@@ -31,6 +31,7 @@ class DockerHarnessTests(unittest.TestCase):
         self.assertIn("products/hello_server/tests", runner)
         self.assertIn("products/http_active_router/tests", runner)
         self.assertIn("products/http_multiplexer/tests", runner)
+        self.assertIn("products/postgres_server/tests", runner)
         self.assertIn("product_image_lane.py", runner)
 
     def test_product_image_lane_reports_cpk_server_image_definition(self) -> None:
@@ -50,30 +51,46 @@ class DockerHarnessTests(unittest.TestCase):
         self.assertEqual(report["schema"], "cpk-servers.product-image-lane-report")
         self.assertEqual(
             [product["product_id"] for product in report["products"]],
-            ["cpk-server", "hello-server", "http-active-router", "http-multiplexer"],
+            [
+                "cpk-server",
+                "hello-server",
+                "http-active-router",
+                "http-multiplexer",
+                "postgres-server",
+            ],
         )
         self.assertEqual(
             report["image_builds"],
             [
                 {
                     "product_id": "cpk-server",
+                    "image_source": "local-dockerfile",
                     "dockerfile": "products/cpk_server/Dockerfile",
                     "status": "image-definition-present",
                 },
                 {
                     "product_id": "hello-server",
+                    "image_source": "local-dockerfile",
                     "dockerfile": "products/hello_server/Dockerfile",
                     "status": "image-definition-present",
                 },
                 {
                     "product_id": "http-active-router",
+                    "image_source": "local-dockerfile",
                     "dockerfile": "products/http_active_router/Dockerfile",
                     "status": "image-definition-present",
                 },
                 {
                     "product_id": "http-multiplexer",
+                    "image_source": "local-dockerfile",
                     "dockerfile": "products/http_multiplexer/Dockerfile",
                     "status": "image-definition-present",
+                },
+                {
+                    "product_id": "postgres-server",
+                    "image_source": "external-oci",
+                    "external_image": "docker.io/library/postgres@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777",
+                    "status": "external-oci-pinned",
                 },
             ],
         )

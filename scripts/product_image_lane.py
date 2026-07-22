@@ -20,22 +20,39 @@ def build_report(inventory_path: Path) -> dict[str, Any]:
         product_id = product.get("product_id")
         if not isinstance(product_id, str) or not product_id:
             raise ValueError("product entries require product_id")
-        dockerfile = product.get("dockerfile")
-        if not isinstance(dockerfile, str) or not dockerfile:
-            raise ValueError("product entries require dockerfile")
-        dockerfile_path = root / dockerfile
-        status = (
-            "image-definition-present"
-            if dockerfile_path.exists()
-            else "requires-product-local-image-definition"
-        )
-        image_builds.append(
-            {
-                "product_id": product_id,
-                "dockerfile": dockerfile,
-                "status": status,
-            }
-        )
+        image_source = product.get("image_source", "local-dockerfile")
+        if image_source == "local-dockerfile":
+            dockerfile = product.get("dockerfile")
+            if not isinstance(dockerfile, str) or not dockerfile:
+                raise ValueError("local image products require dockerfile")
+            dockerfile_path = root / dockerfile
+            status = (
+                "image-definition-present"
+                if dockerfile_path.exists()
+                else "requires-product-local-image-definition"
+            )
+            image_builds.append(
+                {
+                    "product_id": product_id,
+                    "image_source": image_source,
+                    "dockerfile": dockerfile,
+                    "status": status,
+                }
+            )
+        elif image_source == "external-oci":
+            image_ref = product.get("external_image")
+            if not isinstance(image_ref, str) or "@sha256:" not in image_ref:
+                raise ValueError("external OCI products require digest-pinned external_image")
+            image_builds.append(
+                {
+                    "product_id": product_id,
+                    "image_source": image_source,
+                    "external_image": image_ref,
+                    "status": "external-oci-pinned",
+                }
+            )
+        else:
+            raise ValueError(f"unknown product image_source: {image_source}")
 
     return {
         "schema": "cpk-servers.product-image-lane-report",
@@ -46,7 +63,11 @@ def build_report(inventory_path: Path) -> dict[str, Any]:
             if not products
             else (
                 "product-image-definitions-present"
-                if all(item["status"] == "image-definition-present" for item in image_builds)
+                if all(
+                    item["status"]
+                    in {"image-definition-present", "external-oci-pinned"}
+                    for item in image_builds
+                )
                 else "product-image-definitions-required"
             )
         ),

@@ -70,7 +70,13 @@ class ServerRepositoryPolicyTests(unittest.TestCase):
 
         self.assertEqual(
             [product["product_id"] for product in inventory["products"]],
-            ["cpk-server", "hello-server", "http-active-router", "http-multiplexer"],
+            [
+                "cpk-server",
+                "hello-server",
+                "http-active-router",
+                "http-multiplexer",
+                "postgres-server",
+            ],
         )
         self.assertEqual(
             [product["status"] for product in inventory["products"]],
@@ -79,6 +85,7 @@ class ServerRepositoryPolicyTests(unittest.TestCase):
                 "descriptor-published",
                 "descriptor-published",
                 "descriptor-published",
+                "image-definition-present",
             ],
         )
         self.assertEqual(
@@ -97,6 +104,11 @@ class ServerRepositoryPolicyTests(unittest.TestCase):
             inventory["products"][3]["descriptor_issue"],
             "OpenJ92/control-plane-kit#826",
         )
+        self.assertEqual(
+            inventory["products"][4]["descriptor_issue"],
+            "OpenJ92/control-plane-kit#828",
+        )
+        self.assertEqual(inventory["products"][4]["image_source"], "external-oci")
         catalogue = json.loads(
             (ROOT / "catalogue" / "products.json").read_text(encoding="utf-8")
         )

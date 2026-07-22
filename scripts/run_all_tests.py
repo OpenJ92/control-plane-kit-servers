@@ -46,6 +46,15 @@ def main() -> int:
         "products/http_multiplexer/tests",
         "-v",
     ])
+    run([
+        sys.executable,
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "products/postgres_server/tests",
+        "-v",
+    ])
     run(
         [
             sys.executable,
