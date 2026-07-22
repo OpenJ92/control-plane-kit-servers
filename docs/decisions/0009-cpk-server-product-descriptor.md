@@ -18,7 +18,7 @@ ProductIdentity("control-plane-kit", "cpk-server", 1)
 
 The product declares:
 
-- an OCI image pinned by digest: `ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:a459acbae4759f67f3bc5edc2cc0dbc9f189ac4a433fac210ba74afae18f3d62`;
+- an OCI image pinned by digest: `ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:5bdd63738f8d2ea211e02681fbb80760cb581c6435f1c7dd854bceba0b949416`;
 - HTTP API and MCP Streamable HTTP provider sockets;
 - Postgres requirement sockets for workplace, activity-history, observer-state,
   and graph-topology stores;
@@ -52,9 +52,9 @@ child cpk-server and then navigate directly to the child public endpoint.
 Publication lane:
 
 ```text
-scripts/publish_product_image.sh cpk-server extract-f
-  -> ghcr.io/openj92/control-plane-kit-servers/cpk-server:extract-f
-  -> ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:a459acbae4759f67f3bc5edc2cc0dbc9f189ac4a433fac210ba74afae18f3d62
+scripts/publish_product_image.sh cpk-server extract-f-817
+  -> ghcr.io/openj92/control-plane-kit-servers/cpk-server:extract-f-817
+  -> ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:5bdd63738f8d2ea211e02681fbb80760cb581c6435f1c7dd854bceba0b949416
 ```
 
 A GitHub Actions `workflow_dispatch` entrypoint can publish future server
