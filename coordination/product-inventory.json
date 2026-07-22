@@ -1,0 +1,31 @@
+{
+  "schema": "cpk-servers.product-inventory",
+  "issue": "OpenJ92/control-plane-kit#649",
+  "products": [],
+  "bootstrap_reserved_products": [
+    {
+      "product_id": "cpk-server",
+      "target_directory": "products/cpk_server",
+      "role": "control-plane process wrapper",
+      "implementation_issue": "OpenJ92/control-plane-kit#813",
+      "descriptor_issue": "OpenJ92/control-plane-kit#816",
+      "live_smoke_issue": "OpenJ92/control-plane-kit#817",
+      "status": "reserved-not-implemented"
+    },
+    {
+      "product_id": "hello",
+      "target_directory": "products/hello",
+      "role": "first ordinary reusable server product",
+      "test_context_issue": "OpenJ92/control-plane-kit#678",
+      "implementation_issue": "OpenJ92/control-plane-kit#655",
+      "status": "reserved-not-implemented"
+    }
+  ],
+  "laws": [
+    "Repository begins without product implementations.",
+    "One product owns one directory.",
+    "Catalogue imports values, not applications or stores.",
+    "Core dependency points inward; core never imports servers.",
+    "cpk-server and Hello have different roles and neither substitutes for the other."
+  ]
+}
