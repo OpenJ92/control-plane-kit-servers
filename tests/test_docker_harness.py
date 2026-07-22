@@ -25,7 +25,9 @@ class DockerHarnessTests(unittest.TestCase):
         self.assertIn("python:3.12-slim", dockerfile)
         self.assertIn("python", dockerfile)
         self.assertIn("scripts/run_all_tests.py", dockerfile)
+        self.assertIn("COPY products ./products", dockerfile)
         self.assertIn("unittest", runner)
+        self.assertIn("products/cpk_server/tests", runner)
         self.assertIn("product_image_lane.py", runner)
 
     def test_product_image_lane_reports_empty_inventory_without_building(self) -> None:

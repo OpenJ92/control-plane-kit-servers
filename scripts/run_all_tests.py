@@ -10,6 +10,15 @@ def run(command: list[str]) -> None:
 
 def main() -> int:
     run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"])
+    run([
+        sys.executable,
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "products/cpk_server/tests",
+        "-v",
+    ])
     run(
         [
             sys.executable,

@@ -1,0 +1,6 @@
+{
+  "schema": "cpk-server.product-stub",
+  "product_id": "cpk-server",
+  "status": "composition-only-not-published",
+  "publishing_issue": "#816"
+}

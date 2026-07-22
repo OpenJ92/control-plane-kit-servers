@@ -1,0 +1,30 @@
+{
+  "schema": "cpk-server.extract-f-law-cards",
+  "issue": "#813",
+  "law_cards": [
+    {
+      "law": "behavior.execution-mode-requires-auth-configuration",
+      "reference": "tests.test_block_control_fastapi.BlockControlFastAPITests.test_execution_mode_requires_auth_configuration",
+      "owner": "control-plane-kit-servers/cpk_server",
+      "behavioral_law": "Execution-capable cpk-server composition requires explicit authentication configuration before exposing mutation routes."
+    },
+    {
+      "law": "behavior.execution-mutations-require-identity-replay-and-conflict",
+      "reference": "tests.test_block_control_fastapi.BlockControlFastAPITests.test_execution_mutations_require_identity_replay_and_conflict",
+      "owner": "control-plane-kit-servers/cpk_server",
+      "behavioral_law": "Runtime mutation commands preserve command identity, exact replay, and conflict behavior through one application service boundary."
+    },
+    {
+      "law": "behavior.observer-mutation-updates-observer-state",
+      "reference": "tests.test_block_control_state.BlockControlStateTests.test_observer_mutation_updates_observer_state",
+      "owner": "control-plane-kit-servers/cpk_server",
+      "behavioral_law": "Observer mutation changes process-owned observer state without creating a second graph truth."
+    },
+    {
+      "law": "behavior.replacing-targets-clears-stale-active-target",
+      "reference": "tests.test_block_control_state.BlockControlStateTests.test_replacing_targets_clears_stale_active_target",
+      "owner": "control-plane-kit-servers/cpk_server",
+      "behavioral_law": "Replacing target sets clears stale active-target state rather than preserving an invalid pointer."
+    }
+  ]
+}
