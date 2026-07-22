@@ -97,7 +97,11 @@ class CpkServerProductDescriptorTests(unittest.TestCase):
     def test_catalogue_admits_descriptor_and_core_catalog_lookup(self) -> None:
         from control_plane_kit_servers.catalogue import load_catalogue, load_product_catalog
 
-        (declaration,) = load_catalogue(CATALOGUE)
+        declarations = {
+            declaration.product_id: declaration
+            for declaration in load_catalogue(CATALOGUE)
+        }
+        declaration = declarations["cpk-server"]
         document = self.decode()
         catalog = load_product_catalog(CATALOGUE, root=ROOT)
 

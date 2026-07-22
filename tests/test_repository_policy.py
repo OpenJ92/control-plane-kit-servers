@@ -56,35 +56,41 @@ class ServerRepositoryPolicyTests(unittest.TestCase):
             "entrypoint/",
             "tests/",
             "products/cpk_server",
-            "products/hello",
+            "products/hello_server",
             "No shared support without evidence from two products",
             "Catalogue imports declaration entrances only",
         ):
             with self.subTest(required=required):
                 self.assertIn(required, layout)
 
-    def test_product_inventory_tracks_published_cpk_server_descriptor(self) -> None:
+    def test_product_inventory_tracks_published_seed_descriptors(self) -> None:
         inventory = json.loads(
             (ROOT / "coordination" / "product-inventory.json").read_text(encoding="utf-8")
         )
 
         self.assertEqual(
             [product["product_id"] for product in inventory["products"]],
-            ["cpk-server"],
+            ["cpk-server", "hello-server"],
         )
-        self.assertEqual(
-            inventory["products"][0]["status"],
-            "descriptor-published",
+        self.assertTrue(
+            all(product["status"] == "descriptor-published" for product in inventory["products"])
         )
         self.assertEqual(
             inventory["products"][0]["descriptor_issue"],
             "OpenJ92/control-plane-kit#816",
         )
+        self.assertEqual(
+            inventory["products"][1]["descriptor_issue"],
+            "OpenJ92/control-plane-kit#824",
+        )
         catalogue = json.loads(
             (ROOT / "catalogue" / "products.json").read_text(encoding="utf-8")
         )
-        self.assertEqual([product["product_id"] for product in catalogue["products"]], ["cpk-server"])
-        self.assertEqual(catalogue["products"][0]["status"], "completed")
+        self.assertEqual(
+            [product["product_id"] for product in catalogue["products"]],
+            ["cpk-server", "hello-server"],
+        )
+        self.assertTrue(all(product["status"] == "completed" for product in catalogue["products"]))
         self.assertIn(
             "catalogue entries",
             inventory["laws"][0],

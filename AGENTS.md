@@ -12,7 +12,7 @@ contracts, process handoff contracts, and tests. Core never imports servers.
 - cpk-server and Hello have different roles and neither substitutes for the
   other.
 - `products/cpk_server` is the control-plane process wrapper.
-- `products/hello` is the first ordinary reusable server product.
+- `products/hello_server` is the first ordinary reusable server product.
 - Do not create implementation directories before the issue for that product
   opens.
 - Do not use broad Docker prune. Inspect Docker resources first and preserve
