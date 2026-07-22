@@ -257,6 +257,29 @@ class CpkServerHttpMcpBoundaryTests(unittest.TestCase):
         self.assertEqual(mcp_response.status, 404)
         self.assertTrue(all(service.requests == [] for service in services.values()))
 
+    def test_application_errors_map_to_bounded_process_responses(self) -> None:
+        from control_plane_kit_operations import CpkServerApplicationError
+        from control_plane_kit_servers_cpk_server import CpkServerHttpProcessBoundary
+
+        class FailingService:
+            def handle(self, request):
+                raise CpkServerApplicationError(503, "store unavailable")
+
+        composition, services, application = self._application()
+        services[ControlPlaneServiceRole.READS] = FailingService()
+        application = type(application)(services)
+        http = CpkServerHttpProcessBoundary(composition, application)
+
+        response = http.handle(
+            method="GET",
+            path="/workspaces/workspace-a/graphs/current",
+            headers={"Authorization": "Bearer present"},
+            body=b"",
+        )
+
+        self.assertEqual(response.status, 503)
+        self.assertEqual(response.body["error"]["message"], "store unavailable")
+
 
 if __name__ == "__main__":
     unittest.main()

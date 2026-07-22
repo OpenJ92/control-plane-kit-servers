@@ -76,13 +76,13 @@ sh scripts/cpk_server_image_smoke.sh
 The first product image is published at:
 
 ```text
-ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:5bdd63738f8d2ea211e02681fbb80760cb581c6435f1c7dd854bceba0b949416
+ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:dacf70bb1dac886d24a7abdf101cf9a95bfd5ed54cef036a59fce810c7b76d9e
 ```
 
 Per-product publication uses:
 
 ```bash
-sh scripts/publish_product_image.sh cpk-server extract-f-817
+sh scripts/publish_product_image.sh cpk-server extract-ops-848
 ```
 
 Each product must be admitted explicitly by the script. There is no broad

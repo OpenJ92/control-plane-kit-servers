@@ -8,7 +8,10 @@ ENV PIP_DEFAULT_TIMEOUT=120 \
 WORKDIR /app
 
 RUN python -m pip install --no-cache-dir \
-    "control-plane-kit-core @ https://github.com/OpenJ92/control-plane-kit/archive/a04631770efbf59e62b4536cc80a71d42873446d.zip#subdirectory=control-plane-kit-core"
+    "fastapi>=0.115" \
+    "uvicorn>=0.30" \
+    "control-plane-kit-core @ https://github.com/OpenJ92/control-plane-kit/archive/cfe33a15ce1abbab7b767dbd8e51965ce09f5864.zip#subdirectory=control-plane-kit-core" \
+    "control-plane-kit-operations @ https://github.com/OpenJ92/control-plane-kit/archive/cfe33a15ce1abbab7b767dbd8e51965ce09f5864.zip#subdirectory=control-plane-kit-operations"
 
 COPY products/cpk_server/src ./products/cpk_server/src
 

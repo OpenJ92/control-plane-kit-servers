@@ -13,6 +13,7 @@ from control_plane_kit_core.operations.http import (
     HttpMethod,
     HttpOperationSafety,
 )
+from control_plane_kit_operations import CpkServerApplicationError
 
 from .composition import CpkServerComposition, CpkServerCompositionError
 
@@ -85,15 +86,17 @@ class CpkServerHttpProcessBoundary:
         payload = _decode_http_payload(route, body)
         if isinstance(payload, CpkServerBoundaryResponse):
             return payload
-        result = self.application.dispatch(
-            CpkServerServiceRequest(
-                surface="http",
-                route_id=route.route_id,
-                service_role=route.service_role,
-                path_parameters=path_parameters,
-                payload=payload,
-            )
+        request = CpkServerServiceRequest(
+            surface="http",
+            route_id=route.route_id,
+            service_role=route.service_role,
+            path_parameters=path_parameters,
+            payload=payload,
         )
+        response = _dispatch_application(self.application, request)
+        if isinstance(response, CpkServerBoundaryResponse):
+            return response
+        result = response
         return CpkServerBoundaryResponse(200, dict(result))
 
 
@@ -128,7 +131,10 @@ class CpkServerMcpProcessBoundary:
         request = _decode_mcp_message(self.composition, message)
         if isinstance(request, CpkServerBoundaryResponse):
             return request
-        result = self.application.dispatch(request)
+        response = _dispatch_application(self.application, request)
+        if isinstance(response, CpkServerBoundaryResponse):
+            return response
+        result = response
         return CpkServerBoundaryResponse(
             200,
             {
@@ -261,3 +267,15 @@ def _error(status: int, message: str) -> CpkServerBoundaryResponse:
             }
         },
     )
+
+
+def _dispatch_application(
+    application: CpkServerApplicationBoundary,
+    request: CpkServerServiceRequest,
+) -> Mapping[str, object] | CpkServerBoundaryResponse:
+    try:
+        return application.dispatch(request)
+    except CpkServerApplicationError as error:
+        return CpkServerBoundaryResponse(error.status, error.descriptor())
+    except Exception:  # noqa: BLE001 - process boundary must fail closed without leaking details.
+        return _error(500, "application service failed")

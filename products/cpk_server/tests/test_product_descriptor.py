@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -37,7 +38,7 @@ class CpkServerProductDescriptorTests(unittest.TestCase):
         self.assertEqual(product.display_name, "cpk-server")
         self.assertEqual(product.image.registry, "ghcr.io")
         self.assertEqual(product.image.repository, "openj92/control-plane-kit-servers/cpk-server")
-        self.assertEqual(product.image.tag, "extract-f-817")
+        self.assertEqual(product.image.tag, "extract-ops-848")
         self.assertEqual(
             product.image.execution_reference,
             f"ghcr.io/openj92/control-plane-kit-servers/cpk-server@{product.image.digest}",
@@ -144,15 +145,25 @@ class CpkServerProductDescriptorTests(unittest.TestCase):
             ProductDescriptorCodec().decode_document(descriptor)
 
     def test_descriptor_and_catalogue_loading_do_not_import_process_code(self) -> None:
-        from control_plane_kit_servers.catalogue import load_catalogue, load_product_catalog
+        script = f"""
+import sys
+from pathlib import Path
+from control_plane_kit_servers.catalogue import load_catalogue, load_product_catalog
 
-        load_catalogue(CATALOGUE)
-        load_product_catalog(CATALOGUE, root=ROOT)
-
-        self.assertNotIn("control_plane_kit_servers_cpk_server.server", sys.modules)
-        self.assertNotIn("fastapi", sys.modules)
-        self.assertNotIn("httpx", sys.modules)
-        self.assertNotIn("docker", sys.modules)
+root = Path({str(ROOT)!r})
+catalogue = Path({str(CATALOGUE)!r})
+load_catalogue(catalogue)
+load_product_catalog(catalogue, root=root)
+for module in (
+    "control_plane_kit_servers_cpk_server.server",
+    "fastapi",
+    "httpx",
+    "docker",
+):
+    if module in sys.modules:
+        raise SystemExit(f"imported process module: {{module}}")
+"""
+        subprocess.run([sys.executable, "-c", script], check=True)
 
     def test_generated_catalogue_checksum_matches_publication_artifact(self) -> None:
         package_catalogue = ROOT / "src" / "control_plane_kit_servers" / "catalogue.json"

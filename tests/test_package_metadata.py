@@ -7,11 +7,11 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
-CORE_PIN = "a04631770efbf59e62b4536cc80a71d42873446d"
+CPK_PIN = "cfe33a15ce1abbab7b767dbd8e51965ce09f5864"
 
 
 class PackageMetadataTests(unittest.TestCase):
-    def test_pyproject_names_package_and_pins_core_dependency(self) -> None:
+    def test_pyproject_names_package_and_pins_cpk_dependencies(self) -> None:
         pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         project = pyproject["project"]
 
@@ -19,10 +19,18 @@ class PackageMetadataTests(unittest.TestCase):
         self.assertEqual(project["version"], "0.1.0")
         self.assertIn(
             "control-plane-kit-core @ "
-            f"https://github.com/OpenJ92/control-plane-kit/archive/{CORE_PIN}.zip"
+            f"https://github.com/OpenJ92/control-plane-kit/archive/{CPK_PIN}.zip"
             "#subdirectory=control-plane-kit-core",
             project["dependencies"],
         )
+        self.assertIn(
+            "control-plane-kit-operations @ "
+            f"https://github.com/OpenJ92/control-plane-kit/archive/{CPK_PIN}.zip"
+            "#subdirectory=control-plane-kit-operations",
+            project["dependencies"],
+        )
+        self.assertIn("fastapi>=0.115", project["dependencies"])
+        self.assertIn("uvicorn>=0.30", project["dependencies"])
         self.assertEqual(project["requires-python"], ">=3.12")
 
     def test_root_import_is_lightweight_and_exposes_catalogue_entrance(self) -> None:
