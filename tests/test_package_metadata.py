@@ -34,7 +34,12 @@ class PackageMetadataTests(unittest.TestCase):
             catalogue = control_plane_kit_servers.load_catalogue()
             self.assertEqual(
                 [item.product_id for item in catalogue],
-                ["cpk-server", "hello-server", "http-active-router"],
+                [
+                    "cpk-server",
+                    "hello-server",
+                    "http-active-router",
+                    "http-multiplexer",
+                ],
             )
             self.assertNotIn("fastapi", sys.modules)
             self.assertNotIn("httpx", sys.modules)
@@ -42,6 +47,10 @@ class PackageMetadataTests(unittest.TestCase):
             self.assertNotIn("control_plane_kit_servers_hello_server.server", sys.modules)
             self.assertNotIn(
                 "control_plane_kit_servers_http_active_router.server",
+                sys.modules,
+            )
+            self.assertNotIn(
+                "control_plane_kit_servers_http_multiplexer.server",
                 sys.modules,
             )
         finally:
@@ -57,7 +66,12 @@ class PackageMetadataTests(unittest.TestCase):
             catalogue = load_catalogue()
             self.assertEqual(
                 [item.product_id for item in catalogue],
-                ["cpk-server", "hello-server", "http-active-router"],
+                [
+                    "cpk-server",
+                    "hello-server",
+                    "http-active-router",
+                    "http-multiplexer",
+                ],
             )
             self.assertTrue(all(item.status == "completed" for item in catalogue))
             self.assertIsInstance(catalogue, tuple)
@@ -75,6 +89,7 @@ class PackageMetadataTests(unittest.TestCase):
             "control_plane_kit_servers.products.cpk_server",
             "control_plane_kit_servers.products.hello_server",
             "control_plane_kit_servers.products.http_active_router",
+            "control_plane_kit_servers.products.http_multiplexer",
         }
         findings: list[tuple[Path, str]] = []
         for path in sorted((SRC / "control_plane_kit_servers").rglob("*.py")):

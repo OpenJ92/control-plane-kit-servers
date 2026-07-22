@@ -36,7 +36,7 @@
       "implementation_issue": "OpenJ92/control-plane-kit#826",
       "image_issue": "OpenJ92/control-plane-kit#826",
       "descriptor_issue": "OpenJ92/control-plane-kit#826",
-      "status": "image-definition-present"
+      "status": "descriptor-published"
     }
   ],
   "bootstrap_reserved_products": [

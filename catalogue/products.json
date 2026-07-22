@@ -29,6 +29,16 @@
       "product_id": "http-active-router",
       "source_commit": "918341339b2bbf1c43b6551d4e1222f283b82b5d",
       "status": "completed"
+    },
+    {
+      "descriptor_path": "products/http_multiplexer/product.cpk.json",
+      "descriptor_sha256": "22dc8ea50627b6b1c412bec89199436fb04ff95860570818006df7b70e23ba96",
+      "image_digest": "sha256:2b6466d87c7642691c4ce2ee52022450d7b7cf1055f1f25a1449adbb5c8131ec",
+      "image_ref": "ghcr.io/openj92/control-plane-kit-servers/http-multiplexer:server-seed-826",
+      "owner_directory": "products/http_multiplexer",
+      "product_id": "http-multiplexer",
+      "source_commit": "a7f1e2c534007601cb686d79497930f62333a61f",
+      "status": "completed"
     }
   ],
   "schema": "cpk-servers.descriptor-catalogue"

@@ -29,7 +29,12 @@ class DescriptorCatalogueTests(unittest.TestCase):
 
         self.assertEqual(
             [item.product_id for item in catalogue],
-            ["cpk-server", "hello-server", "http-active-router"],
+            [
+                "cpk-server",
+                "hello-server",
+                "http-active-router",
+                "http-multiplexer",
+            ],
         )
         self.assertTrue(all(item.status == "completed" for item in catalogue))
         self.assertIsInstance(catalogue, tuple)
