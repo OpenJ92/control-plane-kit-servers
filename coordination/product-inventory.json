@@ -10,16 +10,25 @@
       "image_issue": "OpenJ92/control-plane-kit#815",
       "descriptor_issue": "OpenJ92/control-plane-kit#816",
       "status": "descriptor-published"
+    },
+    {
+      "product_id": "hello-server",
+      "target_directory": "products/hello_server",
+      "dockerfile": "products/hello_server/Dockerfile",
+      "implementation_issue": "OpenJ92/control-plane-kit#824",
+      "image_issue": "OpenJ92/control-plane-kit#824",
+      "descriptor_issue": "OpenJ92/control-plane-kit#824",
+      "status": "implementation-in-progress"
     }
   ],
   "bootstrap_reserved_products": [
     {
       "product_id": "hello",
-      "target_directory": "products/hello",
+      "target_directory": "products/hello_server",
       "role": "first ordinary reusable server product",
       "test_context_issue": "OpenJ92/control-plane-kit#678",
-      "implementation_issue": "OpenJ92/control-plane-kit#655",
-      "status": "reserved-not-implemented"
+      "implementation_issue": "OpenJ92/control-plane-kit#824",
+      "status": "superseded-by-hello-server-seed"
     }
   ],
   "laws": [

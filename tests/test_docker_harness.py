@@ -28,6 +28,7 @@ class DockerHarnessTests(unittest.TestCase):
         self.assertIn("COPY products ./products", dockerfile)
         self.assertIn("unittest", runner)
         self.assertIn("products/cpk_server/tests", runner)
+        self.assertIn("products/hello_server/tests", runner)
         self.assertIn("product_image_lane.py", runner)
 
     def test_product_image_lane_reports_cpk_server_image_definition(self) -> None:
@@ -45,7 +46,10 @@ class DockerHarnessTests(unittest.TestCase):
         report = json.loads(result.stdout)
 
         self.assertEqual(report["schema"], "cpk-servers.product-image-lane-report")
-        self.assertEqual([product["product_id"] for product in report["products"]], ["cpk-server"])
+        self.assertEqual(
+            [product["product_id"] for product in report["products"]],
+            ["cpk-server", "hello-server"],
+        )
         self.assertEqual(
             report["image_builds"],
             [
@@ -53,7 +57,12 @@ class DockerHarnessTests(unittest.TestCase):
                     "product_id": "cpk-server",
                     "dockerfile": "products/cpk_server/Dockerfile",
                     "status": "image-definition-present",
-                }
+                },
+                {
+                    "product_id": "hello-server",
+                    "dockerfile": "products/hello_server/Dockerfile",
+                    "status": "image-definition-present",
+                },
             ],
         )
         self.assertEqual(report["status"], "product-image-definitions-present")
@@ -72,6 +81,7 @@ class DockerHarnessTests(unittest.TestCase):
         self.assertIn("scripts/publish_product_image.sh", workflow)
         self.assertIn("ghcr.io", script)
         self.assertIn("products/cpk_server/Dockerfile", script)
+        self.assertIn("products/hello_server/Dockerfile", script)
         self.assertIn("unsupported product id", script)
         self.assertNotIn("docker system prune", script)
         self.assertNotIn("docker volume prune", script)
