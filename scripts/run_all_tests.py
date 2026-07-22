@@ -28,6 +28,15 @@ def main() -> int:
         "products/hello_server/tests",
         "-v",
     ])
+    run([
+        sys.executable,
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "products/http_active_router/tests",
+        "-v",
+    ])
     run(
         [
             sys.executable,
