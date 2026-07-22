@@ -24,6 +24,9 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("USER cpk", dockerfile)
         self.assertIn("control_plane_kit_servers_cpk_server.server", dockerfile)
         self.assertIn("control-plane-kit-core @ https://github.com/OpenJ92/control-plane-kit/archive/", dockerfile)
+        self.assertIn("control-plane-kit-operations @ https://github.com/OpenJ92/control-plane-kit/archive/", dockerfile)
+        self.assertIn("fastapi>=0.115", dockerfile)
+        self.assertIn("uvicorn>=0.30", dockerfile)
         self.assertIn("COPY products/cpk_server/src ./products/cpk_server/src", dockerfile)
         self.assertNotIn("COPY products/cpk_server ./products/cpk_server", dockerfile)
         self.assertNotIn("COPY catalogue", dockerfile)
@@ -92,6 +95,20 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
                 ):
                     sys.modules.pop(name, None)
 
+    def test_hosted_process_is_fastapi_over_operations_boundary(self) -> None:
+        source = (
+            PRODUCT_SRC / "control_plane_kit_servers_cpk_server" / "server.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("from fastapi import FastAPI, Request", source)
+        self.assertIn("uvicorn.run", source)
+        self.assertIn("CpkServerOperationsApplication", source)
+        self.assertIn("cpk_server_services", source)
+        self.assertIn("PostgresUnitOfWork", source)
+        self.assertNotIn("BaseHTTPRequestHandler", source)
+        self.assertNotIn("ThreadingHTTPServer", source)
+        self.assertNotIn("_DemoService", source)
+
     def test_product_descriptor_is_now_published_contract_data(self) -> None:
         descriptor = json.loads((PRODUCT / "product.cpk.json").read_text(encoding="utf-8"))
 
@@ -106,6 +123,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
 
         self.assertIn("localhost/control-plane-kit-servers/cpk-server:local", smoke)
         self.assertIn("docker build", smoke)
+        self.assertIn("postgres:16-alpine", smoke)
         self.assertIn("products/cpk_server/Dockerfile", smoke)
         self.assertIn("docker run", smoke)
         self.assertIn("CPK_WORKPLACE_DATABASE_URL", smoke)
@@ -120,6 +138,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("ready response leaked store endpoint", smoke)
         self.assertIn("org.openj92.project=control-plane-kit-servers", smoke)
         self.assertIn("docker rm -f", smoke)
+        self.assertIn("docker network rm", smoke)
         self.assertNotIn("docker system prune", smoke)
         self.assertNotIn("docker volume prune", smoke)
 

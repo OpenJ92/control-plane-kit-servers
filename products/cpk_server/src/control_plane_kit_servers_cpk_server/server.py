@@ -1,20 +1,38 @@
-"""Runnable stdlib HTTP process for the cpk-server image."""
+"""Runnable FastAPI process for the cpk-server image."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import json
 import os
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Mapping
+from uuid import uuid4
 
-from control_plane_kit_core.operations import ControlPlaneServiceRole
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+import psycopg
+import uvicorn
+from control_plane_kit_core.operations.execution import EffectResultKind
+from control_plane_kit_core.operations.lifecycle import FailureCategory
+from control_plane_kit_operations import (
+    ActivityExecutionOutcome,
+    ActivityPlanningCommandService,
+    ApprovalCommandService,
+    BoundedEvidence,
+    CpkServerOperationsApplication,
+    ExecutionAdmissionCommandService,
+    ExecutionCoordinator,
+    FailureEvidence,
+    RunLifecycleCommandService,
+    cpk_server_services,
+)
+from control_plane_kit_operations.postgres import PostgresUnitOfWork, install_schema
 
 from .boundary import (
     CpkServerApplicationBoundary,
     CpkServerHttpProcessBoundary,
     CpkServerMcpProcessBoundary,
-    CpkServerServiceRequest,
 )
 from .composition import (
     CpkServerCompositionError,
@@ -74,101 +92,89 @@ class CpkServerBootstrapConfiguration:
     def process_configuration(self) -> CpkServerProcessConfiguration:
         return CpkServerProcessConfiguration.execution_capable(token_configured=True)
 
-
-class _DemoService:
-    def __init__(self, role: ControlPlaneServiceRole) -> None:
-        self.role = role
-
-    def handle(self, request: CpkServerServiceRequest) -> Mapping[str, object]:
-        return {
-            "service": self.role.value,
-            "route_id": request.route_id,
-            "surface": request.surface,
-            "path_parameters": request.path_parameters,
-            "payload": dict(request.payload),
-        }
-
-
-class _Handler(BaseHTTPRequestHandler):
-    server_version = "cpk-server/0.1"
-
-    def do_GET(self) -> None:
-        if self.path == "/health/live":
-            self._json(200, {"status": "live"})
-            return
-        if self.path == "/health/ready":
-            self._json(
-                200,
-                {
-                    "status": "ready",
-                    "application": "configured",
-                    "stores": "configured",
-                },
+    def operations_database_url(self) -> str:
+        urls = set(self.store_endpoints.values())
+        if len(urls) != 1:
+            raise BootstrapConfigurationError(
+                "current operations package requires all CPK_*_DATABASE_URL values "
+                "to point at one instance database"
             )
-            return
-        response = self.server.http_boundary.handle(
-            method="GET",
-            path=self.path,
-            headers=_headers(self.headers),
-            body=b"",
-        )
-        self._json(response.status, response.body)
-
-    def do_POST(self) -> None:
-        length = int(self.headers.get("Content-Length", "0"))
-        body = self.rfile.read(length)
-        if self.path == "/mcp":
-            try:
-                message = json.loads(body.decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError):
-                self._json(400, {"error": {"status": 400, "message": "invalid JSON request body"}})
-                return
-            response = self.server.mcp_boundary.handle(
-                headers=_headers(self.headers),
-                message=message,
-            )
-        else:
-            response = self.server.http_boundary.handle(
-                method="POST",
-                path=self.path,
-                headers=_headers(self.headers),
-                body=body,
-            )
-        self._json(response.status, response.body)
-
-    def log_message(self, format: str, *args: object) -> None:
-        safe = format.replace("Authorization", "[redacted]")
-        super().log_message(safe, *args)
-
-    def _json(self, status: int, payload: Mapping[str, object]) -> None:
-        encoded = json.dumps(payload, sort_keys=True).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(encoded)))
-        self.end_headers()
-        self.wfile.write(encoded)
+        return next(iter(urls))
 
 
-def create_server(config: CpkServerBootstrapConfiguration) -> ThreadingHTTPServer:
+def create_app(config: CpkServerBootstrapConfiguration) -> FastAPI:
+    """Create the hosted cpk-server FastAPI application."""
+
     composition = create_cpk_server_composition(config.process_configuration())
-    application = CpkServerApplicationBoundary(
-        {role: _DemoService(role) for role in ControlPlaneServiceRole}
+    application = CpkServerApplicationBoundary(_operations_application(config).services)
+    http_boundary = CpkServerHttpProcessBoundary(composition, application)
+    mcp_boundary = CpkServerMcpProcessBoundary(composition, application)
+    app = FastAPI(
+        title="cpk-server",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
     )
-    server = ThreadingHTTPServer(("0.0.0.0", config.port), _Handler)
-    server.http_boundary = CpkServerHttpProcessBoundary(composition, application)
-    server.mcp_boundary = CpkServerMcpProcessBoundary(composition, application)
-    return server
+    app.state.http_boundary = http_boundary
+    app.state.mcp_boundary = mcp_boundary
+
+    @app.get("/health/live")
+    async def live() -> JSONResponse:
+        return _json_response(200, {"status": "live"})
+
+    @app.get("/health/ready")
+    async def ready() -> JSONResponse:
+        return _json_response(
+            200,
+            {
+                "status": "ready",
+                "application": "configured",
+                "stores": "configured",
+            },
+        )
+
+    @app.post("/mcp")
+    async def mcp(request: Request) -> JSONResponse:
+        body = await request.body()
+        try:
+            message = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return _json_response(
+                400,
+                {"error": {"status": 400, "message": "invalid JSON request body"}},
+            )
+        response = mcp_boundary.handle(
+            headers=dict(request.headers),
+            message=message,
+        )
+        return _json_response(response.status, response.body)
+
+    @app.api_route("/{path:path}", methods=["GET", "POST"])
+    async def http(path: str, request: Request) -> JSONResponse:
+        response = http_boundary.handle(
+            method=request.method,
+            path=request.url.path,
+            headers=dict(request.headers),
+            body=await request.body(),
+        )
+        return _json_response(response.status, response.body)
+
+    return app
 
 
 def main() -> int:
     try:
         config = CpkServerBootstrapConfiguration.from_environment()
-        server = create_server(config)
     except (BootstrapConfigurationError, CpkServerCompositionError) as error:
         print(f"cpk-server bootstrap error: {error}", flush=True)
         return 2
     print(f"cpk-server listening on 0.0.0.0:{config.port}", flush=True)
-    server.serve_forever()
+    uvicorn.run(
+        create_app(config),
+        host="0.0.0.0",
+        port=config.port,
+        access_log=False,
+    )
     return 0
 
 
@@ -179,8 +185,88 @@ def _required(values: Mapping[str, str], name: str) -> str:
     return value
 
 
-def _headers(headers) -> dict[str, str]:
-    return {key: value for key, value in headers.items()}
+def _operations_application(
+    config: CpkServerBootstrapConfiguration,
+) -> CpkServerOperationsApplication:
+    database_url = config.operations_database_url()
+    _install_operations_schema(database_url)
+
+    def unit_of_work() -> PostgresUnitOfWork:
+        return PostgresUnitOfWork(lambda: psycopg.connect(database_url))
+
+    lifecycle = RunLifecycleCommandService(
+        unit_of_work,
+        clock=_clock,
+        id_factory=_id,
+    )
+    execution = ExecutionCoordinator(
+        unit_of_work,
+        lifecycle=lifecycle,
+        adapter=_UnsupportedExecutionAdapter(),
+        clock=_clock,
+        id_factory=_id,
+    )
+    return CpkServerOperationsApplication(
+        cpk_server_services(
+            unit_of_work_factory=unit_of_work,
+            planning=ActivityPlanningCommandService(
+                unit_of_work,
+                clock=_clock,
+                id_factory=_id,
+            ),
+            approval=ApprovalCommandService(
+                unit_of_work,
+                clock=_clock,
+                id_factory=_id,
+            ),
+            admission=ExecutionAdmissionCommandService(
+                unit_of_work,
+                clock=_clock,
+                id_factory=_id,
+            ),
+            lifecycle=lifecycle,
+            execution=execution,
+            clock=lambda: datetime.now(timezone.utc),
+        )
+    )
+
+
+class _UnsupportedExecutionAdapter:
+    """cpk-server wrapper default: operations exists, runtime effects do not."""
+
+    def execute(self, activity) -> ActivityExecutionOutcome:
+        return ActivityExecutionOutcome(
+            EffectResultKind.UNSUPPORTED,
+            failure=FailureEvidence(
+                FailureCategory.UNSUPPORTED,
+                "runtime-adapter-unavailable",
+                "cpk-server image does not bundle a runtime effect interpreter",
+                BoundedEvidence.from_mapping(
+                    {"activity_id": activity.activity_id.value}
+                ),
+            ),
+        )
+
+
+def _install_operations_schema(database_url: str) -> None:
+    with psycopg.connect(database_url) as connection:
+        install_schema(connection)
+        connection.commit()
+
+
+def _clock() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _id() -> str:
+    return str(uuid4())
+
+
+def _json_response(status: int, payload: Mapping[str, object]) -> JSONResponse:
+    return JSONResponse(
+        status_code=status,
+        content=dict(payload),
+    )
 
 
 if __name__ == "__main__":
