@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["src", "products/cpk_server/src"]
 
 [tool.setuptools.package-data]
 control_plane_kit_servers = ["catalogue.json"]

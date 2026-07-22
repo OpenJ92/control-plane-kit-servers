@@ -176,3 +176,66 @@ Handoff:
   completed catalogue declaration.
 - Hello issues must follow the same catalogue path; no special built-in route is
   available.
+
+
+## #813 cpk-server Process Composition
+
+#813 creates the first product-local cpk-server wrapper without implementing
+HTTP/MCP process routes or an OCI image. The package lives under
+`products/cpk_server/src/control_plane_kit_servers_cpk_server`, keeping the root
+server catalogue import light and keeping the product independently movable.
+
+Red proof:
+
+```text
+docker run --rm -v "$PWD":/app -w /app python:3.12-slim \
+  sh -c 'python -m pip install . >/tmp/pip.log && \
+         python -m unittest discover -s products/cpk_server/tests -v'
+```
+
+Before implementation, the installed package had core available but no
+`control_plane_kit_servers_cpk_server` module and no product-local #813 law
+cards.
+
+Objects introduced:
+
+```python
+CpkServerProcessConfiguration
+  = execution_enabled x control_token_configured x mode
+
+CpkServerProcessState
+  = targets x active_target x observers x graph_truth_policy
+
+CpkServerComposition
+  = configuration x CpkServerEntrypointHandoffContract x process_state
+```
+
+Composition morphism:
+
+```text
+CpkServerProcessConfiguration
+  -> create_cpk_server_composition
+    -> CpkServerComposition
+      -> CpkServerEntrypointHandoffContract
+        -> DeploymentProgramBoundary + HTTP contract + MCP contract + UoW boundary
+```
+
+Laws proven:
+
+- product-local law cards assign the #813-owned #804 laws;
+- execution-capable composition requires auth configuration;
+- HTTP and MCP share the same core handoff/program boundary;
+- observer mutation changes immutable process state, not graph truth;
+- replacing target sets clears stale active target state;
+- unknown target switches fail closed;
+- root catalogue import does not import cpk-server;
+- core import does not import cpk-server;
+- Hello cannot satisfy cpk-server laws.
+
+Handoff:
+
+- #814 implements HTTP/MCP process boundaries over this composition and must not
+  create another command vocabulary.
+- #815 packages the process as OCI after #814.
+- #816 adds product descriptor and catalogue publication only after image and
+  descriptor digest evidence exists.
