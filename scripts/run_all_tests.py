@@ -37,6 +37,15 @@ def main() -> int:
         "products/http_active_router/tests",
         "-v",
     ])
+    run([
+        sys.executable,
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "products/http_multiplexer/tests",
+        "-v",
+    ])
     run(
         [
             sys.executable,

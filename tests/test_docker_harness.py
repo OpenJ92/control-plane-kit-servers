@@ -30,6 +30,7 @@ class DockerHarnessTests(unittest.TestCase):
         self.assertIn("products/cpk_server/tests", runner)
         self.assertIn("products/hello_server/tests", runner)
         self.assertIn("products/http_active_router/tests", runner)
+        self.assertIn("products/http_multiplexer/tests", runner)
         self.assertIn("product_image_lane.py", runner)
 
     def test_product_image_lane_reports_cpk_server_image_definition(self) -> None:
@@ -49,7 +50,7 @@ class DockerHarnessTests(unittest.TestCase):
         self.assertEqual(report["schema"], "cpk-servers.product-image-lane-report")
         self.assertEqual(
             [product["product_id"] for product in report["products"]],
-            ["cpk-server", "hello-server", "http-active-router"],
+            ["cpk-server", "hello-server", "http-active-router", "http-multiplexer"],
         )
         self.assertEqual(
             report["image_builds"],
@@ -67,6 +68,11 @@ class DockerHarnessTests(unittest.TestCase):
                 {
                     "product_id": "http-active-router",
                     "dockerfile": "products/http_active_router/Dockerfile",
+                    "status": "image-definition-present",
+                },
+                {
+                    "product_id": "http-multiplexer",
+                    "dockerfile": "products/http_multiplexer/Dockerfile",
                     "status": "image-definition-present",
                 },
             ],
@@ -89,6 +95,7 @@ class DockerHarnessTests(unittest.TestCase):
         self.assertIn("products/cpk_server/Dockerfile", script)
         self.assertIn("products/hello_server/Dockerfile", script)
         self.assertIn("products/http_active_router/Dockerfile", script)
+        self.assertIn("products/http_multiplexer/Dockerfile", script)
         self.assertIn("unsupported product id", script)
         self.assertNotIn("docker system prune", script)
         self.assertNotIn("docker volume prune", script)
