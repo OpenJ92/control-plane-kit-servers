@@ -14,6 +14,8 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("python:3.12-slim", dockerfile)
         self.assertIn("USER cpk", dockerfile)
         self.assertIn("control_plane_kit_servers_cpk_server.server", dockerfile)
+        self.assertIn("COPY products/cpk_server/src ./products/cpk_server/src", dockerfile)
+        self.assertNotIn("COPY products/cpk_server ./products/cpk_server", dockerfile)
         self.assertIn("EXPOSE 8080", dockerfile)
         self.assertNotIn("apt-get", dockerfile)
         self.assertNotIn("latest", dockerfile)
@@ -42,6 +44,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             encoding="utf-8"
         )
 
+        self.assertIn("localhost/control-plane-kit-servers/cpk-server:local", smoke)
         self.assertIn("docker build", smoke)
         self.assertIn("products/cpk_server/Dockerfile", smoke)
         self.assertIn("docker run", smoke)

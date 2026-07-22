@@ -9,7 +9,7 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY catalogue ./catalogue
 COPY src ./src
-COPY products/cpk_server ./products/cpk_server
+COPY products/cpk_server/src ./products/cpk_server/src
 
 RUN python -m pip install --no-cache-dir . \
     && adduser --disabled-password --gecos "" --uid 10001 cpk \
