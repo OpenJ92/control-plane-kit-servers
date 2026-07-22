@@ -18,7 +18,7 @@ ProductIdentity("control-plane-kit", "cpk-server", 1)
 
 The product declares:
 
-- an OCI image pinned by digest: `ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:5bdd63738f8d2ea211e02681fbb80760cb581c6435f1c7dd854bceba0b949416`;
+- an OCI image pinned by digest: `ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:dacf70bb1dac886d24a7abdf101cf9a95bfd5ed54cef036a59fce810c7b76d9e`;
 - HTTP API and MCP Streamable HTTP provider sockets;
 - Postgres requirement sockets for workplace, activity-history, observer-state,
   and graph-topology stores;
@@ -28,11 +28,13 @@ The product declares:
 
 Consequence:
 
-The Dockerfile now copies only product-local source required to run the process,
-not `product.cpk.json`, root package catalogue data, or catalogue evidence. This
+The Dockerfile copies only product-local source required to run the process, not
+`product.cpk.json`, root package catalogue data, or catalogue evidence. This
 avoids making the descriptor part of the image it is trying to pin. The
 descriptor records the stabilized image source commit and pushed GHCR image
-digest as provenance.
+digest as provenance. As of #848, the hosted process uses FastAPI over the
+extracted operations application boundary and boots against a caller-supplied
+Postgres instance database.
 
 Catalogue admission is explicit:
 
@@ -52,9 +54,9 @@ child cpk-server and then navigate directly to the child public endpoint.
 Publication lane:
 
 ```text
-scripts/publish_product_image.sh cpk-server extract-f-817
-  -> ghcr.io/openj92/control-plane-kit-servers/cpk-server:extract-f-817
-  -> ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:5bdd63738f8d2ea211e02681fbb80760cb581c6435f1c7dd854bceba0b949416
+scripts/publish_product_image.sh cpk-server extract-ops-848
+  -> ghcr.io/openj92/control-plane-kit-servers/cpk-server:extract-ops-848
+  -> ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:dacf70bb1dac886d24a7abdf101cf9a95bfd5ed54cef036a59fce810c7b76d9e
 ```
 
 A GitHub Actions `workflow_dispatch` entrypoint can publish future server
