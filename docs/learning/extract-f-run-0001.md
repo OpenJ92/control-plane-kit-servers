@@ -81,3 +81,38 @@ Packaging finding:
   `python:3.12-slim` because `git` was not installed.
 - The dependency was changed to an immutable GitHub archive URL for the same
   commit. This preserves the pin while keeping clean Docker installs light.
+
+## #652 Docker-First Test And Image Harness
+
+#652 adds the first canonical validation harness for
+`control-plane-kit-servers`.
+
+Red proof:
+
+```text
+docker run --rm -v "$PWD":/app -w /app python:3.12-slim \
+  python -m unittest tests.test_docker_harness
+```
+
+Before implementation, the focused tests failed because `test.sh`,
+`Dockerfile.test`, harness scripts, and `.github/workflows/tests.yml` did not
+exist.
+
+Harness decisions:
+
+- `./test.sh` is Docker-first and does not require host Python;
+- `Dockerfile.test` installs the package and archive-pinned core dependency;
+- `scripts/run_all_tests.py` runs unittest discovery and the product image lane;
+- `scripts/product_image_lane.py` reports `no-products` while the inventory is
+  empty;
+- `scripts/docker_residue_audit.sh` inspects only resources with the exact
+  `org.openj92.project=control-plane-kit-servers` label;
+- GitHub Actions runs `./test.sh` on `main`, `develop`, and PRs targeting those
+  branches.
+
+Handoff:
+
+- #653 can now rely on `./test.sh` for package and catalogue validation.
+- Product image builds remain pending until actual product directories exist.
+- cpk-server and Hello image lanes must share harness conventions without
+  sharing product ownership.
