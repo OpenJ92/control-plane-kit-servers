@@ -19,6 +19,16 @@
       "product_id": "hello-server",
       "source_commit": "89b07ff26c2a8c2980395b5e07825f93266097d7",
       "status": "completed"
+    },
+    {
+      "descriptor_path": "products/http_active_router/product.cpk.json",
+      "descriptor_sha256": "335ad3933dfb7221140e14f21d672709d4bed7e3595a28a9b6203665b7e59cca",
+      "image_digest": "sha256:9edd29c8b62f6413c7acb4009bfa655c065a31a0eac8728ec9d4350122e0a60d",
+      "image_ref": "ghcr.io/openj92/control-plane-kit-servers/http-active-router:server-seed-825",
+      "owner_directory": "products/http_active_router",
+      "product_id": "http-active-router",
+      "source_commit": "918341339b2bbf1c43b6551d4e1222f283b82b5d",
+      "status": "completed"
     }
   ],
   "schema": "cpk-servers.descriptor-catalogue"

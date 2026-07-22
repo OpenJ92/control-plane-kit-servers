@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-DIGEST="sha256:0000000000000000000000000000000000000000000000000000000000000000"
+DIGEST="sha256:9edd29c8b62f6413c7acb4009bfa655c065a31a0eac8728ec9d4350122e0a60d"
 IMAGE="ghcr.io/openj92/control-plane-kit-servers/http-active-router@$DIGEST"
 
 docker pull "$IMAGE" >/dev/null

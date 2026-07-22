@@ -52,7 +52,7 @@ docker run -d \
   "$IMAGE" >/dev/null
 
 tries=0
-until curl -fsS "http://127.0.0.1:$PORT/health/live" >/dev/null; do
+until curl -fsS "http://127.0.0.1:$PORT/health/live" >/dev/null 2>&1; do
   tries=$((tries + 1))
   if [ "$tries" -gt 30 ]; then
     echo "router did not become live" >&2
