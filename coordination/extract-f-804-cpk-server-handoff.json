@@ -1,0 +1,28 @@
+{
+  "schema": "cpk-servers.extract-f-804-handoff",
+  "source_issue": "OpenJ92/control-plane-kit#804",
+  "source_artifact": "artifacts/extraction/extract-f-804-cpk-server-handoff-inventory.json",
+  "owner": "control-plane-kit-servers/products/cpk_server",
+  "families": {
+    "test_block_control_fastapi": 8,
+    "test_block_control_state": 6
+  },
+  "target_issues": [
+    "OpenJ92/control-plane-kit#813",
+    "OpenJ92/control-plane-kit#814",
+    "OpenJ92/control-plane-kit#815",
+    "OpenJ92/control-plane-kit#816",
+    "OpenJ92/control-plane-kit#817"
+  ],
+  "non_substitutes": [
+    "control-plane-kit-core",
+    "products/hello"
+  ],
+  "handoff_laws": [
+    "A reviewed handoff is not migration evidence.",
+    "Hello must not satisfy cpk-server process laws.",
+    "Core must not import FastAPI, server process code, stores, or runtime mutation.",
+    "cpk-server owns the runnable process wrapper and composes core services through one application boundary.",
+    "HTTP and MCP must delegate to the same command/read services and must not create duplicate truth."
+  ]
+}
