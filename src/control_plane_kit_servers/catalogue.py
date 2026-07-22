@@ -120,6 +120,38 @@ def load_catalogue(
     return tuple(sorted(declarations, key=lambda item: item.product_id))
 
 
+
+def load_product_catalog(
+    path: str | Path,
+    *,
+    root: str | Path,
+):
+    """Load completed publication records as a core ProductCatalog.
+
+    This is the explicit descriptor admission boundary. It validates publication
+    metadata against descriptor bytes without importing product process code.
+    """
+
+    from control_plane_kit_core.products import ProductCatalog, ProductDescriptorCodec
+
+    catalogue_path = Path(path)
+    root_path = Path(root)
+    codec = ProductDescriptorCodec()
+    documents = []
+    for declaration in load_catalogue(catalogue_path):
+        descriptor_path = root_path / declaration.descriptor_path
+        content = descriptor_path.read_bytes()
+        descriptor_digest = hashlib.sha256(content).hexdigest()
+        if descriptor_digest != declaration.descriptor_sha256:
+            raise CatalogueError(
+                f"descriptor digest mismatch for {declaration.product_id}"
+            )
+        document = codec.decode_document(content)
+        if document.product.image.digest != declaration.image_digest:
+            raise CatalogueError(f"image digest mismatch for {declaration.product_id}")
+        documents.append(document)
+    return ProductCatalog.from_documents(documents)
+
 def publish_catalogue(source: str | Path, output: str | Path) -> dict[str, Any]:
     """Write deterministic publication JSON and a sha256 sidecar."""
 

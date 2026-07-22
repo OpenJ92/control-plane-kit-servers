@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-IMAGE="${CPK_SERVER_IMAGE:-control-plane-kit-servers-cpk-server:local}"
+IMAGE="${CPK_SERVER_IMAGE:-localhost/control-plane-kit-servers/cpk-server:local}"
 CONTAINER=""
 LABEL="org.openj92.project=control-plane-kit-servers"
 

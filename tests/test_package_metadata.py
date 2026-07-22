@@ -31,22 +31,24 @@ class PackageMetadataTests(unittest.TestCase):
             import control_plane_kit_servers
 
             self.assertEqual(control_plane_kit_servers.__version__, "0.1.0")
-            self.assertEqual(control_plane_kit_servers.load_catalogue(), ())
+            catalogue = control_plane_kit_servers.load_catalogue()
+            self.assertEqual([item.product_id for item in catalogue], ["cpk-server"])
             self.assertNotIn("fastapi", sys.modules)
             self.assertNotIn("httpx", sys.modules)
-            self.assertNotIn("control_plane_kit_core", sys.modules)
+            self.assertNotIn("control_plane_kit_servers_cpk_server.server", sys.modules)
         finally:
             sys.path.remove(str(SRC))
             sys.modules.pop("control_plane_kit_servers", None)
             sys.modules.pop("control_plane_kit_servers.catalogue", None)
 
-    def test_catalogue_is_empty_immutable_declaration_assembly(self) -> None:
+    def test_catalogue_is_completed_immutable_declaration_assembly(self) -> None:
         sys.path.insert(0, str(SRC))
         try:
             from control_plane_kit_servers.catalogue import load_catalogue
 
             catalogue = load_catalogue()
-            self.assertEqual(catalogue, ())
+            self.assertEqual([item.product_id for item in catalogue], ["cpk-server"])
+            self.assertEqual(catalogue[0].status, "completed")
             self.assertIsInstance(catalogue, tuple)
         finally:
             sys.path.remove(str(SRC))

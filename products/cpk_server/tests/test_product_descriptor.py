@@ -1,0 +1,165 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+import sys
+import tempfile
+import unittest
+
+from control_plane_kit_core.products import (
+    ProductCatalog,
+    ProductDescriptorCodec,
+    ProductDescriptorError,
+    ProductIdentity,
+)
+from control_plane_kit_core.types import Protocol
+
+
+ROOT = Path(__file__).resolve().parents[3]
+PRODUCT = ROOT / "products" / "cpk_server"
+DESCRIPTOR = PRODUCT / "product.cpk.json"
+CATALOGUE = ROOT / "catalogue" / "products.json"
+
+
+class CpkServerProductDescriptorTests(unittest.TestCase):
+    def decode(self):
+        return ProductDescriptorCodec().decode_document(DESCRIPTOR.read_bytes())
+
+    def test_descriptor_round_trips_through_core_product_language(self) -> None:
+        document = self.decode()
+        product = document.product
+
+        self.assertEqual(
+            product.identity,
+            ProductIdentity("control-plane-kit", "cpk-server", 1),
+        )
+        self.assertEqual(product.display_name, "cpk-server")
+        self.assertEqual(product.image.registry, "ghcr.io")
+        self.assertEqual(product.image.repository, "openj92/control-plane-kit-servers/cpk-server")
+        self.assertEqual(product.image.tag, "extract-f")
+        self.assertEqual(
+            product.image.execution_reference,
+            f"ghcr.io/openj92/control-plane-kit-servers/cpk-server@{product.image.digest}",
+        )
+        self.assertEqual(
+            ProductDescriptorCodec().encode_document(product).content,
+            DESCRIPTOR.read_bytes(),
+        )
+
+    def test_descriptor_declares_http_mcp_and_store_contracts_without_values(self) -> None:
+        product = self.decode().product
+        sockets = product.runtime_contract.sockets
+
+        self.assertEqual(sockets.provider("http-api").protocol, Protocol.HTTP)
+        self.assertEqual(sockets.provider("mcp").protocol, Protocol.MCP_STREAMABLE_HTTP)
+        self.assertEqual(
+            sockets.requirement_names(),
+            (
+                "activity-history-store",
+                "graph-topology-store",
+                "observer-state-store",
+                "workplace-store",
+            ),
+        )
+        for name in sockets.requirement_names():
+            requirement = sockets.requirement(name)
+            self.assertEqual(requirement.protocol, Protocol.POSTGRES)
+            self.assertEqual(len(requirement.env_bindings), 1)
+            self.assertTrue(requirement.env_bindings[0].startswith("CPK_"))
+            self.assertTrue(requirement.env_bindings[0].endswith("_DATABASE_URL"))
+
+        raw_descriptor = json.loads(DESCRIPTOR.read_text(encoding="utf-8"))
+        runtime_contract = raw_descriptor["product"]["runtime_contract"]
+        self.assertEqual(runtime_contract["secret_deliveries"], [])
+        rendered = json.dumps(
+            {key: value for key, value in runtime_contract.items() if key != "secret_deliveries"},
+            sort_keys=True,
+        ).lower()
+        self.assertNotIn("postgres://", rendered)
+        self.assertNotIn("password", rendered)
+        self.assertNotIn("token", rendered)
+        self.assertNotIn("secret://", rendered)
+
+    def test_endpoint_contracts_are_direct_child_http_and_mcp_surfaces(self) -> None:
+        product = self.decode().product
+        verification = product.runtime_contract.verification
+        checks = {check.check_id: check for check in verification.checks}
+
+        self.assertEqual(set(checks), {"live", "ready"})
+        self.assertEqual(checks["live"].provider_socket, "http-api")
+        self.assertEqual(checks["live"].path, "/health/live")
+        self.assertEqual(checks["ready"].provider_socket, "http-api")
+        self.assertEqual(checks["ready"].path, "/health/ready")
+        self.assertIn("direct child", product.description)
+        self.assertIn("Recursive proxying is not part", product.description)
+
+    def test_catalogue_admits_descriptor_and_core_catalog_lookup(self) -> None:
+        from control_plane_kit_servers.catalogue import load_catalogue, load_product_catalog
+
+        (declaration,) = load_catalogue(CATALOGUE)
+        document = self.decode()
+        catalog = load_product_catalog(CATALOGUE, root=ROOT)
+
+        self.assertEqual(declaration.product_id, "cpk-server")
+        self.assertEqual(declaration.descriptor_sha256, document.content_digest)
+        self.assertEqual(declaration.image_digest, document.product.image.digest)
+        self.assertEqual(
+            catalog.lookup(ProductIdentity("control-plane-kit", "cpk-server", 1)),
+            document,
+        )
+        self.assertEqual(ProductCatalog.empty().add(document).products, (document,))
+
+    def test_catalogue_rejects_descriptor_and_image_digest_mismatch(self) -> None:
+        from control_plane_kit_servers.catalogue import CatalogueError, load_product_catalog
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            descriptor_path = root / "products" / "cpk_server"
+            descriptor_path.mkdir(parents=True)
+            descriptor_copy = descriptor_path / "product.cpk.json"
+            descriptor_copy.write_bytes(DESCRIPTOR.read_bytes())
+            catalogue = json.loads(CATALOGUE.read_text(encoding="utf-8"))
+            catalogue["products"][0]["descriptor_sha256"] = "0" * 64
+            source = root / "products.json"
+            source.write_text(json.dumps(catalogue), encoding="utf-8")
+            with self.assertRaisesRegex(CatalogueError, "descriptor digest mismatch"):
+                load_product_catalog(source, root=root)
+
+            catalogue = json.loads(CATALOGUE.read_text(encoding="utf-8"))
+            catalogue["products"][0]["image_digest"] = "sha256:" + "1" * 64
+            source.write_text(json.dumps(catalogue), encoding="utf-8")
+            with self.assertRaisesRegex(CatalogueError, "image digest mismatch"):
+                load_product_catalog(source, root=root)
+
+    def test_descriptor_rejects_unknown_fields(self) -> None:
+        descriptor = json.loads(DESCRIPTOR.read_text(encoding="utf-8"))
+        descriptor["product"]["python_module"] = "control_plane_kit_servers_cpk_server.server"
+
+        with self.assertRaises(ProductDescriptorError):
+            ProductDescriptorCodec().decode_document(descriptor)
+
+    def test_descriptor_and_catalogue_loading_do_not_import_process_code(self) -> None:
+        from control_plane_kit_servers.catalogue import load_catalogue, load_product_catalog
+
+        load_catalogue(CATALOGUE)
+        load_product_catalog(CATALOGUE, root=ROOT)
+
+        self.assertNotIn("control_plane_kit_servers_cpk_server.server", sys.modules)
+        self.assertNotIn("fastapi", sys.modules)
+        self.assertNotIn("httpx", sys.modules)
+        self.assertNotIn("docker", sys.modules)
+
+    def test_generated_catalogue_checksum_matches_publication_artifact(self) -> None:
+        package_catalogue = ROOT / "src" / "control_plane_kit_servers" / "catalogue.json"
+        checksum = package_catalogue.with_suffix(package_catalogue.suffix + ".sha256")
+        content = package_catalogue.read_bytes()
+
+        self.assertEqual(
+            checksum.read_text(encoding="utf-8"),
+            f"{hashlib.sha256(content).hexdigest()}  {package_catalogue.name}\n",
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

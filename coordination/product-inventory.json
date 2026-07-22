@@ -9,19 +9,10 @@
       "implementation_issue": "OpenJ92/control-plane-kit#813",
       "image_issue": "OpenJ92/control-plane-kit#815",
       "descriptor_issue": "OpenJ92/control-plane-kit#816",
-      "status": "image-definition-present-not-published"
+      "status": "descriptor-published"
     }
   ],
   "bootstrap_reserved_products": [
-    {
-      "product_id": "cpk-server",
-      "target_directory": "products/cpk_server",
-      "role": "control-plane process wrapper",
-      "implementation_issue": "OpenJ92/control-plane-kit#813",
-      "descriptor_issue": "OpenJ92/control-plane-kit#816",
-      "live_smoke_issue": "OpenJ92/control-plane-kit#817",
-      "status": "reserved-not-implemented"
-    },
     {
       "product_id": "hello",
       "target_directory": "products/hello",
@@ -32,7 +23,7 @@
     }
   ],
   "laws": [
-    "Repository publishes only explicit product inventory entries; catalogue publication remains separate.",
+    "Repository publishes only explicit product inventory and catalogue entries.",
     "One product owns one directory.",
     "Catalogue imports values, not applications or stores.",
     "Core dependency points inward; core never imports servers.",

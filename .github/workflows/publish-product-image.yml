@@ -1,0 +1,30 @@
+name: publish-product-image
+
+on:
+  workflow_dispatch:
+    inputs:
+      product_id:
+        description: Product id to publish
+        required: true
+        default: cpk-server
+      tag:
+        description: OCI tag to publish
+        required: true
+        default: extract-f
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish product image
+        run: sh scripts/publish_product_image.sh "${{ inputs.product_id }}" "${{ inputs.tag }}"

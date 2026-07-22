@@ -1,4 +1,15 @@
 {
-  "schema": "cpk-servers.descriptor-catalogue",
-  "products": []
+  "products": [
+    {
+      "descriptor_path": "products/cpk_server/product.cpk.json",
+      "descriptor_sha256": "bc70bfc07ab926546b0982f7c168e12c7994d3a9850c6170484826243dfd20d1",
+      "image_digest": "sha256:a459acbae4759f67f3bc5edc2cc0dbc9f189ac4a433fac210ba74afae18f3d62",
+      "image_ref": "ghcr.io/openj92/control-plane-kit-servers/cpk-server:extract-f",
+      "owner_directory": "products/cpk_server",
+      "product_id": "cpk-server",
+      "source_commit": "158d1ab102bb2f3d99c5d2008ff757b10f4857a6",
+      "status": "completed"
+    }
+  ],
+  "schema": "cpk-servers.descriptor-catalogue"
 }
