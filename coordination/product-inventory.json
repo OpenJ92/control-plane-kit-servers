@@ -37,6 +37,16 @@
       "image_issue": "OpenJ92/control-plane-kit#826",
       "descriptor_issue": "OpenJ92/control-plane-kit#826",
       "status": "descriptor-published"
+    },
+    {
+      "product_id": "postgres-server",
+      "target_directory": "products/postgres_server",
+      "image_source": "external-oci",
+      "external_image": "docker.io/library/postgres@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777",
+      "implementation_issue": "OpenJ92/control-plane-kit#828",
+      "image_issue": "OpenJ92/control-plane-kit#828",
+      "descriptor_issue": "OpenJ92/control-plane-kit#828",
+      "status": "descriptor-published"
     }
   ],
   "bootstrap_reserved_products": [
@@ -54,6 +64,6 @@
     "One product owns one directory.",
     "Catalogue imports values, not applications or stores.",
     "Core dependency points inward; core never imports servers.",
-    "cpk-server, Hello, active-router, and multiplexer have different roles and none substitutes for the other."
+    "cpk-server, Hello, active-router, multiplexer, and Postgres have different roles and none substitutes for the other."
   ]
 }
