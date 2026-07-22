@@ -239,3 +239,73 @@ Handoff:
 - #815 packages the process as OCI after #814.
 - #816 adds product descriptor and catalogue publication only after image and
   descriptor digest evidence exists.
+
+
+## #814 cpk-server HTTP And MCP Boundaries
+
+#814 adds framework-neutral HTTP and MCP process boundaries over the #813
+composition root. The purpose is to prove route/protocol shape and shared
+delegation before introducing FastAPI, hosted MCP process bootstrap, or an OCI
+image.
+
+Red proof:
+
+```text
+docker run --rm -v "$PWD":/app -w /app python:3.12-slim \
+  sh -c 'python -m pip install . >/tmp/pip.log && \
+         python -m unittest discover -s products/cpk_server/tests -v'
+```
+
+Before implementation, the #814 tests failed because
+`CpkServerHttpProcessBoundary`, `CpkServerMcpProcessBoundary`, and the shared
+application boundary did not exist.
+
+Objects introduced:
+
+```python
+CpkServerApplicationBoundary
+  = ControlPlaneServiceRole -> service.handle(request)
+
+CpkServerHttpProcessBoundary
+  = CpkServerComposition x CpkServerApplicationBoundary
+
+CpkServerMcpProcessBoundary
+  = CpkServerComposition x CpkServerApplicationBoundary
+
+CpkServerServiceRequest
+  = surface x route_id x service_role x path_parameters x payload
+```
+
+Morphism:
+
+```text
+HTTP route / MCP message
+  -> core route id
+    -> service role
+      -> CpkServerApplicationBoundary
+        -> one service object
+```
+
+Laws proven:
+
+- HTTP read route delegates to the shared reads service;
+- HTTP command route requires bearer authorization and delegates to planning;
+- malformed and oversized request bodies fail before service dispatch;
+- MCP `tools/call` and HTTP use the same application boundary;
+- MCP `resources/read` uses the same reads service;
+- missing MCP auth fails closed;
+- unknown HTTP/MCP operations fail closed and do not touch services.
+
+Deliberate hardening:
+
+- The frozen block-control development fixture allowed unconfigured local
+  mutation calls. Hosted cpk-server does not preserve a mutation-capable
+  unauthenticated mode. This matches the refreshed #814 law that control-route
+  mutation requires configured authentication.
+
+Handoff:
+
+- #815 can wrap these framework-neutral boundaries in a runnable process/image.
+- #816 must keep descriptor/catalogue publication declaration-only and avoid
+  importing these process modules during catalogue loading.
+- #817 can use the same boundaries for live smoke evidence.

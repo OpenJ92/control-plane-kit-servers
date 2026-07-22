@@ -1,5 +1,12 @@
 """cpk-server product wrapper composition surface."""
 
+from .boundary import (
+    CpkServerApplicationBoundary,
+    CpkServerBoundaryResponse,
+    CpkServerHttpProcessBoundary,
+    CpkServerMcpProcessBoundary,
+    CpkServerServiceRequest,
+)
 from .composition import (
     CpkServerComposition,
     CpkServerCompositionError,
@@ -11,6 +18,11 @@ from .composition import (
 )
 
 __all__ = (
+    "CpkServerApplicationBoundary",
+    "CpkServerBoundaryResponse",
+    "CpkServerHttpProcessBoundary",
+    "CpkServerMcpProcessBoundary",
+    "CpkServerServiceRequest",
     "CpkServerComposition",
     "CpkServerCompositionError",
     "CpkServerProcessConfiguration",
