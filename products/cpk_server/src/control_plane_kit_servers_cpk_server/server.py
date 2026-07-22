@@ -21,10 +21,14 @@ from control_plane_kit_operations import (
     ApprovalCommandService,
     BoundedEvidence,
     CpkServerOperationsApplication,
+    DesiredGraphCommandService,
     ExecutionAdmissionCommandService,
     ExecutionCoordinator,
     FailureEvidence,
+    OperationCommandService,
+    ProductRegistrationService,
     RunLifecycleCommandService,
+    WorkspaceCommandService,
     cpk_server_services,
 )
 from control_plane_kit_operations.postgres import PostgresUnitOfWork, install_schema
@@ -214,6 +218,17 @@ def _operations_application(
                 clock=_clock,
                 id_factory=_id,
             ),
+            workspaces=WorkspaceCommandService(
+                unit_of_work,
+                clock=_clock,
+                id_factory=_id,
+            ),
+            products=ProductRegistrationService(unit_of_work),
+            desired_graphs=DesiredGraphCommandService(
+                unit_of_work,
+                clock=_clock,
+                id_factory=_id,
+            ),
             approval=ApprovalCommandService(
                 unit_of_work,
                 clock=_clock,
@@ -225,6 +240,11 @@ def _operations_application(
                 id_factory=_id,
             ),
             lifecycle=lifecycle,
+            operations=OperationCommandService(
+                unit_of_work,
+                clock=_clock,
+                id_factory=_id,
+            ),
             execution=execution,
             clock=lambda: datetime.now(timezone.utc),
         )
