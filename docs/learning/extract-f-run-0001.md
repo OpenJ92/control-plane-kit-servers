@@ -116,3 +116,63 @@ Handoff:
 - Product image builds remain pending until actual product directories exist.
 - cpk-server and Hello image lanes must share harness conventions without
   sharing product ownership.
+
+
+## #653 Descriptor Catalogue And Publication Artifacts
+
+#653 defines the server-product publication catalogue without implementing a
+server product. The catalogue is metadata about completed products, not a second
+core descriptor language and not an application bootstrap.
+
+Red proof:
+
+```text
+docker run --rm -v "$PWD":/app -w /app python:3.12-slim \
+  sh -c 'python -m unittest tests.test_descriptor_catalogue -v'
+```
+
+Before implementation, the focused tests failed because the catalogue language,
+strict declaration value, and publication helper did not exist.
+
+Objects introduced:
+
+```python
+PublishedProductDescriptor
+  = product_id
+  x owner_directory
+  x descriptor_path
+  x descriptor_sha256
+  x source_commit
+  x image_ref
+  x image_digest
+  x status
+```
+
+Publication morphism:
+
+```text
+catalogue/products.json
+  -> load_catalogue
+  -> tuple[PublishedProductDescriptor, ...]
+  -> publish_catalogue
+  -> deterministic JSON + sha256 sidecar
+```
+
+Laws proven:
+
+- default installed catalogue is empty and immutable;
+- only completed declarations load;
+- duplicates fail closed;
+- unknown fields fail closed;
+- descriptor/source/image digests are explicit;
+- publication ordering and checksum are deterministic;
+- catalogue loading does not import product implementation or process code.
+
+Handoff:
+
+- #813 can add cpk-server declaration material as ordinary product data once the
+  wrapper exists.
+- #816 must prove cpk-server image and descriptor digests before adding a
+  completed catalogue declaration.
+- Hello issues must follow the same catalogue path; no special built-in route is
+  available.
