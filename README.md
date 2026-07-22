@@ -40,5 +40,17 @@ from control_plane_kit_servers import load_catalogue
 assert load_catalogue() == ()
 ```
 
-The empty catalogue is deliberate until descriptor publication work begins in
-#653.
+The catalogue currently has the completed-product publication language, but
+contains no products until `products/cpk_server` and `products/hello` complete.
+
+Publication source and generated artifacts are intentionally separate:
+
+```text
+catalogue/products.json
+  -> scripts/publish_catalogue.py
+    -> dist/server-products.json
+    -> dist/server-products.json.sha256
+```
+
+`load_catalogue()` reads completed publication records only. It never imports
+product process code, FastAPI apps, Docker clients, stores, or entrypoints.
