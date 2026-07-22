@@ -309,3 +309,67 @@ Handoff:
 - #816 must keep descriptor/catalogue publication declaration-only and avoid
   importing these process modules during catalogue loading.
 - #817 can use the same boundaries for live smoke evidence.
+
+
+## #815 cpk-server OCI Image
+
+#815 packages the cpk-server wrapper as a runnable OCI image while keeping
+descriptor publication deferred to #816. The image host is intentionally stdlib
+HTTP for this first proof; it wraps the #814 process boundaries rather than
+creating another command surface.
+
+Red proof:
+
+```text
+docker run --rm -v "$PWD":/app -w /app python:3.12-slim \
+  sh -c 'python -m pip install . >/tmp/pip.log && \
+         python -m unittest discover -s products/cpk_server/tests -v'
+```
+
+Before implementation, the #815 tests failed because `products/cpk_server` had
+no Dockerfile, no bootstrap contract, and no host-side image smoke script.
+
+Objects introduced:
+
+```text
+products/cpk_server/Dockerfile
+products/cpk_server/bootstrap.contract.json
+control_plane_kit_servers_cpk_server.server
+scripts/cpk_server_image_smoke.sh
+```
+
+Bootstrap law:
+
+```text
+CPK_SERVER_MODE=execution-capable
+CPK_CONTROL_AUTH_CONFIGURED=true
+CPK_PORT=<1..65535>
+  -> CpkServerBootstrapConfiguration
+    -> create_cpk_server_composition
+      -> stdlib HTTP host over #814 boundaries
+```
+
+Live evidence:
+
+- image builds from the pinned server package and archive-pinned core dependency;
+- image runs as non-root `cpk`;
+- missing bootstrap configuration exits nonzero;
+- `/health/live` and `/health/ready` are reachable;
+- unauthenticated operator read returns 401;
+- authenticated HTTP read traverses the reads service;
+- authenticated MCP `tools/call` traverses the planning service;
+- owned container cleanup leaves the residue audit green.
+
+Boundary decision:
+
+- `coordination/product-inventory.json` now records cpk-server as
+  `image-definition-present-not-published`;
+- `catalogue/products.json` remains empty until #816;
+- `product.cpk.json` remains a non-published stub.
+
+Handoff:
+
+- #816 must convert this image evidence into ordinary external product
+  descriptor/catalogue publication with pinned image and descriptor digests.
+- #817 can reuse `scripts/cpk_server_image_smoke.sh` as the base live smoke and
+  add recursive-readiness handoff evidence.

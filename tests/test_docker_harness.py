@@ -30,7 +30,7 @@ class DockerHarnessTests(unittest.TestCase):
         self.assertIn("products/cpk_server/tests", runner)
         self.assertIn("product_image_lane.py", runner)
 
-    def test_product_image_lane_reports_empty_inventory_without_building(self) -> None:
+    def test_product_image_lane_reports_cpk_server_image_definition(self) -> None:
         result = subprocess.run(
             [
                 "python",
@@ -45,9 +45,18 @@ class DockerHarnessTests(unittest.TestCase):
         report = json.loads(result.stdout)
 
         self.assertEqual(report["schema"], "cpk-servers.product-image-lane-report")
-        self.assertEqual(report["products"], [])
-        self.assertEqual(report["image_builds"], [])
-        self.assertEqual(report["status"], "no-products")
+        self.assertEqual([product["product_id"] for product in report["products"]], ["cpk-server"])
+        self.assertEqual(
+            report["image_builds"],
+            [
+                {
+                    "product_id": "cpk-server",
+                    "dockerfile": "products/cpk_server/Dockerfile",
+                    "status": "image-definition-present",
+                }
+            ],
+        )
+        self.assertEqual(report["status"], "product-image-definitions-present")
 
     def test_residue_audit_filters_only_owned_resources(self) -> None:
         audit = (ROOT / "scripts" / "docker_residue_audit.sh").read_text(encoding="utf-8")
