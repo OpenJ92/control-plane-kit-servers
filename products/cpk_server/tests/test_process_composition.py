@@ -128,10 +128,14 @@ class CpkServerProcessCompositionTests(unittest.TestCase):
             catalogue = control_plane_kit_servers.load_catalogue()
             self.assertEqual(
                 [item.product_id for item in catalogue],
-                ["cpk-server", "hello-server"],
+                ["cpk-server", "hello-server", "http-active-router"],
             )
             self.assertNotIn("control_plane_kit_servers_cpk_server", sys.modules)
             self.assertNotIn("control_plane_kit_servers_hello_server", sys.modules)
+            self.assertNotIn(
+                "control_plane_kit_servers_http_active_router",
+                sys.modules,
+            )
         finally:
             sys.path.remove(str(ROOT / "src"))
             sys.modules.pop("control_plane_kit_servers", None)
