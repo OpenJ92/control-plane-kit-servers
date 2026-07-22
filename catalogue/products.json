@@ -39,6 +39,16 @@
       "product_id": "http-multiplexer",
       "source_commit": "a7f1e2c534007601cb686d79497930f62333a61f",
       "status": "completed"
+    },
+    {
+      "product_id": "postgres-server",
+      "owner_directory": "products/postgres_server",
+      "descriptor_path": "products/postgres_server/product.cpk.json",
+      "descriptor_sha256": "f6637870f6148ae9134148ea150ab8fb130249186468cb6dc8de2f98a2f44885",
+      "source_commit": "9cd7e8b513b82eb4619b000edea1f945e48a6317",
+      "image_ref": "docker.io/library/postgres:16-alpine",
+      "image_digest": "sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777",
+      "status": "completed"
     }
   ],
   "schema": "cpk-servers.descriptor-catalogue"

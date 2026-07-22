@@ -85,7 +85,7 @@ class ServerRepositoryPolicyTests(unittest.TestCase):
                 "descriptor-published",
                 "descriptor-published",
                 "descriptor-published",
-                "image-definition-present",
+                "descriptor-published",
             ],
         )
         self.assertEqual(
@@ -119,6 +119,7 @@ class ServerRepositoryPolicyTests(unittest.TestCase):
                 "hello-server",
                 "http-active-router",
                 "http-multiplexer",
+                "postgres-server",
             ],
         )
         self.assertTrue(all(product["status"] == "completed" for product in catalogue["products"]))
