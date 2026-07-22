@@ -1,0 +1,24 @@
+{
+  "schema": "cpk-server.bootstrap-contract",
+  "environment": [
+    {
+      "name": "CPK_SERVER_MODE",
+      "required": true,
+      "allowed_values": ["execution-capable"]
+    },
+    {
+      "name": "CPK_CONTROL_AUTH_CONFIGURED",
+      "required": true,
+      "allowed_values": ["true"]
+    },
+    {
+      "name": "CPK_PORT",
+      "required": true,
+      "allowed_values": ["1..65535"]
+    }
+  ],
+  "runtime_inputs": [
+    "authorization header is runtime-supplied",
+    "store endpoints remain external runtime configuration in later issues"
+  ]
+}

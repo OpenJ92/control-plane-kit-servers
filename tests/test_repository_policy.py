@@ -63,12 +63,31 @@ class ServerRepositoryPolicyTests(unittest.TestCase):
             with self.subTest(required=required):
                 self.assertIn(required, layout)
 
-    def test_product_inventory_remains_empty_after_policy_foundation(self) -> None:
+    def test_product_inventory_tracks_cpk_server_image_without_catalogue_publication(self) -> None:
         inventory = json.loads(
             (ROOT / "coordination" / "product-inventory.json").read_text(encoding="utf-8")
         )
 
-        self.assertEqual(inventory["products"], [])
+        self.assertEqual(
+            [product["product_id"] for product in inventory["products"]],
+            ["cpk-server"],
+        )
+        self.assertEqual(
+            inventory["products"][0]["status"],
+            "image-definition-present-not-published",
+        )
+        self.assertEqual(
+            inventory["products"][0]["descriptor_issue"],
+            "OpenJ92/control-plane-kit#816",
+        )
+        catalogue = json.loads(
+            (ROOT / "catalogue" / "products.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(catalogue["products"], [])
+        self.assertIn(
+            "catalogue publication remains separate",
+            inventory["laws"][0],
+        )
         reserved = {product["product_id"] for product in inventory["bootstrap_reserved_products"]}
         self.assertEqual(reserved, {"cpk-server", "hello"})
 

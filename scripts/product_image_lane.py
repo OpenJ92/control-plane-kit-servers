@@ -7,6 +7,7 @@ from typing import Any
 
 
 def build_report(inventory_path: Path) -> dict[str, Any]:
+    root = inventory_path.resolve().parents[1]
     inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
     products = inventory.get("products")
     if not isinstance(products, list):
@@ -19,10 +20,20 @@ def build_report(inventory_path: Path) -> dict[str, Any]:
         product_id = product.get("product_id")
         if not isinstance(product_id, str) or not product_id:
             raise ValueError("product entries require product_id")
+        dockerfile = product.get("dockerfile")
+        if not isinstance(dockerfile, str) or not dockerfile:
+            raise ValueError("product entries require dockerfile")
+        dockerfile_path = root / dockerfile
+        status = (
+            "image-definition-present"
+            if dockerfile_path.exists()
+            else "requires-product-local-image-definition"
+        )
         image_builds.append(
             {
                 "product_id": product_id,
-                "status": "requires-product-local-image-definition",
+                "dockerfile": dockerfile,
+                "status": status,
             }
         )
 
@@ -30,7 +41,15 @@ def build_report(inventory_path: Path) -> dict[str, Any]:
         "schema": "cpk-servers.product-image-lane-report",
         "products": products,
         "image_builds": image_builds,
-        "status": "no-products" if not products else "product-image-definitions-required",
+        "status": (
+            "no-products"
+            if not products
+            else (
+                "product-image-definitions-present"
+                if all(item["status"] == "image-definition-present" for item in image_builds)
+                else "product-image-definitions-required"
+            )
+        ),
     }
 
 

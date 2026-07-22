@@ -1,7 +1,17 @@
 {
   "schema": "cpk-servers.product-inventory",
   "issue": "OpenJ92/control-plane-kit#649",
-  "products": [],
+  "products": [
+    {
+      "product_id": "cpk-server",
+      "target_directory": "products/cpk_server",
+      "dockerfile": "products/cpk_server/Dockerfile",
+      "implementation_issue": "OpenJ92/control-plane-kit#813",
+      "image_issue": "OpenJ92/control-plane-kit#815",
+      "descriptor_issue": "OpenJ92/control-plane-kit#816",
+      "status": "image-definition-present-not-published"
+    }
+  ],
   "bootstrap_reserved_products": [
     {
       "product_id": "cpk-server",
@@ -22,7 +32,7 @@
     }
   ],
   "laws": [
-    "Repository begins without product implementations.",
+    "Repository publishes only explicit product inventory entries; catalogue publication remains separate.",
     "One product owns one directory.",
     "Catalogue imports values, not applications or stores.",
     "Core dependency points inward; core never imports servers.",

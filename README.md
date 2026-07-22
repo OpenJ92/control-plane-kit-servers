@@ -41,7 +41,9 @@ assert load_catalogue() == ()
 ```
 
 The catalogue currently has the completed-product publication language, but
-contains no products until `products/cpk_server` and `products/hello` complete.
+publishes only explicit product declarations. `cpk-server` currently has an image
+definition in the inventory, remains unpublished until its descriptor issue
+completes, and `hello` remains reserved for later transfer.
 
 Publication source and generated artifacts are intentionally separate:
 
@@ -54,3 +56,17 @@ catalogue/products.json
 
 `load_catalogue()` reads completed publication records only. It never imports
 product process code, FastAPI apps, Docker clients, stores, or entrypoints.
+
+
+## cpk-server Image Foundation
+
+`products/cpk_server` now contains a runnable image definition for the
+control-plane process wrapper. This is not yet a published product descriptor;
+`catalogue/products.json` remains empty until #816 records descriptor and image
+digest evidence.
+
+Local smoke:
+
+```bash
+sh scripts/cpk_server_image_smoke.sh
+```
