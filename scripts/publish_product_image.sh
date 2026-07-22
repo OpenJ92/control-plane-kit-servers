@@ -6,13 +6,22 @@ TAG="${2:-extract-f}"
 OWNER="${GHCR_OWNER:-openj92}"
 PACKAGE="${GHCR_PACKAGE:-control-plane-kit-servers}"
 
-if [ "$PRODUCT_ID" != "cpk-server" ]; then
-  echo "unsupported product id: $PRODUCT_ID" >&2
-  exit 2
-fi
+case "$PRODUCT_ID" in
+  cpk-server)
+    DOCKERFILE="products/cpk_server/Dockerfile"
+    IMAGE_NAME="cpk-server"
+    ;;
+  hello-server)
+    DOCKERFILE="products/hello_server/Dockerfile"
+    IMAGE_NAME="hello-server"
+    ;;
+  *)
+    echo "unsupported product id: $PRODUCT_ID" >&2
+    exit 2
+    ;;
+esac
 
-DOCKERFILE="products/cpk_server/Dockerfile"
-IMAGE="ghcr.io/$OWNER/$PACKAGE/cpk-server:$TAG"
+IMAGE="ghcr.io/$OWNER/$PACKAGE/$IMAGE_NAME:$TAG"
 
 docker build -f "$DOCKERFILE" -t "$IMAGE" .
 docker push "$IMAGE"

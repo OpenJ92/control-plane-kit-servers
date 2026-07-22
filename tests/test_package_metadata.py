@@ -32,10 +32,14 @@ class PackageMetadataTests(unittest.TestCase):
 
             self.assertEqual(control_plane_kit_servers.__version__, "0.1.0")
             catalogue = control_plane_kit_servers.load_catalogue()
-            self.assertEqual([item.product_id for item in catalogue], ["cpk-server"])
+            self.assertEqual(
+                [item.product_id for item in catalogue],
+                ["cpk-server", "hello-server"],
+            )
             self.assertNotIn("fastapi", sys.modules)
             self.assertNotIn("httpx", sys.modules)
             self.assertNotIn("control_plane_kit_servers_cpk_server.server", sys.modules)
+            self.assertNotIn("control_plane_kit_servers_hello_server.server", sys.modules)
         finally:
             sys.path.remove(str(SRC))
             sys.modules.pop("control_plane_kit_servers", None)
@@ -47,8 +51,11 @@ class PackageMetadataTests(unittest.TestCase):
             from control_plane_kit_servers.catalogue import load_catalogue
 
             catalogue = load_catalogue()
-            self.assertEqual([item.product_id for item in catalogue], ["cpk-server"])
-            self.assertEqual(catalogue[0].status, "completed")
+            self.assertEqual(
+                [item.product_id for item in catalogue],
+                ["cpk-server", "hello-server"],
+            )
+            self.assertTrue(all(item.status == "completed" for item in catalogue))
             self.assertIsInstance(catalogue, tuple)
         finally:
             sys.path.remove(str(SRC))
@@ -62,7 +69,7 @@ class PackageMetadataTests(unittest.TestCase):
             "docker",
             "subprocess",
             "control_plane_kit_servers.products.cpk_server",
-            "control_plane_kit_servers.products.hello",
+            "control_plane_kit_servers.products.hello_server",
         }
         findings: list[tuple[Path, str]] = []
         for path in sorted((SRC / "control_plane_kit_servers").rglob("*.py")):

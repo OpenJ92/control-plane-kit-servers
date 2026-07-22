@@ -19,6 +19,15 @@ def main() -> int:
         "products/cpk_server/tests",
         "-v",
     ])
+    run([
+        sys.executable,
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "products/hello_server/tests",
+        "-v",
+    ])
     run(
         [
             sys.executable,

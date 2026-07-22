@@ -9,6 +9,16 @@
       "product_id": "cpk-server",
       "source_commit": "0f5a0a3c9c2c9008389fcf25b687640f0b17afff",
       "status": "completed"
+    },
+    {
+      "descriptor_path": "products/hello_server/product.cpk.json",
+      "descriptor_sha256": "91da997ce5a17ad0401a9b75b0758dec1d6083fce01f4b9c960c79c3506a7967",
+      "image_digest": "sha256:0b5d62c2706bdfc5b53b67c7e0a72e36b8af7d13f8b2abf26eaa6e6eb7dda5f0",
+      "image_ref": "ghcr.io/openj92/control-plane-kit-servers/hello-server:server-seed-824",
+      "owner_directory": "products/hello_server",
+      "product_id": "hello-server",
+      "source_commit": "89b07ff26c2a8c2980395b5e07825f93266097d7",
+      "status": "completed"
     }
   ],
   "schema": "cpk-servers.descriptor-catalogue"

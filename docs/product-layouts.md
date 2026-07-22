@@ -29,7 +29,7 @@ Current bootstrap product layouts:
 
 ```text
 products/cpk_server  # active cpk-server product wrapper and descriptor
-products/hello       # reserved for the later Hello transfer
+products/hello_server # active first ordinary reusable server product
 ```
 
 These names are tracked by `coordination/product-inventory.json`. `cpk-server`
@@ -46,7 +46,7 @@ products/
   catalog.py             # imports entrypoint modules or Docker build code
   shared.py              # created before two products need it
   cpk_server/            # process code imported by catalogue loading
-  hello/                 # empty placeholder before Hello transfer begins
+  hello/                 # stale placeholder instead of the canonical hello_server product
 ```
 
 Forbidden patterns:
