@@ -25,16 +25,16 @@ server.
 `tests/` owns isomorphic successor tests for the product and any live proof that
 the issue requires.
 
-Bootstrap reserved layouts:
+Current bootstrap product layouts:
 
 ```text
-products/cpk_server
-products/hello
+products/cpk_server  # active cpk-server product wrapper and descriptor
+products/hello       # reserved for the later Hello transfer
 ```
 
-These names are reserved by `coordination/product-inventory.json`, but their
-implementation directories are not created until their implementation issues
-open.
+These names are tracked by `coordination/product-inventory.json`. `cpk-server`
+is now the first published descriptor. `hello` remains reserved until its
+implementation issues open.
 
 No shared support without evidence from two products or an explicit bootstrap
 exception. Catalogue imports declaration entrances only.
@@ -45,7 +45,7 @@ exception. Catalogue imports declaration entrances only.
 products/
   catalog.py             # imports entrypoint modules or Docker build code
   shared.py              # created before two products need it
-  cpk_server/            # empty placeholder before #813 begins
+  cpk_server/            # process code imported by catalogue loading
   hello/                 # empty placeholder before Hello transfer begins
 ```
 

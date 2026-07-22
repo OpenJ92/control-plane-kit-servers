@@ -58,6 +58,24 @@ class DockerHarnessTests(unittest.TestCase):
         )
         self.assertEqual(report["status"], "product-image-definitions-present")
 
+
+    def test_publish_product_image_workflow_is_per_product_and_uses_ghcr(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "publish-product-image.yml").read_text(
+            encoding="utf-8"
+        )
+        script = (ROOT / "scripts" / "publish_product_image.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("workflow_dispatch", workflow)
+        self.assertIn("packages: write", workflow)
+        self.assertIn("scripts/publish_product_image.sh", workflow)
+        self.assertIn("ghcr.io", script)
+        self.assertIn("products/cpk_server/Dockerfile", script)
+        self.assertIn("unsupported product id", script)
+        self.assertNotIn("docker system prune", script)
+        self.assertNotIn("docker volume prune", script)
+
     def test_residue_audit_filters_only_owned_resources(self) -> None:
         audit = (ROOT / "scripts" / "docker_residue_audit.sh").read_text(encoding="utf-8")
 

@@ -14,8 +14,11 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("python:3.12-slim", dockerfile)
         self.assertIn("USER cpk", dockerfile)
         self.assertIn("control_plane_kit_servers_cpk_server.server", dockerfile)
+        self.assertIn("control-plane-kit-core @ https://github.com/OpenJ92/control-plane-kit/archive/", dockerfile)
         self.assertIn("COPY products/cpk_server/src ./products/cpk_server/src", dockerfile)
         self.assertNotIn("COPY products/cpk_server ./products/cpk_server", dockerfile)
+        self.assertNotIn("COPY catalogue", dockerfile)
+        self.assertNotIn("COPY src ./src", dockerfile)
         self.assertIn("EXPOSE 8080", dockerfile)
         self.assertNotIn("apt-get", dockerfile)
         self.assertNotIn("latest", dockerfile)
@@ -33,11 +36,12 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertNotIn("token", rendered.replace("auth_configured", ""))
         self.assertNotIn("secret", rendered)
 
-    def test_product_stub_remains_unpublished_until_descriptor_issue(self) -> None:
+    def test_product_descriptor_is_now_published_contract_data(self) -> None:
         descriptor = json.loads((PRODUCT / "product.cpk.json").read_text(encoding="utf-8"))
 
-        self.assertEqual(descriptor["status"], "composition-only-not-published")
-        self.assertEqual(descriptor["publishing_issue"], "#816")
+        self.assertEqual(descriptor["schema"], "control-plane-kit.product")
+        self.assertEqual(descriptor["product"]["identity"]["name"], "cpk-server")
+        self.assertNotIn("publishing_issue", descriptor)
 
     def test_host_side_smoke_script_builds_runs_and_cleans_owned_image(self) -> None:
         smoke = (ROOT / "scripts" / "cpk_server_image_smoke.sh").read_text(

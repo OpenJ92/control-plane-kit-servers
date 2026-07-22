@@ -63,7 +63,7 @@ class ServerRepositoryPolicyTests(unittest.TestCase):
             with self.subTest(required=required):
                 self.assertIn(required, layout)
 
-    def test_product_inventory_tracks_cpk_server_image_without_catalogue_publication(self) -> None:
+    def test_product_inventory_tracks_published_cpk_server_descriptor(self) -> None:
         inventory = json.loads(
             (ROOT / "coordination" / "product-inventory.json").read_text(encoding="utf-8")
         )
@@ -74,7 +74,7 @@ class ServerRepositoryPolicyTests(unittest.TestCase):
         )
         self.assertEqual(
             inventory["products"][0]["status"],
-            "image-definition-present-not-published",
+            "descriptor-published",
         )
         self.assertEqual(
             inventory["products"][0]["descriptor_issue"],
@@ -83,13 +83,14 @@ class ServerRepositoryPolicyTests(unittest.TestCase):
         catalogue = json.loads(
             (ROOT / "catalogue" / "products.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(catalogue["products"], [])
+        self.assertEqual([product["product_id"] for product in catalogue["products"]], ["cpk-server"])
+        self.assertEqual(catalogue["products"][0]["status"], "completed")
         self.assertIn(
-            "catalogue publication remains separate",
+            "catalogue entries",
             inventory["laws"][0],
         )
         reserved = {product["product_id"] for product in inventory["bootstrap_reserved_products"]}
-        self.assertEqual(reserved, {"cpk-server", "hello"})
+        self.assertEqual(reserved, {"hello"})
 
     def test_learning_and_decision_logs_record_no_product_implementation(self) -> None:
         learning = (ROOT / "docs" / "learning" / "extract-f-run-0001.md").read_text(

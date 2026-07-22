@@ -373,3 +373,85 @@ Handoff:
   descriptor/catalogue publication with pinned image and descriptor digests.
 - #817 can reuse `scripts/cpk_server_image_smoke.sh` as the base live smoke and
   add recursive-readiness handoff evidence.
+
+
+## #816 cpk-server Product Descriptor
+
+#816 published cpk-server as ordinary external product data in the server
+repository. The descriptor is canonical `control-plane-kit.product` JSON emitted
+by extracted core and has identity:
+
+```text
+ProductIdentity("control-plane-kit", "cpk-server", 1)
+```
+
+The descriptor declares two provider sockets:
+
+```text
+http-api : tcp x http
+mcp      : tcp x mcp-streamable-http
+```
+
+and four Postgres requirement sockets for the child instance store boundaries:
+
+```text
+workplace-store
+activity-history-store
+observer-state-store
+graph-topology-store
+```
+
+The catalogue now contains one completed declaration for `cpk-server` pointing at `ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:a459acbae4759f67f3bc5edc2cc0dbc9f189ac4a433fac210ba74afae18f3d62`. Admission
+is still an explicit boundary: `load_catalogue()` reads publication metadata,
+while `load_product_catalog(path, root=...)` verifies descriptor sha256, decodes
+through `ProductDescriptorCodec`, checks image digest agreement, and returns a
+core `ProductCatalog`.
+
+Important implementation decision: the cpk-server Dockerfile now copies only the
+runnable product source, not `product.cpk.json` or catalogue data. This prevents a
+self-referential image/descriptor digest cycle.
+
+Validation evidence added:
+
+- descriptor round-trip through core product language;
+- catalogue admission and core catalogue lookup;
+- digest mismatch and unknown-field negative tests;
+- HTTP/MCP endpoint contract tests through provider sockets and verification;
+- architecture test proving descriptor/catalogue loading does not import process
+  code;
+- generated catalogue checksum proof.
+
+Handoff to #817: use the published descriptor/image digest and the existing smoke
+script to prove live HTTP/MCP reachability and recursive handoff readiness.
+
+
+GHCR publication evidence:
+
+```text
+docker push ghcr.io/openj92/control-plane-kit-servers/cpk-server:extract-f
+  -> digest sha256:a459acbae4759f67f3bc5edc2cc0dbc9f189ac4a433fac210ba74afae18f3d62
+
+docker pull ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:a459acbae4759f67f3bc5edc2cc0dbc9f189ac4a433fac210ba74afae18f3d62
+  -> image is available by immutable registry digest
+```
+
+The server repository now has a reusable per-product publication lane:
+
+```text
+scripts/publish_product_image.sh <product-id> <tag>
+.github/workflows/publish-product-image.yml
+```
+
+Only `cpk-server` is admitted by the script today. Future products should add
+explicit support product-by-product rather than broad glob publishing.
+
+
+Current GHCR visibility:
+
+```text
+https://github.com/users/OpenJ92/packages/container/package/control-plane-kit-servers%2Fcpk-server
+visibility: private
+```
+
+Authenticated Docker Desktop and GitHub Actions can pull the digest. Public
+unauthenticated pulls require an explicit package visibility decision.

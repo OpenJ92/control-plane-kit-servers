@@ -37,13 +37,12 @@ Current package surface:
 ```python
 from control_plane_kit_servers import load_catalogue
 
-assert load_catalogue() == ()
+assert [item.product_id for item in load_catalogue()] == ["cpk-server"]
 ```
 
-The catalogue currently has the completed-product publication language, but
-publishes only explicit product declarations. `cpk-server` currently has an image
-definition in the inventory, remains unpublished until its descriptor issue
-completes, and `hello` remains reserved for later transfer.
+The catalogue currently has the completed-product publication language and
+publishes `cpk-server` as the first completed product declaration. `hello`
+remains reserved for later transfer.
 
 Publication source and generated artifacts are intentionally separate:
 
@@ -61,12 +60,41 @@ product process code, FastAPI apps, Docker clients, stores, or entrypoints.
 ## cpk-server Image Foundation
 
 `products/cpk_server` now contains a runnable image definition for the
-control-plane process wrapper. This is not yet a published product descriptor;
-`catalogue/products.json` remains empty until #816 records descriptor and image
-digest evidence.
+control-plane process wrapper. This is now paired with a published descriptor in
+`products/cpk_server/product.cpk.json` and a catalogue declaration containing
+descriptor, image, and source digest evidence.
 
 Local smoke:
 
 ```bash
 sh scripts/cpk_server_image_smoke.sh
 ```
+
+
+## Publishing Product Images
+
+The first product image is published at:
+
+```text
+ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:a459acbae4759f67f3bc5edc2cc0dbc9f189ac4a433fac210ba74afae18f3d62
+```
+
+Per-product publication uses:
+
+```bash
+sh scripts/publish_product_image.sh cpk-server extract-f
+```
+
+Each product must be admitted explicitly by the script. There is no broad
+publish-all path.
+
+
+Current GHCR visibility:
+
+```text
+https://github.com/users/OpenJ92/packages/container/package/control-plane-kit-servers%2Fcpk-server
+visibility: private
+```
+
+Authenticated Docker Desktop and GitHub Actions can pull the digest. Public
+unauthenticated pulls require an explicit package visibility decision.

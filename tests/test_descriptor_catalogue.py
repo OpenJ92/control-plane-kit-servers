@@ -22,12 +22,13 @@ class DescriptorCatalogueTests(unittest.TestCase):
             ):
                 sys.modules.pop(name, None)
 
-    def test_default_catalogue_loads_empty_completed_declarations(self) -> None:
+    def test_default_catalogue_loads_completed_cpk_server_declaration(self) -> None:
         from control_plane_kit_servers.catalogue import load_catalogue
 
         catalogue = load_catalogue()
 
-        self.assertEqual(catalogue, ())
+        self.assertEqual([item.product_id for item in catalogue], ["cpk-server"])
+        self.assertEqual(catalogue[0].status, "completed")
         self.assertIsInstance(catalogue, tuple)
 
     def test_catalogue_rejects_duplicate_product_ids(self) -> None:
