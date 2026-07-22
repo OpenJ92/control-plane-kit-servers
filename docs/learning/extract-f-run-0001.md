@@ -41,3 +41,43 @@ Handoff:
 - #653 owns descriptor catalogue shape and deterministic publication artifacts.
 
 No product implementation was added in #650.
+
+## #651 Package Metadata And Catalogue Entrance
+
+#651 creates the first installable Python package surface for
+`control-plane-kit-servers` without adding any product implementation.
+
+Red proof:
+
+```text
+docker run --rm -v "$PWD":/app -w /app python:3.12-slim \
+  python -m unittest tests.test_package_metadata
+```
+
+Before implementation, the focused tests failed because `pyproject.toml` and
+`src/control_plane_kit_servers` did not exist.
+
+Package decisions:
+
+- package name: `control-plane-kit-servers`;
+- package version: `0.1.0`;
+- pinned core dependency:
+  `control-plane-kit-core @ https://github.com/OpenJ92/control-plane-kit/archive/a04631770efbf59e62b4536cc80a71d42873446d.zip#subdirectory=control-plane-kit-core`;
+- root import exports only `__version__` and `load_catalogue`;
+- `load_catalogue()` returns `()` until #653 defines completed descriptor
+  publication;
+- root import does not import `control_plane_kit_core`, FastAPI, HTTP clients,
+  Docker clients, cpk-server, or Hello.
+
+Handoff:
+
+- #652 can now install and test a real package in Docker.
+- #653 owns the descriptor catalogue shape and completed declaration loading.
+- #813 and later own cpk-server process implementation.
+
+Packaging finding:
+
+- A first full `pip install .` attempt with a `git+https` pin failed in
+  `python:3.12-slim` because `git` was not installed.
+- The dependency was changed to an immutable GitHub archive URL for the same
+  commit. This preserves the pin while keeping clean Docker installs light.

@@ -5,6 +5,7 @@
   "source_branch": "roadmap/extract-c-external-product-language",
   "source_commit": "a04631770efbf59e62b4536cc80a71d42873446d",
   "source_pr": "OpenJ92/control-plane-kit#818",
+  "install_url": "https://github.com/OpenJ92/control-plane-kit/archive/a04631770efbf59e62b4536cc80a71d42873446d.zip#subdirectory=control-plane-kit-core",
   "core_package": {
     "name": "control-plane-kit-core",
     "version": "0.1.0",

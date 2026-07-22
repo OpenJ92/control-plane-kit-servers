@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "control-plane-kit-servers"
+version = "0.1.0"
+description = "Reusable OCI server products and descriptors for control-plane-kit"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "control-plane-kit-core @ https://github.com/OpenJ92/control-plane-kit/archive/a04631770efbf59e62b4536cc80a71d42873446d.zip#subdirectory=control-plane-kit-core",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

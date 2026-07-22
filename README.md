@@ -31,3 +31,14 @@ See:
 - `docs/issue-transfer-strategy.md`
 - `docs/decisions/0001-repository-foundation.md`
 - `docs/security/0001-foundation-review.md`
+
+Current package surface:
+
+```python
+from control_plane_kit_servers import load_catalogue
+
+assert load_catalogue() == ()
+```
+
+The empty catalogue is deliberate until descriptor publication work begins in
+#653.
