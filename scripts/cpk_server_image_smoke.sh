@@ -45,14 +45,19 @@ POSTGRES_CONTAINER="$(docker run -d \
   -e POSTGRES_PASSWORD=cpk \
   postgres:16-alpine)"
 
-for _ in 1 2 3 4 5 6 7 8 9 10; do
-  if docker exec "$POSTGRES_CONTAINER" pg_isready -U cpk -d cpk >/dev/null 2>&1; then
+POSTGRES_READY=0
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+  if docker exec "$POSTGRES_CONTAINER" psql -U cpk -d cpk -c 'SELECT 1' >/dev/null 2>&1; then
+    POSTGRES_READY=1
     break
   fi
   sleep 1
 done
 
-docker exec "$POSTGRES_CONTAINER" pg_isready -U cpk -d cpk >/dev/null
+if [ "$POSTGRES_READY" != "1" ]; then
+  echo "postgres did not become query-ready" >&2
+  exit 1
+fi
 
 CONTAINER="$(docker run -d \
   --label "$LABEL" \
@@ -109,6 +114,52 @@ if printf '%s' "$authorized_read" | grep -q '"service"'; then
   exit 1
 fi
 
+workspace_response="$(curl -fsS \
+  -H 'Authorization: Bearer present' \
+  -H 'Content-Type: application/json' \
+  -d '{"workspace_id":"workspace-a","name":"Workspace A","actor_id":"operator-a","idempotency_key":"workspace-a"}' \
+  "$BASE/workspaces")"
+printf '%s' "$workspace_response" | grep -q '"workspace_id":"workspace-a"'
+printf '%s' "$workspace_response" | grep -q '"current_graph_id"'
+
+PRODUCT_DESCRIPTOR="$(cat products/hello_server/product.cpk.json)"
+IMPORT_BODY="/tmp/cpk-server-import-product-$$.json"
+printf '{"descriptor_document":%s,"actor_id":"operator-a","imported_at":"2026-07-22T10:02:00Z","idempotency_key":"import-hello"}' \
+  "$PRODUCT_DESCRIPTOR" >"$IMPORT_BODY"
+product_response="$(curl -fsS \
+  -H 'Authorization: Bearer present' \
+  -H 'Content-Type: application/json' \
+  --data-binary "@$IMPORT_BODY" \
+  "$BASE/workspaces/workspace-a/products/import")"
+printf '%s' "$product_response" | grep -q '"name":"hello-server"'
+printf '%s' "$product_response" | grep -q '"status":"active"'
+rm -f "$IMPORT_BODY"
+
+session_response="$(curl -fsS \
+  -H 'Authorization: Bearer present' \
+  -H 'Content-Type: application/json' \
+  -d '{"actor_id":"operator-a","title":"Initial deployment","idempotency_key":"session-a"}' \
+  "$BASE/workspaces/workspace-a/sessions")"
+printf '%s' "$session_response" | grep -q '"session_id"'
+SESSION_ID="$(printf '%s' "$session_response" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')"
+if [ -z "$SESSION_ID" ]; then
+  echo "session response did not contain parseable session_id" >&2
+  exit 1
+fi
+
+desired_response="$(curl -fsS \
+  -H 'Authorization: Bearer present' \
+  -H 'Content-Type: application/json' \
+  -d '{"session_id":"'"$SESSION_ID"'","actor_id":"operator-a","graph":{"name":"desired","runtimes":{},"nodes":{},"edges":{}},"expected_desired_graph_id":null,"idempotency_key":"desired-a"}' \
+  "$BASE/workspaces/workspace-a/graphs/desired")"
+printf '%s' "$desired_response" | grep -q '"desired_graph_id"'
+
+workspace_after_setup="$(curl -fsS \
+  -H 'Authorization: Bearer present' \
+  "$BASE/workspaces/workspace-a")"
+printf '%s' "$workspace_after_setup" | grep -q '"workspace_id":"workspace-a"'
+printf '%s' "$workspace_after_setup" | grep -q '"desired_graph"'
+
 mcp_response="$(curl -sS \
   -H 'Authorization: Bearer present' \
   -H 'Accept: application/json' \
@@ -131,7 +182,8 @@ mcp_read_response="$(curl -sS \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":"read-1","method":"resources/read","params":{"name":"read.workspace","arguments":{"workspace_id":"workspace-a"}}}' \
   "$BASE/mcp")"
-printf '%s' "$mcp_read_response" | grep -q 'missing workspace'
+printf '%s' "$mcp_read_response" | grep -q '"workspace_id":"workspace-a"'
+printf '%s' "$mcp_read_response" | grep -q '"desired_graph"'
 if printf '%s' "$mcp_read_response" | grep -q '"service"'; then
   echo "MCP read returned demo service echo" >&2
   exit 1
