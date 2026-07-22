@@ -1,0 +1,42 @@
+{
+  "schema": "cpk-server.extract-f-law-cards",
+  "issue": "#814",
+  "law_cards": [
+    {
+      "law": "behavior.configured-token-protects-control-routes",
+      "reference": "tests.test_block_control_fastapi.BlockControlFastAPITests.test_configured_token_protects_control_routes",
+      "owner": "control-plane-kit-servers/cpk_server",
+      "behavioral_law": "Hosted cpk-server operator routes require a bearer authorization boundary before command/read services are reached."
+    },
+    {
+      "law": "behavior.control-routes-can-be-called-without-token-when-unconfigured",
+      "reference": "tests.test_block_control_fastapi.BlockControlFastAPITests.test_control_routes_can_be_called_without_token_when_unconfigured",
+      "owner": "control-plane-kit-servers/cpk_server",
+      "behavioral_law": "Frozen development fixture law is deliberately hardened: hosted cpk-server does not expose mutation-capable unauthenticated mode."
+    },
+    {
+      "law": "behavior.execution-auth-does-not-protect-ordinary-data-routes",
+      "reference": "tests.test_block_control_fastapi.BlockControlFastAPITests.test_execution_auth_does_not_protect_ordinary_data_routes",
+      "owner": "control-plane-kit-servers/cpk_server",
+      "behavioral_law": "Operator control authorization remains scoped to the cpk-server boundary and does not define application-block data route behavior."
+    },
+    {
+      "law": "behavior.execution-mutation-body-is-bounded-before-application",
+      "reference": "tests.test_block_control_fastapi.BlockControlFastAPITests.test_execution_mutation_body_is_bounded_before_application",
+      "owner": "control-plane-kit-servers/cpk_server",
+      "behavioral_law": "Mutation request bodies are bounded and decoded before application services are called."
+    },
+    {
+      "law": "behavior.observers-route-mutates-state",
+      "reference": "tests.test_block_control_fastapi.BlockControlFastAPITests.test_observers_route_mutates_state",
+      "owner": "control-plane-kit-servers/cpk_server",
+      "behavioral_law": "Observer mutation routes share the same service boundary as HTTP and MCP rather than creating process-private command truth."
+    },
+    {
+      "law": "behavior.unknown-active-target-returns-bad-request",
+      "reference": "tests.test_block_control_fastapi.BlockControlFastAPITests.test_unknown_active_target_returns_bad_request",
+      "owner": "control-plane-kit-servers/cpk_server",
+      "behavioral_law": "Unknown process-boundary operations fail closed with bounded client errors and do not reach services."
+    }
+  ]
+}
