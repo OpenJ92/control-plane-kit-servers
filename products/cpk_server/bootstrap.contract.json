@@ -15,10 +15,30 @@
       "name": "CPK_PORT",
       "required": true,
       "allowed_values": ["1..65535"]
+    },
+    {
+      "name": "CPK_WORKPLACE_DATABASE_URL",
+      "required": true,
+      "allowed_values": ["runtime-provided-postgres-url"]
+    },
+    {
+      "name": "CPK_ACTIVITY_HISTORY_DATABASE_URL",
+      "required": true,
+      "allowed_values": ["runtime-provided-postgres-url"]
+    },
+    {
+      "name": "CPK_OBSERVER_STATE_DATABASE_URL",
+      "required": true,
+      "allowed_values": ["runtime-provided-postgres-url"]
+    },
+    {
+      "name": "CPK_GRAPH_TOPOLOGY_DATABASE_URL",
+      "required": true,
+      "allowed_values": ["runtime-provided-postgres-url"]
     }
   ],
   "runtime_inputs": [
     "authorization header is runtime-supplied",
-    "store endpoints remain external runtime configuration in later issues"
+    "store endpoints are runtime-supplied and never echoed by readiness"
   ]
 }

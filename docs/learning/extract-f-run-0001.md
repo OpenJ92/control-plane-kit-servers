@@ -401,7 +401,7 @@ observer-state-store
 graph-topology-store
 ```
 
-The catalogue now contains one completed declaration for `cpk-server` pointing at `ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:a459acbae4759f67f3bc5edc2cc0dbc9f189ac4a433fac210ba74afae18f3d62`. Admission
+The catalogue now contains one completed declaration for `cpk-server` pointing at `ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:5bdd63738f8d2ea211e02681fbb80760cb581c6435f1c7dd854bceba0b949416`. Admission
 is still an explicit boundary: `load_catalogue()` reads publication metadata,
 while `load_product_catalog(path, root=...)` verifies descriptor sha256, decodes
 through `ProductDescriptorCodec`, checks image digest agreement, and returns a
@@ -428,10 +428,10 @@ script to prove live HTTP/MCP reachability and recursive handoff readiness.
 GHCR publication evidence:
 
 ```text
-docker push ghcr.io/openj92/control-plane-kit-servers/cpk-server:extract-f
-  -> digest sha256:a459acbae4759f67f3bc5edc2cc0dbc9f189ac4a433fac210ba74afae18f3d62
+docker push ghcr.io/openj92/control-plane-kit-servers/cpk-server:extract-f-817
+  -> digest sha256:5bdd63738f8d2ea211e02681fbb80760cb581c6435f1c7dd854bceba0b949416
 
-docker pull ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:a459acbae4759f67f3bc5edc2cc0dbc9f189ac4a433fac210ba74afae18f3d62
+docker pull ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:5bdd63738f8d2ea211e02681fbb80760cb581c6435f1c7dd854bceba0b949416
   -> image is available by immutable registry digest
 ```
 
@@ -455,3 +455,73 @@ visibility: private
 
 Authenticated Docker Desktop and GitHub Actions can pull the digest. Public
 unauthenticated pulls require an explicit package visibility decision.
+
+
+## #817 Published cpk-server Live Smoke
+
+#817 turned the cpk-server image proof from "local build runs" into "published
+server product digest runs". The smoke now has two layers:
+
+```text
+scripts/cpk_server_image_smoke.sh
+  -> build optional local image
+  -> require explicit bootstrap configuration
+  -> run one cpk-server process
+  -> prove HTTP/MCP/auth/readiness
+  -> cleanup and residue audit
+
+scripts/cpk_server_published_image_smoke.sh
+  -> docker pull GHCR digest
+  -> CPK_SERVER_BUILD_IMAGE=0
+  -> delegate to the same smoke
+```
+
+The live digest is:
+
+```text
+ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:5bdd63738f8d2ea211e02681fbb80760cb581c6435f1c7dd854bceba0b949416
+```
+
+The process now requires the four store endpoint environment bindings declared
+by `product.cpk.json`:
+
+```text
+CPK_WORKPLACE_DATABASE_URL
+CPK_ACTIVITY_HISTORY_DATABASE_URL
+CPK_OBSERVER_STATE_DATABASE_URL
+CPK_GRAPH_TOPOLOGY_DATABASE_URL
+```
+
+These values are bootstrap inputs for this wrapper smoke, not durable store
+implementations. The stdlib demo process validates that they are present and
+reports readiness as:
+
+```json
+{"application": "configured", "status": "ready", "stores": "configured"}
+```
+
+It deliberately does not echo endpoint URLs. Real Postgres-backed operations
+remain a later operations/cpk-server integration responsibility.
+
+Live behavior proven by the published image smoke:
+
+- missing bootstrap configuration exits nonzero;
+- image runs as non-root `cpk`;
+- `/health/live` distinguishes process reachability;
+- `/health/ready` distinguishes semantic bootstrap readiness;
+- HTTP operator read without authorization returns 401;
+- MCP command without authorization returns 401;
+- authorized HTTP read traverses the reads service;
+- authorized MCP `tools/call` traverses the planning service;
+- authorized MCP `resources/read` traverses the reads service;
+- response bodies do not leak store endpoint values;
+- cleanup leaves the Docker residue audit green.
+
+Handoff to #676:
+
+- a parent CPK instance should register this product descriptor and receive a
+  direct child HTTP/MCP endpoint contract;
+- the parent must not implement recursive proxying to the child;
+- entering a child means using the child public endpoint/auth boundary directly;
+- #817 does not prove child deployment execution, only child process readiness
+  and endpoint contract coherence.

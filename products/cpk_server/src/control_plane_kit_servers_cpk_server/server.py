@@ -32,6 +32,7 @@ class CpkServerBootstrapConfiguration:
     mode: str
     control_auth_configured: bool
     port: int
+    store_endpoints: Mapping[str, str]
 
     @classmethod
     def from_environment(
@@ -42,6 +43,15 @@ class CpkServerBootstrapConfiguration:
         mode = _required(values, "CPK_SERVER_MODE")
         auth = _required(values, "CPK_CONTROL_AUTH_CONFIGURED")
         port_text = _required(values, "CPK_PORT")
+        store_endpoints = {
+            name: _required(values, name)
+            for name in (
+                "CPK_WORKPLACE_DATABASE_URL",
+                "CPK_ACTIVITY_HISTORY_DATABASE_URL",
+                "CPK_OBSERVER_STATE_DATABASE_URL",
+                "CPK_GRAPH_TOPOLOGY_DATABASE_URL",
+            )
+        }
         if mode != "execution-capable":
             raise BootstrapConfigurationError("CPK_SERVER_MODE must be execution-capable")
         if auth.lower() not in {"true", "1", "yes"}:
@@ -54,7 +64,12 @@ class CpkServerBootstrapConfiguration:
             raise BootstrapConfigurationError("CPK_PORT must be an integer") from error
         if not 1 <= port <= 65535:
             raise BootstrapConfigurationError("CPK_PORT must be in TCP port range")
-        return cls(mode=mode, control_auth_configured=True, port=port)
+        return cls(
+            mode=mode,
+            control_auth_configured=True,
+            port=port,
+            store_endpoints=store_endpoints,
+        )
 
     def process_configuration(self) -> CpkServerProcessConfiguration:
         return CpkServerProcessConfiguration.execution_capable(token_configured=True)
@@ -82,7 +97,14 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(200, {"status": "live"})
             return
         if self.path == "/health/ready":
-            self._json(200, {"status": "ready", "application": "configured"})
+            self._json(
+                200,
+                {
+                    "status": "ready",
+                    "application": "configured",
+                    "stores": "configured",
+                },
+            )
             return
         response = self.server.http_boundary.handle(
             method="GET",
