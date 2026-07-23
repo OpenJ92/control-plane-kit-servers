@@ -158,6 +158,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("ProductRegistrationService", source)
         self.assertIn("DesiredGraphCommandService", source)
         self.assertIn("OperationCommandService", source)
+        self.assertIn("CurrentGraphAdvancementCommandService", source)
         self.assertIn("RuntimeInterpreterDispatcher", source)
         self.assertIn("control_plane_kit_interpreters.docker", source)
         self.assertIn("CPK_RUNTIME_INTERPRETERS", source)
@@ -215,6 +216,56 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("CPK_SERVER_BUILD_IMAGE=0", smoke)
         self.assertIn("scripts/cpk_server_image_smoke.sh", smoke)
         self.assertNotIn("docker build", smoke)
+
+    def test_hosted_activity_smoke_uses_published_image_and_docker_runtime_authority(
+        self,
+    ) -> None:
+        smoke = (ROOT / "scripts" / "cpk_server_hosted_activity_smoke.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:", smoke)
+        self.assertIn("docker pull", smoke)
+        self.assertIn("CPK_RUNTIME_INTERPRETERS=docker", smoke)
+        self.assertIn("CPK_DOCKER_SOCKET_GROUP", smoke)
+        self.assertIn("CPK_DOCKER_AUTH_CONFIG", smoke)
+        self.assertIn("gh auth token", smoke)
+        self.assertIn("auths", smoke)
+        self.assertIn("DOCKER_CONFIG=/tmp/cpk-docker-config", smoke)
+        self.assertIn("chmod 0444", smoke)
+        self.assertIn("--group-add", smoke)
+        self.assertIn("/var/run/docker.sock:/var/run/docker.sock", smoke)
+        self.assertIn("postgres:16-alpine", smoke)
+        self.assertIn("python scripts/cpk_server_hosted_activity.py", smoke)
+        self.assertIn("org.openj92.cpk.workspace=cpk-hosted-activity-basic", smoke)
+        self.assertIn("docker rm -f", smoke)
+        self.assertIn("docker network rm", smoke)
+        self.assertNotIn("docker system prune", smoke)
+        self.assertNotIn("docker volume prune", smoke)
+
+    def test_hosted_activity_controller_drives_public_workflow_over_http_and_mcp(
+        self,
+    ) -> None:
+        controller = (ROOT / "scripts" / "cpk_server_hosted_activity.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("command.deployment.plan", controller)
+        self.assertIn("command.approval.decide", controller)
+        self.assertIn("command.deployment.execute", controller)
+        self.assertIn("read.pending-approvals", controller)
+        self.assertIn("read.approval-detail", controller)
+        self.assertIn("/workspaces/{WORKSPACE_ID}/plans/{plan_id}/approval", controller)
+        self.assertIn("/workspaces/{WORKSPACE_ID}/runs/{run_id}/advance-current-graph", controller)
+        self.assertIn("ProductDescriptorCodec", controller)
+        self.assertIn("DEFAULT_GRAPH_CODEC.encode", controller)
+        self.assertIn("DockerRuntime(", controller)
+        self.assertIn("network.connect", controller)
+        self.assertIn("runtime_interpreters", controller)
+        self.assertIn("http://hello:8000/", controller)
+        self.assertNotIn("CpkServerOperationsApplication", controller)
+        self.assertNotIn("PostgresUnitOfWork", controller)
+        self.assertNotIn("DockerRuntimeInterpreter", controller)
 
 
 if __name__ == "__main__":
