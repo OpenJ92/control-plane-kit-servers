@@ -17,6 +17,11 @@
       "allowed_values": ["1..65535"]
     },
     {
+      "name": "CPK_RUNTIME_INTERPRETERS",
+      "required": true,
+      "allowed_values": ["none", "docker"]
+    },
+    {
       "name": "CPK_WORKPLACE_DATABASE_URL",
       "required": true,
       "allowed_values": ["runtime-provided-postgres-url"]
@@ -39,6 +44,7 @@
   ],
   "runtime_inputs": [
     "authorization header is runtime-supplied",
+    "runtime interpreter authority is selected explicitly and never inferred",
     "store endpoints are runtime-supplied and never echoed by readiness"
   ]
 }

@@ -8,7 +8,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 PRODUCT = ROOT / "products" / "cpk_server"
 PRODUCT_SRC = PRODUCT / "src"
-CPK_PIN = "fc85788e7b39324091d397f8afa4b1b9b56b3cb7"
+CPK_PIN = "34a7701d1533a8cb4eb2d41c144e209b6432a658"
+INTERPRETERS_PIN = "c74e4784855eda72881404310fb63370988b674d"
 STORE_ENVIRONMENT = [
     "CPK_WORKPLACE_DATABASE_URL",
     "CPK_ACTIVITY_HISTORY_DATABASE_URL",
@@ -34,6 +35,12 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             f"https://github.com/OpenJ92/control-plane-kit/archive/{CPK_PIN}.zip",
             dockerfile,
         )
+        self.assertIn(
+            "control-plane-kit-interpreters[docker] @ "
+            "https://github.com/OpenJ92/control-plane-kit-interpreters/archive/"
+            f"{INTERPRETERS_PIN}.zip",
+            dockerfile,
+        )
         self.assertIn("fastapi>=0.115", dockerfile)
         self.assertIn("uvicorn>=0.30", dockerfile)
         self.assertIn("COPY products/cpk_server/src ./products/cpk_server/src", dockerfile)
@@ -55,6 +62,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
                 "CPK_SERVER_MODE",
                 "CPK_CONTROL_AUTH_CONFIGURED",
                 "CPK_PORT",
+                "CPK_RUNTIME_INTERPRETERS",
                 *STORE_ENVIRONMENT,
             ],
         )
@@ -73,6 +81,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
                 "CPK_SERVER_MODE": "execution-capable",
                 "CPK_CONTROL_AUTH_CONFIGURED": "true",
                 "CPK_PORT": "8080",
+                "CPK_RUNTIME_INTERPRETERS": "none",
                 "CPK_WORKPLACE_DATABASE_URL": "postgres://user:pass@workspace/db",
                 "CPK_ACTIVITY_HISTORY_DATABASE_URL": "postgres://user:pass@activity/db",
                 "CPK_OBSERVER_STATE_DATABASE_URL": "postgres://user:pass@observer/db",
@@ -95,7 +104,38 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
                 )
 
             self.assertEqual(set(config.store_endpoints), set(STORE_ENVIRONMENT))
+            self.assertEqual(config.runtime_interpreters, "none")
             self.assertNotIn("postgres://", repr(config.process_configuration()))
+        finally:
+            sys.path.remove(str(PRODUCT_SRC))
+            for name in list(sys.modules):
+                if name == "control_plane_kit_servers_cpk_server" or name.startswith(
+                    "control_plane_kit_servers_cpk_server."
+                ):
+                    sys.modules.pop(name, None)
+
+    def test_bootstrap_runtime_interpreter_selection_is_closed(self) -> None:
+        sys.path.insert(0, str(PRODUCT_SRC))
+        try:
+            server_module = importlib.import_module(
+                "control_plane_kit_servers_cpk_server.server"
+            )
+            environ = {
+                "CPK_SERVER_MODE": "execution-capable",
+                "CPK_CONTROL_AUTH_CONFIGURED": "true",
+                "CPK_PORT": "8080",
+                "CPK_RUNTIME_INTERPRETERS": "aws",
+                "CPK_WORKPLACE_DATABASE_URL": "postgres://user:pass@db/cpk",
+                "CPK_ACTIVITY_HISTORY_DATABASE_URL": "postgres://user:pass@db/cpk",
+                "CPK_OBSERVER_STATE_DATABASE_URL": "postgres://user:pass@db/cpk",
+                "CPK_GRAPH_TOPOLOGY_DATABASE_URL": "postgres://user:pass@db/cpk",
+            }
+
+            with self.assertRaisesRegex(
+                server_module.BootstrapConfigurationError,
+                "CPK_RUNTIME_INTERPRETERS must be one of",
+            ):
+                server_module.CpkServerBootstrapConfiguration.from_environment(environ)
         finally:
             sys.path.remove(str(PRODUCT_SRC))
             for name in list(sys.modules):
@@ -118,9 +158,13 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("ProductRegistrationService", source)
         self.assertIn("DesiredGraphCommandService", source)
         self.assertIn("OperationCommandService", source)
+        self.assertIn("RuntimeInterpreterDispatcher", source)
+        self.assertIn("control_plane_kit_interpreters.docker", source)
+        self.assertIn("CPK_RUNTIME_INTERPRETERS", source)
         self.assertNotIn("BaseHTTPRequestHandler", source)
         self.assertNotIn("ThreadingHTTPServer", source)
         self.assertNotIn("_DemoService", source)
+        self.assertNotIn("import docker", source)
 
     def test_product_descriptor_is_now_published_contract_data(self) -> None:
         descriptor = json.loads((PRODUCT / "product.cpk.json").read_text(encoding="utf-8"))
@@ -143,6 +187,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("CPK_ACTIVITY_HISTORY_DATABASE_URL", smoke)
         self.assertIn("CPK_OBSERVER_STATE_DATABASE_URL", smoke)
         self.assertIn("CPK_GRAPH_TOPOLOGY_DATABASE_URL", smoke)
+        self.assertIn("CPK_RUNTIME_INTERPRETERS", smoke)
         self.assertIn("/health/live", smoke)
         self.assertIn("/health/ready", smoke)
         self.assertIn("/workspaces", smoke)
