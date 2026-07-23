@@ -81,6 +81,8 @@ class HttpActiveRouterProductTests(unittest.TestCase):
         )
         self.assertEqual(product.runtime_contract.public_environment, ())
         self.assertEqual(product.runtime_contract.secret_deliveries, ())
+        for check in product.runtime_contract.verification.checks:
+            self.assertEqual(check.policy.maximum_attempts, 5)
         self.assertIn("runtime target mutation", product.description.lower())
 
     def test_descriptor_instantiates_without_importing_process_code(self) -> None:

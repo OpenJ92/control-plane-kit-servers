@@ -12,7 +12,7 @@
     },
     {
       "descriptor_path": "products/hello_server/product.cpk.json",
-      "descriptor_sha256": "cf87a4d4b06613c3d4caddccceb0439fa190f8f9208a64081b6ae8c43ed35e89",
+      "descriptor_sha256": "7c878cddfa597002f4536c1ac7aea0728df3bbe0e594f6dbc56b646968dab0cc",
       "image_digest": "sha256:0b5d62c2706bdfc5b53b67c7e0a72e36b8af7d13f8b2abf26eaa6e6eb7dda5f0",
       "image_ref": "ghcr.io/openj92/control-plane-kit-servers/hello-server:server-seed-824",
       "owner_directory": "products/hello_server",
@@ -22,7 +22,7 @@
     },
     {
       "descriptor_path": "products/http_active_router/product.cpk.json",
-      "descriptor_sha256": "cbf48ae510fe4e85893719b5df846af5017030358fcd6ff79267fe4754ba0a09",
+      "descriptor_sha256": "c965218c439ea650421220d9977f641330564b86f6397bef05e4a87edbd43c6b",
       "image_digest": "sha256:9edd29c8b62f6413c7acb4009bfa655c065a31a0eac8728ec9d4350122e0a60d",
       "image_ref": "ghcr.io/openj92/control-plane-kit-servers/http-active-router:server-seed-825",
       "owner_directory": "products/http_active_router",
@@ -32,7 +32,7 @@
     },
     {
       "descriptor_path": "products/http_multiplexer/product.cpk.json",
-      "descriptor_sha256": "1bec9c37a32286d344fea41828a3b2a75ef491e7b5c68a939e953477a42bfdf4",
+      "descriptor_sha256": "0b74269a7b8c9b775d431a04382eaa268339330c55d4995a6a52ee6de79abc9d",
       "image_digest": "sha256:2b6466d87c7642691c4ce2ee52022450d7b7cf1055f1f25a1449adbb5c8131ec",
       "image_ref": "ghcr.io/openj92/control-plane-kit-servers/http-multiplexer:server-seed-826",
       "owner_directory": "products/http_multiplexer",
