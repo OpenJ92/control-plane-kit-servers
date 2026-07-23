@@ -2,7 +2,7 @@
   "products": [
     {
       "descriptor_path": "products/cpk_server/product.cpk.json",
-      "descriptor_sha256": "fd9e5fd1f84b2197bfc2a82bd4ccf3125a16b93fd2fbd7772154bad060b26b0f",
+      "descriptor_sha256": "7928958c4903b1c48271b44b709199e1714493630d99d08c2f025ee4bdaba120",
       "image_digest": "sha256:d796b9df23098d87b03d89da5d125102b46482c0562b84179b8cde0d15fc0fb1",
       "image_ref": "ghcr.io/openj92/control-plane-kit-servers/cpk-server:extract-ops-849",
       "owner_directory": "products/cpk_server",
@@ -12,7 +12,7 @@
     },
     {
       "descriptor_path": "products/hello_server/product.cpk.json",
-      "descriptor_sha256": "48054083b3507594f481752b7a864ad8c0dfccfba576250a19d44305b57512e5",
+      "descriptor_sha256": "cf87a4d4b06613c3d4caddccceb0439fa190f8f9208a64081b6ae8c43ed35e89",
       "image_digest": "sha256:0b5d62c2706bdfc5b53b67c7e0a72e36b8af7d13f8b2abf26eaa6e6eb7dda5f0",
       "image_ref": "ghcr.io/openj92/control-plane-kit-servers/hello-server:server-seed-824",
       "owner_directory": "products/hello_server",
@@ -22,7 +22,7 @@
     },
     {
       "descriptor_path": "products/http_active_router/product.cpk.json",
-      "descriptor_sha256": "c1cad3009d19a43ac39b30083f03aee69de3607d19b09116496b6e581f162cfc",
+      "descriptor_sha256": "cbf48ae510fe4e85893719b5df846af5017030358fcd6ff79267fe4754ba0a09",
       "image_digest": "sha256:9edd29c8b62f6413c7acb4009bfa655c065a31a0eac8728ec9d4350122e0a60d",
       "image_ref": "ghcr.io/openj92/control-plane-kit-servers/http-active-router:server-seed-825",
       "owner_directory": "products/http_active_router",
@@ -32,7 +32,7 @@
     },
     {
       "descriptor_path": "products/http_multiplexer/product.cpk.json",
-      "descriptor_sha256": "771fc5061f2f0e1cf8a18e480ecc81f25b49770d657cde827299a35954ff1ec2",
+      "descriptor_sha256": "1bec9c37a32286d344fea41828a3b2a75ef491e7b5c68a939e953477a42bfdf4",
       "image_digest": "sha256:2b6466d87c7642691c4ce2ee52022450d7b7cf1055f1f25a1449adbb5c8131ec",
       "image_ref": "ghcr.io/openj92/control-plane-kit-servers/http-multiplexer:server-seed-826",
       "owner_directory": "products/http_multiplexer",
@@ -42,7 +42,7 @@
     },
     {
       "descriptor_path": "products/postgres_server/product.cpk.json",
-      "descriptor_sha256": "f096ada79eb9f57c6f149a9fb49c7a8d0d62bd43f8a4d3543f1dff8707f14824",
+      "descriptor_sha256": "942c32d198c185bb98afdec03d310a69ed11d3c41a14040644212187c842b193",
       "image_digest": "sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777",
       "image_ref": "docker.io/library/postgres:16-alpine",
       "owner_directory": "products/postgres_server",

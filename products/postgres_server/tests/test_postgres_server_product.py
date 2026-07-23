@@ -58,6 +58,13 @@ class PostgresServerProductTests(unittest.TestCase):
         sockets = product.runtime_contract.sockets
 
         self.assertEqual(sockets.provider("postgres").protocol, Protocol.POSTGRES)
+        self.assertEqual(
+            {
+                value.provider_socket: value.container_port
+                for value in product.runtime_contract.provider_ports
+            },
+            {"postgres": 5432},
+        )
         self.assertEqual(sockets.requirement_names(), ())
         self.assertIn("private postgres socket", product.description.lower())
         self.assertNotIn("host port", product.description.lower())

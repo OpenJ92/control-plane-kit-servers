@@ -66,6 +66,13 @@ class HttpActiveRouterProductTests(unittest.TestCase):
         sockets = product.runtime_contract.sockets
 
         self.assertEqual(sockets.provider("internal").protocol, Protocol.HTTP)
+        self.assertEqual(
+            {
+                value.provider_socket: value.container_port
+                for value in product.runtime_contract.provider_ports
+            },
+            {"internal": 8000},
+        )
         self.assertEqual(sockets.requirement_names(), ("active",))
         self.assertEqual(sockets.requirement("active").protocol, Protocol.HTTP)
         self.assertEqual(

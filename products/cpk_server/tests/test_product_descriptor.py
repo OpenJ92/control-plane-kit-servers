@@ -57,6 +57,13 @@ class CpkServerProductDescriptorTests(unittest.TestCase):
         self.assertEqual(sockets.provider("http-api").protocol, Protocol.HTTP)
         self.assertEqual(sockets.provider("mcp").protocol, Protocol.MCP_STREAMABLE_HTTP)
         self.assertEqual(
+            {
+                value.provider_socket: value.container_port
+                for value in product.runtime_contract.provider_ports
+            },
+            {"http-api": 8080, "mcp": 8080},
+        )
+        self.assertEqual(
             sockets.requirement_names(),
             (
                 "activity-history-store",

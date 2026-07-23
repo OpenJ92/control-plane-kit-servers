@@ -8,7 +8,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 PRODUCT = ROOT / "products" / "cpk_server"
 PRODUCT_SRC = PRODUCT / "src"
-CPK_PIN = "e2e553cdde1ec631341da35e7b1117f5caa7c775"
+CPK_PIN = "185512e92cad44a8e0db54327cc2122f8790d19f"
 STORE_ENVIRONMENT = [
     "CPK_WORKPLACE_DATABASE_URL",
     "CPK_ACTIVITY_HISTORY_DATABASE_URL",
