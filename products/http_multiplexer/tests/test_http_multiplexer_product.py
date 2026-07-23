@@ -69,6 +69,13 @@ class HttpMultiplexerProductTests(unittest.TestCase):
 
         self.assertEqual(sockets.provider("internal").protocol, Protocol.HTTP)
         self.assertEqual(
+            {
+                value.provider_socket: value.container_port
+                for value in product.runtime_contract.provider_ports
+            },
+            {"internal": 8000},
+        )
+        self.assertEqual(
             sockets.requirement_names(),
             ("observer-a", "observer-b", "primary"),
         )
