@@ -2,7 +2,7 @@
   "products": [
     {
       "descriptor_path": "products/cpk_server/product.cpk.json",
-      "descriptor_sha256": "003d1673d7c17d12031f14f746c5724375e376fae9678463a2454134b4c6727b",
+      "descriptor_sha256": "07bfc95a7c584dfbea826aed46e96b23e5438405ac4f5fcf17955b82737fcc39",
       "image_digest": "sha256:6d09435ccb579c318b4e4914435e56e1f758ac9d8241e29aae5755b9662c45b0",
       "image_ref": "ghcr.io/openj92/control-plane-kit-servers/cpk-server:extract-ops-878",
       "owner_directory": "products/cpk_server",

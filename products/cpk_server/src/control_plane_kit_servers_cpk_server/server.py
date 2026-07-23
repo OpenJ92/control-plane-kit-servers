@@ -15,9 +15,11 @@ import psycopg
 import uvicorn
 from control_plane_kit_core.operations.execution import EffectResultKind
 from control_plane_kit_core.operations.lifecycle import FailureCategory
+from control_plane_kit_core.types import RuntimeKind
 from control_plane_kit_operations import (
     ActivityExecutionOutcome,
     ActivityPlanningCommandService,
+    ActivityRealizationContext,
     ApprovalCommandService,
     BoundedEvidence,
     CpkServerOperationsApplication,
@@ -27,6 +29,7 @@ from control_plane_kit_operations import (
     FailureEvidence,
     OperationCommandService,
     ProductRegistrationService,
+    RuntimeInterpreterDispatcher,
     RunLifecycleCommandService,
     WorkspaceCommandService,
     cpk_server_services,
@@ -54,6 +57,7 @@ class CpkServerBootstrapConfiguration:
     mode: str
     control_auth_configured: bool
     port: int
+    runtime_interpreters: str
     store_endpoints: Mapping[str, str]
 
     @classmethod
@@ -65,6 +69,7 @@ class CpkServerBootstrapConfiguration:
         mode = _required(values, "CPK_SERVER_MODE")
         auth = _required(values, "CPK_CONTROL_AUTH_CONFIGURED")
         port_text = _required(values, "CPK_PORT")
+        runtime_interpreters = _required(values, "CPK_RUNTIME_INTERPRETERS")
         store_endpoints = {
             name: _required(values, name)
             for name in (
@@ -86,10 +91,15 @@ class CpkServerBootstrapConfiguration:
             raise BootstrapConfigurationError("CPK_PORT must be an integer") from error
         if not 1 <= port <= 65535:
             raise BootstrapConfigurationError("CPK_PORT must be in TCP port range")
+        if runtime_interpreters not in {"none", "docker"}:
+            raise BootstrapConfigurationError(
+                "CPK_RUNTIME_INTERPRETERS must be one of: none, docker"
+            )
         return cls(
             mode=mode,
             control_auth_configured=True,
             port=port,
+            runtime_interpreters=runtime_interpreters,
             store_endpoints=store_endpoints,
         )
 
@@ -134,6 +144,7 @@ def create_app(config: CpkServerBootstrapConfiguration) -> FastAPI:
                 "status": "ready",
                 "application": "configured",
                 "stores": "configured",
+                "runtime_interpreters": config.runtime_interpreters,
             },
         )
 
@@ -206,7 +217,7 @@ def _operations_application(
     execution = ExecutionCoordinator(
         unit_of_work,
         lifecycle=lifecycle,
-        adapter=_UnsupportedExecutionAdapter(),
+        adapter=_runtime_adapter(config),
         clock=_clock,
         id_factory=_id,
     )
@@ -254,18 +265,46 @@ def _operations_application(
 class _UnsupportedExecutionAdapter:
     """cpk-server wrapper default: operations exists, runtime effects do not."""
 
-    def execute(self, activity) -> ActivityExecutionOutcome:
+    def execute(self, context: ActivityRealizationContext) -> ActivityExecutionOutcome:
         return ActivityExecutionOutcome(
             EffectResultKind.UNSUPPORTED,
             failure=FailureEvidence(
                 FailureCategory.UNSUPPORTED,
                 "runtime-adapter-unavailable",
-                "cpk-server image does not bundle a runtime effect interpreter",
+                "cpk-server runtime interpreter dispatch is disabled",
                 BoundedEvidence.from_mapping(
-                    {"activity_id": activity.activity_id.value}
+                    {"activity_id": context.activity.activity_id.value}
                 ),
             ),
         )
+
+
+def _runtime_adapter(
+    config: CpkServerBootstrapConfiguration,
+) -> _UnsupportedExecutionAdapter | RuntimeInterpreterDispatcher:
+    if config.runtime_interpreters == "none":
+        return _UnsupportedExecutionAdapter()
+    if config.runtime_interpreters == "docker":
+        return _docker_runtime_dispatcher()
+    raise AssertionError("runtime interpreter set validated at bootstrap")
+
+
+def _docker_runtime_dispatcher() -> RuntimeInterpreterDispatcher:
+    try:
+        from control_plane_kit_interpreters.docker import (
+            DockerRuntimeInterpreter,
+            DockerSdkClient,
+        )
+    except ModuleNotFoundError as error:
+        raise BootstrapConfigurationError(
+            "CPK_RUNTIME_INTERPRETERS=docker requires "
+            "control-plane-kit-interpreters[docker]"
+        ) from error
+    return RuntimeInterpreterDispatcher(
+        {
+            RuntimeKind.DOCKER: DockerRuntimeInterpreter(DockerSdkClient()),
+        }
+    )
 
 
 def _install_operations_schema(database_url: str) -> None:

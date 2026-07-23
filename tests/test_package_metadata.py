@@ -7,7 +7,8 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
-CPK_PIN = "fc85788e7b39324091d397f8afa4b1b9b56b3cb7"
+CPK_PIN = "34a7701d1533a8cb4eb2d41c144e209b6432a658"
+INTERPRETERS_PIN = "c74e4784855eda72881404310fb63370988b674d"
 
 
 class PackageMetadataTests(unittest.TestCase):
@@ -27,6 +28,12 @@ class PackageMetadataTests(unittest.TestCase):
             "control-plane-kit-operations @ "
             f"https://github.com/OpenJ92/control-plane-kit/archive/{CPK_PIN}.zip"
             "#subdirectory=control-plane-kit-operations",
+            project["dependencies"],
+        )
+        self.assertIn(
+            "control-plane-kit-interpreters[docker] @ "
+            "https://github.com/OpenJ92/control-plane-kit-interpreters/archive/"
+            f"{INTERPRETERS_PIN}.zip",
             project["dependencies"],
         )
         self.assertIn("fastapi>=0.115", project["dependencies"])
