@@ -23,6 +23,7 @@ from control_plane_kit_operations import (
     ApprovalCommandService,
     BoundedEvidence,
     CpkServerOperationsApplication,
+    CurrentGraphAdvancementCommandService,
     DesiredGraphCommandService,
     ExecutionAdmissionCommandService,
     ExecutionCoordinator,
@@ -257,6 +258,11 @@ def _operations_application(
                 id_factory=_id,
             ),
             execution=execution,
+            advancement=CurrentGraphAdvancementCommandService(
+                unit_of_work,
+                clock=_clock,
+                id_factory=_id,
+            ),
             clock=lambda: datetime.now(timezone.utc),
         )
     )
