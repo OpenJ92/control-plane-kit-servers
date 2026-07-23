@@ -8,6 +8,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 PRODUCT = ROOT / "products" / "cpk_server"
 PRODUCT_SRC = PRODUCT / "src"
+CPK_PIN = "e2e553cdde1ec631341da35e7b1117f5caa7c775"
 STORE_ENVIRONMENT = [
     "CPK_WORKPLACE_DATABASE_URL",
     "CPK_ACTIVITY_HISTORY_DATABASE_URL",
@@ -23,8 +24,16 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("python:3.12-slim", dockerfile)
         self.assertIn("USER cpk", dockerfile)
         self.assertIn("control_plane_kit_servers_cpk_server.server", dockerfile)
-        self.assertIn("control-plane-kit-core @ https://github.com/OpenJ92/control-plane-kit/archive/", dockerfile)
-        self.assertIn("control-plane-kit-operations @ https://github.com/OpenJ92/control-plane-kit/archive/", dockerfile)
+        self.assertIn(
+            "control-plane-kit-core @ "
+            f"https://github.com/OpenJ92/control-plane-kit/archive/{CPK_PIN}.zip",
+            dockerfile,
+        )
+        self.assertIn(
+            "control-plane-kit-operations @ "
+            f"https://github.com/OpenJ92/control-plane-kit/archive/{CPK_PIN}.zip",
+            dockerfile,
+        )
         self.assertIn("fastapi>=0.115", dockerfile)
         self.assertIn("uvicorn>=0.30", dockerfile)
         self.assertIn("COPY products/cpk_server/src ./products/cpk_server/src", dockerfile)

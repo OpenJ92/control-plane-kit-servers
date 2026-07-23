@@ -6,9 +6,11 @@ import unittest
 
 from control_plane_kit_core.lifecycle import ResourcePersistence
 from control_plane_kit_core.products import (
+    ProductFamily,
     ProductDescriptorCodec,
     ProductIdentity,
     ProductInstanceConfiguration,
+    RetainedDataMount,
     instantiate_product,
 )
 from control_plane_kit_core.secrets import SecretEnvironmentDelivery
@@ -34,6 +36,7 @@ class PostgresServerProductTests(unittest.TestCase):
             ProductIdentity("control-plane-kit", "postgres-server", 1),
         )
         self.assertEqual(product.display_name, "postgres-server")
+        self.assertIs(product.product_family, ProductFamily.DATA_SERVICE)
         self.assertEqual(product.image.registry, "docker.io")
         self.assertEqual(product.image.repository, "library/postgres")
         self.assertEqual(product.image.tag, "16-alpine")
@@ -86,6 +89,10 @@ class PostgresServerProductTests(unittest.TestCase):
         self.assertEqual(lifecycle.compute, ResourcePersistence.EPHEMERAL)
         data = lifecycle.data_resource("postgres-data")
         self.assertEqual(data.persistence, ResourcePersistence.RETAINED)
+        self.assertEqual(
+            product.runtime_contract.retained_data_mounts,
+            (RetainedDataMount("postgres-data", "/var/lib/postgresql/data"),),
+        )
 
     def test_descriptor_uses_database_readiness_not_tcp_only(self) -> None:
         product = self.decode().product

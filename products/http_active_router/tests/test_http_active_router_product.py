@@ -7,6 +7,7 @@ import sys
 import unittest
 
 from control_plane_kit_core.products import (
+    ProductFamily,
     ProductDescriptorCodec,
     ProductIdentity,
     ProductInstanceConfiguration,
@@ -45,6 +46,7 @@ class HttpActiveRouterProductTests(unittest.TestCase):
             ProductIdentity("control-plane-kit", "http-active-router", 1),
         )
         self.assertEqual(product.display_name, "http-active-router")
+        self.assertIs(product.product_family, ProductFamily.SERVER)
         self.assertEqual(product.image.registry, "ghcr.io")
         self.assertEqual(
             product.image.repository,

@@ -9,6 +9,7 @@ import unittest
 from urllib import request
 
 from control_plane_kit_core.products import (
+    ProductFamily,
     ProductDescriptorCodec,
     ProductIdentity,
     ProductInstanceConfiguration,
@@ -47,6 +48,7 @@ class HttpMultiplexerProductTests(unittest.TestCase):
             ProductIdentity("control-plane-kit", "http-multiplexer", 1),
         )
         self.assertEqual(product.display_name, "http-multiplexer")
+        self.assertIs(product.product_family, ProductFamily.SERVER)
         self.assertEqual(product.image.registry, "ghcr.io")
         self.assertEqual(
             product.image.repository,
