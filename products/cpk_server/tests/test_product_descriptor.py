@@ -12,6 +12,7 @@ from control_plane_kit_core.products import (
     ProductCatalog,
     ProductDescriptorCodec,
     ProductDescriptorError,
+    ProductFamily,
     ProductIdentity,
 )
 from control_plane_kit_core.types import Protocol
@@ -36,6 +37,7 @@ class CpkServerProductDescriptorTests(unittest.TestCase):
             ProductIdentity("control-plane-kit", "cpk-server", 1),
         )
         self.assertEqual(product.display_name, "cpk-server")
+        self.assertIs(product.product_family, ProductFamily.SERVER)
         self.assertEqual(product.image.registry, "ghcr.io")
         self.assertEqual(product.image.repository, "openj92/control-plane-kit-servers/cpk-server")
         self.assertEqual(product.image.tag, "extract-ops-849")

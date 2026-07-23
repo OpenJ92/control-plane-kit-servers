@@ -7,7 +7,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
-CPK_PIN = "5fa927d56a2d3733ff365b25779ff3087eb073af"
+CPK_PIN = "e2e553cdde1ec631341da35e7b1117f5caa7c775"
 
 
 class PackageMetadataTests(unittest.TestCase):

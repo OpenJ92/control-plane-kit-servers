@@ -9,6 +9,7 @@ import unittest
 
 from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
 from control_plane_kit_core.products import (
+    ProductFamily,
     ProductDescriptorCodec,
     ProductIdentity,
     ProductInstanceConfiguration,
@@ -47,6 +48,7 @@ class HelloServerProductTests(unittest.TestCase):
             ProductIdentity("control-plane-kit", "hello-server", 1),
         )
         self.assertEqual(product.display_name, "hello-server")
+        self.assertIs(product.product_family, ProductFamily.SERVER)
         self.assertEqual(product.image.registry, "ghcr.io")
         self.assertEqual(
             product.image.repository,
