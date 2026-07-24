@@ -127,8 +127,10 @@ class CpkServerProductDescriptorTests(unittest.TestCase):
         self.assertEqual(set(checks), {"live", "ready"})
         self.assertEqual(checks["live"].provider_socket, "http-api")
         self.assertEqual(checks["live"].path, "/health/live")
+        self.assertEqual(checks["live"].policy.maximum_attempts, 10)
         self.assertEqual(checks["ready"].provider_socket, "http-api")
         self.assertEqual(checks["ready"].path, "/health/ready")
+        self.assertEqual(checks["ready"].policy.maximum_attempts, 10)
         self.assertIn("direct child", product.description)
         self.assertIn("Recursive proxying is not part", product.description)
 

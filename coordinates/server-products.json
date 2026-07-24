@@ -9,12 +9,12 @@
       "product_id": "cpk-server",
       "owner_directory": "products/cpk_server",
       "descriptor_path": "products/cpk_server/product.cpk.json",
-      "source_commit": "68f43f7cb0ba5d9bb10f381e28926ea62f34f6dd",
+      "source_commit": "cd786f11201ff0164061c73a04e6430db8f441f4",
       "image": {
         "registry": "ghcr.io",
         "repository": "openj92/control-plane-kit-servers/cpk-server",
-        "tag": "recursive-951",
-        "digest": "sha256:438e4fe6eebe3f5c05ab111c64d514bd7c8d1fded399bb91357d5dd3af31d613"
+        "tag": "recursive-938",
+        "digest": "sha256:a92139b66b5fb0e631bb4fe1a401e3c9968ac99227cf0c9dd5b85e52f506b0f4"
       }
     },
     {

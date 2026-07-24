@@ -376,7 +376,8 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn("ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:", smoke)
+        self.assertIn("products/cpk_server/product.cpk.json", smoke)
+        self.assertIn("@{image['digest']}", smoke)
         self.assertIn("docker pull", smoke)
         self.assertIn("CPK_SERVER_BUILD_IMAGE=0", smoke)
         self.assertIn("scripts/cpk_server_image_smoke.sh", smoke)
@@ -389,7 +390,8 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn("ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:", smoke)
+        self.assertIn("products/cpk_server/product.cpk.json", smoke)
+        self.assertIn("@{image['digest']}", smoke)
         self.assertIn("docker pull", smoke)
         self.assertIn("CPK_RUNTIME_INTERPRETERS=docker", smoke)
         self.assertIn('IMAGE_PULL_RESOLVER="docker-config"', smoke)
@@ -447,7 +449,8 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn("ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:", smoke)
+        self.assertIn("products/cpk_server/product.cpk.json", smoke)
+        self.assertIn("@{image['digest']}", smoke)
         self.assertIn("docker pull", smoke)
         self.assertIn("CPK_RUNTIME_INTERPRETERS=docker", smoke)
         self.assertIn("CPK_PRODUCT_SECRET_RESOLVER=local-development", smoke)
