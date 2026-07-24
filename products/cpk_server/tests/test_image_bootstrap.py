@@ -452,6 +452,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn('"active"', controller)
         self.assertIn("http://router:8000/", controller)
         self.assertNotIn('"ACTIVE_TARGET_URL"', controller)
+        self.assertIn("timeout=60", controller)
         self.assertIn("network.connect", controller)
         self.assertIn("runtime_interpreters", controller)
         self.assertIn("http://hello:8000/", controller)

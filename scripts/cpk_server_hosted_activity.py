@@ -459,6 +459,7 @@ def _execute_to_completion(
                 "idempotency_key": f"{workspace_id}:execute:{attempt}",
                 "max_effects": 1,
             },
+            timeout=60,
         )
         _sync_runtime_networks(server_container, workspace_id=workspace_id)
         if result["coordinator_status"] == "completed":
@@ -590,15 +591,28 @@ def _product_document(servers_repo: Path, product_name: str) -> Any:
     )
 
 
-def _mcp_tool(base_url: str, name: str, arguments: dict[str, object]) -> dict[str, Any]:
-    return _mcp(base_url, "tools/call", name, arguments)
+def _mcp_tool(
+    base_url: str,
+    name: str,
+    arguments: dict[str, object],
+    *,
+    timeout: int = 10,
+) -> dict[str, Any]:
+    return _mcp(base_url, "tools/call", name, arguments, timeout=timeout)
 
 
 def _mcp_read(base_url: str, name: str, arguments: dict[str, object]) -> dict[str, Any]:
     return _mcp(base_url, "resources/read", name, arguments)
 
 
-def _mcp(base_url: str, method: str, name: str, arguments: dict[str, object]) -> dict[str, Any]:
+def _mcp(
+    base_url: str,
+    method: str,
+    name: str,
+    arguments: dict[str, object],
+    *,
+    timeout: int = 10,
+) -> dict[str, Any]:
     response = _http(
         base_url,
         "POST",
@@ -614,6 +628,7 @@ def _mcp(base_url: str, method: str, name: str, arguments: dict[str, object]) ->
             "MCP-Protocol-Version": "2025-06-18",
             "Mcp-Method": method,
         },
+        timeout=timeout,
     )
     if "error" in response:
         raise RuntimeError(f"MCP {name} failed: {response}")
@@ -631,6 +646,7 @@ def _http(
     *,
     authorize: bool = True,
     extra_headers: dict[str, str] | None = None,
+    timeout: int = 10,
 ) -> dict[str, Any]:
     body = None if payload is None else json.dumps(payload).encode("utf-8")
     headers = {"Content-Type": "application/json"}
@@ -645,7 +661,7 @@ def _http(
         method=method,
     )
     try:
-        with urlopen(request, timeout=10) as response:
+        with urlopen(request, timeout=timeout) as response:
             data = response.read(1024 * 1024)
     except HTTPError as error:
         detail = error.read(8192).decode("utf-8", errors="replace")
