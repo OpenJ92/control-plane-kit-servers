@@ -12,6 +12,7 @@ SERVER_CONTAINER=""
 DOCKER_SOCKET_GROUP="${CPK_DOCKER_SOCKET_GROUP:-0}"
 AUTH_CONFIG_SOURCE="${CPK_DOCKER_AUTH_CONFIG:-$HOME/.docker/config.json}"
 AUTH_CONFIG_DIR=""
+IMAGE_PULL_RESOLVER="none"
 
 cleanup_activity_resources() {
   docker ps -aq --filter "label=$WORKSPACE_LABEL" \
@@ -86,10 +87,12 @@ if command -v gh >/dev/null 2>&1 && GHCR_TOKEN="$(gh auth token 2>/dev/null)"; t
   unset GHCR_TOKEN
   unset GHCR_AUTH
   chmod 0444 "$AUTH_CONFIG_DIR/config.json"
+  IMAGE_PULL_RESOLVER="docker-config"
 elif [ -r "$AUTH_CONFIG_SOURCE" ]; then
   AUTH_CONFIG_DIR="$(mktemp -d)"
   cp "$AUTH_CONFIG_SOURCE" "$AUTH_CONFIG_DIR/config.json"
   chmod 0444 "$AUTH_CONFIG_DIR/config.json"
+  IMAGE_PULL_RESOLVER="docker-config"
 fi
 
 if [ -n "$AUTH_CONFIG_DIR" ]; then
@@ -105,6 +108,7 @@ if [ -n "$AUTH_CONFIG_DIR" ]; then
     -e CPK_CONTROL_AUTH_CONFIGURED=true \
     -e CPK_PORT=8080 \
     -e CPK_RUNTIME_INTERPRETERS=docker \
+    -e CPK_IMAGE_PULL_CREDENTIAL_RESOLVER="$IMAGE_PULL_RESOLVER" \
     -e CPK_WORKPLACE_DATABASE_URL=postgresql://cpk:cpk@cpk-postgres:5432/cpk \
     -e CPK_ACTIVITY_HISTORY_DATABASE_URL=postgresql://cpk:cpk@cpk-postgres:5432/cpk \
     -e CPK_OBSERVER_STATE_DATABASE_URL=postgresql://cpk:cpk@cpk-postgres:5432/cpk \
@@ -135,6 +139,7 @@ if ! docker run --rm \
   -e CPK_HOSTED_ACTIVITY_BASE_URL=http://cpk-server:8080 \
   -e CPK_HOSTED_ACTIVITY_SERVER_CONTAINER="$SERVER_CONTAINER" \
   -e CPK_HOSTED_ACTIVITY_SERVERS_REPO=/app \
+  -e CPK_HOSTED_ACTIVITY_REGISTER_PULL_AUTHORITY="$IMAGE_PULL_RESOLVER" \
   "$CONTROLLER_IMAGE" \
   python scripts/cpk_server_hosted_activity.py; then
   docker logs "$SERVER_CONTAINER" 2>&1 | tail -n 100 >&2 || true
