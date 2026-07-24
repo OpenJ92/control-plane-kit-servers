@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import base64
 from datetime import datetime, timezone
 import json
@@ -62,6 +62,8 @@ class CpkServerBootstrapConfiguration:
     port: int
     runtime_interpreters: str
     image_pull_credential_resolver: str
+    product_secret_resolver: str
+    product_secret_values_json: str | None = field(repr=False)
     docker_config_path: str | None
     store_endpoints: Mapping[str, str]
 
@@ -79,6 +81,8 @@ class CpkServerBootstrapConfiguration:
             "CPK_IMAGE_PULL_CREDENTIAL_RESOLVER",
             "none",
         )
+        product_secret_resolver = values.get("CPK_PRODUCT_SECRET_RESOLVER", "none")
+        product_secret_values_json = values.get("CPK_PRODUCT_SECRET_VALUES_JSON")
         docker_config_path = _docker_config_path(values)
         store_endpoints = {
             name: _required(values, name)
@@ -109,6 +113,10 @@ class CpkServerBootstrapConfiguration:
             raise BootstrapConfigurationError(
                 "CPK_IMAGE_PULL_CREDENTIAL_RESOLVER must be one of: none, docker-config"
             )
+        if product_secret_resolver not in {"none", "local-development"}:
+            raise BootstrapConfigurationError(
+                "CPK_PRODUCT_SECRET_RESOLVER must be one of: none, local-development"
+            )
         if (
             image_pull_credential_resolver == "docker-config"
             and runtime_interpreters != "docker"
@@ -117,12 +125,25 @@ class CpkServerBootstrapConfiguration:
                 "CPK_IMAGE_PULL_CREDENTIAL_RESOLVER=docker-config requires "
                 "CPK_RUNTIME_INTERPRETERS=docker"
             )
+        if product_secret_resolver == "local-development":
+            if runtime_interpreters != "docker":
+                raise BootstrapConfigurationError(
+                    "CPK_PRODUCT_SECRET_RESOLVER=local-development requires "
+                    "CPK_RUNTIME_INTERPRETERS=docker"
+                )
+            if product_secret_values_json is None or product_secret_values_json == "":
+                raise BootstrapConfigurationError(
+                    "CPK_PRODUCT_SECRET_RESOLVER=local-development requires "
+                    "CPK_PRODUCT_SECRET_VALUES_JSON"
+                )
         return cls(
             mode=mode,
             control_auth_configured=True,
             port=port,
             runtime_interpreters=runtime_interpreters,
             image_pull_credential_resolver=image_pull_credential_resolver,
+            product_secret_resolver=product_secret_resolver,
+            product_secret_values_json=product_secret_values_json,
             docker_config_path=docker_config_path,
             store_endpoints=store_endpoints,
         )
@@ -347,6 +368,7 @@ def _docker_runtime_dispatcher(
             RuntimeKind.DOCKER: DockerRuntimeInterpreter(
                 DockerSdkClient(),
                 image_pull_credentials=_image_pull_credential_resolver(config),
+                secret_resolver=_product_secret_resolver(config),
             ),
         }
     )
@@ -440,6 +462,62 @@ def _image_pull_credential_resolver(config: CpkServerBootstrapConfiguration):
             return "DockerConfigImagePullCredentialResolver(<redacted>)"
 
     return DockerConfigImagePullCredentialResolver(config.docker_config_path)
+
+
+def _product_secret_resolver(config: CpkServerBootstrapConfiguration):
+    if config.product_secret_resolver == "none":
+        return None
+    if config.product_secret_resolver != "local-development":
+        raise AssertionError("product secret resolver set validated at bootstrap")
+    if config.product_secret_values_json is None:
+        raise AssertionError("product secret values set validated at bootstrap")
+    try:
+        from control_plane_kit_core.secrets import (
+            LocalDevelopmentSecretResolver,
+            SecretProviderAuthority,
+            SecretProviderId,
+            SecretReference,
+        )
+    except ModuleNotFoundError as error:
+        raise BootstrapConfigurationError(
+            "CPK_PRODUCT_SECRET_RESOLVER=local-development requires "
+            "control-plane-kit-core"
+        ) from error
+    try:
+        raw_values = json.loads(config.product_secret_values_json)
+    except json.JSONDecodeError as error:
+        raise BootstrapConfigurationError(
+            "CPK_PRODUCT_SECRET_VALUES_JSON must be a JSON object"
+        ) from error
+    if not isinstance(raw_values, Mapping) or not raw_values:
+        raise BootstrapConfigurationError(
+            "CPK_PRODUCT_SECRET_VALUES_JSON must be a non-empty JSON object"
+        )
+    values: dict[str, str] = {}
+    provider_id: SecretProviderId | None = None
+    allowed_prefixes: set[tuple[str, ...]] = set()
+    for reference_id, secret_value in raw_values.items():
+        if not isinstance(reference_id, str) or not isinstance(secret_value, str):
+            raise BootstrapConfigurationError(
+                "CPK_PRODUCT_SECRET_VALUES_JSON entries must map strings to strings"
+            )
+        reference = SecretReference(reference_id)
+        if provider_id is None:
+            provider_id = reference.provider_id
+        elif reference.provider_id != provider_id:
+            raise BootstrapConfigurationError(
+                "CPK_PRODUCT_SECRET_VALUES_JSON must use one secret provider"
+            )
+        allowed_prefixes.add(reference.path)
+        values[reference.reference_id] = secret_value
+    if provider_id is None:
+        raise BootstrapConfigurationError(
+            "CPK_PRODUCT_SECRET_VALUES_JSON must include at least one secret"
+        )
+    return LocalDevelopmentSecretResolver(
+        SecretProviderAuthority(provider_id, tuple(sorted(allowed_prefixes))),
+        values,
+    )
 
 
 def _install_operations_schema(database_url: str) -> None:
