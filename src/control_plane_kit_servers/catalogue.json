@@ -42,7 +42,7 @@
     },
     {
       "descriptor_path": "products/postgres_server/product.cpk.json",
-      "descriptor_sha256": "942c32d198c185bb98afdec03d310a69ed11d3c41a14040644212187c842b193",
+      "descriptor_sha256": "96307788eb5a6603f3617e1d4b5fd02420997175b969e72304f8e5609acc5f40",
       "image_digest": "sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777",
       "image_ref": "docker.io/library/postgres:16-alpine",
       "owner_directory": "products/postgres_server",

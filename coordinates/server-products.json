@@ -1,0 +1,69 @@
+{
+  "schema": "cpk-servers.coordinates",
+  "upstreams": {
+    "control_plane_kit_commit": "8f6201d4302dae443b7a0e7ff34ead90244c039e",
+    "control_plane_kit_interpreters_commit": "f6caf02231faae402f1a43811a90b4490e95aa0f"
+  },
+  "products": [
+    {
+      "product_id": "cpk-server",
+      "owner_directory": "products/cpk_server",
+      "descriptor_path": "products/cpk_server/product.cpk.json",
+      "source_commit": "8b739ad0c23486c71d6a054af891e34cc8f4210b",
+      "image": {
+        "registry": "ghcr.io",
+        "repository": "openj92/control-plane-kit-servers/cpk-server",
+        "tag": "extract-private-oci-930-r2",
+        "digest": "sha256:12e9eb53d1b61d662d10f007dccec91e9858e5a6bc015b96a703add341421899"
+      }
+    },
+    {
+      "product_id": "hello-server",
+      "owner_directory": "products/hello_server",
+      "descriptor_path": "products/hello_server/product.cpk.json",
+      "source_commit": "89b07ff26c2a8c2980395b5e07825f93266097d7",
+      "image": {
+        "registry": "ghcr.io",
+        "repository": "openj92/control-plane-kit-servers/hello-server",
+        "tag": "server-seed-824",
+        "digest": "sha256:0b5d62c2706bdfc5b53b67c7e0a72e36b8af7d13f8b2abf26eaa6e6eb7dda5f0"
+      }
+    },
+    {
+      "product_id": "http-active-router",
+      "owner_directory": "products/http_active_router",
+      "descriptor_path": "products/http_active_router/product.cpk.json",
+      "source_commit": "918341339b2bbf1c43b6551d4e1222f283b82b5d",
+      "image": {
+        "registry": "ghcr.io",
+        "repository": "openj92/control-plane-kit-servers/http-active-router",
+        "tag": "server-seed-825",
+        "digest": "sha256:9edd29c8b62f6413c7acb4009bfa655c065a31a0eac8728ec9d4350122e0a60d"
+      }
+    },
+    {
+      "product_id": "http-multiplexer",
+      "owner_directory": "products/http_multiplexer",
+      "descriptor_path": "products/http_multiplexer/product.cpk.json",
+      "source_commit": "a7f1e2c534007601cb686d79497930f62333a61f",
+      "image": {
+        "registry": "ghcr.io",
+        "repository": "openj92/control-plane-kit-servers/http-multiplexer",
+        "tag": "server-seed-826",
+        "digest": "sha256:2b6466d87c7642691c4ce2ee52022450d7b7cf1055f1f25a1449adbb5c8131ec"
+      }
+    },
+    {
+      "product_id": "postgres-server",
+      "owner_directory": "products/postgres_server",
+      "descriptor_path": "products/postgres_server/product.cpk.json",
+      "source_commit": "9cd7e8b513b82eb4619b000edea1f945e48a6317",
+      "image": {
+        "registry": "docker.io",
+        "repository": "library/postgres",
+        "tag": "16-alpine",
+        "digest": "sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777"
+      }
+    }
+  ]
+}

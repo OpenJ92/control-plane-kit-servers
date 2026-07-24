@@ -1,4 +1,5 @@
 import ast
+import json
 from pathlib import Path
 import sys
 import tomllib
@@ -7,8 +8,13 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
-CPK_PIN = "82ced0ddc2749bbc5b8263ffbdb29659c7dbe936"
-INTERPRETERS_PIN = "797ae3109c03ff4451476f4760785f08ec5834cd"
+COORDINATES = json.loads(
+    (ROOT / "coordinates" / "server-products.json").read_text(encoding="utf-8")
+)
+CPK_PIN = COORDINATES["upstreams"]["control_plane_kit_commit"]
+INTERPRETERS_PIN = COORDINATES["upstreams"][
+    "control_plane_kit_interpreters_commit"
+]
 
 
 class PackageMetadataTests(unittest.TestCase):

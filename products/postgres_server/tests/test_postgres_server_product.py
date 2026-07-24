@@ -15,7 +15,10 @@ from control_plane_kit_core.products import (
 )
 from control_plane_kit_core.secrets import SecretEnvironmentDelivery
 from control_plane_kit_core.types import Protocol
-from control_plane_kit_core.verification import PostgresQueryCheck
+from control_plane_kit_core.verification import (
+    PostgresPasswordAuthentication,
+    PostgresQueryCheck,
+)
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -109,6 +112,13 @@ class PostgresServerProductTests(unittest.TestCase):
         self.assertEqual(check.provider_socket, "postgres")
         self.assertEqual(check.operation.value, "select-one")
         self.assertEqual(check.policy.maximum_attempts, 5)
+        self.assertIsInstance(check.authentication, PostgresPasswordAuthentication)
+        self.assertEqual(check.authentication.database, "cpk")
+        self.assertEqual(check.authentication.username, "cpk")
+        self.assertEqual(
+            check.authentication.password_reference.reference_id,
+            "secret://control-plane-kit/postgres/password",
+        )
 
     def test_descriptor_instantiates_without_application_or_store_logic(self) -> None:
         product = self.decode().product

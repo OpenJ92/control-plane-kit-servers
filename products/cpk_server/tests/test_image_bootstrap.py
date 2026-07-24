@@ -10,8 +10,13 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 PRODUCT = ROOT / "products" / "cpk_server"
 PRODUCT_SRC = PRODUCT / "src"
-CPK_PIN = "82ced0ddc2749bbc5b8263ffbdb29659c7dbe936"
-INTERPRETERS_PIN = "797ae3109c03ff4451476f4760785f08ec5834cd"
+COORDINATES = json.loads(
+    (ROOT / "coordinates" / "server-products.json").read_text(encoding="utf-8")
+)
+CPK_PIN = COORDINATES["upstreams"]["control_plane_kit_commit"]
+INTERPRETERS_PIN = COORDINATES["upstreams"][
+    "control_plane_kit_interpreters_commit"
+]
 STORE_ENVIRONMENT = [
     "CPK_WORKPLACE_DATABASE_URL",
     "CPK_ACTIVITY_HISTORY_DATABASE_URL",
