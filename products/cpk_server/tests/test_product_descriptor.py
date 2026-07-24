@@ -22,6 +22,15 @@ ROOT = Path(__file__).resolve().parents[3]
 PRODUCT = ROOT / "products" / "cpk_server"
 DESCRIPTOR = PRODUCT / "product.cpk.json"
 CATALOGUE = ROOT / "catalogue" / "products.json"
+COORDINATES = ROOT / "coordinates" / "server-products.json"
+
+
+def _product_coordinates(product_id: str) -> dict[str, object]:
+    coordinates = json.loads(COORDINATES.read_text(encoding="utf-8"))
+    for product in coordinates["products"]:
+        if product["product_id"] == product_id:
+            return product
+    raise AssertionError(f"missing product coordinates: {product_id}")
 
 
 class CpkServerProductDescriptorTests(unittest.TestCase):
@@ -38,9 +47,16 @@ class CpkServerProductDescriptorTests(unittest.TestCase):
         )
         self.assertEqual(product.display_name, "cpk-server")
         self.assertIs(product.product_family, ProductFamily.SERVER)
-        self.assertEqual(product.image.registry, "ghcr.io")
-        self.assertEqual(product.image.repository, "openj92/control-plane-kit-servers/cpk-server")
-        self.assertEqual(product.image.tag, "extract-private-oci-930-r2")
+        coordinates = _product_coordinates("cpk-server")
+        image = coordinates["image"]
+        self.assertEqual(product.image.registry, image["registry"])
+        self.assertEqual(product.image.repository, image["repository"])
+        self.assertEqual(product.image.tag, image["tag"])
+        self.assertEqual(str(product.image.digest), image["digest"])
+        self.assertEqual(
+            dict(product.image.provenance)["source-commit"],
+            coordinates["source_commit"],
+        )
         self.assertEqual(
             product.image.execution_reference,
             f"ghcr.io/openj92/control-plane-kit-servers/cpk-server@{product.image.digest}",

@@ -2,19 +2,19 @@
   "schema": "cpk-servers.coordinates",
   "upstreams": {
     "control_plane_kit_commit": "8f6201d4302dae443b7a0e7ff34ead90244c039e",
-    "control_plane_kit_interpreters_commit": "f6caf02231faae402f1a43811a90b4490e95aa0f"
+    "control_plane_kit_interpreters_commit": "0a34dd40c08ff86de737747325d3cfc5fca4f0f9"
   },
   "products": [
     {
       "product_id": "cpk-server",
       "owner_directory": "products/cpk_server",
       "descriptor_path": "products/cpk_server/product.cpk.json",
-      "source_commit": "8b739ad0c23486c71d6a054af891e34cc8f4210b",
+      "source_commit": "68f43f7cb0ba5d9bb10f381e28926ea62f34f6dd",
       "image": {
         "registry": "ghcr.io",
         "repository": "openj92/control-plane-kit-servers/cpk-server",
-        "tag": "extract-private-oci-930-r2",
-        "digest": "sha256:12e9eb53d1b61d662d10f007dccec91e9858e5a6bc015b96a703add341421899"
+        "tag": "recursive-951",
+        "digest": "sha256:438e4fe6eebe3f5c05ab111c64d514bd7c8d1fded399bb91357d5dd3af31d613"
       }
     },
     {

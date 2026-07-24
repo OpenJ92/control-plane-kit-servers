@@ -39,6 +39,21 @@
       ]
     },
     {
+      "name": "CPK_PRODUCT_SECRET_RESOLVER",
+      "required": false,
+      "allowed_values": [
+        "none",
+        "local-development"
+      ]
+    },
+    {
+      "name": "CPK_PRODUCT_SECRET_VALUES_JSON",
+      "required": false,
+      "allowed_values": [
+        "runtime-secret-reference-to-value-map"
+      ]
+    },
+    {
       "name": "DOCKER_CONFIG",
       "required": false,
       "allowed_values": [
@@ -78,6 +93,7 @@
     "authorization header is runtime-supplied",
     "runtime interpreter authority is selected explicitly and never inferred",
     "store endpoints are runtime-supplied and never echoed by readiness",
-    "image pull credential authority is selected explicitly and resolved only at runtime interpreter dispatch"
+    "image pull credential authority is selected explicitly and resolved only at runtime interpreter dispatch",
+    "product secret authority is selected explicitly and resolved only at runtime interpreter dispatch"
   ]
 }

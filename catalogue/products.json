@@ -5,10 +5,10 @@
       "product_id": "cpk-server",
       "owner_directory": "products/cpk_server",
       "descriptor_path": "products/cpk_server/product.cpk.json",
-      "descriptor_sha256": "a5d87c6593a07a7c5aa98228fe1350cfb75ea734ab43aedd6358c1e31013d12f",
-      "source_commit": "8b739ad0c23486c71d6a054af891e34cc8f4210b",
-      "image_ref": "ghcr.io/openj92/control-plane-kit-servers/cpk-server:extract-private-oci-930-r2",
-      "image_digest": "sha256:12e9eb53d1b61d662d10f007dccec91e9858e5a6bc015b96a703add341421899",
+      "descriptor_sha256": "67e7a3cf68099ec9b75d30cb8638415cb79bee8e1fe52879950414497b045a61",
+      "source_commit": "68f43f7cb0ba5d9bb10f381e28926ea62f34f6dd",
+      "image_ref": "ghcr.io/openj92/control-plane-kit-servers/cpk-server:recursive-951",
+      "image_digest": "sha256:438e4fe6eebe3f5c05ab111c64d514bd7c8d1fded399bb91357d5dd3af31d613",
       "status": "completed"
     },
     {

@@ -71,13 +71,16 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
                 "CPK_PORT",
                 "CPK_RUNTIME_INTERPRETERS",
                 "CPK_IMAGE_PULL_CREDENTIAL_RESOLVER",
+                "CPK_PRODUCT_SECRET_RESOLVER",
+                "CPK_PRODUCT_SECRET_VALUES_JSON",
                 "DOCKER_CONFIG",
                 *STORE_ENVIRONMENT,
             ],
         )
         self.assertNotIn("postgres://", rendered)
-        self.assertNotIn("token", rendered.replace("auth_configured", ""))
-        self.assertNotIn("secret", rendered)
+        self.assertNotIn("token-not-for-output", rendered)
+        self.assertNotIn("secret://", rendered)
+        self.assertNotIn("postgres-secret", rendered)
         self.assertIn("never echoed by readiness", rendered)
 
     def test_bootstrap_requires_store_endpoints_but_does_not_echo_them(self) -> None:
@@ -115,6 +118,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             self.assertEqual(set(config.store_endpoints), set(STORE_ENVIRONMENT))
             self.assertEqual(config.runtime_interpreters, "none")
             self.assertEqual(config.image_pull_credential_resolver, "none")
+            self.assertEqual(config.product_secret_resolver, "none")
             self.assertNotIn("postgres://", repr(config.process_configuration()))
         finally:
             sys.path.remove(str(PRODUCT_SRC))
@@ -184,6 +188,88 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
                 self.assertNotIn("registry-token-not-for-output", repr(resolver))
                 self.assertNotIn("registry-token-not-for-output", repr(resolved))
                 self.assertNotIn("registry-token-not-for-output", repr(config))
+        finally:
+            sys.path.remove(str(PRODUCT_SRC))
+            for name in list(sys.modules):
+                if name == "control_plane_kit_servers_cpk_server" or name.startswith(
+                    "control_plane_kit_servers_cpk_server."
+                ):
+                    sys.modules.pop(name, None)
+
+    def test_bootstrap_local_product_secret_resolver_is_explicit_and_redacted(
+        self,
+    ) -> None:
+        sys.path.insert(0, str(PRODUCT_SRC))
+        try:
+            server_module = importlib.import_module(
+                "control_plane_kit_servers_cpk_server.server"
+            )
+            from control_plane_kit_core.secrets import (
+                SecretReference,
+                SecretResolved,
+            )
+
+            config = server_module.CpkServerBootstrapConfiguration.from_environment(
+                {
+                    "CPK_SERVER_MODE": "execution-capable",
+                    "CPK_CONTROL_AUTH_CONFIGURED": "true",
+                    "CPK_PORT": "8080",
+                    "CPK_RUNTIME_INTERPRETERS": "docker",
+                    "CPK_PRODUCT_SECRET_RESOLVER": "local-development",
+                    "CPK_PRODUCT_SECRET_VALUES_JSON": json.dumps(
+                        {
+                            "secret://control-plane-kit/postgres/password": (
+                                "postgres-secret-not-for-output"
+                            )
+                        }
+                    ),
+                    "CPK_WORKPLACE_DATABASE_URL": "postgres://user:pass@db/cpk",
+                    "CPK_ACTIVITY_HISTORY_DATABASE_URL": "postgres://user:pass@db/cpk",
+                    "CPK_OBSERVER_STATE_DATABASE_URL": "postgres://user:pass@db/cpk",
+                    "CPK_GRAPH_TOPOLOGY_DATABASE_URL": "postgres://user:pass@db/cpk",
+                }
+            )
+            resolver = server_module._product_secret_resolver(config)
+            resolved = resolver.resolve(
+                SecretReference("secret://control-plane-kit/postgres/password")
+            )
+
+            self.assertIsInstance(resolved, SecretResolved)
+            self.assertEqual(config.product_secret_resolver, "local-development")
+            self.assertNotIn("postgres-secret-not-for-output", repr(config))
+            self.assertNotIn("postgres-secret-not-for-output", repr(resolver))
+            self.assertNotIn("postgres-secret-not-for-output", repr(resolved))
+        finally:
+            sys.path.remove(str(PRODUCT_SRC))
+            for name in list(sys.modules):
+                if name == "control_plane_kit_servers_cpk_server" or name.startswith(
+                    "control_plane_kit_servers_cpk_server."
+                ):
+                    sys.modules.pop(name, None)
+
+    def test_bootstrap_product_secret_resolver_selection_is_closed(self) -> None:
+        sys.path.insert(0, str(PRODUCT_SRC))
+        try:
+            server_module = importlib.import_module(
+                "control_plane_kit_servers_cpk_server.server"
+            )
+            environ = {
+                "CPK_SERVER_MODE": "execution-capable",
+                "CPK_CONTROL_AUTH_CONFIGURED": "true",
+                "CPK_PORT": "8080",
+                "CPK_RUNTIME_INTERPRETERS": "docker",
+                "CPK_PRODUCT_SECRET_RESOLVER": "env-file",
+                "CPK_WORKPLACE_DATABASE_URL": "postgres://user:pass@db/cpk",
+                "CPK_ACTIVITY_HISTORY_DATABASE_URL": "postgres://user:pass@db/cpk",
+                "CPK_OBSERVER_STATE_DATABASE_URL": "postgres://user:pass@db/cpk",
+                "CPK_GRAPH_TOPOLOGY_DATABASE_URL": "postgres://user:pass@db/cpk",
+            }
+
+            with self.assertRaisesRegex(
+                server_module.BootstrapConfigurationError,
+                "CPK_PRODUCT_SECRET_RESOLVER must be one of",
+            ):
+                server_module.CpkServerBootstrapConfiguration.from_environment(environ)
         finally:
             sys.path.remove(str(PRODUCT_SRC))
             for name in list(sys.modules):
@@ -311,6 +397,9 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("CPK_HOSTED_ACTIVITY_REGISTER_PULL_AUTHORITY", smoke)
         self.assertIn("CPK_DOCKER_SOCKET_GROUP", smoke)
         self.assertIn("CPK_DOCKER_AUTH_CONFIG", smoke)
+        self.assertIn("CPK_PRODUCT_SECRET_RESOLVER=local-development", smoke)
+        self.assertIn("CPK_PRODUCT_SECRET_VALUES_JSON", smoke)
+        self.assertIn("secret://control-plane-kit/postgres/password", smoke)
         self.assertIn("gh auth token", smoke)
         self.assertIn("auths", smoke)
         self.assertIn("DOCKER_CONFIG=/tmp/cpk-docker-config", smoke)
