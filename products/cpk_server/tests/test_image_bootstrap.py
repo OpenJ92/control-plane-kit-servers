@@ -1,6 +1,8 @@
+import base64
 import importlib
 import json
 from pathlib import Path
+import tempfile
 import sys
 import unittest
 
@@ -8,8 +10,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 PRODUCT = ROOT / "products" / "cpk_server"
 PRODUCT_SRC = PRODUCT / "src"
-CPK_PIN = "34a7701d1533a8cb4eb2d41c144e209b6432a658"
-INTERPRETERS_PIN = "c74e4784855eda72881404310fb63370988b674d"
+CPK_PIN = "82ced0ddc2749bbc5b8263ffbdb29659c7dbe936"
+INTERPRETERS_PIN = "797ae3109c03ff4451476f4760785f08ec5834cd"
 STORE_ENVIRONMENT = [
     "CPK_WORKPLACE_DATABASE_URL",
     "CPK_ACTIVITY_HISTORY_DATABASE_URL",
@@ -63,6 +65,8 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
                 "CPK_CONTROL_AUTH_CONFIGURED",
                 "CPK_PORT",
                 "CPK_RUNTIME_INTERPRETERS",
+                "CPK_IMAGE_PULL_CREDENTIAL_RESOLVER",
+                "DOCKER_CONFIG",
                 *STORE_ENVIRONMENT,
             ],
         )
@@ -105,7 +109,76 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
 
             self.assertEqual(set(config.store_endpoints), set(STORE_ENVIRONMENT))
             self.assertEqual(config.runtime_interpreters, "none")
+            self.assertEqual(config.image_pull_credential_resolver, "none")
             self.assertNotIn("postgres://", repr(config.process_configuration()))
+        finally:
+            sys.path.remove(str(PRODUCT_SRC))
+            for name in list(sys.modules):
+                if name == "control_plane_kit_servers_cpk_server" or name.startswith(
+                    "control_plane_kit_servers_cpk_server."
+                ):
+                    sys.modules.pop(name, None)
+
+    def test_bootstrap_docker_config_pull_resolver_is_explicit_and_redacted(self) -> None:
+        sys.path.insert(0, str(PRODUCT_SRC))
+        try:
+            server_module = importlib.import_module(
+                "control_plane_kit_servers_cpk_server.server"
+            )
+            from control_plane_kit_core.runtime_effects import ImagePullAuthority
+            from control_plane_kit_core.secrets import SecretReference
+            from control_plane_kit_interpreters.secrets import (
+                ImagePullCredentialDenied,
+                ImagePullCredentialResolved,
+            )
+
+            with tempfile.TemporaryDirectory() as directory:
+                config_path = Path(directory) / "config.json"
+                encoded = base64.b64encode(
+                    b"OpenJ92:registry-token-not-for-output"
+                ).decode("ascii")
+                config_path.write_text(
+                    json.dumps({"auths": {"ghcr.io": {"auth": encoded}}}),
+                    encoding="utf-8",
+                )
+                config = server_module.CpkServerBootstrapConfiguration.from_environment(
+                    {
+                        "CPK_SERVER_MODE": "execution-capable",
+                        "CPK_CONTROL_AUTH_CONFIGURED": "true",
+                        "CPK_PORT": "8080",
+                        "CPK_RUNTIME_INTERPRETERS": "docker",
+                        "CPK_IMAGE_PULL_CREDENTIAL_RESOLVER": "docker-config",
+                        "DOCKER_CONFIG": directory,
+                        "CPK_WORKPLACE_DATABASE_URL": "postgres://user:pass@db/cpk",
+                        "CPK_ACTIVITY_HISTORY_DATABASE_URL": "postgres://user:pass@db/cpk",
+                        "CPK_OBSERVER_STATE_DATABASE_URL": "postgres://user:pass@db/cpk",
+                        "CPK_GRAPH_TOPOLOGY_DATABASE_URL": "postgres://user:pass@db/cpk",
+                    }
+                )
+
+                resolver = server_module._image_pull_credential_resolver(config)
+                resolved = resolver.resolve(
+                    ImagePullAuthority(
+                        "ghcr.io",
+                        "openj92/control-plane-kit-servers",
+                        SecretReference("secret://docker-config/ghcr.io"),
+                    )
+                )
+                denied = resolver.resolve(
+                    ImagePullAuthority(
+                        "ghcr.io",
+                        "openj92/control-plane-kit-servers",
+                        SecretReference("secret://other/ghcr.io"),
+                    )
+                )
+
+                self.assertIsInstance(resolved, ImagePullCredentialResolved)
+                self.assertIsInstance(denied, ImagePullCredentialDenied)
+                self.assertEqual(config.image_pull_credential_resolver, "docker-config")
+                self.assertEqual(config.docker_config_path, str(config_path))
+                self.assertNotIn("registry-token-not-for-output", repr(resolver))
+                self.assertNotIn("registry-token-not-for-output", repr(resolved))
+                self.assertNotIn("registry-token-not-for-output", repr(config))
         finally:
             sys.path.remove(str(PRODUCT_SRC))
             for name in list(sys.modules):
@@ -227,6 +300,9 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:", smoke)
         self.assertIn("docker pull", smoke)
         self.assertIn("CPK_RUNTIME_INTERPRETERS=docker", smoke)
+        self.assertIn('IMAGE_PULL_RESOLVER="docker-config"', smoke)
+        self.assertIn('CPK_IMAGE_PULL_CREDENTIAL_RESOLVER="$IMAGE_PULL_RESOLVER"', smoke)
+        self.assertIn("CPK_HOSTED_ACTIVITY_REGISTER_PULL_AUTHORITY", smoke)
         self.assertIn("CPK_DOCKER_SOCKET_GROUP", smoke)
         self.assertIn("CPK_DOCKER_AUTH_CONFIG", smoke)
         self.assertIn("gh auth token", smoke)
@@ -251,8 +327,10 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         )
 
         self.assertIn("command.deployment.plan", controller)
+        self.assertIn("/image-pull-authorities", controller)
         self.assertIn("command.approval.decide", controller)
         self.assertIn("command.deployment.execute", controller)
+        self.assertIn("secret://docker-config/ghcr.io", controller)
         self.assertIn("read.pending-approvals", controller)
         self.assertIn("read.approval-detail", controller)
         self.assertIn("/workspaces/{WORKSPACE_ID}/plans/{plan_id}/approval", controller)

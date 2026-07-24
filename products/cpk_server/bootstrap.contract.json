@@ -4,47 +4,80 @@
     {
       "name": "CPK_SERVER_MODE",
       "required": true,
-      "allowed_values": ["execution-capable"]
+      "allowed_values": [
+        "execution-capable"
+      ]
     },
     {
       "name": "CPK_CONTROL_AUTH_CONFIGURED",
       "required": true,
-      "allowed_values": ["true"]
+      "allowed_values": [
+        "true"
+      ]
     },
     {
       "name": "CPK_PORT",
       "required": true,
-      "allowed_values": ["1..65535"]
+      "allowed_values": [
+        "1..65535"
+      ]
     },
     {
       "name": "CPK_RUNTIME_INTERPRETERS",
       "required": true,
-      "allowed_values": ["none", "docker"]
+      "allowed_values": [
+        "none",
+        "docker"
+      ]
+    },
+    {
+      "name": "CPK_IMAGE_PULL_CREDENTIAL_RESOLVER",
+      "required": false,
+      "allowed_values": [
+        "none",
+        "docker-config"
+      ]
+    },
+    {
+      "name": "DOCKER_CONFIG",
+      "required": false,
+      "allowed_values": [
+        "container-local-docker-config-directory"
+      ]
     },
     {
       "name": "CPK_WORKPLACE_DATABASE_URL",
       "required": true,
-      "allowed_values": ["runtime-provided-postgres-url"]
+      "allowed_values": [
+        "runtime-provided-postgres-url"
+      ]
     },
     {
       "name": "CPK_ACTIVITY_HISTORY_DATABASE_URL",
       "required": true,
-      "allowed_values": ["runtime-provided-postgres-url"]
+      "allowed_values": [
+        "runtime-provided-postgres-url"
+      ]
     },
     {
       "name": "CPK_OBSERVER_STATE_DATABASE_URL",
       "required": true,
-      "allowed_values": ["runtime-provided-postgres-url"]
+      "allowed_values": [
+        "runtime-provided-postgres-url"
+      ]
     },
     {
       "name": "CPK_GRAPH_TOPOLOGY_DATABASE_URL",
       "required": true,
-      "allowed_values": ["runtime-provided-postgres-url"]
+      "allowed_values": [
+        "runtime-provided-postgres-url"
+      ]
     }
   ],
   "runtime_inputs": [
     "authorization header is runtime-supplied",
     "runtime interpreter authority is selected explicitly and never inferred",
-    "store endpoints are runtime-supplied and never echoed by readiness"
+    "store endpoints are runtime-supplied and never echoed by readiness",
+    "image pull credential authority is selected explicitly and resolved only at runtime interpreter dispatch"
   ]
 }

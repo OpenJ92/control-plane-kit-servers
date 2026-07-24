@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import base64
 from datetime import datetime, timezone
 import json
 import os
@@ -28,6 +29,7 @@ from control_plane_kit_operations import (
     ExecutionAdmissionCommandService,
     ExecutionCoordinator,
     FailureEvidence,
+    ImagePullAuthorityRegistrationService,
     OperationCommandService,
     ProductRegistrationService,
     RuntimeInterpreterDispatcher,
@@ -59,6 +61,8 @@ class CpkServerBootstrapConfiguration:
     control_auth_configured: bool
     port: int
     runtime_interpreters: str
+    image_pull_credential_resolver: str
+    docker_config_path: str | None
     store_endpoints: Mapping[str, str]
 
     @classmethod
@@ -71,6 +75,11 @@ class CpkServerBootstrapConfiguration:
         auth = _required(values, "CPK_CONTROL_AUTH_CONFIGURED")
         port_text = _required(values, "CPK_PORT")
         runtime_interpreters = _required(values, "CPK_RUNTIME_INTERPRETERS")
+        image_pull_credential_resolver = values.get(
+            "CPK_IMAGE_PULL_CREDENTIAL_RESOLVER",
+            "none",
+        )
+        docker_config_path = _docker_config_path(values)
         store_endpoints = {
             name: _required(values, name)
             for name in (
@@ -96,11 +105,25 @@ class CpkServerBootstrapConfiguration:
             raise BootstrapConfigurationError(
                 "CPK_RUNTIME_INTERPRETERS must be one of: none, docker"
             )
+        if image_pull_credential_resolver not in {"none", "docker-config"}:
+            raise BootstrapConfigurationError(
+                "CPK_IMAGE_PULL_CREDENTIAL_RESOLVER must be one of: none, docker-config"
+            )
+        if (
+            image_pull_credential_resolver == "docker-config"
+            and runtime_interpreters != "docker"
+        ):
+            raise BootstrapConfigurationError(
+                "CPK_IMAGE_PULL_CREDENTIAL_RESOLVER=docker-config requires "
+                "CPK_RUNTIME_INTERPRETERS=docker"
+            )
         return cls(
             mode=mode,
             control_auth_configured=True,
             port=port,
             runtime_interpreters=runtime_interpreters,
+            image_pull_credential_resolver=image_pull_credential_resolver,
+            docker_config_path=docker_config_path,
             store_endpoints=store_endpoints,
         )
 
@@ -192,6 +215,16 @@ def main() -> int:
         access_log=False,
     )
     return 0
+
+
+def _docker_config_path(values: Mapping[str, str]) -> str | None:
+    docker_config = values.get("DOCKER_CONFIG")
+    if docker_config:
+        return os.path.join(docker_config, "config.json")
+    docker_auth_config = values.get("CPK_DOCKER_AUTH_CONFIG")
+    if docker_auth_config:
+        return docker_auth_config
+    return None
 
 
 def _required(values: Mapping[str, str], name: str) -> str:
@@ -291,11 +324,13 @@ def _runtime_adapter(
     if config.runtime_interpreters == "none":
         return _UnsupportedExecutionAdapter()
     if config.runtime_interpreters == "docker":
-        return _docker_runtime_dispatcher()
+        return _docker_runtime_dispatcher(config)
     raise AssertionError("runtime interpreter set validated at bootstrap")
 
 
-def _docker_runtime_dispatcher() -> RuntimeInterpreterDispatcher:
+def _docker_runtime_dispatcher(
+    config: CpkServerBootstrapConfiguration,
+) -> RuntimeInterpreterDispatcher:
     try:
         from control_plane_kit_interpreters.docker import (
             DockerRuntimeInterpreter,
@@ -308,9 +343,102 @@ def _docker_runtime_dispatcher() -> RuntimeInterpreterDispatcher:
         ) from error
     return RuntimeInterpreterDispatcher(
         {
-            RuntimeKind.DOCKER: DockerRuntimeInterpreter(DockerSdkClient()),
+            RuntimeKind.DOCKER: DockerRuntimeInterpreter(
+                DockerSdkClient(),
+                image_pull_credentials=_image_pull_credential_resolver(config),
+            ),
         }
     )
+
+
+def _image_pull_credential_resolver(config: CpkServerBootstrapConfiguration):
+    if config.image_pull_credential_resolver == "none":
+        return None
+    if config.image_pull_credential_resolver != "docker-config":
+        raise AssertionError("image pull resolver set validated at bootstrap")
+    if config.docker_config_path is None:
+        raise BootstrapConfigurationError(
+            "CPK_IMAGE_PULL_CREDENTIAL_RESOLVER=docker-config requires "
+            "DOCKER_CONFIG or CPK_DOCKER_AUTH_CONFIG"
+        )
+    try:
+        from control_plane_kit_core.secrets import SecretProviderId, SecretValue
+        from control_plane_kit_interpreters.secrets import (
+            ImagePullCredentialDenied,
+            ImagePullCredentialMissing,
+            ImagePullCredentialResolved,
+            ResolvedImagePullCredential,
+        )
+    except ModuleNotFoundError as error:
+        raise BootstrapConfigurationError(
+            "CPK_IMAGE_PULL_CREDENTIAL_RESOLVER=docker-config requires "
+            "control-plane-kit-interpreters[docker]"
+        ) from error
+
+    class DockerConfigImagePullCredentialResolver:
+        def __init__(self, config_path: str) -> None:
+            self._config_path = config_path
+
+        def resolve(self, authority):
+            reference = authority.credential_reference
+            if (
+                reference.provider_id != SecretProviderId("docker-config")
+                or reference.path[0] != authority.registry
+            ):
+                return ImagePullCredentialDenied(reference)
+            auths = self._auths()
+            entry = auths.get(authority.registry)
+            if not isinstance(entry, Mapping):
+                return ImagePullCredentialMissing(reference)
+            identitytoken = entry.get("identitytoken")
+            if isinstance(identitytoken, str) and identitytoken:
+                return ImagePullCredentialResolved(
+                    ResolvedImagePullCredential(
+                        identitytoken=SecretValue(identitytoken),
+                    )
+                )
+            username = entry.get("username")
+            password = entry.get("password")
+            if isinstance(username, str) and isinstance(password, str) and password:
+                return ImagePullCredentialResolved(
+                    ResolvedImagePullCredential(
+                        username=username,
+                        password=SecretValue(password),
+                    )
+                )
+            auth = entry.get("auth")
+            if isinstance(auth, str) and auth:
+                try:
+                    decoded = base64.b64decode(auth).decode("utf-8")
+                except Exception:
+                    return ImagePullCredentialMissing(reference)
+                username, separator, password = decoded.partition(":")
+                if separator and username and password:
+                    return ImagePullCredentialResolved(
+                        ResolvedImagePullCredential(
+                            username=username,
+                            password=SecretValue(password),
+                        )
+                    )
+            return ImagePullCredentialMissing(reference)
+
+        def _auths(self) -> Mapping[str, object]:
+            try:
+                with open(self._config_path, encoding="utf-8") as file:
+                    config_doc = json.load(file)
+            except OSError:
+                return {}
+            if not isinstance(config_doc, Mapping):
+                return {}
+            auths = config_doc.get("auths")
+            if not isinstance(auths, Mapping):
+                return {}
+            return auths
+
+        def __repr__(self) -> str:
+            return "DockerConfigImagePullCredentialResolver(<redacted>)"
+
+    return DockerConfigImagePullCredentialResolver(config.docker_config_path)
 
 
 def _install_operations_schema(database_url: str) -> None:

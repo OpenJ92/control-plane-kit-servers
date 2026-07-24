@@ -60,6 +60,21 @@ def main() -> int:
         },
     )
 
+    if os.environ.get("CPK_HOSTED_ACTIVITY_REGISTER_PULL_AUTHORITY") == "docker-config":
+        _http(
+            base_url,
+            "POST",
+            f"/workspaces/{WORKSPACE_ID}/image-pull-authorities",
+            {
+                "registry": "ghcr.io",
+                "repository": "openj92/control-plane-kit-servers",
+                "credential_reference": "secret://docker-config/ghcr.io",
+                "actor_id": "operator-a",
+                "admitted_at": _clock(),
+                "idempotency_key": f"{WORKSPACE_ID}:pull-authority:ghcr",
+            },
+        )
+
     session = _http(
         base_url,
         "POST",
