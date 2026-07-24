@@ -40,7 +40,7 @@ class CpkServerProductDescriptorTests(unittest.TestCase):
         self.assertIs(product.product_family, ProductFamily.SERVER)
         self.assertEqual(product.image.registry, "ghcr.io")
         self.assertEqual(product.image.repository, "openj92/control-plane-kit-servers/cpk-server")
-        self.assertEqual(product.image.tag, "extract-interpreters-909")
+        self.assertEqual(product.image.tag, "extract-private-oci-930-r2")
         self.assertEqual(
             product.image.execution_reference,
             f"ghcr.io/openj92/control-plane-kit-servers/cpk-server@{product.image.digest}",

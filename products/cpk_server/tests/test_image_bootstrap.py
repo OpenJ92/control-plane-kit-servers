@@ -229,6 +229,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("PostgresUnitOfWork", source)
         self.assertIn("WorkspaceCommandService", source)
         self.assertIn("ProductRegistrationService", source)
+        self.assertIn("ImagePullAuthorityRegistrationService", source)
         self.assertIn("DesiredGraphCommandService", source)
         self.assertIn("OperationCommandService", source)
         self.assertIn("CurrentGraphAdvancementCommandService", source)

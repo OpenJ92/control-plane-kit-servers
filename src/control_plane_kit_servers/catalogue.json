@@ -2,12 +2,12 @@
   "products": [
     {
       "descriptor_path": "products/cpk_server/product.cpk.json",
-      "descriptor_sha256": "10dafb59f3d98a527e9dc39fe87ab93668774afc8ee5b688bf663bdb1553c159",
-      "image_digest": "sha256:def866baeeda659d61a821a29a07a8ceb780bcb440ab7fe0c63a8fa8989e7c7a",
-      "image_ref": "ghcr.io/openj92/control-plane-kit-servers/cpk-server:extract-interpreters-909",
+      "descriptor_sha256": "a5d87c6593a07a7c5aa98228fe1350cfb75ea734ab43aedd6358c1e31013d12f",
+      "image_digest": "sha256:12e9eb53d1b61d662d10f007dccec91e9858e5a6bc015b96a703add341421899",
+      "image_ref": "ghcr.io/openj92/control-plane-kit-servers/cpk-server:extract-private-oci-930-r2",
       "owner_directory": "products/cpk_server",
       "product_id": "cpk-server",
-      "source_commit": "21b319aec780bbc7348b99e96697759a46e1f7f6",
+      "source_commit": "8b739ad0c23486c71d6a054af891e34cc8f4210b",
       "status": "completed"
     },
     {

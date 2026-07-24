@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-CPK_SERVER_IMAGE="${CPK_SERVER_IMAGE:-ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:def866baeeda659d61a821a29a07a8ceb780bcb440ab7fe0c63a8fa8989e7c7a}"
+CPK_SERVER_IMAGE="${CPK_SERVER_IMAGE:-ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:12e9eb53d1b61d662d10f007dccec91e9858e5a6bc015b96a703add341421899}"
 export CPK_SERVER_IMAGE
 export CPK_SERVER_BUILD_IMAGE=0
 
