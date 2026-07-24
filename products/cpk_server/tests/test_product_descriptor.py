@@ -97,7 +97,16 @@ class CpkServerProductDescriptorTests(unittest.TestCase):
 
         raw_descriptor = json.loads(DESCRIPTOR.read_text(encoding="utf-8"))
         runtime_contract = raw_descriptor["product"]["runtime_contract"]
-        self.assertEqual(runtime_contract["secret_deliveries"], [])
+        self.assertEqual(
+            runtime_contract["secret_deliveries"],
+            [
+                {
+                    "kind": "environment",
+                    "environment_name": "PGPASSWORD",
+                    "reference_id": "secret://control-plane-kit/postgres/password",
+                }
+            ],
+        )
         rendered = json.dumps(
             {key: value for key, value in runtime_contract.items() if key != "secret_deliveries"},
             sort_keys=True,
@@ -106,6 +115,9 @@ class CpkServerProductDescriptorTests(unittest.TestCase):
         self.assertNotIn("password", rendered)
         self.assertNotIn("token", rendered)
         self.assertNotIn("secret://", rendered)
+        secret_descriptor = json.dumps(runtime_contract["secret_deliveries"])
+        self.assertNotIn('"value"', secret_descriptor)
+        self.assertNotIn("postgresql://", secret_descriptor)
 
     def test_endpoint_contracts_are_direct_child_http_and_mcp_surfaces(self) -> None:
         product = self.decode().product
