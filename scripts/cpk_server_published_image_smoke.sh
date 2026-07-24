@@ -1,7 +1,17 @@
 #!/bin/sh
 set -eu
 
-CPK_SERVER_IMAGE="${CPK_SERVER_IMAGE:-ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:12e9eb53d1b61d662d10f007dccec91e9858e5a6bc015b96a703add341421899}"
+default_image() {
+  python3 - <<'PY'
+import json
+from pathlib import Path
+
+image = json.loads(Path("products/cpk_server/product.cpk.json").read_text())["product"]["image"]
+print(f"{image['registry']}/{image['repository']}@{image['digest']}")
+PY
+}
+
+CPK_SERVER_IMAGE="${CPK_SERVER_IMAGE:-$(default_image)}"
 export CPK_SERVER_IMAGE
 export CPK_SERVER_BUILD_IMAGE=0
 

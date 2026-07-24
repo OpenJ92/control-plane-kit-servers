@@ -376,7 +376,8 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn("ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:", smoke)
+        self.assertIn("products/cpk_server/product.cpk.json", smoke)
+        self.assertIn("@{image['digest']}", smoke)
         self.assertIn("docker pull", smoke)
         self.assertIn("CPK_SERVER_BUILD_IMAGE=0", smoke)
         self.assertIn("scripts/cpk_server_image_smoke.sh", smoke)
@@ -389,7 +390,8 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn("ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:", smoke)
+        self.assertIn("products/cpk_server/product.cpk.json", smoke)
+        self.assertIn("@{image['digest']}", smoke)
         self.assertIn("docker pull", smoke)
         self.assertIn("CPK_RUNTIME_INTERPRETERS=docker", smoke)
         self.assertIn('IMAGE_PULL_RESOLVER="docker-config"', smoke)
@@ -439,6 +441,54 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertNotIn("CpkServerOperationsApplication", controller)
         self.assertNotIn("PostgresUnitOfWork", controller)
         self.assertNotIn("DockerRuntimeInterpreter", controller)
+
+    def test_recursive_activity_smoke_uses_published_parent_and_secret_authority(
+        self,
+    ) -> None:
+        smoke = (ROOT / "scripts" / "cpk_server_recursive_activity_smoke.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("products/cpk_server/product.cpk.json", smoke)
+        self.assertIn("@{image['digest']}", smoke)
+        self.assertIn("docker pull", smoke)
+        self.assertIn("CPK_RUNTIME_INTERPRETERS=docker", smoke)
+        self.assertIn("CPK_PRODUCT_SECRET_RESOLVER=local-development", smoke)
+        self.assertIn("CPK_PRODUCT_SECRET_VALUES_JSON", smoke)
+        self.assertIn("secret://control-plane-kit/postgres/password", smoke)
+        self.assertIn("CPK_RECURSIVE_REGISTER_PULL_AUTHORITY", smoke)
+        self.assertIn("python scripts/cpk_server_recursive_activity.py", smoke)
+        self.assertIn("org.openj92.cpk.workspace=recursive-cpk-server", smoke)
+        self.assertIn("docker rm -f", smoke)
+        self.assertIn("docker network rm", smoke)
+        self.assertNotIn("docker system prune", smoke)
+        self.assertNotIn("docker volume prune", smoke)
+
+    def test_recursive_activity_controller_uses_parent_routes_and_opaque_child(
+        self,
+    ) -> None:
+        controller = (ROOT / "scripts" / "cpk_server_recursive_activity.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('WORKSPACE_ID = "recursive-cpk-server"', controller)
+        self.assertIn("_product_document(servers_repo, \"cpk_server\")", controller)
+        self.assertIn("_product_document(servers_repo, \"postgres_server\")", controller)
+        self.assertIn("command.deployment.plan", controller)
+        self.assertIn("command.approval.decide", controller)
+        self.assertIn("command.deployment.execute", controller)
+        self.assertIn("read.pending-approvals", controller)
+        self.assertIn("read.approval-detail", controller)
+        self.assertIn("child-cpk", controller)
+        self.assertIn("/health/live", controller)
+        self.assertIn("/health/ready", controller)
+        self.assertIn('ready.get("runtime_interpreters") != "none"', controller)
+        self.assertEqual(controller.count('SocketConnection('), 4)
+        self.assertNotIn("CpkServerOperationsApplication", controller)
+        self.assertNotIn("PostgresUnitOfWork", controller)
+        self.assertNotIn("DockerRuntimeInterpreter", controller)
+        self.assertNotIn("/workspaces/child", controller)
+        self.assertNotIn("/activity-history", controller)
 
 
 if __name__ == "__main__":

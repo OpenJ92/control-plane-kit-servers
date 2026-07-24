@@ -13,18 +13,18 @@ PY
 
 IMAGE="${CPK_SERVER_IMAGE:-$(default_image)}"
 CONTROLLER_IMAGE="${CPK_SERVERS_TEST_IMAGE:-control-plane-kit-servers-test:local}"
-BUILD_CONTROLLER="${CPK_HOSTED_ACTIVITY_BUILD_CONTROLLER:-1}"
-NETWORK="cpk-server-hosted-activity-$$"
+BUILD_CONTROLLER="${CPK_RECURSIVE_BUILD_CONTROLLER:-1}"
+NETWORK="cpk-server-recursive-$$"
 LABEL="org.openj92.project=control-plane-kit-servers"
-WORKSPACE_LABEL="org.openj92.cpk.workspace=cpk-hosted-activity-basic"
+WORKSPACE_LABEL="org.openj92.cpk.workspace=recursive-cpk-server"
 POSTGRES_CONTAINER=""
-SERVER_CONTAINER=""
+PARENT_CONTAINER=""
 DOCKER_SOCKET_GROUP="${CPK_DOCKER_SOCKET_GROUP:-0}"
 AUTH_CONFIG_SOURCE="${CPK_DOCKER_AUTH_CONFIG:-$HOME/.docker/config.json}"
 AUTH_CONFIG_DIR=""
 IMAGE_PULL_RESOLVER="none"
 
-cleanup_activity_resources() {
+cleanup_recursive_resources() {
   docker ps -aq --filter "label=$WORKSPACE_LABEL" \
     | while IFS= read -r container; do
         if [ -n "$container" ]; then
@@ -46,14 +46,14 @@ cleanup_activity_resources() {
 }
 
 cleanup() {
-  if [ -n "$SERVER_CONTAINER" ]; then
-    docker rm -f "$SERVER_CONTAINER" >/dev/null 2>&1 || true
+  if [ -n "$PARENT_CONTAINER" ]; then
+    docker rm -f "$PARENT_CONTAINER" >/dev/null 2>&1 || true
   fi
   if [ -n "$POSTGRES_CONTAINER" ]; then
     docker rm -f "$POSTGRES_CONTAINER" >/dev/null 2>&1 || true
   fi
   docker network rm "$NETWORK" >/dev/null 2>&1 || true
-  cleanup_activity_resources
+  cleanup_recursive_resources
   if [ -n "$AUTH_CONFIG_DIR" ]; then
     rm -rf "$AUTH_CONFIG_DIR"
   fi
@@ -86,7 +86,7 @@ for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
 done
 
 if [ "$POSTGRES_READY" != "1" ]; then
-  echo "postgres did not become query-ready" >&2
+  echo "parent postgres did not become query-ready" >&2
   exit 1
 fi
 
@@ -106,7 +106,7 @@ elif [ -r "$AUTH_CONFIG_SOURCE" ]; then
 fi
 
 if [ -n "$AUTH_CONFIG_DIR" ]; then
-  SERVER_CONTAINER="$(docker run -d \
+  PARENT_CONTAINER="$(docker run -d \
     --label "$LABEL" \
     --network "$NETWORK" \
     --network-alias cpk-server \
@@ -127,7 +127,7 @@ if [ -n "$AUTH_CONFIG_DIR" ]; then
     -e CPK_GRAPH_TOPOLOGY_DATABASE_URL=postgresql://cpk:cpk@cpk-postgres:5432/cpk \
     "$IMAGE")"
 else
-  SERVER_CONTAINER="$(docker run -d \
+  PARENT_CONTAINER="$(docker run -d \
     --label "$LABEL" \
     --network "$NETWORK" \
     --network-alias cpk-server \
@@ -150,20 +150,20 @@ if ! docker run --rm \
   --label "$LABEL" \
   --network "$NETWORK" \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  -e CPK_HOSTED_ACTIVITY_BASE_URL=http://cpk-server:8080 \
-  -e CPK_HOSTED_ACTIVITY_SERVER_CONTAINER="$SERVER_CONTAINER" \
-  -e CPK_HOSTED_ACTIVITY_SERVERS_REPO=/app \
-  -e CPK_HOSTED_ACTIVITY_REGISTER_PULL_AUTHORITY="$IMAGE_PULL_RESOLVER" \
+  -e CPK_RECURSIVE_BASE_URL=http://cpk-server:8080 \
+  -e CPK_RECURSIVE_PARENT_CONTAINER="$PARENT_CONTAINER" \
+  -e CPK_RECURSIVE_SERVERS_REPO=/app \
+  -e CPK_RECURSIVE_REGISTER_PULL_AUTHORITY="$IMAGE_PULL_RESOLVER" \
   "$CONTROLLER_IMAGE" \
-  python scripts/cpk_server_hosted_activity.py; then
-  docker logs "$SERVER_CONTAINER" 2>&1 | tail -n 100 >&2 || true
+  python scripts/cpk_server_recursive_activity.py; then
+  docker logs "$PARENT_CONTAINER" 2>&1 | tail -n 100 >&2 || true
   exit 1
 fi
 
 cleanup
 POSTGRES_CONTAINER=""
-SERVER_CONTAINER=""
+PARENT_CONTAINER=""
 
 sh scripts/docker_residue_audit.sh
 
-echo "cpk-server hosted activity smoke passed"
+echo "recursive cpk-server activity smoke passed"
