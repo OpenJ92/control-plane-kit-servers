@@ -31,7 +31,12 @@ esac
 
 IMAGE="ghcr.io/$OWNER/$PACKAGE/$IMAGE_NAME:$TAG"
 
+PYTHONPATH=src python3 scripts/apply_coordinates.py --check
+
 docker build -f "$DOCKERFILE" -t "$IMAGE" .
 docker push "$IMAGE"
 
 docker image inspect "$IMAGE" --format "{{index .RepoDigests 0}}"
+echo "Update coordinates/server-products.json with the published digest, then run:" >&2
+echo "  PYTHONPATH=src python3 scripts/apply_coordinates.py" >&2
+echo "  PYTHONPATH=src python3 scripts/apply_coordinates.py --check" >&2

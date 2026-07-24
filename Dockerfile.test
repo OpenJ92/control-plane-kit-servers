@@ -8,6 +8,7 @@ WORKDIR /app
 COPY pyproject.toml README.md AGENTS.md GIT-FLOW.md test.sh Dockerfile.test ./
 COPY .github ./.github
 COPY coordination ./coordination
+COPY coordinates ./coordinates
 COPY catalogue ./catalogue
 COPY products ./products
 COPY docs ./docs
