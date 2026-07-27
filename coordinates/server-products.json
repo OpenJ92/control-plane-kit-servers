@@ -9,24 +9,24 @@
       "product_id": "cpk-server",
       "owner_directory": "products/cpk_server",
       "descriptor_path": "products/cpk_server/product.cpk.json",
-      "source_commit": "be48efa2f7b022ddec8f6b4fb614ec8ad47f8d39",
+      "source_commit": "773595201a6d349ff92a10c58d38df95a25e25af",
       "image": {
         "registry": "ghcr.io",
         "repository": "openj92/control-plane-kit-servers/cpk-server",
-        "tag": "seeded-stress-1007-gateway-postgres-v2",
-        "digest": "sha256:45d20f0f45897ea33fd9709f0132422b7a83219edf9818bd8b8bc45ba32755e9"
+        "tag": "seeded-stress-1007-gateway-postgres-v3",
+        "digest": "sha256:534b674d9f5df7efca23e41628abb7b45f99bb1192cca271029423462fc54584"
       }
     },
     {
       "product_id": "cpk-server-docker",
       "owner_directory": "products/cpk_server",
       "descriptor_path": "products/cpk_server/product.docker.cpk.json",
-      "source_commit": "be48efa2f7b022ddec8f6b4fb614ec8ad47f8d39",
+      "source_commit": "773595201a6d349ff92a10c58d38df95a25e25af",
       "image": {
         "registry": "ghcr.io",
         "repository": "openj92/control-plane-kit-servers/cpk-server",
-        "tag": "seeded-stress-1007-gateway-postgres-v2",
-        "digest": "sha256:45d20f0f45897ea33fd9709f0132422b7a83219edf9818bd8b8bc45ba32755e9"
+        "tag": "seeded-stress-1007-gateway-postgres-v3",
+        "digest": "sha256:534b674d9f5df7efca23e41628abb7b45f99bb1192cca271029423462fc54584"
       }
     },
     {
