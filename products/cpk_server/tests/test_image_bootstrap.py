@@ -786,6 +786,14 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn('"postgres_server"', controller)
         self.assertIn('"postgres"', controller)
         self.assertIn("DeploymentGraph(workflow.workspace_id)", controller)
+        self.assertIn(
+            "spec=replace(gateway.spec, verification=VerificationContract())",
+            controller,
+        )
+        self.assertIn(
+            "spec=replace(postgres.spec, verification=VerificationContract())",
+            controller,
+        )
         self.assertIn("VerificationContract()", controller)
         self.assertIn("_assert_gateway_postgres_query_ready", controller)
         self.assertIn("_retained_data_volumes", controller)

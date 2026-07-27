@@ -1,32 +1,32 @@
 {
   "schema": "cpk-servers.coordinates",
   "upstreams": {
-    "control_plane_kit_commit": "2742a3973e03a2e074902c058923dcc339d7e43a",
-    "control_plane_kit_interpreters_commit": "2864d341d367175ef3b30e48fd0fefd2f869129f"
+    "control_plane_kit_commit": "f9fb7cc041ac1c3daf562d941676f67ad28722ee",
+    "control_plane_kit_interpreters_commit": "b1bff88e08189e67949dcf481c50cb9a68630e2a"
   },
   "products": [
     {
       "product_id": "cpk-server",
       "owner_directory": "products/cpk_server",
       "descriptor_path": "products/cpk_server/product.cpk.json",
-      "source_commit": "b34821757175fb5f243722600c1ad249233d091e",
+      "source_commit": "be48efa2f7b022ddec8f6b4fb614ec8ad47f8d39",
       "image": {
         "registry": "ghcr.io",
         "repository": "openj92/control-plane-kit-servers/cpk-server",
-        "tag": "seeded-stress-1007-gateway-postgres",
-        "digest": "sha256:9dffc2b6f892a480db04d88cdc0570b4aab5ab512b35fd9c5af6bc93a445fb83"
+        "tag": "seeded-stress-1007-gateway-postgres-v2",
+        "digest": "sha256:45d20f0f45897ea33fd9709f0132422b7a83219edf9818bd8b8bc45ba32755e9"
       }
     },
     {
       "product_id": "cpk-server-docker",
       "owner_directory": "products/cpk_server",
       "descriptor_path": "products/cpk_server/product.docker.cpk.json",
-      "source_commit": "b34821757175fb5f243722600c1ad249233d091e",
+      "source_commit": "be48efa2f7b022ddec8f6b4fb614ec8ad47f8d39",
       "image": {
         "registry": "ghcr.io",
         "repository": "openj92/control-plane-kit-servers/cpk-server",
-        "tag": "seeded-stress-1007-gateway-postgres",
-        "digest": "sha256:9dffc2b6f892a480db04d88cdc0570b4aab5ab512b35fd9c5af6bc93a445fb83"
+        "tag": "seeded-stress-1007-gateway-postgres-v2",
+        "digest": "sha256:45d20f0f45897ea33fd9709f0132422b7a83219edf9818bd8b8bc45ba32755e9"
       }
     },
     {

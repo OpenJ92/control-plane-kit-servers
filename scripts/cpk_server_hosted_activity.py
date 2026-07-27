@@ -931,6 +931,10 @@ def _postgres_graph(
         "gateway",
         ProductInstanceConfiguration.from_contract(gateway_product.runtime_contract),
     )
+    gateway = replace(
+        gateway,
+        spec=replace(gateway.spec, verification=VerificationContract()),
+    )
     postgres = instantiate_product(
         postgres_product,
         "postgres",

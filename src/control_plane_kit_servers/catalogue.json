@@ -12,22 +12,22 @@
     },
     {
       "descriptor_path": "products/cpk_server/product.cpk.json",
-      "descriptor_sha256": "9a21bbecb86290c41aa8accc3556f62e874e457b68ad0c2e97536d4272541020",
-      "image_digest": "sha256:9dffc2b6f892a480db04d88cdc0570b4aab5ab512b35fd9c5af6bc93a445fb83",
-      "image_ref": "ghcr.io/openj92/control-plane-kit-servers/cpk-server:seeded-stress-1007-gateway-postgres",
+      "descriptor_sha256": "24ccb129ea4a9b79261075a87b40381db3a3d74410d3458a82ba80f14e459526",
+      "image_digest": "sha256:45d20f0f45897ea33fd9709f0132422b7a83219edf9818bd8b8bc45ba32755e9",
+      "image_ref": "ghcr.io/openj92/control-plane-kit-servers/cpk-server:seeded-stress-1007-gateway-postgres-v2",
       "owner_directory": "products/cpk_server",
       "product_id": "cpk-server",
-      "source_commit": "b34821757175fb5f243722600c1ad249233d091e",
+      "source_commit": "be48efa2f7b022ddec8f6b4fb614ec8ad47f8d39",
       "status": "completed"
     },
     {
       "descriptor_path": "products/cpk_server/product.docker.cpk.json",
-      "descriptor_sha256": "b24c38bb9f963e511b406ccea0eb95e03e851fc5325af3b397a79fdfded9094f",
-      "image_digest": "sha256:9dffc2b6f892a480db04d88cdc0570b4aab5ab512b35fd9c5af6bc93a445fb83",
-      "image_ref": "ghcr.io/openj92/control-plane-kit-servers/cpk-server:seeded-stress-1007-gateway-postgres",
+      "descriptor_sha256": "1dfada2a59e1757c0f1a51492ba26702b63ee7b2da17ef2d8a0fdc365e6d00a6",
+      "image_digest": "sha256:45d20f0f45897ea33fd9709f0132422b7a83219edf9818bd8b8bc45ba32755e9",
+      "image_ref": "ghcr.io/openj92/control-plane-kit-servers/cpk-server:seeded-stress-1007-gateway-postgres-v2",
       "owner_directory": "products/cpk_server",
       "product_id": "cpk-server-docker",
-      "source_commit": "b34821757175fb5f243722600c1ad249233d091e",
+      "source_commit": "be48efa2f7b022ddec8f6b4fb614ec8ad47f8d39",
       "status": "completed"
     },
     {

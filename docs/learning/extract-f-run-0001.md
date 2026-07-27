@@ -756,11 +756,12 @@ workspace-c-postgres
     check:    postgres-query select-one
 ```
 
-The scenario deploys the pinned official Postgres OCI descriptor but clears the
-workspace-C Postgres node's direct verification contract. That preserves the
-published descriptor while making this stress case about local-island reachability:
-the parent `cpk-server` is intentionally not attached to the workload network, so
-semantic readiness is verified through `cpk-local-gateway` using the closed
+The scenario deploys the pinned official Postgres OCI descriptor and the
+`cpk-local-gateway` descriptor, but clears the workspace-C Postgres and gateway
+nodes' direct verification contracts. That preserves the published descriptors
+while making this stress case about local-island reachability: the parent
+`cpk-server` is intentionally not attached to the workload network, so semantic
+readiness is verified through `cpk-local-gateway` using the closed
 `postgres-select-one` probe after both nodes exist. The controller may enter the
 gateway container to call the gateway control endpoint, but it does not run `psql`
 against the Postgres container directly and does not attach parent `cpk-server` to
