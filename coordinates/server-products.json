@@ -1,32 +1,32 @@
 {
   "schema": "cpk-servers.coordinates",
   "upstreams": {
-    "control_plane_kit_commit": "af9765c105f108e6f903433ee89ccdabead3137b",
-    "control_plane_kit_interpreters_commit": "a385bf432904ca23f5e920721329514b01f236e9"
+    "control_plane_kit_commit": "2742a3973e03a2e074902c058923dcc339d7e43a",
+    "control_plane_kit_interpreters_commit": "2864d341d367175ef3b30e48fd0fefd2f869129f"
   },
   "products": [
     {
       "product_id": "cpk-server",
       "owner_directory": "products/cpk_server",
       "descriptor_path": "products/cpk_server/product.cpk.json",
-      "source_commit": "e87a939739ef81ab002c594a349344f693cb13f4",
+      "source_commit": "b34821757175fb5f243722600c1ad249233d091e",
       "image": {
         "registry": "ghcr.io",
         "repository": "openj92/control-plane-kit-servers/cpk-server",
-        "tag": "runtime-auth-992-local-chain-gid",
-        "digest": "sha256:9eacda293d09953289a50adb9476a290b73a2406698ce352bb97904f27c1415b"
+        "tag": "seeded-stress-1007-gateway-postgres",
+        "digest": "sha256:9dffc2b6f892a480db04d88cdc0570b4aab5ab512b35fd9c5af6bc93a445fb83"
       }
     },
     {
       "product_id": "cpk-server-docker",
       "owner_directory": "products/cpk_server",
       "descriptor_path": "products/cpk_server/product.docker.cpk.json",
-      "source_commit": "e87a939739ef81ab002c594a349344f693cb13f4",
+      "source_commit": "b34821757175fb5f243722600c1ad249233d091e",
       "image": {
         "registry": "ghcr.io",
         "repository": "openj92/control-plane-kit-servers/cpk-server",
-        "tag": "runtime-auth-992-local-chain-gid",
-        "digest": "sha256:9eacda293d09953289a50adb9476a290b73a2406698ce352bb97904f27c1415b"
+        "tag": "seeded-stress-1007-gateway-postgres",
+        "digest": "sha256:9dffc2b6f892a480db04d88cdc0570b4aab5ab512b35fd9c5af6bc93a445fb83"
       }
     },
     {

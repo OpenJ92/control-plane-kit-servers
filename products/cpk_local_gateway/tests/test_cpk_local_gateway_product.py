@@ -16,7 +16,7 @@ from control_plane_kit_core.products import (
     instantiate_product,
 )
 from control_plane_kit_core.secrets import SecretEnvironmentDelivery, SecretReference
-from control_plane_kit_core.types import Protocol
+from control_plane_kit_core.types import Protocol, SocketBinding
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -79,7 +79,11 @@ class CpkLocalGatewayProductTests(unittest.TestCase):
         self.assertEqual(sockets.requirement("target-http").protocol, Protocol.HTTP)
         self.assertEqual(
             sockets.requirement("target-http").env_bindings,
-            ("CPK_GATEWAY_TARGETS_JSON",),
+            (),
+        )
+        self.assertIs(
+            sockets.requirement("target-http").binding,
+            SocketBinding.RUNTIME_CONTROL,
         )
         self.assertEqual(
             sockets.requirement("target-postgres").protocol,
@@ -87,7 +91,11 @@ class CpkLocalGatewayProductTests(unittest.TestCase):
         )
         self.assertEqual(
             sockets.requirement("target-postgres").env_bindings,
-            ("CPK_GATEWAY_TARGETS_JSON",),
+            (),
+        )
+        self.assertIs(
+            sockets.requirement("target-postgres").binding,
+            SocketBinding.RUNTIME_CONTROL,
         )
         self.assertEqual(
             product.runtime_contract.public_environment,

@@ -756,13 +756,16 @@ workspace-c-postgres
     check:    postgres-query select-one
 ```
 
-The scenario deploys the pinned official Postgres OCI descriptor, waits for the
-normal runtime activity execution to complete, and then verifies query readiness
-through `cpk-local-gateway` using the closed `postgres-select-one` probe. The
-controller may enter the gateway container to call the gateway control endpoint,
-but it does not run `psql` against the Postgres container directly and does not
-attach parent `cpk-server` to the workload network for semantic readiness. The
-scenario then transitions the desired graph to an empty graph and requires:
+The scenario deploys the pinned official Postgres OCI descriptor but clears the
+workspace-C Postgres node's direct verification contract. That preserves the
+published descriptor while making this stress case about local-island reachability:
+the parent `cpk-server` is intentionally not attached to the workload network, so
+semantic readiness is verified through `cpk-local-gateway` using the closed
+`postgres-select-one` probe after both nodes exist. The controller may enter the
+gateway container to call the gateway control endpoint, but it does not run `psql`
+against the Postgres container directly and does not attach parent `cpk-server` to
+the workload network for semantic readiness. The scenario then transitions the
+desired graph to an empty graph and requires:
 
 - the Postgres compute container is removed;
 - the runtime network is removed;
@@ -776,6 +779,8 @@ Important implementation decisions:
   referenced by `secret://control-plane-kit/postgres/password`;
 - the gateway receives graph-derived target material from the
   `postgres.postgres -> gateway.target-postgres` edge;
+- gateway target sockets use `runtime-control` binding so they declare graph
+  reachability without generating duplicate environment URL bindings;
 - the smoke value is unique (`cpk-postgres-smoke-password`) so leakage is
   detectable;
 - the controller does not inject `POSTGRES_PASSWORD` into graph or shell

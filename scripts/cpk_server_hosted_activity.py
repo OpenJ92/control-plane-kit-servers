@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import socket
 import time
@@ -22,6 +22,7 @@ from control_plane_kit_core.products import (
 from control_plane_kit_core.runtime_authority import RuntimeAuthorityReference
 from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC, DeploymentGraph, compile_topology
 from control_plane_kit_core.policies import PolicyScope
+from control_plane_kit_core.verification import VerificationContract
 
 
 DEFAULT_WORKSPACE_ID = "cpk-hosted-activity-basic"
@@ -934,6 +935,10 @@ def _postgres_graph(
         postgres_product,
         "postgres",
         ProductInstanceConfiguration.from_contract(postgres_product.runtime_contract),
+    )
+    postgres = replace(
+        postgres,
+        spec=replace(postgres.spec, verification=VerificationContract()),
     )
     return compile_topology(
         DeploymentTopology(
