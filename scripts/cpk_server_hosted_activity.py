@@ -14,6 +14,15 @@ from typing import Any
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives import serialization
+import jwt
+
+from control_plane_kit_core.gateway_delegation import (
+    DelegatedGatewayProbeGrant,
+    GatewayProbeCommandKind,
+    GatewayProbeRequest,
+)
 from control_plane_kit_core.algebra import DeploymentTopology, DockerRuntime, SocketConnection
 from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
 from control_plane_kit_core.public_ingress import (
@@ -22,10 +31,12 @@ from control_plane_kit_core.public_ingress import (
     PublicIngressTarget,
 )
 from control_plane_kit_core.products import (
+    OciImageReference,
     ProductDescriptorCodec,
     ProductInstanceConfiguration,
     instantiate_product,
 )
+from control_plane_kit_core.runtime_effects import GatewayTargetId
 from control_plane_kit_core.runtime_authority import RuntimeAuthorityReference
 from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC, DeploymentGraph, compile_topology
 from control_plane_kit_core.policies import PolicyScope
@@ -47,6 +58,8 @@ OPENJ92_INGRESS_AUTHORITY_REF = "openj92-cloudflare"
 PUBLIC_GATEWAY_HOSTNAME = "cpk-gateway-001.openj92.dev"
 PUBLIC_GATEWAY_READY_ATTEMPTS = 60
 PUBLIC_GATEWAY_READY_RETRY_SECONDS = 2
+GATEWAY_PROBE_ISSUER = "urn:control-plane-kit:source-live"
+GATEWAY_PROBE_KEY_ID = "source-live-gateway-key"
 
 
 @dataclass(frozen=True)
@@ -392,6 +405,71 @@ class HostedWorkflow:
             {"workspace_id": self.workspace_id, "limit": limit},
         )
 
+    def request_gateway_probe_http(
+        self,
+        *,
+        request_id: str,
+        expected_current_graph_id: str,
+        gateway_node_id: str,
+        kind: str,
+        target_id: str,
+        path: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, object] = {
+            "request_id": request_id,
+            "expected_current_graph_id": expected_current_graph_id,
+            "kind": kind,
+            "target_id": target_id,
+            "actor_id": "operator-a",
+            "actor_scopes": [PolicyScope.GATEWAY_PROBE_USE.value],
+        }
+        if path is not None:
+            payload["path"] = path
+        return _http(
+            self.base_url,
+            "POST",
+            f"/workspaces/{self.workspace_id}/gateways/{gateway_node_id}/probes",
+            payload,
+        )
+
+    def request_gateway_probe_mcp(
+        self,
+        *,
+        request_id: str,
+        expected_current_graph_id: str,
+        gateway_node_id: str,
+        kind: str,
+        target_id: str,
+        path: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, object] = {
+            "workspace_id": self.workspace_id,
+            "request_id": request_id,
+            "expected_current_graph_id": expected_current_graph_id,
+            "gateway_node_id": gateway_node_id,
+            "kind": kind,
+            "target_id": target_id,
+            "actor_id": "operator-a",
+            "actor_scopes": [PolicyScope.GATEWAY_PROBE_USE.value],
+        }
+        if path is not None:
+            payload["path"] = path
+        return _mcp_tool(
+            self.base_url,
+            "command.gateway-probe.request",
+            payload,
+        )
+
+    def read_gateway_probe_detail(self, probe_id: str) -> dict[str, Any]:
+        return _mcp_read(
+            self.base_url,
+            "read.gateway-probe-detail",
+            {
+                "workspace_id": self.workspace_id,
+                "probe_id": probe_id,
+            },
+        )
+
     def run_approved_transition(
         self,
         *,
@@ -509,6 +587,8 @@ def main() -> int:
         _run_public_gateway_ingress(workflow, servers_repo)
     elif scenario == "public-gateway-toggle":
         _run_public_gateway_toggle(workflow, servers_repo)
+    elif scenario == "authenticated-gateway-private":
+        _run_authenticated_gateway_private(workflow, servers_repo)
     else:
         raise RuntimeError(f"unknown hosted activity scenario: {scenario}")
 
@@ -994,6 +1074,92 @@ def _run_public_gateway_toggle(workflow: HostedWorkflow, servers_repo: Path) -> 
     _assert_no_runtime_networks(workflow.workspace_id)
 
 
+def _run_authenticated_gateway_private(
+    workflow: HostedWorkflow,
+    servers_repo: Path,
+) -> None:
+    gateway_document = _product_document(servers_repo, "cpk_local_gateway")
+    hello_document = _product_document(servers_repo, "hello_server")
+    postgres_document = _product_document(servers_repo, "postgres_server")
+
+    graph = _authenticated_gateway_private_graph(
+        gateway_document,
+        hello_document,
+        postgres_document,
+        workspace_id=workflow.workspace_id,
+        authority_ref=RuntimeAuthorityReference(LOCAL_DOCKER_AUTHORITY_REF),
+    )
+    current_graph_id = _bootstrap_workspace(
+        workflow,
+        name="Hosted authenticated gateway private",
+        product_documents={
+            "gateway": gateway_document,
+            "hello": hello_document,
+            "postgres": postgres_document,
+        },
+        register_runtime_authority=True,
+        register_runtime_delivery=True,
+    )
+    deployed = workflow.run_approved_transition(
+        title="Hosted authenticated gateway private deploy",
+        graph=graph,
+        current_graph_id=current_graph_id,
+        sync_runtime_networks=True,
+    )
+    _assert_activity_mentions(workflow, deployed.run_id, "gateway")
+    _assert_activity_mentions(workflow, deployed.run_id, "hello")
+    _assert_activity_mentions(workflow, deployed.run_id, "postgres")
+    _sync_runtime_networks(workflow.server_container, workspace_id=workflow.workspace_id)
+
+    http_probe = workflow.request_gateway_probe_http(
+        request_id=f"{workflow.workspace_id}:gateway-probe:http",
+        expected_current_graph_id=deployed.current_graph_id,
+        gateway_node_id="gateway",
+        kind="http-status",
+        target_id="hello.internal",
+        path="/",
+    )
+    _assert_gateway_probe_succeeded(http_probe, target_id="hello.internal")
+    postgres_probe = workflow.request_gateway_probe_mcp(
+        request_id=f"{workflow.workspace_id}:gateway-probe:postgres",
+        expected_current_graph_id=deployed.current_graph_id,
+        gateway_node_id="gateway",
+        kind="postgres-select-one",
+        target_id="postgres.postgres",
+    )
+    _assert_gateway_probe_succeeded(postgres_probe, target_id="postgres.postgres")
+    _assert_gateway_probe_detail_matches(
+        workflow,
+        http_probe,
+        expected_target_id="hello.internal",
+    )
+    _assert_gateway_probe_detail_matches(
+        workflow,
+        postgres_probe,
+        expected_target_id="postgres.postgres",
+    )
+    _assert_gateway_rejects_unauthenticated_without_target_io()
+    _assert_gateway_rejects_replay_while_alive(workflow.workspace_id)
+    _assert_secret_absent_from_activity(
+        workflow,
+        _required_env("CPK_GATEWAY_PROBE_PRIVATE_KEY_PEM"),
+    )
+
+    _disconnect_runtime_networks(
+        workflow.server_container,
+        workspace_id=workflow.workspace_id,
+    )
+    removed = workflow.run_approved_transition(
+        title="Hosted authenticated gateway private teardown",
+        graph=DeploymentGraph(workflow.workspace_id),
+        current_graph_id=deployed.current_graph_id,
+        expected_desired_graph_id=deployed.desired_graph_id,
+        sync_runtime_networks=False,
+    )
+    _assert_activity_mentions(workflow, removed.run_id, "gateway")
+    _assert_no_runtime_networks(workflow.workspace_id)
+
+
 def _workflow_for(
     base_url: str,
     *,
@@ -1054,6 +1220,110 @@ def _events_for_run(timeline: dict[str, Any], run_id: str) -> list[dict[str, Any
                     if isinstance(events, list):
                         return events
     raise RuntimeError(f"activity timeline did not expose run {run_id}")
+
+
+def _assert_gateway_probe_succeeded(
+    response: dict[str, Any],
+    *,
+    target_id: str,
+) -> None:
+    probe = response.get("gateway_probe")
+    if not isinstance(probe, dict):
+        raise RuntimeError(f"gateway probe response did not include attempt: {response}")
+    if (
+        probe.get("status") != "succeeded"
+        or probe.get("target_id") != target_id
+        or probe.get("result_code") != "probe-succeeded"
+    ):
+        raise RuntimeError(f"gateway probe did not succeed: {response}")
+    encoded = json.dumps(response, sort_keys=True).lower()
+    if any(forbidden in encoded for forbidden in ("private key", "secret://", "password")):
+        raise RuntimeError("gateway probe response leaked secret-shaped material")
+
+
+def _assert_gateway_probe_detail_matches(
+    workflow: HostedWorkflow,
+    response: dict[str, Any],
+    *,
+    expected_target_id: str,
+) -> None:
+    attempt = response.get("gateway_probe")
+    if not isinstance(attempt, dict):
+        raise RuntimeError(f"gateway probe response did not include attempt: {response}")
+    detail = workflow.read_gateway_probe_detail(str(attempt["probe_id"]))
+    probe = detail.get("gateway_probe")
+    if not isinstance(probe, dict) or probe.get("target_id") != expected_target_id:
+        raise RuntimeError(f"gateway probe detail mismatch: {detail}")
+    if probe.get("request_digest") != attempt.get("request_digest"):
+        raise RuntimeError(f"gateway probe detail lost request digest: {detail}")
+
+
+def _assert_gateway_rejects_unauthenticated_without_target_io() -> None:
+    before = _hello_observation_count()
+    body = _gateway_probe_body(
+        GatewayProbeRequest(
+            GatewayProbeCommandKind.HTTP_STATUS,
+            GatewayTargetId("hello.internal"),
+            "/",
+        )
+    )
+    missing = _direct_gateway_probe(body)
+    forged = _direct_gateway_probe(
+        body,
+        authorization=(
+            "CPK-Gateway "
+            + _signed_gateway_capability(
+                Ed25519PrivateKey.generate(),
+                _direct_gateway_grant(
+                    GatewayProbeRequest(
+                        GatewayProbeCommandKind.HTTP_STATUS,
+                        GatewayTargetId("hello.internal"),
+                        "/",
+                    ),
+                    jti="forged-jti",
+                ),
+            )
+        ),
+    )
+    after = _hello_observation_count()
+    if missing.status != 401 or forged.status != 401:
+        raise RuntimeError(
+            f"unauthenticated/forged gateway calls were not rejected: "
+            f"missing={missing.status} forged={forged.status}"
+        )
+    if after != before:
+        raise RuntimeError("rejected gateway call reached private target")
+
+
+def _assert_gateway_rejects_replay_while_alive(workspace_id: str) -> None:
+    private_key = serialization.load_pem_private_key(
+        _required_env("CPK_GATEWAY_PROBE_PRIVATE_KEY_PEM").encode("ascii"),
+        password=None,
+    )
+    if not isinstance(private_key, Ed25519PrivateKey):
+        raise RuntimeError("gateway test private key is not Ed25519")
+    request = GatewayProbeRequest(
+        GatewayProbeCommandKind.HTTP_STATUS,
+        GatewayTargetId("hello.internal"),
+        "/",
+    )
+    token = _signed_gateway_capability(
+        private_key,
+        _direct_gateway_grant(request, jti=f"direct-replay-{int(time.time())}"),
+    )
+    first = _direct_gateway_probe(
+        _gateway_probe_body(request),
+        authorization=f"CPK-Gateway {token}",
+    )
+    second = _direct_gateway_probe(
+        _gateway_probe_body(request),
+        authorization=f"CPK-Gateway {token}",
+    )
+    if first.status != 200 or second.status != 409:
+        raise RuntimeError(
+            f"gateway replay was not rejected while alive: "
+            f"first={first.status} second={second.status}"
+        )
 
 
 def _execute_to_completion(
@@ -1228,6 +1498,7 @@ def _router_graph(
         gateway, cloudflared, ingress = _public_gateway_overlay(
             gateway_document,
             cloudflared_document,
+            workspace_id=workspace_id,
             target_node_id="gateway",
             target_provider_socket="control",
             connector_node_id="cloudflared-gateway",
@@ -1305,6 +1576,7 @@ def _multiplexer_graph(
         gateway, cloudflared, ingress = _public_gateway_overlay(
             gateway_document,
             cloudflared_document,
+            workspace_id=workspace_id,
             target_node_id="gateway",
             target_provider_socket="control",
             connector_node_id="cloudflared-gateway",
@@ -1341,10 +1613,10 @@ def _postgres_graph(
 ) -> DeploymentGraph:
     gateway_product = gateway_document.product
     postgres_product = postgres_document.product
-    gateway = instantiate_product(
+    gateway = _configured_gateway_instance(
         gateway_product,
         "gateway",
-        ProductInstanceConfiguration.from_contract(gateway_product.runtime_contract),
+        workspace_id=workspace_id,
     )
     gateway = replace(
         gateway,
@@ -1424,6 +1696,7 @@ def _public_gateway_ingress_graph(
     gateway, cloudflared, ingress = _public_gateway_overlay(
         gateway_document,
         cloudflared_document,
+        workspace_id=workspace_id,
         target_node_id="gateway",
         target_provider_socket="control",
         connector_node_id="cloudflared-gateway",
@@ -1452,6 +1725,7 @@ def _public_gateway_overlay(
     gateway_document: Any,
     cloudflared_document: Any,
     *,
+    workspace_id: str,
     target_node_id: str,
     target_provider_socket: str,
     connector_node_id: str,
@@ -1459,10 +1733,10 @@ def _public_gateway_overlay(
 ) -> tuple[object, object, NamedPublicIngress]:
     gateway_product = gateway_document.product
     cloudflared_product = cloudflared_document.product
-    gateway = instantiate_product(
+    gateway = _configured_gateway_instance(
         gateway_product,
         target_node_id,
-        ProductInstanceConfiguration.from_contract(gateway_product.runtime_contract),
+        workspace_id=workspace_id,
     )
     cloudflared = instantiate_product(
         cloudflared_product,
@@ -1477,6 +1751,92 @@ def _public_gateway_overlay(
             target_provider_socket=target_provider_socket,
             connector_node_id=connector_node_id,
             public_hostname=public_hostname,
+        ),
+    )
+
+
+def _authenticated_gateway_private_graph(
+    gateway_document: Any,
+    hello_document: Any,
+    postgres_document: Any,
+    *,
+    workspace_id: str,
+    authority_ref: RuntimeAuthorityReference | None = None,
+) -> DeploymentGraph:
+    gateway_product = gateway_document.product
+    hello_product = hello_document.product
+    postgres_product = postgres_document.product
+    gateway = _configured_gateway_instance(
+        gateway_product,
+        "gateway",
+        workspace_id=workspace_id,
+    )
+    gateway = replace(
+        gateway,
+        spec=replace(gateway.spec, verification=VerificationContract()),
+    )
+    hello = instantiate_product(
+        hello_product,
+        "hello",
+        _with_public_environment(
+            ProductInstanceConfiguration.from_contract(hello_product.runtime_contract),
+            {"HELLO_MESSAGE": "Hello through authenticated gateway"},
+        ),
+    )
+    postgres = instantiate_product(
+        postgres_product,
+        "postgres",
+        ProductInstanceConfiguration.from_contract(postgres_product.runtime_contract),
+    )
+    postgres = replace(
+        postgres,
+        spec=replace(postgres.spec, verification=VerificationContract()),
+    )
+    return compile_topology(
+        DeploymentTopology(
+            workspace_id,
+            DockerRuntime(
+                runtime_id="docker",
+                network_name=f"control-plane-kit-{workspace_id}-docker",
+                authority_ref=authority_ref,
+                children=(
+                    gateway,
+                    hello,
+                    postgres,
+                    SocketConnection("hello", "internal", "gateway", "target-http"),
+                    SocketConnection(
+                        "postgres",
+                        "postgres",
+                        "gateway",
+                        "target-postgres",
+                    ),
+                ),
+            ),
+        )
+    )
+
+
+def _configured_gateway_instance(
+    gateway_product: Any,
+    node_id: str,
+    *,
+    workspace_id: str,
+) -> Any:
+    audience = f"gateway:{workspace_id}:{node_id}"
+    return instantiate_product(
+        gateway_product,
+        node_id,
+        _with_public_environment(
+            ProductInstanceConfiguration.from_contract(gateway_product.runtime_contract),
+            {
+                "CPK_GATEWAY_PROBE_VERIFIER": "ed25519",
+                "CPK_GATEWAY_PROBE_ISSUER": GATEWAY_PROBE_ISSUER,
+                "CPK_GATEWAY_PROBE_AUDIENCE": audience,
+                "CPK_GATEWAY_PROBE_NODE_ID": node_id,
+                "CPK_GATEWAY_PROBE_VERIFICATION_KEYS_JSON": _required_env(
+                    "CPK_GATEWAY_PROBE_PUBLIC_KEYS_JSON"
+                ),
+            },
         ),
     )
 
@@ -1518,6 +1878,25 @@ def _with_public_environment(
 def _product_document(servers_repo: Path, product_name: str) -> Any:
     return ProductDescriptorCodec().decode_document(
         (servers_repo / "products" / product_name / "product.cpk.json").read_bytes()
+    )
+
+
+def _oci_image_from_execution_reference(
+    reference: str,
+    *,
+    tag: str,
+) -> OciImageReference:
+    registry_and_repository, digest = reference.rsplit("@", maxsplit=1)
+    registry, repository = registry_and_repository.split("/", maxsplit=1)
+    return OciImageReference(
+        registry=registry,
+        repository=repository,
+        digest=digest,
+        tag=tag,
+        provenance={
+            "source": "source-live-local-registry",
+            "issue": "1143",
+        },
     )
 
 
@@ -1756,6 +2135,108 @@ def _assert_public_gateway_unreachable(hostname: str) -> None:
             return
     raise RuntimeError(
         f"public gateway remained reachable after overlay removal: {last_success}"
+    )
+
+
+def _direct_gateway_probe(
+    body: bytes,
+    *,
+    authorization: str | None = None,
+) -> _PublicHttpsResponse:
+    headers = {"Content-Type": "application/json"}
+    if authorization is not None:
+        headers["Authorization"] = authorization
+    request = Request(
+        "http://gateway:8000/cpk/probes",
+        data=body,
+        headers=headers,
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=5) as response:
+            return _PublicHttpsResponse(
+                status=int(response.status),
+                body=response.read(16_384),
+            )
+    except HTTPError as error:
+        return _PublicHttpsResponse(
+            status=int(error.code),
+            body=error.read(16_384),
+        )
+
+
+def _hello_observation_count() -> int:
+    try:
+        with urlopen("http://hello:8000/observations/requests", timeout=5) as response:
+            payload = json.loads(response.read(16_384).decode("utf-8"))
+    except Exception as error:
+        raise RuntimeError(f"hello observation read failed: {type(error).__name__}") from error
+    requests = payload.get("requests")
+    if not isinstance(requests, list):
+        raise RuntimeError(f"hello observation payload was malformed: {payload}")
+    return len(requests)
+
+
+def _gateway_probe_body(request: GatewayProbeRequest) -> bytes:
+    return json.dumps(
+        request.descriptor(),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("ascii")
+
+
+def _direct_gateway_grant(
+    request: GatewayProbeRequest,
+    *,
+    jti: str,
+) -> DelegatedGatewayProbeGrant:
+    now = int(time.time())
+    workspace_id = os.environ.get(
+        "CPK_HOSTED_ACTIVITY_WORKSPACE_ID",
+        DEFAULT_WORKSPACE_ID,
+    )
+    return DelegatedGatewayProbeGrant(
+        issuer=GATEWAY_PROBE_ISSUER,
+        key_id=GATEWAY_PROBE_KEY_ID,
+        audience=f"gateway:{workspace_id}:gateway",
+        workspace_id=workspace_id,
+        operation_id="direct-adversarial-diagnostic",
+        request_id=f"direct:{jti}",
+        gateway_node_id="gateway",
+        probe_kind=request.kind,
+        target_id=request.target_id,
+        request_digest=request.canonical_digest(),
+        issued_at=now - 1,
+        expires_at=now + 60,
+        jti=jti,
+    )
+
+
+def _signed_gateway_capability(
+    private_key: Ed25519PrivateKey,
+    grant: DelegatedGatewayProbeGrant,
+) -> str:
+    private_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    return jwt.encode(
+        {
+            "iss": grant.issuer,
+            "aud": grant.audience,
+            "iat": grant.issued_at,
+            "exp": grant.expires_at,
+            "jti": grant.jti,
+            "gateway_probe": grant.descriptor(),
+        },
+        private_pem,
+        algorithm="EdDSA",
+        headers={
+            "kid": grant.key_id,
+            "typ": "CPK-GATEWAY-PROBE+JWT",
+        },
     )
 
 
