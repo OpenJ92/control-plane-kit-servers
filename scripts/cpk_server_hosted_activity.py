@@ -31,7 +31,6 @@ from control_plane_kit_core.public_ingress import (
     PublicIngressTarget,
 )
 from control_plane_kit_core.products import (
-    OciImageReference,
     ProductDescriptorCodec,
     ProductInstanceConfiguration,
     instantiate_product,
@@ -53,6 +52,7 @@ WORKSPACE_IDS = (
 )
 WORKER_ID = "hosted-worker"
 AUTHORIZATION = "Bearer present"
+WORKER_AUTHORIZATION = "Bearer worker-present"
 LOCAL_DOCKER_AUTHORITY_REF = "local-docker"
 OPENJ92_INGRESS_AUTHORITY_REF = "openj92-cloudflare"
 PUBLIC_GATEWAY_HOSTNAME = "cpk-gateway-001.openj92.dev"
@@ -297,6 +297,7 @@ class HostedWorkflow:
             self.base_url,
             "command.approval.decide",
             {
+                "workspace_id": self.workspace_id,
                 "session_id": session_id,
                 "request_id": str(approval["request_id"]),
                 "actor_id": "manager-a",
@@ -340,6 +341,7 @@ class HostedWorkflow:
                 "lease_expires_at": "2026-07-22T12:00:00Z",
                 "idempotency_key": f"{self.workspace_id}:{title}:claim",
             },
+            extra_headers={"Authorization": WORKER_AUTHORIZATION},
         )
         return str(claimed["run_id"])
 
@@ -353,6 +355,7 @@ class HostedWorkflow:
                 "actor_scopes": [PolicyScope.EXECUTION_OPERATE.value],
                 "idempotency_key": f"{self.workspace_id}:{title}:start",
             },
+            extra_headers={"Authorization": WORKER_AUTHORIZATION},
         )
 
     def execute_to_completion(
@@ -391,6 +394,7 @@ class HostedWorkflow:
                 "actor_scopes": [PolicyScope.EXECUTION_OPERATE.value],
                 "idempotency_key": f"{self.workspace_id}:{title}:advance",
             },
+            extra_headers={"Authorization": WORKER_AUTHORIZATION},
         )
         return str(advanced["to_graph_id"])
 
@@ -1342,6 +1346,7 @@ def _execute_to_completion(
             base_url,
             "command.deployment.execute",
             {
+                "workspace_id": workspace_id,
                 "run_id": run_id,
                 "worker_id": worker_id,
                 "actor_scopes": [PolicyScope.EXECUTION_OPERATE.value],
@@ -1349,6 +1354,7 @@ def _execute_to_completion(
                 "max_effects": 1,
             },
             timeout=60,
+            authorization=WORKER_AUTHORIZATION,
         )
         if sync_runtime_networks:
             _sync_runtime_networks(server_container, workspace_id=workspace_id)
@@ -1881,33 +1887,22 @@ def _product_document(servers_repo: Path, product_name: str) -> Any:
     )
 
 
-def _oci_image_from_execution_reference(
-    reference: str,
-    *,
-    tag: str,
-) -> OciImageReference:
-    registry_and_repository, digest = reference.rsplit("@", maxsplit=1)
-    registry, repository = registry_and_repository.split("/", maxsplit=1)
-    return OciImageReference(
-        registry=registry,
-        repository=repository,
-        digest=digest,
-        tag=tag,
-        provenance={
-            "source": "source-live-local-registry",
-            "issue": "1143",
-        },
-    )
-
-
 def _mcp_tool(
     base_url: str,
     name: str,
     arguments: dict[str, object],
     *,
     timeout: int = 10,
+    authorization: str | None = None,
 ) -> dict[str, Any]:
-    return _mcp(base_url, "tools/call", name, arguments, timeout=timeout)
+    return _mcp(
+        base_url,
+        "tools/call",
+        name,
+        arguments,
+        timeout=timeout,
+        authorization=authorization,
+    )
 
 
 def _mcp_read(base_url: str, name: str, arguments: dict[str, object]) -> dict[str, Any]:
@@ -1921,7 +1916,15 @@ def _mcp(
     arguments: dict[str, object],
     *,
     timeout: int = 10,
+    authorization: str | None = None,
 ) -> dict[str, Any]:
+    headers = {
+        "Accept": "application/json",
+        "MCP-Protocol-Version": "2025-06-18",
+        "Mcp-Method": method,
+    }
+    if authorization is not None:
+        headers["Authorization"] = authorization
     response = _http(
         base_url,
         "POST",
@@ -1932,11 +1935,7 @@ def _mcp(
             "method": method,
             "params": {"name": name, "arguments": arguments},
         },
-        extra_headers={
-            "Accept": "application/json",
-            "MCP-Protocol-Version": "2025-06-18",
-            "Mcp-Method": method,
-        },
+        extra_headers=headers,
         timeout=timeout,
     )
     if "error" in response:

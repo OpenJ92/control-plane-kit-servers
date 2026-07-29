@@ -41,6 +41,58 @@ GATEWAY_PROBE_ISSUER="urn:control-plane-kit:source-live"
 GATEWAY_PROBE_KEY_ID="source-live-gateway-key"
 CPK_GATEWAY_PROBE_PRIVATE_KEY_PEM=""
 CPK_GATEWAY_PROBE_PUBLIC_KEYS_JSON=""
+CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON="$(python3 - <<'PY'
+import json
+
+operator_scopes = [
+    "hub:instance:create",
+    "hub:instance:read",
+    "instance:workspace:read",
+    "instance:workspace:edit",
+    "plan:request",
+    "plan:approve",
+    "plan:approve-destructive",
+    "plan:execute",
+    "execution:operate",
+    "runtime-authority:register",
+    "runtime-authority:read",
+    "runtime-authority:revoke",
+    "runtime-authority:use",
+    "runtime-authority-delivery:register",
+    "runtime-authority-delivery:read",
+    "runtime-authority-delivery:revoke",
+    "ingress-authority:register",
+    "ingress-authority:read",
+    "ingress-authority:revoke",
+    "ingress-authority:use",
+    "gateway-probe:use",
+]
+worker_scopes = ["execution:operate"]
+workspaces = [
+    "cpk-hosted-activity-basic",
+    "workspace-a-router",
+    "workspace-b-multiplexer",
+    "workspace-c-postgres",
+    "workspace-d-negative-cleanup",
+]
+operator_grants = {workspace: operator_scopes for workspace in workspaces}
+worker_grants = {workspace: worker_scopes for workspace in workspaces}
+print(json.dumps([
+    {
+        "credential": "present",
+        "subject_id": "hosted-operator",
+        "kind": "operator",
+        "workspace_grants": operator_grants,
+    },
+    {
+        "credential": "worker-present",
+        "subject_id": "hosted-worker",
+        "kind": "worker",
+        "workspace_grants": worker_grants,
+    },
+], separators=(",", ":"), sort_keys=True))
+PY
+)"
 
 case "$SCENARIO" in
   public-gateway-ingress|public-gateway-toggle|workspace-a-router-transition|\
@@ -223,7 +275,8 @@ if [ -n "$AUTH_CONFIG_DIR" ]; then
     -v "$AUTH_CONFIG_DIR:/tmp/cpk-docker-config:ro" \
     -e DOCKER_CONFIG=/tmp/cpk-docker-config \
     -e CPK_SERVER_MODE=execution-capable \
-    -e CPK_CONTROL_AUTH_CONFIGURED=true \
+    -e CPK_CONTROL_AUTH_VERIFIER=static-development \
+    -e CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON="$CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON" \
     -e CPK_PORT=8080 \
     -e CPK_RUNTIME_INTERPRETERS=docker \
     -e CPK_INGRESS_INTERPRETERS="$INGRESS_INTERPRETERS" \
@@ -247,7 +300,8 @@ else
     --group-add "$DOCKER_SOCKET_GROUP" \
     -v /var/run/docker.sock:/var/run/docker.sock \
     -e CPK_SERVER_MODE=execution-capable \
-    -e CPK_CONTROL_AUTH_CONFIGURED=true \
+    -e CPK_CONTROL_AUTH_VERIFIER=static-development \
+    -e CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON="$CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON" \
     -e CPK_PORT=8080 \
     -e CPK_RUNTIME_INTERPRETERS=docker \
     -e CPK_INGRESS_INTERPRETERS="$INGRESS_INTERPRETERS" \

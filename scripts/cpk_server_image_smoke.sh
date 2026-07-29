@@ -127,7 +127,17 @@ done
 
 phase "verify cpk-server readiness"
 curl -fsS "$BASE/health/live" | grep -q '"live"'
-ready="$(curl -fsS "$BASE/health/ready")"
+ready=""
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  if ready="$(curl -fsS "$BASE/health/ready" 2>/dev/null)"; then
+    break
+  fi
+  sleep 1
+done
+if [ -z "$ready" ]; then
+  echo "cpk-server did not become ready" >&2
+  exit 1
+fi
 printf '%s' "$ready" | grep -q '"ready"'
 printf '%s' "$ready" | grep -q '"stores"'
 printf '%s' "$ready" | grep -q '"configured"'
