@@ -82,12 +82,12 @@
       "product_id": "cpk-local-gateway",
       "owner_directory": "products/cpk_local_gateway",
       "descriptor_path": "products/cpk_local_gateway/product.cpk.json",
-      "source_commit": "02120b7f9853583804b545bfee262103835b3eea",
+      "source_commit": "b33e9734a7e8216362454e18439e79aa7b0dfc0d",
       "image": {
         "registry": "ghcr.io",
         "repository": "openj92/control-plane-kit-servers/cpk-local-gateway",
-        "tag": "auth-gateway-1143",
-        "digest": "sha256:5698c1ee9e8b933920177d260bf44963e2ebbdfc58f791fc98bf6efd21156aa8"
+        "tag": "harden-secrets-1225",
+        "digest": "sha256:035de9903e4eddd47560687b524a43e9e20fbbf5923d7d688acfc069018085c9"
       }
     },
     {
