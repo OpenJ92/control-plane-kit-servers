@@ -1322,6 +1322,19 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("def request_approval", controller)
         self.assertIn("def assert_approval_visible", controller)
         self.assertIn("def advance_current_graph", controller)
+        self.assertIn("def read_desired_graph", controller)
+        self.assertIn("def read_plan_detail", controller)
+        self.assertIn('"expected_current_realized_projection_id"', controller)
+        self.assertIn('"expected_desired_realized_projection_id"', controller)
+        self.assertIn('"expected_desired_graph_revision"', controller)
+        self.assertIn('"desired_realized_projection_id"', controller)
+        self.assertIn('f"org.openj92.cpk.workspace={workspace_id}"', controller)
+        self.assertIn('"org.openj92.cpk.kind=runtime-network"', controller)
+        self.assertIn('filters={"label": labels}', controller)
+        self.assertIn("required: bool = False", controller)
+        self.assertIn("owned runtime network was not found", controller)
+        self.assertIn("runtime network attachment failed", controller)
+        self.assertNotIn('name.startswith(f"cpk-net-{workspace_id}")', controller)
         self.assertIn("/plans/{plan_id}/approval", controller)
         self.assertIn("/runs/{run_id}/advance-current-graph", controller)
         self.assertIn("self.workspace_id", controller)
@@ -1668,6 +1681,9 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("workspace-secret-wrong-credential", controller)
         self.assertIn("workspace-secret-unavailable", controller)
         self.assertIn("gateway-key-rotation", controller)
+        self.assertIn("gateway-verifier-projection", controller)
+        self.assertIn("stop_after_initial_projection=True", controller)
+        self.assertIn("stop_after_initial_projection=False", controller)
         self.assertIn("request_gateway_probe_http", controller)
         self.assertIn("request_gateway_probe_mcp", controller)
         self.assertIn("/delegation-keys", controller)
@@ -1704,18 +1720,11 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         try:
             spec.loader.exec_module(module)
             gateway_document = module._product_document(ROOT, "cpk_local_gateway")
-            verifier_configuration = {
-                "public_environment": [
-                    {"name": binding.name, "value": binding.value}
-                    for binding in gateway_document.product.runtime_contract.public_environment
-                ]
-            }
             graph = module._gateway_rotation_graph(
                 gateway_document,
                 module._product_document(ROOT, "hello_server"),
                 module._product_document(ROOT, "postgres_server"),
                 workspace_id="workspace-gateway-rotation-graph-test",
-                verifier_configuration=verifier_configuration,
             )
         finally:
             sys.modules.pop(spec.name, None)
@@ -1798,6 +1807,12 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn('"intent": POSTGRES_INTENT,', controller)
 
     def test_http_only_public_gateway_omits_postgres_secret_delivery(self) -> None:
+        from control_plane_kit_core.delegation_authority import (
+            DelegationAuthorityBinding,
+        )
+        from control_plane_kit_core.delegation_keys import DelegationKeyPurpose
+        from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC
+
         script = ROOT / "scripts" / "cpk_server_hosted_activity.py"
         spec = importlib.util.spec_from_file_location(
             "cpk_server_hosted_activity_graph_test",
@@ -1808,27 +1823,134 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         module = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = module
         try:
-            with patch.dict(
-                os.environ,
-                {"CPK_GATEWAY_PROBE_PUBLIC_KEYS_JSON": '{"test-key":"public"}'},
-            ):
-                spec.loader.exec_module(module)
-                graph = module._public_gateway_ingress_graph(
-                    module._product_document(ROOT, "cpk_local_gateway"),
-                    module._product_document(ROOT, "hello_server"),
-                    module._product_document(ROOT, "cloudflared_connector"),
-                    workspace_id="workspace-custody-test",
-                    authority_ref=module.RuntimeAuthorityReference("local-docker"),
-                    public_hostname="cpk-sec1203-test.openj92.dev",
-                )
+            spec.loader.exec_module(module)
+            graph = module._public_gateway_ingress_graph(
+                module._product_document(ROOT, "cpk_local_gateway"),
+                module._product_document(ROOT, "hello_server"),
+                module._product_document(ROOT, "cloudflared_connector"),
+                workspace_id="workspace-custody-test",
+                authority_ref=module.RuntimeAuthorityReference("local-docker"),
+                public_hostname="cpk-sec1203-test.openj92.dev",
+            )
         finally:
             sys.modules.pop(spec.name, None)
 
         self.assertEqual(graph.node("gateway").secret_deliveries, ())
         self.assertEqual(
+            graph.delegation_authorities,
+            (
+                DelegationAuthorityBinding(
+                    delegate_node_id="gateway",
+                    purpose=DelegationKeyPurpose.GATEWAY_PROBE,
+                    issuer=module.GATEWAY_PROBE_ISSUER,
+                ),
+            ),
+        )
+        encoded_document = DEFAULT_GRAPH_CODEC.encode(graph)
+        encoded = json.dumps(
+            encoded_document,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        for reserved_name in (
+            "CPK_GATEWAY_PROBE_AUDIENCE",
+            "CPK_GATEWAY_PROBE_ISSUER",
+            "CPK_GATEWAY_PROBE_NODE_ID",
+            "CPK_GATEWAY_PROBE_PROJECTION_ID",
+            "CPK_GATEWAY_PROBE_VERIFICATION_KEYS_JSON",
+            "CPK_GATEWAY_PROBE_VERIFIER",
+        ):
+            self.assertNotIn(reserved_name, encoded)
+        self.assertNotIn("source-live-gateway-key", encoded)
+        self.assertNotIn(
+            "secret://",
+            json.dumps(encoded_document["delegation_authorities"]),
+        )
+        self.assertEqual(
             graph.public_ingresses[0].hostname,
             "cpk-sec1203-test.openj92.dev",
         )
+
+    def test_all_hosted_gateway_graphs_author_stable_delegation_intent(self) -> None:
+        from control_plane_kit_core.delegation_authority import (
+            DelegationAuthorityBinding,
+        )
+        from control_plane_kit_core.delegation_keys import DelegationKeyPurpose
+        from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC
+
+        script = ROOT / "scripts" / "cpk_server_hosted_activity.py"
+        spec = importlib.util.spec_from_file_location(
+            "cpk_server_hosted_gateway_graphs_test",
+            script,
+        )
+        if spec is None or spec.loader is None:
+            self.fail("hosted activity controller could not be loaded")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        try:
+            spec.loader.exec_module(module)
+            gateway = module._product_document(ROOT, "cpk_local_gateway")
+            hello = module._product_document(ROOT, "hello_server")
+            cloudflared = module._product_document(ROOT, "cloudflared_connector")
+            postgres = module._product_document(ROOT, "postgres_server")
+            authority = module.RuntimeAuthorityReference("local-docker")
+            graphs = (
+                module._router_graph(
+                    hello,
+                    module._product_document(ROOT, "http_active_router"),
+                    gateway,
+                    cloudflared,
+                    workspace_id="workspace-router-binding",
+                    active_hello_role="hello-blue",
+                    message="blue",
+                    authority_ref=authority,
+                    public_hostname="cpk-router-binding.openj92.dev",
+                ),
+                module._multiplexer_graph(
+                    hello,
+                    module._product_document(ROOT, "http_multiplexer"),
+                    gateway,
+                    cloudflared,
+                    workspace_id="workspace-multiplexer-binding",
+                    authority_ref=authority,
+                    public_hostname="cpk-multiplexer-binding.openj92.dev",
+                ),
+                module._postgres_graph(
+                    gateway,
+                    postgres,
+                    workspace_id="workspace-postgres-binding",
+                    authority_ref=authority,
+                ),
+                module._authenticated_gateway_private_graph(
+                    gateway,
+                    hello,
+                    postgres,
+                    workspace_id="workspace-private-binding",
+                    authority_ref=authority,
+                ),
+            )
+        finally:
+            sys.modules.pop(spec.name, None)
+
+        for graph in graphs:
+            with self.subTest(workspace_id=graph.name):
+                self.assertEqual(
+                    graph.delegation_authorities,
+                    (
+                        DelegationAuthorityBinding(
+                            delegate_node_id="gateway",
+                            purpose=DelegationKeyPurpose.GATEWAY_PROBE,
+                            issuer=module.GATEWAY_PROBE_ISSUER,
+                        ),
+                    ),
+                )
+                encoded = json.dumps(
+                    DEFAULT_GRAPH_CODEC.encode(graph),
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+                self.assertNotIn("CPK_GATEWAY_PROBE_VERIFICATION_KEYS_JSON", encoded)
+                self.assertNotIn("source-live-gateway-key", encoded)
 
     def test_cloudflare_tunnel_deletion_accepts_only_absent_or_exact_tombstone(
         self,

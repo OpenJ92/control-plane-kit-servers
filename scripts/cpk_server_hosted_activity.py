@@ -24,6 +24,8 @@ from control_plane_kit_core.gateway_delegation import (
     GatewayProbeCommandKind,
     GatewayProbeRequest,
 )
+from control_plane_kit_core.delegation_authority import DelegationAuthorityBinding
+from control_plane_kit_core.delegation_keys import DelegationKeyPurpose
 from control_plane_kit_core.algebra import DeploymentTopology, DockerRuntime, SocketConnection
 from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
 from control_plane_kit_core.public_ingress import (
@@ -92,6 +94,8 @@ class HostedWorkflow:
         self.worker_id = worker_id
         self.server_container = server_container
         self.worker_authorization = worker_authorization
+        self._desired_graph_coordinates: dict[str, tuple[str, int]] = {}
+        self._plan_coordinates: dict[str, tuple[str, str, int]] = {}
 
     def wait_ready(self, *, policy: VerificationPolicy | None = None) -> None:
         _wait_ready(self.base_url, policy=policy)
@@ -428,7 +432,12 @@ class HostedWorkflow:
                 "idempotency_key": f"{self.workspace_id}:{title}:desired",
             },
         )
-        return str(desired["desired_graph_id"])
+        desired_graph_id = str(desired["desired_graph_id"])
+        self._desired_graph_coordinates[desired_graph_id] = (
+            str(desired["desired_realized_projection_id"]),
+            int(desired["desired_graph_revision"]),
+        )
+        return desired_graph_id
 
     def plan_transition(
         self,
@@ -438,6 +447,20 @@ class HostedWorkflow:
         current_graph_id: str,
         desired_graph_id: str,
     ) -> str:
+        current = _http(
+            self.base_url,
+            "GET",
+            f"/workspaces/{self.workspace_id}/graphs/current",
+        )
+        if current.get("graph_id") != current_graph_id:
+            raise RuntimeError(
+                "current graph changed before planning: "
+                f"{current.get('graph_id')} != {current_graph_id}"
+            )
+        current_projection_id = str(current["realized_projection_id"])
+        desired_projection_id, desired_revision = self._desired_graph_coordinates[
+            desired_graph_id
+        ]
         planned = _mcp_tool(
             self.base_url,
             "command.deployment.plan",
@@ -447,12 +470,21 @@ class HostedWorkflow:
                 "actor_id": "operator-a",
                 "expected_current_graph_id": current_graph_id,
                 "expected_desired_graph_id": desired_graph_id,
+                "expected_current_realized_projection_id": current_projection_id,
+                "expected_desired_realized_projection_id": desired_projection_id,
+                "expected_desired_graph_revision": desired_revision,
                 "idempotency_key": f"{self.workspace_id}:{title}:plan",
             },
         )
         if not planned.get("ready_for_execution", False):
             raise RuntimeError(f"plan was not approval-ready: {planned}")
-        return str(planned["plan_id"])
+        plan_id = str(planned["plan_id"])
+        self._plan_coordinates[plan_id] = (
+            str(planned["base_realized_projection_id"]),
+            str(planned["desired_realized_projection_id"]),
+            int(planned["desired_graph_revision"]),
+        )
+        return plan_id
 
     def request_approval(self, *, session_id: str, title: str, plan_id: str) -> dict[str, Any]:
         return _http(
@@ -574,6 +606,11 @@ class HostedWorkflow:
         current_graph_id: str,
         desired_graph_id: str,
     ) -> str:
+        (
+            current_projection_id,
+            desired_projection_id,
+            desired_revision,
+        ) = self._plan_coordinates[plan_id]
         advanced = _http(
             self.base_url,
             "POST",
@@ -581,7 +618,10 @@ class HostedWorkflow:
             {
                 "plan_id": plan_id,
                 "expected_current_graph_id": current_graph_id,
+                "expected_current_realized_projection_id": current_projection_id,
                 "desired_graph_id": desired_graph_id,
+                "desired_realized_projection_id": desired_projection_id,
+                "expected_desired_graph_revision": desired_revision,
                 "worker_id": self.worker_id,
                 "actor_scopes": [PolicyScope.EXECUTION_OPERATE.value],
                 "idempotency_key": f"{self.workspace_id}:{title}:advance",
@@ -593,6 +633,20 @@ class HostedWorkflow:
     def read_current_graph_id(self) -> str:
         current = _http(self.base_url, "GET", f"/workspaces/{self.workspace_id}/graphs/current")
         return str(current["graph_id"])
+
+    def read_desired_graph(self) -> dict[str, Any]:
+        return _http(
+            self.base_url,
+            "GET",
+            f"/workspaces/{self.workspace_id}/graphs/desired",
+        )
+
+    def read_plan_detail(self, plan_id: str) -> dict[str, Any]:
+        return _mcp_read(
+            self.base_url,
+            "read.plan-detail",
+            {"workspace_id": self.workspace_id, "plan_id": plan_id, "limit": 100},
+        )
 
     def read_activity(self, *, limit: int = 200) -> dict[str, Any]:
         return _mcp_read(
@@ -1562,35 +1616,83 @@ def _execute_to_completion(
             timeout=60,
             authorization=worker_authorization,
         )
+        coordinator_status = result["coordinator_status"]
         if sync_runtime_networks:
-            _sync_runtime_networks(server_container, workspace_id=workspace_id)
-        if result["coordinator_status"] == "completed":
+            _sync_runtime_networks(
+                server_container,
+                workspace_id=workspace_id,
+                required=coordinator_status == "completed",
+            )
+        if coordinator_status == "completed":
             return
-        if result["coordinator_status"] in {"failed", "unsupported", "uncertain", "blocked"}:
+        if coordinator_status in {"failed", "unsupported", "uncertain", "blocked"}:
             timeline = _http(base_url, "GET", f"/workspaces/{workspace_id}/activity")
             raise RuntimeError(f"execution stopped with {result}; timeline={timeline}")
     raise RuntimeError("hosted activity execution did not complete")
 
 
-def _sync_runtime_networks(server_container: str, *, workspace_id: str = WORKSPACE_ID) -> None:
+def _sync_runtime_networks(
+    server_container: str,
+    *,
+    workspace_id: str = WORKSPACE_ID,
+    required: bool = False,
+) -> None:
     import docker
     from docker.errors import APIError, NotFound
 
     client = docker.from_env()
     controller_container = socket.gethostname()
-    for network in client.networks.list():
-        name = network.name
-        if not name.startswith(f"cpk-net-{workspace_id}"):
-            continue
-        for container in (server_container, controller_container):
-            try:
-                network.connect(container)
-            except APIError as error:
-                if "already exists" in str(error).lower():
-                    continue
-                raise
-            except NotFound:
+    networks = _owned_runtime_networks(client, workspace_id)
+    if required and not networks:
+        raise RuntimeError(
+            f"owned runtime network was not found for workspace {workspace_id}"
+        )
+    containers = []
+    for container_reference in (server_container, controller_container):
+        try:
+            container = client.containers.get(container_reference)
+        except NotFound as error:
+            raise RuntimeError(
+                "runtime network attachment failed: required container was not found"
+            ) from error
+        containers.append((container_reference, container.id))
+    for network in networks:
+        network.reload()
+        attached = set((network.attrs.get("Containers") or {}).keys())
+        for container_reference, container_id in containers:
+            if container_id in attached:
                 continue
+            try:
+                network.connect(container_reference)
+            except APIError as error:
+                network.reload()
+                attached = set((network.attrs.get("Containers") or {}).keys())
+                if container_id not in attached:
+                    raise RuntimeError(
+                        "runtime network attachment failed for an owned network"
+                    ) from error
+        network.reload()
+        attached = set((network.attrs.get("Containers") or {}).keys())
+        if any(container_id not in attached for _, container_id in containers):
+            raise RuntimeError(
+                "runtime network attachment failed for an owned network"
+            )
+
+
+def _owned_runtime_networks(client: Any, workspace_id: str) -> list[Any]:
+    labels = [
+        f"org.openj92.cpk.workspace={workspace_id}",
+        "org.openj92.cpk.kind=runtime-network",
+    ]
+    networks = client.networks.list(filters={"label": labels})
+    return [
+        network
+        for network in networks
+        if (network.attrs.get("Labels") or {}).get("org.openj92.cpk.workspace")
+        == workspace_id
+        and (network.attrs.get("Labels") or {}).get("org.openj92.cpk.kind")
+        == "runtime-network"
+    ]
 
 
 def _disconnect_runtime_networks(
@@ -1603,10 +1705,7 @@ def _disconnect_runtime_networks(
 
     client = docker.from_env()
     controller_container = socket.gethostname()
-    for network in client.networks.list():
-        name = network.name
-        if not name.startswith(f"cpk-net-{workspace_id}"):
-            continue
+    for network in _owned_runtime_networks(client, workspace_id):
         for container in (server_container, controller_container):
             try:
                 network.disconnect(container, force=True)
@@ -1717,13 +1816,13 @@ def _router_graph(
         ),
     )
     public_ingresses: tuple[NamedPublicIngress, ...] = ()
+    delegation_authorities: tuple[DelegationAuthorityBinding, ...] = ()
     if public_hostname is not None:
         if gateway_document is None or cloudflared_document is None:
             raise RuntimeError("public router graph requires gateway and cloudflared products")
         gateway, cloudflared, ingress = _public_gateway_overlay(
             gateway_document,
             cloudflared_document,
-            workspace_id=workspace_id,
             target_node_id="gateway",
             target_provider_socket="control",
             connector_node_id="cloudflared-gateway",
@@ -1735,6 +1834,7 @@ def _router_graph(
             SocketConnection("router", "internal", "gateway", "target-http"),
         )
         public_ingresses = (ingress,)
+        delegation_authorities = (_gateway_delegation_authority("gateway"),)
     return compile_topology(
         DeploymentTopology(
             workspace_id,
@@ -1745,6 +1845,7 @@ def _router_graph(
                 children=children,
             ),
             public_ingresses=public_ingresses,
+            delegation_authorities=delegation_authorities,
         )
     )
 
@@ -1795,13 +1896,13 @@ def _multiplexer_graph(
         ),
     )
     public_ingresses: tuple[NamedPublicIngress, ...] = ()
+    delegation_authorities: tuple[DelegationAuthorityBinding, ...] = ()
     if public_hostname is not None:
         if gateway_document is None or cloudflared_document is None:
             raise RuntimeError("public multiplexer graph requires gateway and cloudflared products")
         gateway, cloudflared, ingress = _public_gateway_overlay(
             gateway_document,
             cloudflared_document,
-            workspace_id=workspace_id,
             target_node_id="gateway",
             target_provider_socket="control",
             connector_node_id="cloudflared-gateway",
@@ -1813,6 +1914,7 @@ def _multiplexer_graph(
             SocketConnection("multiplexer", "internal", "gateway", "target-http"),
         )
         public_ingresses = (ingress,)
+        delegation_authorities = (_gateway_delegation_authority("gateway"),)
     return compile_topology(
         DeploymentTopology(
             workspace_id,
@@ -1823,6 +1925,7 @@ def _multiplexer_graph(
                 children=children,
             ),
             public_ingresses=public_ingresses,
+            delegation_authorities=delegation_authorities,
         )
     )
 
@@ -1841,7 +1944,6 @@ def _postgres_graph(
     gateway = _configured_gateway_instance(
         gateway_product,
         "gateway",
-        workspace_id=workspace_id,
     )
     gateway = replace(
         gateway,
@@ -1897,6 +1999,7 @@ def _postgres_graph(
                 children=children,
             ),
             public_ingresses=public_ingresses,
+            delegation_authorities=(_gateway_delegation_authority("gateway"),),
         )
     )
 
@@ -1922,7 +2025,6 @@ def _public_gateway_ingress_graph(
     gateway, cloudflared, ingress = _public_gateway_overlay(
         gateway_document,
         cloudflared_document,
-        workspace_id=workspace_id,
         target_node_id="gateway",
         target_provider_socket="control",
         connector_node_id="cloudflared-gateway",
@@ -1943,6 +2045,7 @@ def _public_gateway_ingress_graph(
                 ),
             ),
             public_ingresses=(ingress,),
+            delegation_authorities=(_gateway_delegation_authority("gateway"),),
         )
     )
 
@@ -1951,7 +2054,6 @@ def _public_gateway_overlay(
     gateway_document: Any,
     cloudflared_document: Any,
     *,
-    workspace_id: str,
     target_node_id: str,
     target_provider_socket: str,
     connector_node_id: str,
@@ -1962,7 +2064,6 @@ def _public_gateway_overlay(
     gateway = _configured_gateway_instance(
         gateway_product,
         target_node_id,
-        workspace_id=workspace_id,
     )
     cloudflared = instantiate_product(
         cloudflared_product,
@@ -1995,7 +2096,6 @@ def _authenticated_gateway_private_graph(
     gateway = _configured_gateway_instance(
         gateway_product,
         "gateway",
-        workspace_id=workspace_id,
     )
     gateway = replace(
         gateway,
@@ -2038,6 +2138,7 @@ def _authenticated_gateway_private_graph(
                     ),
                 ),
             ),
+            delegation_authorities=(_gateway_delegation_authority("gateway"),),
         )
     )
 
@@ -2045,25 +2146,19 @@ def _authenticated_gateway_private_graph(
 def _configured_gateway_instance(
     gateway_product: Any,
     node_id: str,
-    *,
-    workspace_id: str,
 ) -> Any:
-    audience = f"gateway:{workspace_id}:{node_id}"
     return instantiate_product(
         gateway_product,
         node_id,
-        _with_public_environment(
-            ProductInstanceConfiguration.from_contract(gateway_product.runtime_contract),
-            {
-                "CPK_GATEWAY_PROBE_VERIFIER": "ed25519",
-                "CPK_GATEWAY_PROBE_ISSUER": GATEWAY_PROBE_ISSUER,
-                "CPK_GATEWAY_PROBE_AUDIENCE": audience,
-                "CPK_GATEWAY_PROBE_NODE_ID": node_id,
-                "CPK_GATEWAY_PROBE_VERIFICATION_KEYS_JSON": _required_env(
-                    "CPK_GATEWAY_PROBE_PUBLIC_KEYS_JSON"
-                ),
-            },
-        ),
+        ProductInstanceConfiguration.from_contract(gateway_product.runtime_contract),
+    )
+
+
+def _gateway_delegation_authority(node_id: str) -> DelegationAuthorityBinding:
+    return DelegationAuthorityBinding(
+        delegate_node_id=node_id,
+        purpose=DelegationKeyPurpose.GATEWAY_PROBE,
+        issuer=GATEWAY_PROBE_ISSUER,
     )
 
 
