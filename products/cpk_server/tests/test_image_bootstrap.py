@@ -1683,22 +1683,186 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("gateway-key-rotation", controller)
         self.assertIn("gateway-verifier-projection", controller)
         self.assertIn("stop_after_initial_projection=True", controller)
-        self.assertIn("stop_after_initial_projection=False", controller)
+        self.assertIn("_run_gateway_key_rotation_program(", controller)
         self.assertIn("request_gateway_probe_http", controller)
         self.assertIn("request_gateway_probe_mcp", controller)
         self.assertIn("/delegation-keys", controller)
         self.assertIn("verifier-configuration", controller)
         self.assertIn("gateway-rotation-key-a.pem", smoke)
-        self.assertIn("gateway-rotation-key-b.pem", smoke)
+        fixture_generation = smoke[
+            smoke.index("private_key = Ed25519PrivateKey.generate()") :
+            smoke.index('BOOTSTRAP_DIR="$BOOTSTRAP_DIR" python3 -c')
+        ]
+        self.assertIn("gateway-rotation-key-a.pem", fixture_generation)
+        self.assertNotIn("gateway-rotation-key-b.pem", fixture_generation)
         self.assertIn("GHCR pull authority is unavailable", smoke)
         self.assertIn("register_ghcr_pull_authority", controller)
         self.assertIn("GHCR_PULL_CREDENTIAL_REFERENCE", controller)
         self.assertIn("CPK_GATEWAY_PROBE_GRANT_LIFETIME_SECONDS=2", smoke)
+        self.assertIn('"delegation-key:rotate"', smoke)
+        self.assertIn('"delegation-key:rotate-approve"', smoke)
+        self.assertIn('"runtime-authority:use"', smoke)
         self.assertIn("docker_residue_audit.sh", smoke)
         self.assertNotIn("CPK_GATEWAY_PROBE_SIGNING_KEY_REF", smoke)
         self.assertNotIn("CPK_GATEWAY_PROBE_PRIVATE_KEY", smoke)
         self.assertNotIn("DockerRuntimeInterpreter", controller)
         self.assertNotIn("ControlPlaneKitSecretsResolver", controller)
+
+        program_start = controller.index("def _run_gateway_key_rotation_program(")
+        program_end = controller.index("def _run_gateway_key_rotation(", program_start)
+        program = controller[program_start:program_end]
+        after_request = program[program.index("requested = ") :]
+        self.assertLess(
+            program.index("provider_registration_id = "),
+            program.index("receipt = _provider_write_secret("),
+        )
+        self.assertLess(
+            program.index("receipt = _provider_write_secret("),
+            program.index("key_a_receipt = receipt"),
+        )
+        self.assertLess(
+            program.index("key_a_receipt = receipt"),
+            program.index("_register_gateway_rotation_references("),
+        )
+        self.assertIn(
+            "initial_key_receipt=key_a_receipt",
+            program,
+        )
+        self.assertEqual(program.count("_gateway_rotation_graph("), 1)
+        self.assertEqual(program.count("run_approved_transition("), 2)
+        self.assertIn("request_gateway_key_rotation(", program)
+        self.assertIn("request_gateway_key_rotation_approval(", program)
+        self.assertIn("decide_gateway_key_rotation_mcp(", program)
+        self.assertIn("_advance_rotation_until(", program)
+        self.assertIn("_poll_rotation_until_drain_deadline(", program)
+        self.assertIn("_restart_cpk_server(", program)
+        self.assertIn("read_gateway_key_rotation_transitions_mcp(", program)
+        self.assertIn("_assert_provider_version_revoked(", program)
+        self.assertNotIn("time.sleep(", program)
+        self.assertNotIn("_register_delegation_key(", after_request)
+        self.assertNotIn("_activate_delegation_key(", after_request)
+        self.assertNotIn("_retire_delegation_key(", after_request)
+        self.assertNotIn("_revoke_delegation_key(", after_request)
+        self.assertNotIn("gateway-rotation-key-b-public.pem", controller)
+        self.assertIn('"generation-prepared"', controller)
+        self.assertIn('"revocation-prepared"', controller)
+        self.assertNotIn('"old-key-revoked"', controller)
+
+        reference_start = controller.index(
+            "def _register_gateway_rotation_references("
+        )
+        reference_end = controller.index("def _register_delegation_key(", reference_start)
+        reference_registration = controller[reference_start:reference_end]
+        self.assertIn('"provider_version_id": initial_key_receipt.version_id', reference_registration)
+        self.assertIn(
+            '"provider_version_number": initial_key_receipt.version_number',
+            reference_registration,
+        )
+
+        hosted_client = (
+            ROOT / "scripts" / "cpk_server_hosted_activity.py"
+        ).read_text(encoding="utf-8")
+        for route in (
+            "/gateway-key-rotations",
+            "command.gateway-key-rotation.decide",
+            "command.gateway-key-rotation.advance",
+            "read.gateway-key-rotation.transitions",
+        ):
+            self.assertIn(route, hosted_client)
+
+    def test_source_live_provider_receipt_requires_exact_version_identity(
+        self,
+    ) -> None:
+        script_dir = ROOT / "scripts"
+        spec = importlib.util.spec_from_file_location(
+            "cpk_server_provider_receipt_test",
+            script_dir / "cpk_server_secret_provider_source_live.py",
+        )
+        if spec is None or spec.loader is None:
+            self.fail("secret provider source-live controller could not be loaded")
+        module = importlib.util.module_from_spec(spec)
+        sys.path.insert(0, str(script_dir))
+        sys.modules[spec.name] = module
+        try:
+            spec.loader.exec_module(module)
+            receipt = module._provider_version_receipt(
+                {
+                    "metadata": {
+                        "version_id": "version-key-a",
+                        "version_number": 1,
+                    }
+                }
+            )
+            self.assertEqual(receipt.version_id, "version-key-a")
+            self.assertEqual(receipt.version_number, 1)
+            invalid_metadata = (
+                {},
+                {"version_id": "version-key-a"},
+                {"version_id": "version-key-a", "version_number": True},
+                {"version_id": "version-key-a", "version_number": 0},
+            )
+            for metadata in invalid_metadata:
+                with self.subTest(metadata=metadata):
+                    with self.assertRaises(RuntimeError):
+                        module._provider_version_receipt({"metadata": metadata})
+        finally:
+            sys.modules.pop(spec.name, None)
+            sys.path.remove(str(script_dir))
+
+    def test_gateway_rotation_source_live_surfaces_bounded_definite_failure(
+        self,
+    ) -> None:
+        script_dir = ROOT / "scripts"
+        spec = importlib.util.spec_from_file_location(
+            "cpk_server_gateway_rotation_failure_test",
+            script_dir / "cpk_server_secret_provider_source_live.py",
+        )
+        if spec is None or spec.loader is None:
+            self.fail("secret provider source-live controller could not be loaded")
+        module = importlib.util.module_from_spec(spec)
+        sys.path.insert(0, str(script_dir))
+        sys.modules[spec.name] = module
+        try:
+            spec.loader.exec_module(module)
+
+            class DefiniteFailureWorkflow:
+                workspace_id = "workspace-gateway-key-rotation"
+
+                def __init__(self) -> None:
+                    self.calls = 0
+
+                def advance_gateway_key_rotation_http(self, **_kwargs):
+                    self.calls += 1
+                    return {
+                        "phase": "generation",
+                        "outcome": "definite-failure",
+                        "rotation": {
+                            "rotation_id": "rotation-a",
+                            "status": "generation-prepared",
+                            "version": 4,
+                            "failure_code": "provider-denied",
+                        },
+                    }
+
+            workflow = DefiniteFailureWorkflow()
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "phase=generation outcome=definite-failure code=provider-denied",
+            ):
+                module._advance_rotation_until(
+                    workflow,
+                    {
+                        "rotation_id": "rotation-a",
+                        "status": "generation-prepared",
+                        "version": 3,
+                    },
+                    target_status="key-generated",
+                    command_prefix="generation",
+                )
+            self.assertEqual(workflow.calls, 1)
+        finally:
+            sys.modules.pop(spec.name, None)
+            sys.path.remove(str(script_dir))
 
     def test_gateway_rotation_authors_stable_delegation_intent_only(self) -> None:
         from control_plane_kit_core.delegation_authority import (

@@ -420,6 +420,32 @@ class HostedWorkflow:
         title: str,
         expected_desired_graph_id: str | None,
     ) -> str:
+        readback = self.read_workspace()
+        workspace = readback.get("workspace")
+        if not isinstance(workspace, dict):
+            raise RuntimeError("workspace readback omitted workspace summary")
+        observed_graph_id = workspace.get("desired_graph_id")
+        if observed_graph_id != expected_desired_graph_id:
+            raise RuntimeError(
+                "desired graph changed before authoring: "
+                f"{observed_graph_id} != {expected_desired_graph_id}"
+            )
+        observed_projection_id = workspace.get("desired_realized_projection_id")
+        observed_revision = workspace.get("desired_graph_revision")
+        if observed_graph_id is None:
+            if observed_projection_id is not None or observed_revision != 0:
+                raise RuntimeError(
+                    "unassigned desired graph has inconsistent projection lineage"
+                )
+        elif (
+            not isinstance(observed_graph_id, str)
+            or not observed_graph_id
+            or not isinstance(observed_projection_id, str)
+            or not observed_projection_id
+            or type(observed_revision) is not int
+            or observed_revision < 1
+        ):
+            raise RuntimeError("assigned desired graph has invalid projection lineage")
         desired = _http(
             self.base_url,
             "POST",
@@ -429,6 +455,10 @@ class HostedWorkflow:
                 "actor_id": "operator-a",
                 "graph": DEFAULT_GRAPH_CODEC.encode(graph),
                 "expected_desired_graph_id": expected_desired_graph_id,
+                "expected_desired_realized_projection_id": (
+                    observed_projection_id
+                ),
+                "expected_desired_graph_revision": observed_revision,
                 "idempotency_key": f"{self.workspace_id}:{title}:desired",
             },
         )
@@ -634,6 +664,13 @@ class HostedWorkflow:
         current = _http(self.base_url, "GET", f"/workspaces/{self.workspace_id}/graphs/current")
         return str(current["graph_id"])
 
+    def read_workspace(self) -> dict[str, Any]:
+        return _mcp_read(
+            self.base_url,
+            "read.workspace",
+            {"workspace_id": self.workspace_id},
+        )
+
     def read_desired_graph(self) -> dict[str, Any]:
         return _http(
             self.base_url,
@@ -717,6 +754,147 @@ class HostedWorkflow:
             {
                 "workspace_id": self.workspace_id,
                 "probe_id": probe_id,
+            },
+        )
+
+    def request_gateway_key_rotation(
+        self,
+        *,
+        gateway_node_id: str,
+        issuer: str,
+        old_key_id: str,
+        new_secret_reference: str,
+        maximum_grant_lifetime_seconds: int,
+        clock_skew_seconds: int,
+    ) -> dict[str, Any]:
+        return _http(
+            self.base_url,
+            "POST",
+            f"/workspaces/{self.workspace_id}/gateway-key-rotations",
+            {
+                "gateway_node_id": gateway_node_id,
+                "purpose": "gateway-probe",
+                "issuer": issuer,
+                "old_key_id": old_key_id,
+                "new_secret_reference": new_secret_reference,
+                "key_generation_correlation": (
+                    f"{self.workspace_id}:gateway-key-rotation:generate"
+                ),
+                "maximum_grant_lifetime_seconds": maximum_grant_lifetime_seconds,
+                "clock_skew_seconds": clock_skew_seconds,
+                "idempotency_key": (
+                    f"{self.workspace_id}:gateway-key-rotation:request"
+                ),
+                "requested_at": _clock(),
+            },
+        )
+
+    def request_gateway_key_rotation_approval(
+        self,
+        *,
+        session_id: str,
+        rotation_id: str,
+    ) -> dict[str, Any]:
+        return _http(
+            self.base_url,
+            "POST",
+            (
+                f"/workspaces/{self.workspace_id}/gateway-key-rotations/"
+                f"{rotation_id}/approval"
+            ),
+            {
+                "session_id": session_id,
+                "idempotency_key": (
+                    f"{self.workspace_id}:gateway-key-rotation:approval"
+                ),
+                "comment": "Approve source-live gateway key rotation",
+            },
+        )
+
+    def decide_gateway_key_rotation_mcp(
+        self,
+        *,
+        session_id: str,
+        rotation_id: str,
+        approval_request_id: str,
+    ) -> dict[str, Any]:
+        return _mcp_tool(
+            self.base_url,
+            "command.gateway-key-rotation.decide",
+            {
+                "workspace_id": self.workspace_id,
+                "session_id": session_id,
+                "rotation_id": rotation_id,
+                "approval_request_id": approval_request_id,
+                "decision": "approved",
+                "idempotency_key": (
+                    f"{self.workspace_id}:gateway-key-rotation:decision"
+                ),
+                "comment": "Approved by source-live manager principal",
+            },
+        )
+
+    def advance_gateway_key_rotation_http(
+        self,
+        *,
+        rotation_id: str,
+        expected_version: int,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        return _http(
+            self.base_url,
+            "POST",
+            (
+                f"/workspaces/{self.workspace_id}/gateway-key-rotations/"
+                f"{rotation_id}/advance"
+            ),
+            {
+                "expected_version": expected_version,
+                "idempotency_key": idempotency_key,
+            },
+        )
+
+    def advance_gateway_key_rotation_mcp(
+        self,
+        *,
+        rotation_id: str,
+        expected_version: int,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        return _mcp_tool(
+            self.base_url,
+            "command.gateway-key-rotation.advance",
+            {
+                "workspace_id": self.workspace_id,
+                "rotation_id": rotation_id,
+                "expected_version": expected_version,
+                "idempotency_key": idempotency_key,
+            },
+        )
+
+    def read_gateway_key_rotation_detail(
+        self,
+        rotation_id: str,
+    ) -> dict[str, Any]:
+        return _http(
+            self.base_url,
+            "GET",
+            (
+                f"/workspaces/{self.workspace_id}/gateway-key-rotations/"
+                f"{rotation_id}"
+            ),
+        )
+
+    def read_gateway_key_rotation_transitions_mcp(
+        self,
+        rotation_id: str,
+    ) -> dict[str, Any]:
+        return _mcp_read(
+            self.base_url,
+            "read.gateway-key-rotation.transitions",
+            {
+                "workspace_id": self.workspace_id,
+                "rotation_id": rotation_id,
             },
         )
 
