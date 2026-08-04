@@ -44,6 +44,8 @@ CONCRETE_PROVIDER_IMPORT_ROOTS = {
     "kubernetes",
 }
 APPROVED_PROVIDER_FUNCTIONS = {
+    "_GatewayRotationGenerationAdapter.generate",
+    "_GatewayRotationRevocationAdapter.revoke_version",
     "_cloudflare_ingress_interpreter",
     "_docker_runtime_interpreter",
     "_gateway_probe_dispatcher",
@@ -1075,10 +1077,16 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
 
     def test_concrete_provider_imports_are_confined_to_bootstrap_functions(self) -> None:
         tree = ast.parse(SERVER_SOURCE.read_text(encoding="utf-8"))
+        class_stack: list[str] = []
         function_stack: list[str] = []
         violations: list[tuple[str, str, int]] = []
 
         class ImportVisitor(ast.NodeVisitor):
+            def visit_ClassDef(self, node: ast.ClassDef) -> None:
+                class_stack.append(node.name)
+                self.generic_visit(node)
+                class_stack.pop()
+
             def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
                 function_stack.append(node.name)
                 self.generic_visit(node)
@@ -1099,6 +1107,8 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
 
             def _record(self, root: str, line: int) -> None:
                 owner = function_stack[-1] if function_stack else "<module>"
+                if class_stack and function_stack:
+                    owner = f"{class_stack[-1]}.{owner}"
                 if (
                     root in CONCRETE_PROVIDER_IMPORT_ROOTS
                     and owner not in APPROVED_PROVIDER_FUNCTIONS
@@ -1162,6 +1172,16 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         )
         self.assertIn("GatewayProbeCommandService", source)
         self.assertIn("gateway_probes=_gateway_probe_service", source)
+        self.assertEqual(
+            source.count(
+                "gateway_key_rotations = _gateway_key_rotation_application("
+            ),
+            1,
+        )
+        self.assertIn(
+            "gateway_key_rotations=gateway_key_rotations",
+            source,
+        )
         self.assertIn("control_plane_kit_interpreters.docker", source)
         self.assertIn("control_plane_kit_interpreters.cloudflare", source)
         self.assertIn("control_plane_kit_interpreters.probes", source)

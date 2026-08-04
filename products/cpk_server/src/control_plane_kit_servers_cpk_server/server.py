@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
@@ -44,6 +44,7 @@ from control_plane_kit_operations import (
     CpkServerOperationsApplication,
     CurrentGraphAdvancementCommandService,
     DesiredGraphCommandService,
+    DelegationKeyGenerationEvidence,
     DelegationSigningKeyRegistrationService,
     ExecutionAdmissionCommandService,
     ExecutionCoordinator,
@@ -53,6 +54,11 @@ from control_plane_kit_operations import (
     GatewayProbeDispatch,
     GatewayProbeDispatchError,
     GatewayProbeDispatchResult,
+    GatewayKeyGenerationResult,
+    GatewayKeyRotationApplicationService,
+    GatewayKeyRotationProgramExecutor,
+    GatewayKeyRotationRevocationEffectOutcome,
+    GatewayKeyRotationRevocationEffectResult,
     ImagePullAuthorityRegistrationService,
     IngressAuthorityProviderKind,
     IngressAuthorityRegistrationService,
@@ -746,6 +752,11 @@ def _operations_application(
         clock=_clock,
         id_factory=_id,
     )
+    gateway_key_rotations = _gateway_key_rotation_application(
+        unit_of_work,
+        secret_provider,
+        execution,
+    )
     return CpkServerOperationsApplication(
         cpk_server_services(
             unit_of_work_factory=unit_of_work,
@@ -800,6 +811,7 @@ def _operations_application(
                 secret_use_authorizer,
                 secret_provider,
             ),
+            gateway_key_rotations=gateway_key_rotations,
             clock=lambda: datetime.now(timezone.utc),
         )
     )
@@ -1177,12 +1189,133 @@ def _cloudflare_ingress_interpreter(
 class _SecretProviderComposition:
     authorized_resolver: object | None = field(default=None, repr=False)
     secret_custodian: object | None = field(default=None, repr=False)
+    bootstrap_registry: object | None = field(default=None, repr=False)
+    transport: object | None = field(default=None, repr=False)
 
     def __repr__(self) -> str:
         return (
             "SecretProviderComposition("
-            f"configured={self.authorized_resolver is not None})"
+            f"configured={self.bootstrap_registry is not None})"
         )
+
+
+@dataclass(frozen=True, repr=False)
+class _GatewayRotationGenerationAdapter:
+    bootstrap_registry: object = field(repr=False)
+    transport: object | None = field(default=None, repr=False)
+
+    def generate(self, grant):
+        from control_plane_kit_interpreters.secret_provider import (
+            ControlPlaneKitSecretsClient,
+            SecretProviderClientError,
+            SecretProviderOutcomeCertainty,
+        )
+
+        custody = grant.custody_grant
+        try:
+            configuration = self.bootstrap_registry.configuration_for(
+                endpoint_reference=custody.endpoint_reference,
+                credential_reference=custody.credential_reference,
+            )
+            provider_result = ControlPlaneKitSecretsClient(
+                configuration,
+                transport=self.transport,
+            ).generate_delegation_key(
+                workspace_id=grant.workspace_id,
+                reference=grant.reference,
+                purpose=grant.purpose,
+                issuer=grant.issuer,
+                caller_subject=grant.actor_subject,
+                correlation_id=grant.correlation_id,
+            )
+            evidence = DelegationKeyGenerationEvidence.from_provider_result(
+                grant,
+                provider_result,
+            )
+            return GatewayKeyGenerationResult.generated(evidence)
+        except SecretProviderClientError as error:
+            code = f"provider-{error.code.value}"
+            if error.certainty is SecretProviderOutcomeCertainty.UNCERTAIN:
+                return GatewayKeyGenerationResult.uncertain(code)
+            return GatewayKeyGenerationResult.definite_failure(code)
+        except (TypeError, ValueError):
+            return GatewayKeyGenerationResult.uncertain(
+                "provider-malformed-generation-evidence"
+            )
+
+    def __repr__(self) -> str:
+        return "GatewayRotationGenerationAdapter(<redacted>)"
+
+
+@dataclass(frozen=True, repr=False)
+class _GatewayRotationRevocationAdapter:
+    custodian: object = field(repr=False)
+
+    def revoke_version(self, grant):
+        from control_plane_kit_interpreters.secret_provider import (
+            SecretProviderClientError,
+            SecretProviderOutcomeCertainty,
+        )
+
+        try:
+            receipt = self.custodian.revoke_version(grant)
+            return GatewayKeyRotationRevocationEffectResult(
+                GatewayKeyRotationRevocationEffectOutcome.REVOKED,
+                receipt=receipt,
+            )
+        except SecretProviderClientError as error:
+            code = f"provider-{error.code.value}"
+            outcome = (
+                GatewayKeyRotationRevocationEffectOutcome.UNCERTAIN
+                if error.certainty is SecretProviderOutcomeCertainty.UNCERTAIN
+                else GatewayKeyRotationRevocationEffectOutcome.DEFINITE_FAILURE
+            )
+            return GatewayKeyRotationRevocationEffectResult(
+                outcome,
+                failure_code=code,
+            )
+        except (TypeError, ValueError):
+            return GatewayKeyRotationRevocationEffectResult(
+                GatewayKeyRotationRevocationEffectOutcome.UNCERTAIN,
+                failure_code="provider-malformed-revocation-evidence",
+            )
+
+    def __repr__(self) -> str:
+        return "GatewayRotationRevocationAdapter(<redacted>)"
+
+
+def _gateway_key_rotation_application(
+    unit_of_work,
+    secret_provider: "_SecretProviderComposition",
+    execution: ExecutionCoordinator,
+):
+    if (
+        secret_provider.bootstrap_registry is None
+        or secret_provider.secret_custodian is None
+    ):
+        return None
+    executor = GatewayKeyRotationProgramExecutor(
+        unit_of_work,
+        generation_adapter=_GatewayRotationGenerationAdapter(
+            secret_provider.bootstrap_registry,
+            secret_provider.transport,
+        ),
+        revocation_adapter=_GatewayRotationRevocationAdapter(
+            secret_provider.secret_custodian,
+        ),
+        coordinator=execution,
+        clock=_clock,
+        trusted_epoch_clock=lambda: int(time.time()),
+        lease_expiry_clock=_lease_expiry_clock,
+        id_factory=_id,
+    )
+    return GatewayKeyRotationApplicationService(
+        unit_of_work,
+        clock=_clock,
+        trusted_epoch_clock=lambda: int(time.time()),
+        id_factory=_id,
+        phase_executor=executor,
+    )
 
 
 @dataclass(frozen=True, repr=False)
@@ -1289,6 +1422,8 @@ def _secret_provider_composition(
             registry,
             transport=transport,
         ),
+        bootstrap_registry=registry,
+        transport=transport,
     )
 
 
@@ -1300,6 +1435,12 @@ def _install_operations_schema(database_url: str) -> None:
 
 def _clock() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _lease_expiry_clock() -> str:
+    return (
+        datetime.now(timezone.utc) + timedelta(minutes=5)
+    ).isoformat().replace("+00:00", "Z")
 
 
 def _id() -> str:
