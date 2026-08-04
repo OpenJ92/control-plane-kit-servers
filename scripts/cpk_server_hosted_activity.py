@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 import http.client
 import os
 import ssl
@@ -266,6 +267,133 @@ class HostedWorkflow:
         authority = detail.get("ingress_authority", {})
         if authority.get("authority_ref") != OPENJ92_INGRESS_AUTHORITY_REF:
             raise RuntimeError("provider-backed ingress authority was not readable")
+
+    def admit_gateway_delegation_key(
+        self,
+        *,
+        provider_id: str,
+        provider_display_name: str,
+        provider_endpoint_reference: str,
+        provider_credential_reference: str,
+        private_key_reference: str,
+        issuer: str,
+        key_id: str,
+        public_key_pem: str,
+        admitted_at: str,
+        activated_at: str,
+        metadata: dict[str, object],
+    ) -> dict[str, Any]:
+        """Admit one provider-backed gateway key through public CPK routes."""
+
+        provider = _http(
+            self.base_url,
+            "POST",
+            f"/workspaces/{self.workspace_id}/secret-providers",
+            {
+                "provider_id": provider_id,
+                "provider_kind": "control-plane-kit-secrets",
+                "display_name": provider_display_name,
+                "endpoint_reference": provider_endpoint_reference,
+                "credential_reference": provider_credential_reference,
+                "allowed_reference_prefixes": [private_key_reference],
+                "allowed_intents": ["gateway.probe-signing-key"],
+                "admitted_at": admitted_at,
+                "metadata": metadata,
+                "idempotency_key": (
+                    f"{self.workspace_id}:secret-provider:{provider_id}:gateway"
+                ),
+            },
+        )
+        provider_registration_id = str(provider["registration_id"])
+        _http(
+            self.base_url,
+            "POST",
+            f"/workspaces/{self.workspace_id}/secret-references",
+            {
+                "reference": private_key_reference,
+                "provider_registration_id": provider_registration_id,
+                "allowed_intents": ["gateway.probe-signing-key"],
+                "admitted_at": admitted_at,
+                "metadata": metadata,
+                "idempotency_key": (
+                    f"{self.workspace_id}:secret-reference:gateway:{key_id}"
+                ),
+            },
+        )
+        _http(
+            self.base_url,
+            "POST",
+            f"/workspaces/{self.workspace_id}/delegation-keys",
+            {
+                "purpose": "gateway-probe",
+                "issuer": issuer,
+                "key_id": key_id,
+                "algorithm": "ed25519",
+                "public_key_pem": public_key_pem,
+                "private_key_reference": private_key_reference,
+                "admitted_at": admitted_at,
+                "idempotency_key": (
+                    f"{self.workspace_id}:delegation-key:{issuer}:{key_id}"
+                ),
+            },
+        )
+        _mcp_tool(
+            self.base_url,
+            "command.delegation-key.activate",
+            {
+                "workspace_id": self.workspace_id,
+                "purpose": "gateway-probe",
+                "issuer": issuer,
+                "key_id": key_id,
+                "activated_at": activated_at,
+                "idempotency_key": (
+                    f"{self.workspace_id}:delegation-key:{issuer}:{key_id}:activate"
+                ),
+            },
+        )
+        readback = _mcp_read(
+            self.base_url,
+            "read.delegation-keys",
+            {"workspace_id": self.workspace_id},
+        )
+        items = readback.get("items")
+        if not isinstance(items, list):
+            raise RuntimeError("delegation key readback was malformed")
+        matches = [
+            item
+            for item in items
+            if isinstance(item, dict)
+            and item.get("purpose") == "gateway-probe"
+            and item.get("issuer") == issuer
+            and item.get("key_id") == key_id
+        ]
+        if len(matches) != 1:
+            raise RuntimeError("delegation key readback was not exact")
+        active = matches[0]
+        normalized_public_key = public_key_pem.replace("\r\n", "\n").strip() + "\n"
+        expected = {
+            "workspace_id": self.workspace_id,
+            "purpose": "gateway-probe",
+            "issuer": issuer,
+            "key_id": key_id,
+            "algorithm": "ed25519",
+            "fingerprint_sha256": sha256(
+                normalized_public_key.encode("ascii")
+            ).hexdigest(),
+            "private_key_reference": private_key_reference,
+            "status": "active",
+        }
+        mismatches = {
+            field: (active.get(field), value)
+            for field, value in expected.items()
+            if active.get(field) != value
+        }
+        if mismatches:
+            raise RuntimeError(
+                "delegation key readback did not match admitted truth: "
+                f"{sorted(mismatches)}"
+            )
+        return active
 
     def start_session(self, title: str) -> str:
         session = _http(

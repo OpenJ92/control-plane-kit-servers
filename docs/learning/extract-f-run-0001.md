@@ -935,3 +935,52 @@ CPK_HOSTED_ACTIVITY_SCENARIO=public-gateway-ingress \
   scripts/cpk_server_hosted_activity_smoke.sh
 ./test.sh
 ```
+
+## #1383 Hosted Gateway Delegation Bootstrap
+
+#1383 adds one reusable hosted-workflow composition for admitting the initial
+gateway delegation verifier before a bound gateway graph is published:
+
+```text
+real control-plane-kit-secrets provider custody
+  -> cpk-server HTTP secret-provider registration
+    -> cpk-server HTTP secret-reference registration
+      -> cpk-server HTTP public delegation-key registration
+        -> cpk-server MCP key activation
+          -> cpk-server MCP exact key readback
+```
+
+The helper owns no key lifecycle policy and never receives private key bytes.
+It carries provider metadata, a `SecretReference`, and public Ed25519 material.
+The source-live fixture writes the private key directly to the real provider,
+then proves the same admitted key survives provider and cpk-server restart. Its
+leak assertion verifies that private material is absent from activity readback.
+
+The live pass established three useful laws:
+
+- graph-execution permission does not substitute for the focused provider,
+  reference, registration, and activation permissions;
+- exact workspace, purpose, issuer, key id, fingerprint, reference, algorithm,
+  and active status are checked before the helper reports success;
+- idempotent replay after restart preserves the original delegation-key
+  registration identity.
+
+Docker storage exhaustion initially prevented the source-live images from
+building. Only disposable CPK images and inactive build cache were removed;
+all Pottery Factory containers and every volume were preserved. The first full
+package run then encountered one transient Docker port-forward startup miss.
+The unchanged image smoke passed immediately afterward, and the complete gate
+passed on rerun, so no application behavior or assertion was altered.
+
+Validation evidence:
+
+```text
+git diff --check
+python3 -m compileall scripts/cpk_server_hosted_activity.py \
+  scripts/cpk_server_secret_provider_source_live.py
+python -m unittest \
+  products.cpk_server.tests.test_hosted_gateway_delegation_bootstrap
+CPK_SECRET_PROVIDER_SOURCE_LIVE_SCENARIO=gateway-delegation-bootstrap \
+  scripts/cpk_server_secret_provider_source_live_smoke.sh
+./test.sh
+```
