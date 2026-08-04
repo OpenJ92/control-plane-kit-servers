@@ -27,6 +27,8 @@ from control_plane_kit_core.algebra import (
     DockerRuntime,
     SocketConnection,
 )
+from control_plane_kit_core.delegation_authority import DelegationAuthorityBinding
+from control_plane_kit_core.delegation_keys import DelegationKeyPurpose
 from control_plane_kit_core.gateway_delegation import (
     DelegatedGatewayProbeGrant,
     GatewayProbeCommandKind,
@@ -940,6 +942,13 @@ def _gateway_rotation_graph(
                         "gateway",
                         "target-postgres",
                     ),
+                ),
+            ),
+            delegation_authorities=(
+                DelegationAuthorityBinding(
+                    delegate_node_id="gateway",
+                    purpose=DelegationKeyPurpose.GATEWAY_PROBE,
+                    issuer=GATEWAY_ROTATION_ISSUER,
                 ),
             ),
         )
