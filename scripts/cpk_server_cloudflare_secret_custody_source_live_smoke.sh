@@ -127,12 +127,8 @@ public_pem = private_key.public_key().public_bytes(
     encoding=serialization.Encoding.PEM,
     format=serialization.PublicFormat.SubjectPublicKeyInfo,
 ).decode("ascii")
-base.joinpath("gateway-public-keys.json").write_text(
-    json.dumps(
-        {"source-live-gateway-key": public_pem},
-        separators=(",", ":"),
-        sort_keys=True,
-    ),
+base.joinpath("gateway-public-key.pem").write_text(
+    public_pem,
     encoding="utf-8",
 )
 '

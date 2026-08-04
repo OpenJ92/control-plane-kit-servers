@@ -1806,6 +1806,14 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn('"intent": intent,', controller)
         self.assertIn('"intent": POSTGRES_INTENT,', controller)
 
+        cloudflare_smoke = (
+            ROOT
+            / "scripts"
+            / "cpk_server_cloudflare_secret_custody_source_live_smoke.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn('base.joinpath("gateway-public-key.pem")', cloudflare_smoke)
+        self.assertNotIn("gateway-public-keys.json", cloudflare_smoke)
+
     def test_http_only_public_gateway_omits_postgres_secret_delivery(self) -> None:
         from control_plane_kit_core.delegation_authority import (
             DelegationAuthorityBinding,
