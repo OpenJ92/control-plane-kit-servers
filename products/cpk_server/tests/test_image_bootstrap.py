@@ -1865,11 +1865,21 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             sys.path.remove(str(script_dir))
 
     def test_gateway_rotation_authors_stable_delegation_intent_only(self) -> None:
+        from control_plane_kit_core.planning import (
+            StartNode,
+            WaitForHealthy,
+            compile_activity_plan,
+        )
         from control_plane_kit_core.delegation_authority import (
             DelegationAuthorityBinding,
         )
         from control_plane_kit_core.delegation_keys import DelegationKeyPurpose
-        from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC
+        from control_plane_kit_core.topology import (
+            DEFAULT_GRAPH_CODEC,
+            DeploymentGraph,
+            diff_graphs,
+            validate_graph,
+        )
 
         script_dir = ROOT / "scripts"
         spec = importlib.util.spec_from_file_location(
@@ -1921,6 +1931,34 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             sort_keys=True,
         )
         self.assertNotIn("secret://", delegation_descriptor)
+
+        gateway_checks = {
+            check.check_id
+            for check in graph.nodes["gateway"].block_spec.verification.checks
+        }
+        self.assertEqual(gateway_checks, {"live", "ready"})
+        plan = compile_activity_plan(
+            diff_graphs(
+                validate_graph(DeploymentGraph(graph.name)),
+                validate_graph(graph),
+            )
+        )
+        gateway_start = next(
+            activity
+            for activity in plan.activities
+            if isinstance(activity.operation, StartNode)
+            and activity.operation.target.node_id == "gateway"
+        )
+        gateway_health = next(
+            activity
+            for activity in plan.activities
+            if isinstance(activity.operation, WaitForHealthy)
+            and activity.operation.target.node_id == "gateway"
+        )
+        self.assertIn(
+            gateway_start.activity_id,
+            {dependency.predecessor for dependency in gateway_health.dependencies},
+        )
 
     def test_cloudflare_custody_source_live_uses_provider_backed_composition(
         self,

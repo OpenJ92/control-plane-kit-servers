@@ -1312,10 +1312,6 @@ def _gateway_rotation_graph(
         "gateway",
         ProductInstanceConfiguration.from_contract(gateway_product.runtime_contract),
     )
-    gateway = replace(
-        gateway,
-        spec=replace(gateway.spec, verification=VerificationContract()),
-    )
     hello_product = hello_document.product
     hello = instantiate_product(
         hello_product,
