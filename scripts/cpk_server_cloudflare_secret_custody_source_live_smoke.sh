@@ -127,12 +127,8 @@ public_pem = private_key.public_key().public_bytes(
     encoding=serialization.Encoding.PEM,
     format=serialization.PublicFormat.SubjectPublicKeyInfo,
 ).decode("ascii")
-base.joinpath("gateway-public-keys.json").write_text(
-    json.dumps(
-        {"source-live-gateway-key": public_pem},
-        separators=(",", ":"),
-        sort_keys=True,
-    ),
+base.joinpath("gateway-public-key.pem").write_text(
+    public_pem,
     encoding="utf-8",
 )
 '
@@ -231,7 +227,6 @@ print(json.dumps([
 
 PROVIDER_ROUTES_JSON='{"source-live-secrets":"http://cpk-secrets:8081"}'
 PROVIDER_BOOTSTRAP_FILES_JSON='{"secret://bootstrap/provider/client-token":"/run/secrets/cpk-provider/client-token"}'
-GATEWAY_PUBLIC_KEYS_JSON="$(cat "$BOOTSTRAP_DIR/gateway-public-keys.json")"
 
 docker network create "$NETWORK" >/dev/null
 
@@ -338,9 +333,6 @@ SERVER_CONTAINER="$(docker run -d \
   -e CPK_MATERIAL_PROVIDER_ROUTES_JSON="$PROVIDER_ROUTES_JSON" \
   -e CPK_MATERIAL_PROVIDER_BOOTSTRAP_FILES_JSON="$PROVIDER_BOOTSTRAP_FILES_JSON" \
   -e CPK_GATEWAY_PROBE_SIGNER=ed25519 \
-  -e CPK_GATEWAY_PROBE_SIGNING_KEY_REF=secret://control-plane-kit/gateway/source-live-signing-key \
-  -e CPK_GATEWAY_PROBE_ISSUER=urn:control-plane-kit:source-live \
-  -e CPK_GATEWAY_PROBE_KEY_ID=source-live-gateway-key \
   -e CPK_WORKPLACE_DATABASE_URL=postgresql://cpk:cpk@cpk-postgres:5432/cpk \
   -e CPK_ACTIVITY_HISTORY_DATABASE_URL=postgresql://cpk:cpk@cpk-postgres:5432/cpk \
   -e CPK_OBSERVER_STATE_DATABASE_URL=postgresql://cpk:cpk@cpk-postgres:5432/cpk \
@@ -362,7 +354,6 @@ if ! docker run --rm \
   -e CPK_SECRET_PROVIDER_TOKEN_FILE=/run/secrets/cpk-source-live/client-token \
   -e CPK_SECRET_PROVIDER_BOOTSTRAP_DIR=/run/secrets/cpk-source-live \
   -e CPK_GATEWAY_PROBE_PRIVATE_KEY_FILE=/run/secrets/cpk-source-live/gateway-private-key.pem \
-  -e CPK_GATEWAY_PROBE_PUBLIC_KEYS_JSON="$GATEWAY_PUBLIC_KEYS_JSON" \
   -e OPENJ92_CLOUDFLARE_ACCOUNT_ID="$OPENJ92_CLOUDFLARE_ACCOUNT_ID" \
   -e OPENJ92_CLOUDFLARE_ZONE_ID="$OPENJ92_CLOUDFLARE_ZONE_ID" \
   -e OPENJ92_CLOUDFLARE_ZONE="$OPENJ92_CLOUDFLARE_ZONE" \

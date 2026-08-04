@@ -142,20 +142,6 @@ class CpkLocalGatewayProductTests(unittest.TestCase):
         self.assertEqual(
             product.runtime_contract.public_environment,
             (
-                PublicStaticEnvironmentBinding("CPK_GATEWAY_PROBE_AUDIENCE", "gateway"),
-                PublicStaticEnvironmentBinding("CPK_GATEWAY_PROBE_ISSUER", "cpk"),
-                PublicStaticEnvironmentBinding(
-                    "CPK_GATEWAY_PROBE_NODE_ID",
-                    "gateway",
-                ),
-                PublicStaticEnvironmentBinding(
-                    "CPK_GATEWAY_PROBE_VERIFICATION_KEYS_JSON",
-                    "{}",
-                ),
-                PublicStaticEnvironmentBinding(
-                    "CPK_GATEWAY_PROBE_VERIFIER",
-                    "ed25519",
-                ),
                 PublicStaticEnvironmentBinding("CPK_GATEWAY_TARGETS_JSON", "{}"),
             ),
         )

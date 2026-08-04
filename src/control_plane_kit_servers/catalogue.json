@@ -12,7 +12,7 @@
     },
     {
       "descriptor_path": "products/cpk_local_gateway/product.cpk.json",
-      "descriptor_sha256": "b03b03e30f596f05e4411fc95b47ac9ec1016956044fb0b5ea624ddaf5addd56",
+      "descriptor_sha256": "bf14bcdd4dc4287bc8df93a66397521dcfe4714d97d5f261f851c4e2b3efa69f",
       "image_digest": "sha256:035de9903e4eddd47560687b524a43e9e20fbbf5923d7d688acfc069018085c9",
       "image_ref": "ghcr.io/openj92/control-plane-kit-servers/cpk-local-gateway:harden-secrets-1225",
       "owner_directory": "products/cpk_local_gateway",

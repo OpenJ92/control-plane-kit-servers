@@ -46,7 +46,9 @@ from control_plane_kit_core.verification import VerificationContract, Verificati
 
 from cpk_server_hosted_activity import (
     AUTHORIZATION,
+    GATEWAY_PROBE_KEY_ID,
     LOCAL_DOCKER_AUTHORITY_REF,
+    GATEWAY_PROBE_ISSUER,
     HostedWorkflow,
     _assert_activity_mentions,
     _assert_gateway_probe_succeeded,
@@ -59,6 +61,7 @@ from cpk_server_hosted_activity import (
     _bootstrap_workspace,
     _clock,
     _disconnect_runtime_networks,
+    _events_for_run,
     _http,
     _mcp_read,
     _mcp_tool,
@@ -152,6 +155,22 @@ def main() -> int:
         return 0
     if (
         os.environ.get("CPK_SECRET_PROVIDER_SOURCE_LIVE_SCENARIO")
+        == "gateway-verifier-projection"
+    ):
+        _run_gateway_key_rotation(
+            base_url=base_url,
+            server_container=server_container,
+            provider_container=provider_container,
+            servers_repo=servers_repo,
+            operations_database_url=operations_database_url,
+            provider_token_file=provider_token_file,
+            bootstrap_dir=bootstrap_dir,
+            stop_after_initial_projection=True,
+        )
+        print("cpk-server gateway verifier projection source-live acceptance passed")
+        return 0
+    if (
+        os.environ.get("CPK_SECRET_PROVIDER_SOURCE_LIVE_SCENARIO")
         == "gateway-key-rotation"
     ):
         _run_gateway_key_rotation(
@@ -162,6 +181,7 @@ def main() -> int:
             operations_database_url=operations_database_url,
             provider_token_file=provider_token_file,
             bootstrap_dir=bootstrap_dir,
+            stop_after_initial_projection=False,
         )
         print("cpk-server gateway signing-key rotation source-live acceptance passed")
         return 0
@@ -426,6 +446,7 @@ def _run_gateway_key_rotation(
     operations_database_url: str,
     provider_token_file: Path,
     bootstrap_dir: Path,
+    stop_after_initial_projection: bool,
 ) -> None:
     workspace_id = GATEWAY_ROTATION_WORKSPACE
     cpk_server_document = _product_document(servers_repo, "cpk_server")
@@ -513,7 +534,6 @@ def _run_gateway_key_rotation(
         hello_document,
         postgres_document,
         workspace_id=workspace_id,
-        verifier_configuration=verifier_a,
     )
     deployed_a = workflow.run_approved_transition(
         title="Gateway key A deploy",
@@ -521,6 +541,7 @@ def _run_gateway_key_rotation(
         current_graph_id=current_graph_id,
         sync_runtime_networks=True,
     )
+    _assert_initial_gateway_transition_evidence(workflow, deployed_a)
     _wait_private_gateway_ready(gateway_document)
     _assert_gateway_probe_key(
         workflow.request_gateway_probe_http(
@@ -543,6 +564,8 @@ def _run_gateway_key_rotation(
         ),
         GATEWAY_ROTATION_KEY_A_ID,
     )
+    if stop_after_initial_projection:
+        return
 
     _register_delegation_key(
         workflow,
@@ -561,7 +584,6 @@ def _run_gateway_key_rotation(
         hello_document,
         postgres_document,
         workspace_id=workspace_id,
-        verifier_configuration=verifier_overlap,
     )
     overlap = workflow.run_approved_transition(
         title="Gateway key A and B verifier overlap",
@@ -626,7 +648,6 @@ def _run_gateway_key_rotation(
         hello_document,
         postgres_document,
         workspace_id=workspace_id,
-        verifier_configuration=verifier_b,
     )
     retired = workflow.run_approved_transition(
         title="Gateway key A retirement",
@@ -828,6 +849,7 @@ def _register_delegation_key(
     private_key_reference: str,
     public_key_file: Path,
     admitted_at: str,
+    issuer: str = GATEWAY_ROTATION_ISSUER,
 ) -> None:
     _http(
         workflow.base_url,
@@ -835,7 +857,7 @@ def _register_delegation_key(
         f"/workspaces/{workflow.workspace_id}/delegation-keys",
         {
             "purpose": "gateway-probe",
-            "issuer": GATEWAY_ROTATION_ISSUER,
+            "issuer": issuer,
             "key_id": key_id,
             "algorithm": "ed25519",
             "public_key_pem": public_key_file.read_text(encoding="utf-8"),
@@ -851,6 +873,7 @@ def _activate_delegation_key(
     key_id: str,
     *,
     activated_at: str,
+    issuer: str = GATEWAY_ROTATION_ISSUER,
 ) -> None:
     _delegation_key_lifecycle_command(
         workflow,
@@ -858,6 +881,7 @@ def _activate_delegation_key(
         action="activate",
         evidence_name="activated_at",
         evidence_value=activated_at,
+        issuer=issuer,
     )
 
 
@@ -866,6 +890,7 @@ def _retire_delegation_key(
     key_id: str,
     *,
     retired_at: str,
+    issuer: str = GATEWAY_ROTATION_ISSUER,
 ) -> None:
     _delegation_key_lifecycle_command(
         workflow,
@@ -873,6 +898,7 @@ def _retire_delegation_key(
         action="retire",
         evidence_name="retired_at",
         evidence_value=retired_at,
+        issuer=issuer,
     )
 
 
@@ -881,6 +907,7 @@ def _revoke_delegation_key(
     key_id: str,
     *,
     revoked_at: str,
+    issuer: str = GATEWAY_ROTATION_ISSUER,
 ) -> None:
     _delegation_key_lifecycle_command(
         workflow,
@@ -888,6 +915,7 @@ def _revoke_delegation_key(
         action="revoke",
         evidence_name="revoked_at",
         evidence_value=revoked_at,
+        issuer=issuer,
     )
 
 
@@ -898,14 +926,15 @@ def _delegation_key_lifecycle_command(
     action: str,
     evidence_name: str,
     evidence_value: str,
+    issuer: str,
 ) -> None:
-    issuer = quote(GATEWAY_ROTATION_ISSUER, safe="")
+    encoded_issuer = quote(issuer, safe="")
     _http(
         workflow.base_url,
         "POST",
         (
             f"/workspaces/{workflow.workspace_id}/delegation-keys/"
-            f"{issuer}/{key_id}/{action}"
+            f"{encoded_issuer}/{key_id}/{action}"
         ),
         {
             "purpose": "gateway-probe",
@@ -982,30 +1011,12 @@ def _gateway_rotation_graph(
     postgres_document: Any,
     *,
     workspace_id: str,
-    verifier_configuration: dict[str, Any],
 ) -> DeploymentGraph:
-    public_environment = verifier_configuration.get("public_environment")
-    if not isinstance(public_environment, list):
-        raise RuntimeError("gateway verifier environment was malformed")
-    verifier_values = {
-        str(item["name"]): str(item["value"])
-        for item in public_environment
-        if isinstance(item, dict)
-        and isinstance(item.get("name"), str)
-        and isinstance(item.get("value"), str)
-    }
-    if len(verifier_values) != len(public_environment):
-        raise RuntimeError("gateway verifier environment was not closed public material")
     gateway_product = gateway_document.product
     gateway = instantiate_product(
         gateway_product,
         "gateway",
-        _with_public_environment(
-            ProductInstanceConfiguration.from_contract(
-                gateway_product.runtime_contract
-            ),
-            verifier_values,
-        ),
+        ProductInstanceConfiguration.from_contract(gateway_product.runtime_contract),
     )
     gateway = replace(
         gateway,
@@ -1066,6 +1077,71 @@ def _assert_gateway_probe_key(result: dict[str, Any], expected_key_id: str) -> N
     grant = result.get("gateway_probe", {}).get("grant")
     if not isinstance(grant, dict) or grant.get("key_id") != expected_key_id:
         raise RuntimeError("gateway probe did not use the expected active signing key")
+
+
+def _assert_initial_gateway_transition_evidence(
+    workflow: HostedWorkflow,
+    transition: Any,
+) -> None:
+    expected_node_ids = {"gateway", "hello", "postgres"}
+    desired = workflow.read_desired_graph()
+    graph_descriptor = desired.get("graph_descriptor")
+    if not isinstance(graph_descriptor, dict):
+        raise RuntimeError("desired graph readback omitted its graph descriptor")
+    nodes = graph_descriptor.get("nodes")
+    if not isinstance(nodes, dict):
+        raise RuntimeError("desired graph readback omitted its node map")
+    desired_node_ids = set(nodes)
+    if not expected_node_ids <= desired_node_ids:
+        raise RuntimeError(
+            "desired graph readback lost gateway rotation nodes: "
+            f"expected={sorted(expected_node_ids)}, observed={sorted(desired_node_ids)}"
+        )
+
+    detail = workflow.read_plan_detail(transition.plan_id)
+    plan = detail.get("plan")
+    payload = plan.get("payload") if isinstance(plan, dict) else None
+    activities = payload.get("activities") if isinstance(payload, dict) else None
+    if not isinstance(activities, list):
+        raise RuntimeError("plan detail omitted its activity plan")
+    start_activity_ids = {
+        str(target.get("node_id")): str(activity.get("activity_id"))
+        for activity in activities
+        if isinstance(activity, dict)
+        for operation in (activity.get("operation"),)
+        if isinstance(operation, dict) and operation.get("kind") == "start-node"
+        for target in (operation.get("target"),)
+        if isinstance(target, dict) and target.get("kind") == "node"
+    }
+    started_node_ids = set(start_activity_ids)
+    if not expected_node_ids <= started_node_ids:
+        raise RuntimeError(
+            "initial gateway plan omitted required start-node activities: "
+            f"expected={sorted(expected_node_ids)}, observed={sorted(started_node_ids)}, "
+            f"plan_id={transition.plan_id}"
+        )
+
+    events = _events_for_run(workflow.read_activity(limit=200), transition.run_id)
+    succeeded_activity_ids = {
+        str(event.get("activity_id"))
+        for event in events
+        if event.get("event_type") == "step_succeeded"
+    }
+    missing_success = {
+        node_id: activity_id
+        for node_id, activity_id in start_activity_ids.items()
+        if node_id in expected_node_ids and activity_id not in succeeded_activity_ids
+    }
+    if missing_success:
+        gateway_events = [
+            event
+            for event in events
+            if event.get("activity_id") in start_activity_ids.values()
+        ]
+        raise RuntimeError(
+            "initial gateway run omitted exact start-node success evidence: "
+            f"missing={missing_success}, events={gateway_events}"
+        )
 
 
 def _direct_gateway_capability(
@@ -1191,8 +1267,43 @@ def _wait_private_gateway_ready(gateway_document: Any) -> None:
                 f"gateway_addresses={gateway_addresses}"
             )
     raise RuntimeError(
-        f"private gateway did not become ready under descriptor policy: {last_error}"
+        "private gateway did not become ready under descriptor policy: "
+        f"{last_error}; runtime_networks="
+        f"{_runtime_network_diagnostics(GATEWAY_ROTATION_WORKSPACE)}"
     )
+
+
+def _runtime_network_diagnostics(workspace_id: str) -> list[dict[str, object]]:
+    client = docker.from_env()
+    label_filters = [
+        f"org.openj92.cpk.workspace={workspace_id}",
+        "org.openj92.cpk.kind=runtime-network",
+    ]
+    diagnostics: list[dict[str, object]] = []
+    for network in client.networks.list(filters={"label": label_filters}):
+        network.reload()
+        endpoints = []
+        for container_id in sorted((network.attrs.get("Containers") or {}).keys()):
+            container = client.containers.get(container_id)
+            attachment = (
+                (container.attrs.get("NetworkSettings") or {})
+                .get("Networks", {})
+                .get(network.name, {})
+            )
+            endpoints.append(
+                {
+                    "container": container.name,
+                    "aliases": sorted(attachment.get("Aliases") or ()),
+                    "ipv4": str(attachment.get("IPAddress") or ""),
+                }
+            )
+        diagnostics.append(
+            {
+                "network": network.name,
+                "endpoints": endpoints,
+            }
+        )
+    return diagnostics
 
 
 def _run_cloudflare_tunnel_custody(
@@ -1257,6 +1368,20 @@ def _run_cloudflare_tunnel_custody(
     )
     workflow.register_ghcr_pull_authority(
         credential_reference=GHCR_PULL_CREDENTIAL_REFERENCE,
+    )
+    _register_delegation_key(
+        workflow,
+        key_id=GATEWAY_PROBE_KEY_ID,
+        private_key_reference=GATEWAY_SIGNING_KEY_REFERENCE,
+        public_key_file=bootstrap_dir / "gateway-public-key.pem",
+        admitted_at=_clock(),
+        issuer=GATEWAY_PROBE_ISSUER,
+    )
+    _activate_delegation_key(
+        workflow,
+        GATEWAY_PROBE_KEY_ID,
+        activated_at=_clock(),
+        issuer=GATEWAY_PROBE_ISSUER,
     )
     workflow.register_provider_backed_cloudflare_ingress_authority(
         api_token_ref=CLOUDFLARE_API_TOKEN_REFERENCE,
