@@ -166,21 +166,20 @@ for index in range(1, 4):
         secrets.token_urlsafe(40),
         encoding="utf-8",
     )
-for label in ("a", "b"):
-    private_key = Ed25519PrivateKey.generate()
-    base.joinpath(f"gateway-rotation-key-{label}.pem").write_bytes(
-        private_key.private_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PrivateFormat.PKCS8,
-            encryption_algorithm=serialization.NoEncryption(),
-        )
+private_key = Ed25519PrivateKey.generate()
+base.joinpath("gateway-rotation-key-a.pem").write_bytes(
+    private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
     )
-    base.joinpath(f"gateway-rotation-key-{label}-public.pem").write_bytes(
-        private_key.public_key().public_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PublicFormat.SubjectPublicKeyInfo,
-        )
+)
+base.joinpath("gateway-rotation-key-a-public.pem").write_bytes(
+    private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
     )
+)
 '
 chmod 0400 "$BOOTSTRAP_DIR/master.key"
 chmod 0400 "$BOOTSTRAP_DIR/client-token"
@@ -293,8 +292,8 @@ operator_scopes = [
     "execution:operate",
     "runtime-authority:register",
     "runtime-authority:read",
-    "runtime-authority:revoke",
     "runtime-authority:use",
+    "runtime-authority:revoke",
     "secret-provider:register",
     "secret-provider:read",
     "secret-provider:revoke",
@@ -306,6 +305,8 @@ operator_scopes = [
     "delegation-key:retire",
     "delegation-key:revoke",
     "delegation-key:use",
+    "delegation-key:rotate",
+    "delegation-key:rotate-approve",
 ]
 worker_scopes = ["execution:operate", "secret-provider:use"]
 limited_worker_scopes = ["execution:operate"]
@@ -484,7 +485,6 @@ for secret_file in \
   postgres-concurrent-2 \
   postgres-concurrent-3 \
   gateway-rotation-key-a.pem \
-  gateway-rotation-key-b.pem \
   ghcr-pull-credential.json \
   ghcr-token-sentinel
 do

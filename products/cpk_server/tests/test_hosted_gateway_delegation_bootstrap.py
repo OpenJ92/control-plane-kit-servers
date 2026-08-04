@@ -33,6 +33,163 @@ def _controller_module():
 
 
 class HostedGatewayDelegationBootstrapTests(unittest.TestCase):
+    def test_desired_graph_command_uses_authoritative_workspace_pointer(self) -> None:
+        with _controller_module() as module:
+            calls: list[tuple[str, str, dict[str, object]]] = []
+
+            def fake_http(
+                _base_url: str,
+                method: str,
+                path: str,
+                payload: dict[str, object] | None = None,
+                **_kwargs: object,
+            ) -> dict[str, object]:
+                calls.append(("http", f"{method} {path}", payload or {}))
+                return {
+                    "desired_graph_id": "graph-next",
+                    "desired_realized_projection_id": "projection-next",
+                    "desired_graph_revision": 8,
+                }
+
+            def fake_mcp_read(
+                _base_url: str,
+                name: str,
+                arguments: dict[str, object],
+            ) -> dict[str, object]:
+                calls.append(("mcp-read", name, arguments))
+                return {
+                    "workspace": {
+                        "workspace_id": "workspace-a",
+                        "desired_graph_id": "graph-stable",
+                        "desired_realized_projection_id": "projection-rotation-b",
+                        "desired_graph_revision": 7,
+                    }
+                }
+
+            workflow = module.HostedWorkflow(
+                "http://cpk-server:8080",
+                workspace_id="workspace-a",
+                worker_id="worker-a",
+                server_container="cpk-server",
+            )
+            with (
+                patch.object(module, "_http", side_effect=fake_http),
+                patch.object(module, "_mcp_read", side_effect=fake_mcp_read),
+            ):
+                result = workflow.set_desired_graph(
+                    session_id="session-a",
+                    graph=module.DeploymentGraph("workspace-a"),
+                    title="teardown",
+                    expected_desired_graph_id="graph-stable",
+                )
+
+            self.assertEqual(result, "graph-next")
+            self.assertEqual(
+                [value[:2] for value in calls],
+                [
+                    ("mcp-read", "read.workspace"),
+                    (
+                        "http",
+                        "POST /workspaces/workspace-a/graphs/desired",
+                    ),
+                ],
+            )
+            payload = calls[1][2]
+            self.assertEqual(payload["expected_desired_graph_id"], "graph-stable")
+            self.assertEqual(
+                payload["expected_desired_realized_projection_id"],
+                "projection-rotation-b",
+            )
+            self.assertEqual(payload["expected_desired_graph_revision"], 7)
+
+    def test_desired_graph_command_rejects_stale_graph_before_write(self) -> None:
+        with _controller_module() as module:
+            workflow = module.HostedWorkflow(
+                "http://cpk-server:8080",
+                workspace_id="workspace-a",
+                worker_id="worker-a",
+                server_container="cpk-server",
+            )
+            with (
+                patch.object(
+                    module,
+                    "_mcp_read",
+                    return_value={
+                        "workspace": {
+                            "workspace_id": "workspace-a",
+                            "desired_graph_id": "graph-newer",
+                            "desired_realized_projection_id": "projection-newer",
+                            "desired_graph_revision": 9,
+                        }
+                    },
+                ),
+                patch.object(module, "_http") as command,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "desired graph changed before authoring",
+                ):
+                    workflow.set_desired_graph(
+                        session_id="session-a",
+                        graph=module.DeploymentGraph("workspace-a"),
+                        title="teardown",
+                        expected_desired_graph_id="graph-older",
+                    )
+
+            command.assert_not_called()
+
+    def test_initial_desired_graph_command_uses_unassigned_pointer(self) -> None:
+        with _controller_module() as module:
+            payloads: list[dict[str, object]] = []
+
+            def fake_http(
+                _base_url: str,
+                _method: str,
+                _path: str,
+                payload: dict[str, object] | None = None,
+                **_kwargs: object,
+            ) -> dict[str, object]:
+                payloads.append(payload or {})
+                return {
+                    "desired_graph_id": "graph-first",
+                    "desired_realized_projection_id": "projection-first",
+                    "desired_graph_revision": 1,
+                }
+
+            workflow = module.HostedWorkflow(
+                "http://cpk-server:8080",
+                workspace_id="workspace-a",
+                worker_id="worker-a",
+                server_container="cpk-server",
+            )
+            with (
+                patch.object(
+                    module,
+                    "_mcp_read",
+                    return_value={
+                        "workspace": {
+                            "workspace_id": "workspace-a",
+                            "desired_graph_id": None,
+                            "desired_realized_projection_id": None,
+                            "desired_graph_revision": 0,
+                        }
+                    },
+                ),
+                patch.object(module, "_http", side_effect=fake_http),
+            ):
+                workflow.set_desired_graph(
+                    session_id="session-a",
+                    graph=module.DeploymentGraph("workspace-a"),
+                    title="initial",
+                    expected_desired_graph_id=None,
+                )
+
+            self.assertIsNone(payloads[0]["expected_desired_graph_id"])
+            self.assertIsNone(
+                payloads[0]["expected_desired_realized_projection_id"]
+            )
+            self.assertEqual(payloads[0]["expected_desired_graph_revision"], 0)
+
     def test_admission_uses_public_http_and_mcp_surfaces_then_reads_exact_key(self) -> None:
         with _controller_module() as module:
             calls: list[tuple[str, str, dict[str, object]]] = []

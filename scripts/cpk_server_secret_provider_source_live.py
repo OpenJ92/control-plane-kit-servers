@@ -131,6 +131,12 @@ class PreparedRun:
     desired_graph_id: str
 
 
+@dataclass(frozen=True)
+class ProviderVersionReceipt:
+    version_id: str
+    version_number: int
+
+
 def main() -> int:
     base_url = _required_env("CPK_HOSTED_ACTIVITY_BASE_URL").rstrip("/")
     server_container = _required_env("CPK_HOSTED_ACTIVITY_SERVER_CONTAINER")
@@ -173,7 +179,7 @@ def main() -> int:
         os.environ.get("CPK_SECRET_PROVIDER_SOURCE_LIVE_SCENARIO")
         == "gateway-key-rotation"
     ):
-        _run_gateway_key_rotation(
+        _run_gateway_key_rotation_program(
             base_url=base_url,
             server_container=server_container,
             provider_container=provider_container,
@@ -181,7 +187,6 @@ def main() -> int:
             operations_database_url=operations_database_url,
             provider_token_file=provider_token_file,
             bootstrap_dir=bootstrap_dir,
-            stop_after_initial_projection=False,
         )
         print("cpk-server gateway signing-key rotation source-live acceptance passed")
         return 0
@@ -437,6 +442,326 @@ def _assert_gateway_bootstrap_key(value: dict[str, Any]) -> None:
         )
 
 
+def _run_gateway_key_rotation_program(
+    *,
+    base_url: str,
+    server_container: str,
+    provider_container: str,
+    servers_repo: Path,
+    operations_database_url: str,
+    provider_token_file: Path,
+    bootstrap_dir: Path,
+) -> None:
+    workspace_id = GATEWAY_ROTATION_WORKSPACE
+    cpk_server_document = _product_document(servers_repo, "cpk_server")
+    gateway_document = _product_document(servers_repo, "cpk_local_gateway")
+    hello_document = _product_document(servers_repo, "hello_server")
+    postgres_document = _product_document(servers_repo, "postgres_server")
+    workflow = _workflow(
+        base_url,
+        server_container,
+        workspace_id=workspace_id,
+        worker_id="hosted-worker",
+        worker_authorization=WORKER_AUTHORIZATION,
+    )
+    workflow.wait_ready()
+    current_graph_id = _bootstrap_workspace(
+        workflow,
+        name="Gateway delegation-key rotation source-live",
+        product_documents={
+            "gateway": gateway_document,
+            "hello": hello_document,
+            "postgres": postgres_document,
+        },
+        register_runtime_authority=True,
+        register_runtime_delivery=False,
+    )
+    provider_registration_id = _register_gateway_rotation_provider(workflow)
+    key_a_receipt: ProviderVersionReceipt | None = None
+    for reference, intent, value_file, correlation in (
+        (
+            POSTGRES_PASSWORD_REFERENCE,
+            POSTGRES_INTENT,
+            bootstrap_dir / "postgres-password",
+            "gateway-rotation-postgres-bootstrap",
+        ),
+        (
+            GATEWAY_ROTATION_KEY_A_REFERENCE,
+            GATEWAY_SIGNING_KEY_INTENT,
+            bootstrap_dir / "gateway-rotation-key-a.pem",
+            "gateway-rotation-key-a-bootstrap",
+        ),
+        (
+            GHCR_PULL_CREDENTIAL_REFERENCE,
+            OCI_PULL_CREDENTIAL_INTENT,
+            bootstrap_dir / "ghcr-pull-credential.json",
+            "gateway-rotation-ghcr-pull-bootstrap",
+        ),
+    ):
+        receipt = _provider_write_secret(
+            workspace_id=workspace_id,
+            reference=reference,
+            intent=intent,
+            value_file=value_file,
+            provider_token_file=provider_token_file,
+            correlation_id=correlation,
+        )
+        if reference == GATEWAY_ROTATION_KEY_A_REFERENCE:
+            key_a_receipt = receipt
+    if key_a_receipt is None:
+        raise RuntimeError("initial gateway key custody receipt was not recorded")
+    _register_gateway_rotation_references(
+        workflow,
+        provider_registration_id=provider_registration_id,
+        initial_key_receipt=key_a_receipt,
+        register_replacement_reference=False,
+    )
+    workflow.register_ghcr_pull_authority(
+        credential_reference=GHCR_PULL_CREDENTIAL_REFERENCE,
+    )
+
+    _register_delegation_key(
+        workflow,
+        key_id=GATEWAY_ROTATION_KEY_A_ID,
+        private_key_reference=GATEWAY_ROTATION_KEY_A_REFERENCE,
+        public_key_file=bootstrap_dir / "gateway-rotation-key-a-public.pem",
+        admitted_at="2026-08-04T03:00:00Z",
+    )
+    _activate_delegation_key(
+        workflow,
+        GATEWAY_ROTATION_KEY_A_ID,
+        activated_at="2026-08-04T03:00:01Z",
+    )
+    verifier_a = _gateway_verifier_configuration(workflow)
+    _assert_verifier_key_ids(verifier_a, {GATEWAY_ROTATION_KEY_A_ID})
+    graph_a = _gateway_rotation_graph(
+        gateway_document,
+        hello_document,
+        postgres_document,
+        workspace_id=workspace_id,
+    )
+    deployed_a = workflow.run_approved_transition(
+        title="Gateway key A initial deployment",
+        graph=graph_a,
+        current_graph_id=current_graph_id,
+        sync_runtime_networks=True,
+    )
+    _assert_initial_gateway_transition_evidence(workflow, deployed_a)
+    _wait_private_gateway_ready(gateway_document)
+    _assert_gateway_probe_key(
+        workflow.request_gateway_probe_http(
+            request_id=f"{workspace_id}:gateway-probe:key-a-http",
+            expected_current_graph_id=deployed_a.current_graph_id,
+            gateway_node_id="gateway",
+            kind="http-status",
+            target_id="hello.internal",
+            path="/",
+        ),
+        GATEWAY_ROTATION_KEY_A_ID,
+    )
+    _assert_gateway_probe_key(
+        workflow.request_gateway_probe_mcp(
+            request_id=f"{workspace_id}:gateway-probe:key-a-postgres",
+            expected_current_graph_id=deployed_a.current_graph_id,
+            gateway_node_id="gateway",
+            kind="postgres-select-one",
+            target_id="postgres.postgres",
+        ),
+        GATEWAY_ROTATION_KEY_A_ID,
+    )
+    captured_a = _direct_gateway_capability(
+        workspace_id=workspace_id,
+        key_id=GATEWAY_ROTATION_KEY_A_ID,
+        private_key_file=bootstrap_dir / "gateway-rotation-key-a.pem",
+        expires_in=300,
+        jti="captured-key-a-before-program",
+    )
+
+    requested = workflow.request_gateway_key_rotation(
+        gateway_node_id="gateway",
+        issuer=GATEWAY_ROTATION_ISSUER,
+        old_key_id=GATEWAY_ROTATION_KEY_A_ID,
+        new_secret_reference=GATEWAY_ROTATION_KEY_B_REFERENCE,
+        maximum_grant_lifetime_seconds=GATEWAY_ROTATION_GRANT_LIFETIME_SECONDS,
+        clock_skew_seconds=0,
+    )
+    _assert_rotation_status(requested, "requested")
+    rotation_id = str(requested["rotation_id"])
+    approval_session_id = workflow.start_session("Gateway key rotation approval")
+    approval = workflow.request_gateway_key_rotation_approval(
+        session_id=approval_session_id,
+        rotation_id=rotation_id,
+    )
+    _assert_rotation_status(_rotation_from_response(approval), "awaiting-approval")
+    decision = workflow.decide_gateway_key_rotation_mcp(
+        session_id=approval_session_id,
+        rotation_id=rotation_id,
+        approval_request_id=str(approval["approval_request_id"]),
+    )
+    rotation = _rotation_from_response(decision)
+    _assert_rotation_status(rotation, "approved")
+
+    rotation, _ = _advance_rotation_until(
+        workflow,
+        rotation,
+        target_status="key-generated",
+        command_prefix="generation",
+    )
+    generated_key_id = str(rotation["new_key_id"])
+    if not generated_key_id or generated_key_id == GATEWAY_ROTATION_KEY_A_ID:
+        raise RuntimeError("provider did not generate a distinct gateway key B")
+    if (bootstrap_dir / "gateway-rotation-key-b.pem").exists():
+        raise RuntimeError("source-live harness generated private key B")
+
+    rotation, _ = _advance_rotation_until(
+        workflow,
+        rotation,
+        target_status="overlap-deploying",
+        command_prefix="overlap-prepare",
+    )
+    _restart_cpk_server(
+        server_container,
+        workflow,
+        ready_policy=_verification_policy(cpk_server_document, "ready"),
+    )
+    resumed = workflow.read_gateway_key_rotation_detail(rotation_id)
+    if resumed != rotation:
+        raise RuntimeError("rotation did not resume from durable public state")
+
+    rotation, _ = _advance_rotation_until(
+        workflow,
+        rotation,
+        target_status="overlap-ready",
+        command_prefix="overlap-execute",
+    )
+    _wait_private_gateway_ready(gateway_document)
+    _assert_verifier_key_ids(
+        _gateway_verifier_configuration(workflow),
+        {GATEWAY_ROTATION_KEY_A_ID, generated_key_id},
+    )
+    rotation, _ = _advance_rotation_until(
+        workflow,
+        rotation,
+        target_status="draining-old-grants",
+        command_prefix="activate",
+    )
+    _assert_delegation_key_statuses(
+        workflow,
+        {
+            GATEWAY_ROTATION_KEY_A_ID: "verify-only",
+            generated_key_id: "active",
+        },
+    )
+    premature = workflow.advance_gateway_key_rotation_mcp(
+        rotation_id=rotation_id,
+        expected_version=int(rotation["version"]),
+        idempotency_key=f"{workspace_id}:gateway-key-rotation:premature-drain",
+    )
+    if premature.get("phase") != "grant-drain" or premature.get("outcome") != "waiting":
+        raise RuntimeError("premature drain advancement was not typed waiting")
+    premature_rotation = _rotation_from_response(premature)
+    if premature_rotation != rotation:
+        raise RuntimeError("premature drain advancement changed rotation truth")
+    rotation = _poll_rotation_until_drain_deadline(workflow, rotation)
+
+    rotation, final_command = _advance_rotation_until(
+        workflow,
+        rotation,
+        target_status="completed",
+        command_prefix="retire-complete",
+    )
+    _wait_private_gateway_ready(gateway_document)
+    _assert_verifier_key_ids(
+        _gateway_verifier_configuration(workflow),
+        {generated_key_id},
+    )
+    _assert_delegation_key_statuses(
+        workflow,
+        {
+            GATEWAY_ROTATION_KEY_A_ID: "revoked",
+            generated_key_id: "active",
+        },
+    )
+    _assert_provider_version_revoked(
+        provider_container,
+        workspace_id=workspace_id,
+        expected_version_id=key_a_receipt.version_id,
+    )
+
+    current_graph_id = workflow.read_current_graph_id()
+    _assert_gateway_probe_key(
+        workflow.request_gateway_probe_http(
+            request_id=f"{workspace_id}:gateway-probe:key-b-http",
+            expected_current_graph_id=current_graph_id,
+            gateway_node_id="gateway",
+            kind="http-status",
+            target_id="hello.internal",
+            path="/",
+        ),
+        generated_key_id,
+    )
+    _assert_gateway_probe_key(
+        workflow.request_gateway_probe_mcp(
+            request_id=f"{workspace_id}:gateway-probe:key-b-postgres",
+            expected_current_graph_id=current_graph_id,
+            gateway_node_id="gateway",
+            kind="postgres-select-one",
+            target_id="postgres.postgres",
+        ),
+        generated_key_id,
+    )
+    before = _hello_request_count()
+    _assert_direct_gateway_rejected(captured_a)
+    _assert_direct_gateway_rejected(
+        _direct_gateway_capability(
+            workspace_id=workspace_id,
+            key_id=GATEWAY_ROTATION_KEY_A_ID,
+            private_key_file=bootstrap_dir / "gateway-rotation-key-a.pem",
+            expires_in=300,
+            jti="fresh-retired-key-a",
+        )
+    )
+    if _hello_request_count() != before:
+        raise RuntimeError("retired key A reached target IO")
+
+    _restart_cpk_server(
+        server_container,
+        workflow,
+        ready_policy=_verification_policy(cpk_server_document, "ready"),
+    )
+    _restart_container(_single_docker_container(workspace_id, "gateway").id)
+    _wait_private_gateway_ready(gateway_document)
+    if workflow.read_gateway_key_rotation_detail(rotation_id) != rotation:
+        raise RuntimeError("completed rotation did not survive process restart")
+    replay = _replay_rotation_command(workflow, rotation_id, final_command)
+    if not replay.get("replayed") or _rotation_from_response(replay) != rotation:
+        raise RuntimeError("completed rotation command did not replay durably")
+
+    transitions = workflow.read_gateway_key_rotation_transitions_mcp(rotation_id)
+    _assert_rotation_transition_history(transitions)
+    _assert_provider_and_operations_correlation(
+        provider_container=provider_container,
+        operations_database_url=operations_database_url,
+        workspace_id=workspace_id,
+        intent=GATEWAY_SIGNING_KEY_INTENT,
+    )
+    _assert_secret_absent_from_activity(
+        workflow,
+        (bootstrap_dir / "gateway-rotation-key-a.pem").read_text(encoding="utf-8"),
+    )
+
+    _disconnect_runtime_networks(server_container, workspace_id=workspace_id)
+    removed = workflow.run_approved_transition(
+        title="Gateway key rotation teardown",
+        graph=DeploymentGraph(workspace_id),
+        current_graph_id=current_graph_id,
+        expected_desired_graph_id=deployed_a.desired_graph_id,
+        sync_runtime_networks=False,
+    )
+    _assert_activity_mentions(workflow, removed.run_id, "gateway")
+    _assert_no_runtime_networks(workspace_id)
+
+
 def _run_gateway_key_rotation(
     *,
     base_url: str,
@@ -472,9 +797,8 @@ def _run_gateway_key_rotation(
         register_runtime_authority=True,
         register_runtime_delivery=False,
     )
-    reference_registrations = _register_gateway_rotation_provider_and_references(
-        workflow
-    )
+    provider_registration_id = _register_gateway_rotation_provider(workflow)
+    key_a_receipt: ProviderVersionReceipt | None = None
     for reference, value_file, correlation in (
         (
             POSTGRES_PASSWORD_REFERENCE,
@@ -487,11 +811,6 @@ def _run_gateway_key_rotation(
             "gateway-rotation-key-a-bootstrap",
         ),
         (
-            GATEWAY_ROTATION_KEY_B_REFERENCE,
-            bootstrap_dir / "gateway-rotation-key-b.pem",
-            "gateway-rotation-key-b-bootstrap",
-        ),
-        (
             GHCR_PULL_CREDENTIAL_REFERENCE,
             bootstrap_dir / "ghcr-pull-credential.json",
             "gateway-rotation-ghcr-pull-bootstrap",
@@ -500,10 +819,9 @@ def _run_gateway_key_rotation(
         intent = {
             POSTGRES_PASSWORD_REFERENCE: POSTGRES_INTENT,
             GATEWAY_ROTATION_KEY_A_REFERENCE: GATEWAY_SIGNING_KEY_INTENT,
-            GATEWAY_ROTATION_KEY_B_REFERENCE: GATEWAY_SIGNING_KEY_INTENT,
             GHCR_PULL_CREDENTIAL_REFERENCE: OCI_PULL_CREDENTIAL_INTENT,
         }[reference]
-        _provider_write_secret(
+        receipt = _provider_write_secret(
             workspace_id=workspace_id,
             reference=reference,
             intent=intent,
@@ -511,6 +829,16 @@ def _run_gateway_key_rotation(
             provider_token_file=provider_token_file,
             correlation_id=correlation,
         )
+        if reference == GATEWAY_ROTATION_KEY_A_REFERENCE:
+            key_a_receipt = receipt
+    if key_a_receipt is None:
+        raise RuntimeError("initial gateway key custody receipt was not recorded")
+    _register_gateway_rotation_references(
+        workflow,
+        provider_registration_id=provider_registration_id,
+        initial_key_receipt=key_a_receipt,
+        register_replacement_reference=False,
+    )
     workflow.register_ghcr_pull_authority(
         credential_reference=GHCR_PULL_CREDENTIAL_REFERENCE,
     )
@@ -567,221 +895,212 @@ def _run_gateway_key_rotation(
     if stop_after_initial_projection:
         return
 
-    _register_delegation_key(
-        workflow,
-        key_id=GATEWAY_ROTATION_KEY_B_ID,
-        private_key_reference=GATEWAY_ROTATION_KEY_B_REFERENCE,
-        public_key_file=bootstrap_dir / "gateway-rotation-key-b-public.pem",
-        admitted_at="2026-08-01T10:03:00Z",
-    )
-    verifier_overlap = _gateway_verifier_configuration(workflow)
-    _assert_verifier_key_ids(
-        verifier_overlap,
-        {GATEWAY_ROTATION_KEY_A_ID, GATEWAY_ROTATION_KEY_B_ID},
-    )
-    graph_overlap = _gateway_rotation_graph(
-        gateway_document,
-        hello_document,
-        postgres_document,
-        workspace_id=workspace_id,
-    )
-    overlap = workflow.run_approved_transition(
-        title="Gateway key A and B verifier overlap",
-        graph=graph_overlap,
-        current_graph_id=deployed_a.current_graph_id,
-        expected_desired_graph_id=deployed_a.desired_graph_id,
-        sync_runtime_networks=True,
-    )
-    _wait_private_gateway_ready(gateway_document)
-    _assert_gateway_probe_key(
-        workflow.request_gateway_probe_http(
-            request_id=f"{workspace_id}:gateway-probe:overlap-key-a",
-            expected_current_graph_id=overlap.current_graph_id,
-            gateway_node_id="gateway",
-            kind="http-status",
-            target_id="hello.internal",
-            path="/",
-        ),
-        GATEWAY_ROTATION_KEY_A_ID,
-    )
 
-    _activate_delegation_key(
-        workflow,
-        GATEWAY_ROTATION_KEY_B_ID,
-        activated_at="2026-08-01T10:04:00Z",
-    )
-    _assert_delegation_key_statuses(
-        workflow,
-        {
-            GATEWAY_ROTATION_KEY_A_ID: "verify-only",
-            GATEWAY_ROTATION_KEY_B_ID: "active",
-        },
-    )
-    _assert_gateway_probe_key(
-        workflow.request_gateway_probe_mcp(
-            request_id=f"{workspace_id}:gateway-probe:active-key-b",
-            expected_current_graph_id=overlap.current_graph_id,
-            gateway_node_id="gateway",
-            kind="postgres-select-one",
-            target_id="postgres.postgres",
-        ),
-        GATEWAY_ROTATION_KEY_B_ID,
-    )
-    captured_a = _direct_gateway_capability(
-        workspace_id=workspace_id,
-        key_id=GATEWAY_ROTATION_KEY_A_ID,
-        private_key_file=bootstrap_dir / "gateway-rotation-key-a.pem",
-        expires_in=GATEWAY_ROTATION_GRANT_LIFETIME_SECONDS,
-        jti="captured-key-a-before-retirement",
-    )
-    time.sleep(GATEWAY_ROTATION_GRANT_LIFETIME_SECONDS + 1)
+def _rotation_from_response(response: dict[str, Any]) -> dict[str, Any]:
+    rotation = response.get("rotation")
+    if not isinstance(rotation, dict):
+        raise RuntimeError("gateway rotation response was malformed")
+    return rotation
 
-    _retire_delegation_key(
-        workflow,
-        GATEWAY_ROTATION_KEY_A_ID,
-        retired_at="2026-08-01T10:05:00Z",
-    )
-    verifier_b = _gateway_verifier_configuration(workflow)
-    _assert_verifier_key_ids(verifier_b, {GATEWAY_ROTATION_KEY_B_ID})
-    graph_b = _gateway_rotation_graph(
-        gateway_document,
-        hello_document,
-        postgres_document,
-        workspace_id=workspace_id,
-    )
-    retired = workflow.run_approved_transition(
-        title="Gateway key A retirement",
-        graph=graph_b,
-        current_graph_id=overlap.current_graph_id,
-        expected_desired_graph_id=overlap.desired_graph_id,
-        sync_runtime_networks=True,
-    )
-    _wait_private_gateway_ready(gateway_document)
-    before = _hello_request_count()
-    _assert_direct_gateway_rejected(captured_a)
-    _assert_direct_gateway_rejected(
-        _direct_gateway_capability(
-            workspace_id=workspace_id,
-            key_id=GATEWAY_ROTATION_KEY_A_ID,
-            private_key_file=bootstrap_dir / "gateway-rotation-key-a.pem",
-            expires_in=60,
-            jti="fresh-retired-key-a",
-        )
-    )
-    _assert_direct_gateway_rejected(
-        _direct_gateway_capability(
-            workspace_id=workspace_id,
-            key_id="unknown-gateway-key",
-            private_key_file=bootstrap_dir / "gateway-rotation-key-b.pem",
-            expires_in=60,
-            jti="unknown-key-id",
-        )
-    )
-    if _hello_request_count() != before:
-        raise RuntimeError("rejected gateway capabilities reached target IO")
 
-    _revoke_delegation_key(
-        workflow,
-        GATEWAY_ROTATION_KEY_A_ID,
-        revoked_at="2026-08-01T10:06:00Z",
-    )
-    _revoke_reference(
-        workflow,
-        reference_registrations[GATEWAY_ROTATION_KEY_A_REFERENCE],
-    )
-    _provider_revoke_secret(
-        workspace_id=workspace_id,
-        reference=GATEWAY_ROTATION_KEY_A_REFERENCE,
-        provider_token_file=provider_token_file,
-        correlation_id="gateway-rotation-key-a-revoke",
-    )
-    _assert_delegation_key_statuses(
-        workflow,
-        {
-            GATEWAY_ROTATION_KEY_A_ID: "revoked",
-            GATEWAY_ROTATION_KEY_B_ID: "active",
-        },
-    )
-
-    _restart_cpk_server(
-        server_container,
-        workflow,
-        ready_policy=_verification_policy(cpk_server_document, "ready"),
-    )
-    _restart_container(_single_docker_container(workspace_id, "gateway").id)
-    _wait_private_gateway_ready(gateway_document)
-    verifier_after_restart = _gateway_verifier_configuration(workflow)
-    _assert_verifier_key_ids(
-        verifier_after_restart,
-        {GATEWAY_ROTATION_KEY_B_ID},
-    )
-    _assert_gateway_probe_key(
-        workflow.request_gateway_probe_http(
-            request_id=f"{workspace_id}:gateway-probe:restart-key-b-http",
-            expected_current_graph_id=retired.current_graph_id,
-            gateway_node_id="gateway",
-            kind="http-status",
-            target_id="hello.internal",
-            path="/",
-        ),
-        GATEWAY_ROTATION_KEY_B_ID,
-    )
-    _assert_gateway_probe_key(
-        workflow.request_gateway_probe_mcp(
-            request_id=f"{workspace_id}:gateway-probe:restart-key-b-postgres",
-            expected_current_graph_id=retired.current_graph_id,
-            gateway_node_id="gateway",
-            kind="postgres-select-one",
-            target_id="postgres.postgres",
-        ),
-        GATEWAY_ROTATION_KEY_B_ID,
-    )
-    _assert_provider_and_operations_correlation(
-        provider_container=provider_container,
-        operations_database_url=operations_database_url,
-        workspace_id=workspace_id,
-        intent=GATEWAY_SIGNING_KEY_INTENT,
-    )
-    key_b_resolution = _latest_successful_resolution(
-        provider_container,
-        workspace_id,
-        intent=GATEWAY_SIGNING_KEY_INTENT,
-    )
-    replayed_version = _provider_resolve_metadata(
-        workspace_id=workspace_id,
-        reference=GATEWAY_ROTATION_KEY_B_REFERENCE,
-        intent=GATEWAY_SIGNING_KEY_INTENT,
-        provider_token_file=provider_token_file,
-        caller_subject=key_b_resolution["caller_subject"],
-        correlation_id=key_b_resolution["correlation_id"],
-    )
-    if replayed_version != key_b_resolution["version_id"]:
-        raise RuntimeError("gateway key correlation did not remain version-pinned")
-    for private_file in (
-        bootstrap_dir / "gateway-rotation-key-a.pem",
-        bootstrap_dir / "gateway-rotation-key-b.pem",
-    ):
-        _assert_secret_absent_from_activity(
-            workflow,
-            private_file.read_text(encoding="utf-8"),
+def _assert_rotation_status(rotation: dict[str, Any], expected: str) -> None:
+    if rotation.get("status") != expected:
+        raise RuntimeError(
+            f"gateway rotation status mismatch: expected={expected}, "
+            f"observed={rotation.get('status')}"
         )
 
-    _disconnect_runtime_networks(server_container, workspace_id=workspace_id)
-    removed = workflow.run_approved_transition(
-        title="Gateway key rotation teardown",
-        graph=DeploymentGraph(workspace_id),
-        current_graph_id=retired.current_graph_id,
-        expected_desired_graph_id=retired.desired_graph_id,
-        sync_runtime_networks=False,
-    )
-    _assert_activity_mentions(workflow, removed.run_id, "gateway")
-    _assert_no_runtime_networks(workspace_id)
 
-
-def _register_gateway_rotation_provider_and_references(
+def _advance_rotation_until(
     workflow: HostedWorkflow,
+    rotation: dict[str, Any],
+    *,
+    target_status: str,
+    command_prefix: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    last_command: dict[str, Any] = {}
+    for attempt in range(1, 41):
+        if rotation.get("status") == target_status:
+            return rotation, last_command
+        expected_version = int(rotation["version"])
+        idempotency_key = (
+            f"{workflow.workspace_id}:gateway-key-rotation:"
+            f"{command_prefix}:{attempt}"
+        )
+        if attempt % 2:
+            response = workflow.advance_gateway_key_rotation_http(
+                rotation_id=str(rotation["rotation_id"]),
+                expected_version=expected_version,
+                idempotency_key=idempotency_key,
+            )
+            transport = "http"
+        else:
+            response = workflow.advance_gateway_key_rotation_mcp(
+                rotation_id=str(rotation["rotation_id"]),
+                expected_version=expected_version,
+                idempotency_key=idempotency_key,
+            )
+            transport = "mcp"
+        rotation = _rotation_from_response(response)
+        last_command = {
+            "transport": transport,
+            "expected_version": expected_version,
+            "idempotency_key": idempotency_key,
+        }
+        if response.get("outcome") == "definite-failure":
+            raise RuntimeError(
+                "gateway rotation advance failed: "
+                f"phase={response.get('phase')} "
+                "outcome=definite-failure "
+                f"code={rotation.get('failure_code')}"
+            )
+        if rotation.get("status") == "blocked":
+            raise RuntimeError(
+                f"gateway rotation blocked: {rotation.get('failure_code')}"
+            )
+    raise RuntimeError(
+        f"gateway rotation did not reach {target_status} within bounded advances"
+    )
+
+
+def _poll_rotation_until_drain_deadline(
+    workflow: HostedWorkflow,
+    rotation: dict[str, Any],
+) -> dict[str, Any]:
+    deadline = rotation.get("drain_deadline_epoch")
+    if not isinstance(deadline, int):
+        raise RuntimeError("draining rotation did not expose a durable deadline")
+    stop_at = time.monotonic() + max(10.0, float(deadline - int(time.time()) + 5))
+    while int(time.time()) < deadline:
+        current = workflow.read_gateway_key_rotation_detail(
+            str(rotation["rotation_id"])
+        )
+        _assert_rotation_status(current, "draining-old-grants")
+        if time.monotonic() >= stop_at:
+            raise RuntimeError("durable gateway grant-drain deadline did not arrive")
+    return workflow.read_gateway_key_rotation_detail(str(rotation["rotation_id"]))
+
+
+def _replay_rotation_command(
+    workflow: HostedWorkflow,
+    rotation_id: str,
+    command: dict[str, Any],
+) -> dict[str, Any]:
+    kwargs = {
+        "rotation_id": rotation_id,
+        "expected_version": int(command["expected_version"]),
+        "idempotency_key": str(command["idempotency_key"]),
+    }
+    if command.get("transport") == "mcp":
+        return workflow.advance_gateway_key_rotation_mcp(**kwargs)
+    return workflow.advance_gateway_key_rotation_http(**kwargs)
+
+
+def _assert_rotation_transition_history(response: dict[str, Any]) -> None:
+    transitions = response.get("transitions")
+    if not isinstance(transitions, list):
+        raise RuntimeError("gateway rotation transition history was malformed")
+    observed = [item.get("to_status") for item in transitions]
+    required = [
+        "awaiting-approval",
+        "approved",
+        "generation-prepared",
+        "key-generated",
+        "overlap-deploying",
+        "overlap-ready",
+        "new-key-active",
+        "draining-old-grants",
+        "retirement-deploying",
+        "retirement-ready",
+        "old-key-retired",
+        "revocation-prepared",
+        "completed",
+    ]
+    cursor = 0
+    for status in observed:
+        if cursor < len(required) and status == required[cursor]:
+            cursor += 1
+    if cursor != len(required):
+        raise RuntimeError(
+            f"gateway rotation transition history was incomplete: {observed}"
+        )
+
+
+def _register_gateway_rotation_provider(
+    workflow: HostedWorkflow,
+) -> str:
+    all_references = _gateway_rotation_reference_definitions()
+    provider = _http(
+        workflow.base_url,
+        "POST",
+        f"/workspaces/{workflow.workspace_id}/secret-providers",
+        {
+            "provider_id": PROVIDER_ID,
+            "provider_kind": "control-plane-kit-secrets",
+            "display_name": "Source-live gateway rotation custody",
+            "endpoint_reference": PROVIDER_ENDPOINT_REFERENCE,
+            "credential_reference": PROVIDER_CREDENTIAL_REFERENCE,
+            "allowed_reference_prefixes": [value[0] for value in all_references],
+            "allowed_intents": [
+                POSTGRES_INTENT,
+                GATEWAY_SIGNING_KEY_INTENT,
+                OCI_PULL_CREDENTIAL_INTENT,
+            ],
+            "admitted_at": "2026-08-01T10:00:00Z",
+            "metadata": {"acceptance": "source-live-gateway-key-rotation"},
+            "idempotency_key": f"{workflow.workspace_id}:secret-provider",
+        },
+    )
+    return str(provider["registration_id"])
+
+
+def _register_gateway_rotation_references(
+    workflow: HostedWorkflow,
+    *,
+    provider_registration_id: str,
+    initial_key_receipt: ProviderVersionReceipt,
+    register_replacement_reference: bool = True,
 ) -> dict[str, str]:
-    references = (
+    all_references = _gateway_rotation_reference_definitions()
+    references = tuple(
+        item
+        for item in all_references
+        if register_replacement_reference
+        or item[0] != GATEWAY_ROTATION_KEY_B_REFERENCE
+    )
+    registrations: dict[str, str] = {}
+    for reference, intent, label in references:
+        metadata: dict[str, object] = {
+            "acceptance": "source-live-gateway-key-rotation"
+        }
+        if reference == GATEWAY_ROTATION_KEY_A_REFERENCE:
+            metadata.update(
+                {
+                    "provider_version_id": initial_key_receipt.version_id,
+                    "provider_version_number": initial_key_receipt.version_number,
+                }
+            )
+        registered = _http(
+            workflow.base_url,
+            "POST",
+            f"/workspaces/{workflow.workspace_id}/secret-references",
+            {
+                "reference": reference,
+                "provider_registration_id": provider_registration_id,
+                "allowed_intents": [intent],
+                "admitted_at": "2026-08-01T10:00:30Z",
+                "metadata": metadata,
+                "idempotency_key": (
+                    f"{workflow.workspace_id}:secret-reference:{label}"
+                ),
+            },
+        )
+        registrations[reference] = str(registered["registration_id"])
+    return registrations
+
+
+def _gateway_rotation_reference_definitions() -> tuple[tuple[str, str, str], ...]:
+    return (
         (POSTGRES_PASSWORD_REFERENCE, POSTGRES_INTENT, "postgres-password"),
         (
             GATEWAY_ROTATION_KEY_A_REFERENCE,
@@ -799,47 +1118,6 @@ def _register_gateway_rotation_provider_and_references(
             "ghcr-pull-credential",
         ),
     )
-    provider = _http(
-        workflow.base_url,
-        "POST",
-        f"/workspaces/{workflow.workspace_id}/secret-providers",
-        {
-            "provider_id": PROVIDER_ID,
-            "provider_kind": "control-plane-kit-secrets",
-            "display_name": "Source-live gateway rotation custody",
-            "endpoint_reference": PROVIDER_ENDPOINT_REFERENCE,
-            "credential_reference": PROVIDER_CREDENTIAL_REFERENCE,
-            "allowed_reference_prefixes": [value[0] for value in references],
-            "allowed_intents": [
-                POSTGRES_INTENT,
-                GATEWAY_SIGNING_KEY_INTENT,
-                OCI_PULL_CREDENTIAL_INTENT,
-            ],
-            "admitted_at": "2026-08-01T10:00:00Z",
-            "metadata": {"acceptance": "source-live-gateway-key-rotation"},
-            "idempotency_key": f"{workflow.workspace_id}:secret-provider",
-        },
-    )
-    provider_registration_id = str(provider["registration_id"])
-    registrations: dict[str, str] = {}
-    for reference, intent, label in references:
-        registered = _http(
-            workflow.base_url,
-            "POST",
-            f"/workspaces/{workflow.workspace_id}/secret-references",
-            {
-                "reference": reference,
-                "provider_registration_id": provider_registration_id,
-                "allowed_intents": [intent],
-                "admitted_at": "2026-08-01T10:00:30Z",
-                "metadata": {"acceptance": "source-live-gateway-key-rotation"},
-                "idempotency_key": (
-                    f"{workflow.workspace_id}:secret-reference:{label}"
-                ),
-            },
-        )
-        registrations[reference] = str(registered["registration_id"])
-    return registrations
 
 
 def _register_delegation_key(
@@ -2275,7 +2553,7 @@ def _provider_write_secret(
     value_file: Path,
     provider_token_file: Path,
     correlation_id: str,
-) -> str:
+) -> ProviderVersionReceipt:
     status, payload = _provider_request(
         method="POST",
         path=_provider_secret_path(workspace_id, reference=reference),
@@ -2290,7 +2568,7 @@ def _provider_write_secret(
     )
     if status != 200 or payload.get("outcome") != "stored":
         raise RuntimeError("provider fixture write failed")
-    return _metadata_version(payload)
+    return _provider_version_receipt(payload)
 
 
 def _provider_rotate_secret(
@@ -2414,13 +2692,20 @@ def _provider_secret_path(
 
 
 def _metadata_version(payload: dict[str, Any]) -> str:
+    return _provider_version_receipt(payload).version_id
+
+
+def _provider_version_receipt(payload: dict[str, Any]) -> ProviderVersionReceipt:
     metadata = payload.get("metadata")
     if not isinstance(metadata, dict):
         raise RuntimeError("provider response omitted secret metadata")
     version_id = metadata.get("version_id")
     if not isinstance(version_id, str) or not version_id:
         raise RuntimeError("provider response omitted secret version identity")
-    return version_id
+    version_number = metadata.get("version_number")
+    if type(version_number) is not int or version_number < 1:
+        raise RuntimeError("provider response omitted secret version number")
+    return ProviderVersionReceipt(version_id, version_number)
 
 
 def _workspace_runtime_resources(workspace_id: str) -> tuple[tuple[str, ...], ...]:
@@ -2753,6 +3038,31 @@ def _assert_provider_version_history(
     versions = {str(row[0]) for row in rows}
     if not expected_versions.issubset(versions):
         raise RuntimeError("provider did not retain rotated version history")
+
+
+def _assert_provider_version_revoked(
+    provider_container: str,
+    *,
+    workspace_id: str,
+    expected_version_id: str,
+) -> None:
+    script = (
+        "import json,sqlite3,sys;"
+        "c=sqlite3.connect('/var/lib/cpk-secrets/secrets.sqlite3');"
+        "rows=c.execute("
+        "\"SELECT version_id,status FROM secret_versions "
+        "WHERE workspace_id=? AND version_id=?\","
+        "(sys.argv[1],sys.argv[2])).fetchall();"
+        "print(json.dumps(rows))"
+    )
+    result = docker.from_env().containers.get(provider_container).exec_run(
+        ["python", "-c", script, workspace_id, expected_version_id]
+    )
+    if result.exit_code != 0:
+        raise RuntimeError("exact provider version status was unavailable")
+    rows = json.loads(result.output.decode("utf-8"))
+    if rows != [[expected_version_id, "revoked"]]:
+        raise RuntimeError("exact old provider version was not revoked")
 
 
 def _operations_correlations(
