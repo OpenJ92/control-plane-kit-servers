@@ -22,7 +22,7 @@ from control_plane_kit_servers_cpk_local_gateway import (
 
 WORKSPACE_ID = "workspace-secret-cloudflare-1785466744-66810"
 GATEWAY_NODE_ID = "gateway"
-ISSUER = "urn:control-plane-kit:source-live"
+ISSUER = "cpk-source-live"
 KEY_ID = "source-live-gateway-key"
 AUDIENCE = f"gateway:{WORKSPACE_ID}:{GATEWAY_NODE_ID}"
 NOW = 1_785_466_744

@@ -64,7 +64,7 @@ PUBLIC_GATEWAY_HOSTNAME = os.environ.get(
 )
 PUBLIC_GATEWAY_READY_ATTEMPTS = 60
 PUBLIC_GATEWAY_READY_RETRY_SECONDS = 2
-GATEWAY_PROBE_ISSUER = "urn:control-plane-kit:source-live"
+GATEWAY_PROBE_ISSUER = "cpk-source-live"
 GATEWAY_PROBE_KEY_ID = "source-live-gateway-key"
 
 

@@ -53,13 +53,13 @@ cleanup_workspace_resources() {
 
 cleanup() {
   if [ -n "$SERVER_CONTAINER" ]; then
-    docker rm -f "$SERVER_CONTAINER" >/dev/null 2>&1 || true
+    docker rm -fv "$SERVER_CONTAINER" >/dev/null 2>&1 || true
   fi
   if [ -n "$SECRETS_CONTAINER" ]; then
-    docker rm -f "$SECRETS_CONTAINER" >/dev/null 2>&1 || true
+    docker rm -fv "$SECRETS_CONTAINER" >/dev/null 2>&1 || true
   fi
   if [ -n "$POSTGRES_CONTAINER" ]; then
-    docker rm -f "$POSTGRES_CONTAINER" >/dev/null 2>&1 || true
+    docker rm -fv "$POSTGRES_CONTAINER" >/dev/null 2>&1 || true
   fi
   docker network rm "$NETWORK" >/dev/null 2>&1 || true
   cleanup_workspace_resources
@@ -225,6 +225,12 @@ operator_scopes = [
     "secret-provider:revoke",
     "secret-provider:use",
     "gateway-probe:use",
+    "delegation-key:register",
+    "delegation-key:read",
+    "delegation-key:activate",
+    "delegation-key:retire",
+    "delegation-key:revoke",
+    "delegation-key:use",
 ]
 worker_scopes = [
     "execution:operate",

@@ -157,6 +157,7 @@ def main() -> int:
             base_url=base_url,
             server_container=server_container,
             operations_database_url=operations_database_url,
+            provider_container=provider_container,
             provider_token_file=provider_token_file,
             bootstrap_dir=bootstrap_dir,
         )
@@ -1610,6 +1611,7 @@ def _run_cloudflare_tunnel_custody(
     bootstrap_dir: Path,
 ) -> None:
     workspace_id = _required_env("CPK_HOSTED_ACTIVITY_WORKSPACE_ID")
+    provider_container = _required_env("CPK_SECRET_PROVIDER_CONTAINER")
     public_hostname = _required_env("CPK_PUBLIC_GATEWAY_HOSTNAME")
     gateway_document = _product_document(servers_repo, "cpk_local_gateway")
     hello_document = _product_document(servers_repo, "hello_server")
@@ -1828,6 +1830,7 @@ def _run_cloudflare_abort_cleanup(
     base_url: str,
     server_container: str,
     operations_database_url: str,
+    provider_container: str,
     provider_token_file: Path,
     bootstrap_dir: Path,
 ) -> int:
@@ -1872,6 +1875,11 @@ def _run_cloudflare_abort_cleanup(
         )
 
     def verify_authoritative_absence() -> None:
+        _assert_abort_generated_secret_versions_revoked(
+            resources,
+            provider_container=provider_container,
+            workspace_id=workspace_id,
+        )
         _assert_owned_cloudflare_resources_removed(
             operations_database_url,
             workspace_id=workspace_id,
@@ -1880,6 +1888,11 @@ def _run_cloudflare_abort_cleanup(
         )
 
     def verify_emergency_absence() -> None:
+        _assert_abort_generated_secret_versions_revoked(
+            resources,
+            provider_container=provider_container,
+            workspace_id=workspace_id,
+        )
         _assert_abort_resources_physically_absent(
             resources,
             api_token_file=bootstrap_dir / "cloudflare-api-token",
@@ -2089,6 +2102,25 @@ def _assert_abort_resources_physically_absent(
             tunnel_id=coordinates["tunnel_id"],
             api_token_file=api_token_file,
         )
+
+
+def _assert_abort_generated_secret_versions_revoked(
+    resources: tuple[ExactOwnedIngressResource, ...],
+    *,
+    provider_container: str,
+    workspace_id: str,
+) -> None:
+    audit_rows = _provider_audit_rows(provider_container, workspace_id)
+    revoked_version_ids = {
+        row["version_id"]
+        for row in audit_rows
+        if row["outcome"] == "revoked" and row["version_id"]
+    }
+    expected_version_ids = {
+        resource.provider_version_id for resource in resources
+    }
+    if not expected_version_ids.issubset(revoked_version_ids):
+        raise RuntimeError("generated ingress secret revocation evidence is incomplete")
 
 
 def _register_cloudflare_provider_and_references(
