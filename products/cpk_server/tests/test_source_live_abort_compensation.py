@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -216,6 +216,7 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                     {
                         "CPK_SOURCE_LIVE_STATE_FILE": "/state/checkpoint.json",
                         "CPK_HOSTED_ACTIVITY_WORKSPACE_ID": "workspace-a",
+                        "CPK_SECRET_PROVIDER_CONTAINER": "provider-a",
                     },
                     clear=False,
                 ),
@@ -233,6 +234,10 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 ) as authoritative_verify,
                 patch.object(
                     controller,
+                    "_assert_abort_generated_secret_versions_revoked",
+                ) as custody_verify,
+                patch.object(
+                    controller,
                     "_assert_abort_resources_physically_absent",
                 ) as emergency_verify,
                 patch.object(
@@ -244,6 +249,7 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                     base_url="http://cpk-server:8080",
                     server_container="cpk-server",
                     operations_database_url="postgresql://operations",
+                    provider_container="provider-a",
                     provider_token_file=Path("/provider-token"),
                     bootstrap_dir=Path("/bootstrap"),
                 )
@@ -259,6 +265,11 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 workspace_id="workspace-a",
             )
             authoritative_verify.assert_called_once()
+            custody_verify.assert_called_once_with(
+                (resource,),
+                provider_container="provider-a",
+                workspace_id="workspace-a",
+            )
             emergency_verify.assert_not_called()
             emergency.assert_not_called()
 
@@ -278,6 +289,7 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                     {
                         "CPK_SOURCE_LIVE_STATE_FILE": "/state/checkpoint.json",
                         "CPK_HOSTED_ACTIVITY_WORKSPACE_ID": "workspace-a",
+                        "CPK_SECRET_PROVIDER_CONTAINER": "provider-a",
                     },
                     clear=False,
                 ),
@@ -300,6 +312,10 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 ) as physical_verify,
                 patch.object(
                     controller,
+                    "_assert_abort_generated_secret_versions_revoked",
+                ) as custody_verify,
+                patch.object(
+                    controller,
                     "_emergency_compensate_cloudflare",
                     return_value=(),
                 ) as emergency,
@@ -308,6 +324,7 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                     base_url="http://cpk-server:8080",
                     server_container="cpk-server",
                     operations_database_url="postgresql://operations",
+                    provider_container="provider-a",
                     provider_token_file=Path("/provider-token"),
                     bootstrap_dir=Path("/bootstrap"),
                 )
@@ -319,6 +336,57 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 (resource,),
                 api_token_file=Path("/bootstrap/cloudflare-api-token"),
             )
+            self.assertEqual(
+                custody_verify.call_args_list,
+                [
+                    call(
+                        (resource,),
+                        provider_container="provider-a",
+                        workspace_id="workspace-a",
+                    ),
+                    call(
+                        (resource,),
+                        provider_container="provider-a",
+                        workspace_id="workspace-a",
+                    ),
+                ],
+            )
+
+    def test_abort_custody_verification_requires_each_exact_version_revoked(self) -> None:
+        with _controller_module() as controller:
+            resource = _resource(controller)
+            audit_rows = [
+                {
+                    "outcome": "revoked",
+                    "version_id": resource.provider_version_id,
+                }
+            ]
+            with patch.object(
+                controller,
+                "_provider_audit_rows",
+                return_value=audit_rows,
+            ) as audit:
+                controller._assert_abort_generated_secret_versions_revoked(
+                    (resource,),
+                    provider_container="provider-a",
+                    workspace_id="workspace-a",
+                )
+            audit.assert_called_once_with("provider-a", "workspace-a")
+
+            with patch.object(
+                controller,
+                "_provider_audit_rows",
+                return_value=[],
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "revocation evidence is incomplete",
+                ):
+                    controller._assert_abort_generated_secret_versions_revoked(
+                        (resource,),
+                        provider_container="provider-a",
+                        workspace_id="workspace-a",
+                    )
 
     def test_cloudflare_emergency_compensator_uses_exact_reverse_order(self) -> None:
         with _controller_module() as controller, tempfile.TemporaryDirectory() as directory:
@@ -384,6 +452,21 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
         self.assertIn("CPK_SECRET_PROVIDER_SOURCE_LIVE_MODE", smoke)
         self.assertIn("CPK_SOURCE_LIVE_STATE_FILE", smoke)
         self.assertNotIn("api.cloudflare.com", smoke)
+        for scope in (
+            "delegation-key:register",
+            "delegation-key:read",
+            "delegation-key:activate",
+            "delegation-key:retire",
+            "delegation-key:revoke",
+            "delegation-key:use",
+        ):
+            self.assertIn(f'"{scope}"', smoke)
+        for fixture in (
+            '"$SERVER_CONTAINER"',
+            '"$SECRETS_CONTAINER"',
+            '"$POSTGRES_CONTAINER"',
+        ):
+            self.assertIn(f"docker rm -fv {fixture}", smoke)
 
     def test_abort_orchestrator_is_provider_neutral(self) -> None:
         source = MODULE_PATH.read_text(encoding="utf-8")

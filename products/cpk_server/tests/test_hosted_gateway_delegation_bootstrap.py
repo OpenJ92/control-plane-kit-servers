@@ -197,7 +197,7 @@ class HostedGatewayDelegationBootstrapTests(unittest.TestCase):
             active = {
                 "workspace_id": "workspace-a",
                 "purpose": "gateway-probe",
-                "issuer": "urn:control-plane-kit:source-live",
+                "issuer": "cpk-source-live",
                 "key_id": "source-live-gateway-key",
                 "algorithm": "ed25519",
                 "fingerprint_sha256": fingerprint,
@@ -262,7 +262,7 @@ class HostedGatewayDelegationBootstrapTests(unittest.TestCase):
                         "secret://control-plane-kit/gateway/"
                         "source-live-signing-key"
                     ),
-                    issuer="urn:control-plane-kit:source-live",
+                    issuer="cpk-source-live",
                     key_id="source-live-gateway-key",
                     public_key_pem=PUBLIC_KEY,
                     admitted_at="2026-08-04T10:00:00Z",
