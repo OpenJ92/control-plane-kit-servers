@@ -73,6 +73,13 @@ from cpk_server_hosted_activity import (
     _with_public_environment,
     _wait_public_gateway_ready,
 )
+from cpk_server_source_live_abort import (
+    ExactOwnedIngressResource,
+    SourceLiveCheckpoint,
+    compensate_abort,
+    read_checkpoint,
+    record_checkpoint,
+)
 
 
 PROVIDER_ID = "control-plane-kit"
@@ -145,6 +152,14 @@ def main() -> int:
     operations_database_url = _required_env("CPK_OPERATIONS_DATABASE_URL")
     provider_token_file = Path(_required_env("CPK_SECRET_PROVIDER_TOKEN_FILE"))
     bootstrap_dir = Path(_required_env("CPK_SECRET_PROVIDER_BOOTSTRAP_DIR"))
+    if os.environ.get("CPK_SECRET_PROVIDER_SOURCE_LIVE_MODE") == "abort-cleanup":
+        return _run_cloudflare_abort_cleanup(
+            base_url=base_url,
+            server_container=server_container,
+            operations_database_url=operations_database_url,
+            provider_token_file=provider_token_file,
+            bootstrap_dir=bootstrap_dir,
+        )
     if (
         os.environ.get("CPK_SECRET_PROVIDER_SOURCE_LIVE_SCENARIO")
         == "gateway-delegation-bootstrap"
@@ -1689,6 +1704,11 @@ def _run_cloudflare_tunnel_custody(
         current_graph_id=current_graph_id,
         sync_runtime_networks=False,
     )
+    _checkpoint_cloudflare_phase(
+        workflow,
+        phase="public-on-committed",
+        result=public_on,
+    )
     _assert_activity_mentions(workflow, public_on.run_id, "gateway")
     _assert_activity_mentions(workflow, public_on.run_id, "hello")
     _assert_activity_mentions(workflow, public_on.run_id, "cloudflared-gateway")
@@ -1715,6 +1735,11 @@ def _run_cloudflare_tunnel_custody(
         expected_desired_graph_id=public_on.desired_graph_id,
         sync_runtime_networks=False,
     )
+    _checkpoint_cloudflare_phase(
+        workflow,
+        phase="public-off-committed",
+        result=public_off,
+    )
     _assert_activity_mentions(workflow, public_off.run_id, "cloudflared-gateway")
     _assert_public_gateway_unreachable(public_hostname)
     _assert_owned_cloudflare_resources_removed(
@@ -1731,6 +1756,11 @@ def _run_cloudflare_tunnel_custody(
         expected_desired_graph_id=public_off.desired_graph_id,
         sync_runtime_networks=False,
     )
+    _checkpoint_cloudflare_phase(
+        workflow,
+        phase="public-on-again-committed",
+        result=public_on_again,
+    )
     _assert_activity_mentions(workflow, public_on_again.run_id, "gateway")
     _assert_activity_mentions(workflow, public_on_again.run_id, "cloudflared-gateway")
     _wait_public_gateway_ready(public_hostname)
@@ -1745,6 +1775,11 @@ def _run_cloudflare_tunnel_custody(
         current_graph_id=public_on_again.current_graph_id,
         expected_desired_graph_id=public_on_again.desired_graph_id,
         sync_runtime_networks=False,
+    )
+    _checkpoint_cloudflare_phase(
+        workflow,
+        phase="final-teardown-committed",
+        result=removed,
     )
     _assert_activity_mentions(workflow, removed.run_id, "cloudflared-gateway")
     _assert_public_gateway_unreachable(public_hostname)
@@ -1765,6 +1800,295 @@ def _run_cloudflare_tunnel_custody(
         workflow,
         (bootstrap_dir / "cloudflare-api-token").read_text(encoding="utf-8"),
     )
+
+
+def _checkpoint_cloudflare_phase(
+    workflow: HostedWorkflow,
+    *,
+    phase: str,
+    result: PreparedRun,
+) -> None:
+    state_file = os.environ.get("CPK_SOURCE_LIVE_STATE_FILE")
+    if not state_file:
+        return
+    record_checkpoint(
+        Path(state_file),
+        SourceLiveCheckpoint(
+            workspace_id=workflow.workspace_id,
+            phase=phase,
+            current_graph_id=result.current_graph_id,
+            desired_graph_id=result.desired_graph_id,
+        ),
+        fail_after_phase=os.environ.get("CPK_SOURCE_LIVE_FAIL_AFTER_PHASE"),
+    )
+
+
+def _run_cloudflare_abort_cleanup(
+    *,
+    base_url: str,
+    server_container: str,
+    operations_database_url: str,
+    provider_token_file: Path,
+    bootstrap_dir: Path,
+) -> int:
+    checkpoint = read_checkpoint(
+        Path(_required_env("CPK_SOURCE_LIVE_STATE_FILE"))
+    )
+    workspace_id = _required_env("CPK_HOSTED_ACTIVITY_WORKSPACE_ID")
+    if checkpoint.workspace_id != workspace_id:
+        raise RuntimeError("source-live checkpoint workspace changed")
+    resources = _load_exact_owned_ingress_resources(
+        operations_database_url,
+        workspace_id=workspace_id,
+    )
+    _print_bounded_abort_snapshot(checkpoint, resources)
+    workflow = _workflow(
+        base_url,
+        server_container,
+        workspace_id=workspace_id,
+        worker_id="hosted-worker",
+        worker_authorization=WORKER_AUTHORIZATION,
+    )
+
+    def authoritative_cleanup() -> None:
+        workflow.wait_ready()
+        current_graph_id = workflow.read_current_graph_id()
+        workspace = workflow.read_workspace().get("workspace")
+        if not isinstance(workspace, dict):
+            raise RuntimeError("abort cleanup workspace readback was unavailable")
+        desired_graph_id = workspace.get("desired_graph_id")
+        if not isinstance(desired_graph_id, str) or not desired_graph_id:
+            raise RuntimeError("abort cleanup desired graph was unavailable")
+        _disconnect_runtime_networks(
+            server_container,
+            workspace_id=workspace_id,
+        )
+        workflow.run_approved_transition(
+            title=f"Source-live abort cleanup {checkpoint.phase}",
+            graph=DeploymentGraph(workspace_id),
+            current_graph_id=current_graph_id,
+            expected_desired_graph_id=desired_graph_id,
+            sync_runtime_networks=False,
+        )
+
+    def verify_authoritative_absence() -> None:
+        _assert_owned_cloudflare_resources_removed(
+            operations_database_url,
+            workspace_id=workspace_id,
+            api_token_file=bootstrap_dir / "cloudflare-api-token",
+            expected_minimum=1,
+        )
+
+    def verify_emergency_absence() -> None:
+        _assert_abort_resources_physically_absent(
+            resources,
+            api_token_file=bootstrap_dir / "cloudflare-api-token",
+        )
+
+    report = compensate_abort(
+        authoritative_cleanup=authoritative_cleanup,
+        verify_authoritative_absence=verify_authoritative_absence,
+        verify_emergency_absence=verify_emergency_absence,
+        resources=resources,
+        emergency_compensators={
+            "cloudflare": lambda resource: _emergency_compensate_cloudflare(
+                resource,
+                workspace_id=workspace_id,
+                provider_token_file=provider_token_file,
+                api_token_file=bootstrap_dir / "cloudflare-api-token",
+            )
+        },
+    )
+    print(
+        json.dumps(
+            {
+                "abort_cleanup": "completed",
+                "authoritative": report.authoritative,
+                "emergency_attempted": report.emergency_attempted,
+                "resource_count": report.resource_count,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    )
+    return 0 if report.authoritative else 2
+
+
+def _load_exact_owned_ingress_resources(
+    operations_database_url: str,
+    *,
+    workspace_id: str,
+) -> tuple[ExactOwnedIngressResource, ...]:
+    query = """
+        SELECT
+          resource.provider_kind,
+          resource.ingress_id,
+          resource.epoch,
+          resource.tunnel_id,
+          resource.dns_record_id,
+          resource.hostname,
+          resource.zone_id,
+          generated.secret_ref,
+          generated.metadata->>'provider_version_id',
+          (generated.metadata->>'provider_version_number')::integer
+        FROM cpk_cloudflare_ingress_resources AS resource
+        JOIN cpk_generated_ingress_secret_references AS generated
+          ON generated.workspace_id = resource.workspace_id
+         AND generated.source_run_id = resource.source_run_id
+         AND generated.source_activity_id = resource.source_activity_id
+         AND generated.source_event_id = resource.source_event_id
+        WHERE resource.workspace_id = %s
+          AND resource.status <> 'removed'
+        ORDER BY resource.ingress_id, resource.epoch
+    """
+    with psycopg.connect(operations_database_url) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(query, (workspace_id,))
+            rows = cursor.fetchall()
+    return tuple(
+        ExactOwnedIngressResource(
+            provider_kind=str(row[0]),
+            ingress_id=str(row[1]),
+            epoch=int(row[2]),
+            public_provider_coordinates={
+                "tunnel_id": str(row[3]),
+                "dns_record_id": str(row[4]),
+                "hostname": str(row[5]),
+                "zone_id": str(row[6]),
+            },
+            secret_reference=str(row[7]),
+            provider_version_id=str(row[8]),
+            provider_version_number=int(row[9]),
+        )
+        for row in rows
+    )
+
+
+def _print_bounded_abort_snapshot(
+    checkpoint: SourceLiveCheckpoint,
+    resources: tuple[ExactOwnedIngressResource, ...],
+) -> None:
+    print(
+        json.dumps(
+            {
+                "abort_phase": checkpoint.phase,
+                "workspace_id": checkpoint.workspace_id,
+                "current_graph_id": checkpoint.current_graph_id,
+                "desired_graph_id": checkpoint.desired_graph_id,
+                "owned_resources": [
+                    resource.bounded_descriptor() for resource in resources
+                ],
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    )
+
+
+def _emergency_compensate_cloudflare(
+    resource: ExactOwnedIngressResource,
+    *,
+    workspace_id: str,
+    provider_token_file: Path,
+    api_token_file: Path,
+) -> tuple[str, ...]:
+    failed: list[str] = []
+    coordinates = resource.public_provider_coordinates
+    try:
+        _provider_revoke_exact_version(
+            workspace_id=workspace_id,
+            reference=resource.secret_reference,
+            version_id=resource.provider_version_id,
+            version_number=resource.provider_version_number,
+            provider_token_file=provider_token_file,
+            correlation_id=(
+                f"source-live-abort:{resource.ingress_id}:{resource.epoch}"
+            ),
+        )
+    except Exception:
+        failed.append("custody")
+
+    try:
+        from control_plane_kit_core.secrets import SecretReference, SecretValue
+        from control_plane_kit_interpreters.cloudflare import (
+            CloudflareApiClient,
+            CloudflareZoneAuthority,
+        )
+
+        authority = CloudflareZoneAuthority(
+            account_id=_required_env("OPENJ92_CLOUDFLARE_ACCOUNT_ID"),
+            zone_id=coordinates["zone_id"],
+            zone_name=_required_env("OPENJ92_CLOUDFLARE_ZONE"),
+            api_token_ref=SecretReference(CLOUDFLARE_API_TOKEN_REFERENCE),
+            allowed_hostname_pattern=coordinates["hostname"],
+        )
+        client = CloudflareApiClient(
+            authority,
+            api_token=SecretValue(
+                api_token_file.read_text(encoding="utf-8").strip()
+            ),
+        )
+    except Exception:
+        return tuple((*failed, "dns", "tunnel"))
+
+    try:
+        client.delete_dns_record(coordinates["dns_record_id"])
+    except Exception:
+        failed.append("dns")
+    try:
+        client.delete_tunnel(coordinates["tunnel_id"])
+    except Exception:
+        failed.append("tunnel")
+    return tuple(failed)
+
+
+def _provider_revoke_exact_version(
+    *,
+    workspace_id: str,
+    reference: str,
+    version_id: str,
+    version_number: int,
+    provider_token_file: Path,
+    correlation_id: str,
+) -> None:
+    suffix = f"/versions/{quote(version_id, safe='')}/revoke"
+    status, payload = _provider_request(
+        method="POST",
+        path=_provider_secret_path(
+            workspace_id,
+            reference=reference,
+            suffix=suffix,
+        ),
+        provider_token_file=provider_token_file,
+        payload={
+            "version_number": version_number,
+            "caller_subject": "source-live-abort-compensator",
+            "correlation_id": correlation_id,
+        },
+    )
+    if status != 200 or payload.get("outcome") != "revoked":
+        raise RuntimeError("provider exact version revocation failed")
+
+
+def _assert_abort_resources_physically_absent(
+    resources: tuple[ExactOwnedIngressResource, ...],
+    *,
+    api_token_file: Path,
+) -> None:
+    for resource in resources:
+        if resource.provider_kind != "cloudflare":
+            raise RuntimeError("abort resource provider is unsupported")
+        coordinates = resource.public_provider_coordinates
+        _assert_cloudflare_resource_absent(
+            "/zones/"
+            f"{coordinates['zone_id']}/dns_records/{coordinates['dns_record_id']}",
+            api_token_file,
+        )
+        _assert_cloudflare_tunnel_deleted(
+            account_id=_required_env("OPENJ92_CLOUDFLARE_ACCOUNT_ID"),
+            tunnel_id=coordinates["tunnel_id"],
+            api_token_file=api_token_file,
+        )
 
 
 def _register_cloudflare_provider_and_references(

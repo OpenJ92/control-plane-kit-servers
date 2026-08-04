@@ -18,12 +18,16 @@ WORKSPACE_LABEL_KEY="org.openj92.cpk.workspace"
 STATE_ROOT="$(mktemp -d)"
 PROVIDER_DATA_DIR="$STATE_ROOT/provider-data"
 BOOTSTRAP_DIR="$STATE_ROOT/bootstrap"
+CONTROLLER_STATE_DIR="$STATE_ROOT/controller-state"
+CONTROLLER_STATE_FILE="$CONTROLLER_STATE_DIR/checkpoint.json"
 OPERATIONS_DUMP="$STATE_ROOT/operations.sql"
 POSTGRES_CONTAINER=""
 SECRETS_CONTAINER=""
 SERVER_CONTAINER=""
+CONTROLLER_STATUS=0
+ABORT_CLEANUP_ATTEMPTED=0
 
-mkdir -p "$PROVIDER_DATA_DIR" "$BOOTSTRAP_DIR"
+mkdir -p "$PROVIDER_DATA_DIR" "$BOOTSTRAP_DIR" "$CONTROLLER_STATE_DIR"
 umask 077
 
 cleanup_workspace_resources() {
@@ -61,7 +65,25 @@ cleanup() {
   cleanup_workspace_resources
   rm -rf "$STATE_ROOT"
 }
-trap cleanup EXIT INT TERM
+
+finish() {
+  status=$?
+  trap - EXIT INT TERM
+  if [ "$status" -ne 0 ] \
+    && [ "$CONTROLLER_STATUS" -ne 0 ] \
+    && [ "$ABORT_CLEANUP_ATTEMPTED" -eq 0 ] \
+    && [ -f "$CONTROLLER_STATE_FILE" ]; then
+    ABORT_CLEANUP_ATTEMPTED=1
+    echo "source-live controller failed; attempting cpk-server-first abort cleanup" >&2
+    if ! run_controller abort-cleanup; then
+      echo "source-live abort cleanup remained non-success" >&2
+    fi
+  fi
+  cleanup
+  exit "$status"
+}
+trap finish EXIT
+trap 'exit 130' INT TERM
 
 if [ ! -r "$CLOUDFLARE_ENV_FILE" ]; then
   echo "Cloudflare authority configuration is unavailable" >&2
@@ -339,30 +361,43 @@ SERVER_CONTAINER="$(docker run -d \
   -e CPK_GRAPH_TOPOLOGY_DATABASE_URL=postgresql://cpk:cpk@cpk-postgres:5432/cpk \
   "$SERVER_IMAGE")"
 
-if ! docker run --rm \
-  --label "$LABEL" \
-  --network "$NETWORK" \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$BOOTSTRAP_DIR:/run/secrets/cpk-source-live:ro" \
-  -e CPK_HOSTED_ACTIVITY_BASE_URL=http://cpk-server:8080 \
-  -e CPK_HOSTED_ACTIVITY_SERVER_CONTAINER="$SERVER_CONTAINER" \
-  -e CPK_HOSTED_ACTIVITY_SERVERS_REPO=/app \
-  -e CPK_HOSTED_ACTIVITY_WORKSPACE_ID="$WORKSPACE_ID" \
-  -e CPK_PUBLIC_GATEWAY_HOSTNAME="$PUBLIC_HOSTNAME" \
-  -e CPK_SECRET_PROVIDER_SOURCE_LIVE_SCENARIO=cloudflare-tunnel-custody \
-  -e CPK_SECRET_PROVIDER_CONTAINER="$SECRETS_CONTAINER" \
-  -e CPK_SECRET_PROVIDER_TOKEN_FILE=/run/secrets/cpk-source-live/client-token \
-  -e CPK_SECRET_PROVIDER_BOOTSTRAP_DIR=/run/secrets/cpk-source-live \
-  -e CPK_GATEWAY_PROBE_PRIVATE_KEY_FILE=/run/secrets/cpk-source-live/gateway-private-key.pem \
-  -e OPENJ92_CLOUDFLARE_ACCOUNT_ID="$OPENJ92_CLOUDFLARE_ACCOUNT_ID" \
-  -e OPENJ92_CLOUDFLARE_ZONE_ID="$OPENJ92_CLOUDFLARE_ZONE_ID" \
-  -e OPENJ92_CLOUDFLARE_ZONE="$OPENJ92_CLOUDFLARE_ZONE" \
-  -e CPK_OPERATIONS_DATABASE_URL=postgresql://cpk:cpk@cpk-postgres:5432/cpk \
-  "$CONTROLLER_IMAGE" \
-  python scripts/cpk_server_secret_provider_source_live.py; then
+run_controller() {
+  mode="$1"
+  docker run --rm \
+    --label "$LABEL" \
+    --network "$NETWORK" \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -v "$BOOTSTRAP_DIR:/run/secrets/cpk-source-live:ro" \
+    -v "$CONTROLLER_STATE_DIR:/run/cpk-source-live-state" \
+    -e CPK_HOSTED_ACTIVITY_BASE_URL=http://cpk-server:8080 \
+    -e CPK_HOSTED_ACTIVITY_SERVER_CONTAINER="$SERVER_CONTAINER" \
+    -e CPK_HOSTED_ACTIVITY_SERVERS_REPO=/app \
+    -e CPK_HOSTED_ACTIVITY_WORKSPACE_ID="$WORKSPACE_ID" \
+    -e CPK_PUBLIC_GATEWAY_HOSTNAME="$PUBLIC_HOSTNAME" \
+    -e CPK_SECRET_PROVIDER_SOURCE_LIVE_SCENARIO=cloudflare-tunnel-custody \
+    -e CPK_SECRET_PROVIDER_SOURCE_LIVE_MODE="$mode" \
+    -e CPK_SOURCE_LIVE_STATE_FILE=/run/cpk-source-live-state/checkpoint.json \
+    -e CPK_SOURCE_LIVE_FAIL_AFTER_PHASE="${CPK_SOURCE_LIVE_FAIL_AFTER_PHASE:-}" \
+    -e CPK_SECRET_PROVIDER_CONTAINER="$SECRETS_CONTAINER" \
+    -e CPK_SECRET_PROVIDER_TOKEN_FILE=/run/secrets/cpk-source-live/client-token \
+    -e CPK_SECRET_PROVIDER_BOOTSTRAP_DIR=/run/secrets/cpk-source-live \
+    -e CPK_GATEWAY_PROBE_PRIVATE_KEY_FILE=/run/secrets/cpk-source-live/gateway-private-key.pem \
+    -e OPENJ92_CLOUDFLARE_ACCOUNT_ID="$OPENJ92_CLOUDFLARE_ACCOUNT_ID" \
+    -e OPENJ92_CLOUDFLARE_ZONE_ID="$OPENJ92_CLOUDFLARE_ZONE_ID" \
+    -e OPENJ92_CLOUDFLARE_ZONE="$OPENJ92_CLOUDFLARE_ZONE" \
+    -e CPK_OPERATIONS_DATABASE_URL=postgresql://cpk:cpk@cpk-postgres:5432/cpk \
+    "$CONTROLLER_IMAGE" \
+    python scripts/cpk_server_secret_provider_source_live.py
+}
+
+set +e
+run_controller run
+CONTROLLER_STATUS=$?
+set -e
+if [ "$CONTROLLER_STATUS" -ne 0 ]; then
   docker logs "$SERVER_CONTAINER" 2>&1 | tail -n 100 >&2 || true
   docker logs "$SECRETS_CONTAINER" 2>&1 | tail -n 100 >&2 || true
-  exit 1
+  exit "$CONTROLLER_STATUS"
 fi
 
 docker exec "$POSTGRES_CONTAINER" pg_dump -U cpk -d cpk >"$OPERATIONS_DUMP"
