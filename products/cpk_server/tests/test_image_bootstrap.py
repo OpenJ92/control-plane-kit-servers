@@ -1684,6 +1684,71 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertNotIn("DockerRuntimeInterpreter", controller)
         self.assertNotIn("ControlPlaneKitSecretsResolver", controller)
 
+    def test_gateway_rotation_authors_stable_delegation_intent_only(self) -> None:
+        from control_plane_kit_core.delegation_authority import (
+            DelegationAuthorityBinding,
+        )
+        from control_plane_kit_core.delegation_keys import DelegationKeyPurpose
+        from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC
+
+        script_dir = ROOT / "scripts"
+        spec = importlib.util.spec_from_file_location(
+            "cpk_server_secret_provider_rotation_graph_test",
+            script_dir / "cpk_server_secret_provider_source_live.py",
+        )
+        if spec is None or spec.loader is None:
+            self.fail("secret provider source-live controller could not be loaded")
+        module = importlib.util.module_from_spec(spec)
+        sys.path.insert(0, str(script_dir))
+        sys.modules[spec.name] = module
+        try:
+            spec.loader.exec_module(module)
+            gateway_document = module._product_document(ROOT, "cpk_local_gateway")
+            verifier_configuration = {
+                "public_environment": [
+                    {"name": binding.name, "value": binding.value}
+                    for binding in gateway_document.product.runtime_contract.public_environment
+                ]
+            }
+            graph = module._gateway_rotation_graph(
+                gateway_document,
+                module._product_document(ROOT, "hello_server"),
+                module._product_document(ROOT, "postgres_server"),
+                workspace_id="workspace-gateway-rotation-graph-test",
+                verifier_configuration=verifier_configuration,
+            )
+        finally:
+            sys.modules.pop(spec.name, None)
+            sys.path.remove(str(script_dir))
+
+        self.assertEqual(
+            graph.delegation_authorities,
+            (
+                DelegationAuthorityBinding(
+                    delegate_node_id="gateway",
+                    purpose=DelegationKeyPurpose.GATEWAY_PROBE,
+                    issuer=module.GATEWAY_ROTATION_ISSUER,
+                ),
+            ),
+        )
+        encoded_graph = DEFAULT_GRAPH_CODEC.encode(graph)
+        descriptor = json.dumps(
+            encoded_graph,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        self.assertIn('"purpose":"gateway-probe"', descriptor)
+        self.assertNotIn(module.GATEWAY_ROTATION_KEY_A_ID, descriptor)
+        self.assertNotIn(module.GATEWAY_ROTATION_KEY_B_ID, descriptor)
+        self.assertNotIn("private_key", descriptor.lower())
+        self.assertNotIn("public_key_pem", descriptor.lower())
+        delegation_descriptor = json.dumps(
+            encoded_graph["delegation_authorities"],
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        self.assertNotIn("secret://", delegation_descriptor)
+
     def test_cloudflare_custody_source_live_uses_provider_backed_composition(
         self,
     ) -> None:
