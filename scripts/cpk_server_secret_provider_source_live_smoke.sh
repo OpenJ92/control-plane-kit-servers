@@ -219,6 +219,11 @@ credentials = [{
             "intents": ["gateway.probe-signing-key"],
         },
         {
+            "action": "secret.generate-delegation-key",
+            "workspace_id": "*",
+            "intents": ["gateway.probe-signing-key"],
+        },
+        {
             "action": "secret.write",
             "workspace_id": "*",
             "intents": ["oci.pull-credential"],

@@ -1636,6 +1636,20 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertNotIn("CPK_PRODUCT_SECRET_VALUES_JSON", smoke)
         self.assertNotIn("CPK_PRODUCT_MATERIAL_RESOLVER=local-development", smoke)
         self.assertNotIn("CPK_IMAGE_PULL_CREDENTIAL_RESOLVER", smoke)
+        provider_credentials = smoke[
+            smoke.index("credentials = [{") : smoke.index(
+                'Path(os.environ["BOOTSTRAP_DIR"], "credentials.json")'
+            )
+        ]
+        delegation_generation_grant = """{
+            "action": "secret.generate-delegation-key",
+            "workspace_id": "*",
+            "intents": ["gateway.probe-signing-key"],
+        }"""
+        self.assertEqual(
+            provider_credentials.count(delegation_generation_grant),
+            1,
+        )
 
         self.assertIn("/secret-providers", controller)
         self.assertIn("/secret-references", controller)
