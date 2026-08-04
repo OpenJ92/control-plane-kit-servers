@@ -42,6 +42,7 @@ cleanup_workspace_resources() {
             workspace-secret-concurrent-a|\
             workspace-secret-concurrent-b|\
             workspace-secret-concurrent-c|\
+            workspace-gateway-key-bootstrap|\
             workspace-gateway-key-rotation)
               docker rm -f "$resource" >/dev/null 2>&1 || true
               ;;
@@ -67,6 +68,7 @@ cleanup_workspace_resources() {
               workspace-secret-concurrent-a|\
               workspace-secret-concurrent-b|\
               workspace-secret-concurrent-c|\
+              workspace-gateway-key-bootstrap|\
               workspace-gateway-key-rotation)
               docker volume rm "$resource" >/dev/null 2>&1 || true
               ;;
@@ -92,6 +94,7 @@ cleanup_workspace_resources() {
               workspace-secret-concurrent-a|\
               workspace-secret-concurrent-b|\
               workspace-secret-concurrent-c|\
+              workspace-gateway-key-bootstrap|\
               workspace-gateway-key-rotation)
               docker network rm "$resource" >/dev/null 2>&1 || true
               ;;
@@ -269,6 +272,7 @@ WORKSPACES='[
   "workspace-secret-concurrent-a",
   "workspace-secret-concurrent-b",
   "workspace-secret-concurrent-c",
+  "workspace-gateway-key-bootstrap",
   "workspace-gateway-key-rotation"
 ]'
 CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON="$(

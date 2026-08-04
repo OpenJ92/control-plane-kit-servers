@@ -113,6 +113,7 @@ CONCURRENT_WORKSPACES = (
 PROVIDER_BASE_URL = "http://cpk-secrets:8081"
 CONTAINER_RESTART_TIMEOUT_SECONDS = 30
 GATEWAY_ROTATION_WORKSPACE = "workspace-gateway-key-rotation"
+GATEWAY_BOOTSTRAP_WORKSPACE = "workspace-gateway-key-bootstrap"
 GATEWAY_ROTATION_ISSUER = "cpk-source-live-rotation"
 GATEWAY_ROTATION_KEY_A_ID = "source-live-rotation-key-a"
 GATEWAY_ROTATION_KEY_B_ID = "source-live-rotation-key-b"
@@ -135,6 +136,20 @@ def main() -> int:
     operations_database_url = _required_env("CPK_OPERATIONS_DATABASE_URL")
     provider_token_file = Path(_required_env("CPK_SECRET_PROVIDER_TOKEN_FILE"))
     bootstrap_dir = Path(_required_env("CPK_SECRET_PROVIDER_BOOTSTRAP_DIR"))
+    if (
+        os.environ.get("CPK_SECRET_PROVIDER_SOURCE_LIVE_SCENARIO")
+        == "gateway-delegation-bootstrap"
+    ):
+        _run_gateway_delegation_bootstrap(
+            base_url=base_url,
+            server_container=server_container,
+            provider_container=provider_container,
+            servers_repo=servers_repo,
+            provider_token_file=provider_token_file,
+            bootstrap_dir=bootstrap_dir,
+        )
+        print("cpk-server gateway delegation bootstrap source-live acceptance passed")
+        return 0
     if (
         os.environ.get("CPK_SECRET_PROVIDER_SOURCE_LIVE_SCENARIO")
         == "gateway-key-rotation"
@@ -309,6 +324,97 @@ def main() -> int:
     )
     print("cpk-server durable secret-provider source-live acceptance passed")
     return 0
+
+
+def _run_gateway_delegation_bootstrap(
+    *,
+    base_url: str,
+    server_container: str,
+    provider_container: str,
+    servers_repo: Path,
+    provider_token_file: Path,
+    bootstrap_dir: Path,
+) -> None:
+    cpk_server_document = _product_document(servers_repo, "cpk_server")
+    workflow = _workflow(
+        base_url,
+        server_container,
+        workspace_id=GATEWAY_BOOTSTRAP_WORKSPACE,
+        worker_id="hosted-worker",
+        worker_authorization=WORKER_AUTHORIZATION,
+    )
+    workflow.wait_ready()
+    _bootstrap_workspace(
+        workflow,
+        name="Gateway delegation bootstrap source-live",
+        product_documents={},
+        register_runtime_authority=False,
+        register_runtime_delivery=False,
+    )
+    private_key_file = bootstrap_dir / "gateway-rotation-key-a.pem"
+    public_key_file = bootstrap_dir / "gateway-rotation-key-a-public.pem"
+    _provider_write_secret(
+        workspace_id=GATEWAY_BOOTSTRAP_WORKSPACE,
+        reference=GATEWAY_ROTATION_KEY_A_REFERENCE,
+        intent=GATEWAY_SIGNING_KEY_INTENT,
+        value_file=private_key_file,
+        provider_token_file=provider_token_file,
+        correlation_id="gateway-delegation-bootstrap-write",
+    )
+    arguments = {
+        "provider_id": PROVIDER_ID,
+        "provider_display_name": "Ephemeral hosted acceptance custody",
+        "provider_endpoint_reference": PROVIDER_ENDPOINT_REFERENCE,
+        "provider_credential_reference": PROVIDER_CREDENTIAL_REFERENCE,
+        "private_key_reference": GATEWAY_ROTATION_KEY_A_REFERENCE,
+        "issuer": GATEWAY_ROTATION_ISSUER,
+        "key_id": GATEWAY_ROTATION_KEY_A_ID,
+        "public_key_pem": public_key_file.read_text(encoding="ascii"),
+        "admitted_at": "2026-08-04T10:00:00Z",
+        "activated_at": "2026-08-04T10:00:01Z",
+        "metadata": {"acceptance": "ephemeral-hosted-source-live"},
+    }
+    admitted = workflow.admit_gateway_delegation_key(**arguments)
+    _assert_gateway_bootstrap_key(admitted)
+
+    _restart_provider(provider_container)
+    _restart_cpk_server(
+        server_container,
+        workflow,
+        ready_policy=_verification_policy(cpk_server_document, "ready"),
+    )
+    replayed = workflow.admit_gateway_delegation_key(**arguments)
+    _assert_gateway_bootstrap_key(replayed)
+    if replayed["registration_id"] != admitted["registration_id"]:
+        raise RuntimeError("delegation bootstrap replay changed key identity")
+    verifier = _gateway_verifier_configuration(workflow)
+    _assert_verifier_key_ids(verifier, {GATEWAY_ROTATION_KEY_A_ID})
+    _assert_secret_absent_from_activity(
+        workflow,
+        private_key_file.read_text(encoding="ascii"),
+    )
+
+
+def _assert_gateway_bootstrap_key(value: dict[str, Any]) -> None:
+    expected = {
+        "workspace_id": GATEWAY_BOOTSTRAP_WORKSPACE,
+        "purpose": "gateway-probe",
+        "issuer": GATEWAY_ROTATION_ISSUER,
+        "key_id": GATEWAY_ROTATION_KEY_A_ID,
+        "algorithm": "ed25519",
+        "private_key_reference": GATEWAY_ROTATION_KEY_A_REFERENCE,
+        "status": "active",
+    }
+    mismatches = {
+        key: (value.get(key), expected_value)
+        for key, expected_value in expected.items()
+        if value.get(key) != expected_value
+    }
+    if mismatches:
+        raise RuntimeError(
+            "gateway delegation bootstrap key did not match: "
+            f"{sorted(mismatches)}"
+        )
 
 
 def _run_gateway_key_rotation(
