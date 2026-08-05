@@ -37,7 +37,7 @@ class PackageMetadataTests(unittest.TestCase):
             project["dependencies"],
         )
         self.assertIn(
-            "control-plane-kit-interpreters[cloudflare,docker,gateway] @ "
+            "control-plane-kit-interpreters[cloudflare,docker,gateway,public-dns] @ "
             "https://github.com/OpenJ92/control-plane-kit-interpreters/archive/"
             f"{INTERPRETERS_PIN}.zip",
             project["dependencies"],

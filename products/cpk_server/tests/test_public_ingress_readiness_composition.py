@@ -19,6 +19,8 @@ from control_plane_kit_core.public_ingress import (
 from control_plane_kit_core.types import Protocol
 from control_plane_kit_core.verification import HttpCheck
 from control_plane_kit_servers_cpk_server.server import (
+    BootstrapConfigurationError,
+    _public_dns_resolver,
     _public_ingress_readiness_verifier,
 )
 
@@ -33,7 +35,38 @@ class RecordingPublicResolver:
         return self.addresses
 
 
+@dataclass(frozen=True)
+class PublicDnsBootstrap:
+    public_dns_resolver_endpoint: str
+
+
 class PublicIngressReadinessCompositionTests(unittest.TestCase):
+    def test_production_factory_injects_refreshable_redacted_resolver(self) -> None:
+        endpoint = "https://1.1.1.1/dns-query"
+        resolver = _public_dns_resolver(PublicDnsBootstrap(endpoint))
+        verifier = _public_ingress_readiness_verifier(public_resolver=resolver)
+        interpreter = verifier.interpreter_factory("gateway-001.openj92.dev")
+
+        self.assertEqual(
+            type(interpreter.public_resolver).__name__,
+            "DnsOverHttpsPublicAddressResolver",
+        )
+        self.assertIs(interpreter.public_resolver, resolver)
+        self.assertNotIn(endpoint, repr(resolver))
+        self.assertNotIn("SystemPublicAddressResolver", repr(verifier))
+
+    def test_malformed_resolver_bootstrap_is_bounded_and_redacted(self) -> None:
+        endpoint = "https://user:credential@resolver.example/dns-query"
+
+        with self.assertRaises(BootstrapConfigurationError) as raised:
+            _public_dns_resolver(PublicDnsBootstrap(endpoint))
+
+        self.assertEqual(
+            str(raised.exception),
+            "public DNS resolver bootstrap is malformed",
+        )
+        self.assertNotIn(endpoint, repr(raised.exception))
+
     def test_http_interpreter_ready_result_becomes_bounded_ingress_observation(
         self,
     ) -> None:

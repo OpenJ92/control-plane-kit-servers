@@ -7,7 +7,6 @@ from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
-import socket
 import time
 from typing import Mapping
 from urllib.parse import urlsplit
@@ -106,6 +105,9 @@ from .composition import (
 )
 
 
+_DEFAULT_PUBLIC_DNS_RESOLVER_ENDPOINT = "https://1.1.1.1/dns-query"
+
+
 class BootstrapConfigurationError(ValueError):
     """Raised when required process bootstrap configuration is missing."""
 
@@ -182,6 +184,7 @@ class CpkServerBootstrapConfiguration:
     material_provider_routes_json: str | None = field(repr=False)
     material_provider_bootstrap_files_json: str | None = field(repr=False)
     store_endpoints: Mapping[str, str]
+    public_dns_resolver_endpoint: str = field(repr=False)
     gateway_probe_signer: str = "none"
     gateway_probe_grant_lifetime_seconds: int = 60
     control_auth_static_workspace_grants: tuple[WorkspaceGrant, ...] = ()
@@ -226,6 +229,14 @@ class CpkServerBootstrapConfiguration:
         )
         material_provider_bootstrap_files_json = values.get(
             "CPK_MATERIAL_PROVIDER_BOOTSTRAP_FILES_JSON"
+        )
+        public_dns_resolver_endpoint = _bounded_ascii(
+            values.get(
+                "CPK_PUBLIC_DNS_RESOLVER_ENDPOINT",
+                _DEFAULT_PUBLIC_DNS_RESOLVER_ENDPOINT,
+            ),
+            "CPK_PUBLIC_DNS_RESOLVER_ENDPOINT",
+            maximum=2_048,
         )
         gateway_probe_signer = values.get("CPK_GATEWAY_PROBE_SIGNER", "none")
         gateway_probe_grant_lifetime_text = values.get(
@@ -432,6 +443,7 @@ class CpkServerBootstrapConfiguration:
                 material_provider_bootstrap_files_json
             ),
             store_endpoints=store_endpoints,
+            public_dns_resolver_endpoint=public_dns_resolver_endpoint,
             gateway_probe_signer=gateway_probe_signer,
             gateway_probe_grant_lifetime_seconds=(
                 gateway_probe_grant_lifetime_seconds
@@ -943,6 +955,7 @@ def _gateway_probe_dispatcher(
         raise BootstrapConfigurationError(
             "gateway probe signer requires provider-backed secret resolution"
         )
+    resolver = public_resolver or _public_dns_resolver(config)
     try:
         from control_plane_kit_interpreters.probes import (
             Ed25519GatewayProbeSigner,
@@ -987,7 +1000,7 @@ def _gateway_probe_dispatcher(
                 ),
             ),
             public_resolver=(
-                public_resolver or _SystemPublicAddressResolver()
+                resolver
                 if endpoint_context is EndpointContext.PUBLIC
                 else None
             ),
@@ -1004,22 +1017,6 @@ def _gateway_probe_dispatcher(
         succeeded_code=GatewayProbeClientCode.SUCCEEDED,
         rejected_code=GatewayProbeClientCode.REJECTED,
     )
-
-
-@dataclass(frozen=True)
-class _SystemPublicAddressResolver:
-    """Resolve public DNS at dispatch time for same-request address pinning."""
-
-    def resolve(self, hostname: str) -> tuple[str, ...]:
-        addresses = {
-            record[4][0]
-            for record in socket.getaddrinfo(
-                hostname,
-                443,
-                type=socket.SOCK_STREAM,
-            )
-        }
-        return tuple(sorted(addresses))
 
 
 @dataclass(frozen=True)
@@ -1089,7 +1086,7 @@ def _public_readiness_evidence(result) -> dict[str, object]:
     return evidence
 
 
-def _public_ingress_readiness_verifier(*, transport=None, public_resolver=None):
+def _public_ingress_readiness_verifier(*, public_resolver, transport=None):
     try:
         from control_plane_kit_interpreters.probes import ProbeAddressPolicy
         from control_plane_kit_interpreters.verification import (
@@ -1102,16 +1099,41 @@ def _public_ingress_readiness_verifier(*, transport=None, public_resolver=None):
             "control-plane-kit-interpreters[http]"
         ) from error
 
-    resolver = public_resolver or _SystemPublicAddressResolver()
     return _PublicIngressReadinessVerifierAdapter(
         interpreter_factory=lambda hostname: HttpVerificationInterpreter(
             ProbeAddressPolicy(public_hosts=frozenset((hostname,))),
-            public_resolver=resolver,
+            public_resolver=public_resolver,
             transport=transport,
         ),
         material_factory=VerificationCheckMaterial,
         clock=_clock,
     )
+
+
+def _public_dns_resolver(
+    config: CpkServerBootstrapConfiguration,
+    *,
+    transport=None,
+):
+    try:
+        from control_plane_kit_interpreters.probes import (
+            DnsOverHttpsPublicAddressResolver,
+            PublicDnsResolutionError,
+        )
+    except ModuleNotFoundError as error:
+        raise BootstrapConfigurationError(
+            "public DNS resolution requires "
+            "control-plane-kit-interpreters[public-dns]"
+        ) from error
+    try:
+        return DnsOverHttpsPublicAddressResolver(
+            config.public_dns_resolver_endpoint,
+            transport=transport,
+        )
+    except PublicDnsResolutionError as error:
+        raise BootstrapConfigurationError(
+            "public DNS resolver bootstrap is malformed"
+        ) from error
 
 
 class _UnsupportedExecutionAdapter:
@@ -1136,6 +1158,7 @@ def _activity_adapter(
     unit_of_work,
     secret_use_authorizer,
     secret_provider: "_SecretProviderComposition",
+    public_resolver=None,
 ) -> ActivityExecutionAdapter:
     runtime = _runtime_adapter(
         config,
@@ -1149,7 +1172,9 @@ def _activity_adapter(
         interpreters=_ingress_interpreters(config, secret_provider),
         clock=_clock,
         secret_use_authorizer=secret_use_authorizer,
-        readiness_verifier=_public_ingress_readiness_verifier(),
+        readiness_verifier=_public_ingress_readiness_verifier(
+            public_resolver=(public_resolver or _public_dns_resolver(config)),
+        ),
     )
     return ActivityExecutionDispatcher(runtime=runtime, ingress=ingress)
 

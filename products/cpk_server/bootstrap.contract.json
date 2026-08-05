@@ -62,6 +62,13 @@
       ]
     },
     {
+      "name": "CPK_PUBLIC_DNS_RESOLVER_ENDPOINT",
+      "required": false,
+      "allowed_values": [
+        "trusted-https-dns-over-https-endpoint"
+      ]
+    },
+    {
       "name": "CPK_PRODUCT_MATERIAL_RESOLVER",
       "required": false,
       "allowed_values": [
@@ -126,6 +133,7 @@
     "runtime interpreter authority is selected explicitly and never inferred",
     "ingress interpreter authority is selected explicitly and never inferred",
     "gateway probe signing authority is selected explicitly and resolves only its secret reference at dispatch",
+    "public DNS resolution uses bounded fresh queries against a trusted process-bootstrap endpoint that is never echoed",
     "store endpoints are runtime-supplied and never echoed by readiness",
     "provider endpoint references map to bounded process-local routes and are never echoed",
     "provider bootstrap credentials are mounted files read only by the provider client and are never recursively resolved through operations",

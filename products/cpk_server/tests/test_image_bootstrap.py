@@ -49,6 +49,7 @@ APPROVED_PROVIDER_FUNCTIONS = {
     "_cloudflare_ingress_interpreter",
     "_docker_runtime_interpreter",
     "_gateway_probe_dispatcher",
+    "_public_dns_resolver",
     "_public_ingress_readiness_verifier",
     "_secret_provider_composition",
 }
@@ -73,7 +74,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             dockerfile,
         )
         self.assertIn(
-            "control-plane-kit-interpreters[cloudflare,docker,gateway] @ "
+            "control-plane-kit-interpreters[cloudflare,docker,gateway,public-dns] @ "
             "https://github.com/OpenJ92/control-plane-kit-interpreters/archive/"
             f"{INTERPRETERS_PIN}.zip",
             dockerfile,
@@ -104,6 +105,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
                 "CPK_RUNTIME_INTERPRETERS",
                 "CPK_INGRESS_INTERPRETERS",
                 "CPK_GATEWAY_PROBE_SIGNER",
+                "CPK_PUBLIC_DNS_RESOLVER_ENDPOINT",
                 "CPK_PRODUCT_MATERIAL_RESOLVER",
                 "CPK_PRODUCT_SECRET_VALUES_JSON",
                 "CPK_MATERIAL_PROVIDER_ROUTES_JSON",
@@ -153,9 +155,14 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             self.assertEqual(str(config.runtime_dispatcher), "none")
             self.assertEqual(str(config.ingress_interpreters), "none")
             self.assertEqual(config.product_material_resolver, "none")
+            self.assertEqual(
+                config.public_dns_resolver_endpoint,
+                "https://1.1.1.1/dns-query",
+            )
             self.assertIsNone(config.material_provider_routes_json)
             self.assertIsNone(config.material_provider_bootstrap_files_json)
             self.assertNotIn("postgres://", repr(config.process_configuration()))
+            self.assertNotIn("1.1.1.1", repr(config))
         finally:
             sys.path.remove(str(PRODUCT_SRC))
             for name in list(sys.modules):
@@ -2086,6 +2093,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
 
         self.assertIn("CPK_PRODUCT_MATERIAL_RESOLVER=provider", smoke)
         self.assertIn("CPK_INGRESS_INTERPRETERS=cloudflare", smoke)
+        self.assertIn("CPK_PUBLIC_DNS_RESOLVER_ENDPOINT", smoke)
         self.assertIn(
             'CPK_SECRET_PROVIDER_SOURCE_LIVE_SCENARIO="$SCENARIO"',
             smoke,
