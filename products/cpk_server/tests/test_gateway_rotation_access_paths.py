@@ -57,6 +57,31 @@ def _public_key(key_id: str) -> DelegationPublicKey:
 
 
 class GatewayRotationAccessPathTests(unittest.TestCase):
+    def test_rotation_advance_uses_bounded_effect_transport_timeout(self) -> None:
+        workflow = hosted.HostedWorkflow(
+            "http://cpk-server:8080",
+            workspace_id="workspace-a",
+            worker_id="worker-a",
+            server_container="cpk-server",
+        )
+        with (
+            patch.object(hosted, "_http", return_value={}) as http,
+            patch.object(hosted, "_mcp_tool", return_value={}) as mcp,
+        ):
+            workflow.advance_gateway_key_rotation_http(
+                rotation_id="rotation-a",
+                expected_version=4,
+                idempotency_key="advance-http",
+            )
+            workflow.advance_gateway_key_rotation_mcp(
+                rotation_id="rotation-a",
+                expected_version=5,
+                idempotency_key="advance-mcp",
+            )
+
+        self.assertEqual(http.call_args.kwargs["timeout"], 60)
+        self.assertEqual(mcp.call_args.kwargs["timeout"], 60)
+
     def test_hosted_workflow_forwards_closed_access_path_over_http_and_mcp(self) -> None:
         workflow = hosted.HostedWorkflow(
             "http://cpk-server:8080",

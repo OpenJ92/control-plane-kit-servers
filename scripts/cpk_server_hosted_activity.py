@@ -861,6 +861,7 @@ class HostedWorkflow:
                 "expected_version": expected_version,
                 "idempotency_key": idempotency_key,
             },
+            timeout=60,
         )
 
     def advance_gateway_key_rotation_mcp(
@@ -879,6 +880,7 @@ class HostedWorkflow:
                 "expected_version": expected_version,
                 "idempotency_key": idempotency_key,
             },
+            timeout=60,
         )
 
     def read_gateway_key_rotation_detail(
