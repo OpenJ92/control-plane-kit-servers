@@ -1467,6 +1467,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn('"cloudflared_connector"', controller)
         self.assertIn('"cloudflared-gateway"', controller)
         self.assertIn("cpk-gateway-001.openj92.dev", controller)
+        self.assertIn('readiness_check_id="ready"', controller)
         self.assertIn("def _assert_public_gateway_http_probe", controller)
         self.assertIn("def _assert_public_gateway_postgres_query_ready", controller)
         self.assertIn("def _assert_public_gateway_unreachable", controller)
