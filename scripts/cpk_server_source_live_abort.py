@@ -41,6 +41,7 @@ class ExactOwnedIngressResource:
     ingress_id: str
     epoch: int
     public_provider_coordinates: Mapping[str, str]
+    source_run_id: str
     secret_reference: str
     provider_version_id: str
     provider_version_number: int
@@ -49,6 +50,7 @@ class ExactOwnedIngressResource:
         for name in (
             "provider_kind",
             "ingress_id",
+            "source_run_id",
             "provider_version_id",
         ):
             value = getattr(self, name)
@@ -87,6 +89,7 @@ class ExactOwnedIngressResource:
             "ingress_id": self.ingress_id,
             "epoch": self.epoch,
             "public_provider_coordinates": dict(self.public_provider_coordinates),
+            "source_run_id": self.source_run_id,
             "provider_version_id": self.provider_version_id,
             "provider_version_number": self.provider_version_number,
         }

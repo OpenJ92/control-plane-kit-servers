@@ -3085,6 +3085,7 @@ def _load_exact_owned_ingress_resources(
           resource.dns_record_id,
           resource.hostname,
           resource.zone_id,
+          resource.source_run_id,
           generated.secret_ref,
           generated.metadata->>'provider_version_id',
           (generated.metadata->>'provider_version_number')::integer
@@ -3113,9 +3114,10 @@ def _load_exact_owned_ingress_resources(
                 "hostname": str(row[5]),
                 "zone_id": str(row[6]),
             },
-            secret_reference=str(row[7]),
-            provider_version_id=str(row[8]),
-            provider_version_number=int(row[9]),
+            source_run_id=str(row[7]),
+            secret_reference=str(row[8]),
+            provider_version_id=str(row[9]),
+            provider_version_number=int(row[10]),
         )
         for row in rows
     )

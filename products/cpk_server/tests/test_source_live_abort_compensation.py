@@ -548,6 +548,7 @@ def _resource(module, *, provider_kind: str = "cloudflare"):
             "hostname": "cpk-gateway-a.openj92.dev",
             "zone_id": "zone-exact",
         },
+        source_run_id="run-failed",
         secret_reference="secret://generated/ingress/token-a",
         provider_version_id="version-exact",
         provider_version_number=1,
