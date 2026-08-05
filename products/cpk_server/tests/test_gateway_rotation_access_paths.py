@@ -210,6 +210,45 @@ class GatewayRotationAccessPathTests(unittest.TestCase):
                         authored["nodes"][node_id],
                     )
 
+    def test_public_overlay_adds_only_connector_and_ingress(self) -> None:
+        module = _load_source_live_module()
+        gateway = module._product_document(ROOT, "cpk_local_gateway")
+        hello = module._product_document(ROOT, "hello_server")
+        postgres = module._product_document(ROOT, "postgres_server")
+        private = module._gateway_rotation_graph(
+            gateway,
+            hello,
+            postgres,
+            workspace_id="workspace-rotation-overlay",
+        )
+        public = module._gateway_rotation_public_graph(
+            gateway,
+            hello,
+            postgres,
+            module._product_document(ROOT, "cloudflared_connector"),
+            workspace_id="workspace-rotation-overlay",
+            public_hostname="cpk-rotation-overlay.openj92.dev",
+        )
+        private_descriptor = DEFAULT_GRAPH_CODEC.encode(private)
+        public_descriptor = DEFAULT_GRAPH_CODEC.encode(public)
+
+        self.assertEqual(
+            set(public.nodes) - set(private.nodes),
+            {"cloudflared-gateway"},
+        )
+        self.assertEqual(private_descriptor["edges"], public_descriptor["edges"])
+        self.assertEqual(
+            private_descriptor["delegation_authorities"],
+            public_descriptor["delegation_authorities"],
+        )
+        for node_id in ("gateway", "hello", "postgres"):
+            self.assertEqual(
+                private_descriptor["nodes"][node_id],
+                public_descriptor["nodes"][node_id],
+            )
+        self.assertEqual(private_descriptor["public_ingresses"], [])
+        self.assertEqual(len(public_descriptor["public_ingresses"]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

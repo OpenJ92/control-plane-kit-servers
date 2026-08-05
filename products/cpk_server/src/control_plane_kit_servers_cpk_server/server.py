@@ -853,7 +853,9 @@ def _gateway_probe_service(
 @dataclass(frozen=True, repr=False)
 class _SignedGatewayProbeDispatcher:
     client_factory: object = field(repr=False)
-    bounded_error_types: tuple[type[Exception], ...] = field(repr=False)
+    client_error_type: type[Exception] = field(repr=False)
+    security_error_type: type[Exception] = field(repr=False)
+    security_result_codes: frozenset[str] = field(repr=False)
     succeeded_code: object = field(repr=False)
     rejected_code: object = field(repr=False)
 
@@ -884,10 +886,30 @@ class _SignedGatewayProbeDispatcher:
                 endpoint,
                 request.secret_resolution_grant,
             )
-        except self.bounded_error_types:
-            raise GatewayProbeDispatchError(
-                "gateway probe dispatch was rejected"
-            ) from None
+        except self.security_error_type as error:
+            security_code = getattr(getattr(error, "code", None), "value", None)
+            if security_code not in self.security_result_codes:
+                raise GatewayProbeDispatchError(
+                    "gateway endpoint security failure is unclassified"
+                ) from None
+            return GatewayProbeDispatchResult(
+                status=GatewayProbeAttemptStatus.FAILED,
+                code=f"gateway-endpoint-{security_code}",
+                evidence=BoundedEvidence.from_mapping(
+                    {
+                        "failure_code": security_code,
+                        "failure_domain": "endpoint-security",
+                    }
+                ),
+            )
+        except self.client_error_type:
+            return GatewayProbeDispatchResult(
+                status=GatewayProbeAttemptStatus.FAILED,
+                code="gateway-client-failed",
+                evidence=BoundedEvidence.from_mapping(
+                    {"failure_domain": "gateway-client"}
+                ),
+            )
         if result.code is self.succeeded_code:
             status = GatewayProbeAttemptStatus.SUCCEEDED
         elif result.code is self.rejected_code:
@@ -927,6 +949,7 @@ def _gateway_probe_dispatcher(
             GatewayProbeClientCode,
             GatewayProbeClientError,
             ProbeAddressPolicy,
+            ProbeSecurityCode,
             ProbeSecurityError,
             SignedGatewayProbeClient,
         )
@@ -973,9 +996,10 @@ def _gateway_probe_dispatcher(
 
     return _SignedGatewayProbeDispatcher(
         client_factory=client_factory,
-        bounded_error_types=(
-            GatewayProbeClientError,
-            ProbeSecurityError,
+        client_error_type=GatewayProbeClientError,
+        security_error_type=ProbeSecurityError,
+        security_result_codes=frozenset(
+            code.value for code in ProbeSecurityCode
         ),
         succeeded_code=GatewayProbeClientCode.SUCCEEDED,
         rejected_code=GatewayProbeClientCode.REJECTED,

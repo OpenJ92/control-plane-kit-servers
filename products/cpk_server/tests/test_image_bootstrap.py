@@ -524,6 +524,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             )
             from control_plane_kit_core.runtime_effects import GatewayTargetId
             from control_plane_kit_core.secrets import (
+                SecretDenied,
                 SecretProviderEndpointReference,
                 SecretReference,
                 SecretResolutionGrant,
@@ -737,6 +738,102 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
                 public_resolver.hostname,
                 "gateway-public.example.test",
             )
+
+            class RejectedPublicResolver:
+                def resolve(self, hostname):
+                    return ("127.0.0.1",)
+
+            rejected_public_dispatch = server_module._gateway_probe_dispatcher(
+                config,
+                secret_provider=server_module._SecretProviderComposition(
+                    authorized_resolver=AuthorizedResolver()
+                ),
+                transport=httpx.MockTransport(handler),
+                public_resolver=RejectedPublicResolver(),
+            )
+            rejected_public_result = rejected_public_dispatch.dispatch(
+                GatewayProbeDispatch(
+                    grant,
+                    request,
+                    RuntimeEndpointObservation(
+                        "gateway-a",
+                        "control",
+                        "graph-a",
+                        Protocol.HTTP,
+                        EndpointContext.PUBLIC,
+                        LiteralEndpointMaterial(
+                            "https://gateway-public.example.test:443"
+                        ),
+                    ),
+                    SecretReference(key_reference),
+                    DelegationPublicKey(
+                        key_id="gateway-key-a",
+                        algorithm=DelegationKeyAlgorithm.ED25519,
+                        public_key_pem=public_pem,
+                    ),
+                    secret_grant,
+                )
+            )
+            self.assertIs(
+                rejected_public_result.status,
+                GatewayProbeAttemptStatus.FAILED,
+            )
+            self.assertEqual(
+                rejected_public_result.code,
+                "gateway-endpoint-untrusted-address",
+            )
+            self.assertEqual(
+                rejected_public_result.evidence.descriptor(),
+                {
+                    "failure_code": "untrusted-address",
+                    "failure_domain": "endpoint-security",
+                },
+            )
+
+            class DeniedResolver:
+                def resolve(self, received):
+                    return SecretDenied(received.reference)
+
+            client_failure_dispatch = server_module._gateway_probe_dispatcher(
+                config,
+                secret_provider=server_module._SecretProviderComposition(
+                    authorized_resolver=DeniedResolver()
+                ),
+                transport=httpx.MockTransport(handler),
+                public_resolver=public_resolver,
+            )
+            client_failure_result = client_failure_dispatch.dispatch(
+                GatewayProbeDispatch(
+                    grant,
+                    request,
+                    RuntimeEndpointObservation(
+                        "gateway-a",
+                        "control",
+                        "graph-a",
+                        Protocol.HTTP,
+                        EndpointContext.RUNTIME_PRIVATE,
+                        LiteralEndpointMaterial("http://gateway-a:8000"),
+                    ),
+                    SecretReference(key_reference),
+                    DelegationPublicKey(
+                        key_id="gateway-key-a",
+                        algorithm=DelegationKeyAlgorithm.ED25519,
+                        public_key_pem=public_pem,
+                    ),
+                    secret_grant,
+                )
+            )
+            self.assertIs(
+                client_failure_result.status,
+                GatewayProbeAttemptStatus.FAILED,
+            )
+            self.assertEqual(client_failure_result.code, "gateway-client-failed")
+            self.assertEqual(
+                client_failure_result.evidence.descriptor(),
+                {"failure_domain": "gateway-client"},
+            )
+            self.assertNotIn(private_pem, repr(rejected_public_result))
+            self.assertNotIn(private_pem, repr(client_failure_result))
         finally:
             sys.path.remove(str(PRODUCT_SRC))
             for name in list(sys.modules):
@@ -1370,6 +1467,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn('"cloudflared_connector"', controller)
         self.assertIn('"cloudflared-gateway"', controller)
         self.assertIn("cpk-gateway-001.openj92.dev", controller)
+        self.assertIn('readiness_check_id="ready"', controller)
         self.assertIn("def _assert_public_gateway_http_probe", controller)
         self.assertIn("def _assert_public_gateway_postgres_query_ready", controller)
         self.assertIn("def _assert_public_gateway_unreachable", controller)
@@ -1734,8 +1832,16 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             "initial_key_receipt=key_a_receipt",
             program,
         )
-        self.assertEqual(program.count("_gateway_rotation_graph("), 1)
-        self.assertEqual(program.count("run_approved_transition("), 2)
+        self.assertIn("graph_a = _gateway_rotation_graph(", program)
+        self.assertIn("private_graph = _gateway_rotation_graph(", program)
+        for title in (
+            "Gateway key A initial deployment",
+            "Gateway rotation public overlay on",
+            "Gateway rotation public overlay off",
+            "Gateway rotation public overlay on again",
+            "Gateway key rotation teardown",
+        ):
+            self.assertIn(title, program)
         self.assertIn("request_gateway_key_rotation(", program)
         self.assertIn("request_gateway_key_rotation_approval(", program)
         self.assertIn("decide_gateway_key_rotation_mcp(", program)
@@ -1981,7 +2087,16 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("CPK_PRODUCT_MATERIAL_RESOLVER=provider", smoke)
         self.assertIn("CPK_INGRESS_INTERPRETERS=cloudflare", smoke)
         self.assertIn(
-            "CPK_SECRET_PROVIDER_SOURCE_LIVE_SCENARIO=cloudflare-tunnel-custody",
+            'CPK_SECRET_PROVIDER_SOURCE_LIVE_SCENARIO="$SCENARIO"',
+            smoke,
+        )
+        self.assertIn("gateway-key-rotation-overlay", smoke)
+        self.assertIn("cpk-rot1404-$RUN_SUFFIX-gateway.openj92.dev", smoke)
+        self.assertIn("cpk-rot1404-$RUN_SUFFIX-*.openj92.dev", smoke)
+        self.assertIn("CPK_PUBLIC_GATEWAY_ALLOWED_HOSTNAME_PATTERN", smoke)
+        self.assertIn('CPK_SOURCE_LIVE_GATEWAY_IMAGE="$SOURCE_LIVE_GATEWAY_IMAGE"', smoke)
+        self.assertIn(
+            'CPK_SOURCE_LIVE_GATEWAY_SOURCE_COMMIT="$SOURCE_LIVE_GATEWAY_SOURCE_COMMIT"',
             smoke,
         )
         self.assertIn("cloudflare-api-token", smoke)
@@ -1989,8 +2104,18 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertNotIn("CPK_IMAGE_PULL_CREDENTIAL_RESOLVER", smoke)
         self.assertNotIn("DOCKER_CONFIG=", smoke)
         self.assertNotIn("-e OPENJ92_CLOUDFLARE_API_TOKEN=", smoke)
+        failure_report = smoke[
+            smoke.index('if [ "$CONTROLLER_STATUS" -ne 0 ]; then') :
+            smoke.index('docker exec "$POSTGRES_CONTAINER" pg_dump')
+        ]
+        self.assertNotIn('docker logs "$SERVER_CONTAINER"', failure_report)
+        self.assertNotIn('docker logs "$SECRETS_CONTAINER"', failure_report)
+        self.assertIn('"component":"cpk-server"', smoke)
+        self.assertIn('"component":"secrets-provider"', smoke)
         self.assertIn("ghcr-pull-credential.json", smoke)
-        self.assertGreaterEqual(smoke.count('"oci.pull-credential",'), 2)
+        self.assertIn('"oci.pull-credential"', smoke)
+        self.assertIn('"action": "secret.write"', smoke)
+        self.assertIn('"action": "secret.resolve"', smoke)
         operator_scopes = smoke[
             smoke.index("operator_scopes = [") : smoke.index("worker_scopes = [")
         ]
@@ -1999,6 +2124,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("GHCR_PULL_CREDENTIAL_REFERENCE", controller)
         self.assertIn('OCI_PULL_CREDENTIAL_INTENT = "oci.pull-credential"', controller)
         self.assertIn("register_provider_backed_cloudflare_ingress_authority", controller)
+        self.assertIn("CPK_PUBLIC_GATEWAY_ALLOWED_HOSTNAME_PATTERN", controller)
         self.assertIn(
             "api_token_ref=CLOUDFLARE_API_TOKEN_REFERENCE",
             controller,
@@ -2011,6 +2137,14 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("_assert_cloudflare_provider_correlation", controller)
         self.assertIn("_assert_public_gateway_authenticated_http_probe", controller)
         self.assertIn("_assert_owned_cloudflare_resources_removed", controller)
+        self.assertIn("_assert_named_public_gateway_probes_unavailable", controller)
+        self.assertIn("_assert_runtime_node_identities", controller)
+        self.assertEqual(
+            controller.count("_assert_public_overlay_transition_evidence("),
+            4,
+        )
+        self.assertIn("_assert_owned_cloudflare_epoch_states", controller)
+        self.assertIn("_assert_removed_ingress_token_versions_revoked", controller)
         self.assertIn('"intent": intent,', controller)
         self.assertIn('"intent": POSTGRES_INTENT,', controller)
 
