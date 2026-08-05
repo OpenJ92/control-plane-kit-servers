@@ -9,6 +9,8 @@ SECRETS_IMAGE="${CPK_SECRETS_TEST_IMAGE:-control-plane-kit-secrets:source-1202}"
 POSTGRES_IMAGE="${CPK_LIVE_POSTGRES_IMAGE:-postgres:16-alpine}"
 BUILD_IMAGES="${CPK_SECRET_PROVIDER_BUILD_IMAGES:-1}"
 SCENARIO="${CPK_SECRET_PROVIDER_SOURCE_LIVE_SCENARIO:-default}"
+SOURCE_LIVE_GATEWAY_IMAGE="${CPK_SOURCE_LIVE_GATEWAY_IMAGE:-}"
+SOURCE_LIVE_GATEWAY_SOURCE_COMMIT="${CPK_SOURCE_LIVE_GATEWAY_SOURCE_COMMIT:-}"
 NETWORK="cpk-secret-provider-source-live-$$"
 LABEL="org.openj92.project=control-plane-kit-servers"
 STATE_ROOT="$(mktemp -d)"
@@ -19,6 +21,16 @@ POSTGRES_CONTAINER=""
 SECRETS_CONTAINER=""
 SERVER_CONTAINER=""
 WORKSPACE_LABEL_KEY="org.openj92.cpk.workspace"
+
+case "$SCENARIO" in
+  gateway-key-rotation|gateway-verifier-projection)
+    if [ -z "$SOURCE_LIVE_GATEWAY_IMAGE" ] || \
+       [ -z "$SOURCE_LIVE_GATEWAY_SOURCE_COMMIT" ]; then
+      echo "gateway source-live image digest and source commit are required" >&2
+      exit 2
+    fi
+    ;;
+esac
 
 mkdir -p "$PROVIDER_DATA_DIR" "$BOOTSTRAP_DIR"
 
@@ -467,6 +479,8 @@ if ! docker run --rm \
   -e CPK_HOSTED_ACTIVITY_SERVERS_REPO=/app \
   -e CPK_OPERATIONS_DATABASE_URL=postgresql://cpk:cpk@cpk-postgres:5432/cpk \
   -e CPK_SECRET_PROVIDER_SOURCE_LIVE_SCENARIO="$SCENARIO" \
+  -e CPK_SOURCE_LIVE_GATEWAY_IMAGE="$SOURCE_LIVE_GATEWAY_IMAGE" \
+  -e CPK_SOURCE_LIVE_GATEWAY_SOURCE_COMMIT="$SOURCE_LIVE_GATEWAY_SOURCE_COMMIT" \
   "$CONTROLLER_IMAGE" \
   python scripts/cpk_server_secret_provider_source_live.py; then
   docker logs "$SERVER_CONTAINER" 2>&1 | tail -n 100 >&2 || true
