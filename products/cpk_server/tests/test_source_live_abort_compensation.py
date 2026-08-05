@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
-from unittest.mock import call, patch
+from unittest.mock import MagicMock, call, patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -398,6 +398,9 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 def delete_dns_record(self, record_id: str) -> None:
                     calls.append(("dns", record_id))
 
+                def delete_tunnel_connections(self, tunnel_id: str) -> None:
+                    calls.append(("connections", tunnel_id))
+
                 def delete_tunnel(self, tunnel_id: str) -> None:
                     calls.append(("tunnel", tunnel_id))
 
@@ -418,6 +421,13 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                     "_provider_revoke_exact_version",
                     side_effect=revoke,
                 ),
+                patch.object(
+                    controller,
+                    "_stop_remove_exact_failed_connector",
+                    side_effect=lambda effect: calls.append(
+                        ("connector", effect.container_name)
+                    ),
+                ),
                 patch(
                     "control_plane_kit_interpreters.cloudflare.CloudflareApiClient",
                     return_value=Client(),
@@ -428,6 +438,7 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                     workspace_id="workspace-a",
                     provider_token_file=Path("/provider-token"),
                     api_token_file=api_token_file,
+                    failed_connector_effect=_failed_connector_effect(controller),
                 )
 
             self.assertEqual(failed, ())
@@ -435,9 +446,156 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 calls,
                 [
                     ("custody", "version-exact"),
+                    ("connector", "container-exact"),
                     ("dns", "dns-exact"),
+                    ("connections", "tunnel-exact"),
                     ("tunnel", "tunnel-exact"),
                 ],
+            )
+
+    def test_failed_connector_effect_is_reconstructed_from_one_exact_success(
+        self,
+    ) -> None:
+        with _controller_module() as controller:
+            effect = controller._decode_exact_failed_connector_effect(
+                expected_workspace_id="workspace-a",
+                expected_run_id="run-failed",
+                connector_node_id="cloudflared-gateway",
+                rows=_failed_connector_rows(),
+            )
+
+            self.assertEqual(effect, _failed_connector_effect(controller))
+            descriptor = effect.bounded_descriptor()
+            self.assertNotIn("token", str(descriptor).lower())
+            self.assertNotIn("secret", str(descriptor).lower())
+
+    def test_failed_connector_effect_rejects_missing_duplicate_or_contradictory_evidence(
+        self,
+    ) -> None:
+        with _controller_module() as controller:
+            valid = _failed_connector_rows()
+            cases = {
+                "missing": (valid[0][:-1] + (None,),),
+                "duplicate": (valid[0], valid[0]),
+                "wrong-workspace": (
+                    valid[0][:2] + ("workspace-other",) + valid[0][3:],
+                ),
+                "non-failed-run": (
+                    (valid[0][0], "succeeded") + valid[0][2:],
+                ),
+            }
+            for name, rows in cases.items():
+                with self.subTest(name=name), self.assertRaisesRegex(
+                    RuntimeError,
+                    "failed connector evidence is uncertain",
+                ):
+                    controller._decode_exact_failed_connector_effect(
+                        expected_workspace_id="workspace-a",
+                        expected_run_id="run-failed",
+                        connector_node_id="cloudflared-gateway",
+                        rows=rows,
+                    )
+
+    def test_exact_failed_connector_requires_every_ownership_label_before_mutation(
+        self,
+    ) -> None:
+        with _controller_module() as controller:
+            effect = _failed_connector_effect(controller)
+            expected_labels = effect.expected_labels()
+            container = MagicMock()
+            container.name = effect.container_name
+            container.status = "running"
+            container.attrs = {"Config": {"Labels": expected_labels}}
+            client = MagicMock()
+            client.containers.get.return_value = container
+
+            with patch.object(controller.docker, "from_env", return_value=client):
+                controller._stop_remove_exact_failed_connector(effect)
+
+            client.containers.get.assert_called_once_with("container-exact")
+            container.stop.assert_called_once_with(timeout=10)
+            container.remove.assert_called_once_with()
+
+            for label in expected_labels:
+                with self.subTest(label=label):
+                    mismatched = dict(expected_labels)
+                    mismatched[label] = "other"
+                    container.reset_mock()
+                    container.attrs = {"Config": {"Labels": mismatched}}
+                    with (
+                        patch.object(controller.docker, "from_env", return_value=client),
+                        self.assertRaisesRegex(RuntimeError, "ownership is uncertain"),
+                    ):
+                        controller._stop_remove_exact_failed_connector(effect)
+                    container.stop.assert_not_called()
+                    container.remove.assert_not_called()
+
+    def test_cloudflare_cleanup_faults_remain_ordered_and_independently_attempted(
+        self,
+    ) -> None:
+        with _controller_module() as controller, tempfile.TemporaryDirectory() as directory:
+            calls: list[str] = []
+            api_token_file = Path(directory) / "api-token"
+            api_token_file.write_text("test-only-api-token", encoding="utf-8")
+
+            class Client:
+                def delete_dns_record(self, _record_id: str) -> None:
+                    calls.append("dns")
+                    raise RuntimeError("bounded")
+
+                def delete_tunnel_connections(self, _tunnel_id: str) -> None:
+                    calls.append("connections")
+                    raise RuntimeError("bounded")
+
+                def delete_tunnel(self, _tunnel_id: str) -> None:
+                    calls.append("tunnel")
+                    raise RuntimeError("bounded")
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "OPENJ92_CLOUDFLARE_ACCOUNT_ID": "account-exact",
+                        "OPENJ92_CLOUDFLARE_ZONE": "openj92.dev",
+                    },
+                    clear=False,
+                ),
+                patch.object(
+                    controller,
+                    "_provider_revoke_exact_version",
+                    side_effect=lambda **_arguments: (
+                        calls.append("custody"),
+                        (_ for _ in ()).throw(RuntimeError("bounded")),
+                    ),
+                ),
+                patch.object(
+                    controller,
+                    "_stop_remove_exact_failed_connector",
+                    side_effect=lambda _effect: (
+                        calls.append("connector"),
+                        (_ for _ in ()).throw(RuntimeError("bounded")),
+                    ),
+                ),
+                patch(
+                    "control_plane_kit_interpreters.cloudflare.CloudflareApiClient",
+                    return_value=Client(),
+                ),
+            ):
+                failed = controller._emergency_compensate_cloudflare(
+                    _resource(controller),
+                    workspace_id="workspace-a",
+                    provider_token_file=Path("/provider-token"),
+                    api_token_file=api_token_file,
+                    failed_connector_effect=_failed_connector_effect(controller),
+                )
+
+            self.assertEqual(
+                calls,
+                ["custody", "connector", "dns", "connections", "tunnel"],
+            )
+            self.assertEqual(
+                failed,
+                ("custody", "connector", "dns", "connections", "tunnel"),
             )
 
     def test_shell_keeps_fixtures_alive_until_abort_cleanup_finishes(self) -> None:
@@ -552,6 +710,62 @@ def _resource(module, *, provider_kind: str = "cloudflare"):
         secret_reference="secret://generated/ingress/token-a",
         provider_version_id="version-exact",
         provider_version_number=1,
+    )
+
+
+def _failed_connector_effect(module):
+    return module.ExactFailedDockerNodeEffect(
+        workspace_id="workspace-a",
+        run_id="run-failed",
+        plan_id="plan-failed",
+        desired_graph_id="graph-failed",
+        activity_id="activity-start-connector",
+        runtime_id="runtime-a",
+        node_id="cloudflared-gateway",
+        container_name="container-exact",
+    )
+
+
+def _failed_connector_rows():
+    plan_payload = {
+        "schema": "control-plane-kit.activity-plan",
+        "version": 1,
+        "activities": [
+            {
+                "activity_id": "activity-start-connector",
+                "operation": {
+                    "kind": "start-node",
+                    "target": {
+                        "kind": "node",
+                        "node_id": "cloudflared-gateway",
+                    },
+                },
+            }
+        ],
+    }
+    event_payload = {
+        "activity_id": "activity-start-connector",
+        "evidence": {
+            "action": "created",
+            "node_id": "cloudflared-gateway",
+            "runtime_id": "runtime-a",
+            "container": "container-exact",
+            "network": "network-exact",
+            "image": "registry.example/image@sha256:bounded",
+        },
+        "failure": None,
+        "recovery": None,
+    }
+    return (
+        (
+            "run-failed",
+            "failed",
+            "workspace-a",
+            "plan-failed",
+            "graph-failed",
+            plan_payload,
+            event_payload,
+        ),
     )
 
 
