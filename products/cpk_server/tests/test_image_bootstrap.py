@@ -49,6 +49,7 @@ APPROVED_PROVIDER_FUNCTIONS = {
     "_cloudflare_ingress_interpreter",
     "_docker_runtime_interpreter",
     "_gateway_probe_dispatcher",
+    "_public_ingress_readiness_verifier",
     "_secret_provider_composition",
 }
 
@@ -1164,6 +1165,8 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("RuntimeDispatcherBootstrapConfiguration", source)
         self.assertIn("RuntimeInterpreterDispatcher", source)
         self.assertIn("IngressRealizationAdapter", source)
+        self.assertIn("_public_ingress_readiness_verifier", source)
+        self.assertIn("readiness_verifier=", source)
         self.assertIn("IngressAuthorityRegistrationService", source)
         self.assertIn("SecretProviderRegistrationService", source)
         self.assertIn(
