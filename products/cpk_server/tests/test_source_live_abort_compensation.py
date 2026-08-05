@@ -478,6 +478,32 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
         descriptor = _resource(_module()).bounded_descriptor()
         self.assertNotIn("secret_reference", descriptor)
 
+    def test_owned_resource_carries_bounded_failed_source_run(self) -> None:
+        module = _module()
+
+        resource = module.ExactOwnedIngressResource(
+            provider_kind="cloudflare",
+            ingress_id="gateway-a",
+            epoch=1,
+            public_provider_coordinates={
+                "tunnel_id": "tunnel-exact",
+                "dns_record_id": "dns-exact",
+                "hostname": "cpk-gateway-a.openj92.dev",
+                "zone_id": "zone-exact",
+            },
+            source_run_id="run-failed",
+            secret_reference="secret://generated/ingress/token-a",
+            provider_version_id="version-exact",
+            provider_version_number=1,
+        )
+
+        self.assertEqual(resource.source_run_id, "run-failed")
+        self.assertEqual(
+            resource.bounded_descriptor()["source_run_id"],
+            "run-failed",
+        )
+        self.assertNotIn("secret_reference", resource.bounded_descriptor())
+
 
 class RecordingWorkflow:
     def __init__(self, controller, *, fail_transition: bool) -> None:
