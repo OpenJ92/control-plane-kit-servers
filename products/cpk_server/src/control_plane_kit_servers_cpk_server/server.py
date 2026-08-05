@@ -28,9 +28,20 @@ from control_plane_kit_core.policies import PolicyScope
 from control_plane_kit_core.probe_intents import (
     EndpointContext,
     LiteralEndpointMaterial,
+    RuntimeEndpointObservation,
+)
+from control_plane_kit_core.public_ingress import (
+    NamedPublicIngress,
+    PublicIngressObservation,
+    PublicIngressObservationStatus,
 )
 from control_plane_kit_core.secrets import SecretReference, SecretResolutionError
 from control_plane_kit_core.types import RuntimeKind
+from control_plane_kit_core.verification import (
+    HttpCheck,
+    VerificationCompleted,
+    VerificationOutcome,
+)
 from control_plane_kit_operations import (
     ActivityExecutionDispatcher,
     ActivityExecutionOutcome,
@@ -987,6 +998,98 @@ class _SystemPublicAddressResolver:
         return tuple(sorted(addresses))
 
 
+@dataclass(frozen=True)
+class _PublicIngressReadinessVerifierAdapter:
+    """Compose operations readiness with the concrete HTTP interpreter."""
+
+    interpreter_factory: object
+    material_factory: object
+    clock: object
+
+    def observe(
+        self,
+        *,
+        ingress: NamedPublicIngress,
+        check: HttpCheck,
+        endpoint: RuntimeEndpointObservation,
+    ) -> PublicIngressObservation:
+        interpreter = self.interpreter_factory(ingress.hostname)
+        material = self.material_factory(
+            ingress.target.node_id,
+            endpoint.graph_id,
+            check,
+            endpoint,
+        )
+        result = interpreter.execute(material)
+        status = PublicIngressObservationStatus.UNKNOWN
+        if isinstance(result, VerificationCompleted):
+            if result.outcome is VerificationOutcome.PASSED:
+                status = PublicIngressObservationStatus.READY
+            elif result.outcome in {
+                VerificationOutcome.FAILED,
+                VerificationOutcome.TIMED_OUT,
+                VerificationOutcome.MALFORMED,
+            }:
+                status = PublicIngressObservationStatus.UNREADY
+        return PublicIngressObservation(
+            ingress_id=ingress.ingress_id,
+            hostname=ingress.hostname,
+            url=f"https://{ingress.hostname}",
+            target=ingress.target,
+            observed_at=self.clock(),
+            status=status,
+            evidence=_public_readiness_evidence(result),
+        )
+
+
+def _public_readiness_evidence(result) -> dict[str, object]:
+    evidence: dict[str, object] = {
+        "verification_type": (
+            "completed"
+            if isinstance(result, VerificationCompleted)
+            else "unsupported"
+        ),
+        "verification_capability": result.capability.value,
+    }
+    if not isinstance(result, VerificationCompleted):
+        return evidence
+    evidence["verification_outcome"] = result.outcome.value
+    evidence["verification_attempts"] = result.attempts
+    if result.evidence is not None:
+        evidence.update(
+            {
+                f"verification_{key}": value
+                for key, value in result.evidence.descriptor().items()
+            }
+        )
+    return evidence
+
+
+def _public_ingress_readiness_verifier(*, transport=None, public_resolver=None):
+    try:
+        from control_plane_kit_interpreters.probes import ProbeAddressPolicy
+        from control_plane_kit_interpreters.verification import (
+            HttpVerificationInterpreter,
+            VerificationCheckMaterial,
+        )
+    except ModuleNotFoundError as error:
+        raise BootstrapConfigurationError(
+            "public ingress readiness requires "
+            "control-plane-kit-interpreters[http]"
+        ) from error
+
+    resolver = public_resolver or _SystemPublicAddressResolver()
+    return _PublicIngressReadinessVerifierAdapter(
+        interpreter_factory=lambda hostname: HttpVerificationInterpreter(
+            ProbeAddressPolicy(public_hosts=frozenset((hostname,))),
+            public_resolver=resolver,
+            transport=transport,
+        ),
+        material_factory=VerificationCheckMaterial,
+        clock=_clock,
+    )
+
+
 class _UnsupportedExecutionAdapter:
     """cpk-server wrapper default: operations exists, runtime effects do not."""
 
@@ -1022,6 +1125,7 @@ def _activity_adapter(
         interpreters=_ingress_interpreters(config, secret_provider),
         clock=_clock,
         secret_use_authorizer=secret_use_authorizer,
+        readiness_verifier=_public_ingress_readiness_verifier(),
     )
     return ActivityExecutionDispatcher(runtime=runtime, ingress=ingress)
 
