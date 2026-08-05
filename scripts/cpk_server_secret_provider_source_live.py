@@ -67,6 +67,7 @@ from cpk_server_hosted_activity import (
     _mcp_tool,
     _product_document,
     _public_gateway_ingress_graph,
+    _public_gateway_overlay,
     _single_hello_graph,
     _single_docker_container,
     _sync_runtime_networks,
@@ -1351,6 +1352,75 @@ def _gateway_rotation_graph(
                     ),
                 ),
             ),
+            delegation_authorities=(
+                DelegationAuthorityBinding(
+                    delegate_node_id="gateway",
+                    purpose=DelegationKeyPurpose.GATEWAY_PROBE,
+                    issuer=GATEWAY_ROTATION_ISSUER,
+                ),
+            ),
+        )
+    )
+
+
+def _gateway_rotation_public_graph(
+    gateway_document: Any,
+    hello_document: Any,
+    postgres_document: Any,
+    cloudflared_document: Any,
+    *,
+    workspace_id: str,
+    public_hostname: str,
+) -> DeploymentGraph:
+    gateway, cloudflared, ingress = _public_gateway_overlay(
+        gateway_document,
+        cloudflared_document,
+        target_node_id="gateway",
+        target_provider_socket="control",
+        connector_node_id="cloudflared-gateway",
+        public_hostname=public_hostname,
+    )
+    hello_product = hello_document.product
+    hello = instantiate_product(
+        hello_product,
+        "hello",
+        _with_public_environment(
+            ProductInstanceConfiguration.from_contract(hello_product.runtime_contract),
+            {"HELLO_MESSAGE": "Hello through rotating gateway keys"},
+        ),
+    )
+    postgres_product = postgres_document.product
+    postgres = instantiate_product(
+        postgres_product,
+        "postgres",
+        ProductInstanceConfiguration.from_contract(postgres_product.runtime_contract),
+    )
+    postgres = replace(
+        postgres,
+        spec=replace(postgres.spec, verification=VerificationContract()),
+    )
+    return compile_topology(
+        DeploymentTopology(
+            workspace_id,
+            DockerRuntime(
+                runtime_id="docker",
+                network_name=f"control-plane-kit-{workspace_id}-docker",
+                authority_ref=RuntimeAuthorityReference(LOCAL_DOCKER_AUTHORITY_REF),
+                children=(
+                    gateway,
+                    hello,
+                    postgres,
+                    cloudflared,
+                    SocketConnection("hello", "internal", "gateway", "target-http"),
+                    SocketConnection(
+                        "postgres",
+                        "postgres",
+                        "gateway",
+                        "target-postgres",
+                    ),
+                ),
+            ),
+            public_ingresses=(ingress,),
             delegation_authorities=(
                 DelegationAuthorityBinding(
                     delegate_node_id="gateway",

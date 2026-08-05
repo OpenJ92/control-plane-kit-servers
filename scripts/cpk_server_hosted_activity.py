@@ -21,6 +21,7 @@ import jwt
 
 from control_plane_kit_core.gateway_delegation import (
     DelegatedGatewayProbeGrant,
+    GatewayProbeAccessPath,
     GatewayProbeCommandKind,
     GatewayProbeRequest,
 )
@@ -701,6 +702,9 @@ class HostedWorkflow:
         kind: str,
         target_id: str,
         path: str | None = None,
+        access_path: GatewayProbeAccessPath = (
+            GatewayProbeAccessPath.RUNTIME_PRIVATE
+        ),
     ) -> dict[str, Any]:
         payload: dict[str, object] = {
             "request_id": request_id,
@@ -709,6 +713,7 @@ class HostedWorkflow:
             "target_id": target_id,
             "actor_id": "operator-a",
             "actor_scopes": [PolicyScope.GATEWAY_PROBE_USE.value],
+            "access_path": access_path.value,
         }
         if path is not None:
             payload["path"] = path
@@ -728,6 +733,9 @@ class HostedWorkflow:
         kind: str,
         target_id: str,
         path: str | None = None,
+        access_path: GatewayProbeAccessPath = (
+            GatewayProbeAccessPath.RUNTIME_PRIVATE
+        ),
     ) -> dict[str, Any]:
         payload: dict[str, object] = {
             "workspace_id": self.workspace_id,
@@ -738,6 +746,7 @@ class HostedWorkflow:
             "target_id": target_id,
             "actor_id": "operator-a",
             "actor_scopes": [PolicyScope.GATEWAY_PROBE_USE.value],
+            "access_path": access_path.value,
         }
         if path is not None:
             payload["path"] = path
