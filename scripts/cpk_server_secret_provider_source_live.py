@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
+from enum import Enum
 import json
 import os
 from pathlib import Path
@@ -155,6 +156,11 @@ class SourceLiveGatewayDenialError(RuntimeError):
         super().__init__(code)
 
 
+class GatewayRotationSourceLiveScope(Enum):
+    ADVERSARIAL_DENIALS = "adversarial-denials"
+    RESTART_LIFECYCLE = "restart-lifecycle"
+
+
 @dataclass(repr=False)
 class PostgresTransactionWitness:
     """Detect target database IO after accounting for its own measurements."""
@@ -239,10 +245,8 @@ def main() -> int:
         )
         print("cpk-server gateway verifier projection source-live acceptance passed")
         return 0
-    if (
-        os.environ.get("CPK_SECRET_PROVIDER_SOURCE_LIVE_SCENARIO")
-        == "gateway-key-rotation"
-    ):
+    scenario = os.environ.get("CPK_SECRET_PROVIDER_SOURCE_LIVE_SCENARIO")
+    if scenario in {"gateway-capability-denials", "gateway-key-rotation"}:
         _run_gateway_key_rotation_program(
             base_url=base_url,
             server_container=server_container,
@@ -251,8 +255,13 @@ def main() -> int:
             operations_database_url=operations_database_url,
             provider_token_file=provider_token_file,
             bootstrap_dir=bootstrap_dir,
+            scope=(
+                GatewayRotationSourceLiveScope.ADVERSARIAL_DENIALS
+                if scenario == "gateway-capability-denials"
+                else GatewayRotationSourceLiveScope.RESTART_LIFECYCLE
+            ),
         )
-        print("cpk-server gateway signing-key rotation source-live acceptance passed")
+        print(f"cpk-server gateway {scenario} source-live acceptance passed")
         return 0
     if (
         os.environ.get("CPK_SECRET_PROVIDER_SOURCE_LIVE_SCENARIO")
@@ -515,6 +524,7 @@ def _run_gateway_key_rotation_program(
     operations_database_url: str,
     provider_token_file: Path,
     bootstrap_dir: Path,
+    scope: GatewayRotationSourceLiveScope,
 ) -> None:
     workspace_id = GATEWAY_ROTATION_WORKSPACE
     cpk_server_document = _product_document(servers_repo, "cpk_server")
@@ -818,6 +828,22 @@ def _run_gateway_key_rotation_program(
             postgres_witness=retired_witness,
         )
 
+    if scope is GatewayRotationSourceLiveScope.ADVERSARIAL_DENIALS:
+        _finalize_gateway_rotation_source_live(
+            workflow=workflow,
+            server_container=server_container,
+            provider_container=provider_container,
+            operations_database_url=operations_database_url,
+            bootstrap_dir=bootstrap_dir,
+            workspace_id=workspace_id,
+            rotation_id=rotation_id,
+            rotation=rotation,
+            final_command=final_command,
+            current_graph_id=current_graph_id,
+            expected_desired_graph_id=deployed_a.desired_graph_id,
+        )
+        return
+
     _restart_cpk_server(
         server_container,
         workflow,
@@ -825,8 +851,37 @@ def _run_gateway_key_rotation_program(
     )
     _restart_container(_single_docker_container(workspace_id, "gateway").id)
     _wait_private_gateway_ready(gateway_document)
+    _finalize_gateway_rotation_source_live(
+        workflow=workflow,
+        server_container=server_container,
+        provider_container=provider_container,
+        operations_database_url=operations_database_url,
+        bootstrap_dir=bootstrap_dir,
+        workspace_id=workspace_id,
+        rotation_id=rotation_id,
+        rotation=rotation,
+        final_command=final_command,
+        current_graph_id=current_graph_id,
+        expected_desired_graph_id=deployed_a.desired_graph_id,
+    )
+
+
+def _finalize_gateway_rotation_source_live(
+    *,
+    workflow: HostedWorkflow,
+    server_container: str,
+    provider_container: str,
+    operations_database_url: str,
+    bootstrap_dir: Path,
+    workspace_id: str,
+    rotation_id: str,
+    rotation: dict[str, Any],
+    final_command: dict[str, Any],
+    current_graph_id: str,
+    expected_desired_graph_id: str,
+) -> None:
     if workflow.read_gateway_key_rotation_detail(rotation_id) != rotation:
-        raise RuntimeError("completed rotation did not survive process restart")
+        raise RuntimeError("completed rotation durable detail changed")
     replay = _replay_rotation_command(workflow, rotation_id, final_command)
     if not replay.get("replayed") or _rotation_from_response(replay) != rotation:
         raise RuntimeError("completed rotation command did not replay durably")
@@ -849,7 +904,7 @@ def _run_gateway_key_rotation_program(
         title="Gateway key rotation teardown",
         graph=DeploymentGraph(workspace_id),
         current_graph_id=current_graph_id,
-        expected_desired_graph_id=deployed_a.desired_graph_id,
+        expected_desired_graph_id=expected_desired_graph_id,
         sync_runtime_networks=False,
     )
     _assert_activity_mentions(workflow, removed.run_id, "gateway")

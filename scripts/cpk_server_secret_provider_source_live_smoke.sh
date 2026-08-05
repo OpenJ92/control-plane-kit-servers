@@ -23,7 +23,7 @@ SERVER_CONTAINER=""
 WORKSPACE_LABEL_KEY="org.openj92.cpk.workspace"
 
 case "$SCENARIO" in
-  gateway-key-rotation|gateway-verifier-projection)
+  gateway-capability-denials|gateway-key-rotation|gateway-verifier-projection)
     if [ -z "$SOURCE_LIVE_GATEWAY_IMAGE" ] || \
        [ -z "$SOURCE_LIVE_GATEWAY_SOURCE_COMMIT" ]; then
       echo "gateway source-live image digest and source commit are required" >&2
@@ -409,7 +409,9 @@ if [ "$SECRETS_READY" != "1" ]; then
   exit 1
 fi
 
-if [ "$SCENARIO" = "gateway-key-rotation" ] || [ "$SCENARIO" = "gateway-verifier-projection" ]; then
+if [ "$SCENARIO" = "gateway-capability-denials" ] || \
+   [ "$SCENARIO" = "gateway-key-rotation" ] || \
+   [ "$SCENARIO" = "gateway-verifier-projection" ]; then
   if command -v gh >/dev/null 2>&1 && GHCR_TOKEN="$(gh auth token 2>/dev/null)"; then
     BOOTSTRAP_DIR="$BOOTSTRAP_DIR" GHCR_TOKEN="$GHCR_TOKEN" python3 -c '
 import json
