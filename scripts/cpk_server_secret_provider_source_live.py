@@ -145,6 +145,59 @@ class PreparedRun:
 
 
 @dataclass(frozen=True)
+class ExactFailedDockerNodeEffect:
+    workspace_id: str
+    run_id: str
+    plan_id: str
+    desired_graph_id: str
+    activity_id: str
+    runtime_id: str
+    node_id: str
+    container_name: str
+
+    def __post_init__(self) -> None:
+        for name in (
+            "workspace_id",
+            "run_id",
+            "plan_id",
+            "desired_graph_id",
+            "activity_id",
+            "runtime_id",
+            "node_id",
+            "container_name",
+        ):
+            value = getattr(self, name)
+            if (
+                not isinstance(value, str)
+                or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}", value)
+                is None
+            ):
+                raise RuntimeError("failed connector evidence is uncertain")
+
+    def expected_labels(self) -> dict[str, str]:
+        return {
+            "org.openj92.cpk.kind": "container",
+            "org.openj92.cpk.workspace": self.workspace_id,
+            "org.openj92.cpk.runtime": self.runtime_id,
+            "org.openj92.cpk.node": self.node_id,
+            "org.openj92.cpk.plan": self.plan_id,
+            "org.openj92.cpk.desired-graph": self.desired_graph_id,
+        }
+
+    def bounded_descriptor(self) -> dict[str, str]:
+        return {
+            "workspace_id": self.workspace_id,
+            "run_id": self.run_id,
+            "plan_id": self.plan_id,
+            "desired_graph_id": self.desired_graph_id,
+            "activity_id": self.activity_id,
+            "runtime_id": self.runtime_id,
+            "node_id": self.node_id,
+            "container_name": self.container_name,
+        }
+
+
+@dataclass(frozen=True)
 class ProviderVersionReceipt:
     version_id: str
     version_number: int
@@ -2988,7 +3041,27 @@ def _run_cloudflare_abort_cleanup(
         operations_database_url,
         workspace_id=workspace_id,
     )
-    _print_bounded_abort_snapshot(checkpoint, resources)
+    failed_connector_effects: dict[str, ExactFailedDockerNodeEffect] = {}
+    uncertain_connector_runs: set[str] = set()
+    for source_run_id in sorted({resource.source_run_id for resource in resources}):
+        try:
+            effect = _load_exact_failed_connector_effect(
+                operations_database_url,
+                workspace_id=workspace_id,
+                source_run_id=source_run_id,
+                connector_node_id="cloudflared-gateway",
+            )
+            if effect.desired_graph_id == checkpoint.current_graph_id:
+                raise RuntimeError("failed connector evidence is uncertain")
+            failed_connector_effects[source_run_id] = effect
+        except Exception:
+            uncertain_connector_runs.add(source_run_id)
+    _print_bounded_abort_snapshot(
+        checkpoint,
+        resources,
+        failed_connector_effects=failed_connector_effects,
+        uncertain_connector_runs=uncertain_connector_runs,
+    )
     workflow = _workflow(
         base_url,
         server_container,
@@ -3019,6 +3092,11 @@ def _run_cloudflare_abort_cleanup(
         )
 
     def verify_authoritative_absence() -> None:
+        _assert_failed_connectors_absent(
+            resources,
+            failed_connector_effects=failed_connector_effects,
+            uncertain_connector_runs=uncertain_connector_runs,
+        )
         _assert_abort_generated_secret_versions_revoked(
             resources,
             provider_container=provider_container,
@@ -3040,6 +3118,8 @@ def _run_cloudflare_abort_cleanup(
         _assert_abort_resources_physically_absent(
             resources,
             api_token_file=bootstrap_dir / "cloudflare-api-token",
+            failed_connector_effects=failed_connector_effects,
+            uncertain_connector_runs=uncertain_connector_runs,
         )
 
     report = compensate_abort(
@@ -3053,6 +3133,9 @@ def _run_cloudflare_abort_cleanup(
                 workspace_id=workspace_id,
                 provider_token_file=provider_token_file,
                 api_token_file=bootstrap_dir / "cloudflare-api-token",
+                failed_connector_effect=failed_connector_effects.get(
+                    resource.source_run_id
+                ),
             )
         },
     )
@@ -3123,9 +3206,119 @@ def _load_exact_owned_ingress_resources(
     )
 
 
+def _load_exact_failed_connector_effect(
+    operations_database_url: str,
+    *,
+    workspace_id: str,
+    source_run_id: str,
+    connector_node_id: str,
+) -> ExactFailedDockerNodeEffect:
+    query = """
+        SELECT
+          run.run_id,
+          run.status,
+          request.workspace_id,
+          plan.plan_id,
+          plan.desired_graph_id,
+          plan.payload,
+          event.payload
+        FROM cpk_activity_runs AS run
+        JOIN cpk_execution_requests AS request
+          ON request.request_id = run.request_id
+         AND request.plan_id = run.plan_id
+        JOIN cpk_activity_plans AS plan
+          ON plan.plan_id = run.plan_id
+        LEFT JOIN cpk_activity_events AS event
+          ON event.run_id = run.run_id
+         AND event.event_type = 'step_succeeded'
+        WHERE run.run_id = %s
+        ORDER BY event.ordinal
+    """
+    with psycopg.connect(operations_database_url) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(query, (source_run_id,))
+            rows = tuple(cursor.fetchall())
+    return _decode_exact_failed_connector_effect(
+        expected_workspace_id=workspace_id,
+        expected_run_id=source_run_id,
+        connector_node_id=connector_node_id,
+        rows=rows,
+    )
+
+
+def _decode_exact_failed_connector_effect(
+    *,
+    expected_workspace_id: str,
+    expected_run_id: str,
+    connector_node_id: str,
+    rows: tuple[tuple[Any, ...], ...],
+) -> ExactFailedDockerNodeEffect:
+    if not rows or any(len(row) != 7 for row in rows):
+        raise RuntimeError("failed connector evidence is uncertain")
+    identity = rows[0][:6]
+    if any(row[:6] != identity for row in rows):
+        raise RuntimeError("failed connector evidence is uncertain")
+    run_id, run_status, workspace_id, plan_id, desired_graph_id, plan_payload = identity
+    if (
+        run_id != expected_run_id
+        or run_status != "failed"
+        or workspace_id != expected_workspace_id
+        or not isinstance(plan_payload, dict)
+    ):
+        raise RuntimeError("failed connector evidence is uncertain")
+    activities = plan_payload.get("activities")
+    if not isinstance(activities, list):
+        raise RuntimeError("failed connector evidence is uncertain")
+    matching_activities = []
+    for activity in activities:
+        if not isinstance(activity, dict):
+            continue
+        operation = activity.get("operation")
+        target = operation.get("target") if isinstance(operation, dict) else None
+        if (
+            isinstance(target, dict)
+            and operation.get("kind") == "start-node"
+            and target.get("kind") == "node"
+            and target.get("node_id") == connector_node_id
+        ):
+            matching_activities.append(activity)
+    if len(matching_activities) != 1:
+        raise RuntimeError("failed connector evidence is uncertain")
+    activity_id = matching_activities[0].get("activity_id")
+    matching_events = []
+    for row in rows:
+        event_payload = row[6]
+        if (
+            isinstance(event_payload, dict)
+            and event_payload.get("activity_id") == activity_id
+        ):
+            matching_events.append(event_payload)
+    if len(matching_events) != 1:
+        raise RuntimeError("failed connector evidence is uncertain")
+    evidence = matching_events[0].get("evidence")
+    if not isinstance(evidence, dict) or evidence.get("node_id") != connector_node_id:
+        raise RuntimeError("failed connector evidence is uncertain")
+    try:
+        return ExactFailedDockerNodeEffect(
+            workspace_id=workspace_id,
+            run_id=run_id,
+            plan_id=plan_id,
+            desired_graph_id=desired_graph_id,
+            activity_id=activity_id,
+            runtime_id=evidence["runtime_id"],
+            node_id=evidence["node_id"],
+            container_name=evidence["container"],
+        )
+    except (KeyError, TypeError, RuntimeError):
+        raise RuntimeError("failed connector evidence is uncertain") from None
+
+
 def _print_bounded_abort_snapshot(
     checkpoint: SourceLiveCheckpoint,
     resources: tuple[ExactOwnedIngressResource, ...],
+    *,
+    failed_connector_effects: dict[str, ExactFailedDockerNodeEffect],
+    uncertain_connector_runs: set[str],
 ) -> None:
     print(
         json.dumps(
@@ -3137,6 +3330,11 @@ def _print_bounded_abort_snapshot(
                 "owned_resources": [
                     resource.bounded_descriptor() for resource in resources
                 ],
+                "failed_connectors": [
+                    failed_connector_effects[source_run_id].bounded_descriptor()
+                    for source_run_id in sorted(failed_connector_effects)
+                ],
+                "uncertain_connector_run_ids": sorted(uncertain_connector_runs),
             },
             separators=(",", ":"),
             sort_keys=True,
@@ -3150,6 +3348,7 @@ def _emergency_compensate_cloudflare(
     workspace_id: str,
     provider_token_file: Path,
     api_token_file: Path,
+    failed_connector_effect: ExactFailedDockerNodeEffect | None,
 ) -> tuple[str, ...]:
     failed: list[str] = []
     coordinates = resource.public_provider_coordinates
@@ -3166,6 +3365,14 @@ def _emergency_compensate_cloudflare(
         )
     except Exception:
         failed.append("custody")
+
+    if failed_connector_effect is None:
+        failed.append("connector-evidence")
+    else:
+        try:
+            _stop_remove_exact_failed_connector(failed_connector_effect)
+        except Exception:
+            failed.append("connector")
 
     try:
         from control_plane_kit_core.secrets import SecretReference, SecretValue
@@ -3188,17 +3395,62 @@ def _emergency_compensate_cloudflare(
             ),
         )
     except Exception:
-        return tuple((*failed, "dns", "tunnel"))
+        return tuple((*failed, "dns", "connections", "tunnel"))
 
     try:
         client.delete_dns_record(coordinates["dns_record_id"])
     except Exception:
         failed.append("dns")
     try:
+        client.delete_tunnel_connections(coordinates["tunnel_id"])
+    except Exception:
+        failed.append("connections")
+    try:
         client.delete_tunnel(coordinates["tunnel_id"])
     except Exception:
         failed.append("tunnel")
     return tuple(failed)
+
+
+def _stop_remove_exact_failed_connector(
+    effect: ExactFailedDockerNodeEffect,
+) -> None:
+    client = docker.from_env()
+    try:
+        try:
+            container = client.containers.get(effect.container_name)
+        except docker.errors.NotFound:
+            return
+        container.reload()
+        labels = (container.attrs.get("Config") or {}).get("Labels") or {}
+        if (
+            container.name != effect.container_name
+            or not isinstance(labels, dict)
+            or any(
+                labels.get(key) != value
+                for key, value in effect.expected_labels().items()
+            )
+        ):
+            raise RuntimeError("failed connector ownership is uncertain")
+        if container.status == "running":
+            container.stop(timeout=10)
+        container.remove()
+    finally:
+        client.close()
+
+
+def _assert_exact_failed_connector_absent(
+    effect: ExactFailedDockerNodeEffect,
+) -> None:
+    client = docker.from_env()
+    try:
+        try:
+            client.containers.get(effect.container_name)
+        except docker.errors.NotFound:
+            return
+        raise RuntimeError("exact failed connector remains present")
+    finally:
+        client.close()
 
 
 def _provider_revoke_exact_version(
@@ -3233,7 +3485,14 @@ def _assert_abort_resources_physically_absent(
     resources: tuple[ExactOwnedIngressResource, ...],
     *,
     api_token_file: Path,
+    failed_connector_effects: dict[str, ExactFailedDockerNodeEffect],
+    uncertain_connector_runs: set[str],
 ) -> None:
+    _assert_failed_connectors_absent(
+        resources,
+        failed_connector_effects=failed_connector_effects,
+        uncertain_connector_runs=uncertain_connector_runs,
+    )
     for resource in resources:
         if resource.provider_kind != "cloudflare":
             raise RuntimeError("abort resource provider is unsupported")
@@ -3247,6 +3506,21 @@ def _assert_abort_resources_physically_absent(
             account_id=_required_env("OPENJ92_CLOUDFLARE_ACCOUNT_ID"),
             tunnel_id=coordinates["tunnel_id"],
             api_token_file=api_token_file,
+        )
+
+
+def _assert_failed_connectors_absent(
+    resources: tuple[ExactOwnedIngressResource, ...],
+    *,
+    failed_connector_effects: dict[str, ExactFailedDockerNodeEffect],
+    uncertain_connector_runs: set[str],
+) -> None:
+    expected_run_ids = {resource.source_run_id for resource in resources}
+    if uncertain_connector_runs or set(failed_connector_effects) != expected_run_ids:
+        raise RuntimeError("failed connector absence is uncertain")
+    for source_run_id in sorted(expected_run_ids):
+        _assert_exact_failed_connector_absent(
+            failed_connector_effects[source_run_id]
         )
 
 

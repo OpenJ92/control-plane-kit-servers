@@ -226,6 +226,11 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                     "_load_exact_owned_ingress_resources",
                     return_value=(resource,),
                 ),
+                patch.object(
+                    controller,
+                    "_load_exact_failed_connector_effect",
+                    return_value=_failed_connector_effect(controller),
+                ),
                 patch.object(controller, "_workflow", return_value=workflow),
                 patch.object(controller, "_disconnect_runtime_networks") as disconnect,
                 patch.object(
@@ -236,6 +241,10 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                     controller,
                     "_assert_abort_generated_secret_versions_revoked",
                 ) as custody_verify,
+                patch.object(
+                    controller,
+                    "_assert_failed_connectors_absent",
+                ) as connector_verify,
                 patch.object(
                     controller,
                     "_assert_abort_resources_physically_absent",
@@ -265,6 +274,7 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 workspace_id="workspace-a",
             )
             authoritative_verify.assert_called_once()
+            connector_verify.assert_called_once()
             custody_verify.assert_called_once_with(
                 (resource,),
                 provider_container="provider-a",
@@ -299,6 +309,11 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                     "_load_exact_owned_ingress_resources",
                     return_value=(resource,),
                 ),
+                patch.object(
+                    controller,
+                    "_load_exact_failed_connector_effect",
+                    return_value=_failed_connector_effect(controller),
+                ),
                 patch.object(controller, "_workflow", return_value=workflow),
                 patch.object(controller, "_disconnect_runtime_networks"),
                 patch.object(
@@ -316,6 +331,10 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 ) as custody_verify,
                 patch.object(
                     controller,
+                    "_assert_failed_connectors_absent",
+                ) as connector_verify,
+                patch.object(
+                    controller,
                     "_emergency_compensate_cloudflare",
                     return_value=(),
                 ) as emergency,
@@ -330,11 +349,16 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 )
 
             self.assertEqual(status, 2)
+            connector_verify.assert_called_once()
             emergency.assert_called_once()
             self.assertIs(emergency.call_args.args[0], resource)
             physical_verify.assert_called_once_with(
                 (resource,),
                 api_token_file=Path("/bootstrap/cloudflare-api-token"),
+                failed_connector_effects={
+                    "run-failed": _failed_connector_effect(controller)
+                },
+                uncertain_connector_runs=set(),
             )
             self.assertEqual(
                 custody_verify.call_args_list,
@@ -483,6 +507,7 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 "non-failed-run": (
                     (valid[0][0], "succeeded") + valid[0][2:],
                 ),
+                "null-plan": (valid[0][:3] + (None,) + valid[0][4:],),
             }
             for name, rows in cases.items():
                 with self.subTest(name=name), self.assertRaisesRegex(
@@ -597,6 +622,50 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 failed,
                 ("custody", "connector", "dns", "connections", "tunnel"),
             )
+
+    def test_missing_connector_evidence_preserves_later_exact_provider_attempts(
+        self,
+    ) -> None:
+        with _controller_module() as controller, tempfile.TemporaryDirectory() as directory:
+            calls: list[str] = []
+            api_token_file = Path(directory) / "api-token"
+            api_token_file.write_text("test-only-api-token", encoding="utf-8")
+
+            class Client:
+                def delete_dns_record(self, _record_id: str) -> None:
+                    calls.append("dns")
+
+                def delete_tunnel_connections(self, _tunnel_id: str) -> None:
+                    calls.append("connections")
+
+                def delete_tunnel(self, _tunnel_id: str) -> None:
+                    calls.append("tunnel")
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "OPENJ92_CLOUDFLARE_ACCOUNT_ID": "account-exact",
+                        "OPENJ92_CLOUDFLARE_ZONE": "openj92.dev",
+                    },
+                    clear=False,
+                ),
+                patch.object(controller, "_provider_revoke_exact_version"),
+                patch(
+                    "control_plane_kit_interpreters.cloudflare.CloudflareApiClient",
+                    return_value=Client(),
+                ),
+            ):
+                failed = controller._emergency_compensate_cloudflare(
+                    _resource(controller),
+                    workspace_id="workspace-a",
+                    provider_token_file=Path("/provider-token"),
+                    api_token_file=api_token_file,
+                    failed_connector_effect=None,
+                )
+
+            self.assertEqual(calls, ["dns", "connections", "tunnel"])
+            self.assertEqual(failed, ("connector-evidence",))
 
     def test_shell_keeps_fixtures_alive_until_abort_cleanup_finishes(self) -> None:
         smoke = SMOKE_PATH.read_text(encoding="utf-8")
