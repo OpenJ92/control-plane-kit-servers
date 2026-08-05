@@ -33,6 +33,7 @@ from control_plane_kit_core.delegation_authority import DelegationAuthorityBindi
 from control_plane_kit_core.delegation_keys import DelegationKeyPurpose
 from control_plane_kit_core.gateway_delegation import (
     DelegatedGatewayProbeGrant,
+    GatewayProbeAccessPath,
     GatewayProbeCommandKind,
     GatewayProbeRequest,
 )
@@ -126,12 +127,13 @@ CONCURRENT_WORKSPACES = (
 )
 PROVIDER_BASE_URL = "http://cpk-secrets:8081"
 CONTAINER_RESTART_TIMEOUT_SECONDS = 30
+CONTAINER_RESTART_STABILITY_SECONDS = 1.0
 GATEWAY_ROTATION_WORKSPACE = "workspace-gateway-key-rotation"
 GATEWAY_BOOTSTRAP_WORKSPACE = "workspace-gateway-key-bootstrap"
 GATEWAY_ROTATION_ISSUER = "cpk-source-live-rotation"
 GATEWAY_ROTATION_KEY_A_ID = "source-live-rotation-key-a"
 GATEWAY_ROTATION_KEY_B_ID = "source-live-rotation-key-b"
-GATEWAY_ROTATION_GRANT_LIFETIME_SECONDS = 2
+GATEWAY_ROTATION_GRANT_LIFETIME_SECONDS = 10
 
 
 @dataclass(frozen=True)
@@ -159,6 +161,7 @@ class SourceLiveGatewayDenialError(RuntimeError):
 class GatewayRotationSourceLiveScope(Enum):
     ADVERSARIAL_DENIALS = "adversarial-denials"
     RESTART_LIFECYCLE = "restart-lifecycle"
+    PUBLIC_OVERLAY_LIFECYCLE = "public-overlay-lifecycle"
 
 
 @dataclass(repr=False)
@@ -246,7 +249,11 @@ def main() -> int:
         print("cpk-server gateway verifier projection source-live acceptance passed")
         return 0
     scenario = os.environ.get("CPK_SECRET_PROVIDER_SOURCE_LIVE_SCENARIO")
-    if scenario in {"gateway-capability-denials", "gateway-key-rotation"}:
+    if scenario in {
+        "gateway-capability-denials",
+        "gateway-key-rotation",
+        "gateway-key-rotation-overlay",
+    }:
         _run_gateway_key_rotation_program(
             base_url=base_url,
             server_container=server_container,
@@ -255,11 +262,17 @@ def main() -> int:
             operations_database_url=operations_database_url,
             provider_token_file=provider_token_file,
             bootstrap_dir=bootstrap_dir,
-            scope=(
-                GatewayRotationSourceLiveScope.ADVERSARIAL_DENIALS
-                if scenario == "gateway-capability-denials"
-                else GatewayRotationSourceLiveScope.RESTART_LIFECYCLE
-            ),
+            scope={
+                "gateway-capability-denials": (
+                    GatewayRotationSourceLiveScope.ADVERSARIAL_DENIALS
+                ),
+                "gateway-key-rotation": (
+                    GatewayRotationSourceLiveScope.RESTART_LIFECYCLE
+                ),
+                "gateway-key-rotation-overlay": (
+                    GatewayRotationSourceLiveScope.PUBLIC_OVERLAY_LIFECYCLE
+                ),
+            }[scenario],
         )
         print(f"cpk-server gateway {scenario} source-live acceptance passed")
         return 0
@@ -526,11 +539,21 @@ def _run_gateway_key_rotation_program(
     bootstrap_dir: Path,
     scope: GatewayRotationSourceLiveScope,
 ) -> None:
-    workspace_id = GATEWAY_ROTATION_WORKSPACE
+    public_overlay = scope is GatewayRotationSourceLiveScope.PUBLIC_OVERLAY_LIFECYCLE
+    workspace_id = (
+        _required_env("CPK_HOSTED_ACTIVITY_WORKSPACE_ID")
+        if public_overlay
+        else GATEWAY_ROTATION_WORKSPACE
+    )
     cpk_server_document = _product_document(servers_repo, "cpk_server")
     gateway_document = _source_live_gateway_document(servers_repo)
     hello_document = _product_document(servers_repo, "hello_server")
     postgres_document = _product_document(servers_repo, "postgres_server")
+    cloudflared_document = (
+        _product_document(servers_repo, "cloudflared_connector")
+        if public_overlay
+        else None
+    )
     workflow = _workflow(
         base_url,
         server_container,
@@ -546,13 +569,21 @@ def _run_gateway_key_rotation_program(
             "gateway": gateway_document,
             "hello": hello_document,
             "postgres": postgres_document,
+            **(
+                {"cloudflared": cloudflared_document}
+                if cloudflared_document is not None
+                else {}
+            ),
         },
         register_runtime_authority=True,
         register_runtime_delivery=False,
     )
-    provider_registration_id = _register_gateway_rotation_provider(workflow)
+    provider_registration_id = _register_gateway_rotation_provider(
+        workflow,
+        include_public_ingress=public_overlay,
+    )
     key_a_receipt: ProviderVersionReceipt | None = None
-    for reference, intent, value_file, correlation in (
+    bootstrap_secrets = [
         (
             POSTGRES_PASSWORD_REFERENCE,
             POSTGRES_INTENT,
@@ -571,7 +602,17 @@ def _run_gateway_key_rotation_program(
             bootstrap_dir / "ghcr-pull-credential.json",
             "gateway-rotation-ghcr-pull-bootstrap",
         ),
-    ):
+    ]
+    if public_overlay:
+        bootstrap_secrets.append(
+            (
+                CLOUDFLARE_API_TOKEN_REFERENCE,
+                CLOUDFLARE_API_TOKEN_INTENT,
+                bootstrap_dir / "cloudflare-api-token",
+                "gateway-rotation-cloudflare-api-bootstrap",
+            )
+        )
+    for reference, intent, value_file, correlation in bootstrap_secrets:
         receipt = _provider_write_secret(
             workspace_id=workspace_id,
             reference=reference,
@@ -589,10 +630,23 @@ def _run_gateway_key_rotation_program(
         provider_registration_id=provider_registration_id,
         initial_key_receipt=key_a_receipt,
         register_replacement_reference=False,
+        include_public_ingress=public_overlay,
     )
     workflow.register_ghcr_pull_authority(
         credential_reference=GHCR_PULL_CREDENTIAL_REFERENCE,
     )
+    if public_overlay:
+        public_hostname = _required_env("CPK_PUBLIC_GATEWAY_HOSTNAME")
+        workflow.register_provider_backed_cloudflare_ingress_authority(
+            api_token_ref=CLOUDFLARE_API_TOKEN_REFERENCE,
+            generated_secret_provider_registration_id=provider_registration_id,
+            generated_secret_reference_prefix=(
+                CLOUDFLARE_GENERATED_REFERENCE_PREFIX
+            ),
+            allowed_hostname_pattern=_required_env(
+                "CPK_PUBLIC_GATEWAY_ALLOWED_HOSTNAME_PATTERN"
+            ),
+        )
 
     _register_delegation_key(
         workflow,
@@ -621,7 +675,7 @@ def _run_gateway_key_rotation_program(
         sync_runtime_networks=True,
     )
     _assert_initial_gateway_transition_evidence(workflow, deployed_a)
-    _wait_private_gateway_ready(gateway_document)
+    _wait_private_gateway_ready(gateway_document, workspace_id=workspace_id)
     _assert_gateway_probe_key(
         workflow.request_gateway_probe_http(
             request_id=f"{workspace_id}:gateway-probe:key-a-http",
@@ -714,7 +768,7 @@ def _run_gateway_key_rotation_program(
         target_status="overlap-ready",
         command_prefix="overlap-execute",
     )
-    _wait_private_gateway_ready(gateway_document)
+    _wait_private_gateway_ready(gateway_document, workspace_id=workspace_id)
     _assert_verifier_key_ids(
         _gateway_verifier_configuration(workflow),
         {GATEWAY_ROTATION_KEY_A_ID, generated_key_id},
@@ -750,7 +804,7 @@ def _run_gateway_key_rotation_program(
         target_status="completed",
         command_prefix="retire-complete",
     )
-    _wait_private_gateway_ready(gateway_document)
+    _wait_private_gateway_ready(gateway_document, workspace_id=workspace_id)
     _assert_verifier_key_ids(
         _gateway_verifier_configuration(workflow),
         {generated_key_id},
@@ -828,6 +882,29 @@ def _run_gateway_key_rotation_program(
             postgres_witness=retired_witness,
         )
 
+    if public_overlay:
+        if cloudflared_document is None:
+            raise RuntimeError("public rotation omitted cloudflared product material")
+        _run_gateway_rotation_public_overlay_lifecycle(
+            workflow=workflow,
+            server_container=server_container,
+            provider_container=provider_container,
+            operations_database_url=operations_database_url,
+            bootstrap_dir=bootstrap_dir,
+            workspace_id=workspace_id,
+            cpk_server_document=cpk_server_document,
+            gateway_document=gateway_document,
+            hello_document=hello_document,
+            postgres_document=postgres_document,
+            cloudflared_document=cloudflared_document,
+            rotation_id=rotation_id,
+            rotation=rotation,
+            final_command=final_command,
+            generated_key_id=generated_key_id,
+            current_graph_id=current_graph_id,
+        )
+        return
+
     if scope is GatewayRotationSourceLiveScope.ADVERSARIAL_DENIALS:
         _finalize_gateway_rotation_source_live(
             workflow=workflow,
@@ -850,7 +927,7 @@ def _run_gateway_key_rotation_program(
         ready_policy=_verification_policy(cpk_server_document, "ready"),
     )
     _restart_container(_single_docker_container(workspace_id, "gateway").id)
-    _wait_private_gateway_ready(gateway_document)
+    _wait_private_gateway_ready(gateway_document, workspace_id=workspace_id)
     _finalize_gateway_rotation_source_live(
         workflow=workflow,
         server_container=server_container,
@@ -866,6 +943,503 @@ def _run_gateway_key_rotation_program(
     )
 
 
+def _run_gateway_rotation_public_overlay_lifecycle(
+    *,
+    workflow: HostedWorkflow,
+    server_container: str,
+    provider_container: str,
+    operations_database_url: str,
+    bootstrap_dir: Path,
+    workspace_id: str,
+    cpk_server_document: Any,
+    gateway_document: Any,
+    hello_document: Any,
+    postgres_document: Any,
+    cloudflared_document: Any,
+    rotation_id: str,
+    rotation: dict[str, Any],
+    final_command: dict[str, Any],
+    generated_key_id: str,
+    current_graph_id: str,
+) -> None:
+    public_hostname = _required_env("CPK_PUBLIC_GATEWAY_HOSTNAME")
+    private_graph = _gateway_rotation_graph(
+        gateway_document,
+        hello_document,
+        postgres_document,
+        workspace_id=workspace_id,
+    )
+    public_graph = _gateway_rotation_public_graph(
+        gateway_document,
+        hello_document,
+        postgres_document,
+        cloudflared_document,
+        workspace_id=workspace_id,
+        public_hostname=public_hostname,
+    )
+    workload_identities = _runtime_node_identities(
+        workspace_id,
+        ("gateway", "hello", "postgres"),
+    )
+
+    public_on = workflow.run_approved_transition(
+        title="Gateway rotation public overlay on",
+        graph=public_graph,
+        current_graph_id=current_graph_id,
+        expected_desired_graph_id=current_graph_id,
+        sync_runtime_networks=False,
+    )
+    _assert_public_overlay_transition_evidence(
+        workflow,
+        public_on,
+        expected_ingress_operation="allocate-public-ingress",
+        expected_connector_operations={"start-node", "wait-for-healthy"},
+    )
+    _checkpoint_cloudflare_phase(
+        workflow,
+        phase="public-on-committed",
+        result=public_on,
+    )
+    _assert_activity_mentions(workflow, public_on.run_id, "cloudflared-gateway")
+    _wait_public_gateway_ready(public_hostname)
+    _assert_runtime_node_identities(workspace_id, workload_identities)
+    _assert_owned_cloudflare_epoch_states(
+        operations_database_url,
+        workspace_id=workspace_id,
+        expected_statuses=("active",),
+    )
+    _assert_rotation_gateway_probe_pair(
+        workflow,
+        current_graph_id=public_on.current_graph_id,
+        expected_key_id=generated_key_id,
+        access_path=GatewayProbeAccessPath.NAMED_PUBLIC_INGRESS,
+        request_prefix="public-before-restart",
+    )
+
+    _restart_container(_single_docker_container(workspace_id, "gateway").id)
+    _wait_private_gateway_ready(gateway_document, workspace_id=workspace_id)
+    _restart_cpk_server(
+        server_container,
+        workflow,
+        ready_policy=_verification_policy(cpk_server_document, "ready"),
+    )
+    if workflow.read_current_graph_id() != public_on.current_graph_id:
+        raise RuntimeError("cpk-server restart changed current graph truth")
+    if workflow.read_gateway_key_rotation_detail(rotation_id) != rotation:
+        raise RuntimeError("cpk-server restart changed completed rotation truth")
+    _assert_delegation_key_statuses(
+        workflow,
+        {
+            GATEWAY_ROTATION_KEY_A_ID: "revoked",
+            generated_key_id: "active",
+        },
+    )
+    _assert_runtime_node_identities(workspace_id, workload_identities)
+    _assert_rotation_gateway_probe_pair(
+        workflow,
+        current_graph_id=public_on.current_graph_id,
+        expected_key_id=generated_key_id,
+        access_path=GatewayProbeAccessPath.NAMED_PUBLIC_INGRESS,
+        request_prefix="public-after-restart",
+    )
+
+    public_off = workflow.run_approved_transition(
+        title="Gateway rotation public overlay off",
+        graph=private_graph,
+        current_graph_id=public_on.current_graph_id,
+        expected_desired_graph_id=public_on.desired_graph_id,
+        sync_runtime_networks=False,
+    )
+    _assert_public_overlay_transition_evidence(
+        workflow,
+        public_off,
+        expected_ingress_operation="remove-public-ingress",
+        expected_connector_operations={"stop-node", "remove-node-resource"},
+    )
+    _checkpoint_cloudflare_phase(
+        workflow,
+        phase="public-off-committed",
+        result=public_off,
+    )
+    _assert_activity_mentions(workflow, public_off.run_id, "cloudflared-gateway")
+    _assert_no_node_containers(workspace_id, "cloudflared-gateway")
+    _assert_runtime_node_identities(workspace_id, workload_identities)
+    _assert_public_gateway_unreachable(public_hostname)
+    public_denial_witness = _postgres_transaction_witness(
+        bootstrap_dir / "postgres-password"
+    )
+    _assert_no_gateway_target_io(
+        lambda: _assert_named_public_gateway_probes_unavailable(
+            workflow,
+            current_graph_id=public_off.current_graph_id,
+        ),
+        postgres_witness=public_denial_witness,
+    )
+    _assert_rotation_gateway_probe_pair(
+        workflow,
+        current_graph_id=public_off.current_graph_id,
+        expected_key_id=generated_key_id,
+        access_path=GatewayProbeAccessPath.RUNTIME_PRIVATE,
+        request_prefix="private-overlay-off",
+    )
+    _assert_owned_cloudflare_epoch_states(
+        operations_database_url,
+        workspace_id=workspace_id,
+        expected_statuses=("removed",),
+    )
+    _assert_removed_ingress_token_versions_revoked(
+        provider_container,
+        operations_database_url,
+        workspace_id=workspace_id,
+        expected_count=1,
+    )
+    _assert_owned_cloudflare_resources_removed(
+        operations_database_url,
+        workspace_id=workspace_id,
+        api_token_file=bootstrap_dir / "cloudflare-api-token",
+        expected_minimum=1,
+    )
+
+    public_on_again = workflow.run_approved_transition(
+        title="Gateway rotation public overlay on again",
+        graph=public_graph,
+        current_graph_id=public_off.current_graph_id,
+        expected_desired_graph_id=public_off.desired_graph_id,
+        sync_runtime_networks=False,
+    )
+    _assert_public_overlay_transition_evidence(
+        workflow,
+        public_on_again,
+        expected_ingress_operation="allocate-public-ingress",
+        expected_connector_operations={"start-node", "wait-for-healthy"},
+    )
+    _checkpoint_cloudflare_phase(
+        workflow,
+        phase="public-on-again-committed",
+        result=public_on_again,
+    )
+    _assert_activity_mentions(
+        workflow,
+        public_on_again.run_id,
+        "cloudflared-gateway",
+    )
+    _wait_public_gateway_ready(public_hostname)
+    _assert_runtime_node_identities(workspace_id, workload_identities)
+    _assert_owned_cloudflare_epoch_states(
+        operations_database_url,
+        workspace_id=workspace_id,
+        expected_statuses=("removed", "active"),
+    )
+    _assert_rotation_gateway_probe_pair(
+        workflow,
+        current_graph_id=public_on_again.current_graph_id,
+        expected_key_id=generated_key_id,
+        access_path=GatewayProbeAccessPath.NAMED_PUBLIC_INGRESS,
+        request_prefix="public-overlay-restored",
+    )
+
+    removed = _finalize_gateway_rotation_source_live(
+        workflow=workflow,
+        server_container=server_container,
+        provider_container=provider_container,
+        operations_database_url=operations_database_url,
+        bootstrap_dir=bootstrap_dir,
+        workspace_id=workspace_id,
+        rotation_id=rotation_id,
+        rotation=rotation,
+        final_command=final_command,
+        current_graph_id=public_on_again.current_graph_id,
+        expected_desired_graph_id=public_on_again.desired_graph_id,
+    )
+    _checkpoint_cloudflare_phase(
+        workflow,
+        phase="final-teardown-committed",
+        result=removed,
+    )
+    _assert_public_gateway_unreachable(public_hostname)
+    _assert_owned_cloudflare_epoch_states(
+        operations_database_url,
+        workspace_id=workspace_id,
+        expected_statuses=("removed", "removed"),
+    )
+    _assert_owned_cloudflare_resources_removed(
+        operations_database_url,
+        workspace_id=workspace_id,
+        api_token_file=bootstrap_dir / "cloudflare-api-token",
+        expected_minimum=2,
+    )
+    _assert_removed_ingress_token_versions_revoked(
+        provider_container,
+        operations_database_url,
+        workspace_id=workspace_id,
+        expected_count=2,
+    )
+    _assert_cloudflare_provider_correlation(
+        provider_container=provider_container,
+        operations_database_url=operations_database_url,
+        workspace_id=workspace_id,
+    )
+
+
+def _runtime_node_identities(
+    workspace_id: str,
+    node_ids: tuple[str, ...],
+) -> dict[str, str]:
+    return {
+        node_id: str(_single_docker_container(workspace_id, node_id).id)
+        for node_id in node_ids
+    }
+
+
+def _assert_public_overlay_transition_evidence(
+    workflow: HostedWorkflow,
+    transition: Any,
+    *,
+    expected_ingress_operation: str,
+    expected_connector_operations: set[str],
+) -> None:
+    detail = workflow.read_plan_detail(transition.plan_id)
+    plan = detail.get("plan")
+    payload = plan.get("payload") if isinstance(plan, dict) else None
+    activities = payload.get("activities") if isinstance(payload, dict) else None
+    if not isinstance(activities, list):
+        raise RuntimeError("public overlay plan detail omitted its activity plan")
+
+    observed_ingress_operations: set[str] = set()
+    observed_connector_operations: set[str] = set()
+    forbidden_workload_mutations: list[tuple[str, str]] = []
+    planned_activity_ids: set[str] = set()
+    workload_node_ids = {"gateway", "hello", "postgres"}
+    mutation_kinds = {
+        "start-node",
+        "stop-node",
+        "remove-node-resource",
+        "reconcile-node",
+    }
+    for activity in activities:
+        if not isinstance(activity, dict):
+            raise RuntimeError("public overlay plan contained malformed activity")
+        activity_id = activity.get("activity_id")
+        operation = activity.get("operation")
+        if not isinstance(activity_id, str) or not isinstance(operation, dict):
+            raise RuntimeError("public overlay plan contained malformed operation")
+        planned_activity_ids.add(activity_id)
+        kind = operation.get("kind")
+        target = operation.get("target")
+        if not isinstance(kind, str) or not isinstance(target, dict):
+            raise RuntimeError("public overlay plan operation omitted its target")
+        if target.get("kind") == "public-ingress":
+            observed_ingress_operations.add(kind)
+        node_id = target.get("node_id")
+        if node_id == "cloudflared-gateway":
+            observed_connector_operations.add(kind)
+        if node_id in workload_node_ids and kind in mutation_kinds:
+            forbidden_workload_mutations.append((kind, str(node_id)))
+
+    if observed_ingress_operations != {expected_ingress_operation}:
+        raise RuntimeError(
+            "public overlay plan had unexpected ingress operations: "
+            f"{sorted(observed_ingress_operations)}"
+        )
+    if observed_connector_operations != expected_connector_operations:
+        raise RuntimeError(
+            "public overlay plan had unexpected connector operations: "
+            f"{sorted(observed_connector_operations)}"
+        )
+    if forbidden_workload_mutations:
+        raise RuntimeError(
+            "public overlay plan mutated stable workload nodes: "
+            f"{forbidden_workload_mutations}"
+        )
+
+    events = _events_for_run(workflow.read_activity(limit=200), transition.run_id)
+    succeeded_activity_ids = {
+        str(event.get("activity_id"))
+        for event in events
+        if event.get("event_type") == "step_succeeded"
+    }
+    missing_success = planned_activity_ids - succeeded_activity_ids
+    if missing_success:
+        raise RuntimeError(
+            "public overlay run omitted planned success evidence: "
+            f"{sorted(missing_success)}"
+        )
+
+
+def _assert_runtime_node_identities(
+    workspace_id: str,
+    expected: dict[str, str],
+) -> None:
+    observed = _runtime_node_identities(workspace_id, tuple(expected))
+    if observed != expected:
+        raise RuntimeError(
+            "public access overlay changed workload container identities"
+        )
+
+
+def _assert_rotation_gateway_probe_pair(
+    workflow: HostedWorkflow,
+    *,
+    current_graph_id: str,
+    expected_key_id: str,
+    access_path: GatewayProbeAccessPath,
+    request_prefix: str,
+) -> None:
+    _assert_gateway_probe_key(
+        workflow.request_gateway_probe_http(
+            request_id=(
+                f"{workflow.workspace_id}:gateway-probe:{request_prefix}:http"
+            ),
+            expected_current_graph_id=current_graph_id,
+            gateway_node_id="gateway",
+            kind="http-status",
+            target_id="hello.internal",
+            path="/",
+            access_path=access_path,
+        ),
+        expected_key_id,
+    )
+    _assert_gateway_probe_key(
+        workflow.request_gateway_probe_mcp(
+            request_id=(
+                f"{workflow.workspace_id}:gateway-probe:{request_prefix}:postgres"
+            ),
+            expected_current_graph_id=current_graph_id,
+            gateway_node_id="gateway",
+            kind="postgres-select-one",
+            target_id="postgres.postgres",
+            access_path=access_path,
+        ),
+        expected_key_id,
+    )
+
+
+def _assert_named_public_gateway_probes_unavailable(
+    workflow: HostedWorkflow,
+    *,
+    current_graph_id: str,
+) -> None:
+    calls = (
+        lambda: workflow.request_gateway_probe_http(
+            request_id=(
+                f"{workflow.workspace_id}:gateway-probe:public-off:http"
+            ),
+            expected_current_graph_id=current_graph_id,
+            gateway_node_id="gateway",
+            kind="http-status",
+            target_id="hello.internal",
+            path="/",
+            access_path=GatewayProbeAccessPath.NAMED_PUBLIC_INGRESS,
+        ),
+        lambda: workflow.request_gateway_probe_mcp(
+            request_id=(
+                f"{workflow.workspace_id}:gateway-probe:public-off:postgres"
+            ),
+            expected_current_graph_id=current_graph_id,
+            gateway_node_id="gateway",
+            kind="postgres-select-one",
+            target_id="postgres.postgres",
+            access_path=GatewayProbeAccessPath.NAMED_PUBLIC_INGRESS,
+        ),
+    )
+    for call in calls:
+        try:
+            call()
+        except RuntimeError as error:
+            if "gateway control node has no named public ingress" not in str(error):
+                raise RuntimeError(
+                    "public gateway probe failed for an unexpected reason"
+                ) from None
+        else:
+            raise RuntimeError("public gateway probe succeeded while overlay was off")
+
+
+def _owned_cloudflare_epoch_evidence(
+    operations_database_url: str,
+    *,
+    workspace_id: str,
+) -> tuple[tuple[int, str, str, str, str], ...]:
+    query = """
+        SELECT
+          resource.epoch,
+          resource.status,
+          resource.tunnel_id,
+          resource.dns_record_id,
+          generated.metadata->>'provider_version_id'
+        FROM cpk_cloudflare_ingress_resources AS resource
+        JOIN cpk_generated_ingress_secret_references AS generated
+          ON generated.workspace_id = resource.workspace_id
+         AND generated.source_run_id = resource.source_run_id
+         AND generated.source_activity_id = resource.source_activity_id
+         AND generated.source_event_id = resource.source_event_id
+        WHERE resource.workspace_id = %s
+        ORDER BY resource.epoch
+    """
+    with psycopg.connect(operations_database_url) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(query, (workspace_id,))
+            rows = cursor.fetchall()
+    return tuple(
+        (
+            int(row[0]),
+            str(row[1]),
+            str(row[2]),
+            str(row[3]),
+            str(row[4]),
+        )
+        for row in rows
+    )
+
+
+def _assert_owned_cloudflare_epoch_states(
+    operations_database_url: str,
+    *,
+    workspace_id: str,
+    expected_statuses: tuple[str, ...],
+) -> None:
+    evidence = _owned_cloudflare_epoch_evidence(
+        operations_database_url,
+        workspace_id=workspace_id,
+    )
+    if tuple(row[0] for row in evidence) != tuple(
+        range(1, len(expected_statuses) + 1)
+    ):
+        raise RuntimeError("owned ingress allocation epochs were not monotonic")
+    if tuple(row[1] for row in evidence) != expected_statuses:
+        raise RuntimeError("owned ingress lifecycle state did not match graph truth")
+    for column, label in ((2, "tunnel"), (3, "DNS"), (4, "token version")):
+        identities = [row[column] for row in evidence]
+        if len(set(identities)) != len(identities):
+            raise RuntimeError(f"public ingress recreation reused {label} identity")
+
+
+def _assert_removed_ingress_token_versions_revoked(
+    provider_container: str,
+    operations_database_url: str,
+    *,
+    workspace_id: str,
+    expected_count: int,
+) -> None:
+    evidence = _owned_cloudflare_epoch_evidence(
+        operations_database_url,
+        workspace_id=workspace_id,
+    )
+    removed_versions = {
+        row[4] for row in evidence if row[1] == "removed"
+    }
+    if len(removed_versions) != expected_count:
+        raise RuntimeError("removed ingress token-version evidence was incomplete")
+    revoked_versions = {
+        row["version_id"]
+        for row in _provider_audit_rows(provider_container, workspace_id)
+        if row["outcome"] == "revoked"
+        and row["intent"] == CLOUDFLARE_TUNNEL_TOKEN_INTENT
+        and row["version_id"]
+    }
+    if not removed_versions.issubset(revoked_versions):
+        raise RuntimeError("removed ingress token version remained active")
+
+
 def _finalize_gateway_rotation_source_live(
     *,
     workflow: HostedWorkflow,
@@ -879,7 +1453,7 @@ def _finalize_gateway_rotation_source_live(
     final_command: dict[str, Any],
     current_graph_id: str,
     expected_desired_graph_id: str,
-) -> None:
+) -> Any:
     if workflow.read_gateway_key_rotation_detail(rotation_id) != rotation:
         raise RuntimeError("completed rotation durable detail changed")
     replay = _replay_rotation_command(workflow, rotation_id, final_command)
@@ -909,6 +1483,7 @@ def _finalize_gateway_rotation_source_live(
     )
     _assert_activity_mentions(workflow, removed.run_id, "gateway")
     _assert_no_runtime_networks(workspace_id)
+    return removed
 
 
 def _run_gateway_key_rotation(
@@ -946,7 +1521,10 @@ def _run_gateway_key_rotation(
         register_runtime_authority=True,
         register_runtime_delivery=False,
     )
-    provider_registration_id = _register_gateway_rotation_provider(workflow)
+    provider_registration_id = _register_gateway_rotation_provider(
+        workflow,
+        include_public_ingress=False,
+    )
     key_a_receipt: ProviderVersionReceipt | None = None
     for reference, value_file, correlation in (
         (
@@ -1019,7 +1597,7 @@ def _run_gateway_key_rotation(
         sync_runtime_networks=True,
     )
     _assert_initial_gateway_transition_evidence(workflow, deployed_a)
-    _wait_private_gateway_ready(gateway_document)
+    _wait_private_gateway_ready(gateway_document, workspace_id=workspace_id)
     _assert_gateway_probe_key(
         workflow.request_gateway_probe_http(
             request_id=f"{workspace_id}:gateway-probe:key-a-http",
@@ -1177,8 +1755,23 @@ def _assert_rotation_transition_history(response: dict[str, Any]) -> None:
 
 def _register_gateway_rotation_provider(
     workflow: HostedWorkflow,
+    *,
+    include_public_ingress: bool,
 ) -> str:
-    all_references = _gateway_rotation_reference_definitions()
+    all_references = _gateway_rotation_reference_definitions(
+        include_public_ingress=include_public_ingress,
+    )
+    allowed_reference_prefixes = [value[0] for value in all_references]
+    allowed_intents = [
+        POSTGRES_INTENT,
+        GATEWAY_SIGNING_KEY_INTENT,
+        OCI_PULL_CREDENTIAL_INTENT,
+    ]
+    if include_public_ingress:
+        allowed_reference_prefixes.append(CLOUDFLARE_GENERATED_REFERENCE_PREFIX)
+        allowed_intents.extend(
+            (CLOUDFLARE_API_TOKEN_INTENT, CLOUDFLARE_TUNNEL_TOKEN_INTENT)
+        )
     provider = _http(
         workflow.base_url,
         "POST",
@@ -1189,12 +1782,8 @@ def _register_gateway_rotation_provider(
             "display_name": "Source-live gateway rotation custody",
             "endpoint_reference": PROVIDER_ENDPOINT_REFERENCE,
             "credential_reference": PROVIDER_CREDENTIAL_REFERENCE,
-            "allowed_reference_prefixes": [value[0] for value in all_references],
-            "allowed_intents": [
-                POSTGRES_INTENT,
-                GATEWAY_SIGNING_KEY_INTENT,
-                OCI_PULL_CREDENTIAL_INTENT,
-            ],
+            "allowed_reference_prefixes": allowed_reference_prefixes,
+            "allowed_intents": allowed_intents,
             "admitted_at": "2026-08-01T10:00:00Z",
             "metadata": {"acceptance": "source-live-gateway-key-rotation"},
             "idempotency_key": f"{workflow.workspace_id}:secret-provider",
@@ -1209,8 +1798,11 @@ def _register_gateway_rotation_references(
     provider_registration_id: str,
     initial_key_receipt: ProviderVersionReceipt,
     register_replacement_reference: bool = True,
+    include_public_ingress: bool = False,
 ) -> dict[str, str]:
-    all_references = _gateway_rotation_reference_definitions()
+    all_references = _gateway_rotation_reference_definitions(
+        include_public_ingress=include_public_ingress,
+    )
     references = tuple(
         item
         for item in all_references
@@ -1248,8 +1840,11 @@ def _register_gateway_rotation_references(
     return registrations
 
 
-def _gateway_rotation_reference_definitions() -> tuple[tuple[str, str, str], ...]:
-    return (
+def _gateway_rotation_reference_definitions(
+    *,
+    include_public_ingress: bool = False,
+) -> tuple[tuple[str, str, str], ...]:
+    references = [
         (POSTGRES_PASSWORD_REFERENCE, POSTGRES_INTENT, "postgres-password"),
         (
             GATEWAY_ROTATION_KEY_A_REFERENCE,
@@ -1266,7 +1861,16 @@ def _gateway_rotation_reference_definitions() -> tuple[tuple[str, str, str], ...
             OCI_PULL_CREDENTIAL_INTENT,
             "ghcr-pull-credential",
         ),
-    )
+    ]
+    if include_public_ingress:
+        references.append(
+            (
+                CLOUDFLARE_API_TOKEN_REFERENCE,
+                CLOUDFLARE_API_TOKEN_INTENT,
+                "cloudflare-api-token",
+            )
+        )
+    return tuple(references)
 
 
 def _register_delegation_key(
@@ -2040,7 +2644,11 @@ def _hello_request_count() -> int:
     return len(requests)
 
 
-def _wait_private_gateway_ready(gateway_document: Any) -> None:
+def _wait_private_gateway_ready(
+    gateway_document: Any,
+    *,
+    workspace_id: str = GATEWAY_ROTATION_WORKSPACE,
+) -> None:
     policy = _verification_policy(gateway_document, "ready")
     last_error = "gateway did not answer"
     for attempt in range(1, policy.maximum_attempts + 1):
@@ -2078,9 +2686,23 @@ def _wait_private_gateway_ready(gateway_document: Any) -> None:
             )
     raise RuntimeError(
         "private gateway did not become ready under descriptor policy: "
-        f"{last_error}; runtime_networks="
-        f"{_runtime_network_diagnostics(GATEWAY_ROTATION_WORKSPACE)}"
+        f"{last_error}; gateway_container="
+        f"{json.dumps(_gateway_container_diagnostics(workspace_id), sort_keys=True)}; "
+        "runtime_networks="
+        f"{_runtime_network_diagnostics(workspace_id)}"
     )
+
+
+def _gateway_container_diagnostics(workspace_id: str) -> dict[str, Any]:
+    try:
+        container = _single_docker_container(workspace_id, "gateway")
+        container.reload()
+        return _bounded_container_state(container)
+    except Exception as error:
+        return {
+            "status": "unavailable",
+            "failure_type": type(error).__name__,
+        }
 
 
 def _runtime_network_diagnostics(workspace_id: str) -> list[dict[str, object]]:
@@ -3386,13 +4008,68 @@ def _restart_container(container_id: str) -> None:
         raise RuntimeError("container did not stop before restart")
     container.start()
     deadline = time.monotonic() + CONTAINER_RESTART_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
+    stable_since: float | None = None
+    while (now := time.monotonic()) < deadline:
         container.reload()
         state = container.attrs["State"]
-        if state["Running"] and str(state["StartedAt"]) != previous_started_at:
-            return
+        crossed_restart_boundary = str(state["StartedAt"]) != previous_started_at
+        if crossed_restart_boundary and state["Running"]:
+            if stable_since is None:
+                stable_since = now
+            if now - stable_since >= CONTAINER_RESTART_STABILITY_SECONDS:
+                return
+        elif crossed_restart_boundary:
+            if state.get("Status") in {"dead", "exited"}:
+                raise RuntimeError(
+                    "container exited before restart stability: "
+                    + json.dumps(
+                        _bounded_container_state(container),
+                        sort_keys=True,
+                        separators=(",", ": "),
+                    )
+                )
+            stable_since = None
+        else:
+            stable_since = None
         time.sleep(0.25)
-    raise RuntimeError("container did not cross the requested restart boundary")
+    raise RuntimeError(
+        "container did not reach stable running state after restart: "
+        + json.dumps(
+            _bounded_container_state(container),
+            sort_keys=True,
+            separators=(",", ": "),
+        )
+    )
+
+
+def _bounded_container_state(container: Any) -> dict[str, Any]:
+    state = container.attrs.get("State", {})
+    health = state.get("Health")
+    health_status = health.get("Status") if isinstance(health, dict) else None
+    networks = container.attrs.get("NetworkSettings", {}).get("Networks", {})
+    network_names = sorted(str(name) for name in networks)
+    network_addresses = {
+        str(name): str(material.get("IPAddress", ""))
+        for name, material in sorted(networks.items())
+        if isinstance(material, dict)
+    }
+    return {
+        "container_id": str(container.id)[:12],
+        "container_name": str(container.name),
+        "image_id": str(container.image.id),
+        "status": str(state.get("Status", "unknown")),
+        "running": state.get("Running") is True,
+        "restarting": state.get("Restarting") is True,
+        "paused": state.get("Paused") is True,
+        "dead": state.get("Dead") is True,
+        "oom_killed": state.get("OOMKilled") is True,
+        "exit_code": state.get("ExitCode"),
+        "health_status": health_status,
+        "started_at": str(state.get("StartedAt", "")),
+        "finished_at": str(state.get("FinishedAt", "")),
+        "network_names": network_names,
+        "network_addresses": network_addresses,
+    }
 
 
 def _verification_policy(
