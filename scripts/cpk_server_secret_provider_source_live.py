@@ -5,13 +5,15 @@ from __future__ import annotations
 import base64
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
+from enum import Enum
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import threading
 import time
-from typing import Any
+from typing import Any, Callable
 from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -35,6 +37,7 @@ from control_plane_kit_core.gateway_delegation import (
     GatewayProbeRequest,
 )
 from control_plane_kit_core.products import (
+    ProductDescriptorCodec,
     ProductInstanceConfiguration,
     instantiate_product,
 )
@@ -145,6 +148,56 @@ class ProviderVersionReceipt:
     version_number: int
 
 
+class SourceLiveGatewayDenialError(RuntimeError):
+    """Bounded source-live gateway denial witness failure."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+class GatewayRotationSourceLiveScope(Enum):
+    ADVERSARIAL_DENIALS = "adversarial-denials"
+    RESTART_LIFECYCLE = "restart-lifecycle"
+
+
+@dataclass(repr=False)
+class PostgresTransactionWitness:
+    """Detect target database IO after accounting for its own measurements."""
+
+    snapshot: Callable[[], int]
+    measurement_overhead: int
+    _last_snapshot: int
+
+    @classmethod
+    def calibrate(
+        cls,
+        snapshot: Callable[[], int],
+    ) -> "PostgresTransactionWitness":
+        first = snapshot()
+        second = snapshot()
+        third = snapshot()
+        first_delta = second - first
+        second_delta = third - second
+        if first_delta < 1 or first_delta != second_delta:
+            raise SourceLiveGatewayDenialError("postgres-witness-unstable")
+        return cls(snapshot, first_delta, third)
+
+    def assert_no_target_io(self, action: Callable[[], None]) -> None:
+        action()
+        current = self.snapshot()
+        observed_delta = current - self._last_snapshot
+        self._last_snapshot = current
+        if observed_delta != self.measurement_overhead:
+            raise SourceLiveGatewayDenialError("postgres-target-io-observed")
+
+    def synchronize(self) -> None:
+        self._last_snapshot = self.snapshot()
+
+    def __repr__(self) -> str:
+        return "PostgresTransactionWitness(<bounded>)"
+
+
 def main() -> int:
     base_url = _required_env("CPK_HOSTED_ACTIVITY_BASE_URL").rstrip("/")
     server_container = _required_env("CPK_HOSTED_ACTIVITY_SERVER_CONTAINER")
@@ -192,10 +245,8 @@ def main() -> int:
         )
         print("cpk-server gateway verifier projection source-live acceptance passed")
         return 0
-    if (
-        os.environ.get("CPK_SECRET_PROVIDER_SOURCE_LIVE_SCENARIO")
-        == "gateway-key-rotation"
-    ):
+    scenario = os.environ.get("CPK_SECRET_PROVIDER_SOURCE_LIVE_SCENARIO")
+    if scenario in {"gateway-capability-denials", "gateway-key-rotation"}:
         _run_gateway_key_rotation_program(
             base_url=base_url,
             server_container=server_container,
@@ -204,8 +255,13 @@ def main() -> int:
             operations_database_url=operations_database_url,
             provider_token_file=provider_token_file,
             bootstrap_dir=bootstrap_dir,
+            scope=(
+                GatewayRotationSourceLiveScope.ADVERSARIAL_DENIALS
+                if scenario == "gateway-capability-denials"
+                else GatewayRotationSourceLiveScope.RESTART_LIFECYCLE
+            ),
         )
-        print("cpk-server gateway signing-key rotation source-live acceptance passed")
+        print(f"cpk-server gateway {scenario} source-live acceptance passed")
         return 0
     if (
         os.environ.get("CPK_SECRET_PROVIDER_SOURCE_LIVE_SCENARIO")
@@ -468,10 +524,11 @@ def _run_gateway_key_rotation_program(
     operations_database_url: str,
     provider_token_file: Path,
     bootstrap_dir: Path,
+    scope: GatewayRotationSourceLiveScope,
 ) -> None:
     workspace_id = GATEWAY_ROTATION_WORKSPACE
     cpk_server_document = _product_document(servers_repo, "cpk_server")
-    gateway_document = _product_document(servers_repo, "cpk_local_gateway")
+    gateway_document = _source_live_gateway_document(servers_repo)
     hello_document = _product_document(servers_repo, "hello_server")
     postgres_document = _product_document(servers_repo, "postgres_server")
     workflow = _workflow(
@@ -585,6 +642,12 @@ def _run_gateway_key_rotation_program(
             target_id="postgres.postgres",
         ),
         GATEWAY_ROTATION_KEY_A_ID,
+    )
+    _assert_live_gateway_denial_matrix(
+        workspace_id=workspace_id,
+        key_id=GATEWAY_ROTATION_KEY_A_ID,
+        private_key_file=bootstrap_dir / "gateway-rotation-key-a.pem",
+        postgres_password_file=bootstrap_dir / "postgres-password",
     )
     captured_a = _direct_gateway_capability(
         workspace_id=workspace_id,
@@ -727,19 +790,59 @@ def _run_gateway_key_rotation_program(
         ),
         generated_key_id,
     )
-    before = _hello_request_count()
-    _assert_direct_gateway_rejected(captured_a)
-    _assert_direct_gateway_rejected(
-        _direct_gateway_capability(
-            workspace_id=workspace_id,
-            key_id=GATEWAY_ROTATION_KEY_A_ID,
-            private_key_file=bootstrap_dir / "gateway-rotation-key-a.pem",
-            expires_in=300,
-            jti="fresh-retired-key-a",
-        )
+    retired_witness = _postgres_transaction_witness(
+        bootstrap_dir / "postgres-password"
     )
-    if _hello_request_count() != before:
-        raise RuntimeError("retired key A reached target IO")
+    _assert_no_gateway_target_io(
+        lambda: _assert_direct_gateway_rejected(captured_a),
+        postgres_witness=retired_witness,
+    )
+    for request, suffix in (
+        (
+            GatewayProbeRequest(
+                GatewayProbeCommandKind.HTTP_STATUS,
+                GatewayTargetId("hello.internal"),
+                "/",
+            ),
+            "http",
+        ),
+        (
+            GatewayProbeRequest(
+                GatewayProbeCommandKind.POSTGRES_SELECT_ONE,
+                GatewayTargetId("postgres.postgres"),
+            ),
+            "postgres",
+        ),
+    ):
+        _assert_no_gateway_target_io(
+            lambda request=request, suffix=suffix: _assert_direct_gateway_rejected(
+                _direct_gateway_capability(
+                    workspace_id=workspace_id,
+                    key_id=GATEWAY_ROTATION_KEY_A_ID,
+                    private_key_file=bootstrap_dir / "gateway-rotation-key-a.pem",
+                    expires_in=300,
+                    jti=f"fresh-retired-key-a-{suffix}",
+                    request=request,
+                )
+            ),
+            postgres_witness=retired_witness,
+        )
+
+    if scope is GatewayRotationSourceLiveScope.ADVERSARIAL_DENIALS:
+        _finalize_gateway_rotation_source_live(
+            workflow=workflow,
+            server_container=server_container,
+            provider_container=provider_container,
+            operations_database_url=operations_database_url,
+            bootstrap_dir=bootstrap_dir,
+            workspace_id=workspace_id,
+            rotation_id=rotation_id,
+            rotation=rotation,
+            final_command=final_command,
+            current_graph_id=current_graph_id,
+            expected_desired_graph_id=deployed_a.desired_graph_id,
+        )
+        return
 
     _restart_cpk_server(
         server_container,
@@ -748,8 +851,37 @@ def _run_gateway_key_rotation_program(
     )
     _restart_container(_single_docker_container(workspace_id, "gateway").id)
     _wait_private_gateway_ready(gateway_document)
+    _finalize_gateway_rotation_source_live(
+        workflow=workflow,
+        server_container=server_container,
+        provider_container=provider_container,
+        operations_database_url=operations_database_url,
+        bootstrap_dir=bootstrap_dir,
+        workspace_id=workspace_id,
+        rotation_id=rotation_id,
+        rotation=rotation,
+        final_command=final_command,
+        current_graph_id=current_graph_id,
+        expected_desired_graph_id=deployed_a.desired_graph_id,
+    )
+
+
+def _finalize_gateway_rotation_source_live(
+    *,
+    workflow: HostedWorkflow,
+    server_container: str,
+    provider_container: str,
+    operations_database_url: str,
+    bootstrap_dir: Path,
+    workspace_id: str,
+    rotation_id: str,
+    rotation: dict[str, Any],
+    final_command: dict[str, Any],
+    current_graph_id: str,
+    expected_desired_graph_id: str,
+) -> None:
     if workflow.read_gateway_key_rotation_detail(rotation_id) != rotation:
-        raise RuntimeError("completed rotation did not survive process restart")
+        raise RuntimeError("completed rotation durable detail changed")
     replay = _replay_rotation_command(workflow, rotation_id, final_command)
     if not replay.get("replayed") or _rotation_from_response(replay) != rotation:
         raise RuntimeError("completed rotation command did not replay durably")
@@ -772,7 +904,7 @@ def _run_gateway_key_rotation_program(
         title="Gateway key rotation teardown",
         graph=DeploymentGraph(workspace_id),
         current_graph_id=current_graph_id,
-        expected_desired_graph_id=deployed_a.desired_graph_id,
+        expected_desired_graph_id=expected_desired_graph_id,
         sync_runtime_networks=False,
     )
     _assert_activity_mentions(workflow, removed.run_id, "gateway")
@@ -792,7 +924,7 @@ def _run_gateway_key_rotation(
 ) -> None:
     workspace_id = GATEWAY_ROTATION_WORKSPACE
     cpk_server_document = _product_document(servers_repo, "cpk_server")
-    gateway_document = _product_document(servers_repo, "cpk_local_gateway")
+    gateway_document = _source_live_gateway_document(servers_repo)
     hello_document = _product_document(servers_repo, "hello_server")
     postgres_document = _product_document(servers_repo, "postgres_server")
     workflow = _workflow(
@@ -1511,8 +1643,12 @@ def _direct_gateway_capability(
     private_key_file: Path,
     expires_in: int,
     jti: str,
+    request: GatewayProbeRequest | None = None,
+    grant_changes: dict[str, object] | None = None,
+    signing_private_key: Ed25519PrivateKey | None = None,
+    inbound_request: GatewayProbeRequest | None = None,
 ) -> tuple[str, GatewayProbeRequest]:
-    request = GatewayProbeRequest(
+    request = request or GatewayProbeRequest(
         GatewayProbeCommandKind.HTTP_STATUS,
         GatewayTargetId("hello.internal"),
         "/",
@@ -1533,9 +1669,10 @@ def _direct_gateway_capability(
         expires_at=now + expires_in,
         jti=jti,
     )
-    private_key = serialization.load_pem_private_key(
-        private_key_file.read_bytes(),
-        password=None,
+    if grant_changes:
+        grant = replace(grant, **grant_changes)
+    private_key = signing_private_key or serialization.load_pem_private_key(
+        private_key_file.read_bytes(), password=None
     )
     if not isinstance(private_key, Ed25519PrivateKey):
         raise RuntimeError("gateway diagnostic key was not Ed25519")
@@ -1552,33 +1689,346 @@ def _direct_gateway_capability(
         algorithm="EdDSA",
         headers={"kid": grant.key_id, "typ": "CPK-GATEWAY-PROBE+JWT"},
     )
-    return token, request
+    return token, inbound_request or request
 
 
 def _assert_direct_gateway_rejected(
     capability: tuple[str, GatewayProbeRequest],
 ) -> None:
     token, probe = capability
+    status = _direct_gateway_status(
+        authorization=f"CPK-Gateway {token}",
+        body=_gateway_request_body(probe),
+    )
+    if status not in {400, 401, 403, 409}:
+        raise RuntimeError(f"invalid gateway capability was not rejected: {status}")
+
+
+def _direct_gateway_status(
+    *,
+    authorization: str | None,
+    body: bytes,
+) -> int:
+    headers = {"Content-Type": "application/json"}
+    if authorization is not None:
+        headers["Authorization"] = authorization
     request = Request(
         "http://gateway:8000/cpk/probes",
         method="POST",
-        headers={
-            "Authorization": f"CPK-Gateway {token}",
-            "Content-Type": "application/json",
-        },
-        data=json.dumps(
-            probe.descriptor(),
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("ascii"),
+        headers=headers,
+        data=body,
     )
     try:
         with urlopen(request, timeout=5) as response:
-            status = response.status
+            return response.status
     except HTTPError as error:
-        status = error.code
-    if status not in {401, 403}:
-        raise RuntimeError(f"invalid gateway capability was not rejected: {status}")
+        return error.code
+
+
+def _gateway_request_body(request: GatewayProbeRequest) -> bytes:
+    return json.dumps(
+        request.descriptor(),
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("ascii")
+
+
+def _source_live_gateway_document(servers_repo: Path) -> Any:
+    execution_reference = _required_env("CPK_SOURCE_LIVE_GATEWAY_IMAGE")
+    source_commit = _required_env("CPK_SOURCE_LIVE_GATEWAY_SOURCE_COMMIT")
+    match = re.fullmatch(
+        r"(?P<registry>[a-z0-9.-]+(?:\:[0-9]+)?)/"
+        r"(?P<repository>[a-z0-9._/-]+)@"
+        r"(?P<digest>sha256:[0-9a-f]{64})",
+        execution_reference,
+    )
+    if match is None:
+        raise RuntimeError("source-live gateway image must be an immutable digest")
+    if re.fullmatch(r"[0-9a-f]{40}", source_commit) is None:
+        raise RuntimeError("source-live gateway source commit must be canonical")
+
+    descriptor_path = (
+        servers_repo / "products" / "cpk_local_gateway" / "product.cpk.json"
+    )
+    descriptor = json.loads(descriptor_path.read_text(encoding="utf-8"))
+    image = descriptor["product"]["image"]
+    image.update(
+        {
+            "registry": match.group("registry"),
+            "repository": match.group("repository"),
+            "digest": match.group("digest"),
+            "tag": "source-live",
+        }
+    )
+    provenance = image.get("provenance")
+    if isinstance(provenance, dict):
+        provenance["source-commit"] = source_commit
+    return ProductDescriptorCodec().decode_document(
+        json.dumps(descriptor, separators=(",", ":")).encode("ascii")
+    )
+
+
+def _assert_live_gateway_denial_matrix(
+    *,
+    workspace_id: str,
+    key_id: str,
+    private_key_file: Path,
+    postgres_password_file: Path,
+) -> None:
+    trusted_private_key = serialization.load_pem_private_key(
+        private_key_file.read_bytes(), password=None
+    )
+    if not isinstance(trusted_private_key, Ed25519PrivateKey):
+        raise RuntimeError("gateway diagnostic key was not Ed25519")
+    forged_private_key = Ed25519PrivateKey.generate()
+    witness = _postgres_transaction_witness(postgres_password_file)
+    requests = (
+        GatewayProbeRequest(
+            GatewayProbeCommandKind.HTTP_STATUS,
+            GatewayTargetId("hello.internal"),
+            "/",
+        ),
+        GatewayProbeRequest(
+            GatewayProbeCommandKind.POSTGRES_SELECT_ONE,
+            GatewayTargetId("postgres.postgres"),
+        ),
+    )
+    for probe in requests:
+        suffix = probe.kind.value
+        base = _direct_gateway_capability(
+            workspace_id=workspace_id,
+            key_id=key_id,
+            private_key_file=private_key_file,
+            expires_in=60,
+            jti=f"denial-base-{suffix}",
+            request=probe,
+        )
+        alternate = (
+            GatewayProbeRequest(
+                GatewayProbeCommandKind.POSTGRES_SELECT_ONE,
+                GatewayTargetId("postgres.postgres"),
+            )
+            if probe.kind is GatewayProbeCommandKind.HTTP_STATUS
+            else GatewayProbeRequest(
+                GatewayProbeCommandKind.HTTP_STATUS,
+                GatewayTargetId("hello.internal"),
+                "/",
+            )
+        )
+        cases: tuple[tuple[str, str | None, bytes], ...] = (
+            ("missing", None, _gateway_request_body(probe)),
+            ("malformed", "CPK-Gateway malformed", _gateway_request_body(probe)),
+            (
+                "forged",
+                "CPK-Gateway "
+                + _direct_gateway_capability(
+                    workspace_id=workspace_id,
+                    key_id=key_id,
+                    private_key_file=private_key_file,
+                    expires_in=60,
+                    jti=f"denial-forged-{suffix}",
+                    request=probe,
+                    signing_private_key=forged_private_key,
+                )[0],
+                _gateway_request_body(probe),
+            ),
+            (
+                "wrong-issuer",
+                "CPK-Gateway "
+                + _direct_gateway_capability(
+                    workspace_id=workspace_id,
+                    key_id=key_id,
+                    private_key_file=private_key_file,
+                    expires_in=60,
+                    jti=f"denial-issuer-{suffix}",
+                    request=probe,
+                    grant_changes={"issuer": "cpk-source-live-other"},
+                )[0],
+                _gateway_request_body(probe),
+            ),
+            (
+                "wrong-key",
+                "CPK-Gateway "
+                + _direct_gateway_capability(
+                    workspace_id=workspace_id,
+                    key_id=key_id,
+                    private_key_file=private_key_file,
+                    expires_in=60,
+                    jti=f"denial-key-{suffix}",
+                    request=probe,
+                    grant_changes={"key_id": "unknown-key"},
+                )[0],
+                _gateway_request_body(probe),
+            ),
+            (
+                "wrong-audience",
+                "CPK-Gateway "
+                + _direct_gateway_capability(
+                    workspace_id=workspace_id,
+                    key_id=key_id,
+                    private_key_file=private_key_file,
+                    expires_in=60,
+                    jti=f"denial-audience-{suffix}",
+                    request=probe,
+                    grant_changes={"audience": "gateway:other:gateway"},
+                )[0],
+                _gateway_request_body(probe),
+            ),
+            (
+                "wrong-workspace",
+                "CPK-Gateway "
+                + _direct_gateway_capability(
+                    workspace_id=workspace_id,
+                    key_id=key_id,
+                    private_key_file=private_key_file,
+                    expires_in=60,
+                    jti=f"denial-workspace-{suffix}",
+                    request=probe,
+                    grant_changes={"workspace_id": "workspace-other"},
+                )[0],
+                _gateway_request_body(probe),
+            ),
+            (
+                "wrong-gateway",
+                "CPK-Gateway "
+                + _direct_gateway_capability(
+                    workspace_id=workspace_id,
+                    key_id=key_id,
+                    private_key_file=private_key_file,
+                    expires_in=60,
+                    jti=f"denial-gateway-{suffix}",
+                    request=probe,
+                    grant_changes={"gateway_node_id": "gateway-other"},
+                )[0],
+                _gateway_request_body(probe),
+            ),
+            (
+                "wrong-request",
+                f"CPK-Gateway {base[0]}",
+                _gateway_request_body(alternate),
+            ),
+            (
+                "malformed-body",
+                f"CPK-Gateway {base[0]}",
+                b'{"kind":"unsupported"}',
+            ),
+            (
+                "expired",
+                "CPK-Gateway "
+                + _direct_gateway_capability(
+                    workspace_id=workspace_id,
+                    key_id=key_id,
+                    private_key_file=private_key_file,
+                    expires_in=60,
+                    jti=f"denial-expired-{suffix}",
+                    request=probe,
+                    grant_changes={
+                        "issued_at": int(time.time()) - 80,
+                        "expires_at": int(time.time()) - 20,
+                    },
+                )[0],
+                _gateway_request_body(probe),
+            ),
+            (
+                "not-yet-valid",
+                "CPK-Gateway "
+                + _direct_gateway_capability(
+                    workspace_id=workspace_id,
+                    key_id=key_id,
+                    private_key_file=private_key_file,
+                    expires_in=60,
+                    jti=f"denial-future-{suffix}",
+                    request=probe,
+                    grant_changes={
+                        "issued_at": int(time.time()) + 20,
+                        "expires_at": int(time.time()) + 80,
+                    },
+                )[0],
+                _gateway_request_body(probe),
+            ),
+        )
+        for label, authorization, body in cases:
+            _assert_no_gateway_target_io(
+                lambda authorization=authorization, body=body, label=label: (
+                    _assert_direct_gateway_status_rejected(
+                        authorization=authorization,
+                        body=body,
+                        label=label,
+                    )
+                ),
+                postgres_witness=witness,
+            )
+
+        replay = _direct_gateway_capability(
+            workspace_id=workspace_id,
+            key_id=key_id,
+            private_key_file=private_key_file,
+            expires_in=60,
+            jti=f"denial-replay-{suffix}",
+            request=probe,
+            signing_private_key=trusted_private_key,
+        )
+        first_status = _direct_gateway_status(
+            authorization=f"CPK-Gateway {replay[0]}",
+            body=_gateway_request_body(replay[1]),
+        )
+        if first_status != 200:
+            raise RuntimeError("diagnostic replay seed request did not succeed")
+        witness.synchronize()
+        _assert_no_gateway_target_io(
+            lambda: _assert_direct_gateway_status_rejected(
+                authorization=f"CPK-Gateway {replay[0]}",
+                body=_gateway_request_body(replay[1]),
+                label="replayed",
+            ),
+            postgres_witness=witness,
+        )
+
+
+def _assert_direct_gateway_status_rejected(
+    *,
+    authorization: str | None,
+    body: bytes,
+    label: str,
+) -> None:
+    status = _direct_gateway_status(authorization=authorization, body=body)
+    if status not in {400, 401, 403, 409}:
+        raise RuntimeError(f"gateway denial case {label} returned {status}")
+
+
+def _postgres_transaction_witness(password_file: Path) -> PostgresTransactionWitness:
+    def snapshot() -> int:
+        password = password_file.read_text(encoding="utf-8").strip()
+        with psycopg.connect(
+            host="postgres",
+            port=5432,
+            dbname="cpk",
+            user="cpk",
+            password=password,
+            connect_timeout=5,
+            autocommit=True,
+        ) as connection:
+            connection.execute("SELECT pg_stat_force_next_flush()")
+            row = connection.execute(
+                "SELECT xact_commit + xact_rollback "
+                "FROM pg_stat_database WHERE datname = current_database()"
+            ).fetchone()
+        if row is None or type(row[0]) is not int:
+            raise SourceLiveGatewayDenialError("postgres-witness-malformed")
+        return row[0]
+
+    return PostgresTransactionWitness.calibrate(snapshot)
+
+
+def _assert_no_gateway_target_io(
+    action: Callable[[], None],
+    *,
+    postgres_witness: PostgresTransactionWitness,
+) -> None:
+    hello_before = _hello_request_count()
+    postgres_witness.assert_no_target_io(action)
+    if _hello_request_count() != hello_before:
+        raise SourceLiveGatewayDenialError("hello-target-io-observed")
 
 
 def _hello_request_count() -> int:

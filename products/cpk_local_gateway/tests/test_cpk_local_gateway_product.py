@@ -416,6 +416,177 @@ class CpkLocalGatewayProductTests(unittest.TestCase):
                     )
                 self.assertIs(raised.exception.code, expected_code)
 
+    def test_gateway_denial_matrix_precedes_http_and_postgres_target_io(self) -> None:
+        from control_plane_kit_servers_cpk_local_gateway import (
+            Ed25519GatewayProbeVerifier,
+            GatewayConfiguration,
+            GatewayProbeReplayCache,
+            create_app,
+        )
+
+        private_key, public_key = _ed25519_keys()
+        forged_key, _ = _ed25519_keys()
+        now = 1_750_000_000
+        requests = (
+            GatewayProbeRequest(
+                GatewayProbeCommandKind.HTTP_STATUS,
+                GatewayTargetId("hello.internal"),
+                "/",
+            ),
+            GatewayProbeRequest(
+                GatewayProbeCommandKind.POSTGRES_SELECT_ONE,
+                GatewayTargetId("postgres.postgres"),
+            ),
+        )
+        gateway = GatewayConfiguration.from_target_map(
+            {
+                "hello.internal": {
+                    "protocol": "http",
+                    "url": "http://hello:8000",
+                },
+                "postgres.postgres": {
+                    "protocol": "postgres",
+                    "host": "postgres",
+                    "port": 5432,
+                },
+            }
+        )
+
+        def verifier() -> Ed25519GatewayProbeVerifier:
+            return Ed25519GatewayProbeVerifier(
+                issuer=ISSUER,
+                audience=AUDIENCE,
+                gateway_node_id=GATEWAY_NODE_ID,
+                public_keys={KEY_ID: public_key},
+                replay_cache=GatewayProbeReplayCache(clock=lambda: now),
+                clock=lambda: now,
+            )
+
+        for probe in requests:
+            base = _grant(probe, now=now)
+            different_target = (
+                GatewayProbeRequest(
+                    GatewayProbeCommandKind.POSTGRES_SELECT_ONE,
+                    GatewayTargetId("postgres.postgres"),
+                )
+                if probe.kind is GatewayProbeCommandKind.HTTP_STATUS
+                else GatewayProbeRequest(
+                    GatewayProbeCommandKind.HTTP_STATUS,
+                    GatewayTargetId("hello.internal"),
+                    "/",
+                )
+            )
+            cases = (
+                ("missing", None, _request_body(probe)),
+                ("malformed", "CPK-Gateway malformed", _request_body(probe)),
+                (
+                    "forged",
+                    f"CPK-Gateway {_signed_capability(forged_key, base)}",
+                    _request_body(probe),
+                ),
+                (
+                    "wrong-issuer",
+                    "CPK-Gateway "
+                    + _signed_capability(
+                        private_key,
+                        replace_grant(base, issuer="urn:other:issuer"),
+                    ),
+                    _request_body(probe),
+                ),
+                (
+                    "wrong-key",
+                    "CPK-Gateway "
+                    + _signed_capability(
+                        private_key,
+                        replace_grant(base, key_id="unknown-key"),
+                    ),
+                    _request_body(probe),
+                ),
+                (
+                    "wrong-audience",
+                    "CPK-Gateway "
+                    + _signed_capability(
+                        private_key,
+                        replace_grant(base, audience="gateway:other:gateway"),
+                    ),
+                    _request_body(probe),
+                ),
+                (
+                    "wrong-workspace",
+                    "CPK-Gateway "
+                    + _signed_capability(
+                        private_key,
+                        replace_grant(base, workspace_id="workspace-other"),
+                    ),
+                    _request_body(probe),
+                ),
+                (
+                    "wrong-gateway",
+                    "CPK-Gateway "
+                    + _signed_capability(
+                        private_key,
+                        replace_grant(base, gateway_node_id="gateway-other"),
+                    ),
+                    _request_body(probe),
+                ),
+                (
+                    "wrong-target",
+                    f"CPK-Gateway {_signed_capability(private_key, base)}",
+                    _request_body(different_target),
+                ),
+                (
+                    "wrong-path-or-body",
+                    f"CPK-Gateway {_signed_capability(private_key, base)}",
+                    b'{"kind":"http-status","path":"/wrong","target_id":"hello.internal"}'
+                    if probe.kind is GatewayProbeCommandKind.HTTP_STATUS
+                    else b'{"kind":"postgres-select-one","path":"/wrong","target_id":"postgres.postgres"}',
+                ),
+                (
+                    "expired",
+                    "CPK-Gateway "
+                    + _signed_capability(
+                        private_key,
+                        replace_grant(
+                            base,
+                            issued_at=now - 80,
+                            expires_at=now - 20,
+                        ),
+                    ),
+                    _request_body(probe),
+                ),
+                (
+                    "not-yet-valid",
+                    "CPK-Gateway "
+                    + _signed_capability(
+                        private_key,
+                        replace_grant(
+                            base,
+                            issued_at=now + 20,
+                            expires_at=now + 80,
+                        ),
+                    ),
+                    _request_body(probe),
+                ),
+            )
+            for label, authorization, body in cases:
+                with self.subTest(probe=probe.kind.value, case=label):
+                    headers = {"Content-Type": "application/json"}
+                    if authorization is not None:
+                        headers["Authorization"] = authorization
+                    with patch(
+                        "control_plane_kit_servers_cpk_local_gateway.server.execute_probe"
+                    ) as execute:
+                        response = TestClient(
+                            create_app(gateway, verifier=verifier())
+                        ).post("/cpk/probes", content=body, headers=headers)
+
+                    self.assertIn(response.status_code, {400, 401, 403})
+                    self.assertIn(
+                        response.json()["code"],
+                        {"gateway.capability-rejected", "gateway.probe-rejected"},
+                    )
+                    execute.assert_not_called()
+
     def test_gateway_replay_cache_allows_exactly_one_concurrent_request(self) -> None:
         from control_plane_kit_servers_cpk_local_gateway import (
             Ed25519GatewayProbeVerifier,

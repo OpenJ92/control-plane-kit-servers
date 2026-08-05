@@ -209,6 +209,8 @@ class Ed25519GatewayProbeVerifier:
             grant.issuer != self.issuer
             or grant.audience != self.audience
             or grant.gateway_node_id != self.gateway_node_id
+            or grant.audience
+            != f"gateway:{grant.workspace_id}:{grant.gateway_node_id}"
         ):
             raise _rejected(DelegatedGatewayProbeVerificationCode.AUDIENCE_MISMATCH)
 
