@@ -2151,6 +2151,10 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             controller.count("_assert_public_overlay_transition_evidence("),
             4,
         )
+        self.assertEqual(
+            controller.count('"wait-for-public-ingress-ready",'),
+            2,
+        )
         self.assertIn("_assert_owned_cloudflare_epoch_states", controller)
         self.assertIn("_assert_removed_ingress_token_versions_revoked", controller)
         self.assertIn('"intent": intent,', controller)

@@ -992,7 +992,10 @@ def _run_gateway_rotation_public_overlay_lifecycle(
     _assert_public_overlay_transition_evidence(
         workflow,
         public_on,
-        expected_ingress_operation="allocate-public-ingress",
+        expected_ingress_operations={
+            "allocate-public-ingress",
+            "wait-for-public-ingress-ready",
+        },
         expected_connector_operations={"start-node", "wait-for-healthy"},
     )
     _checkpoint_cloudflare_phase(
@@ -1053,7 +1056,7 @@ def _run_gateway_rotation_public_overlay_lifecycle(
     _assert_public_overlay_transition_evidence(
         workflow,
         public_off,
-        expected_ingress_operation="remove-public-ingress",
+        expected_ingress_operations={"remove-public-ingress"},
         expected_connector_operations={"stop-node", "remove-node-resource"},
     )
     _checkpoint_cloudflare_phase(
@@ -1110,7 +1113,10 @@ def _run_gateway_rotation_public_overlay_lifecycle(
     _assert_public_overlay_transition_evidence(
         workflow,
         public_on_again,
-        expected_ingress_operation="allocate-public-ingress",
+        expected_ingress_operations={
+            "allocate-public-ingress",
+            "wait-for-public-ingress-ready",
+        },
         expected_connector_operations={"start-node", "wait-for-healthy"},
     )
     _checkpoint_cloudflare_phase(
@@ -1195,7 +1201,7 @@ def _assert_public_overlay_transition_evidence(
     workflow: HostedWorkflow,
     transition: Any,
     *,
-    expected_ingress_operation: str,
+    expected_ingress_operations: set[str],
     expected_connector_operations: set[str],
 ) -> None:
     detail = workflow.read_plan_detail(transition.plan_id)
@@ -1236,7 +1242,7 @@ def _assert_public_overlay_transition_evidence(
         if node_id in workload_node_ids and kind in mutation_kinds:
             forbidden_workload_mutations.append((kind, str(node_id)))
 
-    if observed_ingress_operations != {expected_ingress_operation}:
+    if observed_ingress_operations != expected_ingress_operations:
         raise RuntimeError(
             "public overlay plan had unexpected ingress operations: "
             f"{sorted(observed_ingress_operations)}"
