@@ -158,6 +158,20 @@ class CoordinateGenerationTests(unittest.TestCase):
             ):
                 module.product_source_commit(path, "cpk-local-gateway")
 
+    def test_secrets_server_source_tracks_secrets_upstream(self) -> None:
+        module = load_product_image_script_module()
+        document = json.loads(module.COORDINATES.read_text(encoding="utf-8"))
+        secrets_server = next(
+            product
+            for product in document["products"]
+            if product["product_id"] == "secrets-server"
+        )
+
+        self.assertEqual(
+            secrets_server["source_commit"],
+            document["upstreams"]["control_plane_kit_secrets_commit"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
