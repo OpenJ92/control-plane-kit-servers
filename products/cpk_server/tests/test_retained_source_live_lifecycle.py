@@ -145,6 +145,56 @@ class RetainedSourceLiveLifecycleTests(unittest.TestCase):
                 )
             self.assertNotIn(forbidden, str(raised.exception))
 
+    def test_public_gateway_probe_retries_only_transient_dns_with_fresh_ids(
+        self,
+    ) -> None:
+        with _controller_module() as controller:
+            workflow = MagicMock()
+            workflow.workspace_id = "workspace-retained"
+            workflow.request_gateway_probe_http.side_effect = (
+                _gateway_probe_result(
+                    status="failed",
+                    target_id="hello.internal",
+                    result_code="gateway-endpoint-unresolved-endpoint",
+                    key_id="key-b",
+                ),
+                _gateway_probe_result(
+                    status="succeeded",
+                    target_id="hello.internal",
+                    result_code="probe-succeeded",
+                    key_id="key-b",
+                ),
+            )
+            workflow.request_gateway_probe_mcp.return_value = (
+                _gateway_probe_result(
+                    status="succeeded",
+                    target_id="postgres.postgres",
+                    result_code="probe-succeeded",
+                    key_id="key-b",
+                )
+            )
+
+            with patch.object(controller.time, "sleep") as sleep:
+                controller._assert_rotation_gateway_probe_pair(
+                    workflow,
+                    current_graph_id="graph-current",
+                    expected_key_id="key-b",
+                    access_path=(
+                        controller.GatewayProbeAccessPath.NAMED_PUBLIC_INGRESS
+                    ),
+                    request_prefix="public-before-restart",
+                )
+
+            self.assertEqual(workflow.request_gateway_probe_http.call_count, 2)
+            request_ids = [
+                call.kwargs["request_id"]
+                for call in workflow.request_gateway_probe_http.call_args_list
+            ]
+            self.assertEqual(len(set(request_ids)), 2)
+            self.assertTrue(request_ids[0].endswith(":attempt-1"))
+            self.assertTrue(request_ids[1].endswith(":attempt-2"))
+            sleep.assert_called_once()
+
     def test_canonical_mcp_retained_read_uses_shared_route(self) -> None:
         with _hosted_activity_module() as hosted:
             workflow = hosted.HostedWorkflow(
@@ -363,6 +413,23 @@ def _retained_item() -> dict[str, object]:
                 "removed_at": "2026-08-05T10:02:00Z",
             }
         ],
+    }
+
+
+def _gateway_probe_result(
+    *,
+    status: str,
+    target_id: str,
+    result_code: str,
+    key_id: str,
+) -> dict[str, object]:
+    return {
+        "gateway_probe": {
+            "status": status,
+            "target_id": target_id,
+            "result_code": result_code,
+            "grant": {"key_id": key_id},
+        }
     }
 
 
