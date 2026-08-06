@@ -1465,14 +1465,22 @@ def _assert_rotation_gateway_probe(
     for attempt in attempts:
         result = request(f"{request_id_prefix}:attempt-{attempt}")
         probe = result.get("gateway_probe")
-        transient_dns = (
+        evidence = probe.get("evidence") if isinstance(probe, dict) else None
+        transient_public_readiness = (
             isinstance(probe, dict)
             and probe.get("status") == "failed"
-            and probe.get("result_code")
-            == "gateway-endpoint-unresolved-endpoint"
+            and (
+                probe.get("result_code")
+                == "gateway-endpoint-unresolved-endpoint"
+                or (
+                    probe.get("result_code") == "gateway-transport-failed"
+                    and isinstance(evidence, dict)
+                    and evidence.get("http_status") == 530
+                )
+            )
         )
         if (
-            transient_dns
+            transient_public_readiness
             and attempt < PUBLIC_GATEWAY_PROBE_POLICY.maximum_attempts
         ):
             continue
