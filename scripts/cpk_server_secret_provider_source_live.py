@@ -42,6 +42,7 @@ from control_plane_kit_core.products import (
     ProductInstanceConfiguration,
     instantiate_product,
 )
+from control_plane_kit_core.public_ingress import PublicIngressLifecycle
 from control_plane_kit_core.runtime_authority import RuntimeAuthorityReference
 from control_plane_kit_core.runtime_effects import GatewayTargetId
 from control_plane_kit_core.topology import DeploymentGraph, compile_topology
@@ -2889,6 +2890,7 @@ def _run_cloudflare_tunnel_custody(
         workspace_id=workspace_id,
         authority_ref=RuntimeAuthorityReference(LOCAL_DOCKER_AUTHORITY_REF),
         public_hostname=public_hostname,
+        lifecycle=PublicIngressLifecycle.RETAINED,
     )
     private_graph = _single_hello_graph(
         hello_document,
@@ -2916,6 +2918,11 @@ def _run_cloudflare_tunnel_custody(
         public_hostname,
         workspace_id=workspace_id,
     )
+    _assert_retained_public_ingress_read(
+        workflow,
+        reservation_status="bound",
+        realization_statuses=("active",),
+    )
     _sync_runtime_networks(server_container, workspace_id=workspace_id)
     private_probe = workflow.request_gateway_probe_http(
         request_id=f"{workspace_id}:gateway-probe:first",
@@ -2941,6 +2948,11 @@ def _run_cloudflare_tunnel_custody(
     )
     _assert_activity_mentions(workflow, public_off.run_id, "cloudflared-gateway")
     _assert_public_gateway_unreachable(public_hostname)
+    _assert_retained_public_ingress_read(
+        workflow,
+        reservation_status="reserved",
+        realization_statuses=("removed",),
+    )
     _assert_owned_cloudflare_resources_removed(
         operations_database_url,
         workspace_id=workspace_id,
@@ -2967,6 +2979,11 @@ def _run_cloudflare_tunnel_custody(
         public_hostname,
         workspace_id=workspace_id,
     )
+    _assert_retained_public_ingress_read(
+        workflow,
+        reservation_status="bound",
+        realization_statuses=("removed", "active"),
+    )
     _disconnect_runtime_networks(server_container, workspace_id=workspace_id)
     removed = workflow.run_approved_transition(
         title="Cloudflare custody final teardown",
@@ -2982,6 +2999,11 @@ def _run_cloudflare_tunnel_custody(
     )
     _assert_activity_mentions(workflow, removed.run_id, "cloudflared-gateway")
     _assert_public_gateway_unreachable(public_hostname)
+    _assert_retained_public_ingress_read(
+        workflow,
+        reservation_status="reserved",
+        realization_statuses=("removed", "removed"),
+    )
     _assert_no_runtime_networks(workspace_id)
     _assert_owned_cloudflare_resources_removed(
         operations_database_url,
@@ -2999,6 +3021,34 @@ def _run_cloudflare_tunnel_custody(
         workflow,
         (bootstrap_dir / "cloudflare-api-token").read_text(encoding="utf-8"),
     )
+
+
+def _assert_retained_public_ingress_read(
+    workflow: HostedWorkflow,
+    *,
+    reservation_status: str,
+    realization_statuses: tuple[str, ...],
+) -> None:
+    readback = workflow.read_public_ingress_resources()
+    items = readback.get("items")
+    if not isinstance(items, list) or len(items) != 1:
+        raise RuntimeError("retained public ingress readback was malformed")
+    item = items[0]
+    if not isinstance(item, dict):
+        raise RuntimeError("retained public ingress item was malformed")
+    realizations = item.get("realizations")
+    if not isinstance(realizations, list):
+        raise RuntimeError("retained public ingress realizations were malformed")
+    if (
+        item.get("lifecycle") != PublicIngressLifecycle.RETAINED.value
+        or item.get("status") != reservation_status
+        or tuple(value.get("status") for value in realizations) != realization_statuses
+    ):
+        raise RuntimeError("retained public ingress readback changed lifecycle truth")
+    encoded = repr(readback).lower()
+    for forbidden in ("cloudflare", "dns_record_id", "tunnel_id", "token"):
+        if forbidden in encoded:
+            raise RuntimeError("retained public ingress readback leaked provider material")
 
 
 def _checkpoint_cloudflare_phase(

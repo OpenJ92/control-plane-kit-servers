@@ -250,9 +250,8 @@ def _decode_mcp_message(
         return _error(400, "MCP operation name must be text")
     if not isinstance(arguments, Mapping):
         return _error(400, "MCP arguments must be an object")
-    try:
-        route = composition.http_api.route(name)
-    except ValueError:
+    route = _mcp_route(composition, method, name)
+    if route is None:
         return _error(404, "unknown MCP operation")
     if method == "tools/call" and route.safety is HttpOperationSafety.READ_ONLY:
         return _error(400, "tools/call requires a command route")
@@ -266,6 +265,25 @@ def _decode_mcp_message(
         payload=dict(arguments),
         principal=principal,
     )
+
+
+def _mcp_route(
+    composition: CpkServerComposition,
+    method: object,
+    name: str,
+) -> HttpApiRouteContract | None:
+    bindings = (
+        composition.handoff.projection_parity.projections
+        if method == "resources/read"
+        else composition.handoff.command_parity.commands
+    )
+    for binding in bindings:
+        if binding.mcp_tool_name == name:
+            return composition.http_api.route(binding.http_route_id)
+    try:
+        return composition.http_api.route(name)
+    except ValueError:
+        return None
 
 
 def _message_id(message: Mapping[str, object]) -> object:

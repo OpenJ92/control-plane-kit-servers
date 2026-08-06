@@ -73,8 +73,14 @@ from control_plane_kit_operations import (
     IngressAuthorityProviderKind,
     IngressAuthorityRegistrationService,
     IngressRealizationAdapter,
+    IngressReservationCoordinates,
+    IngressReservationObservation,
+    IngressResourcePresence,
+    IngressTunnelObservation,
     OperationCommandService,
     ProductRegistrationService,
+    PublicIngressReservationReleasePlanningService,
+    RetainedIngressDeactivationResult,
     RuntimeAuthorityRegistrationService,
     RuntimeDispatcherBootstrapConfiguration,
     RuntimeDispatcherBootstrapError,
@@ -797,6 +803,11 @@ def _operations_application(
             image_pull_authorities=ImagePullAuthorityRegistrationService(unit_of_work),
             runtime_authorities=RuntimeAuthorityRegistrationService(unit_of_work),
             ingress_authorities=IngressAuthorityRegistrationService(unit_of_work),
+            ingress_reservation_releases=PublicIngressReservationReleasePlanningService(
+                unit_of_work,
+                clock=_clock,
+                id_factory=_id,
+            ),
             secret_providers=SecretProviderRegistrationService(unit_of_work),
             delegation_signing_keys=DelegationSigningKeyRegistrationService(
                 unit_of_work
@@ -1256,6 +1267,7 @@ def _cloudflare_ingress_interpreter(
     try:
         from control_plane_kit_interpreters.cloudflare import (
             CloudflareNamedIngressInterpreter,
+            CloudflareOwnedHostnameReservation,
             CloudflareOwnedIngressResources,
             CloudflareZoneAuthority,
         )
@@ -1293,13 +1305,7 @@ def _cloudflare_ingress_interpreter(
         ):
             return self._inner.create(
                 ingress,
-                authority=CloudflareZoneAuthority(
-                    account_id=authority.account_id,
-                    zone_id=authority.zone_id,
-                    zone_name=authority.zone_name,
-                    api_token_ref=authority.api_token_ref,
-                    allowed_hostname_pattern=authority.allowed_hostname_pattern,
-                ),
+                authority=self._authority(authority),
                 allocation_name=allocation_name,
                 origin_service_url=origin_service_url,
                 secret_resolution_grant=secret_resolution_grant,
@@ -1315,21 +1321,105 @@ def _cloudflare_ingress_interpreter(
             secret_custody_grant,
         ) -> None:
             return self._inner.teardown(
-                authority=CloudflareZoneAuthority(
-                    account_id=authority.account_id,
-                    zone_id=authority.zone_id,
-                    zone_name=authority.zone_name,
-                    api_token_ref=authority.api_token_ref,
-                    allowed_hostname_pattern=authority.allowed_hostname_pattern,
-                ),
-                resources=CloudflareOwnedIngressResources(
-                    tunnel_id=resources.tunnel_id,
-                    dns_record_id=resources.dns_record_id,
-                    tunnel_name=resources.tunnel_name,
-                    hostname=resources.hostname,
-                ),
+                authority=self._authority(authority),
+                resources=self._resources(resources),
                 secret_resolution_grant=secret_resolution_grant,
                 secret_custody_grant=secret_custody_grant,
+            )
+
+        def rebind(
+            self,
+            ingress,
+            *,
+            authority: CloudflareZoneIngressAuthority,
+            reservation: IngressReservationCoordinates,
+            allocation_name: str,
+            origin_service_url: str,
+            secret_resolution_grant,
+            secret_custody_grant,
+        ):
+            return self._inner.rebind(
+                ingress,
+                authority=self._authority(authority),
+                reservation=self._reservation(reservation),
+                allocation_name=allocation_name,
+                origin_service_url=origin_service_url,
+                secret_resolution_grant=secret_resolution_grant,
+                secret_custody_grant=secret_custody_grant,
+            )
+
+        def deactivate_preserving_reservation(
+            self,
+            *,
+            authority: CloudflareZoneIngressAuthority,
+            reservation: IngressReservationCoordinates,
+            resources: CloudflareOwnedIngressResource,
+            secret_resolution_grant,
+            secret_custody_grant,
+        ) -> RetainedIngressDeactivationResult:
+            result = self._inner.deactivate_preserving_reservation(
+                authority=self._authority(authority),
+                reservation=self._reservation(reservation),
+                resources=self._resources(resources),
+                secret_resolution_grant=secret_resolution_grant,
+                secret_custody_grant=secret_custody_grant,
+            )
+            return RetainedIngressDeactivationResult(
+                reservation=self._reservation_observation(result.reservation),
+                tunnel=IngressTunnelObservation(
+                    tunnel_id=result.tunnel.tunnel_id,
+                    presence=IngressResourcePresence(result.tunnel.presence.value),
+                ),
+            )
+
+        def release_reservation(
+            self,
+            *,
+            authority: CloudflareZoneIngressAuthority,
+            reservation: IngressReservationCoordinates,
+            secret_resolution_grant,
+        ) -> IngressReservationObservation:
+            result = self._inner.release_reservation(
+                authority=self._authority(authority),
+                reservation=self._reservation(reservation),
+                secret_resolution_grant=secret_resolution_grant,
+            )
+            return self._reservation_observation(result)
+
+        @staticmethod
+        def _authority(authority: CloudflareZoneIngressAuthority):
+            return CloudflareZoneAuthority(
+                account_id=authority.account_id,
+                zone_id=authority.zone_id,
+                zone_name=authority.zone_name,
+                api_token_ref=authority.api_token_ref,
+                allowed_hostname_pattern=authority.allowed_hostname_pattern,
+            )
+
+        @staticmethod
+        def _reservation(reservation: IngressReservationCoordinates):
+            return CloudflareOwnedHostnameReservation(
+                dns_record_id=reservation.dns_record_id,
+                hostname=reservation.hostname,
+                expected_tunnel_id=reservation.expected_tunnel_id,
+            )
+
+        @staticmethod
+        def _resources(resources: CloudflareOwnedIngressResource):
+            return CloudflareOwnedIngressResources(
+                tunnel_id=resources.tunnel_id,
+                dns_record_id=resources.dns_record_id,
+                tunnel_name=resources.tunnel_name,
+                hostname=resources.hostname,
+            )
+
+        @staticmethod
+        def _reservation_observation(result) -> IngressReservationObservation:
+            return IngressReservationObservation(
+                dns_record_id=result.dns_record_id,
+                hostname=result.hostname,
+                presence=IngressResourcePresence(result.presence.value),
+                tunnel_id=result.tunnel_id,
             )
 
         def __repr__(self) -> str:
