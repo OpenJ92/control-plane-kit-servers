@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import importlib.util
 from pathlib import Path
+import socket
 import sys
 import unittest
 from unittest.mock import MagicMock, patch
@@ -98,6 +99,51 @@ class RetainedSourceLiveLifecycleTests(unittest.TestCase):
                     reservation_status="reserved",
                     realization_statuses=("removed",),
                 )
+
+    def test_public_hostname_resolution_is_required_and_address_safe(self) -> None:
+        with _controller_module() as controller:
+            with patch.object(
+                controller.socket,
+                "getaddrinfo",
+                return_value=[
+                    (
+                        socket.AF_INET,
+                        socket.SOCK_STREAM,
+                        socket.IPPROTO_TCP,
+                        "",
+                        ("192.0.2.1", 443),
+                    )
+                ],
+            ) as resolve:
+                controller._assert_public_hostname_resolves(
+                    "retained.example.invalid"
+                )
+
+            resolve.assert_called_once_with(
+                "retained.example.invalid",
+                443,
+                type=socket.SOCK_STREAM,
+            )
+
+            with patch.object(
+                controller.socket,
+                "getaddrinfo",
+                return_value=[],
+            ), self.assertRaisesRegex(RuntimeError, "did not resolve"):
+                controller._assert_public_hostname_resolves(
+                    "retained.example.invalid"
+                )
+
+            forbidden = "203.0.113.77"
+            with patch.object(
+                controller.socket,
+                "getaddrinfo",
+                side_effect=socket.gaierror(forbidden),
+            ), self.assertRaises(RuntimeError) as raised:
+                controller._assert_public_hostname_resolves(
+                    "retained.example.invalid"
+                )
+            self.assertNotIn(forbidden, str(raised.exception))
 
     def test_canonical_mcp_retained_read_uses_shared_route(self) -> None:
         with _hosted_activity_module() as hosted:
