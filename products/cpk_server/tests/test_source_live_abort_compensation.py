@@ -274,6 +274,7 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 workspace_id="workspace-a",
             )
             authoritative_verify.assert_called_once()
+            self.assertEqual(workflow.release_reservation_statuses, ["reserved"])
             connector_verify.assert_called_once()
             custody_verify.assert_called_once_with(
                 (resource,),
@@ -738,6 +739,7 @@ class RecordingWorkflow:
         self.fail_transition = fail_transition
         self.transition_graph_names: list[str] = []
         self.transition_expected_desired_ids: list[str] = []
+        self.release_reservation_statuses: list[str] = []
 
     def wait_ready(self) -> None:
         return None
@@ -761,6 +763,39 @@ class RecordingWorkflow:
             plan_id="plan-cleanup",
             current_graph_id="graph-empty",
             desired_graph_id="graph-empty",
+        )
+
+    def read_public_ingress_resources(self) -> dict[str, object]:
+        return {
+            "workspace_id": "workspace-a",
+            "items": [
+                {
+                    "reservation_id": "reservation-exact",
+                    "ingress_id": "gateway-a",
+                    "lifecycle": "retained",
+                    "status": "reserved",
+                    "version": 2,
+                    "realizations": [{"epoch": 1, "status": "removed"}],
+                }
+            ],
+        }
+
+    def read_public_ingress_resources_mcp(self) -> dict[str, object]:
+        return self.read_public_ingress_resources()
+
+    def run_approved_public_ingress_reservation_release(
+        self,
+        *,
+        title: str,
+        reservation: dict[str, object],
+    ):
+        del title
+        self.release_reservation_statuses.append(str(reservation["status"]))
+        return self.controller.HostedReleaseResult(
+            plan_id="plan-release",
+            approval_id="approval-release",
+            run_id="run-release",
+            current_graph_id="graph-empty",
         )
 
 
