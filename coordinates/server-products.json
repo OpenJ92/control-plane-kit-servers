@@ -10,36 +10,36 @@
       "product_id": "cpk-server",
       "owner_directory": "products/cpk_server",
       "descriptor_path": "products/cpk_server/product.cpk.json",
-      "source_commit": "606f8e74d07873f070d4a06f2968d705034173f6",
+      "source_commit": "37cabc3243269e63750cc23b298706e8297b1ee3",
       "image": {
         "registry": "ghcr.io",
         "repository": "openj92/control-plane-kit-servers/cpk-server",
-        "tag": "harden-secrets-1205-cpk-server",
-        "digest": "sha256:141534c254c0fb2291db3b13bfc0c26ffed70a604e7d47009ad682ef9368dd8d"
+        "tag": "harden-auth-gateway-1258-cpk-server",
+        "digest": "sha256:8615b89ed01898161feddd53c949e0dfa1227036ea0a52eba20cc2f9fae63793"
       }
     },
     {
       "product_id": "cpk-server-docker",
       "owner_directory": "products/cpk_server",
       "descriptor_path": "products/cpk_server/product.docker.cpk.json",
-      "source_commit": "606f8e74d07873f070d4a06f2968d705034173f6",
+      "source_commit": "37cabc3243269e63750cc23b298706e8297b1ee3",
       "image": {
         "registry": "ghcr.io",
         "repository": "openj92/control-plane-kit-servers/cpk-server",
-        "tag": "harden-secrets-1205-cpk-server",
-        "digest": "sha256:141534c254c0fb2291db3b13bfc0c26ffed70a604e7d47009ad682ef9368dd8d"
+        "tag": "harden-auth-gateway-1258-cpk-server",
+        "digest": "sha256:8615b89ed01898161feddd53c949e0dfa1227036ea0a52eba20cc2f9fae63793"
       }
     },
     {
       "product_id": "cpk-server-docker-cloudflare",
       "owner_directory": "products/cpk_server",
       "descriptor_path": "products/cpk_server/product.docker-cloudflare.cpk.json",
-      "source_commit": "606f8e74d07873f070d4a06f2968d705034173f6",
+      "source_commit": "37cabc3243269e63750cc23b298706e8297b1ee3",
       "image": {
         "registry": "ghcr.io",
         "repository": "openj92/control-plane-kit-servers/cpk-server",
-        "tag": "harden-secrets-1205-cpk-server",
-        "digest": "sha256:141534c254c0fb2291db3b13bfc0c26ffed70a604e7d47009ad682ef9368dd8d"
+        "tag": "harden-auth-gateway-1258-cpk-server",
+        "digest": "sha256:8615b89ed01898161feddd53c949e0dfa1227036ea0a52eba20cc2f9fae63793"
       }
     },
     {
@@ -82,12 +82,12 @@
       "product_id": "cpk-local-gateway",
       "owner_directory": "products/cpk_local_gateway",
       "descriptor_path": "products/cpk_local_gateway/product.cpk.json",
-      "source_commit": "31c569b6e90d139ea658cccb1b19b8e84c4172c2",
+      "source_commit": "37cabc3243269e63750cc23b298706e8297b1ee3",
       "image": {
         "registry": "ghcr.io",
         "repository": "openj92/control-plane-kit-servers/cpk-local-gateway",
-        "tag": "workspace-binding-1431",
-        "digest": "sha256:6fe6e42c7e4996be1708b3f97983adfae625fd055119557b22f396410e676477"
+        "tag": "harden-auth-gateway-1258-gateway",
+        "digest": "sha256:b7cca6d0556eb5b68ef92386bc9b8e198ee62ccf10a7304b076a07283f821792"
       }
     },
     {
