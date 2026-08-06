@@ -206,6 +206,46 @@ class RetainedSourceLiveLifecycleTests(unittest.TestCase):
                 )
             )
 
+    def test_public_gateway_probe_retries_cloudflare_tunnel_warmup_530(self) -> None:
+        with _controller_module() as controller:
+            request_ids: list[str] = []
+
+            def request(request_id: str) -> dict[str, object]:
+                request_ids.append(request_id)
+                if len(request_ids) == 1:
+                    return _gateway_probe_result(
+                        status="failed",
+                        target_id="hello.internal",
+                        result_code="gateway-transport-failed",
+                        key_id="key-b",
+                        evidence={"http_status": 530},
+                    )
+                return _gateway_probe_result(
+                    status="succeeded",
+                    target_id="hello.internal",
+                    result_code="probe-succeeded",
+                    key_id="key-b",
+                )
+
+            with patch.object(
+                controller,
+                "verification_attempts",
+                return_value=iter((1, 2)),
+            ):
+                controller._assert_rotation_gateway_probe(
+                    request,
+                    request_id_prefix="workspace-retained:public-restored:http",
+                    expected_key_id="key-b",
+                    access_path=(
+                        controller.GatewayProbeAccessPath.NAMED_PUBLIC_INGRESS
+                    ),
+                )
+
+            self.assertEqual(len(request_ids), 2)
+            self.assertEqual(len(set(request_ids)), 2)
+            self.assertTrue(request_ids[0].endswith(":attempt-1"))
+            self.assertTrue(request_ids[1].endswith(":attempt-2"))
+
     def test_public_gateway_probe_does_not_retry_other_failures(self) -> None:
         with _controller_module() as controller:
             workflow = MagicMock()
@@ -472,6 +512,7 @@ def _gateway_probe_result(
     target_id: str,
     result_code: str,
     key_id: str,
+    evidence: dict[str, object] | None = None,
 ) -> dict[str, object]:
     return {
         "gateway_probe": {
@@ -479,6 +520,7 @@ def _gateway_probe_result(
             "target_id": target_id,
             "result_code": result_code,
             "grant": {"key_id": key_id},
+            "evidence": evidence or {},
         }
     }
 
