@@ -195,6 +195,37 @@ class RetainedSourceLiveLifecycleTests(unittest.TestCase):
             self.assertTrue(request_ids[1].endswith(":attempt-2"))
             sleep.assert_called_once()
 
+    def test_public_gateway_probe_does_not_retry_other_failures(self) -> None:
+        with _controller_module() as controller:
+            workflow = MagicMock()
+            workflow.workspace_id = "workspace-retained"
+            workflow.request_gateway_probe_http.return_value = (
+                _gateway_probe_result(
+                    status="failed",
+                    target_id="hello.internal",
+                    result_code="gateway-target-denied",
+                    key_id="key-b",
+                )
+            )
+
+            with (
+                patch.object(controller.time, "sleep") as sleep,
+                self.assertRaises(RuntimeError),
+            ):
+                controller._assert_rotation_gateway_probe_pair(
+                    workflow,
+                    current_graph_id="graph-current",
+                    expected_key_id="key-b",
+                    access_path=(
+                        controller.GatewayProbeAccessPath.NAMED_PUBLIC_INGRESS
+                    ),
+                    request_prefix="public-before-restart",
+                )
+
+            workflow.request_gateway_probe_http.assert_called_once()
+            workflow.request_gateway_probe_mcp.assert_not_called()
+            sleep.assert_not_called()
+
     def test_canonical_mcp_retained_read_uses_shared_route(self) -> None:
         with _hosted_activity_module() as hosted:
             workflow = hosted.HostedWorkflow(

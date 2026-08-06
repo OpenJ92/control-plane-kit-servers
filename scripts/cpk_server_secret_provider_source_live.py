@@ -137,6 +137,8 @@ GATEWAY_ROTATION_ISSUER = "cpk-source-live-rotation"
 GATEWAY_ROTATION_KEY_A_ID = "source-live-rotation-key-a"
 GATEWAY_ROTATION_KEY_B_ID = "source-live-rotation-key-b"
 GATEWAY_ROTATION_GRANT_LIFETIME_SECONDS = 10
+PUBLIC_GATEWAY_PROBE_ATTEMPTS = 5
+PUBLIC_GATEWAY_PROBE_RETRY_SECONDS = 2
 
 
 @dataclass(frozen=True)
@@ -1411,11 +1413,9 @@ def _assert_rotation_gateway_probe_pair(
     access_path: GatewayProbeAccessPath,
     request_prefix: str,
 ) -> None:
-    _assert_gateway_probe_key(
-        workflow.request_gateway_probe_http(
-            request_id=(
-                f"{workflow.workspace_id}:gateway-probe:{request_prefix}:http"
-            ),
+    _assert_rotation_gateway_probe(
+        lambda request_id: workflow.request_gateway_probe_http(
+            request_id=request_id,
             expected_current_graph_id=current_graph_id,
             gateway_node_id="gateway",
             kind="http-status",
@@ -1423,21 +1423,55 @@ def _assert_rotation_gateway_probe_pair(
             path="/",
             access_path=access_path,
         ),
-        expected_key_id,
+        request_id_prefix=(
+            f"{workflow.workspace_id}:gateway-probe:{request_prefix}:http"
+        ),
+        expected_key_id=expected_key_id,
+        access_path=access_path,
     )
-    _assert_gateway_probe_key(
-        workflow.request_gateway_probe_mcp(
-            request_id=(
-                f"{workflow.workspace_id}:gateway-probe:{request_prefix}:postgres"
-            ),
+    _assert_rotation_gateway_probe(
+        lambda request_id: workflow.request_gateway_probe_mcp(
+            request_id=request_id,
             expected_current_graph_id=current_graph_id,
             gateway_node_id="gateway",
             kind="postgres-select-one",
             target_id="postgres.postgres",
             access_path=access_path,
         ),
-        expected_key_id,
+        request_id_prefix=(
+            f"{workflow.workspace_id}:gateway-probe:{request_prefix}:postgres"
+        ),
+        expected_key_id=expected_key_id,
+        access_path=access_path,
     )
+
+
+def _assert_rotation_gateway_probe(
+    request: Callable[[str], dict[str, Any]],
+    *,
+    request_id_prefix: str,
+    expected_key_id: str,
+    access_path: GatewayProbeAccessPath,
+) -> None:
+    maximum_attempts = (
+        PUBLIC_GATEWAY_PROBE_ATTEMPTS
+        if access_path is GatewayProbeAccessPath.NAMED_PUBLIC_INGRESS
+        else 1
+    )
+    for attempt in range(1, maximum_attempts + 1):
+        result = request(f"{request_id_prefix}:attempt-{attempt}")
+        probe = result.get("gateway_probe")
+        transient_dns = (
+            isinstance(probe, dict)
+            and probe.get("status") == "failed"
+            and probe.get("result_code")
+            == "gateway-endpoint-unresolved-endpoint"
+        )
+        if transient_dns and attempt < maximum_attempts:
+            time.sleep(PUBLIC_GATEWAY_PROBE_RETRY_SECONDS)
+            continue
+        _assert_gateway_probe_key(result, expected_key_id)
+        return
 
 
 def _assert_named_public_gateway_probes_unavailable(
