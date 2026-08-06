@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 import sys
+from tempfile import TemporaryDirectory
 import unittest
 
 
@@ -125,6 +127,36 @@ class CoordinateGenerationTests(unittest.TestCase):
                     source,
                 )
                 self.assertNotIn("DIGEST=", source)
+
+    def test_published_product_source_commit_comes_from_coordinates(self) -> None:
+        module = load_product_image_script_module()
+
+        self.assertEqual(
+            module.product_source_commit(
+                module.COORDINATES,
+                "cpk-local-gateway",
+            ),
+            "37cabc3243269e63750cc23b298706e8297b1ee3",
+        )
+
+    def test_published_product_source_commit_must_be_canonical(self) -> None:
+        module = load_product_image_script_module()
+        document = json.loads(module.COORDINATES.read_text(encoding="utf-8"))
+        gateway = next(
+            product
+            for product in document["products"]
+            if product["product_id"] == "cpk-local-gateway"
+        )
+        gateway["source_commit"] = "main"
+
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "coordinates.json"
+            path.write_text(json.dumps(document), encoding="utf-8")
+            with self.assertRaisesRegex(
+                module.ProductCoordinateError,
+                "source commit must be canonical",
+            ):
+                module.product_source_commit(path, "cpk-local-gateway")
 
 
 if __name__ == "__main__":

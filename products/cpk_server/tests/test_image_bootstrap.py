@@ -2766,6 +2766,43 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertEqual(7, len(planned_images))
         self.assertTrue(all("@sha256:" in image for image in planned_images))
 
+    def test_published_gateway_gate_confines_source_to_orchestration(self) -> None:
+        wrapper = (
+            ROOT / "scripts" / "cpk_server_gateway_published_live_smoke.sh"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("CPK_GATEWAY_PUBLISHED_LIVE_ACCEPTANCE", wrapper)
+        self.assertIn("CPK_GATEWAY_PUBLISHED_LIVE_PLAN_ONLY", wrapper)
+        self.assertIn("coordinates/server-products.json", wrapper)
+        self.assertIn('docker build -f "$SERVERS_REPO/Dockerfile.test"', wrapper)
+        self.assertIn("python scripts/apply_coordinates.py --check", wrapper)
+        for product_id in (
+            "cpk-server",
+            "secrets-server",
+            "cpk-local-gateway",
+            "cloudflared-connector",
+            "postgres-server",
+            "hello-server",
+        ):
+            self.assertIn(f"coordinate_image {product_id}", wrapper)
+        self.assertIn("product_source_commit cpk-local-gateway", wrapper)
+        self.assertIn("require_digest", wrapper)
+        self.assertIn("docker pull", wrapper)
+        self.assertIn("CPK_CLOUDFLARE_CUSTODY_BUILD_IMAGES=0", wrapper)
+        self.assertIn(
+            "CPK_CLOUDFLARE_CUSTODY_SCENARIO=gateway-key-rotation-overlay",
+            wrapper,
+        )
+        self.assertIn("CPK_SOURCE_LIVE_GATEWAY_IMAGE", wrapper)
+        self.assertIn("CPK_SOURCE_LIVE_GATEWAY_SOURCE_COMMIT", wrapper)
+        self.assertIn(
+            "cpk_server_cloudflare_secret_custody_source_live_smoke.sh",
+            wrapper,
+        )
+        self.assertNotIn("python3", wrapper)
+        self.assertNotIn("cpk-server:source-", wrapper)
+        self.assertNotIn("cpk-local-gateway:source-", wrapper)
+
 
 if __name__ == "__main__":
     unittest.main()
