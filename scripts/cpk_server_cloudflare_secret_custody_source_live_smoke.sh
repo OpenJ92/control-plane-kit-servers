@@ -528,7 +528,6 @@ for secret_file in \
   client-token \
   gateway-private-key.pem \
   gateway-rotation-key-a.pem \
-  gateway-rotation-key-a-public.pem \
   ghcr-pull-credential.json \
   ghcr-token-sentinel \
   postgres-password
