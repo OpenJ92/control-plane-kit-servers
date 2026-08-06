@@ -1048,6 +1048,7 @@ class HostedWorkflow:
             "expected_reservation_version": expected_version,
             "expected_current_graph_id": current_graph_id,
             "expected_current_realized_projection_id": current_projection_id,
+            "expected_desired_graph_revision": desired_revision,
             "idempotency_key": idempotency_key,
         }
         planned = _http(
