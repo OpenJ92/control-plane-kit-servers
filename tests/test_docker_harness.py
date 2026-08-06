@@ -179,7 +179,15 @@ class DockerHarnessTests(unittest.TestCase):
         self.assertIn("develop", workflow)
         self.assertIn("pull_request:", workflow)
         self.assertNotIn("pull_request:\n    branches:", workflow)
+        self.assertIn("packages: read", workflow)
+        self.assertIn("docker/login-action@v3", workflow)
+        self.assertIn("registry: ghcr.io", workflow)
+        self.assertIn("secrets.GITHUB_TOKEN", workflow)
         self.assertIn("./test.sh", workflow)
+        self.assertLess(
+            workflow.index("docker/login-action@v3"),
+            workflow.index("./test.sh"),
+        )
 
 
 if __name__ == "__main__":
