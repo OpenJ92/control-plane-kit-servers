@@ -316,11 +316,16 @@ class RetainedSourceLiveLifecycleTests(unittest.TestCase):
             def http(_base, method, path, payload=None, **_kwargs):
                 calls.append(f"http:{method}:{path}")
                 self.assertEqual(payload["expected_reservation_version"], 3)
+                self.assertEqual(payload["expected_desired_graph_revision"], 7)
                 return plan
 
             def mcp(_base, name, arguments, **_kwargs):
                 calls.append(f"mcp:{name}")
                 self.assertEqual(arguments["reservation_id"], "reservation-1")
+                self.assertEqual(
+                    arguments["expected_desired_graph_revision"],
+                    7,
+                )
                 return replay
 
             with (
