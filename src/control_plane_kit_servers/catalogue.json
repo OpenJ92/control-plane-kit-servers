@@ -12,12 +12,12 @@
     },
     {
       "descriptor_path": "products/cpk_local_gateway/product.cpk.json",
-      "descriptor_sha256": "bf14bcdd4dc4287bc8df93a66397521dcfe4714d97d5f261f851c4e2b3efa69f",
-      "image_digest": "sha256:035de9903e4eddd47560687b524a43e9e20fbbf5923d7d688acfc069018085c9",
-      "image_ref": "ghcr.io/openj92/control-plane-kit-servers/cpk-local-gateway:harden-secrets-1225",
+      "descriptor_sha256": "da4127d0867f676631ef15b11d8423161cf797f944be4066382d61e4a4e6d7f3",
+      "image_digest": "sha256:6fe6e42c7e4996be1708b3f97983adfae625fd055119557b22f396410e676477",
+      "image_ref": "ghcr.io/openj92/control-plane-kit-servers/cpk-local-gateway:workspace-binding-1431",
       "owner_directory": "products/cpk_local_gateway",
       "product_id": "cpk-local-gateway",
-      "source_commit": "b33e9734a7e8216362454e18439e79aa7b0dfc0d",
+      "source_commit": "31c569b6e90d139ea658cccb1b19b8e84c4172c2",
       "status": "completed"
     },
     {
