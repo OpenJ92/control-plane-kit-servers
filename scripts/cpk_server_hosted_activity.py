@@ -32,6 +32,7 @@ from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
 from control_plane_kit_core.public_ingress import (
     IngressAuthorityReference,
     NamedPublicIngress,
+    PublicIngressLifecycle,
     PublicIngressTarget,
 )
 from control_plane_kit_core.products import (
@@ -100,6 +101,13 @@ class HostedWorkflow:
 
     def wait_ready(self, *, policy: VerificationPolicy | None = None) -> None:
         _wait_ready(self.base_url, policy=policy)
+
+    def read_public_ingress_resources(self) -> dict[str, Any]:
+        return _http(
+            self.base_url,
+            "GET",
+            f"/workspaces/{self.workspace_id}/public-ingress-resources",
+        )
 
     def create_workspace(self, *, name: str, actor_id: str = "operator-a") -> str:
         workspace = _http(
@@ -2201,6 +2209,7 @@ def _public_gateway_ingress_graph(
     workspace_id: str,
     authority_ref: RuntimeAuthorityReference | None = None,
     public_hostname: str = PUBLIC_GATEWAY_HOSTNAME,
+    lifecycle: PublicIngressLifecycle = PublicIngressLifecycle.EPHEMERAL,
 ) -> DeploymentGraph:
     hello_product = hello_document.product
     hello = instantiate_product(
@@ -2218,6 +2227,7 @@ def _public_gateway_ingress_graph(
         target_provider_socket="control",
         connector_node_id="cloudflared-gateway",
         public_hostname=public_hostname,
+        lifecycle=lifecycle,
     )
     return compile_topology(
         DeploymentTopology(
@@ -2247,6 +2257,7 @@ def _public_gateway_overlay(
     target_provider_socket: str,
     connector_node_id: str,
     public_hostname: str,
+    lifecycle: PublicIngressLifecycle = PublicIngressLifecycle.EPHEMERAL,
 ) -> tuple[object, object, NamedPublicIngress]:
     gateway_product = gateway_document.product
     cloudflared_product = cloudflared_document.product
@@ -2267,6 +2278,7 @@ def _public_gateway_overlay(
             target_provider_socket=target_provider_socket,
             connector_node_id=connector_node_id,
             public_hostname=public_hostname,
+            lifecycle=lifecycle,
         ),
     )
 
@@ -2357,6 +2369,7 @@ def _named_public_gateway_ingress(
     target_provider_socket: str,
     connector_node_id: str,
     public_hostname: str,
+    lifecycle: PublicIngressLifecycle = PublicIngressLifecycle.EPHEMERAL,
 ) -> NamedPublicIngress:
     return NamedPublicIngress(
         ingress_id="gateway-public",
@@ -2367,6 +2380,7 @@ def _named_public_gateway_ingress(
         connector_node_id=connector_node_id,
         hostname=public_hostname,
         readiness_check_id="ready",
+        lifecycle=lifecycle,
     )
 
 

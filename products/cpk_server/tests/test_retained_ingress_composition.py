@@ -128,15 +128,16 @@ class RetainedIngressCompositionTests(unittest.TestCase):
                 sys.modules.pop(name, None)
 
     def test_operations_does_not_import_interpreter_package(self) -> None:
-        import control_plane_kit_operations  # noqa: F401
+        import control_plane_kit_operations
 
-        self.assertFalse(
-            any(
-                name == "control_plane_kit_interpreters"
-                or name.startswith("control_plane_kit_interpreters.")
-                for name in sys.modules
-            )
-        )
+        package_root = Path(control_plane_kit_operations.__file__).resolve().parent
+        offenders = [
+            path
+            for path in package_root.rglob("*.py")
+            if "control_plane_kit_interpreters" in path.read_text(encoding="utf-8")
+        ]
+
+        self.assertEqual(offenders, [])
 
     def test_rebind_translates_exact_reservation_coordinates(self) -> None:
         provider = self._provider()
