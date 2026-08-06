@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from hashlib import sha256
 import http.client
 import os
@@ -66,6 +67,7 @@ PUBLIC_GATEWAY_HOSTNAME = os.environ.get(
 )
 PUBLIC_GATEWAY_READY_ATTEMPTS = 60
 PUBLIC_GATEWAY_READY_RETRY_SECONDS = 2
+COORDINATOR_WAIT_SLEEP_LIMIT_SECONDS = 5.0
 GATEWAY_PROBE_ISSUER = "cpk-source-live"
 GATEWAY_PROBE_KEY_ID = "source-live-gateway-key"
 
@@ -1959,7 +1961,25 @@ def _execute_to_completion(
         if coordinator_status in {"failed", "unsupported", "uncertain", "blocked"}:
             timeline = _http(base_url, "GET", f"/workspaces/{workspace_id}/activity")
             raise RuntimeError(f"execution stopped with {result}; timeline={timeline}")
+        if coordinator_status == "waiting":
+            delay = _coordinator_retry_delay(result)
+            if delay > 0:
+                time.sleep(delay)
     raise RuntimeError("hosted activity execution did not complete")
+
+
+def _coordinator_retry_delay(result: dict[str, object]) -> float:
+    not_before = result.get("next_attempt_not_before")
+    if not isinstance(not_before, str) or not not_before.strip():
+        raise RuntimeError("waiting coordinator result lacks retry timestamp")
+    try:
+        retry_at = datetime.fromisoformat(not_before.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise RuntimeError("waiting coordinator retry timestamp is malformed") from error
+    if retry_at.tzinfo is None:
+        raise RuntimeError("waiting coordinator retry timestamp lacks timezone")
+    remaining = (retry_at.astimezone(timezone.utc) - datetime.now(timezone.utc)).total_seconds()
+    return min(max(remaining, 0.0), COORDINATOR_WAIT_SLEEP_LIMIT_SECONDS)
 
 
 def _sync_runtime_networks(
