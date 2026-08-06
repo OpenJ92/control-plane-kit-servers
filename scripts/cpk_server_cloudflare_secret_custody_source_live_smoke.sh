@@ -230,7 +230,12 @@ base.joinpath("gateway-rotation-key-a-public.pem").write_bytes(
 )
 '
 
-BOOTSTRAP_DIR="$BOOTSTRAP_DIR" SCENARIO="$SCENARIO" python3 -c '
+docker run --rm \
+  -v "$BOOTSTRAP_DIR:/bootstrap" \
+  -e BOOTSTRAP_DIR=/bootstrap \
+  -e SCENARIO="$SCENARIO" \
+  "$CONTROLLER_IMAGE" \
+  python -c '
 import json
 import os
 from pathlib import Path
@@ -282,7 +287,11 @@ Path(os.environ["BOOTSTRAP_DIR"], "credentials.json").write_text(
 chmod 0400 "$BOOTSTRAP_DIR"/*
 
 CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON="$(
-  WORKSPACE_ID="$WORKSPACE_ID" SCENARIO="$SCENARIO" python3 -c '
+  docker run --rm \
+    -e WORKSPACE_ID="$WORKSPACE_ID" \
+    -e SCENARIO="$SCENARIO" \
+    "$CONTROLLER_IMAGE" \
+    python -c '
 import json
 import os
 
@@ -409,7 +418,12 @@ if [ "$SECRETS_READY" != "1" ]; then
 fi
 
 if command -v gh >/dev/null 2>&1 && GHCR_TOKEN="$(gh auth token 2>/dev/null)"; then
-  BOOTSTRAP_DIR="$BOOTSTRAP_DIR" GHCR_TOKEN="$GHCR_TOKEN" python3 -c '
+  docker run --rm \
+    -v "$BOOTSTRAP_DIR:/bootstrap" \
+    -e BOOTSTRAP_DIR=/bootstrap \
+    -e GHCR_TOKEN="$GHCR_TOKEN" \
+    "$CONTROLLER_IMAGE" \
+    python -c '
 import json
 import os
 from pathlib import Path

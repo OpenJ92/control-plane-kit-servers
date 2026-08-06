@@ -281,6 +281,7 @@ class RetainedSourceLiveLifecycleTests(unittest.TestCase):
     def test_shell_preserves_full_host_inventory_across_exact_cleanup(self) -> None:
         smoke = SMOKE_PATH.read_text(encoding="utf-8")
 
+        self.assertNotIn("python3", smoke)
         self.assertIn("host_inventory()", smoke)
         self.assertIn("assert_host_inventory_unchanged()", smoke)
         self.assertIn('host_inventory "$HOST_INVENTORY_BEFORE"', smoke)
