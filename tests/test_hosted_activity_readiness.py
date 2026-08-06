@@ -9,6 +9,31 @@ from scripts import cpk_server_hosted_activity
 
 
 class HostedActivityReadinessTests(unittest.TestCase):
+    def test_execution_waits_for_durable_coordinator_retry_window(self) -> None:
+        with (
+            patch.object(
+                cpk_server_hosted_activity,
+                "_mcp_tool",
+                side_effect=(
+                    {
+                        "coordinator_status": "waiting",
+                        "next_attempt_not_before": "2099-01-01T00:00:00Z",
+                    },
+                    {"coordinator_status": "completed"},
+                ),
+            ) as execute,
+            patch.object(cpk_server_hosted_activity.time, "sleep") as sleep,
+        ):
+            cpk_server_hosted_activity._execute_to_completion(
+                "http://cpk-server",
+                "cpk-server",
+                "run-a",
+                sync_runtime_networks=False,
+            )
+
+        self.assertEqual(execute.call_count, 2)
+        self.assertEqual(sleep.call_args_list, [call(5.0)])
+
     def test_policy_cadence_occurs_only_between_failed_attempts(self) -> None:
         policy = VerificationPolicy(
             timeout_seconds=3.0,
