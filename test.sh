@@ -38,5 +38,11 @@ docker build -f Dockerfile.test -t "$IMAGE" .
 docker run --rm "$IMAGE"
 docker run --rm "$IMAGE" \
   sh -c 'cd /tmp && python -c "import control_plane_kit_servers; print(\"control-plane-kit-servers import ok\")"'
+SECRETS_IMAGE="$(docker run --rm "$IMAGE" python scripts/product_image_coordinate.py secrets-server)"
+CPK_SECRETS_BUILD_IMAGE=0 \
+CPK_SECRETS_BUILD_CONTROLLER=0 \
+CPK_SERVERS_TEST_IMAGE="$IMAGE" \
+CPK_SECRETS_IMAGE="$SECRETS_IMAGE" \
+  sh scripts/secrets_server_image_smoke.sh
 CPK_SERVER_BUILD_IMAGE=1 sh scripts/cpk_server_image_smoke.sh
 sh scripts/docker_residue_audit.sh

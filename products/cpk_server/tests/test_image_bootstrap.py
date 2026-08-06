@@ -2803,6 +2803,29 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertNotIn("cpk-server:source-", wrapper)
         self.assertNotIn("cpk-local-gateway:source-", wrapper)
 
+    def test_secrets_image_smoke_covers_private_delegation_contract(self) -> None:
+        wrapper = (
+            ROOT / "scripts" / "secrets_server_image_smoke.sh"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("CPK_SECRETS_IMAGE", wrapper)
+        self.assertIn("@sha256:", wrapper)
+        self.assertIn("secret.generate-delegation-key", wrapper)
+        self.assertIn("generate_delegation_key", wrapper)
+        self.assertIn("replayed", wrapper)
+        self.assertIn("resolve", wrapper)
+        self.assertIn("revoke_version", wrapper)
+        self.assertIn("--network", wrapper)
+        self.assertIn("SecretProviderClientError", wrapper)
+        self.assertEqual(wrapper.count("docker run --rm -i"), 4)
+        self.assertNotIn("-p 127.0.0.1", wrapper)
+        self.assertNotIn("curl ", wrapper)
+        self.assertNotIn("python3", wrapper)
+        self.assertIn(
+            "secrets_server_image_smoke.sh",
+            (ROOT / "test.sh").read_text(encoding="utf-8"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
