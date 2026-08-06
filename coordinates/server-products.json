@@ -122,8 +122,8 @@
       "image": {
         "registry": "ghcr.io",
         "repository": "openj92/control-plane-kit-servers/secrets-server",
-        "tag": "harden-secrets-1205-secrets-server",
-        "digest": "sha256:e7e9e6efa53dbd82b6bc1b2a92e9ea52df87e6b7dc88b8ceda3aa1df0b3d1b53"
+        "tag": "harden-auth-gateway-1447-secrets-server",
+        "digest": "sha256:066d51110a04bbb4e5ce228b7779c8f022bf3b1d850e8e55950673a777e9cd19"
       }
     }
   ]
