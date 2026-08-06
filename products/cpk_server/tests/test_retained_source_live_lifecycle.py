@@ -174,7 +174,11 @@ class RetainedSourceLiveLifecycleTests(unittest.TestCase):
                 )
             )
 
-            with patch.object(controller.time, "sleep") as sleep:
+            with patch.object(
+                controller,
+                "verification_attempts",
+                side_effect=(iter((1, 2)), iter((1,))),
+            ) as attempts:
                 controller._assert_rotation_gateway_probe_pair(
                     workflow,
                     current_graph_id="graph-current",
@@ -193,7 +197,14 @@ class RetainedSourceLiveLifecycleTests(unittest.TestCase):
             self.assertEqual(len(set(request_ids)), 2)
             self.assertTrue(request_ids[0].endswith(":attempt-1"))
             self.assertTrue(request_ids[1].endswith(":attempt-2"))
-            sleep.assert_called_once()
+            self.assertEqual(attempts.call_count, 2)
+            self.assertTrue(
+                all(
+                    call.args
+                    == (controller.PUBLIC_GATEWAY_PROBE_POLICY,)
+                    for call in attempts.call_args_list
+                )
+            )
 
     def test_public_gateway_probe_does_not_retry_other_failures(self) -> None:
         with _controller_module() as controller:
@@ -209,7 +220,11 @@ class RetainedSourceLiveLifecycleTests(unittest.TestCase):
             )
 
             with (
-                patch.object(controller.time, "sleep") as sleep,
+                patch.object(
+                    controller,
+                    "verification_attempts",
+                    return_value=iter((1, 2)),
+                ),
                 self.assertRaises(RuntimeError),
             ):
                 controller._assert_rotation_gateway_probe_pair(
@@ -224,7 +239,6 @@ class RetainedSourceLiveLifecycleTests(unittest.TestCase):
 
             workflow.request_gateway_probe_http.assert_called_once()
             workflow.request_gateway_probe_mcp.assert_not_called()
-            sleep.assert_not_called()
 
     def test_canonical_mcp_retained_read_uses_shared_route(self) -> None:
         with _hosted_activity_module() as hosted:

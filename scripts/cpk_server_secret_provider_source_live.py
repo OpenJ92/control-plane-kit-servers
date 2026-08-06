@@ -49,6 +49,7 @@ from control_plane_kit_core.runtime_effects import GatewayTargetId
 from control_plane_kit_core.topology import DeploymentGraph, compile_topology
 from control_plane_kit_core.policies import PolicyScope
 from control_plane_kit_core.verification import VerificationContract, VerificationPolicy
+from control_plane_kit_interpreters.timing import verification_attempts
 
 from cpk_server_hosted_activity import (
     AUTHORIZATION,
@@ -137,8 +138,11 @@ GATEWAY_ROTATION_ISSUER = "cpk-source-live-rotation"
 GATEWAY_ROTATION_KEY_A_ID = "source-live-rotation-key-a"
 GATEWAY_ROTATION_KEY_B_ID = "source-live-rotation-key-b"
 GATEWAY_ROTATION_GRANT_LIFETIME_SECONDS = 10
-PUBLIC_GATEWAY_PROBE_ATTEMPTS = 5
-PUBLIC_GATEWAY_PROBE_RETRY_SECONDS = 2
+PUBLIC_GATEWAY_PROBE_POLICY = VerificationPolicy(
+    timeout_seconds=5,
+    interval_seconds=2,
+    maximum_attempts=5,
+)
 
 
 @dataclass(frozen=True)
@@ -1453,12 +1457,12 @@ def _assert_rotation_gateway_probe(
     expected_key_id: str,
     access_path: GatewayProbeAccessPath,
 ) -> None:
-    maximum_attempts = (
-        PUBLIC_GATEWAY_PROBE_ATTEMPTS
+    attempts = (
+        verification_attempts(PUBLIC_GATEWAY_PROBE_POLICY)
         if access_path is GatewayProbeAccessPath.NAMED_PUBLIC_INGRESS
-        else 1
+        else iter((1,))
     )
-    for attempt in range(1, maximum_attempts + 1):
+    for attempt in attempts:
         result = request(f"{request_id_prefix}:attempt-{attempt}")
         probe = result.get("gateway_probe")
         transient_dns = (
@@ -1467,8 +1471,10 @@ def _assert_rotation_gateway_probe(
             and probe.get("result_code")
             == "gateway-endpoint-unresolved-endpoint"
         )
-        if transient_dns and attempt < maximum_attempts:
-            time.sleep(PUBLIC_GATEWAY_PROBE_RETRY_SECONDS)
+        if (
+            transient_dns
+            and attempt < PUBLIC_GATEWAY_PROBE_POLICY.maximum_attempts
+        ):
             continue
         _assert_gateway_probe_key(result, expected_key_id)
         return
