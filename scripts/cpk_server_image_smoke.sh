@@ -20,6 +20,7 @@ GRAPH_TOPOLOGY_DATABASE_URL="${CPK_GRAPH_TOPOLOGY_DATABASE_URL:-$DATABASE_URL}"
 RUNTIME_INTERPRETERS="${CPK_RUNTIME_INTERPRETERS:-none}"
 STATIC_WORKSPACE_GRANTS_JSON="${CPK_CONTROL_AUTH_STATIC_WORKSPACE_GRANTS_JSON:-{\"workspace-a\":[\"hub:instance:create\",\"instance:workspace:read\",\"instance:workspace:edit\",\"plan:request\"]}}"
 HEALTH_ATTEMPTS="${CPK_SERVER_HEALTH_ATTEMPTS:-30}"
+REQUEST_HOST="${CPK_SERVER_SMOKE_HOST:-127.0.0.1}"
 
 cleanup() {
   rm -f "$MISSING_CONFIG_OUTPUT" "$IMPORT_BODY" "$UNAUTHORIZED_BODY" "$MCP_UNAUTHORIZED_BODY"
@@ -133,7 +134,7 @@ CONTAINER="$(docker run -d \
   "$IMAGE")"
 
 PORT="$(docker port "$CONTAINER" 8080/tcp | sed 's/.*://')"
-BASE="http://127.0.0.1:$PORT"
+BASE="http://$REQUEST_HOST:$PORT"
 
 phase "wait for cpk-server liveness"
 if ! live="$(curl_with_retry "$BASE/health/live")"; then

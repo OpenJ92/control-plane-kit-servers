@@ -1327,6 +1327,8 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("CPK_OBSERVER_STATE_DATABASE_URL", smoke)
         self.assertIn("CPK_GRAPH_TOPOLOGY_DATABASE_URL", smoke)
         self.assertIn("CPK_RUNTIME_INTERPRETERS", smoke)
+        self.assertIn("CPK_SERVER_SMOKE_HOST", smoke)
+        self.assertIn('CPK_SERVER_SMOKE_HOST:-127.0.0.1', smoke)
         self.assertIn("/health/live", smoke)
         self.assertIn("/health/ready", smoke)
         self.assertIn("/workspaces", smoke)
