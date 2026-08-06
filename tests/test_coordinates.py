@@ -126,6 +126,17 @@ class CoordinateGenerationTests(unittest.TestCase):
                 )
                 self.assertNotIn("DIGEST=", source)
 
+    def test_published_product_source_commit_comes_from_coordinates(self) -> None:
+        module = load_product_image_script_module()
+
+        self.assertEqual(
+            module.product_source_commit(
+                module.COORDINATES,
+                "cpk-local-gateway",
+            ),
+            "37cabc3243269e63750cc23b298706e8297b1ee3",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
