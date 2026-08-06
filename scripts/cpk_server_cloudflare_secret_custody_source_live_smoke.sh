@@ -42,6 +42,9 @@ BOOTSTRAP_DIR="$STATE_ROOT/bootstrap"
 CONTROLLER_STATE_DIR="$STATE_ROOT/controller-state"
 CONTROLLER_STATE_FILE="$CONTROLLER_STATE_DIR/checkpoint.json"
 OPERATIONS_DUMP="$STATE_ROOT/operations.sql"
+HOST_INVENTORY_BEFORE="$STATE_ROOT/host-inventory-before.txt"
+HOST_INVENTORY_AFTER="$STATE_ROOT/host-inventory-after.txt"
+CLOUDFLARE_INVENTORY_FILE="$CONTROLLER_STATE_DIR/cloudflare-inventory.json"
 POSTGRES_CONTAINER=""
 SECRETS_CONTAINER=""
 SERVER_CONTAINER=""
@@ -50,6 +53,35 @@ ABORT_CLEANUP_ATTEMPTED=0
 
 mkdir -p "$PROVIDER_DATA_DIR" "$BOOTSTRAP_DIR" "$CONTROLLER_STATE_DIR"
 umask 077
+
+host_inventory() {
+  output_file="$1"
+  {
+    docker ps -aq | while IFS= read -r resource; do
+      if [ -n "$resource" ]; then
+        docker inspect --format 'container\t{{.Id}}\t{{.Name}}' "$resource"
+      fi
+    done
+    docker network ls -q | while IFS= read -r resource; do
+      if [ -n "$resource" ]; then
+        docker network inspect --format 'network\t{{.Id}}\t{{.Name}}' "$resource"
+      fi
+    done
+    docker volume ls -q | while IFS= read -r resource; do
+      if [ -n "$resource" ]; then
+        docker volume inspect --format 'volume\t{{.Name}}' "$resource"
+      fi
+    done
+  } | LC_ALL=C sort >"$output_file"
+}
+
+assert_host_inventory_unchanged() {
+  host_inventory "$HOST_INVENTORY_AFTER"
+  if ! cmp -s "$HOST_INVENTORY_BEFORE" "$HOST_INVENTORY_AFTER"; then
+    echo "protected Docker host inventory changed during source-live acceptance" >&2
+    return 1
+  fi
+}
 
 cleanup_workspace_resources() {
   docker ps -aq --filter "label=$WORKSPACE_LABEL_KEY=$WORKSPACE_ID" \
@@ -84,7 +116,6 @@ cleanup() {
   fi
   docker network rm "$NETWORK" >/dev/null 2>&1 || true
   cleanup_workspace_resources
-  rm -rf "$STATE_ROOT"
 }
 
 finish() {
@@ -101,6 +132,11 @@ finish() {
     fi
   fi
   cleanup
+  if [ -f "$HOST_INVENTORY_BEFORE" ] \
+    && ! assert_host_inventory_unchanged; then
+    status=1
+  fi
+  rm -rf "$STATE_ROOT"
   exit "$status"
 }
 trap finish EXIT
@@ -312,6 +348,7 @@ print(json.dumps([
 PROVIDER_ROUTES_JSON='{"source-live-secrets":"http://cpk-secrets:8081"}'
 PROVIDER_BOOTSTRAP_FILES_JSON='{"secret://bootstrap/provider/client-token":"/run/secrets/cpk-provider/client-token"}'
 
+host_inventory "$HOST_INVENTORY_BEFORE"
 docker network create "$NETWORK" >/dev/null
 
 POSTGRES_CONTAINER="$(docker run -d \
@@ -441,6 +478,7 @@ run_controller() {
     -e CPK_SECRET_PROVIDER_SOURCE_LIVE_SCENARIO="$SCENARIO" \
     -e CPK_SECRET_PROVIDER_SOURCE_LIVE_MODE="$mode" \
     -e CPK_SOURCE_LIVE_STATE_FILE=/run/cpk-source-live-state/checkpoint.json \
+    -e CPK_SOURCE_LIVE_CLOUDFLARE_INVENTORY_FILE=/run/cpk-source-live-state/cloudflare-inventory.json \
     -e CPK_SOURCE_LIVE_FAIL_AFTER_PHASE="${CPK_SOURCE_LIVE_FAIL_AFTER_PHASE:-}" \
     -e CPK_SECRET_PROVIDER_CONTAINER="$SECRETS_CONTAINER" \
     -e CPK_SECRET_PROVIDER_TOKEN_FILE=/run/secrets/cpk-source-live/client-token \
@@ -509,6 +547,8 @@ cleanup
 SERVER_CONTAINER=""
 SECRETS_CONTAINER=""
 POSTGRES_CONTAINER=""
+
+assert_host_inventory_unchanged
 
 sh "$SERVERS_REPO/scripts/docker_residue_audit.sh"
 echo "cpk-server Cloudflare generated-secret custody source-live smoke passed"
