@@ -95,8 +95,8 @@
       "product_id": "secrets-server",
       "owner_directory": "products/secrets_server",
       "descriptor_path": "products/secrets_server/product.cpk.json",
-      "descriptor_sha256": "5f6e10d5e86a501a2a0a8d9d6e58f805d35b0d9857596a80516c2ebdd180dd6a",
-      "source_commit": "606f8e74d07873f070d4a06f2968d705034173f6",
+      "descriptor_sha256": "ddd9443c374f1fe0f25d629a76920395f94b8f26ab76e607dc92dee67fa45ad2",
+      "source_commit": "96e86dc3248d578780d64d5d7fc5d6359631d1d6",
       "image_ref": "ghcr.io/openj92/control-plane-kit-servers/secrets-server:harden-secrets-1205-secrets-server",
       "image_digest": "sha256:e7e9e6efa53dbd82b6bc1b2a92e9ea52df87e6b7dc88b8ceda3aa1df0b3d1b53",
       "status": "completed"

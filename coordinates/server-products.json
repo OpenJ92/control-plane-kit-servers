@@ -118,7 +118,7 @@
       "product_id": "secrets-server",
       "owner_directory": "products/secrets_server",
       "descriptor_path": "products/secrets_server/product.cpk.json",
-      "source_commit": "606f8e74d07873f070d4a06f2968d705034173f6",
+      "source_commit": "96e86dc3248d578780d64d5d7fc5d6359631d1d6",
       "image": {
         "registry": "ghcr.io",
         "repository": "openj92/control-plane-kit-servers/secrets-server",
