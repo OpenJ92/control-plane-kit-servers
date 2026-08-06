@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from hashlib import sha256
 import http.client
 import os
@@ -66,6 +67,7 @@ PUBLIC_GATEWAY_HOSTNAME = os.environ.get(
 )
 PUBLIC_GATEWAY_READY_ATTEMPTS = 60
 PUBLIC_GATEWAY_READY_RETRY_SECONDS = 2
+COORDINATOR_WAIT_SLEEP_LIMIT_SECONDS = 5.0
 GATEWAY_PROBE_ISSUER = "cpk-source-live"
 GATEWAY_PROBE_KEY_ID = "source-live-gateway-key"
 
@@ -74,6 +76,14 @@ GATEWAY_PROBE_KEY_ID = "source-live-gateway-key"
 class HostedTransitionResult:
     current_graph_id: str
     desired_graph_id: str
+    plan_id: str
+    approval_id: str
+    run_id: str
+
+
+@dataclass(frozen=True)
+class HostedReleaseResult:
+    current_graph_id: str
     plan_id: str
     approval_id: str
     run_id: str
@@ -107,6 +117,13 @@ class HostedWorkflow:
             self.base_url,
             "GET",
             f"/workspaces/{self.workspace_id}/public-ingress-resources",
+        )
+
+    def read_public_ingress_resources_mcp(self) -> dict[str, Any]:
+        return _mcp_read(
+            self.base_url,
+            "list_public_ingress_resources",
+            {"workspace_id": self.workspace_id},
         )
 
     def create_workspace(self, *, name: str, actor_id: str = "operator-a") -> str:
@@ -978,6 +995,126 @@ class HostedWorkflow:
             run_id=run_id,
         )
 
+    def run_approved_public_ingress_reservation_release(
+        self,
+        *,
+        title: str,
+        reservation: dict[str, Any],
+    ) -> HostedReleaseResult:
+        reservation_id = _required_nonempty_string(
+            reservation,
+            "reservation_id",
+            subject="retained public ingress reservation",
+        )
+        ingress_id = _required_nonempty_string(
+            reservation,
+            "ingress_id",
+            subject="retained public ingress reservation",
+        )
+        if reservation.get("lifecycle") != PublicIngressLifecycle.RETAINED.value:
+            raise RuntimeError("public ingress reservation was not retained")
+        if reservation.get("status") != "reserved":
+            raise RuntimeError("public ingress reservation was not releasable")
+        expected_version = reservation.get("version")
+        if type(expected_version) is not int or expected_version < 1:
+            raise RuntimeError("public ingress reservation version was invalid")
+
+        session_id = self.start_session(title)
+        workspace = self.read_workspace().get("workspace")
+        if not isinstance(workspace, dict):
+            raise RuntimeError("reservation release workspace readback was unavailable")
+        current_graph_id = _required_nonempty_string(
+            workspace,
+            "current_graph_id",
+            subject="reservation release workspace",
+        )
+        if workspace.get("desired_graph_id") != current_graph_id:
+            raise RuntimeError("reservation release workspace was not quiescent")
+        current_projection_id = _required_nonempty_string(
+            workspace,
+            "current_realized_projection_id",
+            subject="reservation release workspace",
+        )
+        if workspace.get("desired_realized_projection_id") != current_projection_id:
+            raise RuntimeError("reservation release projection was not quiescent")
+        desired_revision = workspace.get("desired_graph_revision")
+        if type(desired_revision) is not int or desired_revision < 1:
+            raise RuntimeError("reservation release graph revision was invalid")
+
+        idempotency_key = f"{self.workspace_id}:{title}:release-plan"
+        payload: dict[str, object] = {
+            "session_id": session_id,
+            "ingress_id": ingress_id,
+            "expected_reservation_version": expected_version,
+            "expected_current_graph_id": current_graph_id,
+            "expected_current_realized_projection_id": current_projection_id,
+            "expected_desired_graph_revision": desired_revision,
+            "idempotency_key": idempotency_key,
+        }
+        planned = _http(
+            self.base_url,
+            "POST",
+            (
+                f"/workspaces/{self.workspace_id}/public-ingress-reservations/"
+                f"{reservation_id}/release-plan"
+            ),
+            payload,
+        )
+        replayed = _mcp_tool(
+            self.base_url,
+            "plan_public_ingress_reservation_release",
+            {
+                "workspace_id": self.workspace_id,
+                "reservation_id": reservation_id,
+                **payload,
+            },
+        )
+        _assert_release_plan_response(
+            planned,
+            expected_replayed=False,
+            session_id=session_id,
+            current_graph_id=current_graph_id,
+            current_projection_id=current_projection_id,
+            desired_revision=desired_revision,
+        )
+        _assert_release_plan_response(
+            replayed,
+            expected_replayed=True,
+            session_id=session_id,
+            current_graph_id=current_graph_id,
+            current_projection_id=current_projection_id,
+            desired_revision=desired_revision,
+        )
+        if replayed.get("plan_id") != planned.get("plan_id"):
+            raise RuntimeError("reservation release HTTP/MCP replay changed plan identity")
+
+        plan_id = str(planned["plan_id"])
+        approval = self.request_approval(
+            session_id=session_id,
+            title=title,
+            plan_id=plan_id,
+        )
+        approval_id = str(approval["request_id"])
+        self.assert_approval_visible(approval_id, plan_id)
+        self.approve(session_id=session_id, title=title, approval=approval)
+        request_id = self.admit(
+            session_id=session_id,
+            title=title,
+            plan_id=plan_id,
+            approval_id=approval_id,
+        )
+        run_id = self.claim(title=title, request_id=request_id)
+        self.start_run(title=title, run_id=run_id)
+        self.execute_to_completion(run_id, sync_runtime_networks=False)
+        if self.read_current_graph_id() != current_graph_id:
+            raise RuntimeError("reservation release changed current graph truth")
+        return HostedReleaseResult(
+            current_graph_id=current_graph_id,
+            plan_id=plan_id,
+            approval_id=approval_id,
+            run_id=run_id,
+        )
+
 
 def main() -> int:
     base_url = _required_env("CPK_HOSTED_ACTIVITY_BASE_URL").rstrip("/")
@@ -1825,7 +1962,25 @@ def _execute_to_completion(
         if coordinator_status in {"failed", "unsupported", "uncertain", "blocked"}:
             timeline = _http(base_url, "GET", f"/workspaces/{workspace_id}/activity")
             raise RuntimeError(f"execution stopped with {result}; timeline={timeline}")
+        if coordinator_status == "waiting":
+            delay = _coordinator_retry_delay(result)
+            if delay > 0:
+                time.sleep(delay)
     raise RuntimeError("hosted activity execution did not complete")
+
+
+def _coordinator_retry_delay(result: dict[str, object]) -> float:
+    not_before = result.get("next_attempt_not_before")
+    if not isinstance(not_before, str) or not not_before.strip():
+        raise RuntimeError("waiting coordinator result lacks retry timestamp")
+    try:
+        retry_at = datetime.fromisoformat(not_before.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise RuntimeError("waiting coordinator retry timestamp is malformed") from error
+    if retry_at.tzinfo is None:
+        raise RuntimeError("waiting coordinator retry timestamp lacks timezone")
+    remaining = (retry_at.astimezone(timezone.utc) - datetime.now(timezone.utc)).total_seconds()
+    return min(max(remaining, 0.0), COORDINATOR_WAIT_SLEEP_LIMIT_SECONDS)
 
 
 def _sync_runtime_networks(
@@ -3010,6 +3165,55 @@ def _docker_client():
 
 def _clock() -> str:
     return "2026-07-22T10:00:00Z"
+
+
+def _required_nonempty_string(
+    value: dict[str, Any],
+    field: str,
+    *,
+    subject: str,
+) -> str:
+    result = value.get(field)
+    if not isinstance(result, str) or not result:
+        raise RuntimeError(f"{subject} omitted {field}")
+    return result
+
+
+def _assert_release_plan_response(
+    response: dict[str, Any],
+    *,
+    expected_replayed: bool,
+    session_id: str,
+    current_graph_id: str,
+    current_projection_id: str,
+    desired_revision: int,
+) -> None:
+    expected = {
+        "session_id": session_id,
+        "base_graph_id": current_graph_id,
+        "desired_graph_id": current_graph_id,
+        "base_realized_projection_id": current_projection_id,
+        "desired_realized_projection_id": current_projection_id,
+        "desired_graph_revision": desired_revision,
+        "ready_for_execution": True,
+        "activity_count": 1,
+        "replayed": expected_replayed,
+    }
+    mismatches = {
+        field: (response.get(field), expected_value)
+        for field, expected_value in expected.items()
+        if response.get(field) != expected_value
+    }
+    if mismatches:
+        raise RuntimeError(
+            "reservation release plan response changed coordinates: "
+            f"{sorted(mismatches)}"
+        )
+    _required_nonempty_string(
+        response,
+        "plan_id",
+        subject="reservation release plan",
+    )
 
 
 def _required_env(name: str) -> str:

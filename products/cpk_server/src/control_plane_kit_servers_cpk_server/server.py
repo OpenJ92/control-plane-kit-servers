@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 import json
+from math import isfinite
 import os
 from pathlib import Path
 import time
@@ -1044,12 +1045,31 @@ class _PublicIngressReadinessVerifierAdapter:
         ingress: NamedPublicIngress,
         check: HttpCheck,
         endpoint: RuntimeEndpointObservation,
+        attempt_timeout_seconds: float,
     ) -> PublicIngressObservation:
+        if (
+            not isinstance(attempt_timeout_seconds, (int, float))
+            or isinstance(attempt_timeout_seconds, bool)
+            or not isfinite(attempt_timeout_seconds)
+            or attempt_timeout_seconds <= 0
+        ):
+            raise ValueError("public ingress readiness attempt timeout is invalid")
+        bounded_check = replace(
+            check,
+            policy=replace(
+                check.policy,
+                timeout_seconds=min(
+                    float(attempt_timeout_seconds),
+                    float(check.policy.timeout_seconds),
+                ),
+                maximum_attempts=1,
+            ),
+        )
         interpreter = self.interpreter_factory(ingress.hostname)
         material = self.material_factory(
             ingress.target.node_id,
             endpoint.graph_id,
-            check,
+            bounded_check,
             endpoint,
         )
         result = interpreter.execute(material)

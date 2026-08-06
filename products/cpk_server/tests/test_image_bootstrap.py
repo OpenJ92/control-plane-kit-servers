@@ -2177,6 +2177,19 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn('base.joinpath("gateway-public-key.pem")', cloudflare_smoke)
         self.assertNotIn("gateway-public-keys.json", cloudflare_smoke)
 
+    def test_cloudflare_source_live_secret_scan_excludes_public_verifier(self) -> None:
+        smoke = (
+            ROOT
+            / "scripts"
+            / "cpk_server_cloudflare_secret_custody_source_live_smoke.sh"
+        ).read_text(encoding="utf-8")
+        secret_scan = smoke.split("for secret_file in \\\n", 1)[1].split(
+            "\ndo\n", 1
+        )[0]
+
+        self.assertIn("gateway-rotation-key-a.pem", secret_scan)
+        self.assertNotIn("gateway-rotation-key-a-public.pem", secret_scan)
+
     def test_http_only_public_gateway_omits_postgres_secret_delivery(self) -> None:
         from control_plane_kit_core.delegation_authority import (
             DelegationAuthorityBinding,

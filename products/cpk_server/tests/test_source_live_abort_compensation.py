@@ -56,6 +56,7 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
             "public-off-committed",
             "public-on-again-committed",
             "final-teardown-committed",
+            "final-release-committed",
         )
         controller_source = CONTROLLER_PATH.read_text(encoding="utf-8")
         for phase in phases:
@@ -274,6 +275,7 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 workspace_id="workspace-a",
             )
             authoritative_verify.assert_called_once()
+            self.assertEqual(workflow.release_reservation_statuses, ["reserved"])
             connector_verify.assert_called_once()
             custody_verify.assert_called_once_with(
                 (resource,),
@@ -375,6 +377,137 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                     ),
                 ],
             )
+
+    def test_post_teardown_abort_uses_historical_exact_reservation_evidence(
+        self,
+    ) -> None:
+        with _controller_module() as controller:
+            workflow = RecordingWorkflow(controller, fail_transition=False)
+            resource = _resource(controller)
+            checkpoint = controller.SourceLiveCheckpoint(
+                workspace_id="workspace-a",
+                phase="final-teardown-committed",
+                current_graph_id="graph-empty",
+                desired_graph_id="graph-empty",
+            )
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "CPK_SOURCE_LIVE_STATE_FILE": "/state/checkpoint.json",
+                        "CPK_HOSTED_ACTIVITY_WORKSPACE_ID": "workspace-a",
+                        "CPK_SECRET_PROVIDER_CONTAINER": "provider-a",
+                    },
+                    clear=False,
+                ),
+                patch.object(controller, "read_checkpoint", return_value=checkpoint),
+                patch.object(
+                    controller,
+                    "_load_exact_owned_ingress_resources",
+                    return_value=(),
+                ),
+                patch.object(
+                    controller,
+                    "_load_all_exact_owned_ingress_resources",
+                    return_value=(resource,),
+                ) as historical,
+                patch.object(
+                    controller,
+                    "_load_exact_failed_connector_effect",
+                ) as failed_connector,
+                patch.object(controller, "_workflow", return_value=workflow),
+                patch.object(controller, "_disconnect_runtime_networks"),
+                patch.object(
+                    controller,
+                    "_assert_owned_cloudflare_resources_removed",
+                ),
+                patch.object(
+                    controller,
+                    "_assert_abort_generated_secret_versions_revoked",
+                ),
+                patch.object(controller, "_assert_failed_connectors_absent") as absent,
+                patch.object(controller, "_emergency_compensate_cloudflare") as emergency,
+            ):
+                status = controller._run_cloudflare_abort_cleanup(
+                    base_url="http://cpk-server:8080",
+                    server_container="cpk-server",
+                    operations_database_url="postgresql://operations",
+                    provider_container="provider-a",
+                    provider_token_file=Path("/provider-token"),
+                    bootstrap_dir=Path("/bootstrap"),
+                )
+
+            self.assertEqual(status, 0)
+            historical.assert_called_once()
+            failed_connector.assert_not_called()
+            self.assertEqual(workflow.release_reservation_statuses, ["reserved"])
+            absent.assert_called_once_with(
+                (),
+                failed_connector_effects={},
+                uncertain_connector_runs=set(),
+            )
+            emergency.assert_not_called()
+
+    def test_post_release_abort_verifies_without_releasing_again(self) -> None:
+        with _controller_module() as controller:
+            workflow = RecordingWorkflow(
+                controller,
+                fail_transition=False,
+                reservation_status="released",
+            )
+            resource = _resource(controller)
+            checkpoint = controller.SourceLiveCheckpoint(
+                workspace_id="workspace-a",
+                phase="final-release-committed",
+                current_graph_id="graph-empty",
+                desired_graph_id="graph-empty",
+            )
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "CPK_SOURCE_LIVE_STATE_FILE": "/state/checkpoint.json",
+                        "CPK_HOSTED_ACTIVITY_WORKSPACE_ID": "workspace-a",
+                        "CPK_SECRET_PROVIDER_CONTAINER": "provider-a",
+                    },
+                    clear=False,
+                ),
+                patch.object(controller, "read_checkpoint", return_value=checkpoint),
+                patch.object(
+                    controller,
+                    "_load_exact_owned_ingress_resources",
+                    return_value=(),
+                ),
+                patch.object(
+                    controller,
+                    "_load_all_exact_owned_ingress_resources",
+                    return_value=(resource,),
+                ),
+                patch.object(controller, "_workflow", return_value=workflow),
+                patch.object(controller, "_disconnect_runtime_networks"),
+                patch.object(
+                    controller,
+                    "_assert_owned_cloudflare_resources_removed",
+                ),
+                patch.object(
+                    controller,
+                    "_assert_abort_generated_secret_versions_revoked",
+                ),
+                patch.object(controller, "_assert_failed_connectors_absent"),
+                patch.object(controller, "_emergency_compensate_cloudflare") as emergency,
+            ):
+                status = controller._run_cloudflare_abort_cleanup(
+                    base_url="http://cpk-server:8080",
+                    server_container="cpk-server",
+                    operations_database_url="postgresql://operations",
+                    provider_container="provider-a",
+                    provider_token_file=Path("/provider-token"),
+                    bootstrap_dir=Path("/bootstrap"),
+                )
+
+            self.assertEqual(status, 0)
+            self.assertEqual(workflow.release_reservation_statuses, [])
+            emergency.assert_not_called()
 
     def test_abort_custody_verification_requires_each_exact_version_revoked(self) -> None:
         with _controller_module() as controller:
@@ -733,11 +866,19 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
 
 
 class RecordingWorkflow:
-    def __init__(self, controller, *, fail_transition: bool) -> None:
+    def __init__(
+        self,
+        controller,
+        *,
+        fail_transition: bool,
+        reservation_status: str = "reserved",
+    ) -> None:
         self.controller = controller
         self.fail_transition = fail_transition
         self.transition_graph_names: list[str] = []
         self.transition_expected_desired_ids: list[str] = []
+        self.release_reservation_statuses: list[str] = []
+        self.reservation_status = reservation_status
 
     def wait_ready(self) -> None:
         return None
@@ -761,6 +902,40 @@ class RecordingWorkflow:
             plan_id="plan-cleanup",
             current_graph_id="graph-empty",
             desired_graph_id="graph-empty",
+        )
+
+    def read_public_ingress_resources(self) -> dict[str, object]:
+        return {
+            "workspace_id": "workspace-a",
+            "items": [
+                {
+                    "reservation_id": "reservation-exact",
+                    "ingress_id": "gateway-a",
+                    "lifecycle": "retained",
+                    "status": self.reservation_status,
+                    "version": 2,
+                    "realizations": [{"epoch": 1, "status": "removed"}],
+                }
+            ],
+        }
+
+    def read_public_ingress_resources_mcp(self) -> dict[str, object]:
+        return self.read_public_ingress_resources()
+
+    def run_approved_public_ingress_reservation_release(
+        self,
+        *,
+        title: str,
+        reservation: dict[str, object],
+    ):
+        del title
+        self.release_reservation_statuses.append(str(reservation["status"]))
+        self.reservation_status = "released"
+        return self.controller.HostedReleaseResult(
+            plan_id="plan-release",
+            approval_id="approval-release",
+            run_id="run-release",
+            current_graph_id="graph-empty",
         )
 
 
