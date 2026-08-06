@@ -113,10 +113,15 @@ class SecretsServerProductTests(unittest.TestCase):
     def test_image_smoke_recreates_provider_against_retained_data(self) -> None:
         smoke = SMOKE.read_text(encoding="utf-8")
 
-        self.assertIn('docker rm -f "$CONTAINER"', smoke)
+        self.assertIn('docker rm -f "$PROVIDER"', smoke)
         self.assertGreaterEqual(smoke.count("start_provider"), 3)
         self.assertIn("resolve-after-restart", smoke)
-        self.assertIn('\\"intent\\":\\"postgres.password\\"', smoke)
+        self.assertIn('"postgres.password"', smoke)
+        self.assertIn("generate_delegation_key", smoke)
+        self.assertIn("revoke_version", smoke)
+        self.assertIn("--network", smoke)
+        self.assertNotIn("-p 127.0.0.1", smoke)
+        self.assertNotIn("python3", smoke)
         self.assertIn("cpk.test-run", smoke)
         self.assertIn("docker volume create", smoke)
 
