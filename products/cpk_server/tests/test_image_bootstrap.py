@@ -1269,6 +1269,11 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("RuntimeDispatcherBootstrapConfiguration", source)
         self.assertIn("RuntimeInterpreterDispatcher", source)
         self.assertIn("IngressRealizationAdapter", source)
+        self.assertIn("PublicIngressReservationReleasePlanningService", source)
+        self.assertIn(
+            "ingress_reservation_releases=PublicIngressReservationReleasePlanningService",
+            source,
+        )
         self.assertIn("_public_ingress_readiness_verifier", source)
         self.assertIn("readiness_verifier=", source)
         self.assertIn("IngressAuthorityRegistrationService", source)
@@ -2159,6 +2164,8 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("_assert_removed_ingress_token_versions_revoked", controller)
         self.assertIn('"intent": intent,', controller)
         self.assertIn('"intent": POSTGRES_INTENT,', controller)
+        self.assertIn("PublicIngressLifecycle.RETAINED", controller)
+        self.assertIn("read_public_ingress_resources", controller)
 
         cloudflare_smoke = (
             ROOT
