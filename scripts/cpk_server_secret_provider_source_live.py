@@ -1626,7 +1626,19 @@ def _assert_retained_cloudflare_reservation_present(
 
 
 def _assert_public_hostname_resolves(hostname: str) -> None:
-    _public_ingress_address(hostname)
+    try:
+        addresses = socket.getaddrinfo(
+            hostname,
+            443,
+            type=socket.SOCK_STREAM,
+        )
+    except OSError as error:
+        raise RuntimeError(
+            "public hostname did not resolve: "
+            f"{type(error).__name__}"
+        ) from None
+    if not addresses:
+        raise RuntimeError("public hostname did not resolve")
 
 
 def _release_retained_public_ingress(
