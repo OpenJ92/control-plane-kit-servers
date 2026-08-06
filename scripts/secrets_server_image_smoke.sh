@@ -80,6 +80,7 @@ import secrets
 
 from control_plane_kit_secrets.crypto import encode_master_key_for_file
 
+os.umask(0o077)
 provider = Path("/provider-bootstrap")
 client = Path("/client-bootstrap")
 token = secrets.token_urlsafe(48)
@@ -182,7 +183,7 @@ assert_logs_redacted() {
       --mount "type=volume,src=$CLIENT_BOOTSTRAP,dst=/client,readonly" \
       --entrypoint cat \
       "$IMAGE" "/client/$secret_name")"
-    if docker logs "$PROVIDER" 2>&1 | grep -F "$secret"; then
+    if docker logs "$PROVIDER" 2>&1 | grep -F -- "$secret"; then
       echo "secrets-server logs contain exact secret material" >&2
       exit 1
     fi
