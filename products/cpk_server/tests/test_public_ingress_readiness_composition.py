@@ -17,7 +17,7 @@ from control_plane_kit_core.public_ingress import (
     PublicIngressTarget,
 )
 from control_plane_kit_core.types import Protocol
-from control_plane_kit_core.verification import HttpCheck
+from control_plane_kit_core.verification import HttpCheck, VerificationPolicy
 from control_plane_kit_servers_cpk_server.server import (
     BootstrapConfigurationError,
     _public_dns_resolver,
@@ -84,6 +84,7 @@ class PublicIngressReadinessCompositionTests(unittest.TestCase):
             ingress=_ingress(),
             check=_check(),
             endpoint=_endpoint(),
+            attempt_timeout_seconds=5.0,
         )
 
         self.assertIs(observation.status, PublicIngressObservationStatus.READY)
@@ -109,6 +110,7 @@ class PublicIngressReadinessCompositionTests(unittest.TestCase):
             ingress=_ingress(),
             check=_check(),
             endpoint=_endpoint(),
+            attempt_timeout_seconds=5.0,
         )
 
         self.assertIs(observation.status, PublicIngressObservationStatus.UNKNOWN)
@@ -128,9 +130,39 @@ class PublicIngressReadinessCompositionTests(unittest.TestCase):
             ingress=_ingress(),
             check=_check(),
             endpoint=_endpoint(),
+            attempt_timeout_seconds=5.0,
         )
 
         self.assertIs(observation.status, PublicIngressObservationStatus.UNREADY)
+
+    def test_operations_attempt_budget_bounds_one_http_observation(self) -> None:
+        requests: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(503)
+
+        observation = _public_ingress_readiness_verifier(
+            transport=httpx.MockTransport(handler),
+            public_resolver=RecordingPublicResolver(("1.1.1.1",)),
+        ).observe(
+            ingress=_ingress(),
+            check=HttpCheck(
+                check_id="gateway-ready",
+                provider_socket="control",
+                path="/health/ready",
+                policy=VerificationPolicy(
+                    timeout_seconds=12.0,
+                    maximum_attempts=3,
+                ),
+            ),
+            endpoint=_endpoint(),
+            attempt_timeout_seconds=2.0,
+        )
+
+        self.assertIs(observation.status, PublicIngressObservationStatus.UNREADY)
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0].extensions["timeout"]["read"], 2.0)
 
 
 def _ingress() -> NamedPublicIngress:
