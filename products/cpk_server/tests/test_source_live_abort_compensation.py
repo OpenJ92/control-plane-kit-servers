@@ -861,13 +861,24 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 self.assertEqual(resources[0].provider_version_number, 1)
 
             for name, rows in {
+                "oversized-provider-kind": (("x" * 256,) + row[1:],),
+                "oversized-ingress-id": (row[:1] + ("x" * 256,) + row[2:],),
                 "null": (row[:3] + (None,) + row[4:],),
                 "coerced-epoch": (row[:2] + ("1",) + row[3:],),
                 "unknown-provider": (("other",) + row[1:],),
                 "duplicate": (row, row),
+                "oversized-tunnel-id": (row[:3] + ("x" * 256,) + row[4:],),
+                "oversized-dns-record-id": (
+                    row[:4] + ("x" * 256,) + row[5:],
+                ),
                 "oversized-coordinate": (
                     row[:5] + ("x" * 256,) + row[6:],
                 ),
+                "oversized-zone-id": (row[:6] + ("x" * 256,) + row[7:],),
+                "oversized-source-run-id": (
+                    row[:7] + ("x" * 256,) + row[8:],
+                ),
+                "oversized-version-id": (row[:9] + ("x" * 256,) + row[10:],),
                 "zero-version": (row[:-1] + ("0",),),
                 "signed-version": (row[:-1] + ("+1",),),
                 "leading-zero-version": (row[:-1] + ("01",),),
@@ -926,6 +937,16 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                         )
                         query = cursor.execute.call_args.args[0]
                         self.assertNotIn("::integer", query)
+                        for expression in (
+                            "left(resource.provider_kind, 256)",
+                            "left(resource.ingress_id, 256)",
+                            "left(resource.tunnel_id, 256)",
+                            "left(resource.dns_record_id, 256)",
+                            "left(resource.hostname, 256)",
+                            "left(resource.zone_id, 256)",
+                            "left(resource.source_run_id, 256)",
+                        ):
+                            self.assertIn(expression, query)
                         self.assertIn("left(generated.secret_ref, 257)", query)
                         self.assertIn(
                             "left(generated.metadata->>'provider_version_id', 256)",
@@ -934,6 +955,10 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                         self.assertIn(
                             "left(generated.metadata->>'provider_version_number', 11)",
                             query,
+                        )
+                        self.assertIn(
+                            "ORDER BY left(resource.ingress_id, 256), resource.epoch",
+                            " ".join(query.split()),
                         )
                         self.assertEqual(resources[0].provider_version_number, 1)
 
