@@ -123,9 +123,6 @@ class SignedTransitAdmissionTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         sys.path.remove(str(PRODUCT_SRC))
-        for name in list(sys.modules):
-            if name == MODULE_NAME:
-                sys.modules.pop(name, None)
 
     def _validate_independent_fixture(self) -> None:
         credential = self.fixture["credential_ascii"].encode("ascii")
@@ -790,7 +787,7 @@ class SignedTransitAdmissionTests(unittest.TestCase):
                     lambda attempt_id=attempt_id: self.verify_fixture(
                         expected_attempt_id=attempt_id
                     ),
-                    str(attempt_id),
+                    *(() if attempt_id == "" else (str(attempt_id),)),
                 )
 
         module = self.module()
