@@ -712,6 +712,79 @@ class SignedTransitAdmissionTests(unittest.TestCase):
             )
         )
 
+    def test_nominal_core_inputs_and_verified_outputs_reject_subclasses(self) -> None:
+        module = self.module()
+        verifier_type = module.Ed25519GatewayNodeControlTransitVerifier
+        error_type = module.GatewayNodeControlTransitAdmissionError
+
+        class HostilePublicKey(DelegationPublicKey):
+            @property
+            def key_id(self):
+                raise RuntimeError("candidate-public-key-hook")
+
+        class HostileGraphReference(NodeControlGraphReference):
+            @property
+            def role(self):
+                raise RuntimeError("candidate-graph-reference-hook")
+
+        hostile_key = object.__new__(HostilePublicKey)
+        hostile_reference = object.__new__(HostileGraphReference)
+        constructor_cases = (
+            {
+                "issuer": "cpk-server",
+                "workspace_id": _reference(
+                    NodeControlGraphReferenceRole.WORKSPACE,
+                    "workspace-1",
+                ),
+                "gateway_node_id": _reference(
+                    NodeControlGraphReferenceRole.NODE,
+                    "gateway-1",
+                ),
+                "public_keys": (hostile_key,),
+            },
+            {
+                "issuer": "cpk-server",
+                "workspace_id": hostile_reference,
+                "gateway_node_id": _reference(
+                    NodeControlGraphReferenceRole.NODE,
+                    "gateway-1",
+                ),
+                "public_keys": (_public_key(key_id="gateway-transit-key-1"),),
+            },
+        )
+        for values in constructor_cases:
+            with self.subTest(values=tuple(values)):
+                with self.assertRaises(error_type) as caught:
+                    verifier_type(**values)
+                self.assertLessEqual(len(str(caught.exception)), 128)
+                for canary in (
+                    "candidate-public-key-hook",
+                    "candidate-graph-reference-hook",
+                ):
+                    self.assertNotIn(canary, str(caught.exception))
+                    self.assertNotIn(canary, repr(caught.exception))
+                self.assertIsNone(caught.exception.__cause__)
+                self.assertIsNone(caught.exception.__context__)
+
+        class TransitGrantSubclass(DelegatedGatewayNodeControlTransitGrant):
+            pass
+
+        class CommandRequestSubclass(NodeControlCommandRequest):
+            pass
+
+        verified = self.verify_fixture()
+        output_cases = (
+            (object.__new__(TransitGrantSubclass), verified.request),
+            (verified.grant, object.__new__(CommandRequestSubclass)),
+        )
+        for grant, request in output_cases:
+            with self.subTest(grant=type(grant), request=type(request)):
+                with self.assertRaises(error_type) as caught:
+                    module.VerifiedGatewayNodeControlTransit(grant, request, 150)
+                self.assertLessEqual(len(str(caught.exception)), 128)
+                self.assertIsNone(caught.exception.__cause__)
+                self.assertIsNone(caught.exception.__context__)
+
     def test_outer_inner_claim_request_and_authority_congruence(self) -> None:
         self.module()
         outer_cases = (
