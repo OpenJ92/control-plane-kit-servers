@@ -284,6 +284,15 @@ class SignedTransitAdmissionTests(unittest.TestCase):
         ):
             self.assertNotIn(canary, rendered)
 
+    def test_root_and_transit_module_share_one_import_generation(self) -> None:
+        module = self.module()
+
+        self.assertIs(
+            sys.modules["control_plane_kit_servers_cpk_local_gateway"],
+            gateway_root,
+        )
+        self.assertIs(sys.modules[MODULE_NAME], module)
+
     def test_independent_signed_vector_reconstructs_exact_grant_and_request(self) -> None:
         verified = self.verify_fixture()
         expected_request = NodeControlCommandRequestCodec().decode_canonical_bytes(
