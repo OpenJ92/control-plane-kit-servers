@@ -856,12 +856,7 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 "1",
             )
             with self.subTest(name="canonical-version"):
-                resources = ()
-                try:
-                    resources = controller._decode_exact_owned_ingress_resources((row,))
-                except RuntimeError:
-                    pass
-                self.assertEqual(len(resources), 1)
+                resources = controller._decode_exact_owned_ingress_resources((row,))
                 self.assertEqual(resources[0].source_run_id, "run-a")
                 self.assertEqual(resources[0].provider_version_number, 1)
 
@@ -925,14 +920,10 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 ):
                     with self.subTest(loader=loader.__name__):
                         cursor.execute.reset_mock()
-                        resources = ()
-                        try:
-                            resources = loader(
-                                "postgresql://operations",
-                                workspace_id="workspace-a",
-                            )
-                        except RuntimeError:
-                            pass
+                        resources = loader(
+                            "postgresql://operations",
+                            workspace_id="workspace-a",
+                        )
                         query = cursor.execute.call_args.args[0]
                         self.assertNotIn("::integer", query)
                         self.assertIn("left(generated.secret_ref, 257)", query)
@@ -987,8 +978,10 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 self.assertIsNone(raised.exception.__context__)
                 self.assertNotIn(candidate, str(raised.exception))
 
-        bounded_error = None
-        try:
+        with self.assertRaisesRegex(
+            module.SourceLiveAbortError,
+            "owned resource secret reference is invalid",
+        ) as raised:
             module.ExactOwnedIngressResource(
                 provider_kind=valid.provider_kind,
                 ingress_id=valid.ingress_id,
@@ -999,13 +992,8 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 provider_version_id=valid.provider_version_id,
                 provider_version_number=valid.provider_version_number,
             )
-        except module.SourceLiveAbortError as error:
-            bounded_error = error
-        except UnicodeEncodeError:
-            pass
-        self.assertIsNotNone(bounded_error)
-        self.assertIsNone(bounded_error.__cause__)
-        self.assertIsNone(bounded_error.__context__)
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertIsNone(raised.exception.__context__)
 
     def test_failed_connector_effect_rejects_missing_duplicate_or_contradictory_evidence(
         self,
