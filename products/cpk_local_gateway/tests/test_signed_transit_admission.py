@@ -16,7 +16,6 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 import rfc8785
 
-import control_plane_kit_servers_cpk_local_gateway as gateway_root
 from control_plane_kit_core.delegation_keys import (
     DelegationKeyAlgorithm,
     DelegationKeyPurpose,
@@ -65,6 +64,7 @@ FIXTURE = (
     / "gateway_node_control_transit_admission_v1.json"
 )
 MODULE_NAME = "control_plane_kit_servers_cpk_local_gateway.transit_admission"
+PACKAGE_NAME = "control_plane_kit_servers_cpk_local_gateway"
 TOKEN_TYPE = "CPK-GATEWAY-NODE-CONTROL-TRANSIT+JWT"
 MAX_CREDENTIAL_BYTES = 5_167
 MAX_HEADER_SEGMENT_BYTES = 263
@@ -176,6 +176,9 @@ class SignedTransitAdmissionTests(unittest.TestCase):
         )
         return importlib.import_module(MODULE_NAME)
 
+    def root(self):
+        return importlib.import_module(PACKAGE_NAME)
+
     def contract(self, name: str):
         value = getattr(self.module(), name, None)
         self.assertIsNotNone(value, f"{name} is not implemented")
@@ -233,6 +236,7 @@ class SignedTransitAdmissionTests(unittest.TestCase):
         return self.verifier().verify(**values)
 
     def test_profile_public_types_exports_and_redacted_nominal_result(self) -> None:
+        gateway_root = self.root()
         module = self.module()
         self.assertEqual(
             module.GATEWAY_NODE_CONTROL_TRANSIT_TOKEN_TYPE,
@@ -285,10 +289,11 @@ class SignedTransitAdmissionTests(unittest.TestCase):
             self.assertNotIn(canary, rendered)
 
     def test_root_and_transit_module_share_one_import_generation(self) -> None:
+        gateway_root = self.root()
         module = self.module()
 
         self.assertIs(
-            sys.modules["control_plane_kit_servers_cpk_local_gateway"],
+            sys.modules[PACKAGE_NAME],
             gateway_root,
         )
         self.assertIs(sys.modules[MODULE_NAME], module)
