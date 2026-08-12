@@ -50,15 +50,18 @@ def _hosted_activity_module():
 
 
 class RetainedSourceLiveLifecycleTests(unittest.TestCase):
-    def test_gateway_rotation_public_graph_selects_retained_hostname(self) -> None:
+    def test_public_gateway_graph_selects_retained_hostname(self) -> None:
         with _controller_module() as controller:
-            graph = controller._gateway_rotation_public_graph(
+            graph = controller._public_gateway_ingress_graph(
                 controller._product_document(ROOT, "cpk_local_gateway"),
                 controller._product_document(ROOT, "hello_server"),
-                controller._product_document(ROOT, "postgres_server"),
                 controller._product_document(ROOT, "cloudflared_connector"),
                 workspace_id="workspace-retained",
+                authority_ref=controller.RuntimeAuthorityReference(
+                    controller.LOCAL_DOCKER_AUTHORITY_REF
+                ),
                 public_hostname="cpk-rot1404-test-gateway.openj92.dev",
+                lifecycle=controller.PublicIngressLifecycle.RETAINED,
             )
 
             self.assertEqual(len(graph.public_ingresses), 1)
@@ -179,13 +182,10 @@ class RetainedSourceLiveLifecycleTests(unittest.TestCase):
                 "verification_attempts",
                 side_effect=(iter((1, 2)), iter((1,))),
             ) as attempts:
-                controller._assert_rotation_gateway_probe_pair(
+                controller._assert_public_gateway_probe_pair(
                     workflow,
                     current_graph_id="graph-current",
                     expected_key_id="key-b",
-                    access_path=(
-                        controller.GatewayProbeAccessPath.NAMED_PUBLIC_INGRESS
-                    ),
                     request_prefix="public-before-restart",
                 )
 
@@ -232,13 +232,10 @@ class RetainedSourceLiveLifecycleTests(unittest.TestCase):
                 "verification_attempts",
                 return_value=iter((1, 2)),
             ):
-                controller._assert_rotation_gateway_probe(
+                controller._assert_public_gateway_probe(
                     request,
                     request_id_prefix="workspace-retained:public-restored:http",
                     expected_key_id="key-b",
-                    access_path=(
-                        controller.GatewayProbeAccessPath.NAMED_PUBLIC_INGRESS
-                    ),
                 )
 
             self.assertEqual(len(request_ids), 2)
@@ -267,13 +264,10 @@ class RetainedSourceLiveLifecycleTests(unittest.TestCase):
                 ),
                 self.assertRaises(RuntimeError),
             ):
-                controller._assert_rotation_gateway_probe_pair(
+                controller._assert_public_gateway_probe_pair(
                     workflow,
                     current_graph_id="graph-current",
                     expected_key_id="key-b",
-                    access_path=(
-                        controller.GatewayProbeAccessPath.NAMED_PUBLIC_INGRESS
-                    ),
                     request_prefix="public-before-restart",
                 )
 

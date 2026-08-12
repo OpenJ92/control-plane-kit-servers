@@ -9,30 +9,10 @@ SECRETS_IMAGE="${CPK_SECRETS_TEST_IMAGE:-control-plane-kit-secrets:source-1203}"
 POSTGRES_IMAGE="${CPK_LIVE_POSTGRES_IMAGE:-postgres:16-alpine}"
 BUILD_IMAGES="${CPK_CLOUDFLARE_CUSTODY_BUILD_IMAGES:-1}"
 CLOUDFLARE_ENV_FILE="${CPK_CLOUDFLARE_ENV_FILE:-$SERVERS_REPO/env/cloudflare.openj92.local.dev}"
-SCENARIO="${CPK_CLOUDFLARE_CUSTODY_SCENARIO:-cloudflare-tunnel-custody}"
-SOURCE_LIVE_GATEWAY_IMAGE="${CPK_SOURCE_LIVE_GATEWAY_IMAGE:-}"
-SOURCE_LIVE_GATEWAY_SOURCE_COMMIT="${CPK_SOURCE_LIVE_GATEWAY_SOURCE_COMMIT:-}"
+SCENARIO="cloudflare-tunnel-custody"
 RUN_SUFFIX="$(date +%s)-$$"
-case "$SCENARIO" in
-  cloudflare-tunnel-custody)
-    WORKSPACE_ID="workspace-secret-cloudflare-$RUN_SUFFIX"
-    PUBLIC_HOSTNAME="cpk-sec1203-$RUN_SUFFIX.openj92.dev"
-    ;;
-  gateway-key-rotation-overlay)
-    WORKSPACE_ID="workspace-gateway-key-rotation-$RUN_SUFFIX"
-    PUBLIC_HOSTNAME="cpk-rot1404-$RUN_SUFFIX-gateway.openj92.dev"
-    PUBLIC_HOSTNAME_PATTERN="cpk-rot1404-$RUN_SUFFIX-*.openj92.dev"
-    if [ -z "$SOURCE_LIVE_GATEWAY_IMAGE" ] || \
-       [ -z "$SOURCE_LIVE_GATEWAY_SOURCE_COMMIT" ]; then
-      echo "gateway source-live image digest and source commit are required" >&2
-      exit 2
-    fi
-    ;;
-  *)
-    echo "unsupported Cloudflare custody scenario: $SCENARIO" >&2
-    exit 2
-    ;;
-esac
+WORKSPACE_ID="workspace-secret-cloudflare-$RUN_SUFFIX"
+PUBLIC_HOSTNAME="cpk-sec1203-$RUN_SUFFIX.openj92.dev"
 NETWORK="cpk-secret-cloudflare-source-live-$RUN_SUFFIX"
 LABEL="org.openj92.project=control-plane-kit-servers"
 WORKSPACE_LABEL_KEY="org.openj92.cpk.workspace"
@@ -182,10 +162,6 @@ base.joinpath("client-token").write_text(
     secrets.token_urlsafe(48),
     encoding="utf-8",
 )
-base.joinpath("postgres-password").write_text(
-    secrets.token_urlsafe(40),
-    encoding="utf-8",
-)
 '
 
 docker run --rm \
@@ -214,41 +190,22 @@ base.joinpath("gateway-public-key.pem").write_text(
     public_pem,
     encoding="utf-8",
 )
-rotation_key = Ed25519PrivateKey.generate()
-base.joinpath("gateway-rotation-key-a.pem").write_bytes(
-    rotation_key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption(),
-    )
-)
-base.joinpath("gateway-rotation-key-a-public.pem").write_bytes(
-    rotation_key.public_key().public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo,
-    )
-)
 '
 
 docker run --rm \
   -v "$BOOTSTRAP_DIR:/bootstrap" \
-  -e BOOTSTRAP_DIR=/bootstrap \
-  -e SCENARIO="$SCENARIO" \
   "$CONTROLLER_IMAGE" \
   python -c '
 import json
-import os
 from pathlib import Path
 
-token = Path(os.environ["BOOTSTRAP_DIR"], "client-token").read_text(encoding="utf-8")
+token = Path("/bootstrap/client-token").read_text(encoding="utf-8")
 intents = [
     "cloudflare.api-token",
     "cloudflare.tunnel-token",
     "gateway.probe-signing-key",
     "oci.pull-credential",
 ]
-if os.environ["SCENARIO"] == "gateway-key-rotation-overlay":
-    intents.append("postgres.password")
 grants = [
     {
         "action": "secret.write",
@@ -263,23 +220,12 @@ grants = [
     {"action": "secret.revoke", "workspace_id": "*"},
     {"action": "secret.metadata", "workspace_id": "*"},
 ]
-if os.environ["SCENARIO"] == "gateway-key-rotation-overlay":
-    grants.extend(
-        (
-            {
-                "action": "secret.generate-delegation-key",
-                "workspace_id": "*",
-                "intents": ["gateway.probe-signing-key"],
-            },
-            {"action": "secret.rotate", "workspace_id": "*"},
-        )
-    )
 credentials = [{
     "subject": "cpk-server-source-live",
     "token": token,
     "grants": grants,
 }]
-Path(os.environ["BOOTSTRAP_DIR"], "credentials.json").write_text(
+Path("/bootstrap/credentials.json").write_text(
     json.dumps(credentials, separators=(",", ":"), sort_keys=True),
     encoding="utf-8",
 )
@@ -289,12 +235,10 @@ chmod 0400 "$BOOTSTRAP_DIR"/*
 CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON="$(
   docker run --rm \
     -e WORKSPACE_ID="$WORKSPACE_ID" \
-    -e SCENARIO="$SCENARIO" \
     "$CONTROLLER_IMAGE" \
     python -c '
 import json
 import os
-
 workspace_id = os.environ["WORKSPACE_ID"]
 operator_scopes = [
     "hub:instance:create",
@@ -326,13 +270,6 @@ operator_scopes = [
     "delegation-key:revoke",
     "delegation-key:use",
 ]
-if os.environ["SCENARIO"] == "gateway-key-rotation-overlay":
-    operator_scopes.extend(
-        (
-            "delegation-key:rotate",
-            "delegation-key:rotate-approve",
-        )
-    )
 worker_scopes = [
     "execution:operate",
     "secret-provider:use",
@@ -498,8 +435,6 @@ run_controller() {
     -e CPK_SECRET_PROVIDER_TOKEN_FILE=/run/secrets/cpk-source-live/client-token \
     -e CPK_SECRET_PROVIDER_BOOTSTRAP_DIR=/run/secrets/cpk-source-live \
     -e CPK_GATEWAY_PROBE_PRIVATE_KEY_FILE=/run/secrets/cpk-source-live/gateway-private-key.pem \
-    -e CPK_SOURCE_LIVE_GATEWAY_IMAGE="$SOURCE_LIVE_GATEWAY_IMAGE" \
-    -e CPK_SOURCE_LIVE_GATEWAY_SOURCE_COMMIT="$SOURCE_LIVE_GATEWAY_SOURCE_COMMIT" \
     -e OPENJ92_CLOUDFLARE_ACCOUNT_ID="$OPENJ92_CLOUDFLARE_ACCOUNT_ID" \
     -e OPENJ92_CLOUDFLARE_ZONE_ID="$OPENJ92_CLOUDFLARE_ZONE_ID" \
     -e OPENJ92_CLOUDFLARE_ZONE="$OPENJ92_CLOUDFLARE_ZONE" \
@@ -527,10 +462,8 @@ for secret_file in \
   cloudflare-api-token \
   client-token \
   gateway-private-key.pem \
-  gateway-rotation-key-a.pem \
   ghcr-pull-credential.json \
-  ghcr-token-sentinel \
-  postgres-password
+  ghcr-token-sentinel
 do
   if [ ! -f "$BOOTSTRAP_DIR/$secret_file" ]; then
     continue
