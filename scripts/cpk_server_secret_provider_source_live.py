@@ -2215,7 +2215,6 @@ def _run_cloudflare_abort_cleanup(
     if not resources and checkpoint.phase != "prepared":
         raise RuntimeError("source-live exact Cloudflare evidence was unavailable")
     failed_connector_effects: dict[str, ExactFailedDockerNodeEffect] = {}
-    accepted_connector_run_ids: set[str] = set()
     uncertain_connector_runs: set[str] = set()
     for source_run_id in sorted(
         {resource.source_run_id for resource in active_resources}
@@ -2228,9 +2227,7 @@ def _run_cloudflare_abort_cleanup(
                 connector_node_id="cloudflared-gateway",
                 accepted_graph_id=checkpoint.current_graph_id,
             )
-            if effect is None:
-                accepted_connector_run_ids.add(source_run_id)
-            else:
+            if effect is not None:
                 failed_connector_effects[source_run_id] = effect
         except Exception:
             uncertain_connector_runs.add(source_run_id)
@@ -2277,8 +2274,7 @@ def _run_cloudflare_abort_cleanup(
     def verify_authoritative_absence() -> None:
         if uncertain_connector_runs:
             raise RuntimeError("failed connector absence is uncertain")
-        if accepted_connector_run_ids:
-            _assert_no_node_containers(workspace_id, "cloudflared-gateway")
+        _assert_no_node_containers(workspace_id, "cloudflared-gateway")
         _assert_failed_connectors_absent(
             emergency_resources,
             failed_connector_effects=failed_connector_effects,
@@ -2297,8 +2293,7 @@ def _run_cloudflare_abort_cleanup(
         )
 
     def verify_emergency_absence() -> None:
-        if accepted_connector_run_ids:
-            _assert_no_node_containers(workspace_id, "cloudflared-gateway")
+        _assert_no_node_containers(workspace_id, "cloudflared-gateway")
         _assert_abort_generated_secret_versions_revoked(
             resources,
             provider_container=provider_container,
@@ -2374,9 +2369,9 @@ def _load_exact_owned_ingress_resources(
           resource.hostname,
           resource.zone_id,
           resource.source_run_id,
-          generated.secret_ref,
-          generated.metadata->>'provider_version_id',
-          (generated.metadata->>'provider_version_number')::integer
+          left(generated.secret_ref, 257),
+          left(generated.metadata->>'provider_version_id', 256),
+          left(generated.metadata->>'provider_version_number', 11)
         FROM cpk_cloudflare_ingress_resources AS resource
         JOIN cpk_generated_ingress_secret_references AS generated
           ON generated.workspace_id = resource.workspace_id
@@ -2409,9 +2404,9 @@ def _load_all_exact_owned_ingress_resources(
           resource.hostname,
           resource.zone_id,
           resource.source_run_id,
-          generated.secret_ref,
-          generated.metadata->>'provider_version_id',
-          (generated.metadata->>'provider_version_number')::integer
+          left(generated.secret_ref, 257),
+          left(generated.metadata->>'provider_version_id', 256),
+          left(generated.metadata->>'provider_version_number', 11)
         FROM cpk_cloudflare_ingress_resources AS resource
         JOIN cpk_generated_ingress_secret_references AS generated
           ON generated.workspace_id = resource.workspace_id
@@ -2438,7 +2433,7 @@ def _decode_exact_owned_ingress_resources(
             len(row) != 11
             or row[0] != "cloudflare"
             or type(row[2]) is not int
-            or type(row[10]) is not int
+            or type(row[10]) is not str
             or any(
                 type(row[index]) is not str
                 for index in (*range(0, 2), *range(3, 10))
@@ -2449,6 +2444,9 @@ def _decode_exact_owned_ingress_resources(
         if identity in identities:
             raise RuntimeError("owned ingress evidence is uncertain")
         identities.add(identity)
+        provider_version_number = _decode_provider_version_number(row[10])
+        if provider_version_number is None:
+            raise RuntimeError("owned ingress evidence is uncertain")
         invalid_resource = False
         try:
             resource = ExactOwnedIngressResource(
@@ -2464,7 +2462,7 @@ def _decode_exact_owned_ingress_resources(
                 source_run_id=row[7],
                 secret_reference=row[8],
                 provider_version_id=row[9],
-                provider_version_number=row[10],
+                provider_version_number=provider_version_number,
             )
         except (SourceLiveAbortError, TypeError, ValueError):
             invalid_resource = True
@@ -2472,6 +2470,13 @@ def _decode_exact_owned_ingress_resources(
             raise RuntimeError("owned ingress evidence is uncertain")
         resources.append(resource)
     return tuple(resources)
+
+
+def _decode_provider_version_number(candidate: str) -> int | None:
+    if re.fullmatch(r"[1-9][0-9]{0,9}", candidate) is None:
+        return None
+    decoded = int(candidate)
+    return decoded if decoded <= 2_147_483_647 else None
 
 
 def _load_exact_failed_connector_effect(
