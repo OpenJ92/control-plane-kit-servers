@@ -937,6 +937,10 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                         self.assertNotIn("::integer", query)
                         self.assertIn("left(generated.secret_ref, 257)", query)
                         self.assertIn(
+                            "left(generated.metadata->>'provider_version_id', 256)",
+                            query,
+                        )
+                        self.assertIn(
                             "left(generated.metadata->>'provider_version_number', 11)",
                             query,
                         )
@@ -980,6 +984,26 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 self.assertIsNone(raised.exception.__cause__)
                 self.assertIsNone(raised.exception.__context__)
                 self.assertNotIn(candidate, str(raised.exception))
+
+        bounded_error = None
+        try:
+            module.ExactOwnedIngressResource(
+                provider_kind=valid.provider_kind,
+                ingress_id=valid.ingress_id,
+                epoch=valid.epoch,
+                public_provider_coordinates=valid.public_provider_coordinates,
+                source_run_id=valid.source_run_id,
+                secret_reference="secret://generated/ingress/\ud800",
+                provider_version_id=valid.provider_version_id,
+                provider_version_number=valid.provider_version_number,
+            )
+        except module.SourceLiveAbortError as error:
+            bounded_error = error
+        except UnicodeEncodeError:
+            pass
+        self.assertIsNotNone(bounded_error)
+        self.assertIsNone(bounded_error.__cause__)
+        self.assertIsNone(bounded_error.__context__)
 
     def test_failed_connector_effect_rejects_missing_duplicate_or_contradictory_evidence(
         self,
