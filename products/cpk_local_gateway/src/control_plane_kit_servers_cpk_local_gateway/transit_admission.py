@@ -115,8 +115,8 @@ class VerifiedGatewayNodeControlTransit:
 
     def __post_init__(self) -> None:
         if (
-            not isinstance(self.grant, DelegatedGatewayNodeControlTransitGrant)
-            or not isinstance(self.request, NodeControlCommandRequest)
+            type(self.grant) is not DelegatedGatewayNodeControlTransitGrant
+            or type(self.request) is not NodeControlCommandRequest
             or not _is_epoch(self.effective_now)
         ):
             raise GatewayNodeControlTransitAdmissionError(_ERROR_MESSAGE)
@@ -265,7 +265,7 @@ def _validated_public_keys(
     if (
         type(public_keys) is not tuple
         or not 1 <= len(public_keys) <= _MAX_PUBLIC_KEYS
-        or not all(isinstance(value, DelegationPublicKey) for value in public_keys)
+        or not all(type(value) is DelegationPublicKey for value in public_keys)
     ):
         raise _TransitAdmissionRejected
     ordered = tuple(sorted(public_keys, key=lambda value: value.key_id))
@@ -461,7 +461,7 @@ def _require_graph_reference(
     value: object,
     role: NodeControlGraphReferenceRole,
 ) -> None:
-    if not isinstance(value, NodeControlGraphReference) or value.role is not role:
+    if type(value) is not NodeControlGraphReference or value.role is not role:
         raise _TransitAdmissionRejected
 
 
