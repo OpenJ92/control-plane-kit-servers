@@ -54,19 +54,24 @@ ISSUER = "urn:control-plane-kit:test-gateway"
 AUDIENCE = "gateway:workspace-auth-private:gateway"
 GATEWAY_NODE_ID = "gateway"
 KEY_ID = "gateway-test-key"
+PACKAGE_NAME = "control_plane_kit_servers_cpk_local_gateway"
 
 
 class CpkLocalGatewayProductTests(unittest.TestCase):
     def setUp(self) -> None:
+        self._package_modules = {
+            name: module
+            for name, module in sys.modules.items()
+            if name == PACKAGE_NAME or name.startswith(f"{PACKAGE_NAME}.")
+        }
         sys.path.insert(0, str(PRODUCT_SRC))
 
     def tearDown(self) -> None:
         sys.path.remove(str(PRODUCT_SRC))
         for name in list(sys.modules):
-            if name == "control_plane_kit_servers_cpk_local_gateway" or name.startswith(
-                "control_plane_kit_servers_cpk_local_gateway."
-            ):
+            if name == PACKAGE_NAME or name.startswith(f"{PACKAGE_NAME}."):
                 sys.modules.pop(name, None)
+        sys.modules.update(self._package_modules)
 
     def decode(self):
         return ProductDescriptorCodec().decode_document(DESCRIPTOR.read_bytes())
