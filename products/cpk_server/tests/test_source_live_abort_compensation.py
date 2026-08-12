@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
 import importlib.util
+from io import StringIO
 import os
 from pathlib import Path
 import sys
@@ -52,11 +53,11 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
     def test_each_committed_phase_checkpoints_before_fault_injection(self) -> None:
         module = _module()
         phases = (
+            "prepared",
             "public-on-committed",
             "public-off-committed",
             "public-on-again-committed",
             "final-teardown-committed",
-            "final-release-committed",
         )
         controller_source = CONTROLLER_PATH.read_text(encoding="utf-8")
         for phase in phases:
@@ -94,6 +95,7 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
             verify_authoritative_absence=lambda: calls.append("verify"),
             verify_emergency_absence=lambda: calls.append("unexpected-verify"),
             resources=(_resource(module),),
+            emergency_resources=(),
             emergency_compensators={
                 "cloudflare": lambda _resource: calls.append("emergency") or (),
             },
@@ -131,6 +133,7 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
             verify_authoritative_absence=verify_authoritative,
             verify_emergency_absence=verify_emergency,
             resources=(_resource(module),),
+            emergency_resources=(_resource(module),),
             emergency_compensators={"cloudflare": emergency},
         )
 
@@ -162,6 +165,7 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
             verify_authoritative_absence=lambda: calls.append("verified-absent"),
             verify_emergency_absence=lambda: calls.append("unexpected-verify"),
             resources=(_resource(module),),
+            emergency_resources=(),
             emergency_compensators={
                 "future-provider": lambda _resource: calls.append("emergency") or (),
             },
@@ -187,6 +191,7 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                     RuntimeError("tunnel-token-value")
                 ),
                 resources=(resource,),
+                emergency_resources=(),
                 emergency_compensators={},
             )
 
@@ -198,6 +203,98 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
         self.assertNotIn("provider-token-value", repr(raised.exception))
         self.assertNotIn("tunnel-token-value", repr(raised.exception))
         self.assertIsNone(raised.exception.__cause__)
+        self.assertIsNone(raised.exception.__context__)
+
+    def test_only_exact_failed_unadvanced_resources_enter_emergency_dispatch(
+        self,
+    ) -> None:
+        module = _module()
+        accepted = _resource(module)
+        unadvanced = _resource(module, source_run_id="run-unadvanced", epoch=2)
+        calls: list[str] = []
+
+        report = module.compensate_abort(
+            authoritative_cleanup=lambda: (_ for _ in ()).throw(
+                RuntimeError("graph cleanup did not see unadvanced effect")
+            ),
+            verify_authoritative_absence=lambda: (_ for _ in ()).throw(
+                RuntimeError("unadvanced effect remains")
+            ),
+            verify_emergency_absence=lambda: calls.append("verified"),
+            resources=(accepted, unadvanced),
+            emergency_resources=(unadvanced,),
+            emergency_compensators={
+                "cloudflare": lambda resource: calls.append(resource.source_run_id)
+                or (),
+            },
+        )
+
+        self.assertEqual(calls, ["run-unadvanced", "verified"])
+        self.assertFalse(report.authoritative)
+        self.assertTrue(report.emergency_attempted)
+        self.assertEqual(report.resource_count, 2)
+
+    def test_uncertain_unadvanced_evidence_authorizes_no_destructive_call(self) -> None:
+        module = _module()
+        calls: list[str] = []
+
+        with self.assertRaises(module.SourceLiveAbortError) as raised:
+            module.compensate_abort(
+                authoritative_cleanup=lambda: (_ for _ in ()).throw(
+                    RuntimeError("candidate-provider-address")
+                ),
+                verify_authoritative_absence=lambda: (_ for _ in ()).throw(
+                    RuntimeError("candidate-secret-reference")
+                ),
+                verify_emergency_absence=lambda: (_ for _ in ()).throw(
+                    RuntimeError("candidate-token")
+                ),
+                resources=(_resource(module),),
+                emergency_resources=(),
+                emergency_compensators={
+                    "cloudflare": lambda _resource: calls.append("mutated") or (),
+                },
+            )
+
+        self.assertEqual(calls, [])
+        rendered = str(raised.exception) + repr(raised.exception)
+        for candidate in (
+            "candidate-provider-address",
+            "candidate-secret-reference",
+            "candidate-token",
+        ):
+            self.assertNotIn(candidate, rendered)
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertIsNone(raised.exception.__context__)
+
+    def test_abort_snapshot_is_candidate_free(self) -> None:
+        with _controller_module() as controller:
+            resource = _resource(controller)
+            connector = _failed_connector_effect(controller)
+            output = StringIO()
+            with redirect_stdout(output):
+                controller._print_bounded_abort_snapshot(
+                    controller.SourceLiveCheckpoint(
+                        "workspace-a",
+                        "public-on-committed",
+                        "graph-private",
+                        "graph-public",
+                    ),
+                    (resource,),
+                    failed_connector_effects={"run-failed": connector},
+                    uncertain_connector_runs=set(),
+                )
+
+            rendered = output.getvalue()
+            for candidate in (
+                "tunnel-exact",
+                "dns-exact",
+                "cpk-gateway-a.openj92.dev",
+                "secret://generated/ingress/token-a",
+                "container-exact",
+            ):
+                self.assertNotIn(candidate, rendered)
+            self.assertLessEqual(len(rendered), 512)
 
     def test_controller_cleanup_drives_empty_graph_through_cpk_server_first(
         self,
@@ -275,7 +372,7 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 workspace_id="workspace-a",
             )
             authoritative_verify.assert_called_once()
-            self.assertEqual(workflow.release_reservation_statuses, ["reserved"])
+            self.assertEqual(workflow.release_reservation_statuses, [])
             connector_verify.assert_called_once()
             custody_verify.assert_called_once_with(
                 (resource,),
@@ -378,7 +475,93 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 ],
             )
 
-    def test_post_teardown_abort_uses_historical_exact_reservation_evidence(
+    def test_controller_fallback_receives_only_failed_unadvanced_resources(
+        self,
+    ) -> None:
+        with _controller_module() as controller:
+            workflow = RecordingWorkflow(controller, fail_transition=True)
+            accepted = _resource(controller, source_run_id="run-accepted")
+            unadvanced = _resource(
+                controller,
+                source_run_id="run-unadvanced",
+                epoch=2,
+            )
+            checkpoint = controller.SourceLiveCheckpoint(
+                workspace_id="workspace-a",
+                phase="public-on-committed",
+                current_graph_id="graph-public",
+                desired_graph_id="graph-public",
+            )
+
+            def connector_effect(
+                _database_url: str,
+                *,
+                workspace_id: str,
+                source_run_id: str,
+                connector_node_id: str,
+            ):
+                del _database_url, workspace_id, connector_node_id
+                return _failed_connector_effect(
+                    controller,
+                    run_id=source_run_id,
+                    desired_graph_id=(
+                        "graph-public"
+                        if source_run_id == "run-accepted"
+                        else "graph-unadvanced"
+                    ),
+                )
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "CPK_SOURCE_LIVE_STATE_FILE": "/state/checkpoint.json",
+                        "CPK_HOSTED_ACTIVITY_WORKSPACE_ID": "workspace-a",
+                        "CPK_SECRET_PROVIDER_CONTAINER": "provider-a",
+                    },
+                    clear=False,
+                ),
+                patch.object(controller, "read_checkpoint", return_value=checkpoint),
+                patch.object(
+                    controller,
+                    "_load_exact_owned_ingress_resources",
+                    return_value=(accepted, unadvanced),
+                ),
+                patch.object(
+                    controller,
+                    "_load_exact_failed_connector_effect",
+                    side_effect=connector_effect,
+                ),
+                patch.object(controller, "_workflow", return_value=workflow),
+                patch.object(controller, "_disconnect_runtime_networks"),
+                patch.object(
+                    controller,
+                    "_assert_owned_cloudflare_resources_removed",
+                    side_effect=RuntimeError("unadvanced effect remains"),
+                ),
+                patch.object(controller, "_assert_abort_generated_secret_versions_revoked"),
+                patch.object(controller, "_assert_abort_resources_physically_absent"),
+                patch.object(controller, "_assert_failed_connectors_absent"),
+                patch.object(
+                    controller,
+                    "_emergency_compensate_cloudflare",
+                    return_value=(),
+                ) as emergency,
+            ):
+                status = controller._run_cloudflare_abort_cleanup(
+                    base_url="http://cpk-server:8080",
+                    server_container="cpk-server",
+                    operations_database_url="postgresql://operations",
+                    provider_container="provider-a",
+                    provider_token_file=Path("/provider-token"),
+                    bootstrap_dir=Path("/bootstrap"),
+                )
+
+            self.assertEqual(status, 2)
+            emergency.assert_called_once()
+            self.assertIs(emergency.call_args.args[0], unadvanced)
+
+    def test_post_teardown_abort_uses_historical_exact_ephemeral_evidence(
         self,
     ) -> None:
         with _controller_module() as controller:
@@ -440,73 +623,12 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
             self.assertEqual(status, 0)
             historical.assert_called_once()
             failed_connector.assert_not_called()
-            self.assertEqual(workflow.release_reservation_statuses, ["reserved"])
+            self.assertEqual(workflow.release_reservation_statuses, [])
             absent.assert_called_once_with(
                 (),
                 failed_connector_effects={},
                 uncertain_connector_runs=set(),
             )
-            emergency.assert_not_called()
-
-    def test_post_release_abort_verifies_without_releasing_again(self) -> None:
-        with _controller_module() as controller:
-            workflow = RecordingWorkflow(
-                controller,
-                fail_transition=False,
-                reservation_status="released",
-            )
-            resource = _resource(controller)
-            checkpoint = controller.SourceLiveCheckpoint(
-                workspace_id="workspace-a",
-                phase="final-release-committed",
-                current_graph_id="graph-empty",
-                desired_graph_id="graph-empty",
-            )
-            with (
-                patch.dict(
-                    os.environ,
-                    {
-                        "CPK_SOURCE_LIVE_STATE_FILE": "/state/checkpoint.json",
-                        "CPK_HOSTED_ACTIVITY_WORKSPACE_ID": "workspace-a",
-                        "CPK_SECRET_PROVIDER_CONTAINER": "provider-a",
-                    },
-                    clear=False,
-                ),
-                patch.object(controller, "read_checkpoint", return_value=checkpoint),
-                patch.object(
-                    controller,
-                    "_load_exact_owned_ingress_resources",
-                    return_value=(),
-                ),
-                patch.object(
-                    controller,
-                    "_load_all_exact_owned_ingress_resources",
-                    return_value=(resource,),
-                ),
-                patch.object(controller, "_workflow", return_value=workflow),
-                patch.object(controller, "_disconnect_runtime_networks"),
-                patch.object(
-                    controller,
-                    "_assert_owned_cloudflare_resources_removed",
-                ),
-                patch.object(
-                    controller,
-                    "_assert_abort_generated_secret_versions_revoked",
-                ),
-                patch.object(controller, "_assert_failed_connectors_absent"),
-                patch.object(controller, "_emergency_compensate_cloudflare") as emergency,
-            ):
-                status = controller._run_cloudflare_abort_cleanup(
-                    base_url="http://cpk-server:8080",
-                    server_container="cpk-server",
-                    operations_database_url="postgresql://operations",
-                    provider_container="provider-a",
-                    provider_token_file=Path("/provider-token"),
-                    bootstrap_dir=Path("/bootstrap"),
-                )
-
-            self.assertEqual(status, 0)
-            self.assertEqual(workflow.release_reservation_statuses, [])
             emergency.assert_not_called()
 
     def test_abort_custody_verification_requires_each_exact_version_revoked(self) -> None:
@@ -871,14 +993,12 @@ class RecordingWorkflow:
         controller,
         *,
         fail_transition: bool,
-        reservation_status: str = "reserved",
     ) -> None:
         self.controller = controller
         self.fail_transition = fail_transition
         self.transition_graph_names: list[str] = []
         self.transition_expected_desired_ids: list[str] = []
         self.release_reservation_statuses: list[str] = []
-        self.reservation_status = reservation_status
 
     def wait_ready(self) -> None:
         return None
@@ -912,7 +1032,7 @@ class RecordingWorkflow:
                     "reservation_id": "reservation-exact",
                     "ingress_id": "gateway-a",
                     "lifecycle": "retained",
-                    "status": self.reservation_status,
+                    "status": "reserved",
                     "version": 2,
                     "realizations": [{"epoch": 1, "status": "removed"}],
                 }
@@ -930,7 +1050,6 @@ class RecordingWorkflow:
     ):
         del title
         self.release_reservation_statuses.append(str(reservation["status"]))
-        self.reservation_status = "released"
         return self.controller.HostedReleaseResult(
             plan_id="plan-release",
             approval_id="approval-release",
@@ -939,30 +1058,42 @@ class RecordingWorkflow:
         )
 
 
-def _resource(module, *, provider_kind: str = "cloudflare"):
+def _resource(
+    module,
+    *,
+    provider_kind: str = "cloudflare",
+    source_run_id: str = "run-failed",
+    epoch: int = 1,
+):
+    suffix = "" if epoch == 1 else f"-{epoch}"
     return module.ExactOwnedIngressResource(
         provider_kind=provider_kind,
         ingress_id="gateway-a",
-        epoch=1,
+        epoch=epoch,
         public_provider_coordinates={
-            "tunnel_id": "tunnel-exact",
-            "dns_record_id": "dns-exact",
+            "tunnel_id": f"tunnel-exact{suffix}",
+            "dns_record_id": f"dns-exact{suffix}",
             "hostname": "cpk-gateway-a.openj92.dev",
             "zone_id": "zone-exact",
         },
-        source_run_id="run-failed",
-        secret_reference="secret://generated/ingress/token-a",
-        provider_version_id="version-exact",
-        provider_version_number=1,
+        source_run_id=source_run_id,
+        secret_reference=f"secret://generated/ingress/token{suffix or '-a'}",
+        provider_version_id=f"version-exact{suffix}",
+        provider_version_number=epoch,
     )
 
 
-def _failed_connector_effect(module):
+def _failed_connector_effect(
+    module,
+    *,
+    run_id: str = "run-failed",
+    desired_graph_id: str = "graph-failed",
+):
     return module.ExactFailedDockerNodeEffect(
         workspace_id="workspace-a",
-        run_id="run-failed",
+        run_id=run_id,
         plan_id="plan-failed",
-        desired_graph_id="graph-failed",
+        desired_graph_id=desired_graph_id,
         activity_id="activity-start-connector",
         runtime_id="runtime-a",
         node_id="cloudflared-gateway",
