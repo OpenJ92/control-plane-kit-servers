@@ -2134,8 +2134,9 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("_assert_removed_ingress_token_versions_revoked", controller)
         self.assertIn('"intent": intent,', controller)
         self.assertIn('"intent": POSTGRES_INTENT,', controller)
-        self.assertIn("PublicIngressLifecycle.RETAINED", controller)
-        self.assertIn("read_public_ingress_resources", controller)
+        self.assertIn("PublicIngressLifecycle.EPHEMERAL", controller)
+        self.assertNotIn("PublicIngressLifecycle.RETAINED", controller)
+        self.assertNotIn("read_public_ingress_resources", controller)
 
         cloudflare_smoke = (
             ROOT

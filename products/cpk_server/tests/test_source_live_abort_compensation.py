@@ -191,7 +191,7 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                     RuntimeError("tunnel-token-value")
                 ),
                 resources=(resource,),
-                emergency_resources=(),
+                emergency_resources=(resource,),
                 emergency_compensators={},
             )
 
@@ -326,7 +326,7 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 ),
                 patch.object(
                     controller,
-                    "_load_exact_failed_connector_effect",
+                    "_load_exact_connector_run_evidence",
                     return_value=_failed_connector_effect(controller),
                 ),
                 patch.object(controller, "_workflow", return_value=workflow),
@@ -410,7 +410,7 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 ),
                 patch.object(
                     controller,
-                    "_load_exact_failed_connector_effect",
+                    "_load_exact_connector_run_evidence",
                     return_value=_failed_connector_effect(controller),
                 ),
                 patch.object(controller, "_workflow", return_value=workflow),
@@ -453,6 +453,7 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
             self.assertIs(emergency.call_args.args[0], resource)
             physical_verify.assert_called_once_with(
                 (resource,),
+                connector_resources=(resource,),
                 api_token_file=Path("/bootstrap/cloudflare-api-token"),
                 failed_connector_effects={
                     "run-failed": _failed_connector_effect(controller)
@@ -499,16 +500,15 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 workspace_id: str,
                 source_run_id: str,
                 connector_node_id: str,
+                accepted_graph_id: str,
             ):
-                del _database_url, workspace_id, connector_node_id
+                del _database_url, workspace_id, connector_node_id, accepted_graph_id
+                if source_run_id == "run-accepted":
+                    return None
                 return _failed_connector_effect(
                     controller,
                     run_id=source_run_id,
-                    desired_graph_id=(
-                        "graph-public"
-                        if source_run_id == "run-accepted"
-                        else "graph-unadvanced"
-                    ),
+                    desired_graph_id="graph-unadvanced",
                 )
 
             with (
@@ -529,7 +529,7 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 ),
                 patch.object(
                     controller,
-                    "_load_exact_failed_connector_effect",
+                    "_load_exact_connector_run_evidence",
                     side_effect=connector_effect,
                 ),
                 patch.object(controller, "_workflow", return_value=workflow),
@@ -596,7 +596,7 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 ) as historical,
                 patch.object(
                     controller,
-                    "_load_exact_failed_connector_effect",
+                    "_load_exact_connector_run_evidence",
                 ) as failed_connector,
                 patch.object(controller, "_workflow", return_value=workflow),
                 patch.object(controller, "_disconnect_runtime_networks"),
@@ -747,6 +747,93 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
             descriptor = effect.bounded_descriptor()
             self.assertNotIn("token", str(descriptor).lower())
             self.assertNotIn("secret", str(descriptor).lower())
+
+    def test_connector_run_evidence_separates_accepted_graph_from_failed_effect(
+        self,
+    ) -> None:
+        with _controller_module() as controller:
+            failed = controller._decode_exact_connector_run_evidence(
+                expected_workspace_id="workspace-a",
+                expected_run_id="run-failed",
+                connector_node_id="cloudflared-gateway",
+                accepted_graph_id="graph-current",
+                rows=_failed_connector_rows(),
+            )
+            self.assertEqual(failed, _failed_connector_effect(controller))
+
+            row = _failed_connector_rows()[0]
+            accepted_rows = (
+                (
+                    "run-accepted",
+                    "succeeded",
+                    row[2],
+                    "plan-accepted",
+                    "graph-current",
+                    row[5],
+                    row[6],
+                ),
+            )
+            self.assertIsNone(
+                controller._decode_exact_connector_run_evidence(
+                    expected_workspace_id="workspace-a",
+                    expected_run_id="run-accepted",
+                    connector_node_id="cloudflared-gateway",
+                    accepted_graph_id="graph-current",
+                    rows=accepted_rows,
+                )
+            )
+
+            for name, rows in {
+                "wrong-graph": (
+                    accepted_rows[0][:4]
+                    + ("graph-other",)
+                    + accepted_rows[0][5:],
+                ),
+                "in-progress": (
+                    (accepted_rows[0][0], "running") + accepted_rows[0][2:],
+                ),
+            }.items():
+                with self.subTest(name=name), self.assertRaisesRegex(
+                    RuntimeError,
+                    "connector run evidence is uncertain",
+                ):
+                    controller._decode_exact_connector_run_evidence(
+                        expected_workspace_id="workspace-a",
+                        expected_run_id="run-accepted",
+                        connector_node_id="cloudflared-gateway",
+                        accepted_graph_id="graph-current",
+                        rows=rows,
+                    )
+
+    def test_owned_ingress_rows_are_strict_and_duplicate_free(self) -> None:
+        with _controller_module() as controller:
+            row = (
+                "cloudflare",
+                "gateway-a",
+                1,
+                "tunnel-a",
+                "dns-a",
+                "cpk-gateway-a.openj92.dev",
+                "zone-a",
+                "run-a",
+                "secret://generated/ingress/token-a",
+                "version-a",
+                1,
+            )
+            resources = controller._decode_exact_owned_ingress_resources((row,))
+            self.assertEqual(resources[0].source_run_id, "run-a")
+
+            for name, rows in {
+                "null": (row[:3] + (None,) + row[4:],),
+                "coerced-epoch": (row[:2] + ("1",) + row[3:],),
+                "unknown-provider": (("other",) + row[1:],),
+                "duplicate": (row, row),
+            }.items():
+                with self.subTest(name=name), self.assertRaisesRegex(
+                    RuntimeError,
+                    "owned ingress evidence is uncertain",
+                ):
+                    controller._decode_exact_owned_ingress_resources(rows)
 
     def test_failed_connector_effect_rejects_missing_duplicate_or_contradictory_evidence(
         self,
