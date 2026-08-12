@@ -70,6 +70,7 @@ MAX_CREDENTIAL_BYTES = 5_167
 MAX_HEADER_SEGMENT_BYTES = 263
 MAX_PAYLOAD_SEGMENT_BYTES = 4_816
 MAX_SIGNATURE_SEGMENT_BYTES = 86
+MAX_STRUCTURAL_JSON_MEMBERS = 64
 SEED = bytes(range(32))
 
 
@@ -484,6 +485,36 @@ class SignedTransitAdmissionTests(unittest.TestCase):
                 )
             )
 
+        excessive_members = {
+            f"member_{index}": index
+            for index in range(MAX_STRUCTURAL_JSON_MEMBERS + 1)
+        }
+        excessive_credential = _signed_credential(
+            self.fixture["header"],
+            excessive_members,
+        )
+        self.assertLess(
+            len(excessive_credential.split(b".")[1]),
+            MAX_PAYLOAD_SEGMENT_BYTES,
+        )
+        with patch.object(
+            DelegatedGatewayNodeControlTransitGrantCodec,
+            "decode",
+            side_effect=AssertionError("nested grant decoder was reached"),
+        ), patch.object(
+            NodeControlCommandRequestCodec,
+            "decode_canonical_bytes",
+            side_effect=AssertionError("nested request decoder was reached"),
+        ):
+            self.assert_rejected(
+                lambda: verifier.verify(
+                    credential=excessive_credential,
+                    request_bytes=self.fixture_request_bytes(),
+                    expected_attempt_id="attempt-1",
+                    effective_now=150,
+                )
+            )
+
         for request_candidate in (
             "not-bytes",
             bytearray(self.fixture_request_bytes()),
@@ -519,6 +550,41 @@ class SignedTransitAdmissionTests(unittest.TestCase):
                 "candidate-secret",
             )
 
+        required_payload_keys = tuple(self.fixture["payload"])
+        payload_candidates: list[tuple[str, dict[str, object]]] = []
+        for key in required_payload_keys:
+            missing = deepcopy(self.fixture["payload"])
+            missing.pop(key)
+            payload_candidates.append((f"missing-{key}", missing))
+        unknown = deepcopy(self.fixture["payload"])
+        unknown["unknown"] = "candidate-secret"
+        payload_candidates.append(("unknown", unknown))
+        wrong_types = {
+            "iss": 1,
+            "aud": [],
+            "iat": "100",
+            "nbf": True,
+            "exp": 200.5,
+            "jti": {},
+            "gateway_node_control_transit": [],
+        }
+        for key, value in wrong_types.items():
+            wrong = deepcopy(self.fixture["payload"])
+            wrong[key] = value
+            payload_candidates.append((f"wrong-{key}", wrong))
+        for label, payload in payload_candidates:
+            credential = _signed_credential(self.fixture["header"], payload)
+            with self.subTest(payload=label):
+                self.assert_rejected(
+                    lambda credential=credential: verifier.verify(
+                        credential=credential,
+                        request_bytes=self.fixture_request_bytes(),
+                        expected_attempt_id="attempt-1",
+                        effective_now=150,
+                    ),
+                    "candidate-secret",
+                )
+
     def test_immutable_bounded_key_snapshot_signature_and_purpose(self) -> None:
         verifier_type = self.contract("Ed25519GatewayNodeControlTransitVerifier")
         error_type = self.contract("GatewayNodeControlTransitAdmissionError")
@@ -529,20 +595,25 @@ class SignedTransitAdmissionTests(unittest.TestCase):
             (),
             tuple(_public_key(key_id=f"key-{index}") for index in range(17)),
             (
-                _public_key(key_id="duplicate"),
-                _public_key(seed=b"b" * 32, key_id="duplicate"),
+                _public_key(key_id="candidate-duplicate-key"),
+                _public_key(seed=b"b" * 32, key_id="candidate-duplicate-key"),
             ),
             [_public_key(key_id="gateway-transit-key-1")],
         )
         for snapshot in invalid_snapshots:
             with self.subTest(size=len(snapshot)):
-                with self.assertRaises((ValueError, TypeError, error_type)) as caught:
+                with self.assertRaises(error_type) as caught:
                     verifier_type(
                         issuer="cpk-server",
                         workspace_id=workspace,
                         gateway_node_id=gateway,
                         public_keys=snapshot,
                     )
+                self.assertLessEqual(len(str(caught.exception)), 128)
+                self.assertNotIn("PUBLIC KEY", str(caught.exception))
+                self.assertNotIn("PUBLIC KEY", repr(caught.exception))
+                self.assertNotIn("candidate-duplicate-key", str(caught.exception))
+                self.assertNotIn("candidate-duplicate-key", repr(caught.exception))
                 self.assertIsNone(caught.exception.__cause__)
                 self.assertIsNone(caught.exception.__context__)
 
@@ -571,7 +642,7 @@ class SignedTransitAdmissionTests(unittest.TestCase):
             }
             values.update(changes)
             with self.subTest(changes=changes):
-                with self.assertRaises((ValueError, TypeError, error_type)) as caught:
+                with self.assertRaises(error_type) as caught:
                     verifier_type(**values)
                 self.assertLessEqual(len(str(caught.exception)), 128)
                 self.assertNotIn("candidate-secret", str(caught.exception))
@@ -598,15 +669,29 @@ class SignedTransitAdmissionTests(unittest.TestCase):
         self.assertEqual(verified.grant.key_id, "gateway-transit-key-2")
         self.assertNotIn("PUBLIC KEY", repr(self.verifier(public_keys=snapshot)))
 
-        wrong_signature = credential[:-1] + (b"A" if credential[-1:] != b"A" else b"B")
-        self.assert_rejected(
-            lambda: self.verifier(public_keys=snapshot).verify(
-                credential=wrong_signature,
-                request_bytes=self.fixture_request_bytes(),
-                expected_attempt_id="attempt-1",
-                effective_now=150,
+        protected, claims, encoded_signature = credential.split(b".")
+        signature = bytearray(_decode_base64url(encoded_signature))
+        self.assertEqual(len(signature), 64)
+        signature[0] ^= 1
+        wrong_signature = protected + b"." + claims + b"." + _base64url(bytes(signature))
+        self.assertEqual(len(wrong_signature.split(b".")[2]), 86)
+        with patch.object(
+            DelegatedGatewayNodeControlTransitGrantCodec,
+            "decode",
+            side_effect=AssertionError("nested grant decoder was reached"),
+        ), patch.object(
+            NodeControlCommandRequestCodec,
+            "decode_canonical_bytes",
+            side_effect=AssertionError("nested request decoder was reached"),
+        ):
+            self.assert_rejected(
+                lambda: self.verifier(public_keys=snapshot).verify(
+                    credential=wrong_signature,
+                    request_bytes=self.fixture_request_bytes(),
+                    expected_attempt_id="attempt-1",
+                    effective_now=150,
+                )
             )
-        )
 
         payload = deepcopy(self.fixture["payload"])
         payload["gateway_node_control_transit"]["purpose"] = "gateway-probe"
