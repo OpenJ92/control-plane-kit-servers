@@ -1,0 +1,72 @@
+{
+  "credential_ascii": "eyJhbGciOiJFZERTQSIsImtpZCI6ImdhdGV3YXktdHJhbnNpdC1rZXktMSIsInR5cCI6IkNQSy1HQVRFV0FZLU5PREUtQ09OVFJPTC1UUkFOU0lUK0pXVCJ9.eyJhdWQiOiJnYXRld2F5OndvcmtzcGFjZS0xOmdhdGV3YXktMSIsImV4cCI6MjAwLCJnYXRld2F5X25vZGVfY29udHJvbF90cmFuc2l0Ijp7ImF0dGVtcHRfaWQiOiJhdHRlbXB0LTEiLCJhdWRpZW5jZSI6ImdhdGV3YXk6d29ya3NwYWNlLTE6Z2F0ZXdheS0xIiwiY2Fub25pY2FsaXphdGlvbiI6Impjcy1yZmM4Nzg1LnYxIiwiY29tbWFuZF9jb2RlYyI6ImNvbnRyb2wucmVwbGFjZS1zY2FsYXIudjEiLCJleHBpcmVzX2F0IjoyMDAsImdhdGV3YXlfbm9kZV9pZCI6ImdhdGV3YXktMSIsImdyYXBoX3JldmlzaW9uIjoicmV2aXNpb24tNyIsImlkZW1wb3RlbmN5X2tleSI6ImlkZW1wb3RlbmN5LTEiLCJpc3N1ZWRfYXQiOjEwMCwiaXNzdWVyIjoiY3BrLXNlcnZlciIsImp0aSI6InRyYW5zaXQtZ3JhbnQtMSIsImtleV9pZCI6ImdhdGV3YXktdHJhbnNpdC1rZXktMSIsIm5vdF9iZWZvcmUiOjEwMCwib3BlcmF0aW9uIjoiYXBwbHktY29tbWFuZCIsInByb2ZpbGUiOiJnYXRld2F5LW5vZGUtY29udHJvbC10cmFuc2l0LWdyYW50LnYxIiwicHVycG9zZSI6ImdhdGV3YXktbm9kZS1jb250cm9sLXRyYW5zaXQiLCJyZXF1ZXN0X2RpZ2VzdCI6ImJiZDE3ZGM5ZTVjMTU2YWVlODQxMmIwYzY1MmJjZThhZDY5MWE3ZTllMDk0Yjg0YTI1MGY0ZTVjYmY5NTMwMTEiLCJyZXF1ZXN0X2lkIjoicmVxdWVzdC0xIiwidGFyZ2V0Ijp7ImdyYXBoX3JldmlzaW9uIjoicmV2aXNpb24tNyIsIm5vZGVfaWQiOiJyb3V0ZXIiLCJwcm92aWRlcl9zb2NrZXRfbmFtZSI6ImNvbnRyb2wiLCJ3b3Jrc3BhY2VfaWQiOiJ3b3Jrc3BhY2UtMSJ9LCJ2YXJpYWJsZV9uYW1lIjoibW9kZSIsIndvcmtzcGFjZV9pZCI6IndvcmtzcGFjZS0xIn0sImlhdCI6MTAwLCJpc3MiOiJjcGstc2VydmVyIiwianRpIjoidHJhbnNpdC1ncmFudC0xIiwibmJmIjoxMDB9.6PurmqpgleCN4veHFWwY6-gYmLRMOcUgkkb4fE-DTYcbWdzQri5RU5SeLeaKX8s1uA_l8SLW6Sfdx-hQ2nT0Cg",
+  "effective_now": 150,
+  "header": {
+    "alg": "EdDSA",
+    "kid": "gateway-transit-key-1",
+    "typ": "CPK-GATEWAY-NODE-CONTROL-TRANSIT+JWT"
+  },
+  "payload": {
+    "aud": "gateway:workspace-1:gateway-1",
+    "exp": 200,
+    "gateway_node_control_transit": {
+      "attempt_id": "attempt-1",
+      "audience": "gateway:workspace-1:gateway-1",
+      "canonicalization": "jcs-rfc8785.v1",
+      "command_codec": "control.replace-scalar.v1",
+      "expires_at": 200,
+      "gateway_node_id": "gateway-1",
+      "graph_revision": "revision-7",
+      "idempotency_key": "idempotency-1",
+      "issued_at": 100,
+      "issuer": "cpk-server",
+      "jti": "transit-grant-1",
+      "key_id": "gateway-transit-key-1",
+      "not_before": 100,
+      "operation": "apply-command",
+      "profile": "gateway-node-control-transit-grant.v1",
+      "purpose": "gateway-node-control-transit",
+      "request_digest": "bbd17dc9e5c156aee8412b0c652bce8ad691a7e9e094b84a250f4e5cbf953011",
+      "request_id": "request-1",
+      "target": {
+        "graph_revision": "revision-7",
+        "node_id": "router",
+        "provider_socket_name": "control",
+        "workspace_id": "workspace-1"
+      },
+      "variable_name": "mode",
+      "workspace_id": "workspace-1"
+    },
+    "iat": 100,
+    "iss": "cpk-server",
+    "jti": "transit-grant-1",
+    "nbf": 100
+  },
+  "profile": "CPK-GATEWAY-NODE-CONTROL-TRANSIT+JWT",
+  "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAA6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=\n-----END PUBLIC KEY-----\n",
+  "request": {
+    "canonicalization": "jcs-rfc8785.v1",
+    "command_codec": "control.replace-scalar.v1",
+    "idempotency_key": "idempotency-1",
+    "operation": "apply-command",
+    "payload": {
+      "codec": "control.replace-scalar.v1",
+      "state": {
+        "kind": "scalar",
+        "value": "green"
+      }
+    },
+    "precondition": {
+      "expected_version": 7
+    },
+    "request_id": "request-1",
+    "target": {
+      "graph_revision": "revision-7",
+      "node_id": "router",
+      "provider_socket_name": "control",
+      "workspace_id": "workspace-1"
+    },
+    "variable_name": "mode"
+  },
+  "request_canonical_utf8": "{\"canonicalization\":\"jcs-rfc8785.v1\",\"command_codec\":\"control.replace-scalar.v1\",\"idempotency_key\":\"idempotency-1\",\"operation\":\"apply-command\",\"payload\":{\"codec\":\"control.replace-scalar.v1\",\"state\":{\"kind\":\"scalar\",\"value\":\"green\"}},\"precondition\":{\"expected_version\":7},\"request_id\":\"request-1\",\"target\":{\"graph_revision\":\"revision-7\",\"node_id\":\"router\",\"provider_socket_name\":\"control\",\"workspace_id\":\"workspace-1\"},\"variable_name\":\"mode\"}"
+}
