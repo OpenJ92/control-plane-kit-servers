@@ -958,6 +958,8 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
 
         for name, candidate in {
             "wrong-provider-case": "secret://Generated/ingress/token-a",
+            "wrong-scheme-case": "SECRET://generated/ingress/token-a",
+            "leading-space": " secret://generated/ingress/token-a",
             "empty-segment": "secret://generated/ingress//token-a",
             "dot-segment": "secret://generated/ingress/../token-a",
             "query": "secret://generated/ingress/token-a?raw=1",
