@@ -836,12 +836,18 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 "coerced-epoch": (row[:2] + ("1",) + row[3:],),
                 "unknown-provider": (("other",) + row[1:],),
                 "duplicate": (row, row),
+                "oversized-coordinate": (
+                    row[:5] + ("x" * 256,) + row[6:],
+                ),
             }.items():
                 with self.subTest(name=name), self.assertRaisesRegex(
                     RuntimeError,
                     "owned ingress evidence is uncertain",
-                ):
+                ) as raised:
                     controller._decode_exact_owned_ingress_resources(rows)
+                self.assertIsNone(raised.exception.__cause__)
+                self.assertIsNone(raised.exception.__context__)
+                self.assertNotIn("x" * 256, str(raised.exception))
 
     def test_failed_connector_effect_rejects_missing_duplicate_or_contradictory_evidence(
         self,
