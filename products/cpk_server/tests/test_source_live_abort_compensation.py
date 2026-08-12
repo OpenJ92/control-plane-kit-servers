@@ -947,6 +947,22 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                             "left(resource.source_run_id, 256)",
                         ):
                             self.assertIn(expression, query)
+                            self.assertEqual(
+                                query.count(expression),
+                                2
+                                if expression == "left(resource.ingress_id, 256)"
+                                else 1,
+                            )
+                        for raw_projection in (
+                            "\n          resource.provider_kind,",
+                            "\n          resource.ingress_id,",
+                            "\n          resource.tunnel_id,",
+                            "\n          resource.dns_record_id,",
+                            "\n          resource.hostname,",
+                            "\n          resource.zone_id,",
+                            "\n          resource.source_run_id,",
+                        ):
+                            self.assertNotIn(raw_projection, query)
                         self.assertIn("left(generated.secret_ref, 257)", query)
                         self.assertIn(
                             "left(generated.metadata->>'provider_version_id', 256)",
@@ -958,6 +974,10 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                         )
                         self.assertIn(
                             "ORDER BY left(resource.ingress_id, 256), resource.epoch",
+                            " ".join(query.split()),
+                        )
+                        self.assertNotIn(
+                            "ORDER BY resource.ingress_id",
                             " ".join(query.split()),
                         )
                         self.assertEqual(resources[0].provider_version_number, 1)
