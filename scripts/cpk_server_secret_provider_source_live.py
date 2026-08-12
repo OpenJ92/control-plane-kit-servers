@@ -2361,14 +2361,14 @@ def _load_exact_owned_ingress_resources(
 ) -> tuple[ExactOwnedIngressResource, ...]:
     query = """
         SELECT
-          resource.provider_kind,
-          resource.ingress_id,
+          left(resource.provider_kind, 256),
+          left(resource.ingress_id, 256),
           resource.epoch,
-          resource.tunnel_id,
-          resource.dns_record_id,
-          resource.hostname,
-          resource.zone_id,
-          resource.source_run_id,
+          left(resource.tunnel_id, 256),
+          left(resource.dns_record_id, 256),
+          left(resource.hostname, 256),
+          left(resource.zone_id, 256),
+          left(resource.source_run_id, 256),
           left(generated.secret_ref, 257),
           left(generated.metadata->>'provider_version_id', 256),
           left(generated.metadata->>'provider_version_number', 11)
@@ -2380,7 +2380,7 @@ def _load_exact_owned_ingress_resources(
          AND generated.source_event_id = resource.source_event_id
         WHERE resource.workspace_id = %s
           AND resource.status <> 'removed'
-        ORDER BY resource.ingress_id, resource.epoch
+        ORDER BY left(resource.ingress_id, 256), resource.epoch
     """
     with psycopg.connect(operations_database_url) as connection:
         with connection.cursor() as cursor:
@@ -2396,14 +2396,14 @@ def _load_all_exact_owned_ingress_resources(
 ) -> tuple[ExactOwnedIngressResource, ...]:
     query = """
         SELECT
-          resource.provider_kind,
-          resource.ingress_id,
+          left(resource.provider_kind, 256),
+          left(resource.ingress_id, 256),
           resource.epoch,
-          resource.tunnel_id,
-          resource.dns_record_id,
-          resource.hostname,
-          resource.zone_id,
-          resource.source_run_id,
+          left(resource.tunnel_id, 256),
+          left(resource.dns_record_id, 256),
+          left(resource.hostname, 256),
+          left(resource.zone_id, 256),
+          left(resource.source_run_id, 256),
           left(generated.secret_ref, 257),
           left(generated.metadata->>'provider_version_id', 256),
           left(generated.metadata->>'provider_version_number', 11)
@@ -2414,7 +2414,7 @@ def _load_all_exact_owned_ingress_resources(
          AND generated.source_activity_id = resource.source_activity_id
          AND generated.source_event_id = resource.source_event_id
         WHERE resource.workspace_id = %s
-        ORDER BY resource.ingress_id, resource.epoch
+        ORDER BY left(resource.ingress_id, 256), resource.epoch
     """
     with psycopg.connect(operations_database_url) as connection:
         with connection.cursor() as cursor:
