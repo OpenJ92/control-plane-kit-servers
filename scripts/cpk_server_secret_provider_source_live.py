@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
-from enum import Enum
 from hashlib import sha256
 import json
 import os
@@ -107,11 +106,8 @@ CLOUDFLARE_GENERATED_REFERENCE_PREFIX = (
 GATEWAY_SIGNING_KEY_REFERENCE = (
     "secret://control-plane-kit/gateway/source-live-signing-key"
 )
-GATEWAY_ROTATION_KEY_A_REFERENCE = (
+GATEWAY_VERIFIER_KEY_REFERENCE = (
     "secret://control-plane-kit/gateway/source-live-rotation-key-a"
-)
-GATEWAY_ROTATION_KEY_B_REFERENCE = (
-    "secret://control-plane-kit/gateway/source-live-rotation-key-b"
 )
 GHCR_PULL_CREDENTIAL_REFERENCE = (
     "secret://control-plane-kit/oci/ghcr-source-live-credential"
@@ -132,12 +128,10 @@ CONCURRENT_WORKSPACES = (
 PROVIDER_BASE_URL = "http://cpk-secrets:8081"
 CONTAINER_RESTART_TIMEOUT_SECONDS = 30
 CONTAINER_RESTART_STABILITY_SECONDS = 1.0
-GATEWAY_ROTATION_WORKSPACE = "workspace-gateway-key-rotation"
+GATEWAY_VERIFIER_WORKSPACE = "workspace-gateway-key-rotation"
 GATEWAY_BOOTSTRAP_WORKSPACE = "workspace-gateway-key-bootstrap"
-GATEWAY_ROTATION_ISSUER = "cpk-source-live-rotation"
-GATEWAY_ROTATION_KEY_A_ID = "source-live-rotation-key-a"
-GATEWAY_ROTATION_KEY_B_ID = "source-live-rotation-key-b"
-GATEWAY_ROTATION_GRANT_LIFETIME_SECONDS = 10
+GATEWAY_VERIFIER_ISSUER = "cpk-source-live-rotation"
+GATEWAY_VERIFIER_KEY_ID = "source-live-rotation-key-a"
 PUBLIC_GATEWAY_PROBE_POLICY = VerificationPolicy(
     timeout_seconds=5,
     interval_seconds=2,
@@ -244,12 +238,6 @@ class SourceLiveGatewayDenialError(RuntimeError):
         super().__init__(code)
 
 
-class GatewayRotationSourceLiveScope(Enum):
-    ADVERSARIAL_DENIALS = "adversarial-denials"
-    RESTART_LIFECYCLE = "restart-lifecycle"
-    PUBLIC_OVERLAY_LIFECYCLE = "public-overlay-lifecycle"
-
-
 @dataclass(repr=False)
 class PostgresTransactionWitness:
     """Detect target database IO after accounting for its own measurements."""
@@ -322,7 +310,7 @@ def main() -> int:
         os.environ.get("CPK_SECRET_PROVIDER_SOURCE_LIVE_SCENARIO")
         == "gateway-verifier-projection"
     ):
-        _run_gateway_key_rotation(
+        _run_gateway_verifier_projection(
             base_url=base_url,
             server_container=server_container,
             provider_container=provider_container,
@@ -330,37 +318,8 @@ def main() -> int:
             operations_database_url=operations_database_url,
             provider_token_file=provider_token_file,
             bootstrap_dir=bootstrap_dir,
-            stop_after_initial_projection=True,
         )
         print("cpk-server gateway verifier projection source-live acceptance passed")
-        return 0
-    scenario = os.environ.get("CPK_SECRET_PROVIDER_SOURCE_LIVE_SCENARIO")
-    if scenario in {
-        "gateway-capability-denials",
-        "gateway-key-rotation",
-        "gateway-key-rotation-overlay",
-    }:
-        _run_gateway_key_rotation_program(
-            base_url=base_url,
-            server_container=server_container,
-            provider_container=provider_container,
-            servers_repo=servers_repo,
-            operations_database_url=operations_database_url,
-            provider_token_file=provider_token_file,
-            bootstrap_dir=bootstrap_dir,
-            scope={
-                "gateway-capability-denials": (
-                    GatewayRotationSourceLiveScope.ADVERSARIAL_DENIALS
-                ),
-                "gateway-key-rotation": (
-                    GatewayRotationSourceLiveScope.RESTART_LIFECYCLE
-                ),
-                "gateway-key-rotation-overlay": (
-                    GatewayRotationSourceLiveScope.PUBLIC_OVERLAY_LIFECYCLE
-                ),
-            }[scenario],
-        )
-        print(f"cpk-server gateway {scenario} source-live acceptance passed")
         return 0
     if (
         os.environ.get("CPK_SECRET_PROVIDER_SOURCE_LIVE_SCENARIO")
@@ -552,7 +511,7 @@ def _run_gateway_delegation_bootstrap(
     public_key_file = bootstrap_dir / "gateway-rotation-key-a-public.pem"
     _provider_write_secret(
         workspace_id=GATEWAY_BOOTSTRAP_WORKSPACE,
-        reference=GATEWAY_ROTATION_KEY_A_REFERENCE,
+        reference=GATEWAY_VERIFIER_KEY_REFERENCE,
         intent=GATEWAY_SIGNING_KEY_INTENT,
         value_file=private_key_file,
         provider_token_file=provider_token_file,
@@ -563,9 +522,9 @@ def _run_gateway_delegation_bootstrap(
         "provider_display_name": "Ephemeral hosted acceptance custody",
         "provider_endpoint_reference": PROVIDER_ENDPOINT_REFERENCE,
         "provider_credential_reference": PROVIDER_CREDENTIAL_REFERENCE,
-        "private_key_reference": GATEWAY_ROTATION_KEY_A_REFERENCE,
-        "issuer": GATEWAY_ROTATION_ISSUER,
-        "key_id": GATEWAY_ROTATION_KEY_A_ID,
+        "private_key_reference": GATEWAY_VERIFIER_KEY_REFERENCE,
+        "issuer": GATEWAY_VERIFIER_ISSUER,
+        "key_id": GATEWAY_VERIFIER_KEY_ID,
         "public_key_pem": public_key_file.read_text(encoding="ascii"),
         "admitted_at": "2026-08-04T10:00:00Z",
         "activated_at": "2026-08-04T10:00:01Z",
@@ -585,7 +544,7 @@ def _run_gateway_delegation_bootstrap(
     if replayed["registration_id"] != admitted["registration_id"]:
         raise RuntimeError("delegation bootstrap replay changed key identity")
     verifier = _gateway_verifier_configuration(workflow)
-    _assert_verifier_key_ids(verifier, {GATEWAY_ROTATION_KEY_A_ID})
+    _assert_verifier_key_ids(verifier, {GATEWAY_VERIFIER_KEY_ID})
     _assert_secret_absent_from_activity(
         workflow,
         private_key_file.read_text(encoding="ascii"),
@@ -596,10 +555,10 @@ def _assert_gateway_bootstrap_key(value: dict[str, Any]) -> None:
     expected = {
         "workspace_id": GATEWAY_BOOTSTRAP_WORKSPACE,
         "purpose": "gateway-probe",
-        "issuer": GATEWAY_ROTATION_ISSUER,
-        "key_id": GATEWAY_ROTATION_KEY_A_ID,
+        "issuer": GATEWAY_VERIFIER_ISSUER,
+        "key_id": GATEWAY_VERIFIER_KEY_ID,
         "algorithm": "ed25519",
-        "private_key_reference": GATEWAY_ROTATION_KEY_A_REFERENCE,
+        "private_key_reference": GATEWAY_VERIFIER_KEY_REFERENCE,
         "status": "active",
     }
     mismatches = {
@@ -613,919 +572,6 @@ def _assert_gateway_bootstrap_key(value: dict[str, Any]) -> None:
             f"{sorted(mismatches)}"
         )
 
-
-def _run_gateway_key_rotation_program(
-    *,
-    base_url: str,
-    server_container: str,
-    provider_container: str,
-    servers_repo: Path,
-    operations_database_url: str,
-    provider_token_file: Path,
-    bootstrap_dir: Path,
-    scope: GatewayRotationSourceLiveScope,
-) -> None:
-    public_overlay = scope is GatewayRotationSourceLiveScope.PUBLIC_OVERLAY_LIFECYCLE
-    workspace_id = (
-        _required_env("CPK_HOSTED_ACTIVITY_WORKSPACE_ID")
-        if public_overlay
-        else GATEWAY_ROTATION_WORKSPACE
-    )
-    cpk_server_document = _product_document(servers_repo, "cpk_server")
-    gateway_document = _source_live_gateway_document(servers_repo)
-    hello_document = _product_document(servers_repo, "hello_server")
-    postgres_document = _product_document(servers_repo, "postgres_server")
-    cloudflared_document = (
-        _product_document(servers_repo, "cloudflared_connector")
-        if public_overlay
-        else None
-    )
-    workflow = _workflow(
-        base_url,
-        server_container,
-        workspace_id=workspace_id,
-        worker_id="hosted-worker",
-        worker_authorization=WORKER_AUTHORIZATION,
-    )
-    workflow.wait_ready()
-    current_graph_id = _bootstrap_workspace(
-        workflow,
-        name="Gateway delegation-key rotation source-live",
-        product_documents={
-            "gateway": gateway_document,
-            "hello": hello_document,
-            "postgres": postgres_document,
-            **(
-                {"cloudflared": cloudflared_document}
-                if cloudflared_document is not None
-                else {}
-            ),
-        },
-        register_runtime_authority=True,
-        register_runtime_delivery=False,
-    )
-    provider_registration_id = _register_gateway_rotation_provider(
-        workflow,
-        include_public_ingress=public_overlay,
-    )
-    key_a_receipt: ProviderVersionReceipt | None = None
-    bootstrap_secrets = [
-        (
-            POSTGRES_PASSWORD_REFERENCE,
-            POSTGRES_INTENT,
-            bootstrap_dir / "postgres-password",
-            "gateway-rotation-postgres-bootstrap",
-        ),
-        (
-            GATEWAY_ROTATION_KEY_A_REFERENCE,
-            GATEWAY_SIGNING_KEY_INTENT,
-            bootstrap_dir / "gateway-rotation-key-a.pem",
-            "gateway-rotation-key-a-bootstrap",
-        ),
-        (
-            GHCR_PULL_CREDENTIAL_REFERENCE,
-            OCI_PULL_CREDENTIAL_INTENT,
-            bootstrap_dir / "ghcr-pull-credential.json",
-            "gateway-rotation-ghcr-pull-bootstrap",
-        ),
-    ]
-    if public_overlay:
-        bootstrap_secrets.append(
-            (
-                CLOUDFLARE_API_TOKEN_REFERENCE,
-                CLOUDFLARE_API_TOKEN_INTENT,
-                bootstrap_dir / "cloudflare-api-token",
-                "gateway-rotation-cloudflare-api-bootstrap",
-            )
-        )
-    for reference, intent, value_file, correlation in bootstrap_secrets:
-        receipt = _provider_write_secret(
-            workspace_id=workspace_id,
-            reference=reference,
-            intent=intent,
-            value_file=value_file,
-            provider_token_file=provider_token_file,
-            correlation_id=correlation,
-        )
-        if reference == GATEWAY_ROTATION_KEY_A_REFERENCE:
-            key_a_receipt = receipt
-    if key_a_receipt is None:
-        raise RuntimeError("initial gateway key custody receipt was not recorded")
-    _register_gateway_rotation_references(
-        workflow,
-        provider_registration_id=provider_registration_id,
-        initial_key_receipt=key_a_receipt,
-        register_replacement_reference=False,
-        include_public_ingress=public_overlay,
-    )
-    workflow.register_ghcr_pull_authority(
-        credential_reference=GHCR_PULL_CREDENTIAL_REFERENCE,
-    )
-    if public_overlay:
-        public_hostname = _required_env("CPK_PUBLIC_GATEWAY_HOSTNAME")
-        workflow.register_provider_backed_cloudflare_ingress_authority(
-            api_token_ref=CLOUDFLARE_API_TOKEN_REFERENCE,
-            generated_secret_provider_registration_id=provider_registration_id,
-            generated_secret_reference_prefix=(
-                CLOUDFLARE_GENERATED_REFERENCE_PREFIX
-            ),
-            allowed_hostname_pattern=_required_env(
-                "CPK_PUBLIC_GATEWAY_ALLOWED_HOSTNAME_PATTERN"
-            ),
-        )
-
-    _register_delegation_key(
-        workflow,
-        key_id=GATEWAY_ROTATION_KEY_A_ID,
-        private_key_reference=GATEWAY_ROTATION_KEY_A_REFERENCE,
-        public_key_file=bootstrap_dir / "gateway-rotation-key-a-public.pem",
-        admitted_at="2026-08-04T03:00:00Z",
-    )
-    _activate_delegation_key(
-        workflow,
-        GATEWAY_ROTATION_KEY_A_ID,
-        activated_at="2026-08-04T03:00:01Z",
-    )
-    verifier_a = _gateway_verifier_configuration(workflow)
-    _assert_verifier_key_ids(verifier_a, {GATEWAY_ROTATION_KEY_A_ID})
-    graph_a = _gateway_rotation_graph(
-        gateway_document,
-        hello_document,
-        postgres_document,
-        workspace_id=workspace_id,
-    )
-    deployed_a = workflow.run_approved_transition(
-        title="Gateway key A initial deployment",
-        graph=graph_a,
-        current_graph_id=current_graph_id,
-        sync_runtime_networks=True,
-    )
-    _assert_initial_gateway_transition_evidence(workflow, deployed_a)
-    _wait_private_gateway_ready(gateway_document, workspace_id=workspace_id)
-    _assert_gateway_probe_key(
-        workflow.request_gateway_probe_http(
-            request_id=f"{workspace_id}:gateway-probe:key-a-http",
-            expected_current_graph_id=deployed_a.current_graph_id,
-            gateway_node_id="gateway",
-            kind="http-status",
-            target_id="hello.internal",
-            path="/",
-        ),
-        GATEWAY_ROTATION_KEY_A_ID,
-    )
-    _assert_gateway_probe_key(
-        workflow.request_gateway_probe_mcp(
-            request_id=f"{workspace_id}:gateway-probe:key-a-postgres",
-            expected_current_graph_id=deployed_a.current_graph_id,
-            gateway_node_id="gateway",
-            kind="postgres-select-one",
-            target_id="postgres.postgres",
-        ),
-        GATEWAY_ROTATION_KEY_A_ID,
-    )
-    _assert_live_gateway_denial_matrix(
-        workspace_id=workspace_id,
-        key_id=GATEWAY_ROTATION_KEY_A_ID,
-        private_key_file=bootstrap_dir / "gateway-rotation-key-a.pem",
-        postgres_password_file=bootstrap_dir / "postgres-password",
-    )
-    captured_a = _direct_gateway_capability(
-        workspace_id=workspace_id,
-        key_id=GATEWAY_ROTATION_KEY_A_ID,
-        private_key_file=bootstrap_dir / "gateway-rotation-key-a.pem",
-        expires_in=300,
-        jti="captured-key-a-before-program",
-    )
-
-    requested = workflow.request_gateway_key_rotation(
-        gateway_node_id="gateway",
-        issuer=GATEWAY_ROTATION_ISSUER,
-        old_key_id=GATEWAY_ROTATION_KEY_A_ID,
-        new_secret_reference=GATEWAY_ROTATION_KEY_B_REFERENCE,
-        maximum_grant_lifetime_seconds=GATEWAY_ROTATION_GRANT_LIFETIME_SECONDS,
-        clock_skew_seconds=0,
-    )
-    _assert_rotation_status(requested, "requested")
-    rotation_id = str(requested["rotation_id"])
-    approval_session_id = workflow.start_session("Gateway key rotation approval")
-    approval = workflow.request_gateway_key_rotation_approval(
-        session_id=approval_session_id,
-        rotation_id=rotation_id,
-    )
-    _assert_rotation_status(_rotation_from_response(approval), "awaiting-approval")
-    decision = workflow.decide_gateway_key_rotation_mcp(
-        session_id=approval_session_id,
-        rotation_id=rotation_id,
-        approval_request_id=str(approval["approval_request_id"]),
-    )
-    rotation = _rotation_from_response(decision)
-    _assert_rotation_status(rotation, "approved")
-
-    rotation, _ = _advance_rotation_until(
-        workflow,
-        rotation,
-        target_status="key-generated",
-        command_prefix="generation",
-    )
-    generated_key_id = str(rotation["new_key_id"])
-    if not generated_key_id or generated_key_id == GATEWAY_ROTATION_KEY_A_ID:
-        raise RuntimeError("provider did not generate a distinct gateway key B")
-    if (bootstrap_dir / "gateway-rotation-key-b.pem").exists():
-        raise RuntimeError("source-live harness generated private key B")
-
-    rotation, _ = _advance_rotation_until(
-        workflow,
-        rotation,
-        target_status="overlap-deploying",
-        command_prefix="overlap-prepare",
-    )
-    _restart_cpk_server(
-        server_container,
-        workflow,
-        ready_policy=_verification_policy(cpk_server_document, "ready"),
-    )
-    resumed = workflow.read_gateway_key_rotation_detail(rotation_id)
-    if resumed != rotation:
-        raise RuntimeError("rotation did not resume from durable public state")
-
-    rotation, _ = _advance_rotation_until(
-        workflow,
-        rotation,
-        target_status="overlap-ready",
-        command_prefix="overlap-execute",
-    )
-    _wait_private_gateway_ready(gateway_document, workspace_id=workspace_id)
-    _assert_verifier_key_ids(
-        _gateway_verifier_configuration(workflow),
-        {GATEWAY_ROTATION_KEY_A_ID, generated_key_id},
-    )
-    rotation, _ = _advance_rotation_until(
-        workflow,
-        rotation,
-        target_status="draining-old-grants",
-        command_prefix="activate",
-    )
-    _assert_delegation_key_statuses(
-        workflow,
-        {
-            GATEWAY_ROTATION_KEY_A_ID: "verify-only",
-            generated_key_id: "active",
-        },
-    )
-    premature = workflow.advance_gateway_key_rotation_mcp(
-        rotation_id=rotation_id,
-        expected_version=int(rotation["version"]),
-        idempotency_key=f"{workspace_id}:gateway-key-rotation:premature-drain",
-    )
-    if premature.get("phase") != "grant-drain" or premature.get("outcome") != "waiting":
-        raise RuntimeError("premature drain advancement was not typed waiting")
-    premature_rotation = _rotation_from_response(premature)
-    if premature_rotation != rotation:
-        raise RuntimeError("premature drain advancement changed rotation truth")
-    rotation = _poll_rotation_until_drain_deadline(workflow, rotation)
-
-    rotation, final_command = _advance_rotation_until(
-        workflow,
-        rotation,
-        target_status="completed",
-        command_prefix="retire-complete",
-    )
-    _wait_private_gateway_ready(gateway_document, workspace_id=workspace_id)
-    _assert_verifier_key_ids(
-        _gateway_verifier_configuration(workflow),
-        {generated_key_id},
-    )
-    _assert_delegation_key_statuses(
-        workflow,
-        {
-            GATEWAY_ROTATION_KEY_A_ID: "revoked",
-            generated_key_id: "active",
-        },
-    )
-    _assert_provider_version_revoked(
-        provider_container,
-        workspace_id=workspace_id,
-        expected_version_id=key_a_receipt.version_id,
-    )
-
-    current_graph_id = workflow.read_current_graph_id()
-    _assert_gateway_probe_key(
-        workflow.request_gateway_probe_http(
-            request_id=f"{workspace_id}:gateway-probe:key-b-http",
-            expected_current_graph_id=current_graph_id,
-            gateway_node_id="gateway",
-            kind="http-status",
-            target_id="hello.internal",
-            path="/",
-        ),
-        generated_key_id,
-    )
-    _assert_gateway_probe_key(
-        workflow.request_gateway_probe_mcp(
-            request_id=f"{workspace_id}:gateway-probe:key-b-postgres",
-            expected_current_graph_id=current_graph_id,
-            gateway_node_id="gateway",
-            kind="postgres-select-one",
-            target_id="postgres.postgres",
-        ),
-        generated_key_id,
-    )
-    retired_witness = _postgres_transaction_witness(
-        bootstrap_dir / "postgres-password"
-    )
-    _assert_no_gateway_target_io(
-        lambda: _assert_direct_gateway_rejected(captured_a),
-        postgres_witness=retired_witness,
-    )
-    for request, suffix in (
-        (
-            GatewayProbeRequest(
-                GatewayProbeCommandKind.HTTP_STATUS,
-                GatewayTargetId("hello.internal"),
-                "/",
-            ),
-            "http",
-        ),
-        (
-            GatewayProbeRequest(
-                GatewayProbeCommandKind.POSTGRES_SELECT_ONE,
-                GatewayTargetId("postgres.postgres"),
-            ),
-            "postgres",
-        ),
-    ):
-        _assert_no_gateway_target_io(
-            lambda request=request, suffix=suffix: _assert_direct_gateway_rejected(
-                _direct_gateway_capability(
-                    workspace_id=workspace_id,
-                    key_id=GATEWAY_ROTATION_KEY_A_ID,
-                    private_key_file=bootstrap_dir / "gateway-rotation-key-a.pem",
-                    expires_in=300,
-                    jti=f"fresh-retired-key-a-{suffix}",
-                    request=request,
-                )
-            ),
-            postgres_witness=retired_witness,
-        )
-
-    if public_overlay:
-        if cloudflared_document is None:
-            raise RuntimeError("public rotation omitted cloudflared product material")
-        _run_gateway_rotation_public_overlay_lifecycle(
-            workflow=workflow,
-            server_container=server_container,
-            provider_container=provider_container,
-            operations_database_url=operations_database_url,
-            bootstrap_dir=bootstrap_dir,
-            workspace_id=workspace_id,
-            cpk_server_document=cpk_server_document,
-            gateway_document=gateway_document,
-            hello_document=hello_document,
-            postgres_document=postgres_document,
-            cloudflared_document=cloudflared_document,
-            rotation_id=rotation_id,
-            rotation=rotation,
-            final_command=final_command,
-            generated_key_id=generated_key_id,
-            current_graph_id=current_graph_id,
-        )
-        return
-
-    if scope is GatewayRotationSourceLiveScope.ADVERSARIAL_DENIALS:
-        _finalize_gateway_rotation_source_live(
-            workflow=workflow,
-            server_container=server_container,
-            provider_container=provider_container,
-            operations_database_url=operations_database_url,
-            bootstrap_dir=bootstrap_dir,
-            workspace_id=workspace_id,
-            rotation_id=rotation_id,
-            rotation=rotation,
-            final_command=final_command,
-            current_graph_id=current_graph_id,
-            expected_desired_graph_id=deployed_a.desired_graph_id,
-        )
-        return
-
-    _restart_cpk_server(
-        server_container,
-        workflow,
-        ready_policy=_verification_policy(cpk_server_document, "ready"),
-    )
-    _restart_container(_single_docker_container(workspace_id, "gateway").id)
-    _wait_private_gateway_ready(gateway_document, workspace_id=workspace_id)
-    _finalize_gateway_rotation_source_live(
-        workflow=workflow,
-        server_container=server_container,
-        provider_container=provider_container,
-        operations_database_url=operations_database_url,
-        bootstrap_dir=bootstrap_dir,
-        workspace_id=workspace_id,
-        rotation_id=rotation_id,
-        rotation=rotation,
-        final_command=final_command,
-        current_graph_id=current_graph_id,
-        expected_desired_graph_id=deployed_a.desired_graph_id,
-    )
-
-
-def _run_gateway_rotation_public_overlay_lifecycle(
-    *,
-    workflow: HostedWorkflow,
-    server_container: str,
-    provider_container: str,
-    operations_database_url: str,
-    bootstrap_dir: Path,
-    workspace_id: str,
-    cpk_server_document: Any,
-    gateway_document: Any,
-    hello_document: Any,
-    postgres_document: Any,
-    cloudflared_document: Any,
-    rotation_id: str,
-    rotation: dict[str, Any],
-    final_command: dict[str, Any],
-    generated_key_id: str,
-    current_graph_id: str,
-) -> None:
-    public_hostname = _required_env("CPK_PUBLIC_GATEWAY_HOSTNAME")
-    private_graph = _gateway_rotation_graph(
-        gateway_document,
-        hello_document,
-        postgres_document,
-        workspace_id=workspace_id,
-    )
-    public_graph = _gateway_rotation_public_graph(
-        gateway_document,
-        hello_document,
-        postgres_document,
-        cloudflared_document,
-        workspace_id=workspace_id,
-        public_hostname=public_hostname,
-    )
-    workload_identities = _runtime_node_identities(
-        workspace_id,
-        ("gateway", "hello", "postgres"),
-    )
-    _record_source_live_cloudflare_inventory(
-        bootstrap_dir / "cloudflare-api-token"
-    )
-
-    public_on = workflow.run_approved_transition(
-        title="Gateway rotation public overlay on",
-        graph=public_graph,
-        current_graph_id=current_graph_id,
-        expected_desired_graph_id=current_graph_id,
-        sync_runtime_networks=False,
-    )
-    _assert_public_overlay_transition_evidence(
-        workflow,
-        public_on,
-        expected_ingress_operations={
-            "allocate-public-ingress",
-            "wait-for-public-ingress-ready",
-        },
-        expected_connector_operations={"start-node", "wait-for-healthy"},
-    )
-    _checkpoint_cloudflare_phase(
-        workflow,
-        phase="public-on-committed",
-        result=public_on,
-    )
-    _assert_activity_mentions(workflow, public_on.run_id, "cloudflared-gateway")
-    _wait_public_gateway_ready(public_hostname)
-    _assert_runtime_node_identities(workspace_id, workload_identities)
-    _assert_owned_cloudflare_epoch_states(
-        operations_database_url,
-        workspace_id=workspace_id,
-        expected_statuses=("active",),
-        retained_reservation=True,
-    )
-    _assert_retained_public_ingress_read(
-        workflow,
-        reservation_status="bound",
-        realization_statuses=("active",),
-    )
-    _assert_rotation_gateway_probe_pair(
-        workflow,
-        current_graph_id=public_on.current_graph_id,
-        expected_key_id=generated_key_id,
-        access_path=GatewayProbeAccessPath.NAMED_PUBLIC_INGRESS,
-        request_prefix="public-before-restart",
-    )
-
-    _restart_container(_single_docker_container(workspace_id, "gateway").id)
-    _wait_private_gateway_ready(gateway_document, workspace_id=workspace_id)
-    _restart_cpk_server(
-        server_container,
-        workflow,
-        ready_policy=_verification_policy(cpk_server_document, "ready"),
-    )
-    if workflow.read_current_graph_id() != public_on.current_graph_id:
-        raise RuntimeError("cpk-server restart changed current graph truth")
-    if workflow.read_gateway_key_rotation_detail(rotation_id) != rotation:
-        raise RuntimeError("cpk-server restart changed completed rotation truth")
-    _assert_delegation_key_statuses(
-        workflow,
-        {
-            GATEWAY_ROTATION_KEY_A_ID: "revoked",
-            generated_key_id: "active",
-        },
-    )
-    _assert_runtime_node_identities(workspace_id, workload_identities)
-    _assert_rotation_gateway_probe_pair(
-        workflow,
-        current_graph_id=public_on.current_graph_id,
-        expected_key_id=generated_key_id,
-        access_path=GatewayProbeAccessPath.NAMED_PUBLIC_INGRESS,
-        request_prefix="public-after-restart",
-    )
-
-    public_off = workflow.run_approved_transition(
-        title="Gateway rotation public overlay off",
-        graph=private_graph,
-        current_graph_id=public_on.current_graph_id,
-        expected_desired_graph_id=public_on.desired_graph_id,
-        sync_runtime_networks=False,
-    )
-    _assert_public_overlay_transition_evidence(
-        workflow,
-        public_off,
-        expected_ingress_operations={"remove-public-ingress"},
-        expected_connector_operations={"stop-node", "remove-node-resource"},
-    )
-    _checkpoint_cloudflare_phase(
-        workflow,
-        phase="public-off-committed",
-        result=public_off,
-    )
-    _assert_activity_mentions(workflow, public_off.run_id, "cloudflared-gateway")
-    _assert_no_node_containers(workspace_id, "cloudflared-gateway")
-    _assert_runtime_node_identities(workspace_id, workload_identities)
-    _assert_public_gateway_unreachable(public_hostname)
-    _assert_public_hostname_resolves(public_hostname)
-    public_denial_witness = _postgres_transaction_witness(
-        bootstrap_dir / "postgres-password"
-    )
-    _assert_no_gateway_target_io(
-        lambda: _assert_named_public_gateway_probes_unavailable(
-            workflow,
-            current_graph_id=public_off.current_graph_id,
-        ),
-        postgres_witness=public_denial_witness,
-    )
-    _assert_rotation_gateway_probe_pair(
-        workflow,
-        current_graph_id=public_off.current_graph_id,
-        expected_key_id=generated_key_id,
-        access_path=GatewayProbeAccessPath.RUNTIME_PRIVATE,
-        request_prefix="private-overlay-off",
-    )
-    _assert_owned_cloudflare_epoch_states(
-        operations_database_url,
-        workspace_id=workspace_id,
-        expected_statuses=("removed",),
-        retained_reservation=True,
-    )
-    _assert_retained_public_ingress_read(
-        workflow,
-        reservation_status="reserved",
-        realization_statuses=("removed",),
-    )
-    _assert_removed_ingress_token_versions_revoked(
-        provider_container,
-        operations_database_url,
-        workspace_id=workspace_id,
-        expected_count=1,
-    )
-    _assert_retained_cloudflare_reservation_present(
-        operations_database_url,
-        workspace_id=workspace_id,
-        api_token_file=bootstrap_dir / "cloudflare-api-token",
-    )
-
-    public_on_again = workflow.run_approved_transition(
-        title="Gateway rotation public overlay on again",
-        graph=public_graph,
-        current_graph_id=public_off.current_graph_id,
-        expected_desired_graph_id=public_off.desired_graph_id,
-        sync_runtime_networks=False,
-    )
-    _assert_public_overlay_transition_evidence(
-        workflow,
-        public_on_again,
-        expected_ingress_operations={
-            "allocate-public-ingress",
-            "wait-for-public-ingress-ready",
-        },
-        expected_connector_operations={"start-node", "wait-for-healthy"},
-    )
-    _checkpoint_cloudflare_phase(
-        workflow,
-        phase="public-on-again-committed",
-        result=public_on_again,
-    )
-    _assert_activity_mentions(
-        workflow,
-        public_on_again.run_id,
-        "cloudflared-gateway",
-    )
-    _wait_public_gateway_ready(public_hostname)
-    _assert_runtime_node_identities(workspace_id, workload_identities)
-    _assert_owned_cloudflare_epoch_states(
-        operations_database_url,
-        workspace_id=workspace_id,
-        expected_statuses=("removed", "active"),
-        retained_reservation=True,
-    )
-    _assert_retained_public_ingress_read(
-        workflow,
-        reservation_status="bound",
-        realization_statuses=("removed", "active"),
-    )
-    _assert_rotation_gateway_probe_pair(
-        workflow,
-        current_graph_id=public_on_again.current_graph_id,
-        expected_key_id=generated_key_id,
-        access_path=GatewayProbeAccessPath.NAMED_PUBLIC_INGRESS,
-        request_prefix="public-overlay-restored",
-    )
-
-    removed = _finalize_gateway_rotation_source_live(
-        workflow=workflow,
-        server_container=server_container,
-        provider_container=provider_container,
-        operations_database_url=operations_database_url,
-        bootstrap_dir=bootstrap_dir,
-        workspace_id=workspace_id,
-        rotation_id=rotation_id,
-        rotation=rotation,
-        final_command=final_command,
-        current_graph_id=public_on_again.current_graph_id,
-        expected_desired_graph_id=public_on_again.desired_graph_id,
-    )
-    _checkpoint_cloudflare_phase(
-        workflow,
-        phase="final-teardown-committed",
-        result=removed,
-    )
-    _assert_public_gateway_unreachable(public_hostname)
-    _assert_public_hostname_resolves(public_hostname)
-    _assert_owned_cloudflare_epoch_states(
-        operations_database_url,
-        workspace_id=workspace_id,
-        expected_statuses=("removed", "removed"),
-        retained_reservation=True,
-    )
-    _assert_retained_cloudflare_reservation_present(
-        operations_database_url,
-        workspace_id=workspace_id,
-        api_token_file=bootstrap_dir / "cloudflare-api-token",
-    )
-    released = _release_retained_public_ingress(
-        workflow,
-        realization_statuses=("removed", "removed"),
-    )
-    _checkpoint_cloudflare_phase(
-        workflow,
-        phase="final-release-committed",
-        result=released,
-    )
-    _assert_owned_cloudflare_resources_removed(
-        operations_database_url,
-        workspace_id=workspace_id,
-        api_token_file=bootstrap_dir / "cloudflare-api-token",
-        expected_minimum=2,
-    )
-    _assert_removed_ingress_token_versions_revoked(
-        provider_container,
-        operations_database_url,
-        workspace_id=workspace_id,
-        expected_count=2,
-    )
-    _assert_cloudflare_provider_correlation(
-        provider_container=provider_container,
-        operations_database_url=operations_database_url,
-        workspace_id=workspace_id,
-    )
-    _assert_source_live_cloudflare_inventory_unchanged(
-        bootstrap_dir / "cloudflare-api-token"
-    )
-
-
-def _runtime_node_identities(
-    workspace_id: str,
-    node_ids: tuple[str, ...],
-) -> dict[str, str]:
-    return {
-        node_id: str(_single_docker_container(workspace_id, node_id).id)
-        for node_id in node_ids
-    }
-
-
-def _assert_public_overlay_transition_evidence(
-    workflow: HostedWorkflow,
-    transition: Any,
-    *,
-    expected_ingress_operations: set[str],
-    expected_connector_operations: set[str],
-) -> None:
-    detail = workflow.read_plan_detail(transition.plan_id)
-    plan = detail.get("plan")
-    payload = plan.get("payload") if isinstance(plan, dict) else None
-    activities = payload.get("activities") if isinstance(payload, dict) else None
-    if not isinstance(activities, list):
-        raise RuntimeError("public overlay plan detail omitted its activity plan")
-
-    observed_ingress_operations: set[str] = set()
-    observed_connector_operations: set[str] = set()
-    forbidden_workload_mutations: list[tuple[str, str]] = []
-    planned_activity_ids: set[str] = set()
-    workload_node_ids = {"gateway", "hello", "postgres"}
-    mutation_kinds = {
-        "start-node",
-        "stop-node",
-        "remove-node-resource",
-        "reconcile-node",
-    }
-    for activity in activities:
-        if not isinstance(activity, dict):
-            raise RuntimeError("public overlay plan contained malformed activity")
-        activity_id = activity.get("activity_id")
-        operation = activity.get("operation")
-        if not isinstance(activity_id, str) or not isinstance(operation, dict):
-            raise RuntimeError("public overlay plan contained malformed operation")
-        planned_activity_ids.add(activity_id)
-        kind = operation.get("kind")
-        target = operation.get("target")
-        if not isinstance(kind, str) or not isinstance(target, dict):
-            raise RuntimeError("public overlay plan operation omitted its target")
-        if target.get("kind") == "public-ingress":
-            observed_ingress_operations.add(kind)
-        node_id = target.get("node_id")
-        if node_id == "cloudflared-gateway":
-            observed_connector_operations.add(kind)
-        if node_id in workload_node_ids and kind in mutation_kinds:
-            forbidden_workload_mutations.append((kind, str(node_id)))
-
-    if observed_ingress_operations != expected_ingress_operations:
-        raise RuntimeError(
-            "public overlay plan had unexpected ingress operations: "
-            f"{sorted(observed_ingress_operations)}"
-        )
-    if observed_connector_operations != expected_connector_operations:
-        raise RuntimeError(
-            "public overlay plan had unexpected connector operations: "
-            f"{sorted(observed_connector_operations)}"
-        )
-    if forbidden_workload_mutations:
-        raise RuntimeError(
-            "public overlay plan mutated stable workload nodes: "
-            f"{forbidden_workload_mutations}"
-        )
-
-    events = _events_for_run(workflow.read_activity(limit=200), transition.run_id)
-    succeeded_activity_ids = {
-        str(event.get("activity_id"))
-        for event in events
-        if event.get("event_type") == "step_succeeded"
-    }
-    missing_success = planned_activity_ids - succeeded_activity_ids
-    if missing_success:
-        raise RuntimeError(
-            "public overlay run omitted planned success evidence: "
-            f"{sorted(missing_success)}"
-        )
-
-
-def _assert_runtime_node_identities(
-    workspace_id: str,
-    expected: dict[str, str],
-) -> None:
-    observed = _runtime_node_identities(workspace_id, tuple(expected))
-    if observed != expected:
-        raise RuntimeError(
-            "public access overlay changed workload container identities"
-        )
-
-
-def _assert_rotation_gateway_probe_pair(
-    workflow: HostedWorkflow,
-    *,
-    current_graph_id: str,
-    expected_key_id: str,
-    access_path: GatewayProbeAccessPath,
-    request_prefix: str,
-) -> None:
-    _assert_rotation_gateway_probe(
-        lambda request_id: workflow.request_gateway_probe_http(
-            request_id=request_id,
-            expected_current_graph_id=current_graph_id,
-            gateway_node_id="gateway",
-            kind="http-status",
-            target_id="hello.internal",
-            path="/",
-            access_path=access_path,
-        ),
-        request_id_prefix=(
-            f"{workflow.workspace_id}:gateway-probe:{request_prefix}:http"
-        ),
-        expected_key_id=expected_key_id,
-        access_path=access_path,
-    )
-    _assert_rotation_gateway_probe(
-        lambda request_id: workflow.request_gateway_probe_mcp(
-            request_id=request_id,
-            expected_current_graph_id=current_graph_id,
-            gateway_node_id="gateway",
-            kind="postgres-select-one",
-            target_id="postgres.postgres",
-            access_path=access_path,
-        ),
-        request_id_prefix=(
-            f"{workflow.workspace_id}:gateway-probe:{request_prefix}:postgres"
-        ),
-        expected_key_id=expected_key_id,
-        access_path=access_path,
-    )
-
-
-def _assert_rotation_gateway_probe(
-    request: Callable[[str], dict[str, Any]],
-    *,
-    request_id_prefix: str,
-    expected_key_id: str,
-    access_path: GatewayProbeAccessPath,
-) -> None:
-    attempts = (
-        verification_attempts(PUBLIC_GATEWAY_PROBE_POLICY)
-        if access_path is GatewayProbeAccessPath.NAMED_PUBLIC_INGRESS
-        else iter((1,))
-    )
-    for attempt in attempts:
-        result = request(f"{request_id_prefix}:attempt-{attempt}")
-        probe = result.get("gateway_probe")
-        evidence = probe.get("evidence") if isinstance(probe, dict) else None
-        transient_public_readiness = (
-            isinstance(probe, dict)
-            and probe.get("status") == "failed"
-            and (
-                probe.get("result_code")
-                == "gateway-endpoint-unresolved-endpoint"
-                or (
-                    probe.get("result_code") == "gateway-transport-failed"
-                    and isinstance(evidence, dict)
-                    and evidence.get("http_status") == 530
-                )
-            )
-        )
-        if (
-            transient_public_readiness
-            and attempt < PUBLIC_GATEWAY_PROBE_POLICY.maximum_attempts
-        ):
-            continue
-        _assert_gateway_probe_key(result, expected_key_id)
-        return
-
-
-def _assert_named_public_gateway_probes_unavailable(
-    workflow: HostedWorkflow,
-    *,
-    current_graph_id: str,
-) -> None:
-    calls = (
-        lambda: workflow.request_gateway_probe_http(
-            request_id=(
-                f"{workflow.workspace_id}:gateway-probe:public-off:http"
-            ),
-            expected_current_graph_id=current_graph_id,
-            gateway_node_id="gateway",
-            kind="http-status",
-            target_id="hello.internal",
-            path="/",
-            access_path=GatewayProbeAccessPath.NAMED_PUBLIC_INGRESS,
-        ),
-        lambda: workflow.request_gateway_probe_mcp(
-            request_id=(
-                f"{workflow.workspace_id}:gateway-probe:public-off:postgres"
-            ),
-            expected_current_graph_id=current_graph_id,
-            gateway_node_id="gateway",
-            kind="postgres-select-one",
-            target_id="postgres.postgres",
-            access_path=GatewayProbeAccessPath.NAMED_PUBLIC_INGRESS,
-        ),
-    )
-    for call in calls:
-        try:
-            call()
-        except RuntimeError as error:
-            if "gateway control node has no named public ingress" not in str(error):
-                raise RuntimeError(
-                    "public gateway probe failed for an unexpected reason"
-                ) from None
-        else:
-            raise RuntimeError("public gateway probe succeeded while overlay was off")
 
 
 def _owned_cloudflare_epoch_evidence(
@@ -1742,53 +788,8 @@ def _assert_public_ingress_release_evidence(
         raise RuntimeError("reservation release activity did not succeed durably")
 
 
-def _finalize_gateway_rotation_source_live(
-    *,
-    workflow: HostedWorkflow,
-    server_container: str,
-    provider_container: str,
-    operations_database_url: str,
-    bootstrap_dir: Path,
-    workspace_id: str,
-    rotation_id: str,
-    rotation: dict[str, Any],
-    final_command: dict[str, Any],
-    current_graph_id: str,
-    expected_desired_graph_id: str,
-) -> Any:
-    if workflow.read_gateway_key_rotation_detail(rotation_id) != rotation:
-        raise RuntimeError("completed rotation durable detail changed")
-    replay = _replay_rotation_command(workflow, rotation_id, final_command)
-    if not replay.get("replayed") or _rotation_from_response(replay) != rotation:
-        raise RuntimeError("completed rotation command did not replay durably")
 
-    transitions = workflow.read_gateway_key_rotation_transitions_mcp(rotation_id)
-    _assert_rotation_transition_history(transitions)
-    _assert_provider_and_operations_correlation(
-        provider_container=provider_container,
-        operations_database_url=operations_database_url,
-        workspace_id=workspace_id,
-        intent=GATEWAY_SIGNING_KEY_INTENT,
-    )
-    _assert_secret_absent_from_activity(
-        workflow,
-        (bootstrap_dir / "gateway-rotation-key-a.pem").read_text(encoding="utf-8"),
-    )
-
-    _disconnect_runtime_networks(server_container, workspace_id=workspace_id)
-    removed = workflow.run_approved_transition(
-        title="Gateway key rotation teardown",
-        graph=DeploymentGraph(workspace_id),
-        current_graph_id=current_graph_id,
-        expected_desired_graph_id=expected_desired_graph_id,
-        sync_runtime_networks=False,
-    )
-    _assert_activity_mentions(workflow, removed.run_id, "gateway")
-    _assert_no_runtime_networks(workspace_id)
-    return removed
-
-
-def _run_gateway_key_rotation(
+def _run_gateway_verifier_projection(
     *,
     base_url: str,
     server_container: str,
@@ -1797,9 +798,8 @@ def _run_gateway_key_rotation(
     operations_database_url: str,
     provider_token_file: Path,
     bootstrap_dir: Path,
-    stop_after_initial_projection: bool,
 ) -> None:
-    workspace_id = GATEWAY_ROTATION_WORKSPACE
+    workspace_id = GATEWAY_VERIFIER_WORKSPACE
     cpk_server_document = _product_document(servers_repo, "cpk_server")
     gateway_document = _source_live_gateway_document(servers_repo)
     hello_document = _product_document(servers_repo, "hello_server")
@@ -1814,7 +814,7 @@ def _run_gateway_key_rotation(
     workflow.wait_ready()
     current_graph_id = _bootstrap_workspace(
         workflow,
-        name="Gateway delegation-key rotation source-live",
+        name="Gateway verifier projection source-live",
         product_documents={
             "gateway": gateway_document,
             "hello": hello_document,
@@ -1823,10 +823,7 @@ def _run_gateway_key_rotation(
         register_runtime_authority=True,
         register_runtime_delivery=False,
     )
-    provider_registration_id = _register_gateway_rotation_provider(
-        workflow,
-        include_public_ingress=False,
-    )
+    provider_registration_id = _register_gateway_verifier_provider(workflow)
     key_a_receipt: ProviderVersionReceipt | None = None
     for reference, value_file, correlation in (
         (
@@ -1835,7 +832,7 @@ def _run_gateway_key_rotation(
             "gateway-rotation-postgres-bootstrap",
         ),
         (
-            GATEWAY_ROTATION_KEY_A_REFERENCE,
+            GATEWAY_VERIFIER_KEY_REFERENCE,
             bootstrap_dir / "gateway-rotation-key-a.pem",
             "gateway-rotation-key-a-bootstrap",
         ),
@@ -1847,7 +844,7 @@ def _run_gateway_key_rotation(
     ):
         intent = {
             POSTGRES_PASSWORD_REFERENCE: POSTGRES_INTENT,
-            GATEWAY_ROTATION_KEY_A_REFERENCE: GATEWAY_SIGNING_KEY_INTENT,
+            GATEWAY_VERIFIER_KEY_REFERENCE: GATEWAY_SIGNING_KEY_INTENT,
             GHCR_PULL_CREDENTIAL_REFERENCE: OCI_PULL_CREDENTIAL_INTENT,
         }[reference]
         receipt = _provider_write_secret(
@@ -1858,15 +855,14 @@ def _run_gateway_key_rotation(
             provider_token_file=provider_token_file,
             correlation_id=correlation,
         )
-        if reference == GATEWAY_ROTATION_KEY_A_REFERENCE:
+        if reference == GATEWAY_VERIFIER_KEY_REFERENCE:
             key_a_receipt = receipt
     if key_a_receipt is None:
         raise RuntimeError("initial gateway key custody receipt was not recorded")
-    _register_gateway_rotation_references(
+    _register_gateway_verifier_references(
         workflow,
         provider_registration_id=provider_registration_id,
         initial_key_receipt=key_a_receipt,
-        register_replacement_reference=False,
     )
     workflow.register_ghcr_pull_authority(
         credential_reference=GHCR_PULL_CREDENTIAL_REFERENCE,
@@ -1874,19 +870,19 @@ def _run_gateway_key_rotation(
 
     _register_delegation_key(
         workflow,
-        key_id=GATEWAY_ROTATION_KEY_A_ID,
-        private_key_reference=GATEWAY_ROTATION_KEY_A_REFERENCE,
+        key_id=GATEWAY_VERIFIER_KEY_ID,
+        private_key_reference=GATEWAY_VERIFIER_KEY_REFERENCE,
         public_key_file=bootstrap_dir / "gateway-rotation-key-a-public.pem",
         admitted_at="2026-08-01T10:01:00Z",
     )
     _activate_delegation_key(
         workflow,
-        GATEWAY_ROTATION_KEY_A_ID,
+        GATEWAY_VERIFIER_KEY_ID,
         activated_at="2026-08-01T10:02:00Z",
     )
     verifier_a = _gateway_verifier_configuration(workflow)
-    _assert_verifier_key_ids(verifier_a, {GATEWAY_ROTATION_KEY_A_ID})
-    graph_a = _gateway_rotation_graph(
+    _assert_verifier_key_ids(verifier_a, {GATEWAY_VERIFIER_KEY_ID})
+    graph_a = _gateway_verifier_graph(
         gateway_document,
         hello_document,
         postgres_document,
@@ -1909,7 +905,7 @@ def _run_gateway_key_rotation(
             target_id="hello.internal",
             path="/",
         ),
-        GATEWAY_ROTATION_KEY_A_ID,
+        GATEWAY_VERIFIER_KEY_ID,
     )
     _assert_gateway_probe_key(
         workflow.request_gateway_probe_mcp(
@@ -1919,161 +915,28 @@ def _run_gateway_key_rotation(
             kind="postgres-select-one",
             target_id="postgres.postgres",
         ),
-        GATEWAY_ROTATION_KEY_A_ID,
+        GATEWAY_VERIFIER_KEY_ID,
     )
-    if stop_after_initial_projection:
-        return
-
-
-def _rotation_from_response(response: dict[str, Any]) -> dict[str, Any]:
-    rotation = response.get("rotation")
-    if not isinstance(rotation, dict):
-        raise RuntimeError("gateway rotation response was malformed")
-    return rotation
-
-
-def _assert_rotation_status(rotation: dict[str, Any], expected: str) -> None:
-    if rotation.get("status") != expected:
-        raise RuntimeError(
-            f"gateway rotation status mismatch: expected={expected}, "
-            f"observed={rotation.get('status')}"
-        )
-
-
-def _advance_rotation_until(
-    workflow: HostedWorkflow,
-    rotation: dict[str, Any],
-    *,
-    target_status: str,
-    command_prefix: str,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    last_command: dict[str, Any] = {}
-    for attempt in range(1, 41):
-        if rotation.get("status") == target_status:
-            return rotation, last_command
-        expected_version = int(rotation["version"])
-        idempotency_key = (
-            f"{workflow.workspace_id}:gateway-key-rotation:"
-            f"{command_prefix}:{attempt}"
-        )
-        if attempt % 2:
-            response = workflow.advance_gateway_key_rotation_http(
-                rotation_id=str(rotation["rotation_id"]),
-                expected_version=expected_version,
-                idempotency_key=idempotency_key,
-            )
-            transport = "http"
-        else:
-            response = workflow.advance_gateway_key_rotation_mcp(
-                rotation_id=str(rotation["rotation_id"]),
-                expected_version=expected_version,
-                idempotency_key=idempotency_key,
-            )
-            transport = "mcp"
-        rotation = _rotation_from_response(response)
-        last_command = {
-            "transport": transport,
-            "expected_version": expected_version,
-            "idempotency_key": idempotency_key,
-        }
-        if response.get("outcome") == "definite-failure":
-            raise RuntimeError(
-                "gateway rotation advance failed: "
-                f"phase={response.get('phase')} "
-                "outcome=definite-failure "
-                f"code={rotation.get('failure_code')}"
-            )
-        if rotation.get("status") == "blocked":
-            raise RuntimeError(
-                f"gateway rotation blocked: {rotation.get('failure_code')}"
-            )
-    raise RuntimeError(
-        f"gateway rotation did not reach {target_status} within bounded advances"
+    _assert_live_gateway_denial_matrix(
+        workspace_id=workspace_id,
+        key_id=GATEWAY_VERIFIER_KEY_ID,
+        private_key_file=bootstrap_dir / "gateway-rotation-key-a.pem",
+        postgres_password_file=bootstrap_dir / "postgres-password",
     )
+    return
 
 
-def _poll_rotation_until_drain_deadline(
+
+def _register_gateway_verifier_provider(
     workflow: HostedWorkflow,
-    rotation: dict[str, Any],
-) -> dict[str, Any]:
-    deadline = rotation.get("drain_deadline_epoch")
-    if not isinstance(deadline, int):
-        raise RuntimeError("draining rotation did not expose a durable deadline")
-    stop_at = time.monotonic() + max(10.0, float(deadline - int(time.time()) + 5))
-    while int(time.time()) < deadline:
-        current = workflow.read_gateway_key_rotation_detail(
-            str(rotation["rotation_id"])
-        )
-        _assert_rotation_status(current, "draining-old-grants")
-        if time.monotonic() >= stop_at:
-            raise RuntimeError("durable gateway grant-drain deadline did not arrive")
-    return workflow.read_gateway_key_rotation_detail(str(rotation["rotation_id"]))
-
-
-def _replay_rotation_command(
-    workflow: HostedWorkflow,
-    rotation_id: str,
-    command: dict[str, Any],
-) -> dict[str, Any]:
-    kwargs = {
-        "rotation_id": rotation_id,
-        "expected_version": int(command["expected_version"]),
-        "idempotency_key": str(command["idempotency_key"]),
-    }
-    if command.get("transport") == "mcp":
-        return workflow.advance_gateway_key_rotation_mcp(**kwargs)
-    return workflow.advance_gateway_key_rotation_http(**kwargs)
-
-
-def _assert_rotation_transition_history(response: dict[str, Any]) -> None:
-    transitions = response.get("transitions")
-    if not isinstance(transitions, list):
-        raise RuntimeError("gateway rotation transition history was malformed")
-    observed = [item.get("to_status") for item in transitions]
-    required = [
-        "awaiting-approval",
-        "approved",
-        "generation-prepared",
-        "key-generated",
-        "overlap-deploying",
-        "overlap-ready",
-        "new-key-active",
-        "draining-old-grants",
-        "retirement-deploying",
-        "retirement-ready",
-        "old-key-retired",
-        "revocation-prepared",
-        "completed",
-    ]
-    cursor = 0
-    for status in observed:
-        if cursor < len(required) and status == required[cursor]:
-            cursor += 1
-    if cursor != len(required):
-        raise RuntimeError(
-            f"gateway rotation transition history was incomplete: {observed}"
-        )
-
-
-def _register_gateway_rotation_provider(
-    workflow: HostedWorkflow,
-    *,
-    include_public_ingress: bool,
 ) -> str:
-    all_references = _gateway_rotation_reference_definitions(
-        include_public_ingress=include_public_ingress,
-    )
+    all_references = _gateway_verifier_reference_definitions()
     allowed_reference_prefixes = [value[0] for value in all_references]
     allowed_intents = [
         POSTGRES_INTENT,
         GATEWAY_SIGNING_KEY_INTENT,
         OCI_PULL_CREDENTIAL_INTENT,
     ]
-    if include_public_ingress:
-        allowed_reference_prefixes.append(CLOUDFLARE_GENERATED_REFERENCE_PREFIX)
-        allowed_intents.extend(
-            (CLOUDFLARE_API_TOKEN_INTENT, CLOUDFLARE_TUNNEL_TOKEN_INTENT)
-        )
     provider = _http(
         workflow.base_url,
         "POST",
@@ -2081,42 +944,31 @@ def _register_gateway_rotation_provider(
         {
             "provider_id": PROVIDER_ID,
             "provider_kind": "control-plane-kit-secrets",
-            "display_name": "Source-live gateway rotation custody",
+            "display_name": "Source-live gateway verifier custody",
             "endpoint_reference": PROVIDER_ENDPOINT_REFERENCE,
             "credential_reference": PROVIDER_CREDENTIAL_REFERENCE,
             "allowed_reference_prefixes": allowed_reference_prefixes,
             "allowed_intents": allowed_intents,
             "admitted_at": "2026-08-01T10:00:00Z",
-            "metadata": {"acceptance": "source-live-gateway-key-rotation"},
+            "metadata": {"acceptance": "source-live-gateway-verifier"},
             "idempotency_key": f"{workflow.workspace_id}:secret-provider",
         },
     )
     return str(provider["registration_id"])
 
 
-def _register_gateway_rotation_references(
+def _register_gateway_verifier_references(
     workflow: HostedWorkflow,
     *,
     provider_registration_id: str,
     initial_key_receipt: ProviderVersionReceipt,
-    register_replacement_reference: bool = True,
-    include_public_ingress: bool = False,
 ) -> dict[str, str]:
-    all_references = _gateway_rotation_reference_definitions(
-        include_public_ingress=include_public_ingress,
-    )
-    references = tuple(
-        item
-        for item in all_references
-        if register_replacement_reference
-        or item[0] != GATEWAY_ROTATION_KEY_B_REFERENCE
-    )
     registrations: dict[str, str] = {}
-    for reference, intent, label in references:
+    for reference, intent, label in _gateway_verifier_reference_definitions():
         metadata: dict[str, object] = {
-            "acceptance": "source-live-gateway-key-rotation"
+            "acceptance": "source-live-gateway-verifier"
         }
-        if reference == GATEWAY_ROTATION_KEY_A_REFERENCE:
+        if reference == GATEWAY_VERIFIER_KEY_REFERENCE:
             metadata.update(
                 {
                     "provider_version_id": initial_key_receipt.version_id,
@@ -2142,37 +994,20 @@ def _register_gateway_rotation_references(
     return registrations
 
 
-def _gateway_rotation_reference_definitions(
-    *,
-    include_public_ingress: bool = False,
-) -> tuple[tuple[str, str, str], ...]:
-    references = [
+def _gateway_verifier_reference_definitions() -> tuple[tuple[str, str, str], ...]:
+    return (
         (POSTGRES_PASSWORD_REFERENCE, POSTGRES_INTENT, "postgres-password"),
         (
-            GATEWAY_ROTATION_KEY_A_REFERENCE,
+            GATEWAY_VERIFIER_KEY_REFERENCE,
             GATEWAY_SIGNING_KEY_INTENT,
             "gateway-rotation-key-a",
-        ),
-        (
-            GATEWAY_ROTATION_KEY_B_REFERENCE,
-            GATEWAY_SIGNING_KEY_INTENT,
-            "gateway-rotation-key-b",
         ),
         (
             GHCR_PULL_CREDENTIAL_REFERENCE,
             OCI_PULL_CREDENTIAL_INTENT,
             "ghcr-pull-credential",
         ),
-    ]
-    if include_public_ingress:
-        references.append(
-            (
-                CLOUDFLARE_API_TOKEN_REFERENCE,
-                CLOUDFLARE_API_TOKEN_INTENT,
-                "cloudflare-api-token",
-            )
-        )
-    return tuple(references)
+    )
 
 
 def _register_delegation_key(
@@ -2182,7 +1017,7 @@ def _register_delegation_key(
     private_key_reference: str,
     public_key_file: Path,
     admitted_at: str,
-    issuer: str = GATEWAY_ROTATION_ISSUER,
+    issuer: str = GATEWAY_VERIFIER_ISSUER,
 ) -> None:
     _http(
         workflow.base_url,
@@ -2206,7 +1041,7 @@ def _activate_delegation_key(
     key_id: str,
     *,
     activated_at: str,
-    issuer: str = GATEWAY_ROTATION_ISSUER,
+    issuer: str = GATEWAY_VERIFIER_ISSUER,
 ) -> None:
     _delegation_key_lifecycle_command(
         workflow,
@@ -2223,7 +1058,7 @@ def _retire_delegation_key(
     key_id: str,
     *,
     retired_at: str,
-    issuer: str = GATEWAY_ROTATION_ISSUER,
+    issuer: str = GATEWAY_VERIFIER_ISSUER,
 ) -> None:
     _delegation_key_lifecycle_command(
         workflow,
@@ -2240,7 +1075,7 @@ def _revoke_delegation_key(
     key_id: str,
     *,
     revoked_at: str,
-    issuer: str = GATEWAY_ROTATION_ISSUER,
+    issuer: str = GATEWAY_VERIFIER_ISSUER,
 ) -> None:
     _delegation_key_lifecycle_command(
         workflow,
@@ -2338,7 +1173,7 @@ def _assert_delegation_key_statuses(
         )
 
 
-def _gateway_rotation_graph(
+def _gateway_verifier_graph(
     gateway_document: Any,
     hello_document: Any,
     postgres_document: Any,
@@ -2394,81 +1229,12 @@ def _gateway_rotation_graph(
                 DelegationAuthorityBinding(
                     delegate_node_id="gateway",
                     purpose=DelegationKeyPurpose.GATEWAY_PROBE,
-                    issuer=GATEWAY_ROTATION_ISSUER,
+                    issuer=GATEWAY_VERIFIER_ISSUER,
                 ),
             ),
         )
     )
 
-
-def _gateway_rotation_public_graph(
-    gateway_document: Any,
-    hello_document: Any,
-    postgres_document: Any,
-    cloudflared_document: Any,
-    *,
-    workspace_id: str,
-    public_hostname: str,
-) -> DeploymentGraph:
-    gateway, cloudflared, ingress = _public_gateway_overlay(
-        gateway_document,
-        cloudflared_document,
-        target_node_id="gateway",
-        target_provider_socket="control",
-        connector_node_id="cloudflared-gateway",
-        public_hostname=public_hostname,
-        lifecycle=PublicIngressLifecycle.RETAINED,
-    )
-    hello_product = hello_document.product
-    hello = instantiate_product(
-        hello_product,
-        "hello",
-        _with_public_environment(
-            ProductInstanceConfiguration.from_contract(hello_product.runtime_contract),
-            {"HELLO_MESSAGE": "Hello through rotating gateway keys"},
-        ),
-    )
-    postgres_product = postgres_document.product
-    postgres = instantiate_product(
-        postgres_product,
-        "postgres",
-        ProductInstanceConfiguration.from_contract(postgres_product.runtime_contract),
-    )
-    postgres = replace(
-        postgres,
-        spec=replace(postgres.spec, verification=VerificationContract()),
-    )
-    return compile_topology(
-        DeploymentTopology(
-            workspace_id,
-            DockerRuntime(
-                runtime_id="docker",
-                network_name=f"control-plane-kit-{workspace_id}-docker",
-                authority_ref=RuntimeAuthorityReference(LOCAL_DOCKER_AUTHORITY_REF),
-                children=(
-                    gateway,
-                    hello,
-                    postgres,
-                    cloudflared,
-                    SocketConnection("hello", "internal", "gateway", "target-http"),
-                    SocketConnection(
-                        "postgres",
-                        "postgres",
-                        "gateway",
-                        "target-postgres",
-                    ),
-                ),
-            ),
-            public_ingresses=(ingress,),
-            delegation_authorities=(
-                DelegationAuthorityBinding(
-                    delegate_node_id="gateway",
-                    purpose=DelegationKeyPurpose.GATEWAY_PROBE,
-                    issuer=GATEWAY_ROTATION_ISSUER,
-                ),
-            ),
-        )
-    )
 
 
 def _assert_gateway_probe_key(result: dict[str, Any], expected_key_id: str) -> None:
@@ -2476,6 +1242,75 @@ def _assert_gateway_probe_key(result: dict[str, Any], expected_key_id: str) -> N
     grant = result.get("gateway_probe", {}).get("grant")
     if not isinstance(grant, dict) or grant.get("key_id") != expected_key_id:
         raise RuntimeError("gateway probe did not use the expected active signing key")
+
+
+def _assert_public_gateway_probe(
+    request: Callable[[str], dict[str, Any]],
+    *,
+    request_id_prefix: str,
+    expected_key_id: str,
+) -> None:
+    for attempt in verification_attempts(PUBLIC_GATEWAY_PROBE_POLICY):
+        result = request(f"{request_id_prefix}:attempt-{attempt}")
+        probe = result.get("gateway_probe")
+        evidence = probe.get("evidence") if isinstance(probe, dict) else None
+        transient_readiness = (
+            isinstance(probe, dict)
+            and probe.get("status") == "failed"
+            and (
+                probe.get("result_code")
+                == "gateway-endpoint-unresolved-endpoint"
+                or (
+                    probe.get("result_code") == "gateway-transport-failed"
+                    and isinstance(evidence, dict)
+                    and evidence.get("http_status") == 530
+                )
+            )
+        )
+        if (
+            transient_readiness
+            and attempt < PUBLIC_GATEWAY_PROBE_POLICY.maximum_attempts
+        ):
+            continue
+        if not isinstance(probe, dict) or probe.get("status") != "succeeded":
+            raise RuntimeError("public gateway probe did not succeed")
+        _assert_gateway_probe_key(result, expected_key_id)
+        return
+
+
+def _assert_public_gateway_probe_pair(
+    workflow: HostedWorkflow,
+    *,
+    current_graph_id: str,
+    expected_key_id: str,
+    request_prefix: str,
+) -> None:
+    _assert_public_gateway_probe(
+        lambda request_id: workflow.request_gateway_probe_http(
+            request_id=request_id,
+            expected_current_graph_id=current_graph_id,
+            gateway_node_id="gateway",
+            kind="http-status",
+            target_id="hello.internal",
+            path="/",
+            access_path=GatewayProbeAccessPath.NAMED_PUBLIC_INGRESS,
+        ),
+        request_id_prefix=f"{request_prefix}:http",
+        expected_key_id=expected_key_id,
+    )
+    _assert_public_gateway_probe(
+        lambda request_id: workflow.request_gateway_probe_mcp(
+            request_id=request_id,
+            expected_current_graph_id=current_graph_id,
+            gateway_node_id="gateway",
+            kind="http-status",
+            target_id="hello.internal",
+            path="/",
+            access_path=GatewayProbeAccessPath.NAMED_PUBLIC_INGRESS,
+        ),
+        request_id_prefix=f"{request_prefix}:mcp",
+        expected_key_id=expected_key_id,
+    )
 
 
 def _assert_initial_gateway_transition_evidence(
@@ -2543,6 +1378,123 @@ def _assert_initial_gateway_transition_evidence(
         )
 
 
+def _runtime_node_identities(
+    workspace_id: str,
+    node_ids: tuple[str, ...],
+) -> dict[str, str]:
+    return {
+        node_id: str(_single_docker_container(workspace_id, node_id).id)
+        for node_id in node_ids
+    }
+
+
+def _assert_public_overlay_transition_evidence(
+    workflow: HostedWorkflow,
+    transition: Any,
+    *,
+    expected_ingress_operations: set[str],
+    expected_connector_operations: set[str],
+    stable_workload_nodes: set[str],
+) -> None:
+    detail = workflow.read_plan_detail(transition.plan_id)
+    plan = detail.get("plan")
+    payload = plan.get("payload") if isinstance(plan, dict) else None
+    activities = payload.get("activities") if isinstance(payload, dict) else None
+    if not isinstance(activities, list):
+        raise RuntimeError("public overlay plan detail omitted its activity plan")
+
+    observed_ingress_operations: set[str] = set()
+    observed_connector_operations: set[str] = set()
+    forbidden_workload_mutations: list[tuple[str, str]] = []
+    planned_activity_ids: set[str] = set()
+    mutation_kinds = {
+        "start-node",
+        "stop-node",
+        "remove-node-resource",
+        "reconcile-node",
+    }
+    for activity in activities:
+        if not isinstance(activity, dict):
+            raise RuntimeError("public overlay plan contained malformed activity")
+        activity_id = activity.get("activity_id")
+        operation = activity.get("operation")
+        if not isinstance(activity_id, str) or not isinstance(operation, dict):
+            raise RuntimeError("public overlay plan contained malformed operation")
+        planned_activity_ids.add(activity_id)
+        kind = operation.get("kind")
+        target = operation.get("target")
+        if not isinstance(kind, str) or not isinstance(target, dict):
+            raise RuntimeError("public overlay plan operation omitted its target")
+        if target.get("kind") == "public-ingress":
+            observed_ingress_operations.add(kind)
+        node_id = target.get("node_id")
+        if node_id == "cloudflared-gateway":
+            observed_connector_operations.add(kind)
+        if node_id in stable_workload_nodes and kind in mutation_kinds:
+            forbidden_workload_mutations.append((kind, str(node_id)))
+
+    if observed_ingress_operations != expected_ingress_operations:
+        raise RuntimeError("public overlay plan had unexpected ingress operations")
+    if observed_connector_operations != expected_connector_operations:
+        raise RuntimeError("public overlay plan had unexpected connector operations")
+    if forbidden_workload_mutations:
+        raise RuntimeError("public overlay plan mutated stable workload nodes")
+
+    events = _events_for_run(workflow.read_activity(limit=200), transition.run_id)
+    succeeded_activity_ids = {
+        str(event.get("activity_id"))
+        for event in events
+        if event.get("event_type") == "step_succeeded"
+    }
+    if planned_activity_ids - succeeded_activity_ids:
+        raise RuntimeError("public overlay run omitted planned success evidence")
+
+
+def _assert_runtime_node_identities(
+    workspace_id: str,
+    expected: dict[str, str],
+) -> None:
+    if _runtime_node_identities(workspace_id, tuple(expected)) != expected:
+        raise RuntimeError("public access overlay changed workload container identities")
+
+
+def _assert_named_public_gateway_probes_unavailable(
+    workflow: HostedWorkflow,
+    *,
+    current_graph_id: str,
+) -> None:
+    calls = (
+        lambda: workflow.request_gateway_probe_http(
+            request_id=f"{workflow.workspace_id}:gateway-probe:public-off:http",
+            expected_current_graph_id=current_graph_id,
+            gateway_node_id="gateway",
+            kind="http-status",
+            target_id="hello.internal",
+            path="/",
+            access_path=GatewayProbeAccessPath.NAMED_PUBLIC_INGRESS,
+        ),
+        lambda: workflow.request_gateway_probe_mcp(
+            request_id=f"{workflow.workspace_id}:gateway-probe:public-off:mcp",
+            expected_current_graph_id=current_graph_id,
+            gateway_node_id="gateway",
+            kind="http-status",
+            target_id="hello.internal",
+            path="/",
+            access_path=GatewayProbeAccessPath.NAMED_PUBLIC_INGRESS,
+        ),
+    )
+    for call in calls:
+        try:
+            call()
+        except RuntimeError as error:
+            if "gateway control node has no named public ingress" not in str(error):
+                raise RuntimeError(
+                    "public gateway probe failed for an unexpected reason"
+                ) from None
+        else:
+            raise RuntimeError("public gateway probe succeeded while overlay was off")
+
+
 def _direct_gateway_capability(
     *,
     workspace_id: str,
@@ -2562,7 +1514,7 @@ def _direct_gateway_capability(
     )
     now = int(time.time())
     grant = DelegatedGatewayProbeGrant(
-        issuer=GATEWAY_ROTATION_ISSUER,
+        issuer=GATEWAY_VERIFIER_ISSUER,
         key_id=key_id,
         audience=f"gateway:{workspace_id}:gateway",
         workspace_id=workspace_id,
@@ -2950,7 +1902,7 @@ def _hello_request_count() -> int:
 def _wait_private_gateway_ready(
     gateway_document: Any,
     *,
-    workspace_id: str = GATEWAY_ROTATION_WORKSPACE,
+    workspace_id: str = GATEWAY_VERIFIER_WORKSPACE,
 ) -> None:
     policy = _verification_policy(gateway_document, "ready")
     last_error = "gateway did not answer"
@@ -3151,6 +2103,16 @@ def _run_cloudflare_tunnel_custody(
         current_graph_id=current_graph_id,
         sync_runtime_networks=False,
     )
+    _assert_public_overlay_transition_evidence(
+        workflow,
+        public_on,
+        expected_ingress_operations={
+            "allocate-public-ingress",
+            "wait-for-public-ingress-ready",
+        },
+        expected_connector_operations={"start-node", "wait-for-healthy"},
+        stable_workload_nodes=set(),
+    )
     _checkpoint_cloudflare_phase(
         workflow,
         phase="public-on-committed",
@@ -3163,6 +2125,16 @@ def _run_cloudflare_tunnel_custody(
     _assert_public_gateway_authenticated_http_probe(
         public_hostname,
         workspace_id=workspace_id,
+    )
+    _assert_public_gateway_probe_pair(
+        workflow,
+        current_graph_id=public_on.current_graph_id,
+        expected_key_id=GATEWAY_PROBE_KEY_ID,
+        request_prefix=f"{workspace_id}:gateway-probe:public-on",
+    )
+    workload_identities = _runtime_node_identities(
+        workspace_id,
+        ("gateway", "hello"),
     )
     _assert_retained_public_ingress_read(
         workflow,
@@ -3187,6 +2159,13 @@ def _run_cloudflare_tunnel_custody(
         expected_desired_graph_id=public_on.desired_graph_id,
         sync_runtime_networks=False,
     )
+    _assert_public_overlay_transition_evidence(
+        workflow,
+        public_off,
+        expected_ingress_operations={"remove-public-ingress"},
+        expected_connector_operations={"stop-node", "remove-node-resource"},
+        stable_workload_nodes={"gateway", "hello"},
+    )
     _checkpoint_cloudflare_phase(
         workflow,
         phase="public-off-committed",
@@ -3195,6 +2174,11 @@ def _run_cloudflare_tunnel_custody(
     _assert_activity_mentions(workflow, public_off.run_id, "cloudflared-gateway")
     _assert_public_gateway_unreachable(public_hostname)
     _assert_public_hostname_resolves(public_hostname)
+    _assert_runtime_node_identities(workspace_id, workload_identities)
+    _assert_named_public_gateway_probes_unavailable(
+        workflow,
+        current_graph_id=public_off.current_graph_id,
+    )
     _assert_retained_public_ingress_read(
         workflow,
         reservation_status="reserved",
@@ -3205,6 +2189,12 @@ def _run_cloudflare_tunnel_custody(
         workspace_id=workspace_id,
         expected_statuses=("removed",),
         retained_reservation=True,
+    )
+    _assert_removed_ingress_token_versions_revoked(
+        provider_container,
+        operations_database_url,
+        workspace_id=workspace_id,
+        expected_count=1,
     )
     _assert_retained_cloudflare_reservation_present(
         operations_database_url,
@@ -3219,6 +2209,16 @@ def _run_cloudflare_tunnel_custody(
         expected_desired_graph_id=public_off.desired_graph_id,
         sync_runtime_networks=False,
     )
+    _assert_public_overlay_transition_evidence(
+        workflow,
+        public_on_again,
+        expected_ingress_operations={
+            "allocate-public-ingress",
+            "wait-for-public-ingress-ready",
+        },
+        expected_connector_operations={"start-node", "wait-for-healthy"},
+        stable_workload_nodes={"gateway", "hello"},
+    )
     _checkpoint_cloudflare_phase(
         workflow,
         phase="public-on-again-committed",
@@ -3231,6 +2231,7 @@ def _run_cloudflare_tunnel_custody(
         public_hostname,
         workspace_id=workspace_id,
     )
+    _assert_runtime_node_identities(workspace_id, workload_identities)
     _assert_retained_public_ingress_read(
         workflow,
         reservation_status="bound",
@@ -3249,6 +2250,13 @@ def _run_cloudflare_tunnel_custody(
         current_graph_id=public_on_again.current_graph_id,
         expected_desired_graph_id=public_on_again.desired_graph_id,
         sync_runtime_networks=False,
+    )
+    _assert_public_overlay_transition_evidence(
+        workflow,
+        removed,
+        expected_ingress_operations={"remove-public-ingress"},
+        expected_connector_operations={"stop-node", "remove-node-resource"},
+        stable_workload_nodes=set(),
     )
     _checkpoint_cloudflare_phase(
         workflow,
@@ -3269,6 +2277,12 @@ def _run_cloudflare_tunnel_custody(
         workspace_id=workspace_id,
         expected_statuses=("removed", "removed"),
         retained_reservation=True,
+    )
+    _assert_removed_ingress_token_versions_revoked(
+        provider_container,
+        operations_database_url,
+        workspace_id=workspace_id,
+        expected_count=2,
     )
     _assert_retained_cloudflare_reservation_present(
         operations_database_url,

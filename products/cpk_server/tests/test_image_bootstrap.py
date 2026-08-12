@@ -1795,15 +1795,12 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("workspace-secret-missing", controller)
         self.assertIn("workspace-secret-wrong-credential", controller)
         self.assertIn("workspace-secret-unavailable", controller)
-        self.assertIn("gateway-key-rotation", controller)
-        self.assertIn("gateway-capability-denials", controller)
         self.assertIn("gateway-verifier-projection", controller)
-        self.assertIn("GatewayRotationSourceLiveScope.ADVERSARIAL_DENIALS", controller)
-        self.assertIn("GatewayRotationSourceLiveScope.RESTART_LIFECYCLE", controller)
-        self.assertIn("stop_after_initial_projection=True", controller)
-        self.assertIn("_run_gateway_key_rotation_program(", controller)
+        self.assertNotIn('"gateway-key-rotation"', controller)
+        self.assertNotIn("gateway-capability-denials", controller)
         self.assertIn("request_gateway_probe_http", controller)
         self.assertIn("request_gateway_probe_mcp", controller)
+        self.assertIn("_assert_live_gateway_denial_matrix", controller)
         self.assertIn("/delegation-keys", controller)
         self.assertIn("verifier-configuration", controller)
         self.assertIn("gateway-rotation-key-a.pem", smoke)
@@ -1826,10 +1823,11 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertNotIn("DockerRuntimeInterpreter", controller)
         self.assertNotIn("ControlPlaneKitSecretsResolver", controller)
 
-        program_start = controller.index("def _run_gateway_key_rotation_program(")
-        program_end = controller.index("def _run_gateway_key_rotation(", program_start)
+        program_start = controller.index("def _run_gateway_verifier_projection(")
+        program_end = controller.index(
+            "def _register_gateway_verifier_provider(", program_start
+        )
         program = controller[program_start:program_end]
-        after_request = program[program.index("requested = ") :]
         self.assertLess(
             program.index("provider_registration_id = "),
             program.index("receipt = _provider_write_secret("),
@@ -1840,42 +1838,28 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         )
         self.assertLess(
             program.index("key_a_receipt = receipt"),
-            program.index("_register_gateway_rotation_references("),
+            program.index("_register_gateway_verifier_references("),
         )
         self.assertIn(
             "initial_key_receipt=key_a_receipt",
             program,
         )
-        self.assertIn("graph_a = _gateway_rotation_graph(", program)
-        self.assertIn("private_graph = _gateway_rotation_graph(", program)
-        for title in (
-            "Gateway key A initial deployment",
-            "Gateway rotation public overlay on",
-            "Gateway rotation public overlay off",
-            "Gateway rotation public overlay on again",
-            "Gateway key rotation teardown",
-        ):
-            self.assertIn(title, program)
-        self.assertIn("request_gateway_key_rotation(", program)
-        self.assertIn("request_gateway_key_rotation_approval(", program)
-        self.assertIn("decide_gateway_key_rotation_mcp(", program)
-        self.assertIn("_advance_rotation_until(", program)
-        self.assertIn("_poll_rotation_until_drain_deadline(", program)
-        self.assertIn("_restart_cpk_server(", program)
-        self.assertIn("read_gateway_key_rotation_transitions_mcp(", program)
-        self.assertIn("_assert_provider_version_revoked(", program)
+        self.assertIn("graph_a = _gateway_verifier_graph(", program)
+        self.assertIn("Gateway key A deploy", program)
+        self.assertIn("_assert_live_gateway_denial_matrix(", program)
+        self.assertLess(
+            program.index("request_gateway_probe_http("),
+            program.index("_assert_live_gateway_denial_matrix("),
+        )
+        self.assertLess(
+            program.index("request_gateway_probe_mcp("),
+            program.index("_assert_live_gateway_denial_matrix("),
+        )
         self.assertNotIn("time.sleep(", program)
-        self.assertNotIn("_register_delegation_key(", after_request)
-        self.assertNotIn("_activate_delegation_key(", after_request)
-        self.assertNotIn("_retire_delegation_key(", after_request)
-        self.assertNotIn("_revoke_delegation_key(", after_request)
         self.assertNotIn("gateway-rotation-key-b-public.pem", controller)
-        self.assertIn('"generation-prepared"', controller)
-        self.assertIn('"revocation-prepared"', controller)
-        self.assertNotIn('"old-key-revoked"', controller)
 
         reference_start = controller.index(
-            "def _register_gateway_rotation_references("
+            "def _register_gateway_verifier_references("
         )
         reference_end = controller.index("def _register_delegation_key(", reference_start)
         reference_registration = controller[reference_start:reference_end]
@@ -1894,7 +1878,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             "command.gateway-key-rotation.advance",
             "read.gateway-key-rotation.transitions",
         ):
-            self.assertIn(route, hosted_client)
+            self.assertNotIn(route, hosted_client)
 
     def test_source_live_provider_receipt_requires_exact_version_identity(
         self,
@@ -1935,12 +1919,12 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             sys.modules.pop(spec.name, None)
             sys.path.remove(str(script_dir))
 
-    def test_gateway_rotation_source_live_surfaces_bounded_definite_failure(
+    def test_public_gateway_probe_surfaces_bounded_definite_failure(
         self,
     ) -> None:
         script_dir = ROOT / "scripts"
         spec = importlib.util.spec_from_file_location(
-            "cpk_server_gateway_rotation_failure_test",
+            "cpk_server_gateway_probe_failure_test",
             script_dir / "cpk_server_secret_provider_source_live.py",
         )
         if spec is None or spec.loader is None:
@@ -1951,46 +1935,36 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         try:
             spec.loader.exec_module(module)
 
-            class DefiniteFailureWorkflow:
-                workspace_id = "workspace-gateway-key-rotation"
+            calls = 0
 
-                def __init__(self) -> None:
-                    self.calls = 0
-
-                def advance_gateway_key_rotation_http(self, **_kwargs):
-                    self.calls += 1
-                    return {
-                        "phase": "generation",
-                        "outcome": "definite-failure",
-                        "rotation": {
-                            "rotation_id": "rotation-a",
-                            "status": "generation-prepared",
-                            "version": 4,
-                            "failure_code": "provider-denied",
-                        },
+            def request(_request_id: str) -> dict[str, object]:
+                nonlocal calls
+                calls += 1
+                return {
+                    "gateway_probe": {
+                        "status": "failed",
+                        "target_id": "hello.internal",
+                        "result_code": "gateway-target-denied",
+                        "evidence": {"private": "must-not-appear"},
                     }
+                }
 
-            workflow = DefiniteFailureWorkflow()
-            with self.assertRaisesRegex(
-                RuntimeError,
-                "phase=generation outcome=definite-failure code=provider-denied",
+            with (
+                patch.object(module, "verification_attempts", return_value=iter((1,))),
+                self.assertRaises(RuntimeError) as raised,
             ):
-                module._advance_rotation_until(
-                    workflow,
-                    {
-                        "rotation_id": "rotation-a",
-                        "status": "generation-prepared",
-                        "version": 3,
-                    },
-                    target_status="key-generated",
-                    command_prefix="generation",
+                module._assert_public_gateway_probe(
+                    request,
+                    request_id_prefix="public-definite-failure",
+                    expected_key_id="key-a",
                 )
-            self.assertEqual(workflow.calls, 1)
+            self.assertEqual(calls, 1)
+            self.assertNotIn("must-not-appear", str(raised.exception))
         finally:
             sys.modules.pop(spec.name, None)
             sys.path.remove(str(script_dir))
 
-    def test_gateway_rotation_authors_stable_delegation_intent_only(self) -> None:
+    def test_gateway_verifier_authors_stable_delegation_intent_only(self) -> None:
         from control_plane_kit_core.planning import (
             StartNode,
             WaitForHealthy,
@@ -2009,7 +1983,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
 
         script_dir = ROOT / "scripts"
         spec = importlib.util.spec_from_file_location(
-            "cpk_server_secret_provider_rotation_graph_test",
+            "cpk_server_secret_provider_verifier_graph_test",
             script_dir / "cpk_server_secret_provider_source_live.py",
         )
         if spec is None or spec.loader is None:
@@ -2020,11 +1994,11 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         try:
             spec.loader.exec_module(module)
             gateway_document = module._product_document(ROOT, "cpk_local_gateway")
-            graph = module._gateway_rotation_graph(
+            graph = module._gateway_verifier_graph(
                 gateway_document,
                 module._product_document(ROOT, "hello_server"),
                 module._product_document(ROOT, "postgres_server"),
-                workspace_id="workspace-gateway-rotation-graph-test",
+                workspace_id="workspace-gateway-verifier-graph-test",
             )
         finally:
             sys.modules.pop(spec.name, None)
@@ -2036,7 +2010,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
                 DelegationAuthorityBinding(
                     delegate_node_id="gateway",
                     purpose=DelegationKeyPurpose.GATEWAY_PROBE,
-                    issuer=module.GATEWAY_ROTATION_ISSUER,
+                    issuer=module.GATEWAY_VERIFIER_ISSUER,
                 ),
             ),
         )
@@ -2047,8 +2021,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             sort_keys=True,
         )
         self.assertIn('"purpose":"gateway-probe"', descriptor)
-        self.assertNotIn(module.GATEWAY_ROTATION_KEY_A_ID, descriptor)
-        self.assertNotIn(module.GATEWAY_ROTATION_KEY_B_ID, descriptor)
+        self.assertNotIn(module.GATEWAY_VERIFIER_KEY_ID, descriptor)
         self.assertNotIn("private_key", descriptor.lower())
         self.assertNotIn("public_key_pem", descriptor.lower())
         delegation_descriptor = json.dumps(
@@ -2105,15 +2078,11 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             'CPK_SECRET_PROVIDER_SOURCE_LIVE_SCENARIO="$SCENARIO"',
             smoke,
         )
-        self.assertIn("gateway-key-rotation-overlay", smoke)
-        self.assertIn("cpk-rot1404-$RUN_SUFFIX-gateway.openj92.dev", smoke)
-        self.assertIn("cpk-rot1404-$RUN_SUFFIX-*.openj92.dev", smoke)
+        self.assertIn('SCENARIO="cloudflare-tunnel-custody"', smoke)
+        self.assertIn("cpk-sec1203-$RUN_SUFFIX.openj92.dev", smoke)
         self.assertIn("CPK_PUBLIC_GATEWAY_ALLOWED_HOSTNAME_PATTERN", smoke)
-        self.assertIn('CPK_SOURCE_LIVE_GATEWAY_IMAGE="$SOURCE_LIVE_GATEWAY_IMAGE"', smoke)
-        self.assertIn(
-            'CPK_SOURCE_LIVE_GATEWAY_SOURCE_COMMIT="$SOURCE_LIVE_GATEWAY_SOURCE_COMMIT"',
-            smoke,
-        )
+        self.assertNotIn("CPK_SOURCE_LIVE_GATEWAY_IMAGE", smoke)
+        self.assertNotIn("CPK_SOURCE_LIVE_GATEWAY_SOURCE_COMMIT", smoke)
         self.assertIn("cloudflare-api-token", smoke)
         self.assertNotIn("CPK_PRODUCT_SECRET_VALUES_JSON", smoke)
         self.assertNotIn("CPK_IMAGE_PULL_CREDENTIAL_RESOLVER", smoke)
@@ -2139,7 +2108,6 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("GHCR_PULL_CREDENTIAL_REFERENCE", controller)
         self.assertIn('OCI_PULL_CREDENTIAL_INTENT = "oci.pull-credential"', controller)
         self.assertIn("register_provider_backed_cloudflare_ingress_authority", controller)
-        self.assertIn("CPK_PUBLIC_GATEWAY_ALLOWED_HOSTNAME_PATTERN", controller)
         self.assertIn(
             "api_token_ref=CLOUDFLARE_API_TOKEN_REFERENCE",
             controller,
@@ -2156,7 +2124,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("_assert_runtime_node_identities", controller)
         self.assertEqual(
             controller.count("_assert_public_overlay_transition_evidence("),
-            4,
+            5,
         )
         self.assertEqual(
             controller.count('"wait-for-public-ingress-ready",'),
@@ -2177,7 +2145,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn('base.joinpath("gateway-public-key.pem")', cloudflare_smoke)
         self.assertNotIn("gateway-public-keys.json", cloudflare_smoke)
 
-    def test_cloudflare_source_live_secret_scan_excludes_public_verifier(self) -> None:
+    def test_cloudflare_source_live_secret_scan_excludes_public_key(self) -> None:
         smoke = (
             ROOT
             / "scripts"
@@ -2187,8 +2155,8 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             "\ndo\n", 1
         )[0]
 
-        self.assertIn("gateway-rotation-key-a.pem", secret_scan)
-        self.assertNotIn("gateway-rotation-key-a-public.pem", secret_scan)
+        self.assertIn("gateway-private-key.pem", secret_scan)
+        self.assertNotIn("gateway-public-key.pem", secret_scan)
 
     def test_http_only_public_gateway_omits_postgres_secret_delivery(self) -> None:
         from control_plane_kit_core.delegation_authority import (
@@ -2780,7 +2748,6 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             "cpk-server",
             "secrets-server",
             "cpk-local-gateway",
-            "cloudflared-connector",
             "postgres-server",
             "hello-server",
         ):
@@ -2788,15 +2755,15 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("product_source_commit cpk-local-gateway", wrapper)
         self.assertIn("require_digest", wrapper)
         self.assertIn("docker pull", wrapper)
-        self.assertIn("CPK_CLOUDFLARE_CUSTODY_BUILD_IMAGES=0", wrapper)
+        self.assertIn("CPK_SECRET_PROVIDER_BUILD_IMAGES=0", wrapper)
         self.assertIn(
-            "CPK_CLOUDFLARE_CUSTODY_SCENARIO=gateway-key-rotation-overlay",
+            "CPK_SECRET_PROVIDER_SOURCE_LIVE_SCENARIO=gateway-verifier-projection",
             wrapper,
         )
         self.assertIn("CPK_SOURCE_LIVE_GATEWAY_IMAGE", wrapper)
         self.assertIn("CPK_SOURCE_LIVE_GATEWAY_SOURCE_COMMIT", wrapper)
         self.assertIn(
-            "cpk_server_cloudflare_secret_custody_source_live_smoke.sh",
+            "cpk_server_secret_provider_source_live_smoke.sh",
             wrapper,
         )
         self.assertNotIn("python3", wrapper)
