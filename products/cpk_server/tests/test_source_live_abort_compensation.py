@@ -542,6 +542,7 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 patch.object(controller, "_assert_abort_generated_secret_versions_revoked"),
                 patch.object(controller, "_assert_abort_resources_physically_absent"),
                 patch.object(controller, "_assert_failed_connectors_absent"),
+                patch.object(controller, "_assert_no_node_containers") as no_containers,
                 patch.object(
                     controller,
                     "_emergency_compensate_cloudflare",
@@ -560,6 +561,13 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
             self.assertEqual(status, 2)
             emergency.assert_called_once()
             self.assertIs(emergency.call_args.args[0], unadvanced)
+            self.assertEqual(
+                no_containers.call_args_list,
+                [
+                    call("workspace-a", "cloudflared-gateway"),
+                    call("workspace-a", "cloudflared-gateway"),
+                ],
+            )
 
     def test_post_teardown_abort_uses_historical_exact_ephemeral_evidence(
         self,
