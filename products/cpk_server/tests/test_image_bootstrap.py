@@ -2683,6 +2683,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             "cpk-server",
             "secrets-server",
             "cpk-local-gateway",
+            "cloudflared-connector",
             "postgres-server",
             "hello-server",
         ):
