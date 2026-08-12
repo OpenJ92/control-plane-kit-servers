@@ -81,14 +81,6 @@ class HostedTransitionResult:
     run_id: str
 
 
-@dataclass(frozen=True)
-class HostedReleaseResult:
-    current_graph_id: str
-    plan_id: str
-    approval_id: str
-    run_id: str
-
-
 class HostedWorkflow:
     """Public HTTP/MCP workflow driver for hosted cpk-server acceptance."""
 
@@ -852,127 +844,6 @@ class HostedWorkflow:
             approval_id=approval_id,
             run_id=run_id,
         )
-
-    def run_approved_public_ingress_reservation_release(
-        self,
-        *,
-        title: str,
-        reservation: dict[str, Any],
-    ) -> HostedReleaseResult:
-        reservation_id = _required_nonempty_string(
-            reservation,
-            "reservation_id",
-            subject="retained public ingress reservation",
-        )
-        ingress_id = _required_nonempty_string(
-            reservation,
-            "ingress_id",
-            subject="retained public ingress reservation",
-        )
-        if reservation.get("lifecycle") != PublicIngressLifecycle.RETAINED.value:
-            raise RuntimeError("public ingress reservation was not retained")
-        if reservation.get("status") != "reserved":
-            raise RuntimeError("public ingress reservation was not releasable")
-        expected_version = reservation.get("version")
-        if type(expected_version) is not int or expected_version < 1:
-            raise RuntimeError("public ingress reservation version was invalid")
-
-        session_id = self.start_session(title)
-        workspace = self.read_workspace().get("workspace")
-        if not isinstance(workspace, dict):
-            raise RuntimeError("reservation release workspace readback was unavailable")
-        current_graph_id = _required_nonempty_string(
-            workspace,
-            "current_graph_id",
-            subject="reservation release workspace",
-        )
-        if workspace.get("desired_graph_id") != current_graph_id:
-            raise RuntimeError("reservation release workspace was not quiescent")
-        current_projection_id = _required_nonempty_string(
-            workspace,
-            "current_realized_projection_id",
-            subject="reservation release workspace",
-        )
-        if workspace.get("desired_realized_projection_id") != current_projection_id:
-            raise RuntimeError("reservation release projection was not quiescent")
-        desired_revision = workspace.get("desired_graph_revision")
-        if type(desired_revision) is not int or desired_revision < 1:
-            raise RuntimeError("reservation release graph revision was invalid")
-
-        idempotency_key = f"{self.workspace_id}:{title}:release-plan"
-        payload: dict[str, object] = {
-            "session_id": session_id,
-            "ingress_id": ingress_id,
-            "expected_reservation_version": expected_version,
-            "expected_current_graph_id": current_graph_id,
-            "expected_current_realized_projection_id": current_projection_id,
-            "expected_desired_graph_revision": desired_revision,
-            "idempotency_key": idempotency_key,
-        }
-        planned = _http(
-            self.base_url,
-            "POST",
-            (
-                f"/workspaces/{self.workspace_id}/public-ingress-reservations/"
-                f"{reservation_id}/release-plan"
-            ),
-            payload,
-        )
-        replayed = _mcp_tool(
-            self.base_url,
-            "plan_public_ingress_reservation_release",
-            {
-                "workspace_id": self.workspace_id,
-                "reservation_id": reservation_id,
-                **payload,
-            },
-        )
-        _assert_release_plan_response(
-            planned,
-            expected_replayed=False,
-            session_id=session_id,
-            current_graph_id=current_graph_id,
-            current_projection_id=current_projection_id,
-            desired_revision=desired_revision,
-        )
-        _assert_release_plan_response(
-            replayed,
-            expected_replayed=True,
-            session_id=session_id,
-            current_graph_id=current_graph_id,
-            current_projection_id=current_projection_id,
-            desired_revision=desired_revision,
-        )
-        if replayed.get("plan_id") != planned.get("plan_id"):
-            raise RuntimeError("reservation release HTTP/MCP replay changed plan identity")
-
-        plan_id = str(planned["plan_id"])
-        approval = self.request_approval(
-            session_id=session_id,
-            title=title,
-            plan_id=plan_id,
-        )
-        approval_id = str(approval["request_id"])
-        self.assert_approval_visible(approval_id, plan_id)
-        self.approve(session_id=session_id, title=title, approval=approval)
-        request_id = self.admit(
-            session_id=session_id,
-            title=title,
-            plan_id=plan_id,
-            approval_id=approval_id,
-        )
-        run_id = self.claim(title=title, request_id=request_id)
-        self.start_run(title=title, run_id=run_id)
-        self.execute_to_completion(run_id, sync_runtime_networks=False)
-        if self.read_current_graph_id() != current_graph_id:
-            raise RuntimeError("reservation release changed current graph truth")
-        return HostedReleaseResult(
-            current_graph_id=current_graph_id,
-            plan_id=plan_id,
-            approval_id=approval_id,
-            run_id=run_id,
-        )
-
 
 def main() -> int:
     base_url = _required_env("CPK_HOSTED_ACTIVITY_BASE_URL").rstrip("/")
@@ -3035,43 +2906,6 @@ def _required_nonempty_string(
     if not isinstance(result, str) or not result:
         raise RuntimeError(f"{subject} omitted {field}")
     return result
-
-
-def _assert_release_plan_response(
-    response: dict[str, Any],
-    *,
-    expected_replayed: bool,
-    session_id: str,
-    current_graph_id: str,
-    current_projection_id: str,
-    desired_revision: int,
-) -> None:
-    expected = {
-        "session_id": session_id,
-        "base_graph_id": current_graph_id,
-        "desired_graph_id": current_graph_id,
-        "base_realized_projection_id": current_projection_id,
-        "desired_realized_projection_id": current_projection_id,
-        "desired_graph_revision": desired_revision,
-        "ready_for_execution": True,
-        "activity_count": 1,
-        "replayed": expected_replayed,
-    }
-    mismatches = {
-        field: (response.get(field), expected_value)
-        for field, expected_value in expected.items()
-        if response.get(field) != expected_value
-    }
-    if mismatches:
-        raise RuntimeError(
-            "reservation release plan response changed coordinates: "
-            f"{sorted(mismatches)}"
-        )
-    _required_nonempty_string(
-        response,
-        "plan_id",
-        subject="reservation release plan",
-    )
 
 
 def _required_env(name: str) -> str:

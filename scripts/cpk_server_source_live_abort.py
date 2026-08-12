@@ -148,38 +148,49 @@ def compensate_abort(
     verify_authoritative_absence: Callable[[], None],
     verify_emergency_absence: Callable[[], None],
     resources: tuple[ExactOwnedIngressResource, ...],
+    emergency_resources: tuple[ExactOwnedIngressResource, ...],
     emergency_compensators: Mapping[str, EmergencyCompensator],
 ) -> AbortCompensationReport:
+    if any(resource not in resources for resource in emergency_resources):
+        raise SourceLiveAbortError("emergency cleanup evidence is incongruent")
     try:
         authoritative_cleanup()
     except Exception:
         pass
+    absence_failed = False
     try:
         verify_authoritative_absence()
     except Exception:
-        failed: list[str] = []
-        for resource in resources:
-            compensator = emergency_compensators.get(resource.provider_kind)
-            if compensator is None:
-                failed.append(f"provider:{resource.provider_kind}")
-                continue
-            for stage in compensator(resource):
-                failed.append(f"{resource.provider_kind}:{stage}")
-        try:
-            verify_emergency_absence()
-        except Exception:
-            failed.append("absence-verification")
-        if failed:
-            raise SourceLiveAbortError(
-                "source-live exact cleanup is uncertain: " + ",".join(failed)
-            ) from None
+        absence_failed = True
+    if not absence_failed:
         return AbortCompensationReport(
-            authoritative=False,
-            emergency_attempted=True,
+            authoritative=True,
+            emergency_attempted=False,
             resource_count=len(resources),
         )
+
+    failed: list[str] = []
+    for resource in emergency_resources:
+        compensator = emergency_compensators.get(resource.provider_kind)
+        if compensator is None:
+            failed.append(f"provider:{resource.provider_kind}")
+            continue
+        for stage in compensator(resource):
+            failed.append(f"{resource.provider_kind}:{stage}")
+    emergency_absence_failed = False
+    try:
+        verify_emergency_absence()
+    except Exception:
+        emergency_absence_failed = True
+    if emergency_absence_failed:
+        failed.append("absence-verification")
+    if failed or not emergency_resources:
+        categories = failed or ["unproven-emergency-authority"]
+        raise SourceLiveAbortError(
+            "source-live exact cleanup is uncertain: " + ",".join(categories)
+        )
     return AbortCompensationReport(
-        authoritative=True,
-        emergency_attempted=False,
+        authoritative=False,
+        emergency_attempted=True,
         resource_count=len(resources),
     )
