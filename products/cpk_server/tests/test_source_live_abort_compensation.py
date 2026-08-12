@@ -345,6 +345,10 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 ) as connector_verify,
                 patch.object(
                     controller,
+                    "_assert_no_node_containers",
+                ) as no_containers,
+                patch.object(
+                    controller,
                     "_assert_abort_resources_physically_absent",
                 ) as emergency_verify,
                 patch.object(
@@ -374,6 +378,10 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
             authoritative_verify.assert_called_once()
             self.assertEqual(workflow.release_reservation_statuses, [])
             connector_verify.assert_called_once()
+            no_containers.assert_called_once_with(
+                "workspace-a",
+                "cloudflared-gateway",
+            )
             custody_verify.assert_called_once_with(
                 (resource,),
                 provider_container="provider-a",
@@ -434,6 +442,10 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 ) as connector_verify,
                 patch.object(
                     controller,
+                    "_assert_no_node_containers",
+                ) as no_containers,
+                patch.object(
+                    controller,
                     "_emergency_compensate_cloudflare",
                     return_value=(),
                 ) as emergency,
@@ -449,6 +461,13 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
 
             self.assertEqual(status, 2)
             connector_verify.assert_called_once()
+            self.assertEqual(
+                no_containers.call_args_list,
+                [
+                    call("workspace-a", "cloudflared-gateway"),
+                    call("workspace-a", "cloudflared-gateway"),
+                ],
+            )
             emergency.assert_called_once()
             self.assertIs(emergency.call_args.args[0], resource)
             physical_verify.assert_called_once_with(
@@ -617,6 +636,10 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                     "_assert_abort_generated_secret_versions_revoked",
                 ),
                 patch.object(controller, "_assert_failed_connectors_absent") as absent,
+                patch.object(
+                    controller,
+                    "_assert_no_node_containers",
+                ) as no_containers,
                 patch.object(controller, "_emergency_compensate_cloudflare") as emergency,
             ):
                 status = controller._run_cloudflare_abort_cleanup(
@@ -636,6 +659,10 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 (),
                 failed_connector_effects={},
                 uncertain_connector_runs=set(),
+            )
+            no_containers.assert_called_once_with(
+                "workspace-a",
+                "cloudflared-gateway",
             )
             emergency.assert_not_called()
 
@@ -826,10 +853,17 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 "run-a",
                 "secret://generated/ingress/token-a",
                 "version-a",
-                1,
+                "1",
             )
-            resources = controller._decode_exact_owned_ingress_resources((row,))
-            self.assertEqual(resources[0].source_run_id, "run-a")
+            with self.subTest(name="canonical-version"):
+                resources = ()
+                try:
+                    resources = controller._decode_exact_owned_ingress_resources((row,))
+                except RuntimeError:
+                    pass
+                self.assertEqual(len(resources), 1)
+                self.assertEqual(resources[0].source_run_id, "run-a")
+                self.assertEqual(resources[0].provider_version_number, 1)
 
             for name, rows in {
                 "null": (row[:3] + (None,) + row[4:],),
@@ -838,6 +872,20 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 "duplicate": (row, row),
                 "oversized-coordinate": (
                     row[:5] + ("x" * 256,) + row[6:],
+                ),
+                "zero-version": (row[:-1] + ("0",),),
+                "signed-version": (row[:-1] + ("+1",),),
+                "leading-zero-version": (row[:-1] + ("01",),),
+                "overflow-version": (row[:-1] + ("2147483648",),),
+                "oversized-version": (row[:-1] + ("9" * 11,),),
+                "query-reference": (
+                    row[:8] + ("secret://generated/ingress/token-a?raw=1",) + row[9:],
+                ),
+                "empty-reference-segment": (
+                    row[:8] + ("secret://generated/ingress//token-a",) + row[9:],
+                ),
+                "oversized-reference": (
+                    row[:8] + ("secret://generated/" + "x" * 238,) + row[9:],
                 ),
             }.items():
                 with self.subTest(name=name), self.assertRaisesRegex(
@@ -848,6 +896,90 @@ class SourceLiveAbortCompensationTests(unittest.TestCase):
                 self.assertIsNone(raised.exception.__cause__)
                 self.assertIsNone(raised.exception.__context__)
                 self.assertNotIn("x" * 256, str(raised.exception))
+
+    def test_owned_ingress_loaders_select_bounded_raw_authority_text(self) -> None:
+        with _controller_module() as controller:
+            row = (
+                "cloudflare",
+                "gateway-a",
+                1,
+                "tunnel-a",
+                "dns-a",
+                "cpk-gateway-a.openj92.dev",
+                "zone-a",
+                "run-a",
+                "secret://generated/ingress/token-a",
+                "version-a",
+                "1",
+            )
+            connection = MagicMock()
+            connection.__enter__.return_value = connection
+            cursor = MagicMock()
+            connection.cursor.return_value.__enter__.return_value = cursor
+            cursor.fetchall.return_value = (row,)
+
+            with patch.object(controller.psycopg, "connect", return_value=connection):
+                for loader in (
+                    controller._load_exact_owned_ingress_resources,
+                    controller._load_all_exact_owned_ingress_resources,
+                ):
+                    with self.subTest(loader=loader.__name__):
+                        cursor.execute.reset_mock()
+                        resources = ()
+                        try:
+                            resources = loader(
+                                "postgresql://operations",
+                                workspace_id="workspace-a",
+                            )
+                        except RuntimeError:
+                            pass
+                        query = cursor.execute.call_args.args[0]
+                        self.assertNotIn("::integer", query)
+                        self.assertIn("left(generated.secret_ref, 257)", query)
+                        self.assertIn(
+                            "left(generated.metadata->>'provider_version_number', 11)",
+                            query,
+                        )
+                        self.assertEqual(resources[0].provider_version_number, 1)
+
+    def test_owned_resource_secret_reference_authority_is_canonical_and_bounded(
+        self,
+    ) -> None:
+        module = _module()
+        valid = _resource(module)
+        self.assertEqual(
+            valid.secret_reference,
+            "secret://generated/ingress/token-a",
+        )
+
+        for name, candidate in {
+            "wrong-provider-case": "secret://Generated/ingress/token-a",
+            "empty-segment": "secret://generated/ingress//token-a",
+            "dot-segment": "secret://generated/ingress/../token-a",
+            "query": "secret://generated/ingress/token-a?raw=1",
+            "fragment": "secret://generated/ingress/token-a#raw",
+            "over-bound": "secret://generated/" + "x" * 238,
+        }.items():
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(
+                    module.SourceLiveAbortError,
+                    "owned resource secret reference is invalid",
+                ) as raised:
+                    module.ExactOwnedIngressResource(
+                        provider_kind=valid.provider_kind,
+                        ingress_id=valid.ingress_id,
+                        epoch=valid.epoch,
+                        public_provider_coordinates=(
+                            valid.public_provider_coordinates
+                        ),
+                        source_run_id=valid.source_run_id,
+                        secret_reference=candidate,
+                        provider_version_id=valid.provider_version_id,
+                        provider_version_number=valid.provider_version_number,
+                    )
+                self.assertIsNone(raised.exception.__cause__)
+                self.assertIsNone(raised.exception.__context__)
+                self.assertNotIn(candidate, str(raised.exception))
 
     def test_failed_connector_effect_rejects_missing_duplicate_or_contradictory_evidence(
         self,
