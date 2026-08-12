@@ -530,25 +530,34 @@ class SignedTransitAdmissionTests(unittest.TestCase):
                     )
                 )
 
-        for change in (
-            {"unknown": "candidate-secret"},
-            {"typ": None},
-        ):
-            header = dict(self.fixture["header"])
-            if change.get("typ", object()) is None:
-                header.pop("typ")
-            else:
-                header.update(change)
+        header_candidates: list[tuple[str, dict[str, object]]] = []
+        for key in self.fixture["header"]:
+            missing = dict(self.fixture["header"])
+            missing.pop(key)
+            header_candidates.append((f"missing-{key}", missing))
+        unknown_header = dict(self.fixture["header"])
+        unknown_header["unknown"] = "candidate-secret"
+        header_candidates.append(("unknown", unknown_header))
+        for key, value in {
+            "alg": [],
+            "kid": True,
+            "typ": 1,
+        }.items():
+            wrong = dict(self.fixture["header"])
+            wrong[key] = value
+            header_candidates.append((f"wrong-{key}", wrong))
+        for label, header in header_candidates:
             credential = _signed_credential(header, self.fixture["payload"])
-            self.assert_rejected(
-                lambda credential=credential: verifier.verify(
-                    credential=credential,
-                    request_bytes=self.fixture_request_bytes(),
-                    expected_attempt_id="attempt-1",
-                    effective_now=150,
-                ),
-                "candidate-secret",
-            )
+            with self.subTest(header=label):
+                self.assert_rejected(
+                    lambda credential=credential: verifier.verify(
+                        credential=credential,
+                        request_bytes=self.fixture_request_bytes(),
+                        expected_attempt_id="attempt-1",
+                        effective_now=150,
+                    ),
+                    "candidate-secret",
+                )
 
         required_payload_keys = tuple(self.fixture["payload"])
         payload_candidates: list[tuple[str, dict[str, object]]] = []
@@ -646,7 +655,9 @@ class SignedTransitAdmissionTests(unittest.TestCase):
                     verifier_type(**values)
                 self.assertLessEqual(len(str(caught.exception)), 128)
                 self.assertNotIn("candidate-secret", str(caught.exception))
+                self.assertNotIn("candidate-secret", repr(caught.exception))
                 self.assertNotIn("service.internal", str(caught.exception))
+                self.assertNotIn("service.internal", repr(caught.exception))
                 self.assertIsNone(caught.exception.__cause__)
                 self.assertIsNone(caught.exception.__context__)
 
