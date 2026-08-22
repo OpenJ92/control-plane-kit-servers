@@ -123,7 +123,7 @@ class DockerHarnessTests(unittest.TestCase):
         )
         smoke = CANDIDATE_SMOKE.read_text(encoding="utf-8")
 
-        self.assertIn("scripts/cpk_server_candidate_topology.py", smoke)
+        self.assertIn("python -m scripts.cpk_server_candidate_topology", smoke)
         self.assertNotIn("scripts/cpk_server_hosted_activity.py", smoke)
         self.assertIn("scripts/docker_residue_audit.sh", smoke)
         self.assertEqual(smoke.count("scripts/docker_residue_audit.sh"), 1)
