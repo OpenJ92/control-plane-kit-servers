@@ -466,6 +466,34 @@ class HostedWorkflow:
         current = _http(self.base_url, "GET", f"/workspaces/{self.workspace_id}/graphs/current")
         return str(current["graph_id"])
 
+    def read_current_graph_http(self) -> dict[str, Any]:
+        return _http(
+            self.base_url,
+            "GET",
+            f"/workspaces/{self.workspace_id}/graphs/current",
+        )
+
+    def read_current_graph_mcp(self) -> dict[str, Any]:
+        return _mcp_read(
+            self.base_url,
+            "read.current-graph",
+            {"workspace_id": self.workspace_id},
+        )
+
+    def read_activity_http(self, *, limit: int = 200) -> dict[str, Any]:
+        return _http(
+            self.base_url,
+            "GET",
+            f"/workspaces/{self.workspace_id}/activity?limit={limit}",
+        )
+
+    def read_activity_mcp(self, *, limit: int = 200) -> dict[str, Any]:
+        return _mcp_read(
+            self.base_url,
+            "read.activity",
+            {"workspace_id": self.workspace_id, "limit": limit},
+        )
+
     def read_activity(self, *, limit: int = 200) -> dict[str, Any]:
         return _mcp_read(
             self.base_url,
