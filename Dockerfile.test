@@ -20,6 +20,7 @@ COPY tests ./tests
 RUN python -m pip install .
 RUN python -m pip install --force-reinstall --no-deps \
     "control-plane-kit-core @ https://github.com/OpenJ92/control-plane-kit/archive/4fb75b7b6c1a16ec3b8c1d78dec6ad1a4ad1b40a.zip#subdirectory=control-plane-kit-core" \
-    "control-plane-kit-operations @ https://github.com/OpenJ92/control-plane-kit/archive/4fb75b7b6c1a16ec3b8c1d78dec6ad1a4ad1b40a.zip#subdirectory=control-plane-kit-operations"
+    "control-plane-kit-operations @ https://github.com/OpenJ92/control-plane-kit/archive/4fb75b7b6c1a16ec3b8c1d78dec6ad1a4ad1b40a.zip#subdirectory=control-plane-kit-operations" \
+    "rfc8785==0.1.4"
 
 CMD ["python", "scripts/run_all_tests.py"]
