@@ -1033,12 +1033,18 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
         with self.subTest(boundary="exact-sha-shapes"):
             self.assertTrue(
                 all(
+                    len(value) == 40
+                    and value == value.lower()
+                    and set(value) <= set("0123456789abcdef")
+                    for value in (dynamic_commit, dynamic_tree)
+                )
+            )
+            self.assertTrue(
+                all(
                     len(value) == 64
                     and value == value.lower()
                     and set(value) <= set("0123456789abcdef")
                     for value in (
-                        dynamic_commit,
-                        dynamic_tree,
                         *dynamic_hashes.values(),
                         dynamic_base.removeprefix("sha256:"),
                     )
