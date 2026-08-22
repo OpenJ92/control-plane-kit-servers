@@ -235,7 +235,8 @@ class DockerHarnessTests(unittest.TestCase):
             "--candidate-image-tag \"$CANDIDATE_IMAGE\" "
             "--staging-root /candidate "
             "--assembly /candidate/candidate-assembly.json "
-            "--inspection /candidate/candidate-inspection.json"
+            "--inspection /candidate/candidate-inspection.json "
+            "--report /candidate/candidate-topology-report.json"
         )
         candidate_smoke = (
             'CPK_SERVER_IMAGE="$CANDIDATE_IMAGE" CPK_SERVER_BUILD_IMAGE=0 '
@@ -290,6 +291,19 @@ class DockerHarnessTests(unittest.TestCase):
             self.assertEqual(
                 test_sh.count(
                     'test ! -e "$CANDIDATE_STAGING_ROOT/candidate-inspection.json"'
+                ),
+                1,
+            )
+        with self.subTest(boundary="report-path-is-owned-staging"):
+            self.assertIn(
+                "--report /candidate/candidate-topology-report.json",
+                normalized,
+            )
+        with self.subTest(boundary="report-output-collision-preflight"):
+            self.assertEqual(
+                test_sh.count(
+                    'test ! -e "$CANDIDATE_STAGING_ROOT/'
+                    'candidate-topology-report.json"'
                 ),
                 1,
             )
