@@ -69,16 +69,28 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
     def test_candidate_overlay_installs_exact_wheels_without_mutating_production_recipe(
         self,
     ) -> None:
+        candidate_cpk_commit = "4fb75b7b6c1a16ec3b8c1d78dec6ad1a4ad1b40a"
         self.assertTrue(
             CANDIDATE_OVERLAY.is_file(),
             "candidate acceptance overlay is not implemented",
         )
         overlay = CANDIDATE_OVERLAY.read_text(encoding="utf-8")
         production = (PRODUCT / "Dockerfile").read_bytes()
+        test_dockerfile = (ROOT / "Dockerfile.test").read_text(encoding="utf-8")
+        pyproject = (ROOT / "pyproject.toml").read_bytes()
+        coordinates = (ROOT / "coordinates" / "server-products.json").read_bytes()
 
         self.assertEqual(
             hashlib.sha256(production).hexdigest(),
             "aa0f6971fac329ab191f5d1b7aa21617ca2ea1fc69ef4abad748ec217a6239b6",
+        )
+        self.assertEqual(
+            hashlib.sha256(pyproject).hexdigest(),
+            "407528d55f0c14230d8b67d469f956bdb27fe79e30177d32fba48b0ea8213a78",
+        )
+        self.assertEqual(
+            hashlib.sha256(coordinates).hexdigest(),
+            "9e9492ed1afe80fc77e12b6c7ba8a5a740a7548a0ccce0056c48038a18d6d403",
         )
         overlay_lines = tuple(line.strip() for line in overlay.splitlines())
         self.assertEqual(overlay_lines.count("ARG CPK_SERVER_BASE_IMAGE"), 1)
@@ -94,6 +106,48 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertNotIn("products/cpk_server/Dockerfile", overlay)
         self.assertNotIn("coordinates/server-products.json", overlay)
         self.assertNotIn("git checkout", overlay)
+
+        normalized_test_dockerfile = " ".join(
+            line.strip().removesuffix("\\").strip()
+            for line in test_dockerfile.splitlines()
+            if line.strip()
+        )
+        candidate_core = (
+            "control-plane-kit-core @ "
+            "https://github.com/OpenJ92/control-plane-kit/archive/"
+            f"{candidate_cpk_commit}.zip#subdirectory=control-plane-kit-core"
+        )
+        candidate_operations = (
+            "control-plane-kit-operations @ "
+            "https://github.com/OpenJ92/control-plane-kit/archive/"
+            f"{candidate_cpk_commit}.zip#subdirectory=control-plane-kit-operations"
+        )
+        candidate_reinstall = (
+            "RUN python -m pip install --force-reinstall --no-deps "
+            f'"{candidate_core}" "{candidate_operations}"'
+        )
+
+        with self.subTest(candidate_acceptance_copy=True):
+            self.assertEqual(
+                test_dockerfile.count("COPY acceptance ./acceptance"),
+                1,
+            )
+        with self.subTest(candidate_reinstall=True):
+            self.assertEqual(
+                normalized_test_dockerfile.count(candidate_reinstall),
+                1,
+            )
+        with self.subTest(candidate_commit_multiplicity=True):
+            self.assertEqual(test_dockerfile.count(candidate_cpk_commit), 2)
+        with self.subTest(candidate_reinstall_order=True):
+            baseline_position = normalized_test_dockerfile.find(
+                "RUN python -m pip install ."
+            )
+            candidate_position = normalized_test_dockerfile.find(candidate_reinstall)
+            self.assertGreaterEqual(baseline_position, 0)
+            self.assertGreaterEqual(candidate_position, 0)
+            if baseline_position >= 0 and candidate_position >= 0:
+                self.assertLess(baseline_position, candidate_position)
 
     def test_candidate_runner_attests_records_modules_recipes_wheels_and_image(
         self,
