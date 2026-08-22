@@ -1089,7 +1089,8 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
             base_image=CPK_SERVER_BASE_IMAGE,
         )
         with patch.dict(candidate.os.environ, environment, clear=True):
-            effects.start_candidate_server(CANDIDATE_IMAGE_ID)
+            with self._lawful_docker_socket(candidate):
+                effects.start_candidate_server(CANDIDATE_IMAGE_ID)
 
         runs = client.container_runs
         postgres = [value for value in runs if value["image"] == POSTGRES_IMAGE]
@@ -1597,7 +1598,8 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
         effects.preflight_inventory(exact_assembly())
         effects.build_candidate_image(exact_assembly(), base_image=CPK_SERVER_BASE_IMAGE)
         with patch.dict(candidate.os.environ, CANDIDATE_SERVER_ENVIRONMENT, clear=True):
-            effects.start_candidate_server(CANDIDATE_IMAGE_ID)
+            with self._lawful_docker_socket(candidate):
+                effects.start_candidate_server(CANDIDATE_IMAGE_ID)
         hello_container, hello_network = client.seed_hello_runtime()
 
         result = effects.probe_hello(labelled=True, attach_runtime_network=True)
@@ -1730,7 +1732,8 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
             },
         }
         with patch.dict(candidate.os.environ, cleanup_environment, clear=True):
-            cleanup_effects.start_candidate_server(CANDIDATE_IMAGE_ID)
+            with self._lawful_docker_socket(candidate):
+                cleanup_effects.start_candidate_server(CANDIDATE_IMAGE_ID)
         cleanup_result = cleanup_effects.cleanup(reason="success")
         with self.subTest(boundary="tracked-owned-resources-removed"):
             builds = tuple(
@@ -1796,7 +1799,8 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
             base_image=CPK_SERVER_BASE_IMAGE,
         )
         with patch.dict(candidate.os.environ, CANDIDATE_SERVER_ENVIRONMENT, clear=True):
-            residue_effects.start_candidate_server(CANDIDATE_IMAGE_ID)
+            with self._lawful_docker_socket(candidate):
+                residue_effects.start_candidate_server(CANDIDATE_IMAGE_ID)
         provider_container, provider_network = residue_client.seed_hello_runtime()
         residue_error = None
         try:
@@ -1865,7 +1869,8 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
         effects.preflight_inventory(exact_assembly())
         effects.build_candidate_image(exact_assembly(), base_image=CPK_SERVER_BASE_IMAGE)
         with patch.dict(candidate.os.environ, CANDIDATE_SERVER_ENVIRONMENT, clear=True):
-            effects.start_candidate_server(CANDIDATE_IMAGE_ID)
+            with self._lawful_docker_socket(candidate):
+                effects.start_candidate_server(CANDIDATE_IMAGE_ID)
         original = RuntimeError("protected-original-probe-failure")
         cleanup_error = RuntimeError("protected-cleanup-failure")
 
@@ -1939,6 +1944,18 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                 labels=dict(CANDIDATE_LABELS),
                 evidence_id=CANDIDATE_LABELS["org.openj92.cpk.evidence"],
             )
+
+    @contextmanager
+    def _lawful_docker_socket(self, candidate):
+        with patch.object(
+            candidate.os,
+            "stat",
+            return_value=SimpleNamespace(
+                st_gid=DOCKER_SOCKET_GID,
+                st_mode=stat.S_IFSOCK,
+            ),
+        ):
+            yield
 
     def _invoke_main(
         self,
