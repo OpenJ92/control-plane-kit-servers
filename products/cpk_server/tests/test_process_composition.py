@@ -1,3 +1,4 @@
+import ast
 import importlib
 from pathlib import Path
 import sys
@@ -13,6 +14,7 @@ from control_plane_kit_core.operations import (
 
 ROOT = Path(__file__).resolve().parents[3]
 PRODUCT_SRC = ROOT / "products" / "cpk_server" / "src"
+SERVER_SOURCE = PRODUCT_SRC / "control_plane_kit_servers_cpk_server" / "server.py"
 
 
 class CpkServerProcessCompositionTests(unittest.TestCase):
@@ -173,6 +175,121 @@ class CpkServerProcessCompositionTests(unittest.TestCase):
     def test_hello_product_cannot_satisfy_cpk_server_laws(self) -> None:
         with self.assertRaises(ModuleNotFoundError):
             importlib.import_module("control_plane_kit_servers_hello")
+
+    def test_server_composes_attempt_services_with_one_adapter_and_shared_fold(self) -> None:
+        tree = ast.parse(SERVER_SOURCE.read_text(encoding="utf-8"))
+        function = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "_operations_application"
+        )
+        assignments = {
+            node.targets[0].id: node.value
+            for node in function.body
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and isinstance(node.value, ast.Call)
+        }
+        constructors = {
+            name: value
+            for name, value in assignments.items()
+            if _call_name(value.func)
+            in {
+                "EffectAttemptFoldService",
+                "EffectAttemptStartService",
+                "EffectAttemptReconciliationService",
+            }
+        }
+
+        self.assertEqual(
+            {_call_name(call.func) for call in constructors.values()},
+            {
+                "EffectAttemptFoldService",
+                "EffectAttemptStartService",
+                "EffectAttemptReconciliationService",
+            },
+        )
+        adapter_name = next(
+            name
+            for name, call in assignments.items()
+            if _call_name(call.func) == "_activity_adapter"
+        )
+        fold_name = next(
+            name
+            for name, call in constructors.items()
+            if _call_name(call.func) == "EffectAttemptFoldService"
+        )
+        start_name = next(
+            name
+            for name, call in constructors.items()
+            if _call_name(call.func) == "EffectAttemptStartService"
+        )
+        reconciliation = next(
+            call
+            for call in constructors.values()
+            if _call_name(call.func) == "EffectAttemptReconciliationService"
+        )
+        self.assertEqual(
+            [_name(argument) for argument in reconciliation.args[1:]],
+            [adapter_name, fold_name],
+        )
+
+        coordinator = next(
+            node
+            for node in ast.walk(function)
+            if isinstance(node, ast.Call)
+            and _call_name(node.func) == "ExecutionCoordinator"
+        )
+        keywords = {item.arg: item.value for item in coordinator.keywords}
+        self.assertEqual(_name(keywords["adapter"]), adapter_name)
+        self.assertEqual(_name(keywords["start_service"]), start_name)
+        self.assertEqual(_name(keywords["fold_service"]), fold_name)
+        self.assertEqual(
+            _name(keywords["reconciliation_service"]),
+            next(
+                name
+                for name, call in constructors.items()
+                if _call_name(call.func) == "EffectAttemptReconciliationService"
+            ),
+        )
+        id_factories = {
+            constructor: ast.dump(
+                next(item.value for item in call.keywords if item.arg == "id_factory")
+            )
+            for constructor, call in (
+                (_call_name(call.func), call)
+                for call in constructors.values()
+                if _call_name(call.func) in {"EffectAttemptFoldService", "EffectAttemptStartService"}
+            )
+        }
+        lifecycle = assignments["lifecycle"]
+        id_factories["RunLifecycleCommandService"] = ast.dump(
+            next(item.value for item in lifecycle.keywords if item.arg == "id_factory")
+        )
+        id_factories["ExecutionCoordinator"] = ast.dump(keywords["id_factory"])
+        self.assertEqual(
+            set(id_factories),
+            {
+                "EffectAttemptFoldService",
+                "EffectAttemptStartService",
+                "ExecutionCoordinator",
+                "RunLifecycleCommandService",
+            },
+        )
+        self.assertEqual(len(set(id_factories.values())), 4)
+
+
+def _call_name(node: ast.expr) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return ""
+
+
+def _name(node: ast.expr) -> str:
+    return node.id if isinstance(node, ast.Name) else ""
 
 
 if __name__ == "__main__":

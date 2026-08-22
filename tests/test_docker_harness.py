@@ -5,9 +5,72 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+CANDIDATE_SMOKE = ROOT / "scripts" / "cpk_server_candidate_topology_smoke.sh"
 
 
 class DockerHarnessTests(unittest.TestCase):
+    def test_candidate_smoke_reuses_hosted_workflow_and_authoritative_residue_audit(
+        self,
+    ) -> None:
+        self.assertTrue(
+            CANDIDATE_SMOKE.is_file(),
+            "candidate topology smoke wrapper is not implemented",
+        )
+        smoke = CANDIDATE_SMOKE.read_text(encoding="utf-8")
+
+        self.assertIn("scripts/cpk_server_candidate_topology.py", smoke)
+        self.assertNotIn("scripts/cpk_server_hosted_activity.py", smoke)
+        self.assertIn("scripts/docker_residue_audit.sh", smoke)
+        self.assertEqual(smoke.count("scripts/docker_residue_audit.sh"), 1)
+        self.assertIn("candidate-assembly.json", smoke)
+        self.assertIn("candidate-topology-report.json", smoke)
+        self.assertIn("CPK_SERVER_BASE_IMAGE", smoke)
+        self.assertIn("sync_runtime_networks=False", smoke)
+        self.assertNotIn("docker network connect", smoke)
+        self.assertNotIn("sync_runtime_networks=True", smoke)
+        self.assertNotIn("_sync_runtime_networks", smoke)
+        self.assertNotIn("psql ", smoke)
+        self.assertNotIn("SELECT ", smoke)
+        self.assertNotIn("INSERT ", smoke)
+        self.assertNotIn("UPDATE ", smoke)
+        self.assertNotIn("DELETE FROM", smoke)
+        self.assertNotIn("-X DELETE", smoke)
+        self.assertNotIn('"DELETE"', smoke)
+        self.assertNotIn("'DELETE'", smoke)
+        self.assertNotIn("docker system prune", smoke)
+        self.assertNotIn("docker volume prune", smoke)
+        self.assertNotIn("docker compose", smoke)
+
+    def test_candidate_smoke_cleanup_owns_abort_timeout_and_exact_labelled_residue(
+        self,
+    ) -> None:
+        self.assertTrue(
+            CANDIDATE_SMOKE.is_file(),
+            "candidate topology smoke wrapper is not implemented",
+        )
+        smoke = CANDIDATE_SMOKE.read_text(encoding="utf-8")
+
+        self.assertIn("trap cleanup EXIT HUP INT TERM", smoke)
+        self.assertIn("org.openj92.project=control-plane-kit-servers", smoke)
+        self.assertIn("org.openj92.cpk.scenario=candidate-topology-1714", smoke)
+        self.assertIn("foreign_resource_canary", smoke)
+        self.assertIn("first_failed_stage", smoke)
+        self.assertIn("timeout", smoke)
+        self.assertIn("docker rm -f", smoke)
+        self.assertIn("docker network rm", smoke)
+        self.assertIn("docker image rm", smoke)
+        self.assertNotIn("docker volume create", smoke)
+        self.assertNotIn("DROP DATABASE", smoke)
+        self.assertNotIn("DELETE FROM", smoke)
+        self.assertNotIn("docker network connect", smoke)
+        self.assertNotIn("sync_runtime_networks=True", smoke)
+        self.assertNotIn("_sync_runtime_networks", smoke)
+        self.assertNotIn("delete_workspace", smoke)
+        self.assertNotIn("-X DELETE", smoke)
+        self.assertNotIn('"DELETE"', smoke)
+        self.assertNotIn("'DELETE'", smoke)
+        self.assertNotIn("password", smoke.lower())
+
     def test_test_sh_is_docker_first_and_avoids_broad_cleanup(self) -> None:
         test_sh = (ROOT / "test.sh").read_text(encoding="utf-8")
 

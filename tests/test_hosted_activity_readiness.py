@@ -9,6 +9,97 @@ from scripts import cpk_server_hosted_activity
 
 
 class HostedActivityReadinessTests(unittest.TestCase):
+    def test_candidate_graph_readback_preserves_distinct_http_and_mcp_surfaces(
+        self,
+    ) -> None:
+        workflow = cpk_server_hosted_activity.HostedWorkflow(
+            "http://cpk-server",
+            workspace_id="candidate-topology-1714",
+            worker_id="worker-a",
+            server_container="candidate-server",
+        )
+        expected = {
+            "graph_id": "graph-predecessor",
+            "descriptor_sha256": "a" * 64,
+        }
+        self.assertTrue(
+            hasattr(workflow, "read_current_graph_http")
+            and hasattr(workflow, "read_current_graph_mcp"),
+            "candidate graph readback phases are not implemented",
+        )
+
+        with (
+            patch.object(
+                cpk_server_hosted_activity,
+                "_http",
+                return_value=expected,
+            ) as http,
+            patch.object(
+                cpk_server_hosted_activity,
+                "_mcp_read",
+                return_value=expected,
+            ) as mcp,
+        ):
+            observed_http = workflow.read_current_graph_http()
+            observed_mcp = workflow.read_current_graph_mcp()
+
+        self.assertEqual(observed_http, expected)
+        self.assertEqual(observed_mcp, expected)
+        http.assert_called_once_with(
+            "http://cpk-server",
+            "GET",
+            "/workspaces/candidate-topology-1714/graphs/current",
+        )
+        mcp.assert_called_once_with(
+            "http://cpk-server",
+            "read.current-graph",
+            {"workspace_id": "candidate-topology-1714"},
+        )
+
+    def test_candidate_activity_readback_preserves_distinct_http_and_mcp_surfaces(
+        self,
+    ) -> None:
+        workflow = cpk_server_hosted_activity.HostedWorkflow(
+            "http://cpk-server",
+            workspace_id="candidate-topology-1714",
+            worker_id="worker-a",
+            server_container="candidate-server",
+        )
+        expected = {"events": [{"event_id": "event-a"}]}
+        self.assertTrue(
+            hasattr(workflow, "read_activity_http")
+            and hasattr(workflow, "read_activity_mcp"),
+            "candidate activity readback phases are not implemented",
+        )
+
+        with (
+            patch.object(
+                cpk_server_hosted_activity,
+                "_http",
+                return_value=expected,
+            ) as http,
+            patch.object(
+                cpk_server_hosted_activity,
+                "_mcp_read",
+                return_value=expected,
+            ) as mcp,
+        ):
+            observed_http = workflow.read_activity_http(limit=200)
+            observed_mcp = workflow.read_activity_mcp(limit=200)
+
+        self.assertEqual(observed_http, expected)
+        self.assertEqual(observed_mcp, expected)
+        http.assert_called_once_with(
+            "http://cpk-server",
+            "GET",
+            "/workspaces/candidate-topology-1714/activity?limit=200",
+        )
+        mcp.assert_called_once_with(
+            "http://cpk-server",
+            "read.activity",
+            {"workspace_id": "candidate-topology-1714", "limit": 200},
+        )
+
     def test_policy_cadence_occurs_only_between_failed_attempts(self) -> None:
         policy = VerificationPolicy(
             timeout_seconds=3.0,

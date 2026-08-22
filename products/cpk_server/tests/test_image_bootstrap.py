@@ -1,5 +1,6 @@
 import ast
 import base64
+import hashlib
 import importlib
 import importlib.util
 import json
@@ -35,6 +36,8 @@ STORE_ENVIRONMENT = [
     "CPK_GRAPH_TOPOLOGY_DATABASE_URL",
 ]
 SERVER_SOURCE = PRODUCT_SRC / "control_plane_kit_servers_cpk_server" / "server.py"
+CANDIDATE_OVERLAY = ROOT / "acceptance" / "candidate_topology" / "Dockerfile"
+CANDIDATE_RUNNER = ROOT / "scripts" / "cpk_server_candidate_topology.py"
 CONCRETE_PROVIDER_IMPORT_ROOTS = {
     "boto3",
     "botocore",
@@ -51,8 +54,255 @@ APPROVED_PROVIDER_FUNCTIONS = {
 }
 
 
+def _dotted_name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        owner = _dotted_name(node.value)
+        if owner is not None:
+            return f"{owner}.{node.attr}"
+    return None
+
+
 
 class CpkServerImageBootstrapTests(unittest.TestCase):
+    def test_candidate_overlay_installs_exact_wheels_without_mutating_production_recipe(
+        self,
+    ) -> None:
+        self.assertTrue(
+            CANDIDATE_OVERLAY.is_file(),
+            "candidate acceptance overlay is not implemented",
+        )
+        overlay = CANDIDATE_OVERLAY.read_text(encoding="utf-8")
+        production = (PRODUCT / "Dockerfile").read_bytes()
+
+        self.assertEqual(
+            hashlib.sha256(production).hexdigest(),
+            "aa0f6971fac329ab191f5d1b7aa21617ca2ea1fc69ef4abad748ec217a6239b6",
+        )
+        overlay_lines = tuple(line.strip() for line in overlay.splitlines())
+        self.assertEqual(overlay_lines.count("ARG CPK_SERVER_BASE_IMAGE"), 1)
+        self.assertFalse(
+            any(line.startswith("ARG CPK_SERVER_BASE_IMAGE=") for line in overlay_lines)
+        )
+        self.assertIn("FROM ${CPK_SERVER_BASE_IMAGE}", overlay)
+        self.assertIn("control_plane_kit_core", overlay)
+        self.assertIn("control_plane_kit_operations", overlay)
+        self.assertIn("--force-reinstall", overlay)
+        self.assertIn("--no-deps", overlay)
+        self.assertIn("--no-index", overlay)
+        self.assertNotIn("products/cpk_server/Dockerfile", overlay)
+        self.assertNotIn("coordinates/server-products.json", overlay)
+        self.assertNotIn("git checkout", overlay)
+
+    def test_candidate_runner_attests_records_modules_recipes_wheels_and_image(
+        self,
+    ) -> None:
+        self.assertTrue(
+            CANDIDATE_RUNNER.is_file(),
+            "candidate topology runner is not implemented",
+        )
+        runner = CANDIDATE_RUNNER.read_text(encoding="utf-8")
+        tree = ast.parse(runner)
+
+        for required in (
+            "candidate-assembly.json",
+            "candidate-topology-report.json",
+            "cpk.candidate-assembly.v1",
+            "cpk.candidate-topology-report.v1",
+            "server_source",
+            "production_dockerfile_sha256",
+            "acceptance_overlay_sha256",
+            "core_wheel_sha256",
+            "operations_wheel_sha256",
+            "RECORD",
+            "module_paths",
+            "CPK_SERVER_BASE_IMAGE",
+            "image_id",
+            "first_failed_stage",
+            "candidate-direct",
+            "supporting",
+            "published-digest",
+        ):
+            self.assertIn(required, runner)
+        self.assertNotIn(
+            'Path("coordinates/server-products.json").write',
+            runner,
+        )
+        self.assertNotIn(
+            'Path("products/cpk_server/Dockerfile").write',
+            runner,
+        )
+        hosted_imports = [
+            (node.module, alias.name, alias.asname)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            for alias in node.names
+            if alias.name == "HostedWorkflow"
+        ]
+        self.assertEqual(
+            hosted_imports,
+            [("scripts.cpk_server_hosted_activity", "HostedWorkflow", None)],
+        )
+        self.assertFalse(
+            any(
+                isinstance(node, ast.ClassDef) and node.name == "HostedWorkflow"
+                for node in ast.walk(tree)
+            )
+        )
+        calls = tuple(
+            name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            if (name := _dotted_name(node.func)) is not None
+        )
+        call_members = tuple(call.rsplit(".", 1)[-1] for call in calls)
+        hosted_assignments = [
+            node.targets[0].id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and isinstance(node.value, ast.Call)
+            and _dotted_name(node.value.func) == "HostedWorkflow"
+        ]
+        self.assertEqual(hosted_assignments, ["workflow"])
+        workflow_calls = tuple(
+            node.func.attr
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == hosted_assignments[0]
+        )
+        for required_call in (
+            "start_session",
+            "set_desired_graph",
+            "plan_transition",
+            "request_approval",
+            "assert_approval_visible",
+            "approve",
+            "admit",
+            "claim",
+            "start_run",
+            "execute_to_completion",
+            "read_current_graph_http",
+            "read_current_graph_mcp",
+            "advance_current_graph",
+            "read_activity_http",
+            "read_activity_mcp",
+        ):
+            self.assertIn(required_call, workflow_calls)
+
+        build_image_calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "build_candidate_image"
+        ]
+        self.assertEqual(len(build_image_calls), 1)
+        admitted_base_values = [
+            keyword.value
+            for keyword in build_image_calls[0].keywords
+            if keyword.arg == "base_image"
+        ]
+        self.assertEqual(len(admitted_base_values), 1)
+        self.assertEqual(_dotted_name(admitted_base_values[0]), "base_image")
+        buildarg_values = [
+            keyword.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            for keyword in node.keywords
+            if keyword.arg == "buildargs"
+        ]
+        self.assertEqual(len(buildarg_values), 1)
+        self.assertIsInstance(buildarg_values[0], ast.Dict)
+        self.assertEqual(
+            [
+                key.value
+                for key in buildarg_values[0].keys
+                if isinstance(key, ast.Constant) and type(key.value) is str
+            ],
+            ["CPK_SERVER_BASE_IMAGE"],
+        )
+        self.assertEqual(
+            [_dotted_name(value) for value in buildarg_values[0].values],
+            ["base_image"],
+        )
+
+        imported_roots = {
+            node.module.split(".", 1)[0]
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module is not None
+        }
+        imported_roots.update(
+            alias.name.split(".", 1)[0]
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        )
+        self.assertTrue(imported_roots.isdisjoint({"psycopg", "sqlalchemy", "sqlite3"}))
+        self.assertNotIn("execute", call_members)
+        self.assertNotIn("delete_workspace", call_members)
+        rendered_literals = "\n".join(
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant) and type(node.value) is str
+        )
+        normalized_literals = "\n".join(
+            " ".join(value.upper().split())
+            for value in (
+                node.value
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Constant) and type(node.value) is str
+            )
+        )
+        for forbidden in (
+            "SELECT ",
+            "INSERT ",
+            "UPDATE ",
+            "DELETE FROM",
+            "DROP DATABASE",
+        ):
+            self.assertNotIn(forbidden, normalized_literals)
+        for forbidden in (
+            "docker network connect",
+            "sync_runtime_networks=True",
+            "_sync_runtime_networks",
+        ):
+            self.assertNotIn(forbidden, rendered_literals)
+        connect_calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "connect"
+        ]
+        self.assertEqual(len(connect_calls), 1)
+        self.assertEqual(len(connect_calls[0].args), 1)
+        self.assertIsInstance(connect_calls[0].args[0], ast.Name)
+        connect_target = connect_calls[0].args[0].id
+        self.assertIn("probe", connect_target)
+        self.assertNotIn("controller", connect_target)
+        self.assertNotIn("server", connect_target)
+        labelled_container_targets = {
+            node.targets[0].id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Attribute)
+            and node.value.func.attr == "run"
+            and any(keyword.arg == "labels" for keyword in node.value.keywords)
+        }
+        self.assertIn(connect_target, labelled_container_targets)
+        self.assertFalse(
+            "DELETE" in normalized_literals
+            and "/WORKSPACES/" in normalized_literals
+        )
+
     def test_dockerfile_runs_cpk_server_as_non_root_with_explicit_entrypoint(self) -> None:
         dockerfile = (PRODUCT / "Dockerfile").read_text(encoding="utf-8")
 

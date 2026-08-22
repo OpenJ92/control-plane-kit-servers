@@ -1,0 +1,277 @@
+"""Test support for the candidate-direct topology contract."""
+
+from __future__ import annotations
+
+from copy import deepcopy
+from dataclasses import dataclass, field
+import hashlib
+import json
+from typing import Any
+
+
+SERVER_BASELINE_COMMIT = "43e9f359ca828c83fe4994ed1b62e1be54277ddd"
+SERVER_BASELINE_TREE = "ec259176eba3ce2f777d38c68fcc14e0a0e80cd3"
+CANDIDATE_COMMIT = "4fb75b7b6c1a16ec3b8c1d78dec6ad1a4ad1b40a"
+CANDIDATE_TREE = "6a405e4ab7e707ff7374205ca2ef4726d6225b86"
+SNAPSHOT_MANIFEST_SHA256 = (
+    "9e9492ed1afe80fc77e12b6c7ba8a5a740a7548a0ccce0056c48038a18d6d403"
+)
+INTERPRETERS_COMMIT = "2335a21adc5c0b0ae2f592bd15757c6ca1a55e4b"
+INTERPRETERS_TREE = "343911ecc968d0ea6c3b1c128a3aad4a28471cfe"
+SECRETS_COMMIT = "96e86dc3248d578780d64d5d7fc5d6359631d1d6"
+SECRETS_TREE = "b1740225a93410349a9e9199c539e330b408abae"
+PRODUCTION_DOCKERFILE_SHA256 = (
+    "aa0f6971fac329ab191f5d1b7aa21617ca2ea1fc69ef4abad748ec217a6239b6"
+)
+POSTGRES_IMAGE = (
+    "docker.io/library/postgres@sha256:"
+    "57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777"
+)
+HELLO_IMAGE = (
+    "ghcr.io/openj92/control-plane-kit-servers/hello-server@sha256:"
+    "e2288b23844b1f0b7526d2798cbc1eaf6e9f536399173a043e7957f0e7730cbf"
+)
+HELLO_DESCRIPTOR_SHA256 = (
+    "57ac661ca3f73ad4fa488df34390240e95da58e302bffb17c2197eeac29c2a24"
+)
+HELLO_RESPONSE = b"Hello, world!\n"
+HELLO_RESPONSE_SHA256 = hashlib.sha256(HELLO_RESPONSE).hexdigest()
+
+RUNNER_COMMIT = "a" * 40
+RUNNER_TREE = "b" * 40
+OVERLAY_SHA256 = "c" * 64
+CORE_WHEEL_SHA256 = "d" * 64
+OPERATIONS_WHEEL_SHA256 = "e" * 64
+CPK_SERVER_BASE_IMAGE = "sha256:" + "9" * 64
+CANDIDATE_IMAGE_ID = "sha256:" + "f" * 64
+INSTALLED_RECORD_PATHS = (
+    "/usr/local/lib/python3.12/site-packages/"
+    "control_plane_kit_core-0.1.0.dist-info/RECORD",
+    "/usr/local/lib/python3.12/site-packages/"
+    "control_plane_kit_operations-0.1.0.dist-info/RECORD",
+)
+INSTALLED_MODULE_PATHS = (
+    "/usr/local/lib/python3.12/site-packages/control_plane_kit_core/__init__.py",
+    "/usr/local/lib/python3.12/site-packages/"
+    "control_plane_kit_operations/__init__.py",
+)
+WORKSPACE_ID = "candidate-topology-1714"
+FOREIGN_RESOURCE_CANARY = "foreign-resource-1714"
+
+
+def exact_assembly() -> dict[str, Any]:
+    return {
+        "schema": "cpk.candidate-assembly.v1",
+        "scenario": "candidate.topology.single-hello.v1",
+        "acceptance_level": "source-built-candidate",
+        "candidate": {
+            "repository": "OpenJ92/control-plane-kit",
+            "commit": CANDIDATE_COMMIT,
+            "tree": CANDIDATE_TREE,
+        },
+        "server_source": {
+            "repository": "OpenJ92/control-plane-kit-servers",
+            "commit": RUNNER_COMMIT,
+            "tree": RUNNER_TREE,
+        },
+        "runner": {
+            "repository": "OpenJ92/control-plane-kit-servers",
+            "commit": RUNNER_COMMIT,
+            "tree": RUNNER_TREE,
+        },
+        "dependencies": {
+            "control_plane_kit_interpreters": {
+                "repository": "OpenJ92/control-plane-kit-interpreters",
+                "commit": INTERPRETERS_COMMIT,
+                "tree": INTERPRETERS_TREE,
+            },
+            "control_plane_kit_secrets": {
+                "repository": "OpenJ92/control-plane-kit-secrets",
+                "commit": SECRETS_COMMIT,
+                "tree": SECRETS_TREE,
+            },
+        },
+        "products": {
+            "cpk_server": {
+                "classification": "source-built-candidate",
+                "source_commit": CANDIDATE_COMMIT,
+                "source_tree": CANDIDATE_TREE,
+                "dockerfile_sha256": PRODUCTION_DOCKERFILE_SHA256,
+                "image_id": CANDIDATE_IMAGE_ID,
+            },
+            "hello": {
+                "classification": "published-digest",
+                "reference": HELLO_IMAGE,
+                "descriptor_sha256": HELLO_DESCRIPTOR_SHA256,
+            },
+        },
+        "inputs": {
+            "workspace_id": WORKSPACE_ID,
+            "foreign_resource_canary": FOREIGN_RESOURCE_CANARY,
+        },
+    }
+
+
+def exact_inspection() -> dict[str, Any]:
+    return {
+        "candidate": {
+            "commit": CANDIDATE_COMMIT,
+            "tree": CANDIDATE_TREE,
+            "clean": True,
+        },
+        "server_source": {
+            "commit": RUNNER_COMMIT,
+            "tree": RUNNER_TREE,
+            "clean": True,
+        },
+        "files": {
+            "products/cpk_server/Dockerfile": PRODUCTION_DOCKERFILE_SHA256,
+            "acceptance/candidate_topology/Dockerfile": OVERLAY_SHA256,
+            "dist/control_plane_kit_core.whl": CORE_WHEEL_SHA256,
+            "dist/control_plane_kit_operations.whl": OPERATIONS_WHEEL_SHA256,
+        },
+        "images": {"cpk_server_base": CPK_SERVER_BASE_IMAGE},
+    }
+
+
+def changed(document: dict[str, Any], path: tuple[str, ...], value: Any) -> dict[str, Any]:
+    result = deepcopy(document)
+    owner: dict[str, Any] = result
+    for part in path[:-1]:
+        owner = owner[part]
+    owner[path[-1]] = value
+    return result
+
+
+def canonical_sha256(document: dict[str, Any]) -> str:
+    payload = json.dumps(
+        document,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("ascii")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def canonical_report_sha256(document: dict[str, Any]) -> str:
+    projected = deepcopy(document)
+    projected.pop("report_sha256", None)
+    return canonical_sha256(projected)
+
+
+@dataclass
+class RecordingHostedWorkflow:
+    ledger: list[tuple[str, Any]] = field(default_factory=list)
+    current_graph_id: str = "graph-predecessor"
+    activity: tuple[str, ...] = ()
+    active_transition: str = "hello"
+
+    def start_session(self, title: str) -> str:
+        self.active_transition = "empty" if "empty" in title.lower() else "hello"
+        self.ledger.append(("plan", self.active_transition))
+        return f"session-{self.active_transition}"
+
+    def set_desired_graph(self, **kwargs: Any) -> str:
+        self.ledger.append(("desired", self.active_transition))
+        return f"graph-{self.active_transition}"
+
+    def plan_transition(self, **kwargs: Any) -> str:
+        self.ledger.append(("plan", self.active_transition))
+        return f"plan-{self.active_transition}"
+
+    def request_approval(self, **kwargs: Any) -> dict[str, str]:
+        self.ledger.append(("request-approval", self.active_transition))
+        return {"request_id": f"approval-{self.active_transition}"}
+
+    def assert_approval_visible(self, approval_id: str, plan_id: str) -> None:
+        self.ledger.append(("approval-visible", self.active_transition))
+
+    def approve(self, **kwargs: Any) -> None:
+        self.ledger.append(("approve", self.active_transition))
+
+    def admit(self, **kwargs: Any) -> str:
+        self.ledger.append(("admit", self.active_transition))
+        return f"request-{self.active_transition}"
+
+    def claim(self, **kwargs: Any) -> str:
+        self.ledger.append(("claim", self.active_transition))
+        return f"run-{self.active_transition}"
+
+    def start_run(self, **kwargs: Any) -> None:
+        self.ledger.append(("start", self.active_transition))
+
+    def execute_to_completion(self, run_id: str, *, sync_runtime_networks: bool) -> None:
+        self.ledger.append(
+            ("execute", (self.active_transition, sync_runtime_networks))
+        )
+        self.activity = (
+            *self.activity,
+            f"{self.active_transition}-effect-attempt-complete",
+        )
+
+    def read_current_graph_http(self) -> dict[str, Any]:
+        self.ledger.append((f"{self._graph_phase()}-http", self.current_graph_id))
+        return {"graph_id": self.current_graph_id, "activity": self.activity}
+
+    def read_current_graph_mcp(self) -> dict[str, Any]:
+        self.ledger.append((f"{self._graph_phase()}-mcp", self.current_graph_id))
+        return {"graph_id": self.current_graph_id, "activity": self.activity}
+
+    def advance_current_graph(self, **kwargs: Any) -> str:
+        self.current_graph_id = kwargs["desired_graph_id"]
+        self.ledger.append((f"advance-{self.active_transition}", self.current_graph_id))
+        return self.current_graph_id
+
+    def read_activity_http(self) -> dict[str, Any]:
+        self.ledger.append(("history-http", self.activity))
+        return {"events": self.activity}
+
+    def read_activity_mcp(self) -> dict[str, Any]:
+        self.ledger.append(("history-mcp", self.activity))
+        return {"events": self.activity}
+
+    def _graph_phase(self) -> str:
+        if self.active_transition == "empty" and self.current_graph_id == "graph-hello":
+            return "empty-predecessor"
+        if self.current_graph_id == "graph-predecessor":
+            return "hello-predecessor"
+        return f"{self.active_transition}-successor"
+
+
+@dataclass
+class RecordingCandidateEffects:
+    ledger: list[tuple[str, Any]] = field(default_factory=list)
+    foreign_canary_before: tuple[str, ...] = (FOREIGN_RESOURCE_CANARY,)
+
+    def build_candidate_image(
+        self,
+        assembly: dict[str, Any],
+        *,
+        base_image: str,
+    ) -> dict[str, Any]:
+        self.ledger.append(("build", (canonical_sha256(assembly), base_image)))
+        return {
+            "base_image": base_image,
+            "image_id": CANDIDATE_IMAGE_ID,
+            "record_paths": INSTALLED_RECORD_PATHS,
+            "module_paths": INSTALLED_MODULE_PATHS,
+        }
+
+    def probe_hello(self, *, labelled: bool, attach_runtime_network: bool) -> bytes:
+        self.ledger.append(("probe", (labelled, attach_runtime_network)))
+        return HELLO_RESPONSE
+
+    def remove_probe(self) -> None:
+        self.ledger.append(("remove-probe", None))
+
+    def cleanup(self, *, reason: str) -> dict[str, Any]:
+        self.ledger.append(("cleanup", reason))
+        return {
+            "containers": (),
+            "networks": (),
+            "volumes": (),
+            "images": (),
+            "build_residue": (),
+            "postgres_relations": (),
+            "foreign_canary_after": self.foreign_canary_before,
+        }
