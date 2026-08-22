@@ -37,8 +37,8 @@ HELLO_DESCRIPTOR_SHA256 = (
 HELLO_RESPONSE = b"Hello, world!\n"
 HELLO_RESPONSE_SHA256 = hashlib.sha256(HELLO_RESPONSE).hexdigest()
 
-RUNNER_COMMIT = "a" * 40
-RUNNER_TREE = "b" * 40
+RUNNER_COMMIT = "fc46e42d7143698ad6c7ab86d67c66a3f059ab68"
+RUNNER_TREE = "eeab26c68610d176078adbd68a319c806a8cd436"
 OVERLAY_SHA256 = "c" * 64
 CORE_WHEEL_SHA256 = "d" * 64
 OPERATIONS_WHEEL_SHA256 = "e" * 64
@@ -57,6 +57,14 @@ INSTALLED_MODULE_PATHS = (
 )
 WORKSPACE_ID = "candidate-topology-1714"
 FOREIGN_RESOURCE_CANARY = "foreign-resource-1714"
+FOREIGN_INVENTORY = {
+    "containers": ("foreign-container-1714",),
+    "networks": ("foreign-network-1714",),
+    "volumes": (),
+    "images": ("sha256:" + "8" * 64,),
+    "build_residue": ("foreign-build-1714",),
+    "postgres_relations": (),
+}
 
 
 def exact_assembly() -> dict[str, Any]:
@@ -97,7 +105,6 @@ def exact_assembly() -> dict[str, Any]:
                 "source_commit": CANDIDATE_COMMIT,
                 "source_tree": CANDIDATE_TREE,
                 "dockerfile_sha256": PRODUCTION_DOCKERFILE_SHA256,
-                "image_id": CANDIDATE_IMAGE_ID,
             },
             "hello": {
                 "classification": "published-digest",
@@ -162,16 +169,46 @@ def canonical_report_sha256(document: dict[str, Any]) -> str:
 @dataclass
 class RecordingHostedWorkflow:
     ledger: list[tuple[str, Any]] = field(default_factory=list)
+    workspace_id: str = WORKSPACE_ID
     current_graph_id: str = "graph-predecessor"
     activity: tuple[str, ...] = ()
     active_transition: str = "hello"
+    graphs: dict[str, Any] = field(default_factory=dict)
+    fail_at: str | None = None
+
+    def create_workspace(self, *, name: str, actor_id: str = "operator-a") -> str:
+        self.ledger.append(("create-workspace", self.workspace_id))
+        return self.current_graph_id
+
+    def import_product(self, label: str, product_document: Any) -> None:
+        self.ledger.append(
+            (
+                "import-product",
+                {
+                    "label": label,
+                    "content_digest": product_document.content_digest,
+                    "document_sha256": hashlib.sha256(
+                        product_document.content
+                    ).hexdigest(),
+                },
+            )
+        )
+
+    def register_local_docker_authority(self) -> None:
+        self.ledger.append(("register-runtime-authority", self.workspace_id))
+
+    def register_local_docker_delivery(self) -> None:
+        self.ledger.append(("register-runtime-delivery", self.workspace_id))
 
     def start_session(self, title: str) -> str:
+        if self.fail_at == "workflow":
+            raise RuntimeError("protected-workflow-failure")
         self.active_transition = "empty" if "empty" in title.lower() else "hello"
         self.ledger.append(("plan", self.active_transition))
         return f"session-{self.active_transition}"
 
     def set_desired_graph(self, **kwargs: Any) -> str:
+        self.graphs[self.active_transition] = kwargs["graph"]
         self.ledger.append(("desired", self.active_transition))
         return f"graph-{self.active_transition}"
 
@@ -275,3 +312,152 @@ class RecordingCandidateEffects:
             "postgres_relations": (),
             "foreign_canary_after": self.foreign_canary_before,
         }
+
+
+@dataclass
+class HardenedRecordingCandidateEffects(RecordingCandidateEffects):
+    collision: bool = False
+    fail_at: str | None = None
+    wrong_hello: bool = False
+    pre_inventory: dict[str, tuple[str, ...]] = field(
+        default_factory=lambda: deepcopy(FOREIGN_INVENTORY)
+    )
+
+    def preflight_inventory(self, assembly: dict[str, Any]) -> dict[str, Any]:
+        observed = {
+            "inventory": deepcopy(self.pre_inventory),
+            "collisions": (
+                (("container", "candidate-owned-name"),)
+                if self.collision
+                else ()
+            ),
+            "foreign_canary_before": (
+                assembly["inputs"]["foreign_resource_canary"],
+            ),
+        }
+        self.ledger.append(("preflight-inventory", deepcopy(observed)))
+        return observed
+
+    def build_candidate_image(
+        self,
+        assembly: dict[str, Any],
+        *,
+        base_image: str,
+    ) -> dict[str, Any]:
+        if self.fail_at == "build":
+            raise RuntimeError("protected-build-failure")
+        self.ledger.append(("build", (canonical_sha256(assembly), base_image)))
+        return {
+            "base_image": base_image,
+            "image_id": CANDIDATE_IMAGE_ID,
+        }
+
+    def start_candidate_server(self, built_image_id: str) -> dict[str, str]:
+        self.ledger.append(("start-candidate-server", built_image_id))
+        return {
+            "container_id": "candidate-server-container",
+            "image_id": built_image_id,
+            "base_url": "http://candidate-server-container:8080",
+        }
+
+    def inspect_candidate_server(self, container_id: str) -> dict[str, Any]:
+        self.ledger.append(("inspect-candidate-server", container_id))
+        return {
+            "container_id": container_id,
+            "image_id": CANDIDATE_IMAGE_ID,
+            "record_paths": INSTALLED_RECORD_PATHS,
+            "module_paths": INSTALLED_MODULE_PATHS,
+            "record_origins": {
+                path: CANDIDATE_IMAGE_ID for path in INSTALLED_RECORD_PATHS
+            },
+            "module_origins": {
+                path: CANDIDATE_IMAGE_ID for path in INSTALLED_MODULE_PATHS
+            },
+        }
+
+    def probe_hello(
+        self,
+        *,
+        labelled: bool,
+        attach_runtime_network: bool,
+    ) -> dict[str, Any]:
+        if self.fail_at == "probe":
+            raise RuntimeError("protected-probe-failure")
+        self.ledger.append(
+            (
+                "probe-request",
+                {
+                    "container_id": "candidate-consumer-probe",
+                    "labelled": labelled,
+                    "attach_runtime_network": attach_runtime_network,
+                    "request_origin": "inside-probe",
+                    "target_image_id": CANDIDATE_IMAGE_ID,
+                },
+            )
+        )
+        response = b"Wrong response\n" if self.wrong_hello else HELLO_RESPONSE
+        return {
+            "response": response,
+            "container_id": "candidate-consumer-probe",
+            "request_origin": "inside-probe",
+            "target_image_id": CANDIDATE_IMAGE_ID,
+        }
+
+    def cleanup(self, *, reason: str) -> dict[str, Any]:
+        observed = super().cleanup(reason=reason)
+        return {
+            **observed,
+            "pre_inventory": deepcopy(self.pre_inventory),
+            "post_inventory": deepcopy(self.pre_inventory),
+            "ownership_labels": {
+                "org.openj92.project": "control-plane-kit-servers",
+                "org.openj92.cpk.scenario": "candidate-topology-1714",
+            },
+        }
+
+
+
+@dataclass
+class RecordingHostedWorkflowFactory:
+    ledger: list[tuple[str, Any]] = field(default_factory=list)
+    fail_at: str | None = None
+    instances: list[RecordingHostedWorkflow] = field(default_factory=list)
+
+    def __call__(self, base_url: str, **kwargs: Any) -> RecordingHostedWorkflow:
+        self.ledger.append(
+            (
+                "workflow-target",
+                {
+                    "base_url": base_url,
+                    "workspace_id": kwargs["workspace_id"],
+                    "server_container": kwargs["server_container"],
+                },
+            )
+        )
+        workflow = RecordingHostedWorkflow(
+            ledger=self.ledger,
+            workspace_id=kwargs["workspace_id"],
+            fail_at=self.fail_at,
+        )
+        self.instances.append(workflow)
+        return workflow
+
+
+@dataclass
+class RecordingCandidateEffectsFactory:
+    ledger: list[tuple[str, Any]] = field(default_factory=list)
+    collision: bool = False
+    fail_at: str | None = None
+    wrong_hello: bool = False
+    instances: list[HardenedRecordingCandidateEffects] = field(default_factory=list)
+
+    def __call__(self, **kwargs: Any) -> HardenedRecordingCandidateEffects:
+        self.ledger.append(("effects-factory", dict(kwargs)))
+        effects = HardenedRecordingCandidateEffects(
+            ledger=self.ledger,
+            collision=self.collision,
+            fail_at=self.fail_at,
+            wrong_hello=self.wrong_hello,
+        )
+        self.instances.append(effects)
+        return effects

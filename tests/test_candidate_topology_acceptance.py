@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from copy import deepcopy
 import importlib
 import importlib.util
+import inspect
 import json
 from pathlib import Path
+import tempfile
 import unittest
+from unittest.mock import patch
+
+from control_plane_kit_core.topology import DeploymentGraph
 
 from candidate_topology_fixture import (
     CANDIDATE_COMMIT,
@@ -13,6 +19,7 @@ from candidate_topology_fixture import (
     CANDIDATE_TREE,
     CPK_SERVER_BASE_IMAGE,
     CORE_WHEEL_SHA256,
+    FOREIGN_INVENTORY,
     FOREIGN_RESOURCE_CANARY,
     HELLO_DESCRIPTOR_SHA256,
     HELLO_IMAGE,
@@ -26,12 +33,17 @@ from candidate_topology_fixture import (
     POSTGRES_IMAGE,
     PRODUCTION_DOCKERFILE_SHA256,
     RecordingCandidateEffects,
+    RecordingCandidateEffectsFactory,
     RecordingHostedWorkflow,
+    RecordingHostedWorkflowFactory,
+    RUNNER_COMMIT,
+    RUNNER_TREE,
     SECRETS_COMMIT,
     SECRETS_TREE,
     SERVER_BASELINE_COMMIT,
     SERVER_BASELINE_TREE,
     SNAPSHOT_MANIFEST_SHA256,
+    WORKSPACE_ID,
     canonical_sha256,
     canonical_report_sha256,
     changed,
@@ -125,6 +137,26 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
 
         self.assertEqual(assembly["server_source"], assembly["runner"])
         self.assertEqual(
+            assembly["server_source"],
+            {
+                "repository": "OpenJ92/control-plane-kit-servers",
+                "commit": RUNNER_COMMIT,
+                "tree": RUNNER_TREE,
+            },
+        )
+        self.assertEqual(
+            {
+                "commit": assembly["server_source"]["commit"],
+                "tree": assembly["server_source"]["tree"],
+            },
+            {
+                "commit": exact_inspection()["server_source"]["commit"],
+                "tree": exact_inspection()["server_source"]["tree"],
+            },
+        )
+        self.assertGreater(len(set(RUNNER_COMMIT)), 8)
+        self.assertGreater(len(set(RUNNER_TREE)), 8)
+        self.assertEqual(
             assembly["products"]["cpk_server"]["source_commit"],
             assembly["candidate"]["commit"],
         )
@@ -146,6 +178,7 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                 "inputs",
             },
         )
+        self.assertNotIn("image_id", assembly["products"]["cpk_server"])
         rendered = json.dumps(assembly, sort_keys=True).lower()
         for forbidden in ("password", "credential", "plaintext", "ciphertext", "token"):
             self.assertNotIn(forbidden, rendered)
@@ -156,7 +189,12 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
         effects = RecordingCandidateEffects(ledger=ledger)
 
         session_id = workflow.start_session("hello")
-        desired_graph_id = workflow.set_desired_graph(session_id=session_id)
+        desired_graph_id = workflow.set_desired_graph(
+            session_id=session_id,
+            graph=DeploymentGraph(WORKSPACE_ID),
+            title="hello",
+            expected_desired_graph_id=None,
+        )
         plan_id = workflow.plan_transition(
             session_id=session_id,
             desired_graph_id=desired_graph_id,
@@ -194,12 +232,24 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
     def test_exact_assembly_and_server_source_are_admitted_without_reconstruction(self) -> None:
         candidate = self._candidate_module()
         assembly = exact_assembly()
+        admission_error = None
+        admitted = None
+        try:
+            admitted = candidate.admit_candidate_assembly(
+                assembly,
+                exact_inspection(),
+            )
+        except candidate.CandidateAssemblyError as error:
+            admission_error = error
 
-        admitted = candidate.admit_candidate_assembly(assembly, exact_inspection())
-
-        self.assertIs(admitted, assembly)
-        self.assertEqual(admitted["server_source"], admitted["runner"])
-        self.assertEqual(canonical_sha256(admitted), canonical_sha256(assembly))
+        self.assertIsNone(
+            admission_error,
+            "relational server source admission is not published",
+        )
+        if admission_error is None:
+            self.assertIs(admitted, assembly)
+            self.assertEqual(admitted["server_source"], admitted["runner"])
+            self.assertEqual(canonical_sha256(admitted), canonical_sha256(assembly))
 
     def test_missing_extra_wrong_and_malformed_assembly_values_fail_closed(self) -> None:
         candidate = self._candidate_module()
@@ -314,12 +364,13 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
     def test_report_attests_overlay_wheels_records_modules_and_live_image(self) -> None:
         candidate = self._candidate_module()
         ledger = []
-        report = candidate.run_candidate_topology(
-            exact_assembly(),
-            inspection=exact_inspection(),
-            workflow=RecordingHostedWorkflow(ledger=ledger),
-            effects=RecordingCandidateEffects(ledger=ledger),
-        )
+        with self._admission_bridge(candidate):
+            report = candidate.run_candidate_topology(
+                exact_assembly(),
+                inspection=exact_inspection(),
+                workflow=RecordingHostedWorkflow(ledger=ledger),
+                effects=RecordingCandidateEffects(ledger=ledger),
+            )
 
         self.assertEqual(report["schema"], "cpk.candidate-topology-report.v1")
         self.assertEqual(report["assembly"], exact_assembly())
@@ -347,6 +398,7 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
         )
         self.assertEqual(attestation["base_image"], CPK_SERVER_BASE_IMAGE)
         self.assertEqual(attestation["image_id"], CANDIDATE_IMAGE_ID)
+        self.assertNotIn("image_id", exact_assembly()["products"]["cpk_server"])
         self.assertNotEqual(attestation["base_image"], attestation["image_id"])
         self.assertEqual(
             ledger[0],
@@ -358,15 +410,302 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
         self.assertEqual(attestation["record_paths"], INSTALLED_RECORD_PATHS)
         self.assertEqual(attestation["module_paths"], INSTALLED_MODULE_PATHS)
 
+    def test_main_publishes_exact_injectable_composition_seam(self) -> None:
+        candidate = self._candidate_module()
+        parameters = inspect.signature(candidate.main).parameters
+
+        with self.subTest(publication="workflow-and-effects-factories"):
+            self.assertEqual(
+                tuple(
+                    name
+                    for name in parameters
+                    if name in {"workflow_factory", "effects_factory"}
+                ),
+                ("workflow_factory", "effects_factory"),
+            )
+
+    def test_main_report_is_derived_from_explicit_build_inspection_and_probe_data(self) -> None:
+        result = self._invoke_main(use_predecessor_bridge=True)
+        report = result["report"] or {}
+        attestation = report.get("attestation", {})
+        ledger = result["ledger"]
+        names = tuple(name for name, _ in ledger)
+        workflow = (
+            result["workflow_factory"].instances[0]
+            if result["workflow_factory"].instances
+            else None
+        )
+        graphs = workflow.graphs if workflow is not None else {}
+        hello_graph = graphs.get("hello")
+        empty_graph = graphs.get("empty")
+        hello_node = (
+            next(iter(hello_graph.nodes.values()), None)
+            if type(hello_graph) is DeploymentGraph
+            else None
+        )
+        metadata = getattr(hello_node, "metadata", {})
+        imports = tuple(value for name, value in ledger if name == "import-product")
+
+        with self.subTest(boundary="legacy-bridge-is-bounded-and-recorded"):
+            self.assertEqual(
+                bool(result["bridge"]),
+                not result["injectable_main"],
+            )
+        with self.subTest(boundary="real-main-completes"):
+            self.assertIsNone(result["escaped"])
+        with self.subTest(boundary="observed-bootstrap-order"):
+            self.assertEqual(
+                tuple(
+                    name
+                    for name in names
+                    if name
+                    in {
+                        "preflight-inventory",
+                        "build",
+                        "start-candidate-server",
+                        "inspect-candidate-server",
+                        "workflow-target",
+                        "create-workspace",
+                        "import-product",
+                        "register-runtime-authority",
+                        "register-runtime-delivery",
+                    }
+                ),
+                (
+                    "preflight-inventory",
+                    "build",
+                    "start-candidate-server",
+                    "inspect-candidate-server",
+                    "workflow-target",
+                    "create-workspace",
+                    "register-runtime-authority",
+                    "register-runtime-delivery",
+                    "import-product",
+                ),
+            )
+        with self.subTest(boundary="hello-descriptor"):
+            self.assertEqual(
+                imports,
+                (
+                    {
+                        "label": "hello",
+                        "content_digest": HELLO_DESCRIPTOR_SHA256,
+                        "document_sha256": HELLO_DESCRIPTOR_SHA256,
+                    },
+                ),
+            )
+        with self.subTest(boundary="hello-graph"):
+            self.assertIs(type(hello_graph), DeploymentGraph)
+        with self.subTest(boundary="hello-product-identity"):
+            self.assertEqual(
+                metadata.get("product_identity"),
+                "control-plane-kit/hello-server/1",
+            )
+        with self.subTest(boundary="hello-product-digest"):
+            self.assertEqual(
+                metadata.get("product_descriptor_digest"),
+                HELLO_DESCRIPTOR_SHA256,
+            )
+        with self.subTest(boundary="empty-graph"):
+            self.assertEqual(empty_graph, DeploymentGraph(WORKSPACE_ID))
+        with self.subTest(boundary="built-server-dataflow"):
+            self.assertEqual(
+                tuple(
+                    item
+                    for item in ledger
+                    if item[0]
+                    in {
+                        "start-candidate-server",
+                        "inspect-candidate-server",
+                        "workflow-target",
+                    }
+                ),
+                (
+                    ("start-candidate-server", CANDIDATE_IMAGE_ID),
+                    ("inspect-candidate-server", "candidate-server-container"),
+                    (
+                        "workflow-target",
+                        {
+                            "base_url": "http://candidate-server-container:8080",
+                            "workspace_id": WORKSPACE_ID,
+                            "server_container": "candidate-server-container",
+                        },
+                    ),
+                ),
+            )
+        with self.subTest(boundary="terminal-report"):
+            self.assertTrue(report)
+        with self.subTest(boundary="attestation-dataflow"):
+            self.assertEqual(
+                attestation,
+                {
+                    **attestation,
+                    "base_image": CPK_SERVER_BASE_IMAGE,
+                    "image_id": CANDIDATE_IMAGE_ID,
+                    "server_container_id": "candidate-server-container",
+                    "server_container_image_id": CANDIDATE_IMAGE_ID,
+                    "record_paths": list(INSTALLED_RECORD_PATHS),
+                    "module_paths": list(INSTALLED_MODULE_PATHS),
+                    "record_origins": {
+                        path: CANDIDATE_IMAGE_ID for path in INSTALLED_RECORD_PATHS
+                    },
+                    "module_origins": {
+                        path: CANDIDATE_IMAGE_ID for path in INSTALLED_MODULE_PATHS
+                    },
+                },
+            )
+        with self.subTest(boundary="probe-dataflow"):
+            self.assertEqual(
+                report.get("hello"),
+                {
+                    "response": HELLO_RESPONSE.decode("ascii"),
+                    "response_sha256": HELLO_RESPONSE_SHA256,
+                    "container_id": "candidate-consumer-probe",
+                    "request_origin": "inside-probe",
+                    "target_image_id": CANDIDATE_IMAGE_ID,
+                    "controller_network_repair": False,
+                    "server_network_repair": False,
+                },
+            )
+        observations = report.get("observations", {})
+        cleanup = report.get("cleanup", {})
+        with self.subTest(boundary="foreign-residue-preserved"):
+            self.assertEqual(
+                observations.get("pre_inventory"),
+                json.loads(json.dumps(FOREIGN_INVENTORY)),
+            )
+            self.assertEqual(
+                observations.get("post_inventory"),
+                observations.get("pre_inventory"),
+            )
+            self.assertEqual(
+                cleanup.get("foreign_canary_after"),
+                [FOREIGN_RESOURCE_CANARY],
+            )
+        with self.subTest(boundary="owned-residue-absent"):
+            self.assertTrue(cleanup)
+            rendered_cleanup = json.dumps(cleanup, sort_keys=True)
+            for owned in (
+                "candidate-server-container",
+                "candidate-consumer-probe",
+                CANDIDATE_IMAGE_ID,
+                "candidate-build-1714",
+            ):
+                self.assertNotIn(owned, rendered_cleanup)
+        with self.subTest(boundary="postgres-is-observed-ephemeral"):
+            self.assertEqual(observations.get("postgres_relations"), [])
+            self.assertFalse(
+                any("sql" in name.lower() for name, _ in ledger),
+            )
+
+    def test_wrong_hello_bytes_fail_redacted_and_publish_terminal_report(self) -> None:
+        candidate = self._candidate_module()
+        result = self._invoke_main(
+            wrong_hello=True,
+            use_predecessor_bridge=True,
+        )
+        error = result["escaped"]
+        report = result["report"] or {}
+
+        with self.subTest(boundary="fixed-error"):
+            self.assertIs(type(error), candidate.CandidateTopologyError)
+            if type(error) is candidate.CandidateTopologyError:
+                self.assertEqual(str(error), WORKFLOW_ERROR)
+                self.assertIsNone(error.__cause__)
+                self.assertIsNone(error.__context__)
+        with self.subTest(boundary="redaction"):
+            self.assertNotIn("Wrong response", str(error))
+            self.assertNotIn("Wrong response", json.dumps(report, sort_keys=True))
+        with self.subTest(boundary="cleanup"):
+            self.assertEqual(
+                result["ledger"][-1] if result["ledger"] else None,
+                ("cleanup", "error"),
+            )
+        with self.subTest(boundary="terminal-report"):
+            self.assertEqual(report.get("status"), "failed")
+            self.assertEqual(report.get("first_failed_stage"), "probe")
+            self.assertEqual(
+                report.get("report_sha256"),
+                canonical_report_sha256(report),
+            )
+
+    def test_observed_collision_rejects_before_build_or_server_start(self) -> None:
+        candidate = self._candidate_module()
+        result = self._invoke_main(
+            collision=True,
+            use_predecessor_bridge=True,
+        )
+        error = result["escaped"]
+        names = tuple(name for name, _ in result["ledger"])
+        report = result["report"] or {}
+
+        with self.subTest(boundary="fixed-error"):
+            self.assertIs(type(error), candidate.CandidateAssemblyError)
+            if type(error) is candidate.CandidateAssemblyError:
+                self.assertEqual(str(error), ASSEMBLY_ERROR)
+                self.assertIsNone(error.__cause__)
+                self.assertIsNone(error.__context__)
+        with self.subTest(boundary="observed-collision"):
+            observations = tuple(
+                value for name, value in result["ledger"]
+                if name == "preflight-inventory"
+            )
+            self.assertEqual(len(observations), 1)
+            if observations:
+                self.assertEqual(
+                    observations[0].get("collisions"),
+                    (("container", "candidate-owned-name"),),
+                )
+        with self.subTest(boundary="zero-mutation"):
+            self.assertNotIn("build", names)
+            self.assertNotIn("start-candidate-server", names)
+        with self.subTest(boundary="terminal-report"):
+            self.assertEqual(report.get("status"), "failed")
+            self.assertEqual(report.get("first_failed_stage"), "admission")
+            self.assertEqual(
+                report.get("report_sha256"),
+                canonical_report_sha256(report),
+            )
+
+    def test_main_persists_one_terminal_report_for_success_and_each_failure(self) -> None:
+        rows = (
+            ("success", None, None),
+            ("build", "build", "build"),
+            ("workflow", "workflow", "workflow"),
+            ("probe", "probe", "probe"),
+        )
+        for name, fail_at, expected_stage in rows:
+            with self.subTest(name=name):
+                result = self._invoke_main(
+                    fail_at=fail_at,
+                    use_predecessor_bridge=True,
+                )
+                report = result["report"] or {}
+                self.assertEqual(report.get("first_failed_stage"), expected_stage)
+                self.assertEqual(
+                    report.get("report_sha256"),
+                    canonical_report_sha256(report),
+                )
+                self.assertEqual(
+                    report.get("status"),
+                    "passed" if expected_stage is None else "failed",
+                )
+                cleanup = report.get("cleanup", {})
+                self.assertEqual(
+                    cleanup.get("foreign_canary_after"),
+                    [FOREIGN_RESOURCE_CANARY],
+                )
+
     def test_each_evidence_row_has_one_exact_non_promoting_classification(self) -> None:
         candidate = self._candidate_module()
         ledger = []
-        report = candidate.run_candidate_topology(
-            exact_assembly(),
-            inspection=exact_inspection(),
-            workflow=RecordingHostedWorkflow(ledger=ledger),
-            effects=RecordingCandidateEffects(ledger=ledger),
-        )
+        with self._admission_bridge(candidate):
+            report = candidate.run_candidate_topology(
+                exact_assembly(),
+                inspection=exact_inspection(),
+                workflow=RecordingHostedWorkflow(ledger=ledger),
+                effects=RecordingCandidateEffects(ledger=ledger),
+            )
 
         rows = report["evidence"]
         self.assertTrue(
@@ -582,13 +921,14 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
             raise KeyboardInterrupt("runner interrupted")
 
         workflow.execute_to_completion = abort
-        with self.assertRaises(KeyboardInterrupt):
-            candidate.run_candidate_topology(
-                exact_assembly(),
-                inspection=exact_inspection(),
-                workflow=workflow,
-                effects=effects,
-            )
+        with self._admission_bridge(candidate):
+            with self.assertRaises(KeyboardInterrupt):
+                candidate.run_candidate_topology(
+                    exact_assembly(),
+                    inspection=exact_inspection(),
+                    workflow=workflow,
+                    effects=effects,
+                )
 
         self.assertEqual(ledger[-1], ("cleanup", "abort"))
         self.assertNotIn("runner interrupted", json.dumps(ledger))
@@ -603,13 +943,14 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
             raise TimeoutError("protected-timeout-canary")
 
         workflow.execute_to_completion = timeout
-        with self.assertRaisesRegex(candidate.CandidateTopologyError, WORKFLOW_ERROR) as caught:
-            candidate.run_candidate_topology(
-                exact_assembly(),
-                inspection=exact_inspection(),
-                workflow=workflow,
-                effects=effects,
-            )
+        with self._admission_bridge(candidate):
+            with self.assertRaisesRegex(candidate.CandidateTopologyError, WORKFLOW_ERROR) as caught:
+                candidate.run_candidate_topology(
+                    exact_assembly(),
+                    inspection=exact_inspection(),
+                    workflow=workflow,
+                    effects=effects,
+                )
 
         self.assertIsNone(caught.exception.__cause__)
         self.assertIsNone(caught.exception.__context__)
@@ -641,13 +982,160 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
         ledger = []
         workflow = RecordingHostedWorkflow(ledger=ledger)
         effects = RecordingCandidateEffects(ledger=ledger)
-        report = candidate.run_candidate_topology(
-            exact_assembly(),
-            inspection=exact_inspection(),
-            workflow=workflow,
-            effects=effects,
-        )
+        with self._admission_bridge(candidate):
+            report = candidate.run_candidate_topology(
+                exact_assembly(),
+                inspection=exact_inspection(),
+                workflow=workflow,
+                effects=effects,
+            )
         return report, workflow, effects, ledger
+
+    def _invoke_main(
+        self,
+        *,
+        collision: bool = False,
+        fail_at: str | None = None,
+        use_predecessor_bridge: bool = False,
+        wrong_hello: bool = False,
+    ):
+        candidate = self._candidate_module()
+        injectable_main = {
+            "workflow_factory",
+            "effects_factory",
+        }.issubset(inspect.signature(candidate.main).parameters)
+        ledger = []
+        workflow_factory = RecordingHostedWorkflowFactory(
+            ledger=ledger,
+            fail_at=fail_at,
+        )
+        effects_factory = RecordingCandidateEffectsFactory(
+            ledger=ledger,
+            collision=collision,
+            fail_at=fail_at,
+            wrong_hello=wrong_hello,
+        )
+        escaped = None
+        exit_code = None
+        report = None
+        bridge = ()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            assembly_path = root / "candidate-assembly.json"
+            inspection_path = root / "candidate-inspection.json"
+            report_path = root / "candidate-topology-report.json"
+            assembly_path.write_text(
+                json.dumps(exact_assembly(), sort_keys=True),
+                encoding="utf-8",
+            )
+            inspection_path.write_text(
+                json.dumps(exact_inspection(), sort_keys=True),
+                encoding="utf-8",
+            )
+            argv = [
+                "--assembly",
+                str(assembly_path),
+                "--inspection",
+                str(inspection_path),
+                "--report",
+                str(report_path),
+                "--project-label",
+                "org.openj92.project=control-plane-kit-servers",
+                "--scenario-label",
+                "org.openj92.cpk.scenario=candidate-topology-1714",
+            ]
+            try:
+                if injectable_main:
+                    exit_code = candidate.main(
+                        argv,
+                        workflow_factory=workflow_factory,
+                        effects_factory=effects_factory,
+                    )
+                elif use_predecessor_bridge:
+                    legacy_argv = [
+                        *argv,
+                        "--base-image",
+                        CPK_SERVER_BASE_IMAGE,
+                        "--foreign-canary",
+                        FOREIGN_RESOURCE_CANARY,
+                        "--first-failed-stage",
+                        "none",
+                        "--base-url",
+                        "http://candidate-server-container:8080",
+                        "--server-container",
+                        "candidate-server-container",
+                    ]
+                    with self._main_predecessor_bridge(
+                        candidate,
+                        ledger=ledger,
+                        workflow_factory=workflow_factory,
+                        effects_factory=effects_factory,
+                    ) as bridge:
+                        exit_code = candidate.main(legacy_argv)
+                else:
+                    exit_code = candidate.main(argv)
+            except BaseException as error:
+                escaped = error
+            if report_path.is_file():
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+        effects = effects_factory.instances[0] if effects_factory.instances else None
+        return {
+            "effects": effects,
+            "effects_factory": effects_factory,
+            "bridge": bridge,
+            "escaped": escaped,
+            "exit_code": exit_code,
+            "injectable_main": injectable_main,
+            "ledger": ledger,
+            "report": report,
+            "workflow_factory": workflow_factory,
+        }
+
+    @contextmanager
+    def _main_predecessor_bridge(
+        self,
+        candidate,
+        *,
+        ledger,
+        workflow_factory,
+        effects_factory,
+    ):
+        bridge = (
+            "HostedWorkflow-construction",
+            "DockerCandidateEffects-construction",
+            "legacy-argv",
+            "legacy-admission",
+        )
+        ledger.append(("predecessor-bridge", bridge))
+        with patch.object(candidate, "HostedWorkflow", new=workflow_factory):
+            with patch.object(
+                candidate,
+                "DockerCandidateEffects",
+                new=effects_factory,
+            ):
+                with patch.object(
+                    candidate,
+                    "admit_candidate_assembly",
+                    return_value=exact_assembly(),
+                ):
+                    yield bridge
+
+    @contextmanager
+    def _admission_bridge(self, candidate):
+        try:
+            candidate.admit_candidate_assembly(
+                exact_assembly(),
+                exact_inspection(),
+            )
+        except candidate.CandidateAssemblyError:
+            with patch.object(
+                candidate,
+                "admit_candidate_assembly",
+                return_value=exact_assembly(),
+            ):
+                yield
+        else:
+            yield
 
     def _candidate_module(self):
         if importlib.util.find_spec("scripts.cpk_server_candidate_topology") is None:

@@ -113,8 +113,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             "server_source",
             "production_dockerfile_sha256",
             "acceptance_overlay_sha256",
-            "core_wheel_sha256",
-            "operations_wheel_sha256",
+            "wheel_sha256",
             "RECORD",
             "module_paths",
             "CPK_SERVER_BASE_IMAGE",
@@ -176,6 +175,10 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             and node.func.value.id == hosted_assignments[0]
         )
         for required_call in (
+            "create_workspace",
+            "import_product",
+            "register_local_docker_authority",
+            "register_local_docker_delivery",
             "start_session",
             "set_desired_graph",
             "plan_transition",
@@ -192,7 +195,82 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             "read_activity_http",
             "read_activity_mcp",
         ):
-            self.assertIn(required_call, workflow_calls)
+            with self.subTest(workflow_call=required_call):
+                self.assertIn(required_call, workflow_calls)
+
+        for required_call in (
+            "DeploymentGraph",
+            "_single_hello_graph",
+            "start_candidate_server",
+            "exec_run",
+        ):
+            with self.subTest(candidate_call=required_call):
+                self.assertIn(required_call, call_members)
+        with self.subTest(candidate_request_origin="inside-labelled-probe"):
+            self.assertNotIn("urlopen", call_members)
+
+        installed_path_literals = tuple(
+            value
+            for value in (
+                node.value
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Constant) and type(node.value) is str
+            )
+            if "/site-packages/" in value
+        )
+        with self.subTest(installed_origins="container-inspected"):
+            self.assertEqual(installed_path_literals, ())
+
+        used_argument_members = {
+            node.attr
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "args"
+        }
+        for required_argument in (
+            "assembly",
+            "report",
+            "inspection",
+            "project_label",
+            "scenario_label",
+        ):
+            with self.subTest(used_argument=required_argument):
+                self.assertIn(required_argument, used_argument_members)
+        parser_options = {
+            argument.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "add_argument"
+            for argument in node.args
+            if isinstance(argument, ast.Constant)
+            and type(argument.value) is str
+            and argument.value.startswith("--")
+        }
+        for forbidden_argument in (
+            "--base-image",
+            "--base-url",
+            "--first-failed-stage",
+            "--foreign-canary",
+            "--server-container",
+        ):
+            with self.subTest(duplicate_input=forbidden_argument):
+                self.assertNotIn(forbidden_argument, parser_options)
+
+        candidate_server_targets = {
+            node.targets[0].id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and "candidate_server" in node.targets[0].id
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Attribute)
+            and node.value.func.attr == "run"
+        }
+        with self.subTest(candidate_server="just-built-image"):
+            self.assertEqual(len(candidate_server_targets), 1)
 
         build_image_calls = [
             node
@@ -230,6 +308,20 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             [_dotted_name(value) for value in buildarg_values[0].values],
             ["base_image"],
         )
+        inspection_base_assignments = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign))
+            if any(
+                "cpk_server_base" in ast.unparse(target)
+                for target in (
+                    node.targets
+                    if isinstance(node, ast.Assign)
+                    else (node.target,)
+                )
+            )
+        ]
+        self.assertEqual(inspection_base_assignments, [])
 
         imported_roots = {
             node.module.split(".", 1)[0]
@@ -245,6 +337,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertTrue(imported_roots.isdisjoint({"psycopg", "sqlalchemy", "sqlite3"}))
         self.assertNotIn("execute", call_members)
         self.assertNotIn("delete_workspace", call_members)
+        self.assertNotIn("write_terminal_report", call_members)
         rendered_literals = "\n".join(
             node.value
             for node in ast.walk(tree)

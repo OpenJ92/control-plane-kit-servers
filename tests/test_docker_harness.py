@@ -24,6 +24,9 @@ class DockerHarnessTests(unittest.TestCase):
         self.assertEqual(smoke.count("scripts/docker_residue_audit.sh"), 1)
         self.assertIn("candidate-assembly.json", smoke)
         self.assertIn("candidate-topology-report.json", smoke)
+        for required in ("candidate-inspection.json", "--inspection"):
+            with self.subTest(publication=required):
+                self.assertIn(required, smoke)
         self.assertIn("CPK_SERVER_BASE_IMAGE", smoke)
         self.assertIn("sync_runtime_networks=False", smoke)
         self.assertNotIn("docker network connect", smoke)
@@ -40,6 +43,15 @@ class DockerHarnessTests(unittest.TestCase):
         self.assertNotIn("docker system prune", smoke)
         self.assertNotIn("docker volume prune", smoke)
         self.assertNotIn("docker compose", smoke)
+        for required in (
+            "pre_inventory",
+            "post_inventory",
+            "postgres_relations",
+            "build_residue",
+            "report_sha256",
+        ):
+            with self.subTest(observed_claim=required):
+                self.assertIn(required, smoke)
 
     def test_candidate_smoke_cleanup_owns_abort_timeout_and_exact_labelled_residue(
         self,
@@ -55,10 +67,22 @@ class DockerHarnessTests(unittest.TestCase):
         self.assertIn("org.openj92.cpk.scenario=candidate-topology-1714", smoke)
         self.assertIn("foreign_resource_canary", smoke)
         self.assertIn("first_failed_stage", smoke)
+        for stale_cli_input in (
+            "--foreign-canary",
+            "--first-failed-stage",
+            "--base-image",
+        ):
+            with self.subTest(stale_cli_input=stale_cli_input):
+                self.assertNotIn(stale_cli_input, smoke)
+        self.assertNotIn("--server-container", smoke)
         self.assertIn("timeout", smoke)
         self.assertIn("docker rm -f", smoke)
         self.assertIn("docker network rm", smoke)
         self.assertIn("docker image rm", smoke)
+        self.assertIn("candidate-topology-report.json", smoke)
+        for required in ('test -s "$REPORT"', "CPK_CANDIDATE_EVIDENCE_ID"):
+            with self.subTest(publication=required):
+                self.assertIn(required, smoke)
         self.assertNotIn("docker volume create", smoke)
         self.assertNotIn("DROP DATABASE", smoke)
         self.assertNotIn("DELETE FROM", smoke)
@@ -70,6 +94,13 @@ class DockerHarnessTests(unittest.TestCase):
         self.assertNotIn('"DELETE"', smoke)
         self.assertNotIn("'DELETE'", smoke)
         self.assertNotIn("password", smoke.lower())
+        for forbidden_name in (
+            "cpk-1714-probe",
+            "cpk-1714-candidate",
+            "cpk-1714-runtime",
+        ):
+            with self.subTest(fixed_name=forbidden_name):
+                self.assertNotIn(forbidden_name, smoke)
 
     def test_test_sh_is_docker_first_and_avoids_broad_cleanup(self) -> None:
         test_sh = (ROOT / "test.sh").read_text(encoding="utf-8")
