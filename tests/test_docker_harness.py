@@ -59,7 +59,7 @@ class DockerHarnessTests(unittest.TestCase):
         self,
     ) -> None:
         smoke = CANDIDATE_SMOKE.read_text(encoding="utf-8")
-        runner_call = 'python "$ROOT/scripts/cpk_server_candidate_topology.py"'
+        runner_call = "python -m scripts.cpk_server_candidate_topology"
 
         with self.subTest(boundary="runner-source-coordinate"):
             self.assertIn('git -C "$ROOT" rev-parse HEAD', smoke)
@@ -87,6 +87,14 @@ class DockerHarnessTests(unittest.TestCase):
             self.assertIn("docker image inspect", smoke)
             self.assertIn("CPK_SERVER_BASE_IMAGE", smoke)
             self.assertIn("{{.Id}}", smoke)
+        with self.subTest(boundary="runner-module-invocation"):
+            self.assertIn('cd "$ROOT"', smoke)
+            self.assertEqual(smoke.count(runner_call), 1)
+        with self.subTest(boundary="reject-direct-root-runner"):
+            self.assertNotIn(
+                'python "$ROOT/scripts/cpk_server_candidate_topology.py"',
+                smoke,
+            )
         with self.subTest(boundary="measurement-precedes-runner-mutation"):
             positions = tuple(
                 smoke.find(token)
@@ -219,10 +227,10 @@ class DockerHarnessTests(unittest.TestCase):
             '-t "$BASELINE_IMAGE" .'
         )
         candidate_build = (
-            'docker run --rm -v "$ROOT:/source:ro" '
+            'docker run --rm -v "$ROOT:/source:ro" -w /source '
             '-v "$CANDIDATE_STAGING_ROOT:/candidate" '
             '-v /var/run/docker.sock:/var/run/docker.sock '
-            '"$IMAGE" python /source/scripts/cpk_server_candidate_topology.py '
+            '"$IMAGE" python -m scripts.cpk_server_candidate_topology '
             "--package-image-only --candidate-base-image \"$BASELINE_IMAGE\" "
             "--candidate-image-tag \"$CANDIDATE_IMAGE\" "
             "--staging-root /candidate "
@@ -244,19 +252,23 @@ class DockerHarnessTests(unittest.TestCase):
             self.assertNotIn("scripts/cpk_server_candidate_topology_smoke.sh", test_sh)
         with self.subTest(boundary="dependency-closed-runner-python"):
             self.assertNotIn("python scripts/cpk_server_candidate_topology.py", test_sh)
-            self.assertIn('"$IMAGE" python /source/scripts/cpk_server_candidate_topology.py', normalized)
             self.assertIn(
                 '-v /var/run/docker.sock:/var/run/docker.sock',
                 normalized,
             )
+        with self.subTest(boundary="read-only-source-mount"):
             self.assertIn('-v "$ROOT:/source:ro"', normalized)
-            without_qualified_runner = test_sh.replace(
-                '"$IMAGE" python /source/scripts/cpk_server_candidate_topology.py',
-                "",
+        with self.subTest(boundary="source-workdir"):
+            self.assertIn('-w /source', normalized)
+        with self.subTest(boundary="runner-module-invocation"):
+            self.assertIn(
+                '"$IMAGE" python -m scripts.cpk_server_candidate_topology',
+                normalized,
             )
+        with self.subTest(boundary="reject-direct-source-runner"):
             self.assertNotIn(
                 "python /source/scripts/cpk_server_candidate_topology.py",
-                without_qualified_runner,
+                test_sh,
             )
         with self.subTest(boundary="isolated-evidence-staging"):
             self.assertEqual(
