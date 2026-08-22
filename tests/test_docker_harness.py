@@ -6,9 +6,55 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 CANDIDATE_SMOKE = ROOT / "scripts" / "cpk_server_candidate_topology_smoke.sh"
+CANDIDATE_RUNNER = ROOT / "scripts" / "cpk_server_candidate_topology.py"
 
 
 class DockerHarnessTests(unittest.TestCase):
+    def test_candidate_runner_bounds_readiness_and_admits_socket_before_mutation(
+        self,
+    ) -> None:
+        runner = CANDIDATE_RUNNER.read_text(encoding="utf-8")
+
+        with self.subTest(boundary="bounded-postgres-readiness"):
+            for required in (
+                "POSTGRES_READY_ATTEMPTS",
+                "POSTGRES_READY_RETRY_SECONDS",
+                "pg_isready",
+                "_sleep",
+            ):
+                self.assertIn(required, runner)
+            self.assertNotIn("while True", runner)
+        with self.subTest(boundary="owned-server-environment"):
+            for required in (
+                "CPK_WORKPLACE_DATABASE_URL",
+                "CPK_ACTIVITY_HISTORY_DATABASE_URL",
+                "CPK_OBSERVER_STATE_DATABASE_URL",
+                "CPK_GRAPH_TOPOLOGY_DATABASE_URL",
+                'self._name("postgres")',
+                '"credential": "present"',
+                '"credential": "worker-present"',
+            ):
+                self.assertIn(required, runner)
+            self.assertNotIn("name: os.environ[name]", runner)
+            self.assertNotIn("if name in os.environ", runner)
+        with self.subTest(boundary="socket-before-docker-mutation"):
+            self.assertIn("stat.S_ISSOCK", runner)
+            self.assertNotIn("docker_socket_gid = 0", runner)
+            socket_position = runner.find("os.stat(DOCKER_SOCKET)")
+            network_position = runner.find("self._client.networks.create")
+            container_position = runner.find("self._client.containers.run")
+            self.assertGreaterEqual(socket_position, 0)
+            self.assertGreaterEqual(network_position, 0)
+            self.assertGreaterEqual(container_position, 0)
+            if min(socket_position, network_position, container_position) >= 0:
+                self.assertLess(socket_position, network_position)
+                self.assertLess(socket_position, container_position)
+        with self.subTest(boundary="provider-image-provenance"):
+            self.assertIn("RepoDigests", runner)
+            self.assertIn('"Config"', runner)
+            self.assertIn('"Image"', runner)
+            self.assertIn("target_image_reference", runner)
+
     def test_candidate_smoke_measures_dynamic_sources_artifacts_and_base_image_before_mutation(
         self,
     ) -> None:

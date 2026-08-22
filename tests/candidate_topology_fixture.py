@@ -37,6 +37,7 @@ HELLO_DESCRIPTOR_SHA256 = (
 )
 HELLO_RESPONSE = b"Hello, world!\n"
 HELLO_RESPONSE_SHA256 = hashlib.sha256(HELLO_RESPONSE).hexdigest()
+HELLO_LOCAL_IMAGE_ID = "sha256:" + "2" * 64
 
 RUNNER_COMMIT = "fc46e42d7143698ad6c7ab86d67c66a3f059ab68"
 RUNNER_TREE = "eeab26c68610d176078adbd68a319c806a8cd436"
@@ -76,6 +77,8 @@ DOCKER_SOCKET_GID = 987
 POSTGRES_DB = "cpk"
 POSTGRES_USER = "candidate"
 POSTGRES_PASSWORD = "candidate-password-not-for-output"
+POSTGRES_READY_ATTEMPTS = 3
+POSTGRES_READY_RETRY_SECONDS = 0.25
 POSTGRES_BOOTSTRAP_ENVIRONMENT = {
     "POSTGRES_DB": POSTGRES_DB,
     "POSTGRES_USER": POSTGRES_USER,
@@ -99,22 +102,41 @@ POSTGRES_DSN_ENVIRONMENT = {
         "candidate-postgres:5432/cpk"
     ),
 }
+OPERATOR_SCOPES = (
+    "hub:instance:create",
+    "hub:instance:read",
+    "instance:workspace:read",
+    "instance:workspace:edit",
+    "plan:request",
+    "plan:approve",
+    "plan:approve-destructive",
+    "plan:execute",
+    "execution:operate",
+    "runtime-authority:register",
+    "runtime-authority:read",
+    "runtime-authority:revoke",
+    "runtime-authority:use",
+    "runtime-authority-delivery:register",
+    "runtime-authority-delivery:read",
+    "runtime-authority-delivery:revoke",
+)
+WORKER_SCOPES = ("execution:operate",)
 CANDIDATE_SERVER_ENVIRONMENT = {
     "CPK_SERVER_MODE": "execution-capable",
     "CPK_CONTROL_AUTH_VERIFIER": "static-development",
     "CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON": json.dumps(
         [
             {
-                "credential": "operator-token-not-for-output",
-                "subject_id": "operator-a",
+                "credential": "present",
+                "subject_id": "hosted-operator",
                 "kind": "operator",
-                "workspace_grants": {WORKSPACE_ID: ["admin:*"]},
+                "workspace_grants": {WORKSPACE_ID: list(OPERATOR_SCOPES)},
             },
             {
-                "credential": "worker-token-not-for-output",
+                "credential": "worker-present",
                 "subject_id": "candidate-worker",
                 "kind": "worker",
-                "workspace_grants": {WORKSPACE_ID: ["execution:operate"]},
+                "workspace_grants": {WORKSPACE_ID: list(WORKER_SCOPES)},
             },
         ],
         separators=(",", ":"),
@@ -456,7 +478,8 @@ class HardenedRecordingCandidateEffects(RecordingCandidateEffects):
                     "labelled": labelled,
                     "attach_runtime_network": attach_runtime_network,
                     "request_origin": "inside-probe",
-                    "target_image_id": CANDIDATE_IMAGE_ID,
+                    "target_image_id": HELLO_LOCAL_IMAGE_ID,
+                    "target_image_reference": HELLO_IMAGE,
                 },
             )
         )
@@ -465,7 +488,8 @@ class HardenedRecordingCandidateEffects(RecordingCandidateEffects):
             "response": response,
             "container_id": "candidate-consumer-probe",
             "request_origin": "inside-probe",
-            "target_image_id": CANDIDATE_IMAGE_ID,
+            "target_image_id": HELLO_LOCAL_IMAGE_ID,
+            "target_image_reference": HELLO_IMAGE,
         }
 
     def cleanup(self, *, reason: str) -> dict[str, Any]:
@@ -537,7 +561,10 @@ class RecordingDockerImage:
 
     @property
     def attrs(self) -> dict[str, Any]:
-        return {"Config": {"Labels": dict(self.labels)}}
+        return {
+            "Config": {"Labels": dict(self.labels)},
+            "RepoDigests": list(self.tags),
+        }
 
 
 @dataclass
@@ -569,7 +596,10 @@ class RecordingDockerContainer:
     @property
     def attrs(self) -> dict[str, Any]:
         return {
-            "Config": {"Labels": dict(self.labels)},
+            "Config": {
+                "Image": self.image_reference,
+                "Labels": dict(self.labels),
+            },
             "NetworkSettings": {
                 "Ports": {"8080/tcp": [{"HostPort": "49171"}]},
                 "Networks": {
@@ -586,7 +616,13 @@ class RecordingDockerContainer:
         self.client.ledger.append(("container-exec", (self.name, frozen)))
         rendered = " ".join(command) if type(command) is list else str(command)
         if "pg_isready" in rendered:
-            return SimpleNamespace(exit_code=0, output=b"accepting connections\n")
+            exit_code = (
+                self.client.postgres_readiness.pop(0)
+                if self.client.postgres_readiness
+                else 0
+            )
+            output = b"accepting connections\n" if exit_code == 0 else b"no response\n"
+            return SimpleNamespace(exit_code=exit_code, output=output)
         if "importlib.metadata" in rendered:
             return SimpleNamespace(
                 exit_code=0,
@@ -742,6 +778,7 @@ class RecordingDockerClient:
     def __init__(self) -> None:
         self.ledger: list[tuple[str, Any]] = []
         self.container_runs: list[dict[str, Any]] = []
+        self.postgres_readiness: list[int] = []
         self.containers = RecordingDockerContainers(self)
         self.networks = RecordingDockerNetworks(self)
         self.images = RecordingDockerImages(self)
@@ -799,6 +836,13 @@ class RecordingDockerClient:
         )
 
     def seed_hello_runtime(self) -> tuple[Any, Any]:
+        self.images.values.append(
+            RecordingDockerImage(
+                HELLO_LOCAL_IMAGE_ID,
+                (HELLO_IMAGE,),
+                labels={"org.openj92.cpk.product": "hello"},
+            )
+        )
         network = RecordingDockerNetwork(
             client=self,
             name="cpk-runtime-candidate-topology-1714",
@@ -821,3 +865,15 @@ class RecordingDockerClient:
         self.networks.values.append(network)
         self.containers.values.append(container)
         return container, network
+
+    def seed_foreign_workspace_runtime(self) -> RecordingDockerNetwork:
+        network = RecordingDockerNetwork(
+            client=self,
+            name="cpk-runtime-foreign-workspace-1714",
+            labels={
+                "org.openj92.cpk.workspace": "foreign-workspace-1714",
+                "org.openj92.cpk.kind": "runtime-network",
+            },
+        )
+        self.networks.values.append(network)
+        return network

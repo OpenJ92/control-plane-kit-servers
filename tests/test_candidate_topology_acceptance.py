@@ -8,6 +8,7 @@ import importlib.util
 import inspect
 import json
 from pathlib import Path
+import stat
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -30,6 +31,7 @@ from candidate_topology_fixture import (
     FOREIGN_RESOURCE_CANARY,
     HELLO_DESCRIPTOR_SHA256,
     HELLO_IMAGE,
+    HELLO_LOCAL_IMAGE_ID,
     HELLO_RESPONSE,
     HELLO_RESPONSE_SHA256,
     INSTALLED_MODULE_PATHS,
@@ -37,11 +39,14 @@ from candidate_topology_fixture import (
     INTERPRETERS_COMMIT,
     INTERPRETERS_TREE,
     OPERATIONS_WHEEL_SHA256,
+    OPERATOR_SCOPES,
     POSTGRES_BOOTSTRAP_ENVIRONMENT,
     POSTGRES_DB,
     POSTGRES_DSN_ENVIRONMENT,
     POSTGRES_IMAGE,
     POSTGRES_PASSWORD,
+    POSTGRES_READY_ATTEMPTS,
+    POSTGRES_READY_RETRY_SECONDS,
     POSTGRES_USER,
     PRODUCTION_DOCKERFILE_SHA256,
     RecordingCandidateEffects,
@@ -60,6 +65,7 @@ from candidate_topology_fixture import (
     SERVER_BASELINE_TREE,
     SNAPSHOT_MANIFEST_SHA256,
     WORKSPACE_ID,
+    WORKER_SCOPES,
     canonical_sha256,
     canonical_report_sha256,
     changed,
@@ -578,7 +584,8 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                     "response_sha256": HELLO_RESPONSE_SHA256,
                     "container_id": "candidate-consumer-probe",
                     "request_origin": "inside-probe",
-                    "target_image_id": CANDIDATE_IMAGE_ID,
+                    "target_image_id": HELLO_LOCAL_IMAGE_ID,
+                    "target_image_reference": HELLO_IMAGE,
                     "controller_network_repair": False,
                     "server_network_repair": False,
                 },
@@ -1147,6 +1154,184 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                     },
                 )
 
+    def test_postgres_readiness_retries_are_bounded_before_server_start(self) -> None:
+        candidate = self._candidate_module()
+        client = RecordingDockerClient()
+        client.postgres_readiness[:] = [1, 1, 0]
+        effects = self._docker_effects(candidate, client)
+        delays = []
+        escaped = None
+        effects.preflight_inventory(exact_assembly())
+        effects.build_candidate_image(
+            exact_assembly(),
+            base_image=CPK_SERVER_BASE_IMAGE,
+        )
+        with patch.dict(candidate.os.environ, CANDIDATE_SERVER_ENVIRONMENT, clear=True):
+            with patch.object(
+                candidate.os,
+                "stat",
+                return_value=SimpleNamespace(
+                    st_gid=DOCKER_SOCKET_GID,
+                    st_mode=stat.S_IFSOCK,
+                ),
+            ):
+                with patch.object(
+                    candidate,
+                    "_sleep",
+                    new=delays.append,
+                    create=True,
+                ):
+                    try:
+                        effects.start_candidate_server(CANDIDATE_IMAGE_ID)
+                    except BaseException as error:
+                        escaped = error
+
+        readiness = tuple(
+            value
+            for name, value in client.ledger
+            if name == "container-exec" and "pg_isready" in repr(value)
+        )
+        with self.subTest(boundary="bounded-readiness-attempts"):
+            self.assertEqual(len(readiness), POSTGRES_READY_ATTEMPTS)
+        with self.subTest(boundary="bounded-readiness-delays"):
+            self.assertEqual(
+                tuple(delays),
+                (POSTGRES_READY_RETRY_SECONDS,) * (POSTGRES_READY_ATTEMPTS - 1),
+            )
+        with self.subTest(boundary="eventual-readiness-succeeds"):
+            self.assertIsNone(escaped)
+        with self.subTest(boundary="server-starts-only-after-readiness"):
+            server_runs = tuple(
+                value
+                for value in client.container_runs
+                if value["image"] == CANDIDATE_IMAGE_ID
+            )
+            self.assertEqual(len(server_runs), 1)
+            if server_runs:
+                last_ready = max(
+                    index
+                    for index, (name, value) in enumerate(client.ledger)
+                    if name == "container-exec" and "pg_isready" in repr(value)
+                )
+                server_run = next(
+                    index
+                    for index, (name, value) in enumerate(client.ledger)
+                    if name == "container-run"
+                    and value["image"] == CANDIDATE_IMAGE_ID
+                )
+                self.assertLess(last_ready, server_run)
+
+    def test_postgres_readiness_exhaustion_cleans_and_publishes_failed_report(self) -> None:
+        candidate = self._candidate_module()
+        client = RecordingDockerClient()
+        client.postgres_readiness[:] = [1] * POSTGRES_READY_ATTEMPTS
+        docker_module = SimpleNamespace(from_env=lambda: client)
+        delays = []
+        escaped = None
+        report = {}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            assembly_path = root / "candidate-assembly.json"
+            inspection_path = root / "candidate-inspection.json"
+            report_path = root / "candidate-topology-report.json"
+            assembly_path.write_text(
+                json.dumps(exact_assembly(), sort_keys=True),
+                encoding="utf-8",
+            )
+            inspection_path.write_text(
+                json.dumps(exact_inspection(), sort_keys=True),
+                encoding="utf-8",
+            )
+            argv = [
+                "--assembly",
+                str(assembly_path),
+                "--inspection",
+                str(inspection_path),
+                "--report",
+                str(report_path),
+                "--project-label",
+                "org.openj92.project=control-plane-kit-servers",
+                "--scenario-label",
+                "org.openj92.cpk.scenario=candidate-topology-1714",
+            ]
+            with patch.dict(sys.modules, {"docker": docker_module}):
+                with patch.dict(
+                    candidate.os.environ,
+                    CANDIDATE_SERVER_ENVIRONMENT,
+                    clear=True,
+                ):
+                    with patch.object(
+                        candidate.os,
+                        "stat",
+                        return_value=SimpleNamespace(
+                            st_gid=DOCKER_SOCKET_GID,
+                            st_mode=stat.S_IFSOCK,
+                        ),
+                    ):
+                        with patch.object(
+                            candidate,
+                            "_sleep",
+                            new=delays.append,
+                            create=True,
+                        ):
+                            try:
+                                candidate.main(
+                                    argv,
+                                    workflow_factory=lambda *args, **kwargs: None,
+                                    effects_factory=lambda **kwargs: candidate.DockerCandidateEffects(
+                                        **kwargs
+                                    ),
+                                )
+                            except BaseException as error:
+                                escaped = error
+            if report_path.is_file():
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+
+        readiness = tuple(
+            value
+            for name, value in client.ledger
+            if name == "container-exec" and "pg_isready" in repr(value)
+        )
+        with self.subTest(boundary="exhausted-fixed-error"):
+            self.assertIs(type(escaped), candidate.CandidateTopologyError)
+            if type(escaped) is candidate.CandidateTopologyError:
+                self.assertEqual(str(escaped), WORKFLOW_ERROR)
+                self.assertIsNone(escaped.__cause__)
+                self.assertIsNone(escaped.__context__)
+        with self.subTest(boundary="exhausted-bounded-attempts"):
+            self.assertEqual(len(readiness), POSTGRES_READY_ATTEMPTS)
+            self.assertEqual(
+                tuple(delays),
+                (POSTGRES_READY_RETRY_SECONDS,) * (POSTGRES_READY_ATTEMPTS - 1),
+            )
+        with self.subTest(boundary="exhaustion-never-starts-server"):
+            self.assertFalse(
+                any(
+                    value["image"] == CANDIDATE_IMAGE_ID
+                    for value in client.container_runs
+                )
+            )
+        with self.subTest(boundary="exhaustion-cleans-owned-resources"):
+            removed = tuple(
+                value
+                for name, value in client.ledger
+                if name in {"container-remove", "network-remove", "image-remove"}
+            )
+            for role in ("postgres", "runtime"):
+                self.assertTrue(any(effects_name in repr(removed) for effects_name in (
+                    f"-{role}",
+                )))
+        with self.subTest(boundary="exhaustion-terminal-report"):
+            self.assertEqual(report.get("status"), "failed")
+            self.assertEqual(report.get("first_failed_stage"), "build")
+            self.assertEqual(
+                report.get("report_sha256"),
+                canonical_report_sha256(report),
+            )
+            rendered = json.dumps(report, sort_keys=True)
+            for protected in (POSTGRES_PASSWORD, "present", "worker-present"):
+                self.assertNotIn(protected, rendered)
+
     def test_candidate_server_environment_socket_and_gid_are_exactly_bounded(self) -> None:
         candidate = self._candidate_module()
         client = RecordingDockerClient()
@@ -1166,11 +1351,16 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
         }
         effects.preflight_inventory(exact_assembly())
         effects.build_candidate_image(exact_assembly(), base_image=CPK_SERVER_BASE_IMAGE)
+
+        def observed_socket(path):
+            client.ledger.append(("socket-stat", path))
+            return SimpleNamespace(st_gid=DOCKER_SOCKET_GID, st_mode=stat.S_IFSOCK)
+
         with patch.dict(candidate.os.environ, hostile_environment, clear=True):
             with patch.object(
                 candidate.os,
                 "stat",
-                return_value=SimpleNamespace(st_gid=DOCKER_SOCKET_GID),
+                side_effect=observed_socket,
             ):
                 effects.start_candidate_server(CANDIDATE_IMAGE_ID)
 
@@ -1199,9 +1389,206 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                 tuple(str(value) for value in server.get("group_add", ())),
                 (str(DOCKER_SOCKET_GID),),
             )
+        with self.subTest(boundary="socket-admission-precedes-docker-mutation"):
+            socket_position = client.ledger.index(
+                ("socket-stat", "/var/run/docker.sock")
+            )
+            mutation_position = next(
+                index
+                for index, (name, _) in enumerate(client.ledger)
+                if name in {"network-create", "container-run"}
+            )
+            self.assertLess(socket_position, mutation_position)
         with self.subTest(boundary="no-arbitrary-host-forwarding"):
             self.assertNotIn("CPK_UNRELATED_HOST_SECRET", server.get("environment", {}))
             self.assertNotIn("must-not-cross-boundary", repr(server))
+
+    def test_candidate_server_constructs_owned_dsns_and_exact_bearer_principals(self) -> None:
+        candidate = self._candidate_module()
+        client = RecordingDockerClient()
+        effects = self._docker_effects(candidate, client)
+        postgres_name = effects._name("postgres")
+        expected_principals = [
+            {
+                "credential": "present",
+                "subject_id": "hosted-operator",
+                "kind": "operator",
+                "workspace_grants": {WORKSPACE_ID: list(OPERATOR_SCOPES)},
+            },
+            {
+                "credential": "worker-present",
+                "subject_id": "candidate-worker",
+                "kind": "worker",
+                "workspace_grants": {WORKSPACE_ID: list(WORKER_SCOPES)},
+            },
+        ]
+        expected_dsns = {
+            name: (
+                f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@"
+                f"{postgres_name}:5432/{POSTGRES_DB}"
+            )
+            for name in (
+                "CPK_WORKPLACE_DATABASE_URL",
+                "CPK_ACTIVITY_HISTORY_DATABASE_URL",
+                "CPK_OBSERVER_STATE_DATABASE_URL",
+                "CPK_GRAPH_TOPOLOGY_DATABASE_URL",
+            )
+        }
+        expected_environment = {
+            "CPK_SERVER_MODE": "execution-capable",
+            "CPK_CONTROL_AUTH_VERIFIER": "static-development",
+            "CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON": json.dumps(
+                expected_principals,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            "CPK_PORT": "8080",
+            "CPK_RUNTIME_INTERPRETERS": "docker",
+            "CPK_INGRESS_INTERPRETERS": "none",
+            "CPK_PRODUCT_MATERIAL_RESOLVER": "none",
+            **expected_dsns,
+        }
+        hostile_host_environment = {
+            name: f"hostile-owned-value-{index}"
+            for index, name in enumerate(expected_environment)
+        }
+        hostile_host_environment.update(
+            {
+                "CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON": (
+                    '{"hostile-principal":"must-not-cross-boundary"}'
+                ),
+                "CPK_UNRELATED_HOST_SECRET": "must-not-cross-boundary",
+            }
+        )
+        hostile_values = tuple(hostile_host_environment.values())
+        effects.preflight_inventory(exact_assembly())
+        effects.build_candidate_image(exact_assembly(), base_image=CPK_SERVER_BASE_IMAGE)
+        with patch.dict(candidate.os.environ, hostile_host_environment, clear=True):
+            with patch.object(
+                candidate.os,
+                "stat",
+                return_value=SimpleNamespace(
+                    st_gid=DOCKER_SOCKET_GID,
+                    st_mode=stat.S_IFSOCK,
+                ),
+            ):
+                effects.start_candidate_server(CANDIDATE_IMAGE_ID)
+
+        server = next(
+            value
+            for value in client.container_runs
+            if value["image"] == CANDIDATE_IMAGE_ID
+        )
+        observed_environment = server.get("environment")
+        principal_text = (
+            observed_environment.get("CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON")
+            if type(observed_environment) is dict
+            else None
+        )
+        parsed_principals = None
+        if type(principal_text) is str:
+            try:
+                candidate_principals = json.loads(principal_text)
+            except json.JSONDecodeError as error:
+                parsed_principals = error
+            else:
+                if type(candidate_principals) is list:
+                    parsed_principals = candidate_principals
+        observed_operator = None
+        observed_worker = None
+        if type(parsed_principals) is list and len(parsed_principals) >= 2:
+            observed_operator, observed_worker = parsed_principals[:2]
+        with self.subTest(boundary="owned-postgres-dsns"):
+            self.assertEqual(observed_environment, expected_environment)
+            self.assertEqual(
+                set(observed_environment) if type(observed_environment) is dict else set(),
+                set(expected_environment),
+            )
+            for value in expected_dsns.values():
+                self.assertIn(postgres_name, value)
+            for hostile_value in hostile_values:
+                observed_values = (
+                    observed_environment.values()
+                    if type(observed_environment) is dict
+                    else ()
+                )
+                self.assertNotIn(hostile_value, observed_values)
+        with self.subTest(boundary="operator-bearer-and-scopes"):
+            self.assertEqual(observed_operator, expected_principals[0])
+        with self.subTest(boundary="worker-bearer-and-scopes"):
+            self.assertEqual(observed_worker, expected_principals[1])
+        with self.subTest(boundary="bearers-redacted-from-evidence"):
+            cleanup = effects.cleanup(reason="evidence")
+            report = candidate._base_report(
+                exact_assembly(),
+                cleanup=cleanup,
+                first_failed_stage=None,
+                status="passed",
+            )
+            for rendered in (json.dumps(report, sort_keys=True), repr(client.ledger)):
+                for protected in (
+                    "present",
+                    "worker-present",
+                    POSTGRES_PASSWORD,
+                    *hostile_values,
+                ):
+                    self.assertNotIn(protected, rendered)
+
+    def test_missing_or_non_socket_docker_endpoint_fails_before_mutation(self) -> None:
+        candidate = self._candidate_module()
+        rows = (
+            ("missing", FileNotFoundError("protected-missing-socket")),
+            (
+                "non-socket",
+                SimpleNamespace(
+                    st_gid=DOCKER_SOCKET_GID,
+                    st_mode=stat.S_IFREG,
+                ),
+            ),
+        )
+        for name, observed in rows:
+            client = RecordingDockerClient()
+            effects = self._docker_effects(candidate, client)
+            effects.preflight_inventory(exact_assembly())
+            effects.build_candidate_image(
+                exact_assembly(),
+                base_image=CPK_SERVER_BASE_IMAGE,
+            )
+            before_start = len(client.ledger)
+            escaped = None
+            with patch.dict(
+                candidate.os.environ,
+                CANDIDATE_SERVER_ENVIRONMENT,
+                clear=True,
+            ):
+                with patch.object(
+                    candidate.os,
+                    "stat",
+                    side_effect=(observed if type(observed) is FileNotFoundError else None),
+                    return_value=(
+                        observed if type(observed) is SimpleNamespace else None
+                    ),
+                ):
+                    try:
+                        effects.start_candidate_server(CANDIDATE_IMAGE_ID)
+                    except BaseException as error:
+                        escaped = error
+
+            mutation = tuple(
+                value
+                for event, value in client.ledger[before_start:]
+                if event in {"network-create", "container-run"}
+            )
+            with self.subTest(name=name, boundary="fixed-error"):
+                self.assertIs(type(escaped), candidate.CandidateTopologyError)
+                if type(escaped) is candidate.CandidateTopologyError:
+                    self.assertEqual(str(escaped), WORKFLOW_ERROR)
+                    self.assertIsNone(escaped.__cause__)
+                    self.assertIsNone(escaped.__context__)
+            with self.subTest(name=name, boundary="zero-docker-mutation"):
+                self.assertEqual(mutation, ())
+            with self.subTest(name=name, boundary="protected-detail-redacted"):
+                self.assertNotIn("protected-missing-socket", str(escaped))
 
     def test_probe_resolves_hello_runtime_container_network_endpoint_and_image(self) -> None:
         candidate = self._candidate_module()
@@ -1246,7 +1633,17 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                 ],
             )
         with self.subTest(boundary="published-provider-image-attestation"):
-            self.assertEqual(result.get("target_image_id"), HELLO_IMAGE)
+            self.assertEqual(hello_container.image.id, HELLO_LOCAL_IMAGE_ID)
+            self.assertEqual(
+                hello_container.attrs["Config"]["Image"],
+                HELLO_IMAGE,
+            )
+            self.assertEqual(
+                tuple(hello_container.image.attrs["RepoDigests"]),
+                (HELLO_IMAGE,),
+            )
+            self.assertEqual(result.get("target_image_id"), HELLO_LOCAL_IMAGE_ID)
+            self.assertEqual(result.get("target_image_reference"), HELLO_IMAGE)
             self.assertEqual(result.get("response"), HELLO_RESPONSE)
 
     def test_preflight_and_cleanup_own_every_candidate_resource_and_preserve_foreign_truth(
@@ -1414,6 +1811,49 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                 self.assertIsNone(residue_error.__context__)
             self.assertFalse(provider_container.removed)
             self.assertFalse(provider_network.removed)
+
+    def test_cleanup_filters_runtime_network_residue_by_exact_workspace(self) -> None:
+        candidate = self._candidate_module()
+        client = RecordingDockerClient()
+        foreign_network = client.seed_foreign_workspace_runtime()
+        effects = self._docker_effects(candidate, client)
+        effects.preflight_inventory(exact_assembly())
+        effects.build_candidate_image(
+            exact_assembly(),
+            base_image=CPK_SERVER_BASE_IMAGE,
+        )
+        with patch.dict(candidate.os.environ, CANDIDATE_SERVER_ENVIRONMENT, clear=True):
+            with patch.object(
+                candidate.os,
+                "stat",
+                return_value=SimpleNamespace(
+                    st_gid=DOCKER_SOCKET_GID,
+                    st_mode=stat.S_IFSOCK,
+                ),
+            ):
+                effects.start_candidate_server(CANDIDATE_IMAGE_ID)
+        escaped = None
+        cleanup = {}
+        try:
+            cleanup = effects.cleanup(reason="success")
+        except BaseException as error:
+            escaped = error
+
+        with self.subTest(boundary="foreign-workspace-does-not-fail-cleanup"):
+            self.assertIsNone(escaped)
+        with self.subTest(boundary="foreign-workspace-network-is-preserved"):
+            self.assertFalse(foreign_network.removed)
+            self.assertIn(
+                foreign_network.name,
+                cleanup.get("post_inventory", {}).get("networks", ()),
+            )
+        with self.subTest(boundary="foreign-workspace-network-is-never-removed"):
+            self.assertFalse(
+                any(
+                    event == "network-remove" and value == foreign_network.name
+                    for event, value in client.ledger
+                )
+            )
 
     def test_cleanup_failure_preserves_original_stage_terminal_report_and_foreign_resources(
         self,
