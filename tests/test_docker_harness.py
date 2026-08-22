@@ -77,7 +77,12 @@ class DockerHarnessTests(unittest.TestCase):
             self.assertIn("acceptance/candidate_topology/Dockerfile", smoke)
             self.assertIn("dist/control_plane_kit_core.whl", smoke)
             self.assertIn("dist/control_plane_kit_operations.whl", smoke)
-            self.assertGreaterEqual(smoke.count("sha256"), 4)
+            self.assertIn("dist/rfc8785-0.1.4-py3-none-any.whl", smoke)
+            self.assertIn(
+                "520d690b448ecf0703691c76e1a34a24ddcd4fc5bc41d589cb7c58ec651bcd48",
+                smoke,
+            )
+            self.assertGreaterEqual(smoke.count("sha256"), 5)
         with self.subTest(boundary="immutable-base-image-measurement"):
             self.assertIn("docker image inspect", smoke)
             self.assertIn("CPK_SERVER_BASE_IMAGE", smoke)
@@ -196,17 +201,69 @@ class DockerHarnessTests(unittest.TestCase):
 
     def test_test_sh_is_docker_first_and_avoids_broad_cleanup(self) -> None:
         test_sh = (ROOT / "test.sh").read_text(encoding="utf-8")
+        normalized = " ".join(
+            line.strip().removesuffix("\\").strip()
+            for line in test_sh.splitlines()
+            if line.strip()
+        )
+        baseline_image = (
+            'BASELINE_IMAGE="${CPK_SERVER_BASELINE_IMAGE:-'
+            'localhost/control-plane-kit-servers/cpk-server:baseline}"'
+        )
+        candidate_image = (
+            'CANDIDATE_IMAGE="${CPK_SERVER_CANDIDATE_IMAGE:-'
+            'localhost/control-plane-kit-servers/cpk-server:candidate}"'
+        )
+        baseline_build = (
+            'docker build -f products/cpk_server/Dockerfile '
+            '-t "$BASELINE_IMAGE" .'
+        )
+        candidate_build = (
+            "python scripts/cpk_server_candidate_topology.py "
+            "--package-image-only --candidate-base-image \"$BASELINE_IMAGE\" "
+            "--candidate-image-tag \"$CANDIDATE_IMAGE\""
+        )
+        candidate_smoke = (
+            'CPK_SERVER_IMAGE="$CANDIDATE_IMAGE" CPK_SERVER_BUILD_IMAGE=0 '
+            "sh scripts/cpk_server_image_smoke.sh"
+        )
 
-        self.assertIn("docker build", test_sh)
-        self.assertIn("docker run", test_sh)
-        self.assertIn("scripts/docker_residue_audit.sh", test_sh)
-        self.assertIn("scripts/apply_coordinates.py --check", test_sh)
-        self.assertIn("/test-support/package_integrity.py", test_sh)
-        self.assertIn("CPK_SERVER_BUILD_IMAGE=1", test_sh)
-        self.assertIn('"$POLICY_IMAGE"', test_sh)
-        self.assertIn("sh -c 'cd /test-support", test_sh)
-        self.assertNotIn("docker system prune", test_sh)
-        self.assertNotIn("docker volume prune", test_sh)
+        with self.subTest(boundary="baseline-is-build-input-only"):
+            self.assertEqual(test_sh.count(baseline_image), 1)
+            self.assertEqual(normalized.count(baseline_build), 1)
+            self.assertNotIn('CPK_SERVER_IMAGE="$BASELINE_IMAGE"', test_sh)
+        with self.subTest(boundary="candidate-overlay-runner-seam"):
+            self.assertEqual(test_sh.count(candidate_image), 1)
+            self.assertEqual(normalized.count(candidate_build), 1)
+            self.assertNotIn("scripts/cpk_server_candidate_topology_smoke.sh", test_sh)
+        with self.subTest(boundary="candidate-only-liveness"):
+            self.assertEqual(normalized.count(candidate_smoke), 1)
+            self.assertNotIn("CPK_SERVER_BUILD_IMAGE=1", test_sh)
+        with self.subTest(boundary="candidate-before-smoke-before-residue"):
+            build_position = normalized.find(candidate_build)
+            smoke_position = normalized.find(candidate_smoke)
+            residue_position = normalized.find("scripts/docker_residue_audit.sh")
+            self.assertGreaterEqual(build_position, 0)
+            self.assertGreaterEqual(smoke_position, 0)
+            self.assertGreaterEqual(residue_position, 0)
+            if min(build_position, smoke_position, residue_position) >= 0:
+                self.assertLess(build_position, smoke_position)
+                self.assertLess(smoke_position, residue_position)
+        with self.subTest(boundary="package-gate-foundation"):
+            self.assertIn("docker run", test_sh)
+            self.assertIn("scripts/apply_coordinates.py --check", test_sh)
+            self.assertIn("/test-support/package_integrity.py", test_sh)
+            self.assertIn('"$POLICY_IMAGE"', test_sh)
+            self.assertIn("sh -c 'cd /test-support", test_sh)
+        with self.subTest(boundary="bounded-cleanup"):
+            self.assertIn("trap cleanup EXIT HUP INT TERM", test_sh)
+            self.assertEqual(
+                test_sh.count('docker image rm "$CANDIDATE_IMAGE"'),
+                1,
+            )
+            self.assertNotIn('docker image rm "$BASELINE_IMAGE"', test_sh)
+            self.assertNotIn("docker system prune", test_sh)
+            self.assertNotIn("docker volume prune", test_sh)
 
     def test_test_image_runs_unittest_and_product_image_lane(self) -> None:
         dockerfile = (ROOT / "Dockerfile.test").read_text(encoding="utf-8")

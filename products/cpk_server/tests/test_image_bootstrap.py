@@ -106,6 +106,26 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertNotIn("products/cpk_server/Dockerfile", overlay)
         self.assertNotIn("coordinates/server-products.json", overlay)
         self.assertNotIn("git checkout", overlay)
+        offline_wheels = (
+            (
+                "dist/control_plane_kit_core.whl",
+                "/tmp/control_plane_kit_core.whl",
+            ),
+            (
+                "dist/control_plane_kit_operations.whl",
+                "/tmp/control_plane_kit_operations.whl",
+            ),
+            (
+                "dist/rfc8785-0.1.4-py3-none-any.whl",
+                "/tmp/rfc8785-0.1.4-py3-none-any.whl",
+            ),
+        )
+        with self.subTest(candidate_overlay_offline_closure=True):
+            for source, installed in offline_wheels:
+                self.assertEqual(overlay.count(f"COPY {source} {installed}"), 1)
+                self.assertEqual(overlay.count(installed), 3)
+            self.assertEqual(overlay.count("--no-index"), 1)
+            self.assertEqual(overlay.count("--no-deps"), 1)
 
         normalized_test_dockerfile = " ".join(
             line.strip().removesuffix("\\").strip()
@@ -183,6 +203,9 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             "production_dockerfile_sha256",
             "acceptance_overlay_sha256",
             "wheel_sha256",
+            "rfc8785",
+            "dist/rfc8785-0.1.4-py3-none-any.whl",
+            "520d690b448ecf0703691c76e1a34a24ddcd4fc5bc41d589cb7c58ec651bcd48",
             "RECORD",
             "module_paths",
             "CPK_SERVER_BASE_IMAGE",
@@ -303,6 +326,9 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             "inspection",
             "project_label",
             "scenario_label",
+            "package_image_only",
+            "candidate_base_image",
+            "candidate_image_tag",
         ):
             with self.subTest(used_argument=required_argument):
                 self.assertIn(required_argument, used_argument_members)
@@ -326,6 +352,10 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         ):
             with self.subTest(duplicate_input=forbidden_argument):
                 self.assertNotIn(forbidden_argument, parser_options)
+        with self.subTest(package_image_interface="closed"):
+            self.assertIn("--package-image-only", parser_options)
+            self.assertIn("--candidate-base-image", parser_options)
+            self.assertIn("--candidate-image-tag", parser_options)
 
         candidate_server_targets = {
             node.targets[0].id
@@ -351,7 +381,8 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertEqual(len(build_image_calls), 1)
         admitted_base_values = [
             keyword.value
-            for keyword in build_image_calls[0].keywords
+            for call in build_image_calls
+            for keyword in call.keywords
             if keyword.arg == "base_image"
         ]
         self.assertEqual(len(admitted_base_values), 1)
@@ -377,6 +408,128 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             [_dotted_name(value) for value in buildarg_values[0].values],
             ["base_image"],
         )
+        docker_effects = next(
+            (
+                node
+                for node in tree.body
+                if isinstance(node, ast.ClassDef)
+                and node.name == "DockerCandidateEffects"
+            ),
+            None,
+        )
+        docker_build_methods = (
+            [
+                node
+                for node in docker_effects.body
+                if isinstance(node, ast.FunctionDef)
+                and node.name == "build_candidate_image"
+            ]
+            if docker_effects is not None
+            else []
+        )
+        with self.subTest(candidate_package_image_seam="effects-interface"):
+            self.assertEqual(len(docker_build_methods), 1)
+            if docker_build_methods:
+                self.assertEqual(
+                    tuple(
+                        argument.arg
+                        for argument in docker_build_methods[0].args.kwonlyargs
+                    ),
+                    ("base_image", "candidate_image_tag"),
+                )
+        if docker_build_methods:
+            image_build_calls = [
+                node
+                for node in ast.walk(docker_build_methods[0])
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "build"
+            ]
+            with self.subTest(candidate_package_image_seam="effects-forwarding"):
+                self.assertEqual(len(image_build_calls), 1)
+                tag_values = (
+                    [
+                        keyword.value
+                        for keyword in image_build_calls[0].keywords
+                        if keyword.arg == "tag"
+                    ]
+                    if image_build_calls
+                    else []
+                )
+                self.assertEqual(len(tag_values), 1)
+                if tag_values:
+                    self.assertEqual(
+                        _dotted_name(tag_values[0]),
+                        "candidate_image_tag",
+                    )
+        package_build_functions = [
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "build_candidate_package_image"
+        ]
+        with self.subTest(candidate_package_image_seam="one"):
+            self.assertEqual(len(package_build_functions), 1)
+        if package_build_functions:
+            package_parameters = (
+                *(argument.arg for argument in package_build_functions[0].args.args),
+                *(argument.arg for argument in package_build_functions[0].args.kwonlyargs),
+            )
+            with self.subTest(candidate_package_image_seam="exact-interface"):
+                self.assertEqual(
+                    package_parameters,
+                    (
+                        "assembly",
+                        "inspection",
+                        "effects",
+                        "artifact_fetcher",
+                        "candidate_base_image",
+                        "candidate_image_tag",
+                    ),
+                )
+            package_source = ast.unparse(package_build_functions[0])
+            with self.subTest(candidate_package_image_seam="build-only"):
+                self.assertIn("build_candidate_image", package_source)
+                self.assertNotIn("HostedWorkflow", package_source)
+                self.assertNotIn("run_candidate_topology", package_source)
+                self.assertNotIn("probe_hello", package_source)
+            package_build_calls = [
+                node
+                for node in ast.walk(package_build_functions[0])
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "build_candidate_image"
+            ]
+            with self.subTest(candidate_package_image_seam="exact-forwarding"):
+                self.assertEqual(len(package_build_calls), 1)
+                self.assertEqual(
+                    {
+                        keyword.arg: _dotted_name(keyword.value)
+                        for keyword in package_build_calls[0].keywords
+                    },
+                    {
+                        "base_image": "candidate_base_image",
+                        "candidate_image_tag": "candidate_image_tag",
+                    },
+                )
+        prepare_functions = [
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "_prepare_candidate"
+        ]
+        self.assertEqual(len(prepare_functions), 1)
+        if prepare_functions:
+            with self.subTest(candidate_package_image_seam="shared"):
+                self.assertIn(
+                    "build_candidate_package_image",
+                    ast.unparse(prepare_functions[0]),
+                )
+            with self.subTest(candidate_package_image_seam="live-base-inspection"):
+                self.assertIn(
+                    "inspection['images']['cpk_server_base']",
+                    ast.unparse(prepare_functions[0]),
+                )
         inspection_base_assignments = [
             node
             for node in ast.walk(tree)
@@ -1619,7 +1772,29 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("Mcp-Method: tools/call", smoke)
         self.assertIn("ready response leaked store endpoint", smoke)
         self.assertIn("org.openj92.project=control-plane-kit-servers", smoke)
-        self.assertIn("docker rm -f", smoke)
+        with self.subTest(cleanup="owned-postgres-anonymous-volumes"):
+            self.assertIn('docker rm -fv "$POSTGRES_CONTAINER"', smoke)
+        with self.subTest(failure="bounded-logs"):
+            self.assertIn('docker logs --tail 80 "$CONTAINER"', smoke)
+            self.assertIn('docker logs --tail 40 "$POSTGRES_CONTAINER"', smoke)
+        with self.subTest(failure="original-status-preserved"):
+            finish_start = smoke.find("finish()")
+            status_position = smoke.find("status=$?", finish_start)
+            cleanup_position = smoke.find("cleanup", status_position)
+            exit_position = smoke.find('exit "$status"', cleanup_position)
+            self.assertGreaterEqual(finish_start, 0)
+            self.assertGreaterEqual(status_position, 0)
+            self.assertGreaterEqual(cleanup_position, 0)
+            self.assertGreaterEqual(exit_position, 0)
+            if min(
+                finish_start,
+                status_position,
+                cleanup_position,
+                exit_position,
+            ) >= 0:
+                self.assertLess(finish_start, status_position)
+                self.assertLess(status_position, cleanup_position)
+                self.assertLess(cleanup_position, exit_position)
         self.assertIn("docker network rm", smoke)
         self.assertNotIn("docker system prune", smoke)
         self.assertNotIn("docker volume prune", smoke)

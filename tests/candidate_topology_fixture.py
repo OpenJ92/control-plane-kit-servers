@@ -44,6 +44,16 @@ RUNNER_TREE = "eeab26c68610d176078adbd68a319c806a8cd436"
 OVERLAY_SHA256 = "c" * 64
 CORE_WHEEL_SHA256 = "d" * 64
 OPERATIONS_WHEEL_SHA256 = "e" * 64
+RFC8785_WHEEL_PATH = "dist/rfc8785-0.1.4-py3-none-any.whl"
+RFC8785_WHEEL_SHA256 = (
+    "520d690b448ecf0703691c76e1a34a24ddcd4fc5bc41d589cb7c58ec651bcd48"
+)
+RFC8785_WHEEL_SIZE = 9240
+RFC8785_WHEEL_URL = (
+    "https://files.pythonhosted.org/packages/4d/78/"
+    "119878110660b2ad709888c8a1614fce7e2fab39080ab960656dc8605bf6/"
+    "rfc8785-0.1.4-py3-none-any.whl"
+)
 CPK_SERVER_BASE_IMAGE = "sha256:" + "9" * 64
 CANDIDATE_IMAGE_ID = "sha256:" + "f" * 64
 INSTALLED_RECORD_PATHS = (
@@ -51,11 +61,13 @@ INSTALLED_RECORD_PATHS = (
     "control_plane_kit_core-0.1.0.dist-info/RECORD",
     "/usr/local/lib/python3.12/site-packages/"
     "control_plane_kit_operations-0.1.0.dist-info/RECORD",
+    "/usr/local/lib/python3.12/site-packages/rfc8785-0.1.4.dist-info/RECORD",
 )
 INSTALLED_MODULE_PATHS = (
     "/usr/local/lib/python3.12/site-packages/control_plane_kit_core/__init__.py",
     "/usr/local/lib/python3.12/site-packages/"
     "control_plane_kit_operations/__init__.py",
+    "/usr/local/lib/python3.12/site-packages/rfc8785/__init__.py",
 )
 WORKSPACE_ID = "candidate-topology-1714"
 FOREIGN_RESOURCE_CANARY = "foreign-resource-1714"
@@ -223,6 +235,7 @@ def exact_inspection() -> dict[str, Any]:
             "acceptance/candidate_topology/Dockerfile": OVERLAY_SHA256,
             "dist/control_plane_kit_core.whl": CORE_WHEEL_SHA256,
             "dist/control_plane_kit_operations.whl": OPERATIONS_WHEEL_SHA256,
+            RFC8785_WHEEL_PATH: RFC8785_WHEEL_SHA256,
         },
         "images": {"cpk_server_base": CPK_SERVER_BASE_IMAGE},
     }
@@ -372,11 +385,16 @@ class RecordingCandidateEffects:
         assembly: dict[str, Any],
         *,
         base_image: str,
+        candidate_image_tag: str | None = None,
     ) -> dict[str, Any]:
-        self.ledger.append(("build", (canonical_sha256(assembly), base_image)))
+        build_identity = (canonical_sha256(assembly), base_image)
+        if candidate_image_tag is not None:
+            build_identity = (*build_identity, candidate_image_tag)
+        self.ledger.append(("build", build_identity))
         return {
             "base_image": base_image,
             "image_id": CANDIDATE_IMAGE_ID,
+            "image_tag": candidate_image_tag,
             "record_paths": INSTALLED_RECORD_PATHS,
             "module_paths": INSTALLED_MODULE_PATHS,
         }
@@ -430,13 +448,18 @@ class HardenedRecordingCandidateEffects(RecordingCandidateEffects):
         assembly: dict[str, Any],
         *,
         base_image: str,
+        candidate_image_tag: str | None = None,
     ) -> dict[str, Any]:
         if self.fail_at == "build":
             raise RuntimeError("protected-build-failure")
-        self.ledger.append(("build", (canonical_sha256(assembly), base_image)))
+        build_identity = (canonical_sha256(assembly), base_image)
+        if candidate_image_tag is not None:
+            build_identity = (*build_identity, candidate_image_tag)
+        self.ledger.append(("build", build_identity))
         return {
             "base_image": base_image,
             "image_id": CANDIDATE_IMAGE_ID,
+            "image_tag": candidate_image_tag,
         }
 
     def start_candidate_server(self, built_image_id: str) -> dict[str, str]:
@@ -550,6 +573,23 @@ class RecordingCandidateEffectsFactory:
         )
         self.instances.append(effects)
         return effects
+
+
+@dataclass
+class RecordingArtifactFetcher:
+    ledger: list[tuple[str, Any]] = field(default_factory=list)
+    observed_size: int = RFC8785_WHEEL_SIZE
+    observed_sha256: str = RFC8785_WHEEL_SHA256
+
+    def __call__(self, *, url: str, destination: str) -> dict[str, Any]:
+        observation = {
+            "url": url,
+            "path": destination,
+            "size": self.observed_size,
+            "sha256": self.observed_sha256,
+        }
+        self.ledger.append(("fetch-artifact", deepcopy(observation)))
+        return observation
 
 
 @dataclass

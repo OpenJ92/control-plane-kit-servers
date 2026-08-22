@@ -49,8 +49,13 @@ from candidate_topology_fixture import (
     POSTGRES_READY_RETRY_SECONDS,
     POSTGRES_USER,
     PRODUCTION_DOCKERFILE_SHA256,
+    RFC8785_WHEEL_PATH,
+    RFC8785_WHEEL_SHA256,
+    RFC8785_WHEEL_SIZE,
+    RFC8785_WHEEL_URL,
     RecordingCandidateEffects,
     RecordingCandidateEffectsFactory,
+    RecordingArtifactFetcher,
     RecordingDockerClient,
     RecordingDockerContainer,
     RecordingDockerImage,
@@ -133,6 +138,10 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                 POSTGRES_IMAGE,
                 HELLO_IMAGE,
                 HELLO_DESCRIPTOR_SHA256,
+                RFC8785_WHEEL_PATH,
+                RFC8785_WHEEL_SHA256,
+                RFC8785_WHEEL_SIZE,
+                RFC8785_WHEEL_URL,
             ),
             (
                 "43e9f359ca828c83fe4994ed1b62e1be54277ddd",
@@ -150,6 +159,14 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                 "docker.io/library/postgres@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777",
                 "ghcr.io/openj92/control-plane-kit-servers/hello-server@sha256:e2288b23844b1f0b7526d2798cbc1eaf6e9f536399173a043e7957f0e7730cbf",
                 "57ac661ca3f73ad4fa488df34390240e95da58e302bffb17c2197eeac29c2a24",
+                "dist/rfc8785-0.1.4-py3-none-any.whl",
+                "520d690b448ecf0703691c76e1a34a24ddcd4fc5bc41d589cb7c58ec651bcd48",
+                9240,
+                (
+                    "https://files.pythonhosted.org/packages/4d/78/"
+                    "119878110660b2ad709888c8a1614fce7e2fab39080ab960656dc8605bf6/"
+                    "rfc8785-0.1.4-py3-none-any.whl"
+                ),
             ),
         )
         self.assertNotEqual(CPK_SERVER_BASE_IMAGE, CANDIDATE_IMAGE_ID)
@@ -316,9 +333,13 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
         mutated = exact_inspection()
         mutated["files"]["products/cpk_server/Dockerfile"] = "0" * 64
         rows.append(("production-dockerfile", assembly, mutated))
-        incomplete = exact_inspection()
-        del incomplete["files"]["dist/control_plane_kit_operations.whl"]
-        rows.append(("missing-wheel", assembly, incomplete))
+        for name, path in (
+            ("missing-operations-wheel", "dist/control_plane_kit_operations.whl"),
+            ("missing-rfc8785-wheel", RFC8785_WHEEL_PATH),
+        ):
+            incomplete = exact_inspection()
+            del incomplete["files"][path]
+            rows.append((name, assembly, incomplete))
         extra = exact_inspection()
         extra["files"]["dist/foreign.whl"] = "1" * 64
         rows.append(("extra-build-input", assembly, extra))
@@ -366,6 +387,12 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                     None,
                     ("files", "dist/control_plane_kit_operations.whl"),
                     "7" * 64,
+                ),
+                (
+                    "rfc8785-wheel-drift",
+                    None,
+                    ("files", RFC8785_WHEEL_PATH),
+                    "8" * 64,
                 ),
             )
         )
@@ -416,6 +443,7 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
             {
                 "control-plane-kit-core": CORE_WHEEL_SHA256,
                 "control-plane-kit-operations": OPERATIONS_WHEEL_SHA256,
+                "rfc8785": RFC8785_WHEEL_SHA256,
             },
         )
         self.assertEqual(attestation["base_image"], CPK_SERVER_BASE_IMAGE)
@@ -441,10 +469,189 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                 tuple(
                     name
                     for name in parameters
-                    if name in {"workflow_factory", "effects_factory"}
+                    if name
+                    in {
+                        "workflow_factory",
+                        "effects_factory",
+                        "artifact_fetcher",
+                    }
                 ),
-                ("workflow_factory", "effects_factory"),
+                ("workflow_factory", "effects_factory", "artifact_fetcher"),
             )
+
+        baseline_tag = "localhost/control-plane-kit-servers/cpk-server:baseline"
+        candidate_tag = "localhost/control-plane-kit-servers/cpk-server:candidate"
+        project_label = "org.openj92.project=control-plane-kit-servers"
+        scenario_label = "org.openj92.cpk.scenario=candidate-topology-1714"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            assembly_path = root / "assembly.json"
+            inspection_path = root / "inspection.json"
+            report_path = root / "candidate-topology-report.json"
+            assembly_path.write_text(json.dumps(exact_assembly()), encoding="utf-8")
+            inspection_path.write_text(json.dumps(exact_inspection()), encoding="utf-8")
+            argv = [
+                "--assembly",
+                str(assembly_path),
+                "--inspection",
+                str(inspection_path),
+                "--report",
+                str(report_path),
+                "--project-label",
+                project_label,
+                "--scenario-label",
+                scenario_label,
+                "--evidence-id",
+                "package-gate-1714",
+                "--package-image-only",
+                "--candidate-base-image",
+                baseline_tag,
+                "--candidate-image-tag",
+                candidate_tag,
+            ]
+            package_ledger: list[tuple[str, object]] = []
+            effects_factory = RecordingCandidateEffectsFactory(
+                ledger=package_ledger,
+            )
+            fetcher = RecordingArtifactFetcher(ledger=package_ledger)
+            escaped = None
+            exit_code = None
+            try:
+                exit_code = candidate.main(
+                    argv,
+                    effects_factory=effects_factory,
+                    artifact_fetcher=fetcher,
+                )
+            except BaseException as error:
+                escaped = error
+
+            with self.subTest(package_image="exact-success"):
+                self.assertIsNone(escaped)
+                self.assertEqual(exit_code, 0)
+            if escaped is None:
+                with self.subTest(package_image="one-fetch-preflight-build"):
+                    self.assertEqual(
+                        tuple(
+                            value
+                            for name, value in package_ledger
+                            if name == "fetch-artifact"
+                        ),
+                        (
+                            {
+                                "url": RFC8785_WHEEL_URL,
+                                "path": RFC8785_WHEEL_PATH,
+                                "size": RFC8785_WHEEL_SIZE,
+                                "sha256": RFC8785_WHEEL_SHA256,
+                            },
+                        ),
+                    )
+                    package_names = tuple(name for name, _ in package_ledger)
+                    self.assertEqual(
+                        package_names.count("fetch-artifact"),
+                        1,
+                    )
+                    self.assertEqual(package_names.count("preflight-inventory"), 1)
+                    self.assertEqual(package_names.count("build"), 1)
+                    if "fetch-artifact" in package_names and "build" in package_names:
+                        self.assertLess(
+                            package_names.index("fetch-artifact"),
+                            package_names.index("build"),
+                        )
+                    build_rows = tuple(
+                        row for row in package_ledger if row[0] == "build"
+                    )
+                    self.assertEqual(len(build_rows), 1)
+                    if build_rows:
+                        self.assertEqual(
+                            build_rows[0],
+                            (
+                                "build",
+                                (
+                                    canonical_sha256(exact_assembly()),
+                                    baseline_tag,
+                                    candidate_tag,
+                                ),
+                            ),
+                        )
+                with self.subTest(package_image="zero-topology-interaction"):
+                    self.assertFalse(
+                        {
+                            "start-candidate-server",
+                            "workflow-target",
+                            "probe-request",
+                            "probe",
+                            "advance-hello",
+                            "advance-empty",
+                            "cleanup",
+                        }
+                        & {name for name, _ in package_ledger}
+                    )
+                    self.assertFalse(report_path.exists())
+
+            for name, observed_size, observed_sha256 in (
+                ("short-artifact", RFC8785_WHEEL_SIZE - 1, RFC8785_WHEEL_SHA256),
+                ("hash-drift", RFC8785_WHEEL_SIZE, "0" * 64),
+            ):
+                with self.subTest(package_image=name):
+                    rejected_effects: list[tuple[str, object]] = []
+                    rejected_fetch: list[tuple[str, object]] = []
+                    rejected_error = None
+                    try:
+                        candidate.main(
+                            argv,
+                            effects_factory=RecordingCandidateEffectsFactory(
+                                ledger=rejected_effects,
+                            ),
+                            artifact_fetcher=RecordingArtifactFetcher(
+                                ledger=rejected_fetch,
+                                observed_size=observed_size,
+                                observed_sha256=observed_sha256,
+                            ),
+                        )
+                    except BaseException as error:
+                        rejected_error = error
+                    self.assertIsNotNone(rejected_error)
+                    if rejected_error is not None:
+                        self.assertEqual(str(rejected_error), ASSEMBLY_ERROR)
+                        self.assertIsNone(rejected_error.__cause__)
+                        self.assertIsNone(rejected_error.__context__)
+                    self.assertEqual(rejected_effects, [])
+                    self.assertEqual(len(rejected_fetch), 1)
+                    self.assertFalse(report_path.exists())
+                    rendered = json.dumps(rejected_fetch, sort_keys=True).lower()
+                    for forbidden in ("authorization", "credential", "token", "header"):
+                        self.assertNotIn(forbidden, rendered)
+
+            outside_error = None
+            try:
+                candidate.main(
+                    [
+                        "--assembly",
+                        str(assembly_path),
+                        "--inspection",
+                        str(inspection_path),
+                        "--report",
+                        str(report_path),
+                        "--project-label",
+                        project_label,
+                        "--scenario-label",
+                        scenario_label,
+                        "--candidate-base-image",
+                        baseline_tag,
+                        "--candidate-image-tag",
+                        candidate_tag,
+                    ],
+                    effects_factory=RecordingCandidateEffectsFactory(),
+                    artifact_fetcher=RecordingArtifactFetcher(),
+                )
+            except BaseException as error:
+                outside_error = error
+            with self.subTest(package_image="arguments-rejected-outside-mode"):
+                self.assertIsNotNone(outside_error)
+                if outside_error is not None:
+                    self.assertIs(type(outside_error), SystemExit)
+                if type(outside_error) is SystemExit:
+                    self.assertEqual(outside_error.code, 2)
 
     def test_main_report_is_derived_from_explicit_build_inspection_and_probe_data(self) -> None:
         result = self._invoke_main(use_predecessor_bridge=True)
@@ -1011,6 +1218,7 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
             "acceptance/candidate_topology/Dockerfile": "2" * 64,
             "dist/control_plane_kit_core.whl": "3" * 64,
             "dist/control_plane_kit_operations.whl": "4" * 64,
+            RFC8785_WHEEL_PATH: "6" * 64,
         }
         dynamic_base = "sha256:" + "5" * 64
         for owner in ("server_source", "runner"):
@@ -1067,6 +1275,7 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                 'OVERLAY_SHA256 = "c" * 64',
                 'CORE_WHEEL_SHA256 = "d" * 64',
                 'OPERATIONS_WHEEL_SHA256 = "e" * 64',
+                'RFC8785_WHEEL_SHA256 = "5" * 64',
                 'CPK_SERVER_BASE_IMAGE = "sha256:" + "9" * 64',
             ):
                 self.assertNotIn(placeholder, source)
