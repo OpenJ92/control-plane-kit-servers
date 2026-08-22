@@ -9,6 +9,52 @@ CANDIDATE_SMOKE = ROOT / "scripts" / "cpk_server_candidate_topology_smoke.sh"
 
 
 class DockerHarnessTests(unittest.TestCase):
+    def test_candidate_smoke_measures_dynamic_sources_artifacts_and_base_image_before_mutation(
+        self,
+    ) -> None:
+        smoke = CANDIDATE_SMOKE.read_text(encoding="utf-8")
+        runner_call = 'python "$ROOT/scripts/cpk_server_candidate_topology.py"'
+
+        with self.subTest(boundary="runner-source-coordinate"):
+            self.assertIn('git -C "$ROOT" rev-parse HEAD', smoke)
+            self.assertIn('git -C "$ROOT" rev-parse HEAD^{tree}', smoke)
+            self.assertIn('git -C "$ROOT" diff --quiet', smoke)
+            self.assertIn('git -C "$ROOT" diff --cached --quiet', smoke)
+        with self.subTest(boundary="candidate-source-coordinate"):
+            self.assertIn("CPK_CANDIDATE_ROOT", smoke)
+            self.assertIn('git -C "$CPK_CANDIDATE_ROOT" rev-parse HEAD', smoke)
+            self.assertIn('git -C "$CPK_CANDIDATE_ROOT" rev-parse HEAD^{tree}', smoke)
+            self.assertIn('git -C "$CPK_CANDIDATE_ROOT" diff --quiet', smoke)
+            self.assertIn('git -C "$CPK_CANDIDATE_ROOT" diff --cached --quiet', smoke)
+        with self.subTest(boundary="measured-build-inputs"):
+            self.assertIn("products/cpk_server/Dockerfile", smoke)
+            self.assertIn("acceptance/candidate_topology/Dockerfile", smoke)
+            self.assertIn("dist/control_plane_kit_core.whl", smoke)
+            self.assertIn("dist/control_plane_kit_operations.whl", smoke)
+            self.assertGreaterEqual(smoke.count("sha256"), 4)
+        with self.subTest(boundary="immutable-base-image-measurement"):
+            self.assertIn("docker image inspect", smoke)
+            self.assertIn("CPK_SERVER_BASE_IMAGE", smoke)
+            self.assertIn("{{.Id}}", smoke)
+        with self.subTest(boundary="measurement-precedes-runner-mutation"):
+            positions = tuple(
+                smoke.find(token)
+                for token in (
+                    "rev-parse HEAD",
+                    "sha256",
+                    "docker image inspect",
+                    runner_call,
+                )
+            )
+            all_present = all(position >= 0 for position in positions)
+            self.assertTrue(
+                all_present,
+                "candidate measurement ordering token is missing",
+            )
+            if all_present:
+                for measurement_position in positions[:-1]:
+                    self.assertLess(measurement_position, positions[-1])
+
     def test_candidate_smoke_reuses_hosted_workflow_and_authoritative_residue_audit(
         self,
     ) -> None:

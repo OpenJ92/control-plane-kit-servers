@@ -6,6 +6,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 import hashlib
 import json
+from types import SimpleNamespace
 from typing import Any
 
 
@@ -61,10 +62,74 @@ FOREIGN_INVENTORY = {
     "containers": ("foreign-container-1714",),
     "networks": ("foreign-network-1714",),
     "volumes": (),
-    "images": ("sha256:" + "8" * 64,),
-    "build_residue": ("foreign-build-1714",),
+    "images": ("sha256:" + "3" * 64, "sha256:" + "8" * 64),
+    "build_residue": ("foreign-build-1714:latest",),
     "postgres_relations": (),
 }
+
+CANDIDATE_LABELS = {
+    "org.openj92.project": "control-plane-kit-servers",
+    "org.openj92.cpk.scenario": "candidate-topology-1714",
+    "org.openj92.cpk.evidence": "candidate-topology-hardening",
+}
+DOCKER_SOCKET_GID = 987
+POSTGRES_DB = "cpk"
+POSTGRES_USER = "candidate"
+POSTGRES_PASSWORD = "candidate-password-not-for-output"
+POSTGRES_BOOTSTRAP_ENVIRONMENT = {
+    "POSTGRES_DB": POSTGRES_DB,
+    "POSTGRES_USER": POSTGRES_USER,
+    "POSTGRES_PASSWORD": POSTGRES_PASSWORD,
+}
+POSTGRES_DSN_ENVIRONMENT = {
+    "CPK_WORKPLACE_DATABASE_URL": (
+        "postgresql://candidate:candidate-password-not-for-output@"
+        "candidate-postgres:5432/cpk"
+    ),
+    "CPK_ACTIVITY_HISTORY_DATABASE_URL": (
+        "postgresql://candidate:candidate-password-not-for-output@"
+        "candidate-postgres:5432/cpk"
+    ),
+    "CPK_OBSERVER_STATE_DATABASE_URL": (
+        "postgresql://candidate:candidate-password-not-for-output@"
+        "candidate-postgres:5432/cpk"
+    ),
+    "CPK_GRAPH_TOPOLOGY_DATABASE_URL": (
+        "postgresql://candidate:candidate-password-not-for-output@"
+        "candidate-postgres:5432/cpk"
+    ),
+}
+CANDIDATE_SERVER_ENVIRONMENT = {
+    "CPK_SERVER_MODE": "execution-capable",
+    "CPK_CONTROL_AUTH_VERIFIER": "static-development",
+    "CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON": json.dumps(
+        [
+            {
+                "credential": "operator-token-not-for-output",
+                "subject_id": "operator-a",
+                "kind": "operator",
+                "workspace_grants": {WORKSPACE_ID: ["admin:*"]},
+            },
+            {
+                "credential": "worker-token-not-for-output",
+                "subject_id": "candidate-worker",
+                "kind": "worker",
+                "workspace_grants": {WORKSPACE_ID: ["execution:operate"]},
+            },
+        ],
+        separators=(",", ":"),
+        sort_keys=True,
+    ),
+    "CPK_PORT": "8080",
+    "CPK_RUNTIME_INTERPRETERS": "docker",
+    "CPK_INGRESS_INTERPRETERS": "none",
+    "CPK_PRODUCT_MATERIAL_RESOLVER": "none",
+    **POSTGRES_DSN_ENVIRONMENT,
+}
+CURL_IMAGE = (
+    "docker.io/curlimages/curl@sha256:"
+    "7f6d731c246d5d5e5350599f6e85c67c013a006f54d6d8e6dff1117e7f6c91b8"
+)
 
 
 def exact_assembly() -> dict[str, Any]:
@@ -461,3 +526,298 @@ class RecordingCandidateEffectsFactory:
         )
         self.instances.append(effects)
         return effects
+
+
+@dataclass
+class RecordingDockerImage:
+    id: str
+    tags: tuple[str, ...] = ()
+    labels: dict[str, str] = field(default_factory=dict)
+    removed: bool = False
+
+    @property
+    def attrs(self) -> dict[str, Any]:
+        return {"Config": {"Labels": dict(self.labels)}}
+
+
+@dataclass
+class RecordingDockerContainer:
+    client: "RecordingDockerClient"
+    image_reference: str
+    name: str
+    identifier: str
+    labels: dict[str, str]
+    environment: dict[str, str] = field(default_factory=dict)
+    network: str | None = None
+    command: Any = None
+    ports: dict[str, Any] = field(default_factory=dict)
+    volumes: dict[str, Any] = field(default_factory=dict)
+    group_add: tuple[str, ...] = ()
+    removed: bool = False
+
+    @property
+    def id(self) -> str:
+        return self.identifier
+
+    @property
+    def image(self) -> RecordingDockerImage:
+        image = self.client.image_for(self.image_reference)
+        if image is None:
+            image = RecordingDockerImage(self.image_reference)
+        return image
+
+    @property
+    def attrs(self) -> dict[str, Any]:
+        return {
+            "Config": {"Labels": dict(self.labels)},
+            "NetworkSettings": {
+                "Ports": {"8080/tcp": [{"HostPort": "49171"}]},
+                "Networks": {
+                    name: {} for name in (() if self.network is None else (self.network,))
+                },
+            },
+        }
+
+    def reload(self) -> None:
+        self.client.ledger.append(("container-reload", self.name))
+
+    def exec_run(self, command: Any) -> Any:
+        frozen = tuple(command) if type(command) is list else command
+        self.client.ledger.append(("container-exec", (self.name, frozen)))
+        rendered = " ".join(command) if type(command) is list else str(command)
+        if "pg_isready" in rendered:
+            return SimpleNamespace(exit_code=0, output=b"accepting connections\n")
+        if "importlib.metadata" in rendered:
+            return SimpleNamespace(
+                exit_code=0,
+                output=json.dumps(
+                    {
+                        "record_paths": INSTALLED_RECORD_PATHS,
+                        "module_paths": INSTALLED_MODULE_PATHS,
+                    }
+                ).encode("utf-8"),
+            )
+        if "curl" in rendered:
+            return SimpleNamespace(exit_code=0, output=HELLO_RESPONSE)
+        return SimpleNamespace(exit_code=0, output=b"")
+
+    def remove(self, *, force: bool = False) -> None:
+        self.removed = True
+        self.client.ledger.append(("container-remove", (self.name, force)))
+
+
+@dataclass
+class RecordingDockerNetwork:
+    client: "RecordingDockerClient"
+    name: str
+    labels: dict[str, str]
+    removed: bool = False
+    connections: list[str] = field(default_factory=list)
+
+    @property
+    def attrs(self) -> dict[str, Any]:
+        return {"Labels": dict(self.labels)}
+
+    def connect(self, container: RecordingDockerContainer) -> None:
+        self.connections.append(container.name)
+        container.network = self.name
+        self.client.ledger.append(("network-connect", (self.name, container.name)))
+
+    def remove(self) -> None:
+        self.removed = True
+        self.client.ledger.append(("network-remove", self.name))
+
+
+class RecordingDockerContainers:
+    def __init__(self, client: "RecordingDockerClient") -> None:
+        self.client = client
+        self.values: list[RecordingDockerContainer] = []
+
+    def list(self, *, all: bool = False, filters: Any = None) -> list[Any]:
+        values = [value for value in self.values if not value.removed]
+        return self.client.filtered(values, filters)
+
+    def run(self, image: str, command: Any = None, **kwargs: Any) -> Any:
+        name = kwargs["name"]
+        recorded = {
+            "image": image,
+            "command": command,
+            "name": name,
+            **{key: value for key, value in kwargs.items()},
+        }
+        container = RecordingDockerContainer(
+            client=self.client,
+            image_reference=image,
+            name=name,
+            identifier=f"sha256:{hashlib.sha256(name.encode('ascii')).hexdigest()}",
+            labels=dict(kwargs.get("labels") or {}),
+            environment=dict(kwargs.get("environment") or {}),
+            network=kwargs.get("network"),
+            command=command,
+            ports=dict(kwargs.get("ports") or {}),
+            volumes=dict(kwargs.get("volumes") or {}),
+            group_add=tuple(str(value) for value in kwargs.get("group_add") or ()),
+        )
+        self.values.append(container)
+        self.client.container_runs.append(recorded)
+        self.client.ledger.append(
+            (
+                "container-run",
+                {
+                    "image": image,
+                    "command": command,
+                    "name": name,
+                    **{
+                        key: value
+                        for key, value in kwargs.items()
+                        if key != "environment"
+                    },
+                    "environment_keys": tuple(
+                        sorted((kwargs.get("environment") or {}).keys())
+                    ),
+                },
+            )
+        )
+        return container
+
+
+class RecordingDockerNetworks:
+    def __init__(self, client: "RecordingDockerClient") -> None:
+        self.client = client
+        self.values: list[RecordingDockerNetwork] = []
+
+    def list(self, *, filters: Any = None) -> list[Any]:
+        values = [value for value in self.values if not value.removed]
+        return self.client.filtered(values, filters)
+
+    def create(self, name: str, **kwargs: Any) -> RecordingDockerNetwork:
+        network = RecordingDockerNetwork(
+            client=self.client,
+            name=name,
+            labels=dict(kwargs.get("labels") or {}),
+        )
+        self.values.append(network)
+        self.client.ledger.append(("network-create", {"name": name, **kwargs}))
+        return network
+
+
+class RecordingDockerImages:
+    def __init__(self, client: "RecordingDockerClient") -> None:
+        self.client = client
+        self.values: list[RecordingDockerImage] = [
+            RecordingDockerImage(CPK_SERVER_BASE_IMAGE),
+            RecordingDockerImage("sha256:" + "8" * 64, ("foreign-image:stable",)),
+        ]
+
+    def list(self, *, filters: Any = None) -> list[RecordingDockerImage]:
+        values = [value for value in self.values if not value.removed]
+        return self.client.filtered(values, filters)
+
+    def build(self, **kwargs: Any) -> tuple[RecordingDockerImage, tuple[Any, ...]]:
+        image = RecordingDockerImage(
+            CANDIDATE_IMAGE_ID,
+            (kwargs["tag"],),
+            labels=dict(kwargs.get("labels") or {}),
+        )
+        self.values.append(image)
+        self.client.ledger.append(("image-build", dict(kwargs)))
+        return image, ()
+
+    def remove(self, image_id: str, *, force: bool = False) -> None:
+        image = self.client.image_for(image_id)
+        if image is not None:
+            image.removed = True
+        self.client.ledger.append(("image-remove", (image_id, force)))
+
+
+class RecordingDockerVolumes:
+    def __init__(self) -> None:
+        self.values: list[Any] = []
+
+    def list(self) -> list[Any]:
+        return list(self.values)
+
+
+class RecordingDockerClient:
+    def __init__(self) -> None:
+        self.ledger: list[tuple[str, Any]] = []
+        self.container_runs: list[dict[str, Any]] = []
+        self.containers = RecordingDockerContainers(self)
+        self.networks = RecordingDockerNetworks(self)
+        self.images = RecordingDockerImages(self)
+        self.volumes = RecordingDockerVolumes()
+
+    def image_for(self, reference: str) -> RecordingDockerImage | None:
+        return next(
+            (
+                image
+                for image in self.images.values
+                if image.id == reference or reference in image.tags
+            ),
+            None,
+        )
+
+    def filtered(self, values: list[Any], filters: Any) -> list[Any]:
+        if not filters or "label" not in filters:
+            return list(values)
+        expected = {}
+        for item in filters["label"]:
+            key, value = item.split("=", 1)
+            expected[key] = value
+        return [
+            value
+            for value in values
+            if all(
+                value.labels.get(key) == expected_value
+                for key, expected_value in expected.items()
+            )
+        ]
+
+    def seed_foreign_canary(self) -> None:
+        self.containers.values.append(
+            RecordingDockerContainer(
+                client=self,
+                image_reference="sha256:" + "8" * 64,
+                name="foreign-container-1714",
+                identifier="sha256:" + "7" * 64,
+                labels={"org.openj92.foreign": "true"},
+            )
+        )
+        self.networks.values.append(
+            RecordingDockerNetwork(
+                client=self,
+                name="foreign-network-1714",
+                labels={"org.openj92.foreign": "true"},
+            )
+        )
+        self.images.values.append(
+            RecordingDockerImage(
+                "sha256:" + "3" * 64,
+                ("foreign-build-1714:latest",),
+                labels={"org.openj92.foreign": "true"},
+            )
+        )
+
+    def seed_hello_runtime(self) -> tuple[Any, Any]:
+        network = RecordingDockerNetwork(
+            client=self,
+            name="cpk-runtime-candidate-topology-1714",
+            labels={
+                "org.openj92.cpk.workspace": WORKSPACE_ID,
+                "org.openj92.cpk.kind": "runtime-network",
+            },
+        )
+        container = RecordingDockerContainer(
+            client=self,
+            image_reference=HELLO_IMAGE,
+            name="cpk-runtime-candidate-topology-1714-hello",
+            identifier="sha256:" + "6" * 64,
+            labels={
+                "org.openj92.cpk.workspace": WORKSPACE_ID,
+                "org.openj92.cpk.node": "hello",
+            },
+            network=network.name,
+        )
+        self.networks.values.append(network)
+        self.containers.values.append(container)
+        return container, network
