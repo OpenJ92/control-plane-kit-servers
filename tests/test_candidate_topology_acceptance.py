@@ -932,7 +932,7 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                     (
                         (
                             canonical_sha256(expected_assembly),
-                            baseline_tag,
+                            expected_inspection["images"]["cpk_server_base"],
                             candidate_tag,
                         ),
                     ),
@@ -962,70 +962,134 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                 ):
                     self.assertFalse((staging_root / owned_artifact).exists())
 
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            staging_root = root / "evidence-owned"
-            staging_root.mkdir()
-            assembly_path = staging_root / "candidate-assembly.json"
-            inspection_path = staging_root / "candidate-inspection.json"
-            collision_path = staging_root / CORE_WHEEL_PATH
-            collision_path.parent.mkdir(parents=True)
-            collision_bytes = b"pre-existing-candidate-wheel"
-            collision_path.write_bytes(collision_bytes)
-            collision_ledger: list[tuple[str, object]] = []
-            collision_error = None
-            collision_kwargs = {
-                "effects_factory": RecordingCandidateEffectsFactory(
-                    ledger=collision_ledger
+        collision_paths = (
+            CORE_WHEEL_PATH,
+            CORE_WHEEL_PATH + ".part",
+            OPERATIONS_WHEEL_PATH + ".part",
+            RFC8785_WHEEL_PATH + ".part",
+        )
+        for relative_collision_path in collision_paths:
+            with self.subTest(
+                staging="collision-before-mutation",
+                path=relative_collision_path,
+            ):
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    staging_root = root / "evidence-owned"
+                    staging_root.mkdir()
+                    assembly_path = staging_root / "candidate-assembly.json"
+                    inspection_path = staging_root / "candidate-inspection.json"
+                    collision_path = staging_root / relative_collision_path
+                    collision_path.parent.mkdir(parents=True)
+                    collision_bytes = b"pre-existing-candidate-wheel"
+                    collision_path.write_bytes(collision_bytes)
+                    collision_ledger: list[tuple[str, object]] = []
+                    collision_error = None
+                    collision_kwargs = {
+                        "effects_factory": RecordingCandidateEffectsFactory(
+                            ledger=collision_ledger
+                        ),
+                        "artifact_fetcher": RecordingArtifactFetcher(
+                            ledger=collision_ledger,
+                            write_artifact=True,
+                        ),
+                    }
+                    if "wheel_materializer" in parameters:
+                        collision_kwargs["wheel_materializer"] = (
+                            RecordingCandidateWheelMaterializer(
+                                ledger=collision_ledger
+                            )
+                        )
+                    if "source_coordinate_provider" in parameters:
+                        collision_kwargs["source_coordinate_provider"] = (
+                            RecordingServerSourceCoordinate(
+                                ledger=collision_ledger
+                            )
+                        )
+                    try:
+                        candidate.main(
+                            [
+                                "--assembly",
+                                str(assembly_path),
+                                "--inspection",
+                                str(inspection_path),
+                                "--report",
+                                str(staging_root / "report.json"),
+                                "--staging-root",
+                                str(staging_root),
+                                "--project-label",
+                                "org.openj92.project=control-plane-kit-servers",
+                                "--scenario-label",
+                                "org.openj92.cpk.scenario=candidate-topology-1714",
+                                "--package-image-only",
+                                "--candidate-base-image",
+                                baseline_tag,
+                                "--candidate-image-tag",
+                                candidate_tag,
+                            ],
+                            **collision_kwargs,
+                        )
+                    except BaseException as error:
+                        collision_error = error
+                    self.assertIs(
+                        type(collision_error), candidate.CandidateAssemblyError
+                    )
+                    if collision_error is not None:
+                        self.assertEqual(str(collision_error), ASSEMBLY_ERROR)
+                        self.assertIsNone(collision_error.__cause__)
+                        self.assertIsNone(collision_error.__context__)
+                    self.assertEqual(collision_ledger, [])
+                    self.assertEqual(collision_path.read_bytes(), collision_bytes)
+                    self.assertFalse(assembly_path.exists())
+                    self.assertFalse(inspection_path.exists())
+
+        explicit_tag = "localhost/control-plane-kit-servers/cpk-server:cli-candidate"
+        explicit_client = RecordingDockerClient()
+        explicit_client.seed_foreign_canary()
+        preexisting_candidate = RecordingDockerImage(
+            "sha256:" + "5" * 64,
+            (explicit_tag,),
+            {"truth": "pre-existing-candidate-bytes"},
+        )
+        explicit_client.images.values.append(preexisting_candidate)
+        preserved_images = tuple(
+            (image.id, image.tags, deepcopy(image.attrs), image.removed)
+            for image in explicit_client.images.values
+        )
+        explicit_observed = {}
+        explicit_error = None
+        try:
+            explicit_effects = self._docker_effects(
+                candidate,
+                explicit_client,
+                candidate_image_tag=explicit_tag,
+            )
+            explicit_observed = explicit_effects.preflight_inventory(
+                exact_assembly()
+            )
+        except BaseException as error:
+            explicit_error = error
+        with self.subTest(staging="cli-candidate-tag-enters-preflight"):
+            self.assertIsNone(explicit_error)
+            self.assertIn(
+                ("image", explicit_tag),
+                explicit_observed.get("collisions", ()),
+            )
+        with self.subTest(staging="cli-candidate-tag-collision-zero-mutation"):
+            self.assertFalse(
+                any(
+                    name in {"image-build", "network-create", "container-run"}
+                    for name, _ in explicit_client.ledger
+                )
+            )
+        with self.subTest(staging="cli-candidate-tag-preserves-image-truth"):
+            self.assertEqual(
+                tuple(
+                    (image.id, image.tags, deepcopy(image.attrs), image.removed)
+                    for image in explicit_client.images.values
                 ),
-                "artifact_fetcher": RecordingArtifactFetcher(
-                    ledger=collision_ledger,
-                    write_artifact=True,
-                ),
-            }
-            if "wheel_materializer" in parameters:
-                collision_kwargs["wheel_materializer"] = (
-                    RecordingCandidateWheelMaterializer(ledger=collision_ledger)
-                )
-            if "source_coordinate_provider" in parameters:
-                collision_kwargs["source_coordinate_provider"] = (
-                    RecordingServerSourceCoordinate(ledger=collision_ledger)
-                )
-            try:
-                candidate.main(
-                    [
-                        "--assembly",
-                        str(assembly_path),
-                        "--inspection",
-                        str(inspection_path),
-                        "--report",
-                        str(staging_root / "report.json"),
-                        "--staging-root",
-                        str(staging_root),
-                        "--project-label",
-                        "org.openj92.project=control-plane-kit-servers",
-                        "--scenario-label",
-                        "org.openj92.cpk.scenario=candidate-topology-1714",
-                        "--package-image-only",
-                        "--candidate-base-image",
-                        baseline_tag,
-                        "--candidate-image-tag",
-                        candidate_tag,
-                    ],
-                    **collision_kwargs,
-                )
-            except BaseException as error:
-                collision_error = error
-            with self.subTest(staging="collision-before-mutation"):
-                self.assertIs(type(collision_error), candidate.CandidateAssemblyError)
-                if collision_error is not None:
-                    self.assertEqual(str(collision_error), ASSEMBLY_ERROR)
-                    self.assertIsNone(collision_error.__cause__)
-                    self.assertIsNone(collision_error.__context__)
-                self.assertEqual(collision_ledger, [])
-                self.assertEqual(collision_path.read_bytes(), collision_bytes)
-                self.assertFalse(assembly_path.exists())
-                self.assertFalse(inspection_path.exists())
+                preserved_images,
+            )
 
         for name, artifact_bytes in (
             ("short-artifact", RFC8785_WHEEL_BYTES[:-1]),
@@ -2598,14 +2662,23 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
             )
         return report, workflow, effects, ledger
 
-    def _docker_effects(self, candidate, client):
+    def _docker_effects(
+        self,
+        candidate,
+        client,
+        *,
+        candidate_image_tag=None,
+    ):
         docker_module = SimpleNamespace(from_env=lambda: client)
+        kwargs = {
+            "root": ROOT,
+            "labels": dict(CANDIDATE_LABELS),
+            "evidence_id": CANDIDATE_LABELS["org.openj92.cpk.evidence"],
+        }
+        if candidate_image_tag is not None:
+            kwargs["candidate_image_tag"] = candidate_image_tag
         with patch.dict(sys.modules, {"docker": docker_module}):
-            return candidate.DockerCandidateEffects(
-                root=ROOT,
-                labels=dict(CANDIDATE_LABELS),
-                evidence_id=CANDIDATE_LABELS["org.openj92.cpk.evidence"],
-            )
+            return candidate.DockerCandidateEffects(**kwargs)
 
     @contextmanager
     def _lawful_docker_socket(self, candidate):

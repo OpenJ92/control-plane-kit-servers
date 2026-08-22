@@ -320,6 +320,31 @@ class DockerHarnessTests(unittest.TestCase):
             self.assertNotIn('docker image rm "$BASELINE_IMAGE"', test_sh)
             self.assertNotIn("docker system prune", test_sh)
             self.assertNotIn("docker volume prune", test_sh)
+        with self.subTest(boundary="candidate-cleanup-requires-ownership"):
+            self.assertEqual(test_sh.count("CANDIDATE_IMAGE_OWNED=0"), 1)
+            self.assertEqual(test_sh.count("CANDIDATE_IMAGE_OWNED=1"), 1)
+            cleanup_start = test_sh.find("cleanup() {")
+            cleanup_end = test_sh.find("\n}", cleanup_start)
+            cleanup_source = (
+                test_sh[cleanup_start:cleanup_end]
+                if min(cleanup_start, cleanup_end) >= 0
+                else ""
+            )
+            self.assertIn(
+                'if [ "$CANDIDATE_IMAGE_OWNED" = "1" ]',
+                cleanup_source,
+            )
+            self.assertIn('docker image rm "$CANDIDATE_IMAGE"', cleanup_source)
+        with self.subTest(boundary="ownership-follows-package-build"):
+            build_position = normalized.find(candidate_build)
+            ownership_position = normalized.find("CANDIDATE_IMAGE_OWNED=1")
+            smoke_position = normalized.find(candidate_smoke)
+            self.assertGreaterEqual(build_position, 0)
+            self.assertGreaterEqual(ownership_position, 0)
+            self.assertGreaterEqual(smoke_position, 0)
+            if min(build_position, ownership_position, smoke_position) >= 0:
+                self.assertLess(build_position, ownership_position)
+                self.assertLess(ownership_position, smoke_position)
 
     def test_test_image_runs_unittest_and_product_image_lane(self) -> None:
         dockerfile = (ROOT / "Dockerfile.test").read_text(encoding="utf-8")

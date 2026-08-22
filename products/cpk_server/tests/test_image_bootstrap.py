@@ -26,6 +26,8 @@ COORDINATES = json.loads(
     (ROOT / "coordinates" / "server-products.json").read_text(encoding="utf-8")
 )
 CPK_PIN = COORDINATES["upstreams"]["control_plane_kit_commit"]
+CANDIDATE_CPK_COMMIT = "4fb75b7b6c1a16ec3b8c1d78dec6ad1a4ad1b40a"
+CANDIDATE_CPK_TREE = "6a405e4ab7e707ff7374205ca2ef4726d6225b86"
 INTERPRETERS_PIN = COORDINATES["upstreams"][
     "control_plane_kit_interpreters_commit"
 ]
@@ -410,7 +412,8 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             if materializers:
                 materializer_source = ast.unparse(materializers[0])
                 for required in (
-                    CPK_PIN,
+                    CANDIDATE_CPK_COMMIT,
+                    CANDIDATE_CPK_TREE,
                     "control-plane-kit-core",
                     "control-plane-kit-operations",
                     "dist/control_plane_kit_core.whl",
@@ -487,8 +490,16 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             for keyword in call.keywords
             if keyword.arg == "base_image"
         ]
-        self.assertEqual(len(admitted_base_values), 1)
-        self.assertEqual(_dotted_name(admitted_base_values[0]), "base_image")
+        with self.subTest(candidate_package_image_seam="base-forwarding-count"):
+            self.assertEqual(len(admitted_base_values), 1)
+        admitted_base_value = (
+            admitted_base_values[0] if len(admitted_base_values) == 1 else None
+        )
+        with self.subTest(candidate_package_image_seam="base-forwarding-value"):
+            self.assertEqual(
+                _dotted_name(admitted_base_value),
+                "candidate_base_image",
+            )
         buildarg_values = [
             keyword.value
             for node in ast.walk(tree)
@@ -540,6 +551,21 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
                     ("base_image", "candidate_image_tag"),
                 )
         if docker_build_methods:
+            normalized_tag_assignments = [
+                node
+                for node in ast.walk(docker_build_methods[0])
+                if isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and _dotted_name(node.targets[0]) == "candidate_image_tag"
+            ]
+            with self.subTest(candidate_package_image_seam="normalized-tag"):
+                self.assertEqual(len(normalized_tag_assignments), 1)
+                if normalized_tag_assignments:
+                    normalized_tag_source = ast.unparse(
+                        normalized_tag_assignments[0].value
+                    )
+                    self.assertIn("candidate_image_tag", normalized_tag_source)
+                    self.assertIn("self._name('candidate')", normalized_tag_source)
             image_build_calls = [
                 node
                 for node in ast.walk(docker_build_methods[0])
@@ -562,6 +588,22 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
                 if tag_values:
                     self.assertEqual(
                         _dotted_name(tag_values[0]),
+                        "candidate_image_tag",
+                    )
+            returned_image_tags = [
+                value
+                for node in ast.walk(docker_build_methods[0])
+                if isinstance(node, ast.Return)
+                and isinstance(node.value, ast.Dict)
+                for key, value in zip(node.value.keys, node.value.values)
+                if isinstance(key, ast.Constant)
+                and key.value == "image_tag"
+            ]
+            with self.subTest(candidate_package_image_seam="exact-return-tag"):
+                self.assertEqual(len(returned_image_tags), 1)
+                if returned_image_tags:
+                    self.assertEqual(
+                        _dotted_name(returned_image_tags[0]),
                         "candidate_image_tag",
                     )
         package_build_functions = [
@@ -614,6 +656,27 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
                         "candidate_image_tag": "candidate_image_tag",
                     },
                 )
+        main_functions = [
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "main"
+        ]
+        package_effect_tag_values = [
+            _dotted_name(keyword.value)
+            for node in (
+                ast.walk(main_functions[0]) if main_functions else ()
+            )
+            if isinstance(node, ast.Call)
+            and _dotted_name(node.func)
+            in {"DockerCandidateEffects", "effects_factory"}
+            for keyword in node.keywords
+            if keyword.arg == "candidate_image_tag"
+        ]
+        with self.subTest(candidate_package_image_seam="cli-tag-to-preflight"):
+            self.assertEqual(
+                package_effect_tag_values,
+                ["args.candidate_image_tag"] * 4,
+            )
         prepare_functions = [
             node
             for node in tree.body
