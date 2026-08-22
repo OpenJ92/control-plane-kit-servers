@@ -111,21 +111,38 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         offline_wheels = (
             (
                 "dist/control_plane_kit_core.whl",
+                "/tmp/control_plane_kit_core-0.1.0-py3-none-any.whl",
                 "/tmp/control_plane_kit_core.whl",
             ),
             (
                 "dist/control_plane_kit_operations.whl",
+                "/tmp/control_plane_kit_operations-0.1.0-py3-none-any.whl",
                 "/tmp/control_plane_kit_operations.whl",
             ),
             (
                 "dist/rfc8785-0.1.4-py3-none-any.whl",
                 "/tmp/rfc8785-0.1.4-py3-none-any.whl",
+                None,
             ),
         )
-        with self.subTest(candidate_overlay_offline_closure=True):
-            for source, installed in offline_wheels:
+        for source, installed, rejected in offline_wheels:
+            with self.subTest(
+                candidate_overlay_offline_closure="canonical-copy",
+                source=source,
+            ):
                 self.assertEqual(overlay.count(f"COPY {source} {installed}"), 1)
+            with self.subTest(
+                candidate_overlay_offline_closure="install-and-remove",
+                installed=installed,
+            ):
                 self.assertEqual(overlay.count(installed), 3)
+            if rejected is not None:
+                with self.subTest(
+                    candidate_overlay_offline_closure="generic-tmp-rejected",
+                    rejected=rejected,
+                ):
+                    self.assertNotIn(rejected, overlay)
+        with self.subTest(candidate_overlay_offline_closure="one-transaction"):
             self.assertEqual(overlay.count("--no-index"), 1)
             self.assertEqual(overlay.count("--no-deps"), 1)
 

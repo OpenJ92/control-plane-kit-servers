@@ -24,6 +24,10 @@ from candidate_topology_fixture import (
     CANDIDATE_SERVER_ENVIRONMENT,
     CANDIDATE_TREE,
     CANDIDATE_WHEEL_SOURCES,
+    CONCURRENT_CONTAINER_ID,
+    CONCURRENT_CONTAINER_NAME,
+    CONCURRENT_IMAGE_ID,
+    CONCURRENT_IMAGE_TAG,
     CPK_SERVER_BASE_IMAGE,
     CORE_WHEEL_BYTES,
     CORE_WHEEL_PATH,
@@ -32,6 +36,9 @@ from candidate_topology_fixture import (
     DOCKER_SOCKET_GID,
     FOREIGN_INVENTORY,
     FOREIGN_RESOURCE_CANARY,
+    FAILED_BUILD_CONTAINER_ID,
+    FAILED_BUILD_CONTAINER_NAME,
+    FAILED_BUILD_IMAGE_ID,
     HELLO_DESCRIPTOR_SHA256,
     HELLO_IMAGE,
     HELLO_LOCAL_IMAGE_ID,
@@ -1175,6 +1182,247 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                         ),
                         ("materialize-candidate-wheels",),
                     )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            staging_root = root / "evidence-owned"
+            staging_root.mkdir()
+            assembly_path = staging_root / "candidate-assembly.json"
+            inspection_path = staging_root / "candidate-inspection.json"
+            report_path = staging_root / "candidate-topology-report.json"
+            foreign_path = root / "foreign.keep"
+            foreign_bytes = b"foreign-build-truth"
+            foreign_path.write_bytes(foreign_bytes)
+            failure_ledger: list[tuple[str, object]] = []
+            build_error = RuntimeError("protected-build-failure")
+            failure_factory = RecordingCandidateEffectsFactory(
+                ledger=failure_ledger,
+                fail_at="build",
+                build_error=build_error,
+            )
+            failure_kwargs = {
+                "effects_factory": failure_factory,
+                "artifact_fetcher": RecordingArtifactFetcher(
+                    ledger=failure_ledger,
+                    write_artifact=True,
+                ),
+            }
+            if "wheel_materializer" in parameters:
+                failure_kwargs["wheel_materializer"] = (
+                    RecordingCandidateWheelMaterializer(ledger=failure_ledger)
+                )
+            if "source_coordinate_provider" in parameters:
+                failure_kwargs["source_coordinate_provider"] = (
+                    RecordingServerSourceCoordinate(ledger=failure_ledger)
+                )
+            failure = None
+            try:
+                candidate.main(
+                    [
+                        "--assembly",
+                        str(assembly_path),
+                        "--inspection",
+                        str(inspection_path),
+                        "--report",
+                        str(report_path),
+                        "--staging-root",
+                        str(staging_root),
+                        "--project-label",
+                        "org.openj92.project=control-plane-kit-servers",
+                        "--scenario-label",
+                        "org.openj92.cpk.scenario=candidate-topology-1714",
+                        "--evidence-id",
+                        "package-staging-build-failure",
+                        "--package-image-only",
+                        "--candidate-base-image",
+                        baseline_tag,
+                        "--candidate-image-tag",
+                        candidate_tag,
+                    ],
+                    **failure_kwargs,
+                )
+            except BaseException as error:
+                failure = error
+            failed_effects = (
+                failure_factory.instances[0]
+                if failure_factory.instances
+                else None
+            )
+            cleanup = (
+                failed_effects.cleanup_observation
+                if failed_effects is not None
+                and type(failed_effects.cleanup_observation) is dict
+                else {}
+            )
+            report = (
+                json.loads(report_path.read_text(encoding="utf-8"))
+                if report_path.is_file()
+                else {}
+            )
+
+            with self.subTest(build_failure="original-error-owner"):
+                self.assertIs(failure, build_error)
+                self.assertIsNone(build_error.__cause__)
+                self.assertIsNone(build_error.__context__)
+            with self.subTest(build_failure="exact-daemon-residue-observed"):
+                residue_rows = tuple(
+                    value
+                    for name, value in failure_ledger
+                    if name == "build-failure-residue"
+                )
+                self.assertEqual(
+                    residue_rows,
+                    (
+                        {
+                            "containers": (
+                                {
+                                    "id": FAILED_BUILD_CONTAINER_ID,
+                                    "name": FAILED_BUILD_CONTAINER_NAME,
+                                    "image_id": FAILED_BUILD_IMAGE_ID,
+                                    "status": "exited",
+                                    "labels": {},
+                                },
+                            ),
+                            "images": (
+                                {
+                                    "id": FAILED_BUILD_IMAGE_ID,
+                                    "tags": (),
+                                    "labels": {},
+                                },
+                            ),
+                            "candidate_image_tag": candidate_tag,
+                            "candidate_image_tag_present": False,
+                        },
+                    ),
+                )
+            with self.subTest(build_failure="exact-id-cleanup"):
+                self.assertEqual(
+                    tuple(
+                        row
+                        for row in failure_ledger
+                        if row[0]
+                        in {
+                            "cleanup",
+                            "build-container-remove",
+                            "build-image-remove",
+                        }
+                    ),
+                    (
+                        (
+                            "build-container-remove",
+                            {"id": FAILED_BUILD_CONTAINER_ID, "force": True},
+                        ),
+                        (
+                            "build-image-remove",
+                            {"id": FAILED_BUILD_IMAGE_ID, "force": True},
+                        ),
+                        ("cleanup", "error"),
+                    ),
+                )
+            with self.subTest(build_failure="no-broad-prune-cleanup"):
+                self.assertFalse(
+                    any("prune" in name for name, _ in failure_ledger)
+                )
+            with self.subTest(build_failure="candidate-tag-remains-absent"):
+                self.assertIs(
+                    cleanup.get("candidate_image_tag_present", True),
+                    False,
+                )
+            with self.subTest(build_failure="owned-container-ledger-empty"):
+                self.assertEqual(cleanup.get("build_owned_containers"), ())
+            with self.subTest(build_failure="owned-image-ledger-empty"):
+                self.assertEqual(cleanup.get("build_owned_images"), ())
+            with self.subTest(build_failure="foreign-file-preserved"):
+                self.assertEqual(foreign_path.read_bytes(), foreign_bytes)
+            with self.subTest(build_failure="foreign-pre-inventory-preserved"):
+                self.assertEqual(cleanup.get("pre_inventory"), FOREIGN_INVENTORY)
+            with self.subTest(build_failure="foreign-post-inventory-preserved"):
+                self.assertEqual(cleanup.get("post_inventory"), FOREIGN_INVENTORY)
+            concurrent_truth = {
+                "containers": (
+                    {
+                        "id": CONCURRENT_CONTAINER_ID,
+                        "name": CONCURRENT_CONTAINER_NAME,
+                        "labels": {"org.openj92.foreign": "concurrent"},
+                    },
+                ),
+                "images": (
+                    {
+                        "id": CONCURRENT_IMAGE_ID,
+                        "tags": (CONCURRENT_IMAGE_TAG,),
+                        "labels": {"org.openj92.foreign": "concurrent"},
+                    },
+                ),
+            }
+            with self.subTest(build_failure="concurrent-before-preserved"):
+                self.assertEqual(
+                    cleanup.get("concurrent_foreign_before"),
+                    concurrent_truth,
+                )
+            with self.subTest(build_failure="concurrent-after-preserved"):
+                self.assertEqual(
+                    cleanup.get("concurrent_foreign_after"),
+                    concurrent_truth,
+                )
+            artifact_states = (
+                ("core-wheel", staging_root / CORE_WHEEL_PATH, False),
+                ("core-wheel-part", staging_root / (CORE_WHEEL_PATH + ".part"), False),
+                ("operations-wheel", staging_root / OPERATIONS_WHEEL_PATH, False),
+                (
+                    "operations-wheel-part",
+                    staging_root / (OPERATIONS_WHEEL_PATH + ".part"),
+                    False,
+                ),
+                ("rfc8785-wheel", staging_root / RFC8785_WHEEL_PATH, False),
+                (
+                    "rfc8785-wheel-part",
+                    staging_root / (RFC8785_WHEEL_PATH + ".part"),
+                    False,
+                ),
+                (
+                    "overlay",
+                    staging_root / "acceptance/candidate_topology/Dockerfile",
+                    False,
+                ),
+                ("assembly", assembly_path, False),
+                ("inspection", inspection_path, False),
+                ("report", report_path, True),
+            )
+            for artifact, path, expected_exists in artifact_states:
+                with self.subTest(
+                    build_failure="temporary-and-generated-cleanup",
+                    artifact=artifact,
+                ):
+                    self.assertIs(path.exists(), expected_exists)
+            with self.subTest(build_failure="terminal-report-status"):
+                self.assertEqual(report.get("status"), "failed")
+            with self.subTest(build_failure="terminal-report-stage"):
+                self.assertEqual(report.get("first_failed_stage"), "build")
+            with self.subTest(build_failure="terminal-report-attachment"):
+                self.assertEqual(
+                    getattr(build_error, "candidate_terminal_report", None),
+                    report,
+                )
+            with self.subTest(build_failure="terminal-report-digest"):
+                self.assertTrue(report)
+                if report:
+                    self.assertEqual(
+                        report.get("report_sha256"),
+                        canonical_report_sha256(report),
+                    )
+            with self.subTest(
+                build_failure="terminal-evidence-redaction-after-publication"
+            ):
+                if report:
+                    rendered_report = json.dumps(report, sort_keys=True).lower()
+                    for forbidden in (
+                        "protected-build-failure",
+                        "candidate-password-not-for-output",
+                        "authorization",
+                        "credential",
+                        "token",
+                    ):
+                        self.assertNotIn(forbidden, rendered_report)
 
     def test_main_report_is_derived_from_explicit_build_inspection_and_probe_data(self) -> None:
         result = self._invoke_main(use_predecessor_bridge=True)
