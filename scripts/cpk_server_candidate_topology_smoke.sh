@@ -122,7 +122,8 @@ PY
 
 # The admitted inspection owns CPK_SERVER_BASE_IMAGE. The runner owns
 # sync_runtime_networks=False, the labelled probe, and terminal report truth.
-timeout "$TIMEOUT_SECONDS" python "$ROOT/scripts/cpk_server_candidate_topology.py" \
+cd "$ROOT"
+timeout "$TIMEOUT_SECONDS" python -m scripts.cpk_server_candidate_topology \
     --assembly "$ASSEMBLY" \
     --inspection "$INSPECTION" \
     --report "$REPORT" \

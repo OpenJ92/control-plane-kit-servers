@@ -67,9 +67,10 @@ printf '%s\n' \
   '}' > "$CANDIDATE_STAGING_ROOT/source-coordinate.json"
 docker run --rm \
   -v "$ROOT:/source:ro" \
+  -w /source \
   -v "$CANDIDATE_STAGING_ROOT:/candidate" \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  "$IMAGE" python /source/scripts/cpk_server_candidate_topology.py \
+  "$IMAGE" python -m scripts.cpk_server_candidate_topology \
   --package-image-only --candidate-base-image "$BASELINE_IMAGE" \
   --candidate-image-tag "$CANDIDATE_IMAGE" \
   --staging-root /candidate \
