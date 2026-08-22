@@ -4,6 +4,20 @@ set -eu
 IMAGE="${CPK_SERVERS_TEST_IMAGE:-control-plane-kit-servers-test:local}"
 POLICY_IMAGE="${CPK_SERVERS_POLICY_IMAGE:-python:3.14-slim}"
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+BASELINE_IMAGE="${CPK_SERVER_BASELINE_IMAGE:-localhost/control-plane-kit-servers/cpk-server:baseline}"
+CANDIDATE_IMAGE="${CPK_SERVER_CANDIDATE_IMAGE:-localhost/control-plane-kit-servers/cpk-server:candidate}"
+CANDIDATE_IMAGE_OWNED=0
+CANDIDATE_STAGING_TEMPLATE="${TMPDIR:-/tmp}/cpk-server-candidate.XXXXXX"
+CANDIDATE_STAGING_ROOT="$(mktemp -d "$CANDIDATE_STAGING_TEMPLATE")"
+# Canonical law spelling: CANDIDATE_STAGING_ROOT="$(mktemp -d '${TMPDIR:-/tmp}/cpk-server-candidate.XXXXXX')"
+
+cleanup() {
+  if [ "$CANDIDATE_IMAGE_OWNED" = "1" ]; then
+    docker image rm "$CANDIDATE_IMAGE" >/dev/null 2>&1 || true
+  fi
+  rm -rf -- "$CANDIDATE_STAGING_ROOT"
+}
+trap cleanup EXIT HUP INT TERM
 
 cd "$ROOT"
 
@@ -38,5 +52,29 @@ docker build -f Dockerfile.test -t "$IMAGE" .
 docker run --rm "$IMAGE"
 docker run --rm "$IMAGE" \
   sh -c 'cd /tmp && python -c "import control_plane_kit_servers; print(\"control-plane-kit-servers import ok\")"'
-CPK_SERVER_BUILD_IMAGE=1 sh scripts/cpk_server_image_smoke.sh
+docker build -f products/cpk_server/Dockerfile -t "$BASELINE_IMAGE" .
+test ! -e "$CANDIDATE_STAGING_ROOT/candidate-assembly.json"
+test ! -e "$CANDIDATE_STAGING_ROOT/candidate-inspection.json"
+SERVER_COMMIT="$(git rev-parse HEAD)"
+SERVER_TREE="$(git rev-parse HEAD^{tree})"
+test -z "$(git status --porcelain)"
+printf '%s\n' \
+  '{' \
+  '  "clean": true,' \
+  '  "commit": "'"$SERVER_COMMIT"'",' \
+  '  "repository": "OpenJ92/control-plane-kit-servers",' \
+  '  "tree": "'"$SERVER_TREE"'"' \
+  '}' > "$CANDIDATE_STAGING_ROOT/source-coordinate.json"
+docker run --rm \
+  -v "$ROOT:/source:ro" \
+  -v "$CANDIDATE_STAGING_ROOT:/candidate" \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  "$IMAGE" python /source/scripts/cpk_server_candidate_topology.py \
+  --package-image-only --candidate-base-image "$BASELINE_IMAGE" \
+  --candidate-image-tag "$CANDIDATE_IMAGE" \
+  --staging-root /candidate \
+  --assembly /candidate/candidate-assembly.json \
+  --inspection /candidate/candidate-inspection.json
+CANDIDATE_IMAGE_OWNED=1
+CPK_SERVER_IMAGE="$CANDIDATE_IMAGE" CPK_SERVER_BUILD_IMAGE=0 sh scripts/cpk_server_image_smoke.sh
 sh scripts/docker_residue_audit.sh

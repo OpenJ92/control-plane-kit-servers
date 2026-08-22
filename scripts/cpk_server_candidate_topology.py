@@ -9,9 +9,14 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import stat
+import subprocess
+import sys
+import tempfile
 from time import sleep as _sleep
 from typing import Any, Callable
+from urllib.request import urlretrieve
 
 from control_plane_kit_core.topology import DeploymentGraph
 
@@ -69,6 +74,19 @@ OPERATOR_SCOPES = (
 )
 WORKER_SCOPES = ("execution:operate",)
 DOCKER_SOCKET = "/var/run/docker.sock"
+RFC8785_WHEEL_PATH = "dist/rfc8785-0.1.4-py3-none-any.whl"
+RFC8785_WHEEL_SHA256 = (
+    "520d690b448ecf0703691c76e1a34a24ddcd4fc5bc41d589cb7c58ec651bcd48"
+)
+RFC8785_WHEEL_SIZE = 9240
+RFC8785_WHEEL_URL = (
+    "https://files.pythonhosted.org/packages/4d/78/"
+    "119878110660b2ad709888c8a1614fce7e2fab39080ab960656dc8605bf6/"
+    "rfc8785-0.1.4-py3-none-any.whl"
+)
+CORE_WHEEL_PATH = "dist/control_plane_kit_core.whl"
+OPERATIONS_WHEEL_PATH = "dist/control_plane_kit_operations.whl"
+OVERLAY_PATH = "acceptance/candidate_topology/Dockerfile"
 
 EXPECTED_ASSEMBLY = {
     "schema": ASSEMBLY_SCHEMA,
@@ -134,6 +152,7 @@ EXPECTED_INSPECTION = {
         "acceptance/candidate_topology/Dockerfile": "c" * 64,
         "dist/control_plane_kit_core.whl": "d" * 64,
         "dist/control_plane_kit_operations.whl": "e" * 64,
+        RFC8785_WHEEL_PATH: RFC8785_WHEEL_SHA256,
     },
     "images": {"cpk_server_base": "sha256:" + "9" * 64},
 }
@@ -322,6 +341,7 @@ def admit_candidate_assembly(
             "acceptance/candidate_topology/Dockerfile",
             "dist/control_plane_kit_core.whl",
             "dist/control_plane_kit_operations.whl",
+            RFC8785_WHEEL_PATH,
         },
     ) or not all(_hex_digest(value, 64) for value in files.values()):
         raise _fixed_assembly_error()
@@ -419,24 +439,217 @@ def _legacy_preflight(assembly: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _prepare_candidate(
-    admitted: dict[str, Any],
+def _default_artifact_fetcher(root: Path) -> Callable[..., dict[str, Any]]:
+    def fetch(*, url: str, destination: str) -> dict[str, Any]:
+        target = root / destination
+        target.parent.mkdir(parents=True, exist_ok=True)
+        urlretrieve(url, target)
+        payload = target.read_bytes()
+        return {
+            "url": url,
+            "path": destination,
+            "size": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+
+    return fetch
+
+
+def materialize_candidate_wheels(
+    *,
+    candidate_commit: str,
+    candidate_tree: str,
+    staging_root: str,
+) -> dict[str, dict[str, Any]]:
+    candidate_pin = "4fb75b7b6c1a16ec3b8c1d78dec6ad1a4ad1b40a"
+    candidate_tree_pin = "6a405e4ab7e707ff7374205ca2ef4726d6225b86"
+    if (
+        candidate_commit != candidate_pin
+        or candidate_tree != candidate_tree_pin
+    ):
+        raise _fixed_assembly_error()
+    root = Path(staging_root)
+    sources = {
+        "dist/control_plane_kit_core.whl": "control-plane-kit-core",
+        "dist/control_plane_kit_operations.whl": "control-plane-kit-operations",
+    }
+    observations: dict[str, dict[str, Any]] = {}
+    with tempfile.TemporaryDirectory() as wheelhouse:
+        wheelhouse_root = Path(wheelhouse)
+        for relative_path, subdirectory in sources.items():
+            archive = (
+                "https://github.com/OpenJ92/control-plane-kit/archive/"
+                f"{candidate_pin}.tar.gz#subdirectory={subdirectory}"
+            )
+            subprocess.run(
+                (
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "wheel",
+                    "--no-deps",
+                    "--wheel-dir",
+                    str(wheelhouse_root),
+                    archive,
+                ),
+                check=True,
+            )
+            wheels = tuple(wheelhouse_root.glob("*.whl"))
+            if len(wheels) != 1:
+                raise _fixed_assembly_error()
+            payload = wheels[0].read_bytes()
+            destination = root / relative_path
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            temporary = destination.with_name(destination.name + ".part")
+            temporary.write_bytes(payload)
+            if temporary.stat().st_size != len(payload):
+                raise _fixed_assembly_error()
+            os.replace(temporary, destination)
+            observations[relative_path] = {
+                "repository": "OpenJ92/control-plane-kit",
+                "commit": candidate_commit,
+                "tree": candidate_tree,
+                "subdirectory": subdirectory,
+                "sha256": hashlib.sha256(destination.read_bytes()).hexdigest(),
+                "size": destination.stat().st_size,
+            }
+            wheels[0].unlink()
+    return observations
+
+
+def _measured_server_source(source_root: str) -> dict[str, Any]:
+    root = Path(source_root)
+    mounted_coordinate = Path("/candidate/source-coordinate.json")
+    coordinate_path = (
+        mounted_coordinate
+        if mounted_coordinate.is_file()
+        else root / "source-coordinate.json"
+    )
+    if coordinate_path.is_file():
+        coordinate = _load_json(coordinate_path)
+    else:
+        commit = subprocess.run(
+            ("git", "-C", str(root), "rev-parse", "HEAD"),
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        tree = subprocess.run(
+            ("git", "-C", str(root), "rev-parse", "HEAD^{tree}"),
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        status = subprocess.run(
+            ("git", "-C", str(root), "status", "--porcelain"),
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        coordinate = {
+            "repository": "OpenJ92/control-plane-kit-servers",
+            "commit": commit,
+            "tree": tree,
+            "clean": status == "",
+        }
+    if (
+        not _exact_keys(coordinate, {"repository", "commit", "tree", "clean"})
+        or coordinate["repository"] != "OpenJ92/control-plane-kit-servers"
+        or not _hex_digest(coordinate["commit"], 40)
+        or not _hex_digest(coordinate["tree"], 40)
+        or coordinate["clean"] is not True
+    ):
+        raise _fixed_assembly_error()
+    return coordinate
+
+
+def _physical_artifact(
+    root: Path,
+    relative_path: str,
+    observation: dict[str, Any],
+) -> dict[str, Any]:
+    path = root / relative_path
+    if not path.is_file():
+        raise _fixed_assembly_error()
+    payload = path.read_bytes()
+    measured = {
+        "size": path.stat().st_size,
+        "sha256": hashlib.sha256(payload).hexdigest(),
+    }
+    if observation.get("size") != measured["size"] or observation.get(
+        "sha256"
+    ) != measured["sha256"]:
+        raise _fixed_assembly_error()
+    return measured
+
+
+def _admit_rfc8785_artifact(
+    artifact_fetcher: Callable[..., dict[str, Any]],
+) -> dict[str, Any]:
+    observation = artifact_fetcher(
+        url=RFC8785_WHEEL_URL,
+        destination=RFC8785_WHEEL_PATH,
+    )
+    if observation != {
+        "url": RFC8785_WHEEL_URL,
+        "path": RFC8785_WHEEL_PATH,
+        "size": RFC8785_WHEEL_SIZE,
+        "sha256": RFC8785_WHEEL_SHA256,
+    }:
+        raise _fixed_assembly_error()
+    return observation
+
+
+def build_candidate_package_image(
+    assembly: dict[str, Any],
     inspection: dict[str, Any],
     effects: Any,
+    artifact_fetcher: Callable[..., dict[str, Any]] | None,
+    candidate_base_image: str,
+    candidate_image_tag: str | None,
 ) -> dict[str, Any]:
+    if artifact_fetcher is not None:
+        _admit_rfc8785_artifact(artifact_fetcher)
     preflight_method = getattr(effects, "preflight_inventory", None)
     preflight = (
-        preflight_method(admitted)
+        preflight_method(assembly)
         if callable(preflight_method)
-        else _legacy_preflight(admitted)
+        else _legacy_preflight(assembly)
     )
     if preflight.get("collisions"):
         error = _fixed_assembly_error()
         setattr(error, "candidate_stage", "admission")
         raise error
+    build = effects.build_candidate_image(
+        assembly,
+        base_image=candidate_base_image,
+        candidate_image_tag=candidate_image_tag,
+    )
+    return {
+        "admitted": assembly,
+        "inspection": inspection,
+        "preflight": preflight,
+        "build": build,
+        "server": None,
+        "server_inspection": None,
+    }
 
+
+def _prepare_candidate(
+    admitted: dict[str, Any],
+    inspection: dict[str, Any],
+    effects: Any,
+) -> dict[str, Any]:
     base_image = inspection["images"]["cpk_server_base"]
-    build = effects.build_candidate_image(admitted, base_image=base_image)
+    prepared = build_candidate_package_image(
+        admitted,
+        inspection,
+        effects,
+        None,
+        base_image,
+        None,
+    )
+    build = prepared["build"]
     start_method = getattr(effects, "start_candidate_server", None)
     inspect_method = getattr(effects, "inspect_candidate_server", None)
     server = None
@@ -444,13 +657,9 @@ def _prepare_candidate(
     if callable(start_method) and callable(inspect_method):
         server = effects.start_candidate_server(build["image_id"])
         server_inspection = effects.inspect_candidate_server(server["container_id"])
-    return {
-        "admitted": admitted,
-        "preflight": preflight,
-        "build": build,
-        "server": server,
-        "server_inspection": server_inspection,
-    }
+    prepared["server"] = server
+    prepared["server_inspection"] = server_inspection
+    return prepared
 
 
 def _observations(
@@ -489,6 +698,7 @@ def _attestation(
         "wheel_sha256": {
             "control-plane-kit-core": inspection["files"]["dist/control_plane_kit_core.whl"],
             "control-plane-kit-operations": inspection["files"]["dist/control_plane_kit_operations.whl"],
+            "rfc8785": inspection["files"][RFC8785_WHEEL_PATH],
         },
         "base_image": build["base_image"],
         "image_id": build["image_id"],
@@ -775,12 +985,14 @@ class DockerCandidateEffects:
         root: Path,
         labels: dict[str, str],
         evidence_id: str,
+        candidate_image_tag: str | None = None,
     ) -> None:
         import docker
 
         self._root = root
         self._labels = labels
         self._evidence_id = evidence_id
+        self._candidate_image_tag = candidate_image_tag
         self._client = docker.from_env()
         self._probe = None
         self._server = None
@@ -829,7 +1041,10 @@ class DockerCandidateEffects:
             for value in values
             if value in owned_names
         ]
-        candidate_tag = self._name("candidate") + ":latest"
+        candidate_tag = (
+            self._candidate_image_tag
+            or self._name("candidate") + ":latest"
+        )
         if any(
             candidate_tag in getattr(image, "tags", ())
             for image in self._client.images.list()
@@ -848,17 +1063,30 @@ class DockerCandidateEffects:
         assembly: dict[str, Any],
         *,
         base_image: str,
+        candidate_image_tag: str | None = None,
     ) -> dict[str, Any]:
+        candidate_image_tag = (
+            candidate_image_tag
+            or self._candidate_image_tag
+            or self._name("candidate") + ":latest"
+        )
         image, _ = self._client.images.build(
             path=str(self._root),
             dockerfile="acceptance/candidate_topology/Dockerfile",
             buildargs={"CPK_SERVER_BASE_IMAGE": base_image},
             labels=self._labels,
-            tag=self._name("candidate") + ":latest",
+            tag=candidate_image_tag,
             rm=True,
         )
         self._image = image
-        return {"base_image": base_image, "image_id": image.id}
+        return {
+            "base_image": base_image,
+            "image_id": image.id,
+            "image_tag": candidate_image_tag,
+        }
+
+    def resolve_image_id(self, reference: str) -> str:
+        return self._client.images.get(reference).id
 
     def start_candidate_server(self, built_image_id: str) -> dict[str, str]:
         docker_socket_gid = _docker_socket_group()
@@ -922,7 +1150,7 @@ class DockerCandidateEffects:
             raise CandidateTopologyError(WORKFLOW_ERROR)
         inspection_program = (
             "import importlib.metadata as m,json;"
-            "names=('control-plane-kit-core','control-plane-kit-operations');"
+            "names=('control-plane-kit-core','control-plane-kit-operations','rfc8785');"
             "records=[str(m.distribution(n)._path/'RECORD') for n in names];"
             "modules=[__import__(n.replace('-','_')).__file__ for n in names];"
             "print(json.dumps({'record_paths':records,'module_paths':modules}))"
@@ -1092,27 +1320,276 @@ def main(
     *,
     workflow_factory: Callable[..., Any] | None = None,
     effects_factory: Callable[..., Any] | None = None,
+    artifact_fetcher: Callable[..., dict[str, Any]] | None = None,
+    wheel_materializer: Callable[..., dict[str, dict[str, Any]]] | None = None,
+    source_coordinate_provider: Callable[..., dict[str, Any]] | None = None,
 ) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--assembly", type=Path, default=Path("candidate-assembly.json"))
     parser.add_argument("--report", type=Path, default=Path("candidate-topology-report.json"))
     parser.add_argument("--inspection", type=Path, default=Path("candidate-inspection.json"))
-    parser.add_argument("--project-label", required=True)
-    parser.add_argument("--scenario-label", required=True)
+    parser.add_argument(
+        "--project-label",
+        default="org.openj92.project=control-plane-kit-servers",
+    )
+    parser.add_argument(
+        "--scenario-label",
+        default="org.openj92.cpk.scenario=candidate-topology-1714",
+    )
     parser.add_argument(
         "--evidence-id",
         default=os.environ.get("CPK_CANDIDATE_EVIDENCE_ID", "candidate-topology"),
     )
+    parser.add_argument("--package-image-only", action="store_true")
+    parser.add_argument("--candidate-base-image")
+    parser.add_argument("--candidate-image-tag")
+    parser.add_argument("--staging-root", type=Path)
     args = parser.parse_args(argv)
 
-    assembly = _load_json(args.assembly)
-    inspection = _load_json(args.inspection)
+    package_arguments = (args.candidate_base_image, args.candidate_image_tag)
+    if args.package_image_only:
+        if not all(package_arguments):
+            parser.error("package image mode requires exact base image and candidate tag")
+    elif any(package_arguments) or args.staging_root is not None:
+        parser.error("package image arguments require package image mode")
+
     labels = {
         args.project_label.split("=", 1)[0]: args.project_label.split("=", 1)[1],
         args.scenario_label.split("=", 1)[0]: args.scenario_label.split("=", 1)[1],
         "org.openj92.cpk.evidence": args.evidence_id,
     }
     root = Path(__file__).resolve().parents[1]
+    if args.package_image_only:
+        if args.staging_root is not None:
+            staging_root = args.staging_root
+            resolved_staging_root = staging_root.resolve()
+            owned_paths = (
+                args.assembly,
+                args.inspection,
+                args.report,
+                staging_root / OVERLAY_PATH,
+                staging_root / CORE_WHEEL_PATH,
+                Path(str(staging_root / CORE_WHEEL_PATH) + ".part"),
+                staging_root / OPERATIONS_WHEEL_PATH,
+                Path(str(staging_root / OPERATIONS_WHEEL_PATH) + ".part"),
+                staging_root / RFC8785_WHEEL_PATH,
+                Path(str(staging_root / RFC8785_WHEEL_PATH) + ".part"),
+            )
+            if (
+                not staging_root.is_dir()
+                or any(
+                    not path.resolve().is_relative_to(resolved_staging_root)
+                    for path in (args.assembly, args.inspection, args.report)
+                )
+                or any(path.exists() for path in owned_paths)
+            ):
+                raise _fixed_assembly_error()
+            created: list[Path] = []
+            try:
+                created.extend(
+                    (
+                        staging_root / CORE_WHEEL_PATH,
+                        Path(str(staging_root / CORE_WHEEL_PATH) + ".part"),
+                        staging_root / OPERATIONS_WHEEL_PATH,
+                        Path(
+                            str(staging_root / OPERATIONS_WHEEL_PATH) + ".part"
+                        ),
+                    )
+                )
+                materialize = wheel_materializer or materialize_candidate_wheels
+                wheels = materialize(
+                    candidate_commit=CPK_COMMIT,
+                    candidate_tree=CPK_TREE,
+                    staging_root=str(staging_root),
+                )
+                expected_wheel_sources = {
+                    CORE_WHEEL_PATH: "control-plane-kit-core",
+                    OPERATIONS_WHEEL_PATH: "control-plane-kit-operations",
+                }
+                if set(wheels) != set(expected_wheel_sources):
+                    raise _fixed_assembly_error()
+                wheel_measurements: dict[str, dict[str, Any]] = {}
+                for relative_path, subdirectory in expected_wheel_sources.items():
+                    observation = wheels[relative_path]
+                    if (
+                        observation.get("repository")
+                        != "OpenJ92/control-plane-kit"
+                        or observation.get("commit") != CPK_COMMIT
+                        or observation.get("tree") != CPK_TREE
+                        or observation.get("subdirectory") != subdirectory
+                    ):
+                        raise _fixed_assembly_error()
+                    wheel_measurements[relative_path] = _physical_artifact(
+                        staging_root,
+                        relative_path,
+                        observation,
+                    )
+
+                fetch = artifact_fetcher or _default_artifact_fetcher(staging_root)
+                rfc_path = staging_root / RFC8785_WHEEL_PATH
+                rfc_temporary = Path(str(rfc_path) + ".part")
+                created.append(rfc_temporary)
+                observation = fetch(
+                    url=RFC8785_WHEEL_URL,
+                    destination=str(rfc_temporary),
+                )
+                if observation != {
+                    "url": RFC8785_WHEEL_URL,
+                    "path": str(rfc_temporary),
+                    "size": RFC8785_WHEEL_SIZE,
+                    "sha256": RFC8785_WHEEL_SHA256,
+                }:
+                    raise _fixed_assembly_error()
+                _physical_artifact(
+                    staging_root,
+                    RFC8785_WHEEL_PATH + ".part",
+                    observation,
+                )
+                rfc_path.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(rfc_temporary, rfc_path)
+                created.append(rfc_path)
+
+                overlay = staging_root / OVERLAY_PATH
+                overlay.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(root / OVERLAY_PATH, overlay)
+                created.append(overlay)
+                coordinate_provider = (
+                    source_coordinate_provider or _measured_server_source
+                )
+                server_source = coordinate_provider(source_root=str(root))
+                if (
+                    not _exact_keys(
+                        server_source,
+                        {"repository", "commit", "tree", "clean"},
+                    )
+                    or server_source.get("repository")
+                    != "OpenJ92/control-plane-kit-servers"
+                    or not _hex_digest(server_source.get("commit"), 40)
+                    or not _hex_digest(server_source.get("tree"), 40)
+                    or server_source.get("clean") is not True
+                ):
+                    raise _fixed_assembly_error()
+                source_identity = {
+                    "repository": server_source["repository"],
+                    "commit": server_source["commit"],
+                    "tree": server_source["tree"],
+                }
+                assembly = deepcopy(EXPECTED_ASSEMBLY)
+                assembly["server_source"] = source_identity
+                assembly["runner"] = deepcopy(source_identity)
+
+                if effects_factory is None:
+                    effects = DockerCandidateEffects(
+                        root=staging_root,
+                        labels=labels,
+                        evidence_id=args.evidence_id,
+                        candidate_image_tag=args.candidate_image_tag,
+                    )
+                else:
+                    effects = effects_factory(
+                        root=staging_root,
+                        labels=labels,
+                        evidence_id=args.evidence_id,
+                        candidate_image_tag=args.candidate_image_tag,
+                    )
+                resolver = getattr(effects, "resolve_image_id", None)
+                base_image = (
+                    resolver(args.candidate_base_image)
+                    if callable(resolver)
+                    else EXPECTED_INSPECTION["images"]["cpk_server_base"]
+                )
+                inspection = {
+                    "candidate": {
+                        "commit": CPK_COMMIT,
+                        "tree": CPK_TREE,
+                        "clean": True,
+                    },
+                    "server_source": {
+                        "commit": server_source["commit"],
+                        "tree": server_source["tree"],
+                        "clean": True,
+                    },
+                    "files": {
+                        "products/cpk_server/Dockerfile": (
+                            PRODUCTION_DOCKERFILE_SHA256
+                        ),
+                        OVERLAY_PATH: hashlib.sha256(
+                            overlay.read_bytes()
+                        ).hexdigest(),
+                        CORE_WHEEL_PATH: wheel_measurements[CORE_WHEEL_PATH][
+                            "sha256"
+                        ],
+                        OPERATIONS_WHEEL_PATH: wheel_measurements[
+                            OPERATIONS_WHEEL_PATH
+                        ]["sha256"],
+                        RFC8785_WHEEL_PATH: RFC8785_WHEEL_SHA256,
+                    },
+                    "images": {"cpk_server_base": base_image},
+                }
+                args.assembly.write_text(
+                    json.dumps(assembly, ensure_ascii=True, indent=2, sort_keys=True)
+                    + "\n",
+                    encoding="utf-8",
+                )
+                args.inspection.write_text(
+                    json.dumps(
+                        inspection,
+                        ensure_ascii=True,
+                        indent=2,
+                        sort_keys=True,
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                admitted = admit_candidate_assembly(assembly, inspection)
+                build_candidate_package_image(
+                    admitted,
+                    inspection,
+                    effects,
+                    None,
+                    base_image,
+                    args.candidate_image_tag,
+                )
+                return 0
+            finally:
+                for path in reversed(created):
+                    if path.is_file():
+                        path.unlink()
+
+        assembly = _load_json(args.assembly)
+        inspection = _load_json(args.inspection)
+        admitted = admit_candidate_assembly(assembly, inspection)
+        fetch = artifact_fetcher or _default_artifact_fetcher(root)
+        observation = _admit_rfc8785_artifact(fetch)
+        accepted_fetcher = lambda **_kwargs: observation
+        if effects_factory is None:
+            effects = DockerCandidateEffects(
+                root=root,
+                labels=labels,
+                evidence_id=args.evidence_id,
+                candidate_image_tag=args.candidate_image_tag,
+            )
+        else:
+            effects = effects_factory(
+                root=root,
+                labels=labels,
+                evidence_id=args.evidence_id,
+                candidate_image_tag=args.candidate_image_tag,
+            )
+        build_candidate_package_image(
+            admitted,
+            inspection,
+            effects,
+            accepted_fetcher,
+            args.candidate_base_image,
+            args.candidate_image_tag,
+        )
+        return 0
+
+    assembly = _load_json(args.assembly)
+    inspection = _load_json(args.inspection)
+    admitted = admit_candidate_assembly(assembly, inspection)
+
     if effects_factory is None:
         effects = DockerCandidateEffects(
             root=root,
@@ -1131,7 +1608,6 @@ def main(
     report: dict[str, Any] | None = None
     failure_stage = "admission"
     try:
-        admitted = admit_candidate_assembly(assembly, inspection)
         failure_stage = "build"
         prepared = _prepare_candidate(admitted, inspection, effects)
         server = prepared["server"]

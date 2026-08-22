@@ -3,7 +3,12 @@ FROM ${CPK_SERVER_BASE_IMAGE}
 
 COPY dist/control_plane_kit_core.whl /tmp/control_plane_kit_core.whl
 COPY dist/control_plane_kit_operations.whl /tmp/control_plane_kit_operations.whl
+COPY dist/rfc8785-0.1.4-py3-none-any.whl /tmp/rfc8785-0.1.4-py3-none-any.whl
 RUN python -m pip install --force-reinstall --no-deps --no-index \
     /tmp/control_plane_kit_core.whl \
     /tmp/control_plane_kit_operations.whl \
-    && rm -f /tmp/control_plane_kit_core.whl /tmp/control_plane_kit_operations.whl
+    /tmp/rfc8785-0.1.4-py3-none-any.whl \
+    && rm -f \
+        /tmp/control_plane_kit_core.whl \
+        /tmp/control_plane_kit_operations.whl \
+        /tmp/rfc8785-0.1.4-py3-none-any.whl
