@@ -216,6 +216,13 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             "published-digest",
         ):
             self.assertIn(required, runner)
+        with self.subTest(candidate_materialization="official-rfc8785-origin"):
+            self.assertIn("files.pythonhosted.org/packages/4d/78/", runner)
+            self.assertIn(
+                "119878110660b2ad709888c8a1614fce7e2fab39080ab960656dc8605bf6/",
+                runner,
+            )
+            self.assertIn("RFC8785_WHEEL_SIZE = 9240", runner)
         self.assertNotIn(
             'Path("coordinates/server-products.json").write',
             runner,
@@ -329,6 +336,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             "package_image_only",
             "candidate_base_image",
             "candidate_image_tag",
+            "staging_root",
         ):
             with self.subTest(used_argument=required_argument):
                 self.assertIn(required_argument, used_argument_members)
@@ -356,6 +364,100 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             self.assertIn("--package-image-only", parser_options)
             self.assertIn("--candidate-base-image", parser_options)
             self.assertIn("--candidate-image-tag", parser_options)
+            self.assertIn("--staging-root", parser_options)
+
+        main_functions = [
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "main"
+        ]
+        with self.subTest(candidate_materializer_interface="injectable"):
+            self.assertEqual(len(main_functions), 1)
+            if main_functions:
+                main_keyword_parameters = tuple(
+                    argument.arg
+                    for argument in main_functions[0].args.kwonlyargs
+                )
+                self.assertIn("wheel_materializer", main_keyword_parameters)
+                self.assertIn(
+                    "source_coordinate_provider",
+                    main_keyword_parameters,
+                )
+
+        effects_factory_calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and _dotted_name(node.func) == "effects_factory"
+        ]
+        with self.subTest(candidate_package_image_seam="owned-effects-root"):
+            root_values = [
+                _dotted_name(keyword.value)
+                for call in effects_factory_calls
+                for keyword in call.keywords
+                if keyword.arg == "root"
+            ]
+            self.assertIn("staging_root", root_values)
+
+        materializers = [
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "materialize_candidate_wheels"
+        ]
+        with self.subTest(candidate_materialization="exact-coordinate"):
+            self.assertEqual(len(materializers), 1)
+            if materializers:
+                materializer_source = ast.unparse(materializers[0])
+                for required in (
+                    CPK_PIN,
+                    "control-plane-kit-core",
+                    "control-plane-kit-operations",
+                    "dist/control_plane_kit_core.whl",
+                    "dist/control_plane_kit_operations.whl",
+                ):
+                    self.assertIn(required, materializer_source)
+        with self.subTest(candidate_materialization="measured-provenance"):
+            for required in (
+                "candidate_commit",
+                "candidate_tree",
+                "sha256",
+                "subdirectory",
+            ):
+                self.assertIn(required, runner)
+        with self.subTest(candidate_materialization="physical-wheel-files"):
+            for required in (
+                "write_bytes",
+                "stat().st_size",
+                "read_bytes",
+                "dist/control_plane_kit_core.whl",
+                "dist/control_plane_kit_operations.whl",
+            ):
+                self.assertIn(required, runner)
+        with self.subTest(candidate_materialization="atomic-promotion"):
+            self.assertIn(".part", runner)
+            self.assertTrue("os.replace" in runner or ".replace(" in runner)
+        with self.subTest(candidate_materialization="bounded-rejection-cleanup"):
+            self.assertTrue("unlink(" in runner or "rmtree(" in runner)
+        with self.subTest(candidate_materialization="generated-manifest-outputs"):
+            main_source = ast.unparse(main_functions[0]) if main_functions else ""
+            for required in (
+                "args.assembly",
+                "args.inspection",
+                "source_coordinate_provider",
+                "server_source",
+                "runner",
+                "write_text",
+                "json.dumps",
+            ):
+                self.assertIn(required, main_source)
+        with self.subTest(candidate_materialization="owned-overlay-context"):
+            for required in (
+                "acceptance/candidate_topology/Dockerfile",
+                "staging_root",
+                "copy2",
+            ):
+                self.assertIn(required, runner)
 
         candidate_server_targets = {
             node.targets[0].id

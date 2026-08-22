@@ -23,7 +23,10 @@ from candidate_topology_fixture import (
     CANDIDATE_LABELS,
     CANDIDATE_SERVER_ENVIRONMENT,
     CANDIDATE_TREE,
+    CANDIDATE_WHEEL_SOURCES,
     CPK_SERVER_BASE_IMAGE,
+    CORE_WHEEL_BYTES,
+    CORE_WHEEL_PATH,
     CORE_WHEEL_SHA256,
     CURL_IMAGE,
     DOCKER_SOCKET_GID,
@@ -38,6 +41,10 @@ from candidate_topology_fixture import (
     INSTALLED_RECORD_PATHS,
     INTERPRETERS_COMMIT,
     INTERPRETERS_TREE,
+    MEASURED_SERVER_COMMIT,
+    MEASURED_SERVER_TREE,
+    OPERATIONS_WHEEL_BYTES,
+    OPERATIONS_WHEEL_PATH,
     OPERATIONS_WHEEL_SHA256,
     OPERATOR_SCOPES,
     POSTGRES_BOOTSTRAP_ENVIRONMENT,
@@ -49,12 +56,14 @@ from candidate_topology_fixture import (
     POSTGRES_READY_RETRY_SECONDS,
     POSTGRES_USER,
     PRODUCTION_DOCKERFILE_SHA256,
+    RFC8785_WHEEL_BYTES,
     RFC8785_WHEEL_PATH,
     RFC8785_WHEEL_SHA256,
     RFC8785_WHEEL_SIZE,
     RFC8785_WHEEL_URL,
     RecordingCandidateEffects,
     RecordingCandidateEffectsFactory,
+    RecordingCandidateWheelMaterializer,
     RecordingArtifactFetcher,
     RecordingDockerClient,
     RecordingDockerContainer,
@@ -62,6 +71,7 @@ from candidate_topology_fixture import (
     RecordingDockerNetwork,
     RecordingHostedWorkflow,
     RecordingHostedWorkflowFactory,
+    RecordingServerSourceCoordinate,
     RUNNER_COMMIT,
     RUNNER_TREE,
     SECRETS_COMMIT,
@@ -69,6 +79,9 @@ from candidate_topology_fixture import (
     SERVER_BASELINE_COMMIT,
     SERVER_BASELINE_TREE,
     SNAPSHOT_MANIFEST_SHA256,
+    STAGED_CORE_WHEEL_SHA256,
+    STAGED_OPERATIONS_WHEEL_SHA256,
+    STAGED_OVERLAY_SHA256,
     WORKSPACE_ID,
     WORKER_SCOPES,
     canonical_sha256,
@@ -76,6 +89,8 @@ from candidate_topology_fixture import (
     changed,
     exact_assembly,
     exact_inspection,
+    package_staging_assembly,
+    package_staging_inspection,
 )
 
 
@@ -588,9 +603,9 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                     )
                     self.assertFalse(report_path.exists())
 
-            for name, observed_size, observed_sha256 in (
-                ("short-artifact", RFC8785_WHEEL_SIZE - 1, RFC8785_WHEEL_SHA256),
-                ("hash-drift", RFC8785_WHEEL_SIZE, "0" * 64),
+            for name, artifact_bytes in (
+                ("short-artifact", RFC8785_WHEEL_BYTES[:-1]),
+                ("hash-drift", b"!" + RFC8785_WHEEL_BYTES[1:]),
             ):
                 with self.subTest(package_image=name):
                     rejected_effects: list[tuple[str, object]] = []
@@ -604,8 +619,7 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                             ),
                             artifact_fetcher=RecordingArtifactFetcher(
                                 ledger=rejected_fetch,
-                                observed_size=observed_size,
-                                observed_sha256=observed_sha256,
+                                artifact_bytes=artifact_bytes,
                             ),
                         )
                     except BaseException as error:
@@ -652,6 +666,451 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                     self.assertIs(type(outside_error), SystemExit)
                 if type(outside_error) is SystemExit:
                     self.assertEqual(outside_error.code, 2)
+
+    def test_package_image_staging_is_isolated_atomic_and_coordinate_exact(self) -> None:
+        candidate = self._candidate_module()
+        source = inspect.getsource(candidate)
+        parameters = inspect.signature(candidate.main).parameters
+
+        with self.subTest(publication="candidate-wheel-materializer"):
+            self.assertIn("wheel_materializer", parameters)
+            self.assertIn("source_coordinate_provider", parameters)
+        with self.subTest(publication="owned-staging-root"):
+            self.assertIn("--staging-root", source)
+        with self.subTest(atomic="temporary-download"):
+            self.assertIn(".part", source)
+        with self.subTest(atomic="verified-promotion"):
+            self.assertTrue("os.replace" in source or ".replace(" in source)
+        with self.subTest(atomic="bounded-cleanup"):
+            self.assertTrue("unlink(" in source or "rmtree(" in source)
+
+        baseline_tag = "localhost/control-plane-kit-servers/cpk-server:baseline"
+        candidate_tag = "localhost/control-plane-kit-servers/cpk-server:candidate"
+        expected_assembly = package_staging_assembly()
+        expected_inspection = package_staging_inspection()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            foreign_root = root / "foreign"
+            foreign_root.mkdir()
+            foreign_path = foreign_root / "foreign-wheel.keep"
+            foreign_bytes = b"foreign-wheel-contents"
+            foreign_path.write_bytes(foreign_bytes)
+            staging_root = root / "evidence-owned"
+            staging_root.mkdir()
+            assembly_path = staging_root / "candidate-assembly.json"
+            inspection_path = staging_root / "candidate-inspection.json"
+            self.assertFalse(assembly_path.exists())
+            self.assertFalse(inspection_path.exists())
+            ledger: list[tuple[str, object]] = []
+            materializer = RecordingCandidateWheelMaterializer(ledger=ledger)
+            source_coordinate = RecordingServerSourceCoordinate(ledger=ledger)
+            effects_factory = RecordingCandidateEffectsFactory(ledger=ledger)
+            fetcher = RecordingArtifactFetcher(
+                ledger=ledger,
+                write_artifact=True,
+            )
+            escaped = None
+            exit_code = None
+            argv = [
+                "--assembly",
+                str(assembly_path),
+                "--inspection",
+                str(inspection_path),
+                "--report",
+                str(staging_root / "candidate-topology-report.json"),
+                "--staging-root",
+                str(staging_root),
+                "--project-label",
+                "org.openj92.project=control-plane-kit-servers",
+                "--scenario-label",
+                "org.openj92.cpk.scenario=candidate-topology-1714",
+                "--evidence-id",
+                "package-staging-success",
+                "--package-image-only",
+                "--candidate-base-image",
+                baseline_tag,
+                "--candidate-image-tag",
+                candidate_tag,
+            ]
+            call_kwargs = {
+                "effects_factory": effects_factory,
+                "artifact_fetcher": fetcher,
+            }
+            if "wheel_materializer" in parameters:
+                call_kwargs["wheel_materializer"] = materializer
+            if "source_coordinate_provider" in parameters:
+                call_kwargs["source_coordinate_provider"] = source_coordinate
+            try:
+                exit_code = candidate.main(argv, **call_kwargs)
+            except BaseException as error:
+                escaped = error
+
+            with self.subTest(staging="exact-success"):
+                self.assertIsNone(escaped)
+                self.assertEqual(exit_code, 0)
+            with self.subTest(staging="coordinate-materialization"):
+                materialized = tuple(
+                    value
+                    for name, value in ledger
+                    if name == "materialize-candidate-wheels"
+                )
+                self.assertEqual(
+                    materialized,
+                    (
+                        {
+                            "candidate_commit": CANDIDATE_COMMIT,
+                            "candidate_tree": CANDIDATE_TREE,
+                            "staging_root": str(staging_root),
+                        },
+                    ),
+                )
+                self.assertEqual(
+                    CANDIDATE_WHEEL_SOURCES,
+                    {
+                        CORE_WHEEL_PATH: {
+                            "repository": "OpenJ92/control-plane-kit",
+                            "commit": CANDIDATE_COMMIT,
+                            "tree": CANDIDATE_TREE,
+                            "subdirectory": "control-plane-kit-core",
+                            "sha256": STAGED_CORE_WHEEL_SHA256,
+                            "size": len(CORE_WHEEL_BYTES),
+                        },
+                        OPERATIONS_WHEEL_PATH: {
+                            "repository": "OpenJ92/control-plane-kit",
+                            "commit": CANDIDATE_COMMIT,
+                            "tree": CANDIDATE_TREE,
+                            "subdirectory": "control-plane-kit-operations",
+                            "sha256": STAGED_OPERATIONS_WHEEL_SHA256,
+                            "size": len(OPERATIONS_WHEEL_BYTES),
+                        },
+                    },
+                )
+                measured_source = tuple(
+                    value
+                    for name, value in ledger
+                    if name == "measure-server-source"
+                )
+                self.assertEqual(
+                    measured_source,
+                    (
+                        {
+                            "source_root": str(ROOT),
+                            "observation": {
+                                "repository": "OpenJ92/control-plane-kit-servers",
+                                "commit": MEASURED_SERVER_COMMIT,
+                                "tree": MEASURED_SERVER_TREE,
+                                "clean": True,
+                            },
+                        },
+                    ),
+                )
+                self.assertNotEqual(MEASURED_SERVER_COMMIT, RUNNER_COMMIT)
+                self.assertEqual(
+                    hashlib.sha256(
+                        (
+                            ROOT
+                            / "acceptance"
+                            / "candidate_topology"
+                            / "Dockerfile"
+                        ).read_bytes()
+                    ).hexdigest(),
+                    STAGED_OVERLAY_SHA256,
+                )
+                for value in (MEASURED_SERVER_COMMIT, MEASURED_SERVER_TREE):
+                    self.assertEqual(len(value), 40)
+                    self.assertEqual(set(value) - set("0123456789abcdef"), set())
+            with self.subTest(staging="official-rfc8785-artifact"):
+                fetched = tuple(
+                    value for name, value in ledger if name == "fetch-artifact"
+                )
+                self.assertEqual(len(fetched), 1)
+                if fetched:
+                    self.assertEqual(fetched[0]["url"], RFC8785_WHEEL_URL)
+                    self.assertEqual(
+                        fetched[0]["path"],
+                        str(staging_root / (RFC8785_WHEEL_PATH + ".part")),
+                    )
+                    self.assertEqual(fetched[0]["size"], RFC8785_WHEEL_SIZE)
+                    self.assertEqual(fetched[0]["sha256"], RFC8785_WHEEL_SHA256)
+            with self.subTest(staging="generated-inputs-explicit"):
+                self.assertTrue(assembly_path.is_file())
+                self.assertTrue(inspection_path.is_file())
+                generated_assembly = (
+                    json.loads(assembly_path.read_text(encoding="utf-8"))
+                    if assembly_path.is_file()
+                    else None
+                )
+                generated_inspection = (
+                    json.loads(inspection_path.read_text(encoding="utf-8"))
+                    if inspection_path.is_file()
+                    else None
+                )
+                self.assertEqual(generated_assembly, expected_assembly)
+                self.assertEqual(generated_inspection, expected_inspection)
+                if generated_assembly is not None:
+                    self.assertEqual(
+                        generated_assembly["server_source"],
+                        generated_assembly["runner"],
+                    )
+                    self.assertEqual(
+                        generated_assembly["server_source"]["commit"],
+                        MEASURED_SERVER_COMMIT,
+                    )
+                    self.assertEqual(
+                        generated_assembly["server_source"]["tree"],
+                        MEASURED_SERVER_TREE,
+                    )
+                if generated_inspection is not None:
+                    self.assertEqual(
+                        generated_inspection["server_source"],
+                        {
+                            "commit": MEASURED_SERVER_COMMIT,
+                            "tree": MEASURED_SERVER_TREE,
+                            "clean": True,
+                        },
+                    )
+            with self.subTest(staging="owned-build-context"):
+                factory_rows = tuple(
+                    value for name, value in ledger if name == "effects-factory"
+                )
+                self.assertEqual(len(factory_rows), 1)
+                if factory_rows:
+                    self.assertEqual(
+                        str(factory_rows[0].get("root")),
+                        str(staging_root),
+                    )
+                context_rows = tuple(
+                    value for name, value in ledger if name == "build-context"
+                )
+                self.assertEqual(len(context_rows), 1)
+                if context_rows:
+                    self.assertEqual(
+                        str(context_rows[0].get("root")),
+                        str(staging_root),
+                    )
+                    observed_files = context_rows[0].get("files", {})
+                    expected_files = {
+                        "acceptance/candidate_topology/Dockerfile": {
+                            "exists": True,
+                            "size": (
+                                ROOT
+                                / "acceptance"
+                                / "candidate_topology"
+                                / "Dockerfile"
+                            ).stat().st_size,
+                            "sha256": hashlib.sha256(
+                                (
+                                    ROOT
+                                    / "acceptance"
+                                    / "candidate_topology"
+                                    / "Dockerfile"
+                                ).read_bytes()
+                            ).hexdigest(),
+                        },
+                        CORE_WHEEL_PATH: {
+                            "exists": True,
+                            "size": len(CORE_WHEEL_BYTES),
+                            "sha256": STAGED_CORE_WHEEL_SHA256,
+                        },
+                        OPERATIONS_WHEEL_PATH: {
+                            "exists": True,
+                            "size": len(OPERATIONS_WHEEL_BYTES),
+                            "sha256": STAGED_OPERATIONS_WHEEL_SHA256,
+                        },
+                        RFC8785_WHEEL_PATH: {
+                            "exists": True,
+                            "size": RFC8785_WHEEL_SIZE,
+                            "sha256": RFC8785_WHEEL_SHA256,
+                        },
+                    }
+                    self.assertEqual(observed_files, expected_files)
+                build_rows = tuple(
+                    value for name, value in ledger if name == "build"
+                )
+                self.assertEqual(
+                    build_rows,
+                    (
+                        (
+                            canonical_sha256(expected_assembly),
+                            baseline_tag,
+                            candidate_tag,
+                        ),
+                    ),
+                )
+                ledger_names = tuple(name for name, _ in ledger)
+                required_order = (
+                    "materialize-candidate-wheels",
+                    "fetch-artifact",
+                    "effects-factory",
+                    "build-context",
+                    "build",
+                )
+                positions = tuple(
+                    ledger_names.index(name) if name in ledger_names else -1
+                    for name in required_order
+                )
+                self.assertTrue(all(position >= 0 for position in positions))
+                if all(position >= 0 for position in positions):
+                    self.assertEqual(tuple(sorted(positions)), positions)
+            with self.subTest(staging="foreign-preserved-and-owned-clean"):
+                self.assertEqual(foreign_path.read_bytes(), foreign_bytes)
+                self.assertEqual(tuple(staging_root.rglob("*.part")), ())
+                for owned_artifact in (
+                    CORE_WHEEL_PATH,
+                    OPERATIONS_WHEEL_PATH,
+                    RFC8785_WHEEL_PATH,
+                ):
+                    self.assertFalse((staging_root / owned_artifact).exists())
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            staging_root = root / "evidence-owned"
+            staging_root.mkdir()
+            assembly_path = staging_root / "candidate-assembly.json"
+            inspection_path = staging_root / "candidate-inspection.json"
+            collision_path = staging_root / CORE_WHEEL_PATH
+            collision_path.parent.mkdir(parents=True)
+            collision_bytes = b"pre-existing-candidate-wheel"
+            collision_path.write_bytes(collision_bytes)
+            collision_ledger: list[tuple[str, object]] = []
+            collision_error = None
+            collision_kwargs = {
+                "effects_factory": RecordingCandidateEffectsFactory(
+                    ledger=collision_ledger
+                ),
+                "artifact_fetcher": RecordingArtifactFetcher(
+                    ledger=collision_ledger,
+                    write_artifact=True,
+                ),
+            }
+            if "wheel_materializer" in parameters:
+                collision_kwargs["wheel_materializer"] = (
+                    RecordingCandidateWheelMaterializer(ledger=collision_ledger)
+                )
+            if "source_coordinate_provider" in parameters:
+                collision_kwargs["source_coordinate_provider"] = (
+                    RecordingServerSourceCoordinate(ledger=collision_ledger)
+                )
+            try:
+                candidate.main(
+                    [
+                        "--assembly",
+                        str(assembly_path),
+                        "--inspection",
+                        str(inspection_path),
+                        "--report",
+                        str(staging_root / "report.json"),
+                        "--staging-root",
+                        str(staging_root),
+                        "--project-label",
+                        "org.openj92.project=control-plane-kit-servers",
+                        "--scenario-label",
+                        "org.openj92.cpk.scenario=candidate-topology-1714",
+                        "--package-image-only",
+                        "--candidate-base-image",
+                        baseline_tag,
+                        "--candidate-image-tag",
+                        candidate_tag,
+                    ],
+                    **collision_kwargs,
+                )
+            except BaseException as error:
+                collision_error = error
+            with self.subTest(staging="collision-before-mutation"):
+                self.assertIs(type(collision_error), candidate.CandidateAssemblyError)
+                if collision_error is not None:
+                    self.assertEqual(str(collision_error), ASSEMBLY_ERROR)
+                    self.assertIsNone(collision_error.__cause__)
+                    self.assertIsNone(collision_error.__context__)
+                self.assertEqual(collision_ledger, [])
+                self.assertEqual(collision_path.read_bytes(), collision_bytes)
+                self.assertFalse(assembly_path.exists())
+                self.assertFalse(inspection_path.exists())
+
+        for name, artifact_bytes in (
+            ("short-artifact", RFC8785_WHEEL_BYTES[:-1]),
+            ("hash-drift", b"!" + RFC8785_WHEEL_BYTES[1:]),
+        ):
+            with self.subTest(staging=name):
+                with tempfile.TemporaryDirectory() as directory:
+                    staging_root = Path(directory) / "evidence-owned"
+                    staging_root.mkdir()
+                    assembly_path = staging_root / "candidate-assembly.json"
+                    inspection_path = staging_root / "candidate-inspection.json"
+                    rejected_ledger: list[tuple[str, object]] = []
+                    rejected_error = None
+                    rejected_kwargs = {
+                        "effects_factory": RecordingCandidateEffectsFactory(
+                            ledger=rejected_ledger
+                        ),
+                        "artifact_fetcher": RecordingArtifactFetcher(
+                            ledger=rejected_ledger,
+                            artifact_bytes=artifact_bytes,
+                            write_artifact=True,
+                        ),
+                    }
+                    if "wheel_materializer" in parameters:
+                        rejected_kwargs["wheel_materializer"] = (
+                            RecordingCandidateWheelMaterializer(
+                                ledger=rejected_ledger
+                            )
+                        )
+                    if "source_coordinate_provider" in parameters:
+                        rejected_kwargs["source_coordinate_provider"] = (
+                            RecordingServerSourceCoordinate(
+                                ledger=rejected_ledger
+                            )
+                        )
+                    try:
+                        candidate.main(
+                            [
+                                "--assembly",
+                                str(assembly_path),
+                                "--inspection",
+                                str(inspection_path),
+                                "--report",
+                                str(staging_root / "report.json"),
+                                "--staging-root",
+                                str(staging_root),
+                                "--project-label",
+                                "org.openj92.project=control-plane-kit-servers",
+                                "--scenario-label",
+                                "org.openj92.cpk.scenario=candidate-topology-1714",
+                                "--package-image-only",
+                                "--candidate-base-image",
+                                baseline_tag,
+                                "--candidate-image-tag",
+                                candidate_tag,
+                            ],
+                            **rejected_kwargs,
+                        )
+                    except BaseException as error:
+                        rejected_error = error
+                    self.assertIs(
+                        type(rejected_error), candidate.CandidateAssemblyError
+                    )
+                    if rejected_error is not None:
+                        self.assertEqual(str(rejected_error), ASSEMBLY_ERROR)
+                        self.assertIsNone(rejected_error.__cause__)
+                        self.assertIsNone(rejected_error.__context__)
+                    self.assertEqual(tuple(staging_root.rglob("*.part")), ())
+                    self.assertFalse(
+                        (staging_root / RFC8785_WHEEL_PATH).exists()
+                    )
+                    self.assertFalse((staging_root / CORE_WHEEL_PATH).exists())
+                    self.assertFalse(
+                        (staging_root / OPERATIONS_WHEEL_PATH).exists()
+                    )
+                    self.assertFalse(assembly_path.exists())
+                    self.assertFalse(inspection_path.exists())
+                    self.assertEqual(
+                        tuple(
+                            name
+                            for name, _ in rejected_ledger
+                            if name == "materialize-candidate-wheels"
+                        ),
+                        ("materialize-candidate-wheels",),
+                    )
 
     def test_main_report_is_derived_from_explicit_build_inspection_and_probe_data(self) -> None:
         result = self._invoke_main(use_predecessor_bridge=True)
@@ -1267,18 +1726,12 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
             )
         with self.subTest(boundary="measurement-before-docker"):
             self.assertEqual(client.ledger, [])
-        source = inspect.getsource(candidate)
-        with self.subTest(boundary="no-placeholder-measurements"):
-            for placeholder in (
-                'RUNNER_COMMIT = "fc46e42',
-                'RUNNER_TREE = "eeab26c6',
-                'OVERLAY_SHA256 = "c" * 64',
-                'CORE_WHEEL_SHA256 = "d" * 64',
-                'OPERATIONS_WHEEL_SHA256 = "e" * 64',
-                'RFC8785_WHEEL_SHA256 = "5" * 64',
-                'CPK_SERVER_BASE_IMAGE = "sha256:" + "9" * 64',
-            ):
-                self.assertNotIn(placeholder, source)
+        predecessor = exact_assembly()
+        with self.subTest(boundary="predecessor-inspection-remains-exact"):
+            self.assertIs(
+                candidate.admit_candidate_assembly(predecessor, exact_inspection()),
+                predecessor,
+            )
 
     def test_docker_effects_start_one_pinned_postgres_and_supply_four_ephemeral_dsns(self) -> None:
         candidate = self._candidate_module()

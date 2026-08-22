@@ -219,9 +219,15 @@ class DockerHarnessTests(unittest.TestCase):
             '-t "$BASELINE_IMAGE" .'
         )
         candidate_build = (
-            "python scripts/cpk_server_candidate_topology.py "
+            'docker run --rm -v "$ROOT:/source:ro" '
+            '-v "$CANDIDATE_STAGING_ROOT:/candidate" '
+            '-v /var/run/docker.sock:/var/run/docker.sock '
+            '"$IMAGE" python /source/scripts/cpk_server_candidate_topology.py '
             "--package-image-only --candidate-base-image \"$BASELINE_IMAGE\" "
-            "--candidate-image-tag \"$CANDIDATE_IMAGE\""
+            "--candidate-image-tag \"$CANDIDATE_IMAGE\" "
+            "--staging-root /candidate "
+            "--assembly /candidate/candidate-assembly.json "
+            "--inspection /candidate/candidate-inspection.json"
         )
         candidate_smoke = (
             'CPK_SERVER_IMAGE="$CANDIDATE_IMAGE" CPK_SERVER_BUILD_IMAGE=0 '
@@ -236,6 +242,56 @@ class DockerHarnessTests(unittest.TestCase):
             self.assertEqual(test_sh.count(candidate_image), 1)
             self.assertEqual(normalized.count(candidate_build), 1)
             self.assertNotIn("scripts/cpk_server_candidate_topology_smoke.sh", test_sh)
+        with self.subTest(boundary="dependency-closed-runner-python"):
+            self.assertNotIn("python scripts/cpk_server_candidate_topology.py", test_sh)
+            self.assertIn('"$IMAGE" python /source/scripts/cpk_server_candidate_topology.py', normalized)
+            self.assertIn(
+                '-v /var/run/docker.sock:/var/run/docker.sock',
+                normalized,
+            )
+            self.assertIn('-v "$ROOT:/source:ro"', normalized)
+            without_qualified_runner = test_sh.replace(
+                '"$IMAGE" python /source/scripts/cpk_server_candidate_topology.py',
+                "",
+            )
+            self.assertNotIn(
+                "python /source/scripts/cpk_server_candidate_topology.py",
+                without_qualified_runner,
+            )
+        with self.subTest(boundary="isolated-evidence-staging"):
+            self.assertEqual(
+                test_sh.count(
+                    'CANDIDATE_STAGING_ROOT="$(mktemp -d '
+                    "'${TMPDIR:-/tmp}/cpk-server-candidate.XXXXXX')\""
+                ),
+                1,
+            )
+            self.assertIn("--staging-root /candidate", normalized)
+            self.assertIn("--assembly /candidate/candidate-assembly.json", normalized)
+            self.assertIn("--inspection /candidate/candidate-inspection.json", normalized)
+            self.assertEqual(
+                test_sh.count(
+                    'test ! -e "$CANDIDATE_STAGING_ROOT/candidate-assembly.json"'
+                ),
+                1,
+            )
+            self.assertEqual(
+                test_sh.count(
+                    'test ! -e "$CANDIDATE_STAGING_ROOT/candidate-inspection.json"'
+                ),
+                1,
+            )
+        with self.subTest(boundary="owned-docker-build-context"):
+            self.assertIn('-v "$CANDIDATE_STAGING_ROOT:/candidate"', normalized)
+            self.assertIn("--staging-root /candidate", normalized)
+            self.assertNotIn("docker build -f acceptance/candidate_topology/Dockerfile", test_sh)
+        with self.subTest(boundary="owned-staging-cleanup-only"):
+            self.assertEqual(
+                test_sh.count('rm -rf -- "$CANDIDATE_STAGING_ROOT"'),
+                1,
+            )
+            self.assertNotIn('rm -rf -- "$ROOT"', test_sh)
+            self.assertNotIn("find \"$ROOT\" -delete", test_sh)
         with self.subTest(boundary="candidate-only-liveness"):
             self.assertEqual(normalized.count(candidate_smoke), 1)
             self.assertNotIn("CPK_SERVER_BUILD_IMAGE=1", test_sh)
