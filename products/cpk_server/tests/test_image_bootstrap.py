@@ -126,6 +126,10 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             "RUN python -m pip install --force-reinstall --no-deps "
             f'"{candidate_core}" "{candidate_operations}"'
         )
+        candidate_dependency = "rfc8785==0.1.4"
+        candidate_dependency_reinstall = (
+            f'{candidate_reinstall} "{candidate_dependency}"'
+        )
 
         with self.subTest(candidate_acceptance_copy=True):
             self.assertEqual(
@@ -148,6 +152,17 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             self.assertGreaterEqual(candidate_position, 0)
             if baseline_position >= 0 and candidate_position >= 0:
                 self.assertLess(baseline_position, candidate_position)
+        with self.subTest(candidate_dependency_closure=True):
+            self.assertEqual(
+                normalized_test_dockerfile.count(candidate_dependency_reinstall),
+                1,
+            )
+        with self.subTest(candidate_dependency_pin_multiplicity=True):
+            self.assertEqual(
+                test_dockerfile.count(f'"{candidate_dependency}"'),
+                1,
+            )
+            self.assertEqual(test_dockerfile.count(candidate_dependency), 1)
 
     def test_candidate_runner_attests_records_modules_recipes_wheels_and_image(
         self,
