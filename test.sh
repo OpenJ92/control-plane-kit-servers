@@ -55,6 +55,7 @@ docker run --rm "$IMAGE" \
 docker build -f products/cpk_server/Dockerfile -t "$BASELINE_IMAGE" .
 test ! -e "$CANDIDATE_STAGING_ROOT/candidate-assembly.json"
 test ! -e "$CANDIDATE_STAGING_ROOT/candidate-inspection.json"
+test ! -e "$CANDIDATE_STAGING_ROOT/candidate-topology-report.json"
 SERVER_COMMIT="$(git rev-parse HEAD)"
 SERVER_TREE="$(git rev-parse HEAD^{tree})"
 test -z "$(git status --porcelain)"
@@ -75,7 +76,8 @@ docker run --rm \
   --candidate-image-tag "$CANDIDATE_IMAGE" \
   --staging-root /candidate \
   --assembly /candidate/candidate-assembly.json \
-  --inspection /candidate/candidate-inspection.json
+  --inspection /candidate/candidate-inspection.json \
+  --report /candidate/candidate-topology-report.json
 CANDIDATE_IMAGE_OWNED=1
 CPK_SERVER_IMAGE="$CANDIDATE_IMAGE" CPK_SERVER_BUILD_IMAGE=0 sh scripts/cpk_server_image_smoke.sh
 sh scripts/docker_residue_audit.sh
