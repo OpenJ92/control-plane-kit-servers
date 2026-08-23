@@ -5,6 +5,16 @@ ENV PIP_DEFAULT_TIMEOUT=120 \
 
 WORKDIR /app
 
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      coreutils \
+      curl \
+      docker-cli \
+      git \
+      libdigest-sha-perl \
+      mawk \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY pyproject.toml README.md AGENTS.md GIT-FLOW.md test.sh Dockerfile.test ./
 COPY .github ./.github
 COPY acceptance ./acceptance
