@@ -9,6 +9,43 @@ from scripts import cpk_server_hosted_activity
 
 
 class HostedActivityReadinessTests(unittest.TestCase):
+    def test_pending_approval_mcp_read_uses_current_cursor_contract(self) -> None:
+        workflow = cpk_server_hosted_activity.HostedWorkflow(
+            "http://cpk-server",
+            workspace_id="candidate-topology-1714",
+            worker_id="worker-a",
+            server_container="candidate-server",
+        )
+
+        with patch.object(
+            cpk_server_hosted_activity,
+            "_mcp_read",
+            side_effect=(
+                {"items": [{"request_id": "approval-a"}]},
+                {"plan": {"plan_id": "plan-a"}},
+            ),
+        ) as mcp:
+            workflow.assert_approval_visible("approval-a", "plan-a")
+
+        self.assertEqual(
+            mcp.call_args_list,
+            [
+                call(
+                    "http://cpk-server",
+                    "read.pending-approvals",
+                    {"workspace_id": "candidate-topology-1714", "limit": 10},
+                ),
+                call(
+                    "http://cpk-server",
+                    "read.approval-detail",
+                    {
+                        "workspace_id": "candidate-topology-1714",
+                        "approval_id": "approval-a",
+                    },
+                ),
+            ],
+        )
+
     def test_candidate_graph_readback_preserves_distinct_http_and_mcp_surfaces(
         self,
     ) -> None:

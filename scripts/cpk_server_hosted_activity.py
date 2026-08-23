@@ -343,7 +343,7 @@ class HostedWorkflow:
         pending = _mcp_read(
             self.base_url,
             "read.pending-approvals",
-            {"workspace_id": self.workspace_id, "limit": 10, "offset": 0},
+            {"workspace_id": self.workspace_id, "limit": 10},
         )
         if approval_id not in {item["request_id"] for item in pending["items"]}:
             raise RuntimeError("approval request was not visible in pending queue")
