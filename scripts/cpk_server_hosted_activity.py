@@ -1542,7 +1542,7 @@ def _wait_ready(
             continue
         if ready.get("status") == "ready":
             if ready.get("runtime_interpreters") != "docker":
-                raise RuntimeError(f"cpk-server did not boot with Docker runtime: {ready}")
+                raise RuntimeError("cpk-server did not boot with Docker runtime")
             return
     raise RuntimeError("cpk-server did not become ready")
 
