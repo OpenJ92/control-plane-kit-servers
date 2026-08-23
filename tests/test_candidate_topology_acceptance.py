@@ -2397,6 +2397,26 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                         for name, value in POSTGRES_DSN_ENVIRONMENT.items()
                     },
                 )
+        with self.subTest(boundary="loopback-random-port-coordinate"):
+            self.assertEqual(len(server), 1)
+            if server:
+                self.assertEqual(
+                    server[0].get("ports"),
+                    {"8080/tcp": ("127.0.0.1",)},
+                )
+        with self.subTest(boundary="published-port-observed-after-reload"):
+            server_name = effects._name("server")
+            server_run = next(
+                index
+                for index, (name, value) in enumerate(client.ledger)
+                if name == "container-run" and value["name"] == server_name
+            )
+            server_reload = next(
+                index
+                for index, value in enumerate(client.ledger)
+                if value == ("container-reload", server_name)
+            )
+            self.assertLess(server_run, server_reload)
 
     def test_postgres_readiness_retries_are_bounded_before_server_start(self) -> None:
         candidate = self._candidate_module()
