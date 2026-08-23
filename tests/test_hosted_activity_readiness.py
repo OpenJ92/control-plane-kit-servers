@@ -212,6 +212,22 @@ class HostedActivityReadinessTests(unittest.TestCase):
 
         self.assertEqual(advanced_graph_id, "graph-desired")
         self.assertEqual(
+            tool.call_args_list[0],
+            call(
+                "http://cpk-server",
+                "command.deployment.plan",
+                {
+                    "workspace_id": "candidate-topology-1714",
+                    "session_id": "session-a",
+                    "actor_id": "operator-a",
+                    "expected_current_graph_id": "graph-current",
+                    "expected_desired_graph_id": "graph-desired",
+                    "idempotency_key": "candidate-topology-1714:Hello:plan",
+                },
+                timeout=60,
+            ),
+        )
+        self.assertEqual(
             tool.call_args_list[1],
             call(
                 "http://cpk-server",

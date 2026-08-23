@@ -385,6 +385,7 @@ class HostedWorkflow:
                 "expected_desired_graph_id": desired_graph_id,
                 "idempotency_key": f"{self.workspace_id}:{title}:plan",
             },
+            timeout=60,
         )
         if not planned.get("ready_for_execution", False):
             raise RuntimeError(f"plan was not approval-ready: {planned}")
