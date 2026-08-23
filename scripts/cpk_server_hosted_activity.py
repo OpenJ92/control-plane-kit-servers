@@ -52,6 +52,7 @@ WORKSPACE_IDS = (
 )
 WORKER_ID = "hosted-worker"
 AUTHORIZATION = "Bearer present"
+APPROVAL_AUTHORIZATION = "Bearer manager-present"
 WORKER_AUTHORIZATION = "Bearer worker-present"
 LOCAL_DOCKER_AUTHORITY_REF = "local-docker"
 OPENJ92_INGRESS_AUTHORITY_REF = "openj92-cloudflare"
@@ -89,12 +90,14 @@ class HostedWorkflow:
         workspace_id: str,
         worker_id: str,
         server_container: str,
+        approval_authorization: str = APPROVAL_AUTHORIZATION,
         worker_authorization: str = WORKER_AUTHORIZATION,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.workspace_id = workspace_id
         self.worker_id = worker_id
         self.server_container = server_container
+        self.approval_authorization = approval_authorization
         self.worker_authorization = worker_authorization
         self._desired_graph_coordinates: dict[str, tuple[str, int]] = {}
         self._plan_execution_coordinates: dict[str, tuple[str, str, int]] = {}
@@ -451,6 +454,7 @@ class HostedWorkflow:
                 "decision": "approved",
                 "idempotency_key": f"{self.workspace_id}:{title}:approval-decision",
             },
+            authorization=self.approval_authorization,
         )
 
     def admit(

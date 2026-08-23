@@ -418,6 +418,44 @@ class HostedActivityReadinessTests(unittest.TestCase):
             ],
         )
 
+    def test_approval_decision_uses_distinct_approver_credential(self) -> None:
+        workflow = cpk_server_hosted_activity.HostedWorkflow(
+            "http://cpk-server",
+            workspace_id="candidate-topology-1714",
+            worker_id="worker-a",
+            server_container="candidate-server",
+            approval_authorization="Bearer manager-present",
+        )
+
+        with patch.object(
+            cpk_server_hosted_activity,
+            "_mcp_tool",
+            return_value={},
+        ) as tool:
+            workflow.approve(
+                session_id="session-a",
+                title="empty",
+                approval={
+                    "request_id": "approval-a",
+                    "required_scope": "plan:approve-destructive",
+                },
+            )
+
+        tool.assert_called_once_with(
+            "http://cpk-server",
+            "command.approval.decide",
+            {
+                "workspace_id": "candidate-topology-1714",
+                "session_id": "session-a",
+                "request_id": "approval-a",
+                "actor_id": "manager-a",
+                "actor_scopes": ["plan:approve-destructive"],
+                "decision": "approved",
+                "idempotency_key": "candidate-topology-1714:empty:approval-decision",
+            },
+            authorization="Bearer manager-present",
+        )
+
     def test_candidate_graph_readback_preserves_distinct_http_and_mcp_surfaces(
         self,
     ) -> None:

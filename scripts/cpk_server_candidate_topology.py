@@ -64,8 +64,6 @@ OPERATOR_SCOPES = (
     "instance:workspace:read",
     "instance:workspace:edit",
     "plan:request",
-    "plan:approve",
-    "plan:approve-destructive",
     "plan:execute",
     "execution:operate",
     "runtime-authority:register",
@@ -77,6 +75,7 @@ OPERATOR_SCOPES = (
     "runtime-authority-delivery:revoke",
     "secret-provider:register",
 )
+APPROVER_SCOPES = ("plan:approve", "plan:approve-destructive")
 WORKER_SCOPES = ("execution:operate", "secret-provider:use")
 DOCKER_SOCKET = "/var/run/docker.sock"
 GHCR_PULL_CREDENTIAL_ENV = "CPK_CANDIDATE_GHCR_PULL_CREDENTIAL"
@@ -388,6 +387,14 @@ def _candidate_server_environment(
             "kind": "operator",
             "workspace_grants": {
                 EXPECTED_ASSEMBLY["inputs"]["workspace_id"]: list(OPERATOR_SCOPES)
+            },
+        },
+        {
+            "credential": "manager-present",
+            "subject_id": "manager-a",
+            "kind": "operator",
+            "workspace_grants": {
+                EXPECTED_ASSEMBLY["inputs"]["workspace_id"]: list(APPROVER_SCOPES)
             },
         },
         {

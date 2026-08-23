@@ -20,6 +20,7 @@ from unittest.mock import patch
 from control_plane_kit_core.topology import DeploymentGraph
 
 from candidate_topology_fixture import (
+    APPROVER_SCOPES,
     CANDIDATE_COMMIT,
     CANDIDATE_IMAGE_ID,
     CANDIDATE_LABELS,
@@ -2799,6 +2800,12 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                 "workspace_grants": {WORKSPACE_ID: list(OPERATOR_SCOPES)},
             },
             {
+                "credential": "manager-present",
+                "subject_id": "manager-a",
+                "kind": "operator",
+                "workspace_grants": {WORKSPACE_ID: list(APPROVER_SCOPES)},
+            },
+            {
                 "credential": "worker-present",
                 "subject_id": "candidate-worker",
                 "kind": "worker",
@@ -2878,9 +2885,10 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                 if type(candidate_principals) is list:
                     parsed_principals = candidate_principals
         observed_operator = None
+        observed_approver = None
         observed_worker = None
-        if type(parsed_principals) is list and len(parsed_principals) >= 2:
-            observed_operator, observed_worker = parsed_principals[:2]
+        if type(parsed_principals) is list and len(parsed_principals) >= 3:
+            observed_operator, observed_approver, observed_worker = parsed_principals[:3]
         with self.subTest(boundary="owned-postgres-dsns"):
             self.assertEqual(observed_environment, expected_environment)
             self.assertEqual(
@@ -2898,8 +2906,10 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                 self.assertNotIn(hostile_value, observed_values)
         with self.subTest(boundary="operator-bearer-and-scopes"):
             self.assertEqual(observed_operator, expected_principals[0])
+        with self.subTest(boundary="approver-bearer-and-scopes"):
+            self.assertEqual(observed_approver, expected_principals[1])
         with self.subTest(boundary="worker-bearer-and-scopes"):
-            self.assertEqual(observed_worker, expected_principals[1])
+            self.assertEqual(observed_worker, expected_principals[2])
         with self.subTest(boundary="bearers-redacted-from-evidence"):
             cleanup = effects.cleanup(reason="evidence")
             report = candidate._base_report(

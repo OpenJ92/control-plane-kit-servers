@@ -170,8 +170,6 @@ OPERATOR_SCOPES = (
     "instance:workspace:read",
     "instance:workspace:edit",
     "plan:request",
-    "plan:approve",
-    "plan:approve-destructive",
     "plan:execute",
     "execution:operate",
     "runtime-authority:register",
@@ -183,6 +181,7 @@ OPERATOR_SCOPES = (
     "runtime-authority-delivery:revoke",
     "secret-provider:register",
 )
+APPROVER_SCOPES = ("plan:approve", "plan:approve-destructive")
 WORKER_SCOPES = ("execution:operate", "secret-provider:use")
 CANDIDATE_SERVER_ENVIRONMENT = {
     "CPK_SERVER_MODE": "execution-capable",
@@ -194,6 +193,12 @@ CANDIDATE_SERVER_ENVIRONMENT = {
                 "subject_id": "hosted-operator",
                 "kind": "operator",
                 "workspace_grants": {WORKSPACE_ID: list(OPERATOR_SCOPES)},
+            },
+            {
+                "credential": "manager-present",
+                "subject_id": "manager-a",
+                "kind": "operator",
+                "workspace_grants": {WORKSPACE_ID: list(APPROVER_SCOPES)},
             },
             {
                 "credential": "worker-present",
