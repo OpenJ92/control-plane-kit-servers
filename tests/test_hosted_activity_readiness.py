@@ -531,20 +531,20 @@ class HostedActivityReadinessTests(unittest.TestCase):
                 return_value=expected,
             ) as mcp,
         ):
-            observed_http = workflow.read_activity_http(limit=200)
-            observed_mcp = workflow.read_activity_mcp(limit=200)
+            observed_http = workflow.read_activity_http()
+            observed_mcp = workflow.read_activity_mcp()
 
         self.assertEqual(observed_http, expected)
         self.assertEqual(observed_mcp, expected)
         http.assert_called_once_with(
             "http://cpk-server",
             "GET",
-            "/workspaces/candidate-topology-1714/activity?limit=200",
+            "/workspaces/candidate-topology-1714/activity?limit=100",
         )
         mcp.assert_called_once_with(
             "http://cpk-server",
             "read.activity",
-            {"workspace_id": "candidate-topology-1714", "limit": 200},
+            {"workspace_id": "candidate-topology-1714", "limit": 100},
         )
 
     def test_policy_cadence_occurs_only_between_failed_attempts(self) -> None:
