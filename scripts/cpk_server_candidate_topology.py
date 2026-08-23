@@ -539,13 +539,14 @@ def _public_transition(
     title: str,
     graph: Any,
     current_graph_id: str,
+    expected_desired_graph_id: str | None,
 ) -> dict[str, Any]:
     session_id = workflow.start_session(title)
     desired_graph_id = workflow.set_desired_graph(
         session_id=session_id,
         graph=graph,
         title=title,
-        expected_desired_graph_id=None,
+        expected_desired_graph_id=expected_desired_graph_id,
     )
     plan_id = workflow.plan_transition(
         session_id=session_id,
@@ -969,6 +970,7 @@ def run_candidate_topology(
             title="hello",
             graph=hello_graph,
             current_graph_id=current_graph_id,
+            expected_desired_graph_id=None,
         )
         failure_stage = "probe"
         probe_result = effects.probe_hello(
@@ -990,6 +992,7 @@ def run_candidate_topology(
                 title="empty",
                 graph=empty_graph,
                 current_graph_id=hello["advanced_graph_id"],
+                expected_desired_graph_id=hello["desired_graph_id"],
             )
             history_http = workflow.read_activity_http()
             history_mcp = workflow.read_activity_mcp()

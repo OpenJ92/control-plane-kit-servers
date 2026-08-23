@@ -368,6 +368,7 @@ class RecordingHostedWorkflow:
     activity: tuple[str, ...] = ()
     active_transition: str = "hello"
     graphs: dict[str, Any] = field(default_factory=dict)
+    desired_predecessors: dict[str, str | None] = field(default_factory=dict)
     fail_at: str | None = None
 
     def create_workspace(self, *, name: str, actor_id: str = "operator-a") -> str:
@@ -408,6 +409,9 @@ class RecordingHostedWorkflow:
 
     def set_desired_graph(self, **kwargs: Any) -> str:
         self.graphs[self.active_transition] = kwargs["graph"]
+        self.desired_predecessors[self.active_transition] = kwargs[
+            "expected_desired_graph_id"
+        ]
         self.ledger.append(("desired", self.active_transition))
         return f"graph-{self.active_transition}"
 

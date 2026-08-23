@@ -96,6 +96,7 @@ class HostedWorkflow:
         self.worker_id = worker_id
         self.server_container = server_container
         self.worker_authorization = worker_authorization
+        self._desired_graph_coordinates: dict[str, tuple[str, int]] = {}
         self._plan_execution_coordinates: dict[str, tuple[str, str, int]] = {}
         self._run_claim_generations: dict[str, int] = {}
 
@@ -329,6 +330,13 @@ class HostedWorkflow:
         title: str,
         expected_desired_graph_id: str | None,
     ) -> str:
+        expected_projection_id: str | None = None
+        expected_revision = 0
+        if expected_desired_graph_id is not None:
+            expected = self._desired_graph_coordinates.get(expected_desired_graph_id)
+            if expected is None:
+                raise RuntimeError("desired graph coordinates were not observed")
+            expected_projection_id, expected_revision = expected
         desired = _http(
             self.base_url,
             "POST",
@@ -338,10 +346,25 @@ class HostedWorkflow:
                 "actor_id": "operator-a",
                 "graph": DEFAULT_GRAPH_CODEC.encode(graph),
                 "expected_desired_graph_id": expected_desired_graph_id,
+                "expected_desired_realized_projection_id": expected_projection_id,
+                "expected_desired_graph_revision": expected_revision,
                 "idempotency_key": f"{self.workspace_id}:{title}:desired",
             },
         )
-        return str(desired["desired_graph_id"])
+        desired_graph_id = desired.get("desired_graph_id")
+        projection_id = desired.get("desired_realized_projection_id")
+        revision = desired.get("desired_graph_revision")
+        if (
+            not isinstance(desired_graph_id, str)
+            or not desired_graph_id
+            or not isinstance(projection_id, str)
+            or not projection_id
+            or type(revision) is not int
+            or revision < 1
+        ):
+            raise RuntimeError("desired graph response omitted coordinates")
+        self._desired_graph_coordinates[desired_graph_id] = (projection_id, revision)
+        return desired_graph_id
 
     def plan_transition(
         self,

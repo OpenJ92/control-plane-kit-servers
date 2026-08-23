@@ -3,12 +3,76 @@ from __future__ import annotations
 import unittest
 from unittest.mock import call, patch
 
+from control_plane_kit_core.topology import DeploymentGraph
 from control_plane_kit_core.verification import VerificationPolicy
 
 from scripts import cpk_server_hosted_activity
 
 
 class HostedActivityReadinessTests(unittest.TestCase):
+    def test_desired_graph_replacement_preserves_complete_observed_coordinate(
+        self,
+    ) -> None:
+        workflow = cpk_server_hosted_activity.HostedWorkflow(
+            "http://cpk-server",
+            workspace_id="candidate-topology-1714",
+            worker_id="worker-a",
+            server_container="candidate-server",
+        )
+        graph = DeploymentGraph("candidate-topology-1714")
+
+        with patch.object(
+            cpk_server_hosted_activity,
+            "_http",
+            side_effect=(
+                {
+                    "desired_graph_id": "graph-hello",
+                    "desired_realized_projection_id": "projection-hello",
+                    "desired_graph_revision": 1,
+                },
+                {
+                    "desired_graph_id": "graph-empty",
+                    "desired_realized_projection_id": "projection-empty",
+                    "desired_graph_revision": 2,
+                },
+            ),
+        ) as request:
+            hello_id = workflow.set_desired_graph(
+                session_id="session-hello",
+                graph=graph,
+                title="hello",
+                expected_desired_graph_id=None,
+            )
+            empty_id = workflow.set_desired_graph(
+                session_id="session-empty",
+                graph=graph,
+                title="empty",
+                expected_desired_graph_id=hello_id,
+            )
+
+        self.assertEqual((hello_id, empty_id), ("graph-hello", "graph-empty"))
+        self.assertEqual(
+            request.call_args_list[1],
+            call(
+                "http://cpk-server",
+                "POST",
+                "/workspaces/candidate-topology-1714/graphs/desired",
+                {
+                    "session_id": "session-empty",
+                    "actor_id": "operator-a",
+                    "graph": cpk_server_hosted_activity.DEFAULT_GRAPH_CODEC.encode(
+                        graph
+                    ),
+                    "expected_desired_graph_id": "graph-hello",
+                    "expected_desired_realized_projection_id": "projection-hello",
+                    "expected_desired_graph_revision": 1,
+                    "idempotency_key": (
+                        "candidate-topology-1714:empty:desired"
+                    ),
+                },
+            ),
+        )
+
     def test_ghcr_pull_authority_registers_cpk_secret_admission_first(self) -> None:
         workflow = cpk_server_hosted_activity.HostedWorkflow(
             "http://cpk-server",

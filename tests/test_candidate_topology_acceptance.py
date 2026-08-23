@@ -1666,6 +1666,11 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
             )
         with self.subTest(boundary="empty-graph"):
             self.assertEqual(empty_graph, DeploymentGraph(WORKSPACE_ID))
+        with self.subTest(boundary="desired-graph-lineage"):
+            self.assertEqual(
+                workflow.desired_predecessors,
+                {"hello": None, "empty": "graph-hello"},
+            )
         with self.subTest(boundary="built-server-dataflow"):
             self.assertEqual(
                 tuple(
