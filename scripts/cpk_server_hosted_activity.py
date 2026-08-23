@@ -63,6 +63,11 @@ PUBLIC_GATEWAY_READY_ATTEMPTS = 60
 PUBLIC_GATEWAY_READY_RETRY_SECONDS = 2
 GATEWAY_PROBE_ISSUER = "urn:control-plane-kit:source-live"
 GATEWAY_PROBE_KEY_ID = "source-live-gateway-key"
+GHCR_PULL_CREDENTIAL_REFERENCE = "secret://docker-config/ghcr.io"
+GHCR_PROVIDER_CREDENTIAL_REFERENCE = (
+    "secret://docker-config/provider-credential"
+)
+OCI_PULL_CREDENTIAL_INTENT = "oci.pull-credential"
 
 
 @dataclass(frozen=True)
@@ -125,8 +130,42 @@ class HostedWorkflow:
         )
 
     def register_ghcr_pull_authority_from_docker_config(self) -> None:
+        provider = _http(
+            self.base_url,
+            "POST",
+            f"/workspaces/{self.workspace_id}/secret-providers",
+            {
+                "provider_id": "docker-config",
+                "provider_kind": "control-plane-kit-secrets",
+                "display_name": "Local development Docker credentials",
+                "endpoint_reference": "local-development-docker-config",
+                "credential_reference": GHCR_PROVIDER_CREDENTIAL_REFERENCE,
+                "allowed_reference_prefixes": [GHCR_PULL_CREDENTIAL_REFERENCE],
+                "allowed_intents": [OCI_PULL_CREDENTIAL_INTENT],
+                "admitted_at": _clock(),
+                "metadata": {"classification": "local-development"},
+                "idempotency_key": (
+                    f"{self.workspace_id}:secret-provider:docker-config"
+                ),
+            },
+        )
+        _http(
+            self.base_url,
+            "POST",
+            f"/workspaces/{self.workspace_id}/secret-references",
+            {
+                "reference": GHCR_PULL_CREDENTIAL_REFERENCE,
+                "provider_registration_id": str(provider["registration_id"]),
+                "allowed_intents": [OCI_PULL_CREDENTIAL_INTENT],
+                "admitted_at": _clock(),
+                "metadata": {"classification": "local-development"},
+                "idempotency_key": (
+                    f"{self.workspace_id}:secret-reference:ghcr"
+                ),
+            },
+        )
         self.register_ghcr_pull_authority(
-            credential_reference="secret://docker-config/ghcr.io"
+            credential_reference=GHCR_PULL_CREDENTIAL_REFERENCE
         )
 
     def register_ghcr_pull_authority(self, *, credential_reference: str) -> None:
@@ -1499,7 +1538,10 @@ def _execute_to_completion(
                 "workspace_id": workspace_id,
                 "run_id": run_id,
                 "worker_id": worker_id,
-                "actor_scopes": [PolicyScope.EXECUTION_OPERATE.value],
+                "actor_scopes": [
+                    PolicyScope.EXECUTION_OPERATE.value,
+                    PolicyScope.SECRET_PROVIDER_USE.value,
+                ],
                 "claim_generation": claim_generation,
                 "idempotency_key": f"{workspace_id}:execute:{attempt}",
                 "max_effects": 1,

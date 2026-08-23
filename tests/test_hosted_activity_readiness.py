@@ -9,6 +9,91 @@ from scripts import cpk_server_hosted_activity
 
 
 class HostedActivityReadinessTests(unittest.TestCase):
+    def test_ghcr_pull_authority_registers_cpk_secret_admission_first(self) -> None:
+        workflow = cpk_server_hosted_activity.HostedWorkflow(
+            "http://cpk-server",
+            workspace_id="candidate-topology-1714",
+            worker_id="worker-a",
+            server_container="candidate-server",
+        )
+
+        with (
+            patch.object(
+                cpk_server_hosted_activity,
+                "_clock",
+                return_value="2026-08-23T12:00:00Z",
+            ),
+            patch.object(
+                cpk_server_hosted_activity,
+                "_http",
+                side_effect=(
+                    {"registration_id": "spr-ghcr"},
+                    {"registration_id": "sref-ghcr"},
+                    {},
+                ),
+            ) as request,
+        ):
+            workflow.register_ghcr_pull_authority_from_docker_config()
+
+        self.assertEqual(
+            request.call_args_list,
+            [
+                call(
+                    "http://cpk-server",
+                    "POST",
+                    "/workspaces/candidate-topology-1714/secret-providers",
+                    {
+                        "provider_id": "docker-config",
+                        "provider_kind": "control-plane-kit-secrets",
+                        "display_name": "Local development Docker credentials",
+                        "endpoint_reference": "local-development-docker-config",
+                        "credential_reference": (
+                            "secret://docker-config/provider-credential"
+                        ),
+                        "allowed_reference_prefixes": [
+                            "secret://docker-config/ghcr.io"
+                        ],
+                        "allowed_intents": ["oci.pull-credential"],
+                        "admitted_at": "2026-08-23T12:00:00Z",
+                        "metadata": {"classification": "local-development"},
+                        "idempotency_key": (
+                            "candidate-topology-1714:secret-provider:docker-config"
+                        ),
+                    },
+                ),
+                call(
+                    "http://cpk-server",
+                    "POST",
+                    "/workspaces/candidate-topology-1714/secret-references",
+                    {
+                        "reference": "secret://docker-config/ghcr.io",
+                        "provider_registration_id": "spr-ghcr",
+                        "allowed_intents": ["oci.pull-credential"],
+                        "admitted_at": "2026-08-23T12:00:00Z",
+                        "metadata": {"classification": "local-development"},
+                        "idempotency_key": (
+                            "candidate-topology-1714:secret-reference:ghcr"
+                        ),
+                    },
+                ),
+                call(
+                    "http://cpk-server",
+                    "POST",
+                    "/workspaces/candidate-topology-1714/image-pull-authorities",
+                    {
+                        "registry": "ghcr.io",
+                        "repository": "openj92/control-plane-kit-servers",
+                        "credential_reference": "secret://docker-config/ghcr.io",
+                        "actor_id": "operator-a",
+                        "admitted_at": "2026-08-23T12:00:00Z",
+                        "idempotency_key": (
+                            "candidate-topology-1714:pull-authority:ghcr"
+                        ),
+                    },
+                ),
+            ],
+        )
+
     def test_execution_lifecycle_preserves_fence_and_projection_coordinates(
         self,
     ) -> None:
@@ -71,7 +156,7 @@ class HostedActivityReadinessTests(unittest.TestCase):
                     "workspace_id": "candidate-topology-1714",
                     "run_id": "run-a",
                     "worker_id": "worker-a",
-                    "actor_scopes": ["execution:operate"],
+                    "actor_scopes": ["execution:operate", "secret-provider:use"],
                     "claim_generation": 7,
                     "idempotency_key": "candidate-topology-1714:execute:0",
                     "max_effects": 1,

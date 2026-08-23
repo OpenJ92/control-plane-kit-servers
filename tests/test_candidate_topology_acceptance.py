@@ -2764,6 +2764,18 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                 names.index("register-ghcr-pull-authority"),
                 names.index("register-runtime-authority"),
             )
+        with self.subTest(boundary="cpk-secret-admission-precedes-pull-authority"):
+            self.assertLess(
+                names.index("register-ghcr-secret-provider"),
+                names.index("register-ghcr-secret-reference"),
+            )
+            self.assertLess(
+                names.index("register-ghcr-secret-reference"),
+                names.index("register-ghcr-pull-authority"),
+            )
+        with self.subTest(boundary="cpk-secret-admission-is-exactly-once"):
+            self.assertEqual(names.count("register-ghcr-secret-provider"), 1)
+            self.assertEqual(names.count("register-ghcr-secret-reference"), 1)
         with self.subTest(boundary="pull-authority-is-exactly-once"):
             self.assertEqual(names.count("register-ghcr-pull-authority"), 1)
         with self.subTest(boundary="resolved-credential-is-not-reported"):

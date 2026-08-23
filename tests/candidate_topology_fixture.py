@@ -181,8 +181,9 @@ OPERATOR_SCOPES = (
     "runtime-authority-delivery:register",
     "runtime-authority-delivery:read",
     "runtime-authority-delivery:revoke",
+    "secret-provider:register",
 )
-WORKER_SCOPES = ("execution:operate",)
+WORKER_SCOPES = ("execution:operate", "secret-provider:use")
 CANDIDATE_SERVER_ENVIRONMENT = {
     "CPK_SERVER_MODE": "execution-capable",
     "CPK_CONTROL_AUTH_VERIFIER": "static-development",
@@ -391,6 +392,8 @@ class RecordingHostedWorkflow:
         self.ledger.append(("register-runtime-authority", self.workspace_id))
 
     def register_ghcr_pull_authority_from_docker_config(self) -> None:
+        self.ledger.append(("register-ghcr-secret-provider", self.workspace_id))
+        self.ledger.append(("register-ghcr-secret-reference", self.workspace_id))
         self.ledger.append(("register-ghcr-pull-authority", self.workspace_id))
 
     def register_local_docker_delivery(self) -> None:

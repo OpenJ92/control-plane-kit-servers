@@ -75,8 +75,9 @@ OPERATOR_SCOPES = (
     "runtime-authority-delivery:register",
     "runtime-authority-delivery:read",
     "runtime-authority-delivery:revoke",
+    "secret-provider:register",
 )
-WORKER_SCOPES = ("execution:operate",)
+WORKER_SCOPES = ("execution:operate", "secret-provider:use")
 DOCKER_SOCKET = "/var/run/docker.sock"
 GHCR_PULL_CREDENTIAL_ENV = "CPK_CANDIDATE_GHCR_PULL_CREDENTIAL"
 GHCR_PULL_CREDENTIAL_REFERENCE = "secret://docker-config/ghcr.io"
