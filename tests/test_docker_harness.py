@@ -410,7 +410,7 @@ class DockerHarnessTests(unittest.TestCase):
         expected_live_driver_packages = {
             "coreutils",
             "curl",
-            "docker.io",
+            "docker-cli",
             "git",
             "libdigest-sha-perl",
             "mawk",
