@@ -1265,7 +1265,7 @@ class DockerCandidateEffects:
         labels = self._labels if labelled else {}
         probe_container = self._client.containers.run(
             "docker.io/curlimages/curl@sha256:"
-            "7f6d731c246d5d5e5350599f6e85c67c013a006f54d6d8e6dff1117e7f6c91b8",
+            "7c12af72ceb38b7432ab85e1a265cff6ae58e06f95539d539b654f2cfa64bb13",
             ["sleep", "60"],
             labels=labels,
             detach=True,
