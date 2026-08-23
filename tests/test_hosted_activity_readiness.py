@@ -539,12 +539,12 @@ class HostedActivityReadinessTests(unittest.TestCase):
         http.assert_called_once_with(
             "http://cpk-server",
             "GET",
-            "/workspaces/candidate-topology-1714/activity?limit=100",
+            "/workspaces/candidate-topology-1714/activity?limit=50",
         )
         mcp.assert_called_once_with(
             "http://cpk-server",
             "read.activity",
-            {"workspace_id": "candidate-topology-1714", "limit": 100},
+            {"workspace_id": "candidate-topology-1714", "limit": 50},
         )
 
     def test_policy_cadence_occurs_only_between_failed_attempts(self) -> None:

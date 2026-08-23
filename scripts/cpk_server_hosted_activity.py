@@ -590,21 +590,21 @@ class HostedWorkflow:
             {"workspace_id": self.workspace_id},
         )
 
-    def read_activity_http(self, *, limit: int = 100) -> dict[str, Any]:
+    def read_activity_http(self, *, limit: int = 50) -> dict[str, Any]:
         return _http(
             self.base_url,
             "GET",
             f"/workspaces/{self.workspace_id}/activity?limit={limit}",
         )
 
-    def read_activity_mcp(self, *, limit: int = 100) -> dict[str, Any]:
+    def read_activity_mcp(self, *, limit: int = 50) -> dict[str, Any]:
         return _mcp_read(
             self.base_url,
             "read.activity",
             {"workspace_id": self.workspace_id, "limit": limit},
         )
 
-    def read_activity(self, *, limit: int = 100) -> dict[str, Any]:
+    def read_activity(self, *, limit: int = 50) -> dict[str, Any]:
         return _mcp_read(
             self.base_url,
             "read.activity",
