@@ -117,8 +117,8 @@ EXPECTED_ASSEMBLY = {
     "dependencies": {
         "control_plane_kit_interpreters": {
             "repository": "OpenJ92/control-plane-kit-interpreters",
-            "commit": "2335a21adc5c0b0ae2f592bd15757c6ca1a55e4b",
-            "tree": "343911ecc968d0ea6c3b1c128a3aad4a28471cfe",
+            "commit": "f0f25c4e40c9d394bfc71d790e9035a05f425759",
+            "tree": "3fe73bef827642554aa7e8c7bb0512d20284c6a3",
         },
         "control_plane_kit_secrets": {
             "repository": "OpenJ92/control-plane-kit-secrets",
