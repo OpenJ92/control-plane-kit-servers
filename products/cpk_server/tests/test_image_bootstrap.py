@@ -146,6 +146,36 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             self.assertEqual(overlay.count("--no-index"), 1)
             self.assertEqual(overlay.count("--no-deps"), 1)
 
+        root_user = "USER root"
+        runtime_user = "USER cpk"
+        first_copy = "COPY dist/control_plane_kit_core.whl"
+        offline_install = "RUN python -m pip install --force-reinstall"
+        with self.subTest(candidate_overlay_user="root-install-boundary"):
+            self.assertEqual(overlay_lines.count(root_user), 1)
+        with self.subTest(candidate_overlay_user="restore-runtime-user"):
+            self.assertEqual(overlay_lines.count(runtime_user), 1)
+        with self.subTest(candidate_overlay_user="instruction-order"):
+            final_removal_operand = overlay.rfind(
+                "/tmp/rfc8785-0.1.4-py3-none-any.whl"
+            )
+            positions = tuple(
+                overlay.find(instruction)
+                for instruction in (
+                    "FROM ${CPK_SERVER_BASE_IMAGE}",
+                    root_user,
+                    first_copy,
+                    offline_install,
+                )
+            ) + (final_removal_operand, overlay.find(runtime_user))
+            self.assertTrue(
+                all(position >= 0 for position in positions),
+                "candidate overlay user-boundary instruction is missing",
+            )
+            if all(position >= 0 for position in positions):
+                self.assertEqual(tuple(sorted(positions)), positions)
+        with self.subTest(candidate_overlay_user="copy-chown-is-not-a-substitute"):
+            self.assertNotIn("COPY --chown", overlay)
+
         normalized_test_dockerfile = " ".join(
             line.strip().removesuffix("\\").strip()
             for line in test_dockerfile.splitlines()
