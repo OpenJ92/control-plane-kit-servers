@@ -2689,14 +2689,21 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
             self.assertNotIn("CPK_UNRELATED_HOST_SECRET", server.get("environment", {}))
             self.assertNotIn("must-not-cross-boundary", repr(server))
 
-    def test_candidate_server_mounts_only_explicit_pull_credentials_read_only(self) -> None:
+    def test_candidate_server_resolves_explicit_pull_credentials_as_cpk_secret(self) -> None:
         candidate = self._candidate_module()
         client = RecordingDockerClient()
-        docker_config_host_dir = "/private/tmp/cpk-candidate-ghcr-config"
+        ghcr_pull_credential = json.dumps(
+            {
+                "username": "OpenJ92",
+                "password": "credential-not-for-output",
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
         effects = self._docker_effects(
             candidate,
             client,
-            docker_config_host_dir=docker_config_host_dir,
+            ghcr_pull_credential=ghcr_pull_credential,
         )
         postgres_name = effects._name("postgres")
         expected_environment = {
@@ -2705,8 +2712,14 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                 name: value.replace("candidate-postgres", postgres_name)
                 for name, value in POSTGRES_DSN_ENVIRONMENT.items()
             },
-            "DOCKER_CONFIG": "/tmp/cpk-docker-config",
-            "CPK_IMAGE_PULL_CREDENTIAL_RESOLVER": "docker-config",
+            "CPK_PRODUCT_MATERIAL_RESOLVER": "local-development",
+            "CPK_PRODUCT_SECRET_VALUES_JSON": json.dumps(
+                {
+                    "secret://docker-config/ghcr.io": ghcr_pull_credential,
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
         }
         effects.preflight_inventory(exact_assembly())
         effects.build_candidate_image(exact_assembly(), base_image=CPK_SERVER_BASE_IMAGE)
@@ -2720,9 +2733,9 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
             for value in client.container_runs
             if value["image"] == CANDIDATE_IMAGE_ID
         )
-        with self.subTest(boundary="explicit-pull-resolver-environment"):
+        with self.subTest(boundary="explicit-cpk-secret-resolver-environment"):
             self.assertEqual(server.get("environment"), expected_environment)
-        with self.subTest(boundary="credential-directory-is-read-only"):
+        with self.subTest(boundary="docker-socket-remains-the-only-host-mount"):
             self.assertEqual(
                 server.get("volumes"),
                 {
@@ -2730,18 +2743,16 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                         "bind": "/var/run/docker.sock",
                         "mode": "rw",
                     },
-                    docker_config_host_dir: {
-                        "bind": "/tmp/cpk-docker-config",
-                        "mode": "ro",
-                    },
                 },
             )
 
     def test_main_registers_explicit_ghcr_pull_authority_before_runtime(self) -> None:
-        docker_config_host_dir = "/private/tmp/cpk-candidate-ghcr-config"
+        ghcr_pull_credential = (
+            '{"password":"credential-not-for-output","username":"OpenJ92"}'
+        )
         with patch.dict(
             os.environ,
-            {"CPK_CANDIDATE_DOCKER_CONFIG_HOST_DIR": docker_config_host_dir},
+            {"CPK_CANDIDATE_GHCR_PULL_CREDENTIAL": ghcr_pull_credential},
             clear=False,
         ):
             result = self._invoke_main(use_predecessor_bridge=True)
@@ -2755,8 +2766,8 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
             )
         with self.subTest(boundary="pull-authority-is-exactly-once"):
             self.assertEqual(names.count("register-ghcr-pull-authority"), 1)
-        with self.subTest(boundary="credential-host-path-is-not-reported"):
-            self.assertNotIn(docker_config_host_dir, report_text)
+        with self.subTest(boundary="resolved-credential-is-not-reported"):
+            self.assertNotIn("credential-not-for-output", report_text)
 
     def test_candidate_server_constructs_owned_dsns_and_exact_bearer_principals(self) -> None:
         candidate = self._candidate_module()
@@ -3745,7 +3756,7 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
         *,
         candidate_image_tag=None,
         host_address="127.0.0.1",
-        docker_config_host_dir=None,
+        ghcr_pull_credential=None,
     ):
         docker_module = SimpleNamespace(from_env=lambda: client)
         kwargs = {
@@ -3756,8 +3767,8 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
         }
         if candidate_image_tag is not None:
             kwargs["candidate_image_tag"] = candidate_image_tag
-        if docker_config_host_dir is not None:
-            kwargs["docker_config_host_dir"] = docker_config_host_dir
+        if ghcr_pull_credential is not None:
+            kwargs["ghcr_pull_credential"] = ghcr_pull_credential
         with patch.dict(sys.modules, {"docker": docker_module}):
             return candidate.DockerCandidateEffects(**kwargs)
 

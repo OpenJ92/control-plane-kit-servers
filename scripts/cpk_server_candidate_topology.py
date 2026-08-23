@@ -78,8 +78,8 @@ OPERATOR_SCOPES = (
 )
 WORKER_SCOPES = ("execution:operate",)
 DOCKER_SOCKET = "/var/run/docker.sock"
-DOCKER_CONFIG_HOST_DIR_ENV = "CPK_CANDIDATE_DOCKER_CONFIG_HOST_DIR"
-DOCKER_CONFIG_CONTAINER_DIR = "/tmp/cpk-docker-config"
+GHCR_PULL_CREDENTIAL_ENV = "CPK_CANDIDATE_GHCR_PULL_CREDENTIAL"
+GHCR_PULL_CREDENTIAL_REFERENCE = "secret://docker-config/ghcr.io"
 RFC8785_WHEEL_PATH = "dist/rfc8785-0.1.4-py3-none-any.whl"
 RFC8785_WHEEL_SHA256 = (
     "520d690b448ecf0703691c76e1a34a24ddcd4fc5bc41d589cb7c58ec651bcd48"
@@ -378,7 +378,7 @@ def _docker_socket_group() -> str:
 def _candidate_server_environment(
     postgres_name: str,
     *,
-    docker_config_enabled: bool = False,
+    ghcr_pull_credential: str | None = None,
 ) -> dict[str, str]:
     principals = [
         {
@@ -414,18 +414,20 @@ def _candidate_server_environment(
         "CPK_PORT": "8080",
         "CPK_RUNTIME_INTERPRETERS": "docker",
         "CPK_INGRESS_INTERPRETERS": "none",
-        "CPK_PRODUCT_MATERIAL_RESOLVER": "none",
+        "CPK_PRODUCT_MATERIAL_RESOLVER": (
+            "local-development" if ghcr_pull_credential is not None else "none"
+        ),
         "CPK_WORKPLACE_DATABASE_URL": database_url,
         "CPK_ACTIVITY_HISTORY_DATABASE_URL": database_url,
         "CPK_OBSERVER_STATE_DATABASE_URL": database_url,
         "CPK_GRAPH_TOPOLOGY_DATABASE_URL": database_url,
     }
-    if docker_config_enabled:
-        environment.update(
-            {
-                "DOCKER_CONFIG": DOCKER_CONFIG_CONTAINER_DIR,
-                "CPK_IMAGE_PULL_CREDENTIAL_RESOLVER": "docker-config",
-            }
+    if ghcr_pull_credential is not None:
+        environment["CPK_PRODUCT_SECRET_VALUES_JSON"] = json.dumps(
+            {GHCR_PULL_CREDENTIAL_REFERENCE: ghcr_pull_credential},
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
         )
     return environment
 
@@ -1152,7 +1154,7 @@ class DockerCandidateEffects:
         evidence_id: str,
         candidate_image_tag: str | None = None,
         host_address: str = "127.0.0.1",
-        docker_config_host_dir: str | None = None,
+        ghcr_pull_credential: str | None = None,
     ) -> None:
         import docker
 
@@ -1161,7 +1163,7 @@ class DockerCandidateEffects:
         self._evidence_id = evidence_id
         self._candidate_image_tag = candidate_image_tag
         self._host_address = host_address
-        self._docker_config_host_dir = docker_config_host_dir
+        self._ghcr_pull_credential = ghcr_pull_credential
         self._client = docker.from_env()
         self._probe = None
         self._server = None
@@ -1287,19 +1289,8 @@ class DockerCandidateEffects:
             raise CandidateTopologyError(WORKFLOW_ERROR)
         environment = _candidate_server_environment(
             self._name("postgres"),
-            docker_config_enabled=self._docker_config_host_dir is not None,
+            ghcr_pull_credential=self._ghcr_pull_credential,
         )
-        volumes = {
-            DOCKER_SOCKET: {
-                "bind": DOCKER_SOCKET,
-                "mode": "rw",
-            }
-        }
-        if self._docker_config_host_dir is not None:
-            volumes[self._docker_config_host_dir] = {
-                "bind": DOCKER_CONFIG_CONTAINER_DIR,
-                "mode": "ro",
-            }
         candidate_server = self._client.containers.run(
             built_image_id,
             detach=True,
@@ -1309,7 +1300,12 @@ class DockerCandidateEffects:
             name=self._name("server"),
             network=self._network.name,
             ports={"8080/tcp": ("127.0.0.1", 0)},
-            volumes=volumes,
+            volumes={
+                DOCKER_SOCKET: {
+                    "bind": DOCKER_SOCKET,
+                    "mode": "rw",
+                }
+            },
         )
         self._server = candidate_server
         candidate_server.reload()
@@ -1863,14 +1859,14 @@ def main(
     inspection = _load_json(args.inspection)
     admitted = admit_candidate_assembly(assembly, inspection)
 
-    docker_config_host_dir = os.environ.get(DOCKER_CONFIG_HOST_DIR_ENV)
+    ghcr_pull_credential = os.environ.get(GHCR_PULL_CREDENTIAL_ENV)
     effects_arguments = {
         "root": root,
         "labels": labels,
         "evidence_id": args.evidence_id,
     }
-    if docker_config_host_dir is not None:
-        effects_arguments["docker_config_host_dir"] = docker_config_host_dir
+    if ghcr_pull_credential is not None:
+        effects_arguments["ghcr_pull_credential"] = ghcr_pull_credential
 
     if effects_factory is None:
         effects = DockerCandidateEffects(
@@ -1912,7 +1908,7 @@ def main(
             )
         failure_stage = "workflow"
         current_graph_id = workflow.create_workspace(name="candidate topology")
-        if docker_config_host_dir is not None:
+        if ghcr_pull_credential is not None:
             workflow.register_ghcr_pull_authority_from_docker_config()
         workflow.register_local_docker_authority()
         workflow.register_local_docker_delivery()
