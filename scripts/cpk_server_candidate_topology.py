@@ -78,6 +78,8 @@ OPERATOR_SCOPES = (
 )
 WORKER_SCOPES = ("execution:operate",)
 DOCKER_SOCKET = "/var/run/docker.sock"
+DOCKER_CONFIG_HOST_DIR_ENV = "CPK_CANDIDATE_DOCKER_CONFIG_HOST_DIR"
+DOCKER_CONFIG_CONTAINER_DIR = "/tmp/cpk-docker-config"
 RFC8785_WHEEL_PATH = "dist/rfc8785-0.1.4-py3-none-any.whl"
 RFC8785_WHEEL_SHA256 = (
     "520d690b448ecf0703691c76e1a34a24ddcd4fc5bc41d589cb7c58ec651bcd48"
@@ -373,7 +375,11 @@ def _docker_socket_group() -> str:
     return str(observed.st_gid)
 
 
-def _candidate_server_environment(postgres_name: str) -> dict[str, str]:
+def _candidate_server_environment(
+    postgres_name: str,
+    *,
+    docker_config_enabled: bool = False,
+) -> dict[str, str]:
     principals = [
         {
             "credential": "present",
@@ -396,7 +402,7 @@ def _candidate_server_environment(postgres_name: str) -> dict[str, str]:
         f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@"
         f"{postgres_name}:5432/{POSTGRES_DB}"
     )
-    return {
+    environment = {
         "CPK_SERVER_MODE": "execution-capable",
         "CPK_CONTROL_AUTH_VERIFIER": "static-development",
         "CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON": json.dumps(
@@ -414,6 +420,14 @@ def _candidate_server_environment(postgres_name: str) -> dict[str, str]:
         "CPK_OBSERVER_STATE_DATABASE_URL": database_url,
         "CPK_GRAPH_TOPOLOGY_DATABASE_URL": database_url,
     }
+    if docker_config_enabled:
+        environment.update(
+            {
+                "DOCKER_CONFIG": DOCKER_CONFIG_CONTAINER_DIR,
+                "CPK_IMAGE_PULL_CREDENTIAL_RESOLVER": "docker-config",
+            }
+        )
+    return environment
 
 
 def admit_candidate_assembly(
@@ -1138,6 +1152,7 @@ class DockerCandidateEffects:
         evidence_id: str,
         candidate_image_tag: str | None = None,
         host_address: str = "127.0.0.1",
+        docker_config_host_dir: str | None = None,
     ) -> None:
         import docker
 
@@ -1146,6 +1161,7 @@ class DockerCandidateEffects:
         self._evidence_id = evidence_id
         self._candidate_image_tag = candidate_image_tag
         self._host_address = host_address
+        self._docker_config_host_dir = docker_config_host_dir
         self._client = docker.from_env()
         self._probe = None
         self._server = None
@@ -1269,7 +1285,21 @@ class DockerCandidateEffects:
                 _sleep(POSTGRES_READY_RETRY_SECONDS)
         if not postgres_ready:
             raise CandidateTopologyError(WORKFLOW_ERROR)
-        environment = _candidate_server_environment(self._name("postgres"))
+        environment = _candidate_server_environment(
+            self._name("postgres"),
+            docker_config_enabled=self._docker_config_host_dir is not None,
+        )
+        volumes = {
+            DOCKER_SOCKET: {
+                "bind": DOCKER_SOCKET,
+                "mode": "rw",
+            }
+        }
+        if self._docker_config_host_dir is not None:
+            volumes[self._docker_config_host_dir] = {
+                "bind": DOCKER_CONFIG_CONTAINER_DIR,
+                "mode": "ro",
+            }
         candidate_server = self._client.containers.run(
             built_image_id,
             detach=True,
@@ -1279,12 +1309,7 @@ class DockerCandidateEffects:
             name=self._name("server"),
             network=self._network.name,
             ports={"8080/tcp": ("127.0.0.1", 0)},
-            volumes={
-                DOCKER_SOCKET: {
-                    "bind": DOCKER_SOCKET,
-                    "mode": "rw",
-                }
-            },
+            volumes=volumes,
         )
         self._server = candidate_server
         candidate_server.reload()
@@ -1838,19 +1863,22 @@ def main(
     inspection = _load_json(args.inspection)
     admitted = admit_candidate_assembly(assembly, inspection)
 
+    docker_config_host_dir = os.environ.get(DOCKER_CONFIG_HOST_DIR_ENV)
+    effects_arguments = {
+        "root": root,
+        "labels": labels,
+        "evidence_id": args.evidence_id,
+    }
+    if docker_config_host_dir is not None:
+        effects_arguments["docker_config_host_dir"] = docker_config_host_dir
+
     if effects_factory is None:
         effects = DockerCandidateEffects(
-            root=root,
-            labels=labels,
-            evidence_id=args.evidence_id,
+            **effects_arguments,
             host_address=args.host_address,
         )
     else:
-        effects = effects_factory(
-            root=root,
-            labels=labels,
-            evidence_id=args.evidence_id,
-        )
+        effects = effects_factory(**effects_arguments)
 
     prepared: dict[str, Any] | None = None
     failure: BaseException | None = None
@@ -1884,6 +1912,8 @@ def main(
             )
         failure_stage = "workflow"
         current_graph_id = workflow.create_workspace(name="candidate topology")
+        if docker_config_host_dir is not None:
+            workflow.register_ghcr_pull_authority_from_docker_config()
         workflow.register_local_docker_authority()
         workflow.register_local_docker_delivery()
         hello_document = _product_document(root, "hello_server")

@@ -390,6 +390,9 @@ class RecordingHostedWorkflow:
     def register_local_docker_authority(self) -> None:
         self.ledger.append(("register-runtime-authority", self.workspace_id))
 
+    def register_ghcr_pull_authority_from_docker_config(self) -> None:
+        self.ledger.append(("register-ghcr-pull-authority", self.workspace_id))
+
     def register_local_docker_delivery(self) -> None:
         self.ledger.append(("register-runtime-delivery", self.workspace_id))
 

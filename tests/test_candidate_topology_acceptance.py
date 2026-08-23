@@ -7,6 +7,7 @@ import importlib
 import importlib.util
 import inspect
 import json
+import os
 from pathlib import Path
 import stat
 import sys
@@ -2688,6 +2689,75 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
             self.assertNotIn("CPK_UNRELATED_HOST_SECRET", server.get("environment", {}))
             self.assertNotIn("must-not-cross-boundary", repr(server))
 
+    def test_candidate_server_mounts_only_explicit_pull_credentials_read_only(self) -> None:
+        candidate = self._candidate_module()
+        client = RecordingDockerClient()
+        docker_config_host_dir = "/private/tmp/cpk-candidate-ghcr-config"
+        effects = self._docker_effects(
+            candidate,
+            client,
+            docker_config_host_dir=docker_config_host_dir,
+        )
+        postgres_name = effects._name("postgres")
+        expected_environment = {
+            **CANDIDATE_SERVER_ENVIRONMENT,
+            **{
+                name: value.replace("candidate-postgres", postgres_name)
+                for name, value in POSTGRES_DSN_ENVIRONMENT.items()
+            },
+            "DOCKER_CONFIG": "/tmp/cpk-docker-config",
+            "CPK_IMAGE_PULL_CREDENTIAL_RESOLVER": "docker-config",
+        }
+        effects.preflight_inventory(exact_assembly())
+        effects.build_candidate_image(exact_assembly(), base_image=CPK_SERVER_BASE_IMAGE)
+
+        with patch.dict(candidate.os.environ, {}, clear=True):
+            with self._lawful_docker_socket(candidate):
+                effects.start_candidate_server(CANDIDATE_IMAGE_ID)
+
+        server = next(
+            value
+            for value in client.container_runs
+            if value["image"] == CANDIDATE_IMAGE_ID
+        )
+        with self.subTest(boundary="explicit-pull-resolver-environment"):
+            self.assertEqual(server.get("environment"), expected_environment)
+        with self.subTest(boundary="credential-directory-is-read-only"):
+            self.assertEqual(
+                server.get("volumes"),
+                {
+                    "/var/run/docker.sock": {
+                        "bind": "/var/run/docker.sock",
+                        "mode": "rw",
+                    },
+                    docker_config_host_dir: {
+                        "bind": "/tmp/cpk-docker-config",
+                        "mode": "ro",
+                    },
+                },
+            )
+
+    def test_main_registers_explicit_ghcr_pull_authority_before_runtime(self) -> None:
+        docker_config_host_dir = "/private/tmp/cpk-candidate-ghcr-config"
+        with patch.dict(
+            os.environ,
+            {"CPK_CANDIDATE_DOCKER_CONFIG_HOST_DIR": docker_config_host_dir},
+            clear=False,
+        ):
+            result = self._invoke_main(use_predecessor_bridge=True)
+
+        names = tuple(name for name, _ in result["ledger"])
+        report_text = json.dumps(result["report"], sort_keys=True)
+        with self.subTest(boundary="pull-authority-precedes-runtime-authority"):
+            self.assertLess(
+                names.index("register-ghcr-pull-authority"),
+                names.index("register-runtime-authority"),
+            )
+        with self.subTest(boundary="pull-authority-is-exactly-once"):
+            self.assertEqual(names.count("register-ghcr-pull-authority"), 1)
+        with self.subTest(boundary="credential-host-path-is-not-reported"):
+            self.assertNotIn(docker_config_host_dir, report_text)
+
     def test_candidate_server_constructs_owned_dsns_and_exact_bearer_principals(self) -> None:
         candidate = self._candidate_module()
         client = RecordingDockerClient()
@@ -3675,6 +3745,7 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
         *,
         candidate_image_tag=None,
         host_address="127.0.0.1",
+        docker_config_host_dir=None,
     ):
         docker_module = SimpleNamespace(from_env=lambda: client)
         kwargs = {
@@ -3685,6 +3756,8 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
         }
         if candidate_image_tag is not None:
             kwargs["candidate_image_tag"] = candidate_image_tag
+        if docker_config_host_dir is not None:
+            kwargs["docker_config_host_dir"] = docker_config_host_dir
         with patch.dict(sys.modules, {"docker": docker_module}):
             return candidate.DockerCandidateEffects(**kwargs)
 
