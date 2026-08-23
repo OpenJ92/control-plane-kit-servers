@@ -126,7 +126,6 @@ FOREIGN_INVENTORY = {
     "networks": ("foreign-network-1714",),
     "volumes": (),
     "images": ("sha256:" + "3" * 64, "sha256:" + "8" * 64),
-    "build_residue": ("foreign-build-1714:latest",),
     "postgres_relations": (),
 }
 
@@ -506,7 +505,6 @@ class RecordingCandidateEffects:
             "networks": (),
             "volumes": (),
             "images": (),
-            "build_residue": (),
             "postgres_relations": (),
             "foreign_canary_after": self.foreign_canary_before,
         }

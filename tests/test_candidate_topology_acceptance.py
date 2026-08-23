@@ -1679,8 +1679,12 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                     ),
                 ),
             )
+        if result["escaped"] is not None:
+            return
         with self.subTest(boundary="terminal-report"):
             self.assertTrue(report)
+        if not report:
+            return
         with self.subTest(boundary="attestation-dataflow"):
             self.assertEqual(
                 attestation,
@@ -2939,11 +2943,45 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                 if tag == "foreign-build-1714:latest"
             )
             self.assertEqual(foreign_build_tags, ("foreign-build-1714:latest",))
-            self.assertEqual(
-                observed["inventory"]["build_residue"],
-                foreign_build_tags,
-            )
             self.assertIn("sha256:" + "3" * 64, observed["inventory"]["images"])
+        with self.subTest(boundary="exact-preflight-inventory-projection"):
+            expected_preflight_inventory = {
+                "containers": tuple(
+                    sorted(
+                        (
+                            "foreign-container-1714",
+                            *(effects._name(role) for role in roles),
+                        )
+                    )
+                ),
+                "networks": tuple(
+                    sorted(("foreign-network-1714", runtime_name))
+                ),
+                "volumes": (),
+                "images": tuple(
+                    sorted(
+                        (
+                            "sha256:" + "3" * 64,
+                            "sha256:" + "4" * 64,
+                            CPK_SERVER_BASE_IMAGE,
+                            "sha256:" + "8" * 64,
+                        )
+                    )
+                ),
+                "postgres_relations": (),
+            }
+            self.assertEqual(
+                {
+                    key: value
+                    for key, value in observed["inventory"].items()
+                    if key != "build_residue"
+                },
+                expected_preflight_inventory,
+            )
+        with self.subTest(
+            boundary="provider-internal-build-residue-is-not-public-inventory"
+        ):
+            self.assertNotIn("build_residue", observed["inventory"])
 
         cleanup_client = RecordingDockerClient()
         cleanup_client.seed_foreign_canary()
@@ -2984,27 +3022,40 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                 )
             self.assertTrue(any(CANDIDATE_IMAGE_ID in repr(value) for value in removed))
         with self.subTest(boundary="exact-allowed-post-inventory"):
-            self.assertEqual(
-                cleanup_result["post_inventory"],
-                {
-                    "containers": ("foreign-container-1714",),
-                    "networks": ("foreign-network-1714",),
-                    "volumes": (),
-                    "images": (
-                        "sha256:" + "3" * 64,
-                        "sha256:" + "8" * 64,
-                        CPK_SERVER_BASE_IMAGE,
-                    ),
-                    "build_residue": ("foreign-build-1714:latest",),
-                    "postgres_relations": (),
-                },
-            )
-            post_tags = {
-                tag
-                for image in cleanup_client.images.list()
-                for tag in image.tags
+            expected_post_inventory = {
+                "containers": ("foreign-container-1714",),
+                "networks": ("foreign-network-1714",),
+                "volumes": (),
+                "images": (
+                    "sha256:" + "3" * 64,
+                    "sha256:" + "8" * 64,
+                    CPK_SERVER_BASE_IMAGE,
+                ),
+                "postgres_relations": (),
             }
+            self.assertEqual(
+                {
+                    key: value
+                    for key, value in cleanup_result["post_inventory"].items()
+                    if key != "build_residue"
+                },
+                expected_post_inventory,
+            )
+        with self.subTest(
+            boundary="provider-internal-build-residue-is-not-post-inventory"
+        ):
+            self.assertNotIn(
+                "build_residue",
+                cleanup_result["post_inventory"],
+            )
+        post_tags = {
+            tag
+            for image in cleanup_client.images.list()
+            for tag in image.tags
+        }
+        with self.subTest(boundary="foreign-image-tag-is-preserved"):
             self.assertIn("foreign-build-1714:latest", post_tags)
+        with self.subTest(boundary="candidate-image-tag-is-removed"):
             self.assertNotIn(
                 cleanup_effects._name("candidate") + ":latest",
                 post_tags,
@@ -3089,7 +3140,7 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                 )
             )
 
-    def test_cleanup_failure_preserves_original_stage_terminal_report_and_foreign_resources(
+    def test_harness_resource_cleanup_failure_preserves_original_stage_and_foreign_resources(
         self,
     ) -> None:
         candidate = self._candidate_module()
@@ -3140,9 +3191,26 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
         with self.subTest(boundary="original-first-failed-stage"):
             self.assertEqual(report.get("first_failed_stage"), "probe")
             self.assertEqual(report.get("status"), "failed")
-        with self.subTest(boundary="cleanup-failure-is-observed"):
-            self.assertEqual(report.get("cleanup", {}).get("status"), "failed")
-            self.assertNotIn("protected-cleanup-failure", json.dumps(report, sort_keys=True))
+        cleanup = report.get("cleanup", {})
+        with self.subTest(boundary="harness-cleanup-evidence-is-explicit"):
+            self.assertEqual(
+                set(cleanup),
+                {
+                    "containers",
+                    "networks",
+                    "volumes",
+                    "images",
+                    "postgres_relations",
+                    "foreign_canary_after",
+                },
+            )
+        with self.subTest(boundary="cleanup-completion-status-is-not-public"):
+            self.assertNotIn("status", cleanup)
+        with self.subTest(boundary="secondary-cleanup-error-is-redacted"):
+            self.assertNotIn(
+                "protected-cleanup-failure",
+                json.dumps(report, sort_keys=True),
+            )
         with self.subTest(boundary="foreign-resources-untouched"):
             self.assertFalse(
                 any(

@@ -122,6 +122,7 @@ class DockerHarnessTests(unittest.TestCase):
             "candidate topology smoke wrapper is not implemented",
         )
         smoke = CANDIDATE_SMOKE.read_text(encoding="utf-8")
+        runner = CANDIDATE_RUNNER.read_text(encoding="utf-8")
 
         self.assertIn("python -m scripts.cpk_server_candidate_topology", smoke)
         self.assertNotIn("scripts/cpk_server_hosted_activity.py", smoke)
@@ -152,11 +153,21 @@ class DockerHarnessTests(unittest.TestCase):
             "pre_inventory",
             "post_inventory",
             "postgres_relations",
-            "build_residue",
             "report_sha256",
         ):
             with self.subTest(observed_claim=required):
                 self.assertIn(required, smoke)
+        for surface_name, surface in (("runner", runner), ("smoke", smoke)):
+            with self.subTest(
+                obsolete_public_claim="provider-internal-build-residue",
+                surface=surface_name,
+            ):
+                self.assertNotIn("build_residue", surface)
+            with self.subTest(
+                obsolete_public_claim="cleanup-completion-status",
+                surface=surface_name,
+            ):
+                self.assertNotIn("cleanup_terminal", surface)
 
     def test_candidate_smoke_cleanup_owns_abort_timeout_and_exact_labelled_residue(
         self,
