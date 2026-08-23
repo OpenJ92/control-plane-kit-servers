@@ -2837,17 +2837,23 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
         hello_container, hello_network = client.seed_hello_runtime()
 
         result = effects.probe_hello(labelled=True, attach_runtime_network=True)
-        probe_run = next(
+        probe_name = effects._name("probe")
+        probe_runs = [
             value
             for value in client.container_runs
-            if value["image"] == CURL_IMAGE
-        )
+            if value.get("name") == probe_name
+        ]
+        with self.subTest(boundary="sole-owned-probe-run"):
+            self.assertEqual(len(probe_runs), 1)
+        probe_run = probe_runs[0] if len(probe_runs) == 1 else {"name": probe_name}
         connections = [value for name, value in client.ledger if name == "network-connect"]
         probe_exec = [
             value
             for name, value in client.ledger
             if name == "container-exec" and value[0] == probe_run["name"]
         ]
+        with self.subTest(boundary="immutable-probe-image-coordinate"):
+            self.assertEqual(probe_run.get("image"), CURL_IMAGE)
         with self.subTest(boundary="labelled-independent-probe"):
             self.assertEqual(probe_run["labels"], CANDIDATE_LABELS)
             self.assertEqual(probe_run["network_mode"], "none")
