@@ -806,25 +806,29 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "connect"
         ]
-        self.assertEqual(len(connect_calls), 1)
-        self.assertEqual(len(connect_calls[0].args), 1)
-        self.assertIsInstance(connect_calls[0].args[0], ast.Name)
-        connect_target = connect_calls[0].args[0].id
-        self.assertIn("probe", connect_target)
-        self.assertNotIn("controller", connect_target)
-        self.assertNotIn("server", connect_target)
-        labelled_container_targets = {
-            node.targets[0].id
+        self.assertEqual(connect_calls, [])
+        probe_runs = [
+            node.value
             for node in ast.walk(tree)
             if isinstance(node, ast.Assign)
             and len(node.targets) == 1
             and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == "probe_container"
             and isinstance(node.value, ast.Call)
             and isinstance(node.value.func, ast.Attribute)
             and node.value.func.attr == "run"
-            and any(keyword.arg == "labels" for keyword in node.value.keywords)
-        }
-        self.assertIn(connect_target, labelled_container_targets)
+        ]
+        self.assertEqual(len(probe_runs), 1)
+        network_keywords = [
+            keyword.value
+            for keyword in probe_runs[0].keywords
+            if keyword.arg == "network"
+        ]
+        self.assertEqual(len(network_keywords), 1)
+        self.assertIsInstance(network_keywords[0], ast.Attribute)
+        self.assertEqual(network_keywords[0].attr, "name")
+        self.assertIsInstance(network_keywords[0].value, ast.Name)
+        self.assertEqual(network_keywords[0].value.id, "provider_network")
         self.assertFalse(
             "DELETE" in normalized_literals
             and "/WORKSPACES/" in normalized_literals
