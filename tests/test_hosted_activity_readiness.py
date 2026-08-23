@@ -9,6 +9,114 @@ from scripts import cpk_server_hosted_activity
 
 
 class HostedActivityReadinessTests(unittest.TestCase):
+    def test_execution_lifecycle_preserves_fence_and_projection_coordinates(
+        self,
+    ) -> None:
+        workflow = cpk_server_hosted_activity.HostedWorkflow(
+            "http://cpk-server",
+            workspace_id="candidate-topology-1714",
+            worker_id="worker-a",
+            server_container="candidate-server",
+        )
+
+        with (
+            patch.object(
+                cpk_server_hosted_activity,
+                "_mcp_tool",
+                side_effect=(
+                    {
+                        "ready_for_execution": True,
+                        "plan_id": "plan-a",
+                        "base_realized_projection_id": "projection-current",
+                        "desired_realized_projection_id": "projection-desired",
+                        "desired_graph_revision": 3,
+                    },
+                    {"coordinator_status": "completed"},
+                ),
+            ) as tool,
+            patch.object(
+                cpk_server_hosted_activity,
+                "_http",
+                side_effect=(
+                    {"run_id": "run-a", "claim_generation": 7},
+                    {},
+                    {"to_graph_id": "graph-desired"},
+                ),
+            ) as request,
+        ):
+            plan_id = workflow.plan_transition(
+                session_id="session-a",
+                title="Hello",
+                current_graph_id="graph-current",
+                desired_graph_id="graph-desired",
+            )
+            run_id = workflow.claim(title="Hello", request_id="request-a")
+            workflow.start_run(title="Hello", run_id=run_id)
+            workflow.execute_to_completion(run_id, sync_runtime_networks=False)
+            advanced_graph_id = workflow.advance_current_graph(
+                title="Hello",
+                run_id=run_id,
+                plan_id=plan_id,
+                current_graph_id="graph-current",
+                desired_graph_id="graph-desired",
+            )
+
+        self.assertEqual(advanced_graph_id, "graph-desired")
+        self.assertEqual(
+            tool.call_args_list[1],
+            call(
+                "http://cpk-server",
+                "command.deployment.execute",
+                {
+                    "workspace_id": "candidate-topology-1714",
+                    "run_id": "run-a",
+                    "worker_id": "worker-a",
+                    "actor_scopes": ["execution:operate"],
+                    "claim_generation": 7,
+                    "idempotency_key": "candidate-topology-1714:execute:0",
+                    "max_effects": 1,
+                },
+                timeout=60,
+                authorization="Bearer worker-present",
+            ),
+        )
+        self.assertEqual(
+            request.call_args_list[1],
+            call(
+                "http://cpk-server",
+                "POST",
+                "/workspaces/candidate-topology-1714/runs/run-a/start",
+                {
+                    "worker_id": "worker-a",
+                    "actor_scopes": ["execution:operate"],
+                    "claim_generation": 7,
+                    "idempotency_key": "candidate-topology-1714:Hello:start",
+                },
+                extra_headers={"Authorization": "Bearer worker-present"},
+            ),
+        )
+        self.assertEqual(
+            request.call_args_list[2],
+            call(
+                "http://cpk-server",
+                "POST",
+                "/workspaces/candidate-topology-1714/runs/run-a/advance-current-graph",
+                {
+                    "plan_id": "plan-a",
+                    "expected_current_graph_id": "graph-current",
+                    "expected_current_realized_projection_id": "projection-current",
+                    "desired_graph_id": "graph-desired",
+                    "desired_realized_projection_id": "projection-desired",
+                    "expected_desired_graph_revision": 3,
+                    "worker_id": "worker-a",
+                    "actor_scopes": ["execution:operate"],
+                    "claim_generation": 7,
+                    "idempotency_key": "candidate-topology-1714:Hello:advance",
+                },
+                extra_headers={"Authorization": "Bearer worker-present"},
+            ),
+        )
+
     def test_run_claim_uses_current_bounded_lease_contract(self) -> None:
         workflow = cpk_server_hosted_activity.HostedWorkflow(
             "http://cpk-server",
@@ -20,7 +128,7 @@ class HostedActivityReadinessTests(unittest.TestCase):
         with patch.object(
             cpk_server_hosted_activity,
             "_http",
-            return_value={"run_id": "run-a"},
+            return_value={"run_id": "run-a", "claim_generation": 1},
         ) as request:
             run_id = workflow.claim(title="Hello", request_id="request-a")
 

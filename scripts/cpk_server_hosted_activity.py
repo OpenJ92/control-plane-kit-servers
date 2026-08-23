@@ -91,6 +91,8 @@ class HostedWorkflow:
         self.worker_id = worker_id
         self.server_container = server_container
         self.worker_authorization = worker_authorization
+        self._plan_execution_coordinates: dict[str, tuple[str, str, int]] = {}
+        self._run_claim_generations: dict[str, int] = {}
 
     def wait_ready(self, *, policy: VerificationPolicy | None = None) -> None:
         _wait_ready(self.base_url, policy=policy)
@@ -324,7 +326,25 @@ class HostedWorkflow:
         )
         if not planned.get("ready_for_execution", False):
             raise RuntimeError(f"plan was not approval-ready: {planned}")
-        return str(planned["plan_id"])
+        plan_id = str(planned["plan_id"])
+        base_projection = planned.get("base_realized_projection_id")
+        desired_projection = planned.get("desired_realized_projection_id")
+        desired_revision = planned.get("desired_graph_revision")
+        if (
+            not isinstance(base_projection, str)
+            or not base_projection
+            or not isinstance(desired_projection, str)
+            or not desired_projection
+            or type(desired_revision) is not int
+            or desired_revision < 0
+        ):
+            raise RuntimeError("plan omitted execution coordinates")
+        self._plan_execution_coordinates[plan_id] = (
+            base_projection,
+            desired_projection,
+            desired_revision,
+        )
+        return plan_id
 
     def request_approval(self, *, session_id: str, title: str, plan_id: str) -> dict[str, Any]:
         return _http(
@@ -406,7 +426,12 @@ class HostedWorkflow:
             },
             extra_headers={"Authorization": self.worker_authorization},
         )
-        return str(claimed["run_id"])
+        run_id = str(claimed["run_id"])
+        claim_generation = claimed.get("claim_generation")
+        if type(claim_generation) is not int or claim_generation < 1:
+            raise RuntimeError("run claim omitted execution fence")
+        self._run_claim_generations[run_id] = claim_generation
+        return run_id
 
     def start_run(self, *, title: str, run_id: str) -> None:
         _http(
@@ -416,6 +441,7 @@ class HostedWorkflow:
             {
                 "worker_id": self.worker_id,
                 "actor_scopes": [PolicyScope.EXECUTION_OPERATE.value],
+                "claim_generation": self._claim_generation_for(run_id),
                 "idempotency_key": f"{self.workspace_id}:{title}:start",
             },
             extra_headers={"Authorization": self.worker_authorization},
@@ -431,6 +457,7 @@ class HostedWorkflow:
             self.base_url,
             self.server_container,
             run_id,
+            claim_generation=self._claim_generation_for(run_id),
             workspace_id=self.workspace_id,
             worker_id=self.worker_id,
             sync_runtime_networks=sync_runtime_networks,
@@ -446,6 +473,12 @@ class HostedWorkflow:
         current_graph_id: str,
         desired_graph_id: str,
     ) -> str:
+        try:
+            current_projection, desired_projection, desired_revision = (
+                self._plan_execution_coordinates[plan_id]
+            )
+        except KeyError as error:
+            raise RuntimeError("plan execution coordinates are unavailable") from error
         advanced = _http(
             self.base_url,
             "POST",
@@ -453,14 +486,24 @@ class HostedWorkflow:
             {
                 "plan_id": plan_id,
                 "expected_current_graph_id": current_graph_id,
+                "expected_current_realized_projection_id": current_projection,
                 "desired_graph_id": desired_graph_id,
+                "desired_realized_projection_id": desired_projection,
+                "expected_desired_graph_revision": desired_revision,
                 "worker_id": self.worker_id,
                 "actor_scopes": [PolicyScope.EXECUTION_OPERATE.value],
+                "claim_generation": self._claim_generation_for(run_id),
                 "idempotency_key": f"{self.workspace_id}:{title}:advance",
             },
             extra_headers={"Authorization": self.worker_authorization},
         )
         return str(advanced["to_graph_id"])
+
+    def _claim_generation_for(self, run_id: str) -> int:
+        try:
+            return self._run_claim_generations[run_id]
+        except KeyError as error:
+            raise RuntimeError("run execution fence is unavailable") from error
 
     def read_current_graph_id(self) -> str:
         current = _http(self.base_url, "GET", f"/workspaces/{self.workspace_id}/graphs/current")
@@ -1440,6 +1483,7 @@ def _execute_to_completion(
     server_container: str,
     run_id: str,
     *,
+    claim_generation: int,
     workspace_id: str = WORKSPACE_ID,
     worker_id: str = WORKER_ID,
     sync_runtime_networks: bool = True,
@@ -1456,6 +1500,7 @@ def _execute_to_completion(
                 "run_id": run_id,
                 "worker_id": worker_id,
                 "actor_scopes": [PolicyScope.EXECUTION_OPERATE.value],
+                "claim_generation": claim_generation,
                 "idempotency_key": f"{workspace_id}:execute:{attempt}",
                 "max_effects": 1,
             },
