@@ -194,22 +194,16 @@ _PUBLIC_INVENTORY_KEYS = (
 _PUBLIC_CLEANUP_KEYS = (*_PUBLIC_INVENTORY_KEYS, "foreign_canary_after")
 _INTERNAL_CLEANUP_KEY_SETS = (
     frozenset(_PUBLIC_CLEANUP_KEYS),
-    frozenset((*_PUBLIC_CLEANUP_KEYS, "build_residue")),
-    frozenset((*_PUBLIC_CLEANUP_KEYS, "build_residue", "status")),
     frozenset(
         (
             *_PUBLIC_CLEANUP_KEYS,
-            "build_residue",
             "pre_inventory",
             "post_inventory",
             "ownership_labels",
         )
     ),
 )
-_INTERNAL_INVENTORY_KEY_SETS = (
-    frozenset(_PUBLIC_INVENTORY_KEYS),
-    frozenset((*_PUBLIC_INVENTORY_KEYS, "build_residue")),
-)
+_INTERNAL_INVENTORY_KEY_SETS = (frozenset(_PUBLIC_INVENTORY_KEYS),)
 
 
 def _public_inventory(value: Any) -> dict[str, Any]:
@@ -479,7 +473,6 @@ def _legacy_preflight(assembly: dict[str, Any]) -> dict[str, Any]:
             "networks": (),
             "volumes": (),
             "images": (),
-            "build_residue": (),
             "postgres_relations": (),
         },
         "collisions": (),
@@ -891,12 +884,10 @@ def run_candidate_topology(
     except BaseException as error:
         cleanup_failure = error
         cleanup = {
-            "status": "failed",
             "containers": (),
             "networks": (),
             "volumes": (),
             "images": (),
-            "build_residue": (),
             "postgres_relations": (),
             "foreign_canary_after": (
                 admitted["inputs"]["foreign_resource_canary"],
@@ -1058,20 +1049,11 @@ class DockerCandidateEffects:
         return f"cpk-{digest}-{role}"
 
     def _inventory(self) -> dict[str, tuple[str, ...]]:
-        images = self._client.images.list()
         return {
             "containers": tuple(sorted(container.name for container in self._client.containers.list(all=True))),
             "networks": tuple(sorted(network.name for network in self._client.networks.list())),
             "volumes": tuple(sorted(volume.name for volume in self._client.volumes.list())),
-            "images": tuple(sorted(image.id for image in images)),
-            "build_residue": tuple(
-                sorted(
-                    tag
-                    for image in images
-                    for tag in getattr(image, "tags", ())
-                    if "build" in tag
-                )
-            ),
+            "images": tuple(sorted(image.id for image in self._client.images.list())),
             "postgres_relations": (),
         }
 
@@ -1349,7 +1331,6 @@ class DockerCandidateEffects:
             "networks": (),
             "volumes": (),
             "images": (),
-            "build_residue": post_inventory["build_residue"],
             "postgres_relations": post_inventory["postgres_relations"],
             "foreign_canary_after": (self._foreign_canary,),
             "pre_inventory": deepcopy(self._pre_inventory or {}),

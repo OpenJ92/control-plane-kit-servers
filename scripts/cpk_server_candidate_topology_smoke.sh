@@ -147,7 +147,7 @@ required = {
 if not required.issubset(report):
     raise SystemExit("candidate report publication is incomplete")
 observations = report["observations"]
-for name in ("pre_inventory", "post_inventory", "postgres_relations", "build_residue"):
+for name in ("pre_inventory", "post_inventory", "postgres_relations"):
     if name not in observations:
         raise SystemExit("candidate evidence publication is incomplete")
 if "foreign_resource_canary" not in report["assembly"]["inputs"]:
