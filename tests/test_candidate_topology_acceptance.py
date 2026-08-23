@@ -2999,9 +2999,10 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
             self.assertEqual(probe_run.get("image"), CURL_IMAGE)
         with self.subTest(boundary="labelled-independent-probe"):
             self.assertEqual(probe_run["labels"], CANDIDATE_LABELS)
-            self.assertEqual(probe_run["network_mode"], "none")
+            self.assertNotIn("network_mode", probe_run)
         with self.subTest(boundary="provider-runtime-network-only"):
-            self.assertEqual(connections, [(hello_network.name, probe_run["name"])])
+            self.assertEqual(probe_run.get("network"), hello_network.name)
+            self.assertEqual(connections, [])
         with self.subTest(boundary="graph-derived-provider-endpoint"):
             self.assertEqual(
                 probe_exec,

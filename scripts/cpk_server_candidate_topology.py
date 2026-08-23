@@ -1415,13 +1415,12 @@ class DockerCandidateEffects:
             ["sleep", "60"],
             labels=labels,
             detach=True,
-            network_mode="none",
+            network=provider_network.name,
             name=self._name("probe"),
         )
         self._probe = probe_container
         if not attach_runtime_network:
             raise CandidateTopologyError(WORKFLOW_ERROR)
-        provider_network.connect(probe_container)
         result = probe_container.exec_run(
             ["curl", "--fail", "--silent", f"http://{provider.name}:8080/"]
         )
