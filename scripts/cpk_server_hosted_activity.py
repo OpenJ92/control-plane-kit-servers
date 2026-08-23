@@ -401,7 +401,7 @@ class HostedWorkflow:
             {
                 "worker_id": self.worker_id,
                 "actor_scopes": [PolicyScope.EXECUTION_OPERATE.value],
-                "lease_expires_at": "2026-07-22T12:00:00Z",
+                "lease_duration_seconds": 1800,
                 "idempotency_key": f"{self.workspace_id}:{title}:claim",
             },
             extra_headers={"Authorization": self.worker_authorization},

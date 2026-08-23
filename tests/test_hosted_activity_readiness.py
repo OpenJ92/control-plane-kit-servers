@@ -9,6 +9,35 @@ from scripts import cpk_server_hosted_activity
 
 
 class HostedActivityReadinessTests(unittest.TestCase):
+    def test_run_claim_uses_current_bounded_lease_contract(self) -> None:
+        workflow = cpk_server_hosted_activity.HostedWorkflow(
+            "http://cpk-server",
+            workspace_id="candidate-topology-1714",
+            worker_id="worker-a",
+            server_container="candidate-server",
+        )
+
+        with patch.object(
+            cpk_server_hosted_activity,
+            "_http",
+            return_value={"run_id": "run-a"},
+        ) as request:
+            run_id = workflow.claim(title="Hello", request_id="request-a")
+
+        self.assertEqual(run_id, "run-a")
+        request.assert_called_once_with(
+            "http://cpk-server",
+            "POST",
+            "/workspaces/candidate-topology-1714/runs/request-a/claim",
+            {
+                "worker_id": "worker-a",
+                "actor_scopes": ["execution:operate"],
+                "lease_duration_seconds": 1800,
+                "idempotency_key": "candidate-topology-1714:Hello:claim",
+            },
+            extra_headers={"Authorization": "Bearer worker-present"},
+        )
+
     def test_pending_approval_mcp_read_uses_current_cursor_contract(self) -> None:
         workflow = cpk_server_hosted_activity.HostedWorkflow(
             "http://cpk-server",
