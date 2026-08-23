@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from copy import deepcopy
 import hashlib
 import importlib
@@ -12,6 +12,7 @@ import stat
 import sys
 import tempfile
 from types import SimpleNamespace
+from typing import Any
 import unittest
 from unittest.mock import patch
 
@@ -134,6 +135,15 @@ EXPECTED_EVIDENCE_CLASSIFICATIONS = {
     "hello-image": "published-digest",
     "postgres-image": "published-digest",
 }
+
+STARTUP_DIAGNOSTIC_SCHEMA = "cpk.candidate-startup-diagnostic.v1"
+STARTUP_DIAGNOSTIC_FILENAME = "candidate-startup-diagnostic.json"
+
+
+def canonical_startup_diagnostic_sha256(document: dict[str, Any]) -> str:
+    projected = deepcopy(document)
+    projected.pop("diagnostic_sha256", None)
+    return canonical_sha256(projected)
 
 
 class CandidateTopologyAcceptanceTests(unittest.TestCase):
@@ -3271,6 +3281,384 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
             )
         return report, workflow, effects, ledger
 
+    def test_readiness_failure_emits_one_private_bounded_startup_diagnostic(
+        self,
+    ) -> None:
+        original = RuntimeError("cpk-server did not become ready")
+        result = self._invoke_startup_readiness_failure(original)
+        diagnostic = result["diagnostic"] or {}
+        report = result["report"] or {}
+
+        with self.subTest(boundary="readiness-error-remains-authoritative"):
+            self.assertIs(result["escaped"], original)
+            self.assertIsNone(original.__cause__)
+            self.assertIsNone(original.__context__)
+            self.assertEqual(original.args, ("cpk-server did not become ready",))
+        with self.subTest(boundary="private-diagnostic-exact-schema"):
+            self.assertEqual(
+                set(diagnostic),
+                {
+                    "schema",
+                    "classification",
+                    "phase",
+                    "candidate_image_built",
+                    "server_container_started",
+                    "server_package_inspected",
+                    "port_published",
+                    "readiness",
+                    "container_state",
+                    "redaction_verified",
+                    "protected_material_retained",
+                    "diagnostic_sha256",
+                },
+            )
+            self.assertEqual(diagnostic.get("schema"), STARTUP_DIAGNOSTIC_SCHEMA)
+            self.assertEqual(diagnostic.get("classification"), "supporting")
+            self.assertEqual(diagnostic.get("phase"), "hosted-readiness")
+        with self.subTest(boundary="private-diagnostic-topology-facts"):
+            self.assertEqual(
+                {
+                    name: diagnostic.get(name)
+                    for name in (
+                        "candidate_image_built",
+                        "server_container_started",
+                        "server_package_inspected",
+                        "port_published",
+                    )
+                },
+                {
+                    "candidate_image_built": True,
+                    "server_container_started": True,
+                    "server_package_inspected": True,
+                    "port_published": True,
+                },
+            )
+            self.assertEqual(diagnostic.get("readiness"), "policy-exhausted")
+            self.assertEqual(
+                diagnostic.get("container_state"),
+                {"status": "running", "exit_code": None},
+            )
+        with self.subTest(boundary="private-diagnostic-canonical-digest"):
+            self.assertEqual(
+                diagnostic.get("diagnostic_sha256"),
+                canonical_startup_diagnostic_sha256(diagnostic),
+            )
+        with self.subTest(boundary="private-diagnostic-atomic-bounded-mode"):
+            self.assertLessEqual(result["diagnostic_size"], 4096)
+            self.assertEqual(result["diagnostic_mode"], 0o600)
+            self.assertFalse(result["partial_present"])
+        with self.subTest(boundary="private-diagnostic-redacted"):
+            self.assertTrue(diagnostic.get("redaction_verified"))
+            self.assertFalse(diagnostic.get("protected_material_retained"))
+            rendered = json.dumps(diagnostic, sort_keys=True)
+            for protected in (
+                "candidate-server-container",
+                "http://candidate-server-container:8080",
+                CANDIDATE_IMAGE_ID,
+                POSTGRES_PASSWORD,
+                "cpk-server did not become ready",
+                "traceback",
+            ):
+                self.assertNotIn(protected, rendered.lower())
+        with self.subTest(boundary="public-failed-report-remains-closed"):
+            self.assertEqual(report.get("status"), "failed")
+            self.assertEqual(report.get("first_failed_stage"), "build")
+            self.assertNotIn("diagnostic", report)
+            self.assertNotIn("failure", report)
+            self.assertNotIn(STARTUP_DIAGNOSTIC_FILENAME, json.dumps(report))
+            self.assertEqual(
+                report.get("report_sha256"),
+                canonical_report_sha256(report),
+            )
+        with self.subTest(boundary="diagnostic-observed-before-cleanup"):
+            names = [name for name, _value in result["ledger"]]
+            expected_order = (
+                "build",
+                "start-candidate-server",
+                "inspect-candidate-server",
+                "wait-ready",
+                "observe-candidate-startup",
+                "cleanup",
+            )
+            self.assertTrue(all(name in names for name in expected_order))
+            if all(name in names for name in expected_order):
+                self.assertEqual(
+                    tuple(sorted(expected_order, key=names.index)),
+                    expected_order,
+                )
+
+    def test_startup_diagnostic_secondary_faults_never_mask_readiness(
+        self,
+    ) -> None:
+        observer_error = RuntimeError("private-observer-secret")
+        original = RuntimeError("cpk-server did not become ready")
+        observed = self._invoke_startup_readiness_failure(
+            original,
+            startup_observation_error=observer_error,
+        )
+        diagnostic = observed["diagnostic"] or {}
+        with self.subTest(boundary="observer-failure-is-bounded-and-secondary"):
+            self.assertIs(observed["escaped"], original)
+            self.assertIsNone(original.__cause__)
+            self.assertIsNone(original.__context__)
+            self.assertEqual(
+                diagnostic.get("container_state"),
+                {"status": "unknown", "exit_code": None},
+            )
+            self.assertNotIn(
+                "private-observer-secret",
+                json.dumps(observed["report"], sort_keys=True),
+            )
+            self.assertIn("cleanup", [name for name, _value in observed["ledger"]])
+
+        persistence_error = OSError("private-persistence-secret")
+        original = RuntimeError("cpk-server did not become ready")
+        persisted = self._invoke_startup_readiness_failure(
+            original,
+            persistence_error=persistence_error,
+        )
+        with self.subTest(boundary="persistence-failure-preserves-primary"):
+            self.assertIs(persisted["escaped"], original)
+            self.assertIsNone(original.__cause__)
+            self.assertIsNone(original.__context__)
+            self.assertIsNone(persisted["diagnostic"])
+            self.assertFalse(persisted["partial_present"])
+            self.assertIn("cleanup", [name for name, _value in persisted["ledger"]])
+            self.assertNotIn(
+                "private-persistence-secret",
+                json.dumps(persisted["report"], sort_keys=True),
+            )
+
+    def test_startup_diagnostic_readiness_classification_is_total(self) -> None:
+        rows = (
+            (
+                "cpk-server did not boot with Docker runtime",
+                "runtime-mismatch",
+            ),
+            ("unexpected-private-readiness-detail", "unknown"),
+        )
+        for message, expected in rows:
+            with self.subTest(
+                boundary="readiness-classification-is-fixed",
+                classification=expected,
+            ):
+                original = RuntimeError(message)
+                result = self._invoke_startup_readiness_failure(original)
+                diagnostic = result["diagnostic"] or {}
+                self.assertIs(result["escaped"], original)
+                self.assertIsNone(original.__cause__)
+                self.assertIsNone(original.__context__)
+                self.assertEqual(diagnostic.get("readiness"), expected)
+                self.assertNotIn(message, json.dumps(diagnostic, sort_keys=True))
+                self.assertNotIn(
+                    message,
+                    json.dumps(result["report"], sort_keys=True),
+                )
+
+    def test_startup_diagnostic_collision_and_emission_scope_are_exact(self) -> None:
+        for collision_name in (
+            STARTUP_DIAGNOSTIC_FILENAME,
+            STARTUP_DIAGNOSTIC_FILENAME + ".part",
+        ):
+            with self.subTest(
+                boundary="preexisting-diagnostic-is-preserved",
+                path=collision_name,
+            ):
+                collision = b"foreign-private-evidence\n"
+                result = self._invoke_startup_readiness_failure(
+                    RuntimeError("cpk-server did not become ready"),
+                    collision=(collision_name, collision),
+                )
+                self.assertEqual(result["collision_bytes"], collision)
+                self.assertIsInstance(
+                    result["escaped"],
+                    result["candidate"].CandidateAssemblyError,
+                )
+                self.assertEqual(result["ledger"], [])
+
+        for name, fail_at in (
+            ("success", None),
+            ("build", "build"),
+            ("later-workflow", "workflow"),
+            ("later-probe", "probe"),
+        ):
+            with self.subTest(
+                boundary="startup-diagnostic-emission-scope",
+                phase=name,
+            ):
+                result = self._invoke_main(fail_at=fail_at)
+                self.assertFalse(result["startup_diagnostic_present"])
+                self.assertFalse(result["startup_diagnostic_part_present"])
+
+    def test_docker_effects_observe_only_owned_candidate_startup_state(self) -> None:
+        candidate = self._candidate_module()
+        client = RecordingDockerClient()
+        client.candidate_state_status = "exited"
+        client.candidate_state_exit_code = 37
+        effects = self._docker_effects(candidate, client)
+        effects.preflight_inventory(exact_assembly())
+        build = effects.build_candidate_image(
+            exact_assembly(),
+            base_image=CPK_SERVER_BASE_IMAGE,
+        )
+        with self._lawful_docker_socket(candidate):
+            server = effects.start_candidate_server(build["image_id"])
+        effects.inspect_candidate_server(server["container_id"])
+        observer = getattr(effects, "observe_candidate_startup", None)
+
+        with self.subTest(boundary="owned-startup-observer-exists"):
+            self.assertTrue(callable(observer))
+        before = len(
+            [name for name, _value in client.ledger if name == "container-reload"]
+        )
+        terminal = observer(server["container_id"]) if callable(observer) else None
+        with self.subTest(boundary="terminal-state-projection-is-exact"):
+            self.assertEqual(
+                terminal,
+                {"status": "exited", "exit_code": 37},
+            )
+        with self.subTest(boundary="owned-observer-reloads-once"):
+            after = len(
+                [name for name, _value in client.ledger if name == "container-reload"]
+            )
+            self.assertEqual(after - before, 1)
+        foreign_rejected = False
+        if callable(observer):
+            try:
+                observer("foreign-container")
+            except candidate.CandidateTopologyError:
+                foreign_rejected = True
+        with self.subTest(boundary="foreign-container-is-not-observed"):
+            self.assertTrue(foreign_rejected)
+
+        state_rows = (
+            ("running", 91, {"status": "running", "exit_code": None}),
+            (
+                "provider-secret-state",
+                0,
+                {"status": "unknown", "exit_code": None},
+            ),
+            ({"provider": "secret-state"}, 0, {"status": "unknown", "exit_code": None}),
+            ("exited", "provider-secret-code", {"status": "exited", "exit_code": None}),
+            ("dead", True, {"status": "dead", "exit_code": None}),
+            ("exited", 256, {"status": "exited", "exit_code": None}),
+        )
+        for status, exit_code, expected in state_rows:
+            effects._server.state_status = status
+            effects._server.state_exit_code = exit_code
+            observed = observer(server["container_id"]) if callable(observer) else None
+            with self.subTest(
+                boundary="startup-state-projection-is-closed",
+                status=repr(status),
+                exit_code=repr(exit_code),
+            ):
+                self.assertEqual(observed, expected)
+                rendered = json.dumps(observed, sort_keys=True)
+                for protected in ("provider-secret-state", "provider-secret-code"):
+                    self.assertNotIn(protected, rendered)
+
+    def _invoke_startup_readiness_failure(
+        self,
+        readiness_error: RuntimeError,
+        *,
+        startup_observation_error: Exception | None = None,
+        persistence_error: OSError | None = None,
+        collision: tuple[str, bytes] | None = None,
+    ) -> dict[str, Any]:
+        candidate = self._candidate_module()
+        ledger: list[tuple[str, Any]] = []
+        effects_factory = RecordingCandidateEffectsFactory(
+            ledger=ledger,
+            startup_observation_error=startup_observation_error,
+        )
+
+        def hosted_workflow(base_url: str, **kwargs: Any) -> Any:
+            ledger.append(
+                (
+                    "workflow-target",
+                    {
+                        "base_url": base_url,
+                        "server_container": kwargs["server_container"],
+                    },
+                )
+            )
+
+            class FailingReadinessWorkflow:
+                def wait_ready(self) -> None:
+                    ledger.append(("wait-ready", "failure"))
+                    raise readiness_error
+
+            return FailingReadinessWorkflow()
+
+        escaped = None
+        report = None
+        diagnostic = None
+        diagnostic_mode = None
+        diagnostic_size = 0
+        partial_present = False
+        collision_bytes = None
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            assembly_path = root / "candidate-assembly.json"
+            inspection_path = root / "candidate-inspection.json"
+            report_path = root / "candidate-topology-report.json"
+            diagnostic_path = root / STARTUP_DIAGNOSTIC_FILENAME
+            partial_path = Path(str(diagnostic_path) + ".part")
+            assembly_path.write_text(
+                json.dumps(exact_assembly(), sort_keys=True),
+                encoding="utf-8",
+            )
+            inspection_path.write_text(
+                json.dumps(exact_inspection(), sort_keys=True),
+                encoding="utf-8",
+            )
+            if collision is not None:
+                collision_path = root / collision[0]
+                collision_path.write_bytes(collision[1])
+            argv = [
+                "--assembly",
+                str(assembly_path),
+                "--inspection",
+                str(inspection_path),
+                "--report",
+                str(report_path),
+                "--project-label",
+                "org.openj92.project=control-plane-kit-servers",
+                "--scenario-label",
+                "org.openj92.cpk.scenario=candidate-topology-1714",
+            ]
+            replace_patch = (
+                patch.object(candidate.os, "replace", side_effect=persistence_error)
+                if persistence_error is not None
+                else nullcontext()
+            )
+            with patch.object(candidate, "HostedWorkflow", new=hosted_workflow):
+                with replace_patch:
+                    try:
+                        candidate.main(argv, effects_factory=effects_factory)
+                    except BaseException as error:
+                        escaped = error
+            if report_path.is_file():
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+            if diagnostic_path.is_file() and collision is None:
+                diagnostic = json.loads(diagnostic_path.read_text(encoding="utf-8"))
+                diagnostic_mode = stat.S_IMODE(diagnostic_path.stat().st_mode)
+                diagnostic_size = diagnostic_path.stat().st_size
+            partial_present = partial_path.exists()
+            if collision is not None:
+                collision_bytes = (root / collision[0]).read_bytes()
+        return {
+            "candidate": candidate,
+            "collision_bytes": collision_bytes,
+            "diagnostic": diagnostic,
+            "diagnostic_mode": diagnostic_mode,
+            "diagnostic_size": diagnostic_size,
+            "escaped": escaped,
+            "ledger": ledger,
+            "partial_present": partial_present,
+            "report": report,
+        }
+
     def _docker_effects(
         self,
         candidate,
@@ -3328,12 +3716,18 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
         escaped = None
         exit_code = None
         report = None
+        startup_diagnostic_present = False
+        startup_diagnostic_part_present = False
         bridge = ()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             assembly_path = root / "candidate-assembly.json"
             inspection_path = root / "candidate-inspection.json"
             report_path = root / "candidate-topology-report.json"
+            startup_diagnostic_path = root / STARTUP_DIAGNOSTIC_FILENAME
+            startup_diagnostic_part_path = Path(
+                str(startup_diagnostic_path) + ".part"
+            )
             assembly_path.write_text(
                 json.dumps(exact_assembly(), sort_keys=True),
                 encoding="utf-8",
@@ -3388,6 +3782,10 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                 escaped = error
             if report_path.is_file():
                 report = json.loads(report_path.read_text(encoding="utf-8"))
+            startup_diagnostic_present = startup_diagnostic_path.exists()
+            startup_diagnostic_part_present = (
+                startup_diagnostic_part_path.exists()
+            )
         effects = effects_factory.instances[0] if effects_factory.instances else None
         return {
             "effects": effects,
@@ -3398,6 +3796,8 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
             "injectable_main": injectable_main,
             "ledger": ledger,
             "report": report,
+            "startup_diagnostic_present": startup_diagnostic_present,
+            "startup_diagnostic_part_present": startup_diagnostic_part_present,
             "workflow_factory": workflow_factory,
         }
 

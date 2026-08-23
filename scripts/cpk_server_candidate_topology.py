@@ -29,6 +29,8 @@ from scripts.cpk_server_hosted_activity import (
 
 ASSEMBLY_SCHEMA = "cpk.candidate-assembly.v1"
 REPORT_SCHEMA = "cpk.candidate-topology-report.v1"
+STARTUP_DIAGNOSTIC_SCHEMA = "cpk.candidate-startup-diagnostic.v1"
+STARTUP_DIAGNOSTIC_FILENAME = "candidate-startup-diagnostic.json"
 ASSEMBLY_ERROR = "candidate assembly is invalid"
 WORKFLOW_ERROR = "candidate topology workflow failed"
 PACKAGE_BUILD_FAILURE_CODE = "candidate-image-build-failed"
@@ -182,6 +184,113 @@ def _report_sha256(report: dict[str, Any]) -> str:
     projected = deepcopy(report)
     projected.pop("report_sha256", None)
     return _canonical_sha256(projected)
+
+
+def _startup_diagnostic_sha256(diagnostic: dict[str, Any]) -> str:
+    projected = deepcopy(diagnostic)
+    projected.pop("diagnostic_sha256", None)
+    return _canonical_sha256(projected)
+
+
+_CANDIDATE_CONTAINER_STATES = frozenset(
+    {"created", "running", "paused", "restarting", "removing", "exited", "dead"}
+)
+_TERMINAL_CANDIDATE_CONTAINER_STATES = frozenset({"exited", "dead"})
+
+
+def _project_candidate_startup_state(value: Any) -> dict[str, Any]:
+    state = value if type(value) is dict else {}
+    raw_status = state.get("status")
+    status = (
+        raw_status
+        if type(raw_status) is str and raw_status in _CANDIDATE_CONTAINER_STATES
+        else "unknown"
+    )
+    raw_exit_code = state.get("exit_code")
+    exit_code = (
+        raw_exit_code
+        if status in _TERMINAL_CANDIDATE_CONTAINER_STATES
+        and type(raw_exit_code) is int
+        and 0 <= raw_exit_code <= 255
+        else None
+    )
+    return {"status": status, "exit_code": exit_code}
+
+
+def _startup_readiness_classification(error: BaseException) -> str:
+    message = str(error)
+    if message == "cpk-server did not become ready":
+        return "policy-exhausted"
+    if message == "cpk-server did not boot with Docker runtime":
+        return "runtime-mismatch"
+    return "unknown"
+
+
+def _startup_diagnostic(
+    prepared: dict[str, Any],
+    *,
+    readiness_error: BaseException,
+    container_state: Any,
+) -> dict[str, Any]:
+    server = prepared.get("server")
+    inspection = prepared.get("server_inspection")
+    diagnostic = {
+        "schema": STARTUP_DIAGNOSTIC_SCHEMA,
+        "classification": "supporting",
+        "phase": "hosted-readiness",
+        "candidate_image_built": type(prepared.get("build")) is dict,
+        "server_container_started": type(server) is dict,
+        "server_package_inspected": type(inspection) is dict,
+        "port_published": (
+            type(server) is dict
+            and type(server.get("base_url")) is str
+            and bool(server["base_url"])
+        ),
+        "readiness": _startup_readiness_classification(readiness_error),
+        "container_state": _project_candidate_startup_state(container_state),
+        "redaction_verified": True,
+        "protected_material_retained": False,
+    }
+    diagnostic["diagnostic_sha256"] = _startup_diagnostic_sha256(diagnostic)
+    return diagnostic
+
+
+def _path_exists_without_following(path: Path) -> bool:
+    try:
+        os.lstat(path)
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def _persist_startup_diagnostic(path: Path, diagnostic: dict[str, Any]) -> None:
+    payload = (
+        json.dumps(diagnostic, ensure_ascii=True, indent=2, sort_keys=True) + "\n"
+    ).encode("ascii")
+    if len(payload) > 4096:
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+    temporary = Path(str(path) + ".part")
+    descriptor: int | None = None
+    temporary_created = False
+    try:
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+        )
+        temporary_created = True
+        with os.fdopen(descriptor, "wb") as stream:
+            descriptor = None
+            stream.write(payload)
+        if _path_exists_without_following(path):
+            raise CandidateAssemblyError(ASSEMBLY_ERROR)
+        os.replace(temporary, path)
+        temporary_created = False
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        if temporary_created and _path_exists_without_following(temporary):
+            temporary.unlink()
 
 
 _PUBLIC_INVENTORY_KEYS = (
@@ -1212,6 +1321,18 @@ class DockerCandidateEffects:
             },
         }
 
+    def observe_candidate_startup(self, container_id: str) -> dict[str, Any]:
+        if self._server is None or self._server.id != container_id:
+            raise CandidateTopologyError(WORKFLOW_ERROR)
+        self._server.reload()
+        state = self._server.attrs.get("State", {})
+        return _project_candidate_startup_state(
+            {
+                "status": state.get("Status"),
+                "exit_code": state.get("ExitCode"),
+            }
+        )
+
     def probe_hello(
         self,
         *,
@@ -1452,6 +1573,14 @@ def main(
             parser.error("package image mode requires exact base image and candidate tag")
     elif any(package_arguments) or args.staging_root is not None:
         parser.error("package image arguments require package image mode")
+
+    startup_diagnostic_path = args.report.with_name(STARTUP_DIAGNOSTIC_FILENAME)
+    startup_diagnostic_part_path = Path(str(startup_diagnostic_path) + ".part")
+    if not args.package_image_only and (
+        _path_exists_without_following(startup_diagnostic_path)
+        or _path_exists_without_following(startup_diagnostic_part_path)
+    ):
+        raise _fixed_assembly_error()
 
     labels = {
         args.project_label.split("=", 1)[0]: args.project_label.split("=", 1)[1],
@@ -1717,6 +1846,7 @@ def main(
     failure: BaseException | None = None
     report: dict[str, Any] | None = None
     failure_stage = "admission"
+    readiness_failed = False
     try:
         failure_stage = "build"
         prepared = _prepare_candidate(admitted, inspection, effects)
@@ -1730,7 +1860,11 @@ def main(
                 worker_id="candidate-worker",
                 server_container=server["container_id"],
             )
-            workflow.wait_ready()
+            try:
+                workflow.wait_ready()
+            except BaseException:
+                readiness_failed = True
+                raise
         else:
             workflow = workflow_factory(
                 server["base_url"],
@@ -1763,6 +1897,27 @@ def main(
         failure = error
 
     if failure is not None:
+        if readiness_failed and prepared is not None:
+            container_state: dict[str, Any] = {
+                "status": "unknown",
+                "exit_code": None,
+            }
+            server = prepared.get("server")
+            observer = getattr(effects, "observe_candidate_startup", None)
+            if type(server) is dict and callable(observer):
+                try:
+                    container_state = observer(server["container_id"])
+                except Exception:
+                    pass
+            try:
+                diagnostic = _startup_diagnostic(
+                    prepared,
+                    readiness_error=failure,
+                    container_state=container_state,
+                )
+                _persist_startup_diagnostic(startup_diagnostic_path, diagnostic)
+            except Exception:
+                pass
         report = getattr(failure, "candidate_terminal_report", None)
         if report is None:
             cleanup = effects.cleanup(reason="error")

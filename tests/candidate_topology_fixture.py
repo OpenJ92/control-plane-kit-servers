@@ -521,6 +521,10 @@ class HardenedRecordingCandidateEffects(RecordingCandidateEffects):
         default_factory=lambda: RuntimeError("protected-build-failure")
     )
     observation_error: BaseException | None = None
+    startup_observation: dict[str, Any] = field(
+        default_factory=lambda: {"status": "running", "exit_code": None}
+    )
+    startup_observation_error: Exception | None = None
     pre_inventory: dict[str, tuple[str, ...]] = field(
         default_factory=lambda: deepcopy(FOREIGN_INVENTORY)
     )
@@ -614,6 +618,12 @@ class HardenedRecordingCandidateEffects(RecordingCandidateEffects):
             },
         }
 
+    def observe_candidate_startup(self, container_id: str) -> dict[str, Any]:
+        self.ledger.append(("observe-candidate-startup", container_id))
+        if self.startup_observation_error is not None:
+            raise self.startup_observation_error
+        return deepcopy(self.startup_observation)
+
     def probe_hello(
         self,
         *,
@@ -691,6 +701,10 @@ class RecordingCandidateEffectsFactory:
     fail_at: str | None = None
     wrong_hello: bool = False
     build_error: BaseException | None = None
+    startup_observation: dict[str, Any] = field(
+        default_factory=lambda: {"status": "running", "exit_code": None}
+    )
+    startup_observation_error: Exception | None = None
     instances: list[HardenedRecordingCandidateEffects] = field(default_factory=list)
 
     def __call__(self, **kwargs: Any) -> HardenedRecordingCandidateEffects:
@@ -701,6 +715,8 @@ class RecordingCandidateEffectsFactory:
             "fail_at": self.fail_at,
             "wrong_hello": self.wrong_hello,
             "build_context": kwargs.get("root"),
+            "startup_observation": deepcopy(self.startup_observation),
+            "startup_observation_error": self.startup_observation_error,
         }
         if self.build_error is not None:
             effect_arguments["build_error"] = self.build_error
@@ -810,6 +826,8 @@ class RecordingDockerContainer:
     ports: dict[str, Any] = field(default_factory=dict)
     volumes: dict[str, Any] = field(default_factory=dict)
     group_add: tuple[str, ...] = ()
+    state_status: Any = "running"
+    state_exit_code: Any = 0
     removed: bool = False
 
     @property
@@ -835,6 +853,10 @@ class RecordingDockerContainer:
                 "Networks": {
                     name: {} for name in (() if self.network is None else (self.network,))
                 },
+            },
+            "State": {
+                "Status": self.state_status,
+                "ExitCode": self.state_exit_code,
             },
         }
 
@@ -923,6 +945,16 @@ class RecordingDockerContainers:
             ports=dict(kwargs.get("ports") or {}),
             volumes=dict(kwargs.get("volumes") or {}),
             group_add=tuple(str(value) for value in kwargs.get("group_add") or ()),
+            state_status=(
+                self.client.candidate_state_status
+                if image == CANDIDATE_IMAGE_ID
+                else "running"
+            ),
+            state_exit_code=(
+                self.client.candidate_state_exit_code
+                if image == CANDIDATE_IMAGE_ID
+                else 0
+            ),
         )
         self.values.append(container)
         self.client.container_runs.append(recorded)
@@ -1009,6 +1041,8 @@ class RecordingDockerClient:
         self.ledger: list[tuple[str, Any]] = []
         self.container_runs: list[dict[str, Any]] = []
         self.postgres_readiness: list[int] = []
+        self.candidate_state_status = "running"
+        self.candidate_state_exit_code: Any = 0
         self.containers = RecordingDockerContainers(self)
         self.networks = RecordingDockerNetworks(self)
         self.images = RecordingDockerImages(self)
