@@ -521,6 +521,7 @@ class HardenedRecordingCandidateEffects(RecordingCandidateEffects):
     build_error: BaseException = field(
         default_factory=lambda: RuntimeError("protected-build-failure")
     )
+    observation_error: BaseException | None = None
     pre_inventory: dict[str, tuple[str, ...]] = field(
         default_factory=lambda: deepcopy(FOREIGN_INVENTORY)
     )
@@ -587,6 +588,8 @@ class HardenedRecordingCandidateEffects(RecordingCandidateEffects):
 
     def observe_candidate_image_tag(self, candidate_image_tag: str) -> bool:
         self.ledger.append(("observe-candidate-image-tag", candidate_image_tag))
+        if self.observation_error is not None:
+            raise self.observation_error
         return False
 
     def start_candidate_server(self, built_image_id: str) -> dict[str, str]:

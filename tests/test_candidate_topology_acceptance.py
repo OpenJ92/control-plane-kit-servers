@@ -61,6 +61,7 @@ from candidate_topology_fixture import (
     RFC8785_WHEEL_SHA256,
     RFC8785_WHEEL_SIZE,
     RFC8785_WHEEL_URL,
+    HardenedRecordingCandidateEffects,
     RecordingCandidateEffects,
     RecordingCandidateEffectsFactory,
     RecordingCandidateWheelMaterializer,
@@ -1328,6 +1329,25 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                         "message": "Candidate image build failed.",
                     },
                 )
+            with self.subTest(build_failure="exact-failure-report-topology"):
+                self.assertEqual(
+                    set(report),
+                    {
+                        "schema",
+                        "status",
+                        "first_failed_stage",
+                        "failure",
+                        "observations",
+                        "redaction_verified",
+                        "protected_material_retained",
+                        "report_sha256",
+                    },
+                )
+            with self.subTest(build_failure="exact-failure-observation-schema"):
+                self.assertEqual(
+                    set(report.get("observations", {})),
+                    {"candidate_image_tag_present"},
+                )
             with self.subTest(build_failure="terminal-report-candidate-tag-absent"):
                 observations = report.get("observations", {})
                 self.assertIs(
@@ -1365,6 +1385,190 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                         "token",
                     ):
                         self.assertNotIn(forbidden, rendered_report)
+
+        secondary_rows = (
+            (
+                "candidate-tag-observation-unavailable",
+                RuntimeError("protected-observation-failure"),
+                None,
+            ),
+            (
+                "terminal-report-persistence-unavailable",
+                None,
+                OSError("protected-report-persistence-failure"),
+            ),
+        )
+        for boundary, observation_error, persistence_error in secondary_rows:
+            ledger = []
+            original = RuntimeError("protected-primary-build-failure")
+            effects = HardenedRecordingCandidateEffects(
+                ledger=ledger,
+                fail_at="build",
+                build_error=original,
+                observation_error=observation_error,
+            )
+            with tempfile.TemporaryDirectory() as directory:
+                report_path = Path(directory) / "candidate-report.json"
+                escaped = None
+                persist = candidate._persist_report
+                with patch.object(candidate, "_persist_report", wraps=persist) as writer:
+                    if persistence_error is not None:
+                        writer.side_effect = persistence_error
+                    try:
+                        candidate._build_candidate_package_image_with_report(
+                            exact_assembly(),
+                            exact_inspection(),
+                            effects,
+                            None,
+                            CPK_SERVER_BASE_IMAGE,
+                            candidate_tag,
+                            report_path,
+                        )
+                    except BaseException as error:
+                        escaped = error
+                secondary_report = (
+                    json.loads(report_path.read_text(encoding="utf-8"))
+                    if report_path.is_file()
+                    else {}
+                )
+
+            with self.subTest(boundary=boundary, law="primary-exception-authoritative"):
+                self.assertIs(escaped, original)
+            with self.subTest(boundary=boundary, law="primary-cause-unchanged"):
+                self.assertIsNone(original.__cause__)
+            with self.subTest(boundary=boundary, law="primary-context-unchanged"):
+                self.assertIsNone(original.__context__)
+            with self.subTest(
+                boundary=boundary,
+                law="primary-has-no-report-attachment",
+            ):
+                self.assertFalse(
+                    hasattr(original, "candidate_terminal_report")
+                )
+            with self.subTest(boundary=boundary, law="read-only-observation-only"):
+                self.assertEqual(
+                    tuple(name for name, _ in ledger),
+                    (
+                        "preflight-inventory",
+                        "build",
+                        "observe-candidate-image-tag",
+                    ),
+                )
+            if observation_error is not None:
+                with self.subTest(
+                    boundary=boundary,
+                    law="report-persists-with-unavailable-observation",
+                ):
+                    self.assertTrue(secondary_report)
+                with self.subTest(
+                    boundary=boundary,
+                    law="unavailable-observation-report-is-exact-and-fixed",
+                ):
+                    if secondary_report:
+                        projected_secondary_report = dict(secondary_report)
+                        projected_secondary_report.pop("report_sha256", None)
+                        self.assertEqual(
+                            projected_secondary_report,
+                            {
+                                "schema": candidate.REPORT_SCHEMA,
+                                "status": "failed",
+                                "first_failed_stage": "build",
+                                "failure": {
+                                    "code": "candidate-image-build-failed",
+                                    "message": "Candidate image build failed.",
+                                },
+                                "observations": {},
+                                "redaction_verified": True,
+                                "protected_material_retained": False,
+                            },
+                        )
+                with self.subTest(
+                    boundary=boundary,
+                    law="unavailable-observation-is-not-fabricated-absent",
+                ):
+                    if secondary_report:
+                        self.assertEqual(
+                            secondary_report.get("observations"),
+                            {},
+                        )
+                with self.subTest(
+                    boundary=boundary,
+                    law="unavailable-observation-report-digest-is-canonical",
+                ):
+                    if secondary_report:
+                        self.assertEqual(
+                            secondary_report.get("report_sha256"),
+                            canonical_report_sha256(secondary_report),
+                        )
+                with self.subTest(
+                    boundary=boundary,
+                    law="secondary-diagnostics-are-bounded-and-redacted",
+                ):
+                    if secondary_report:
+                        rendered_secondary_report = json.dumps(
+                            secondary_report,
+                            sort_keys=True,
+                        ).lower()
+                        for forbidden in (
+                            "protected-observation-failure",
+                            "protected-report-persistence-failure",
+                            "provider_body",
+                            "provider_status",
+                            "exception_class",
+                            "raw_diagnostic",
+                        ):
+                            self.assertNotIn(
+                                forbidden,
+                                rendered_secondary_report,
+                            )
+            if persistence_error is not None:
+                with self.subTest(
+                    boundary=boundary,
+                    law="failed-persistence-does-not-fabricate-report",
+                ):
+                    self.assertEqual(secondary_report, {})
+
+        cancellation = KeyboardInterrupt("protected-package-cancellation")
+        cancellation_ledger = []
+        cancellation_effects = HardenedRecordingCandidateEffects(
+            ledger=cancellation_ledger,
+            fail_at="build",
+            build_error=cancellation,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            cancellation_report_path = Path(directory) / "candidate-report.json"
+            escaped_cancellation = None
+            try:
+                candidate._build_candidate_package_image_with_report(
+                    exact_assembly(),
+                    exact_inspection(),
+                    cancellation_effects,
+                    None,
+                    CPK_SERVER_BASE_IMAGE,
+                    candidate_tag,
+                    cancellation_report_path,
+                )
+            except BaseException as error:
+                escaped_cancellation = error
+            cancellation_report_exists = cancellation_report_path.exists()
+
+        with self.subTest(cancellation="identity-preserved"):
+            self.assertIs(escaped_cancellation, cancellation)
+        with self.subTest(cancellation="cause-unchanged"):
+            self.assertIsNone(cancellation.__cause__)
+        with self.subTest(cancellation="context-unchanged"):
+            self.assertIsNone(cancellation.__context__)
+        with self.subTest(cancellation="no-report-attachment"):
+            self.assertFalse(
+                hasattr(cancellation, "candidate_terminal_report")
+            )
+        with self.subTest(cancellation="no-candidate-tag-observation"):
+            self.assertEqual(
+                tuple(name for name, _ in cancellation_ledger),
+                ("preflight-inventory", "build"),
+            )
+        with self.subTest(cancellation="no-terminal-build-report"):
+            self.assertFalse(cancellation_report_exists)
 
     def test_main_report_is_derived_from_explicit_build_inspection_and_probe_data(self) -> None:
         result = self._invoke_main(use_predecessor_bridge=True)
@@ -1838,8 +2042,88 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
     def test_success_report_attests_explicit_harness_resources_and_foreign_preservation(
         self,
     ) -> None:
+        candidate = self._candidate_module()
         report, _, _, ledger = self._run_candidate()
         cleanup = report["cleanup"]
+        base_report = candidate._base_report(
+            exact_assembly(),
+            cleanup=cleanup,
+            first_failed_stage=None,
+            status="passed",
+        )
+
+        with self.subTest(report_schema="exact-owned-constructor-topology"):
+            self.assertEqual(
+                set(base_report),
+                {
+                    "schema",
+                    "assembly",
+                    "assembly_sha256",
+                    "external_coordinates",
+                    "status",
+                    "first_failed_stage",
+                    "cleanup",
+                    "redaction_verified",
+                    "protected_material_retained",
+                },
+            )
+        with self.subTest(report_schema="constructor-omits-cleanup-terminal"):
+            self.assertNotIn("cleanup_terminal", base_report)
+
+        with self.subTest(report_schema="exact-success-topology"):
+            self.assertEqual(
+                set(report),
+                {
+                    "schema",
+                    "assembly",
+                    "assembly_sha256",
+                    "external_coordinates",
+                    "status",
+                    "first_failed_stage",
+                    "cleanup",
+                    "redaction_verified",
+                    "protected_material_retained",
+                    "attestation",
+                    "workflow",
+                    "hello",
+                    "observations",
+                    "evidence",
+                    "stages",
+                    "report_sha256",
+                },
+            )
+        with self.subTest(report_schema="exact-success-cleanup-topology"):
+            self.assertEqual(
+                set(cleanup),
+                {
+                    "containers",
+                    "networks",
+                    "volumes",
+                    "images",
+                    "postgres_relations",
+                    "foreign_canary_after",
+                },
+            )
+        with self.subTest(report_schema="exact-success-observation-topology"):
+            self.assertEqual(
+                set(report.get("observations", {})),
+                {"pre_inventory", "post_inventory", "postgres_relations"},
+            )
+        for inventory_name in ("pre_inventory", "post_inventory"):
+            with self.subTest(
+                report_schema="exact-success-inventory-topology",
+                inventory=inventory_name,
+            ):
+                self.assertEqual(
+                    set(report["observations"][inventory_name]),
+                    {
+                        "containers",
+                        "networks",
+                        "volumes",
+                        "images",
+                        "postgres_relations",
+                    },
+                )
 
         self.assertEqual(ledger[-1], ("cleanup", "success"))
         for resource in ("containers", "networks", "volumes", "images"):
@@ -1856,6 +2140,29 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
             self.assertNotIn("build_residue", cleanup)
         with self.subTest(unqualified_cleanup_terminal="absent"):
             self.assertNotIn("cleanup_terminal", report)
+
+        hostile_cleanup = {
+            **cleanup,
+            "unexpected_nested_evidence": {
+                "foreign_note": "must-not-be-silently-filtered",
+            },
+        }
+        schema_error = None
+        try:
+            candidate._base_report(
+                exact_assembly(),
+                cleanup=hostile_cleanup,
+                first_failed_stage=None,
+                status="passed",
+            )
+        except BaseException as error:
+            schema_error = error
+        with self.subTest(report_schema="nested-name-drift-is-fixed-rejection"):
+            self.assertIs(type(schema_error), candidate.CandidateTopologyError)
+            if schema_error is not None:
+                self.assertEqual(str(schema_error), WORKFLOW_ERROR)
+                self.assertIsNone(schema_error.__cause__)
+                self.assertIsNone(schema_error.__context__)
 
     def test_abort_removes_only_explicit_harness_resources_and_is_classified(
         self,
