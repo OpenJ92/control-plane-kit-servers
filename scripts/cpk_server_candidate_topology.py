@@ -31,6 +31,8 @@ ASSEMBLY_SCHEMA = "cpk.candidate-assembly.v1"
 REPORT_SCHEMA = "cpk.candidate-topology-report.v1"
 ASSEMBLY_ERROR = "candidate assembly is invalid"
 WORKFLOW_ERROR = "candidate topology workflow failed"
+PACKAGE_BUILD_FAILURE_CODE = "candidate-image-build-failed"
+PACKAGE_BUILD_FAILURE_MESSAGE = "Candidate image build failed."
 SERVER_BASELINE_COMMIT = "43e9f359ca828c83fe4994ed1b62e1be54277ddd"
 SERVER_BASELINE_TREE = "ec259176eba3ce2f777d38c68fcc14e0a0e80cd3"
 SNAPSHOT_MANIFEST_SHA256 = (
@@ -180,6 +182,52 @@ def _report_sha256(report: dict[str, Any]) -> str:
     projected = deepcopy(report)
     projected.pop("report_sha256", None)
     return _canonical_sha256(projected)
+
+
+_PUBLIC_INVENTORY_KEYS = (
+    "containers",
+    "networks",
+    "volumes",
+    "images",
+    "postgres_relations",
+)
+_PUBLIC_CLEANUP_KEYS = (*_PUBLIC_INVENTORY_KEYS, "foreign_canary_after")
+_INTERNAL_CLEANUP_KEY_SETS = (
+    frozenset(_PUBLIC_CLEANUP_KEYS),
+    frozenset((*_PUBLIC_CLEANUP_KEYS, "build_residue")),
+    frozenset((*_PUBLIC_CLEANUP_KEYS, "build_residue", "status")),
+    frozenset(
+        (
+            *_PUBLIC_CLEANUP_KEYS,
+            "build_residue",
+            "pre_inventory",
+            "post_inventory",
+            "ownership_labels",
+        )
+    ),
+)
+_INTERNAL_INVENTORY_KEY_SETS = (
+    frozenset(_PUBLIC_INVENTORY_KEYS),
+    frozenset((*_PUBLIC_INVENTORY_KEYS, "build_residue")),
+)
+
+
+def _public_inventory(value: Any) -> dict[str, Any]:
+    if (
+        type(value) is not dict
+        or frozenset(value) not in _INTERNAL_INVENTORY_KEY_SETS
+    ):
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+    return {key: deepcopy(value[key]) for key in _PUBLIC_INVENTORY_KEYS}
+
+
+def _public_cleanup(value: Any) -> dict[str, Any]:
+    if (
+        type(value) is not dict
+        or frozenset(value) not in _INTERNAL_CLEANUP_KEY_SETS
+    ):
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+    return {key: deepcopy(value[key]) for key in _PUBLIC_CLEANUP_KEYS}
 
 
 def _now() -> str:
@@ -667,11 +715,15 @@ def _observations(
     cleanup: dict[str, Any],
 ) -> dict[str, Any]:
     inventory = prepared["preflight"].get("inventory", {})
+    public_cleanup = _public_cleanup(cleanup)
     return {
-        "pre_inventory": cleanup.get("pre_inventory", inventory),
-        "post_inventory": cleanup.get("post_inventory", inventory),
-        "postgres_relations": cleanup.get("postgres_relations", ()),
-        "build_residue": cleanup.get("build_residue", ()),
+        "pre_inventory": _public_inventory(
+            cleanup.get("pre_inventory", inventory)
+        ),
+        "post_inventory": _public_inventory(
+            cleanup.get("post_inventory", inventory)
+        ),
+        "postgres_relations": deepcopy(public_cleanup["postgres_relations"]),
     }
 
 
@@ -736,8 +788,7 @@ def _base_report(
         },
         "status": status,
         "first_failed_stage": first_failed_stage,
-        "cleanup": cleanup,
-        "cleanup_terminal": True,
+        "cleanup": _public_cleanup(cleanup),
         "redaction_verified": True,
         "protected_material_retained": False,
     }
@@ -1085,6 +1136,12 @@ class DockerCandidateEffects:
             "image_tag": candidate_image_tag,
         }
 
+    def observe_candidate_image_tag(self, candidate_image_tag: str) -> bool:
+        return any(
+            candidate_image_tag in getattr(image, "tags", ())
+            for image in self._client.images.list()
+        )
+
     def resolve_image_id(self, reference: str) -> str:
         return self._client.images.get(reference).id
 
@@ -1315,6 +1372,67 @@ def _persist_report(path: Path, report: dict[str, Any]) -> None:
     )
 
 
+def _package_build_failure_report(
+    *,
+    candidate_image_tag_present: bool | None,
+) -> dict[str, Any]:
+    observations = (
+        {"candidate_image_tag_present": candidate_image_tag_present}
+        if type(candidate_image_tag_present) is bool
+        else {}
+    )
+    report = {
+        "schema": REPORT_SCHEMA,
+        "status": "failed",
+        "first_failed_stage": "build",
+        "failure": {
+            "code": PACKAGE_BUILD_FAILURE_CODE,
+            "message": PACKAGE_BUILD_FAILURE_MESSAGE,
+        },
+        "observations": observations,
+        "redaction_verified": True,
+        "protected_material_retained": False,
+    }
+    report["report_sha256"] = _report_sha256(report)
+    return report
+
+
+def _build_candidate_package_image_with_report(
+    assembly: dict[str, Any],
+    inspection: dict[str, Any],
+    effects: Any,
+    artifact_fetcher: Callable[..., dict[str, Any]] | None,
+    candidate_base_image: str,
+    candidate_image_tag: str,
+    report_path: Path,
+) -> dict[str, Any]:
+    try:
+        return build_candidate_package_image(
+            assembly,
+            inspection,
+            effects,
+            artifact_fetcher,
+            candidate_base_image,
+            candidate_image_tag,
+        )
+    except Exception:
+        candidate_image_tag_present = None
+        try:
+            observed = effects.observe_candidate_image_tag(candidate_image_tag)
+            if type(observed) is bool:
+                candidate_image_tag_present = observed
+        except Exception:
+            pass
+        try:
+            report = _package_build_failure_report(
+                candidate_image_tag_present=candidate_image_tag_present,
+            )
+            _persist_report(report_path, report)
+        except Exception:
+            pass
+        raise
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -1385,6 +1503,8 @@ def main(
             ):
                 raise _fixed_assembly_error()
             created: list[Path] = []
+            generated: list[Path] = []
+            package_succeeded = False
             try:
                 created.extend(
                     (
@@ -1526,6 +1646,7 @@ def main(
                     },
                     "images": {"cpk_server_base": base_image},
                 }
+                generated.extend((args.assembly, args.inspection))
                 args.assembly.write_text(
                     json.dumps(assembly, ensure_ascii=True, indent=2, sort_keys=True)
                     + "\n",
@@ -1542,19 +1663,25 @@ def main(
                     encoding="utf-8",
                 )
                 admitted = admit_candidate_assembly(assembly, inspection)
-                build_candidate_package_image(
+                _build_candidate_package_image_with_report(
                     admitted,
                     inspection,
                     effects,
                     None,
                     base_image,
                     args.candidate_image_tag,
+                    args.report,
                 )
+                package_succeeded = True
                 return 0
             finally:
                 for path in reversed(created):
                     if path.is_file():
                         path.unlink()
+                if not package_succeeded:
+                    for path in reversed(generated):
+                        if path.is_file():
+                            path.unlink()
 
         assembly = _load_json(args.assembly)
         inspection = _load_json(args.inspection)
@@ -1576,13 +1703,14 @@ def main(
                 evidence_id=args.evidence_id,
                 candidate_image_tag=args.candidate_image_tag,
             )
-        build_candidate_package_image(
+        _build_candidate_package_image_with_report(
             admitted,
             inspection,
             effects,
             accepted_fetcher,
             args.candidate_base_image,
             args.candidate_image_tag,
+            args.report,
         )
         return 0
 
