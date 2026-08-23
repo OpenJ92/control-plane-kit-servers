@@ -151,6 +151,42 @@ class HostedActivityReadinessTests(unittest.TestCase):
 
         sleep.assert_not_called()
 
+    def test_ready_response_with_wrong_runtime_fails_immediately_and_redacted(
+        self,
+    ) -> None:
+        policy = VerificationPolicy(
+            interval_seconds=2.0,
+            maximum_attempts=3,
+        )
+
+        with (
+            patch.object(
+                cpk_server_hosted_activity,
+                "_http",
+                return_value={
+                    "status": "ready",
+                    "runtime_interpreters": "none",
+                    "diagnostic": "credential-secret",
+                },
+            ) as request,
+            patch.object(cpk_server_hosted_activity.time, "sleep") as sleep,
+        ):
+            with self.assertRaises(RuntimeError) as raised:
+                cpk_server_hosted_activity._wait_ready(
+                    "http://cpk-server/private-address",
+                    policy=policy,
+                )
+
+        with self.subTest(boundary="single-semantic-attempt"):
+            self.assertEqual(request.call_count, 1)
+        with self.subTest(boundary="semantic-failure-has-no-delay"):
+            self.assertEqual(sleep.call_args_list, [])
+        with self.subTest(boundary="fixed-redacted-message"):
+            self.assertEqual(
+                str(raised.exception),
+                "cpk-server did not boot with Docker runtime",
+            )
+
     def test_exhaustion_has_no_trailing_delay(self) -> None:
         policy = VerificationPolicy(
             interval_seconds=1.5,
