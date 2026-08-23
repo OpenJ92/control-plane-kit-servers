@@ -54,8 +54,8 @@ HELLO_DESCRIPTOR_SHA256 = (
 POSTGRES_DB = "cpk"
 POSTGRES_USER = "candidate"
 POSTGRES_PASSWORD = "candidate-password-not-for-output"
-POSTGRES_READY_ATTEMPTS = 3
-POSTGRES_READY_RETRY_SECONDS = 0.25
+POSTGRES_READY_ATTEMPTS = 15
+POSTGRES_READY_RETRY_SECONDS = 1.0
 OPERATOR_SCOPES = (
     "hub:instance:create",
     "hub:instance:read",
@@ -1144,6 +1144,7 @@ class DockerCandidateEffects:
             labels=self._labels,
             name=self._name("postgres"),
             network=self._network.name,
+            tmpfs={"/var/lib/postgresql/data": "rw"},
         )
         postgres_ready = False
         for attempt in range(POSTGRES_READY_ATTEMPTS):
