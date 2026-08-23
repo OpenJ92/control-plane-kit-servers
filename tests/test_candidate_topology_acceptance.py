@@ -48,6 +48,7 @@ from candidate_topology_fixture import (
     OPERATIONS_WHEEL_SHA256,
     OPERATOR_SCOPES,
     POSTGRES_BOOTSTRAP_ENVIRONMENT,
+    POSTGRES_DATA_PATH,
     POSTGRES_DB,
     POSTGRES_DSN_ENVIRONMENT,
     POSTGRES_IMAGE,
@@ -2344,6 +2345,14 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                     postgres[0]["environment"],
                     POSTGRES_BOOTSTRAP_ENVIRONMENT,
                 )
+                self.assertEqual(
+                    postgres[0].get("tmpfs"),
+                    {POSTGRES_DATA_PATH: "rw"},
+                )
+                self.assertNotIn(
+                    POSTGRES_DATA_PATH,
+                    postgres[0].get("volumes", {}),
+                )
         with self.subTest(boundary="non-sql-readiness"):
             self.assertEqual(
                 readiness,
@@ -2392,7 +2401,9 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
     def test_postgres_readiness_retries_are_bounded_before_server_start(self) -> None:
         candidate = self._candidate_module()
         client = RecordingDockerClient()
-        client.postgres_readiness[:] = [1, 1, 0]
+        client.postgres_readiness[:] = (
+            [1] * (POSTGRES_READY_ATTEMPTS - 1) + [0]
+        )
         effects = self._docker_effects(candidate, client)
         delays = []
         escaped = None
