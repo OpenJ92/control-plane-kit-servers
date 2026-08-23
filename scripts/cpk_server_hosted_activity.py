@@ -1528,15 +1528,21 @@ def _latest_run_failure(page: dict[str, Any]) -> dict[str, Any] | None:
     items = page.get("items")
     if not isinstance(items, list):
         return None
+    fallback = None
     for event in reversed(items):
         if not isinstance(event, dict) or not isinstance(event.get("failure"), dict):
             continue
-        return {
+        projected = {
             "event_type": event.get("event_type"),
             "activity_id": event.get("activity_id"),
             "failure": event["failure"],
         }
-    return None
+        activity_id = event.get("activity_id")
+        if isinstance(activity_id, str) and activity_id:
+            return projected
+        if fallback is None:
+            fallback = projected
+    return fallback
 
 
 def _sync_runtime_networks(server_container: str, *, workspace_id: str = WORKSPACE_ID) -> None:

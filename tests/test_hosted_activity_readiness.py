@@ -137,7 +137,17 @@ class HostedActivityReadinessTests(unittest.TestCase):
                         "details": {},
                     },
                     "payload": {"secret": "must-not-be-rendered"},
-                }
+                },
+                {
+                    "event_type": "run_failed",
+                    "activity_id": None,
+                    "failure": {
+                        "category": "terminal",
+                        "code": "activity-step-failed",
+                        "message": "generic run failure",
+                        "details": {},
+                    },
+                },
             ]
         }
 
@@ -175,6 +185,7 @@ class HostedActivityReadinessTests(unittest.TestCase):
             },
         )
         self.assertNotIn("must-not-be-rendered", str(raised.exception))
+        self.assertNotIn("activity-step-failed", str(raised.exception))
 
     def test_run_claim_uses_current_bounded_lease_contract(self) -> None:
         workflow = cpk_server_hosted_activity.HostedWorkflow(
