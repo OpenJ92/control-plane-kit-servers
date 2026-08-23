@@ -84,15 +84,15 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
 
         self.assertEqual(
             hashlib.sha256(production).hexdigest(),
-            "65dae2993ab7d141564cf38c8f737d966d8f6cc43cce87a1745bd10c018f4689",
+            "7a95cf122c7bb7c5bd911c5bbe95c3c5da81f757aa8fb7d0fa014eb36a51d5eb",
         )
         self.assertEqual(
             hashlib.sha256(pyproject).hexdigest(),
-            "82c8668cf94bf55a7bdbb82e793353082dc2dc8406edd8f936e5132ac17bc8d9",
+            "132c47e0648c7074b06231b1c0ae6f595969a4756383fba6c69eacef5ecc4b83",
         )
         self.assertEqual(
             hashlib.sha256(coordinates).hexdigest(),
-            "41dfa57a6f09417f7d990263fddc2fee3935b940dffda47207a4d59a63e882a3",
+            "2cf09911ac9dcaa4e8ae86f8eefa60f191955d0e1f1f115f763aba78a831a48c",
         )
         overlay_lines = tuple(line.strip() for line in overlay.splitlines())
         self.assertEqual(overlay_lines.count("ARG CPK_SERVER_BASE_IMAGE"), 1)

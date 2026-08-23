@@ -38,7 +38,7 @@ PACKAGE_BUILD_FAILURE_MESSAGE = "Candidate image build failed."
 SERVER_BASELINE_COMMIT = "43e9f359ca828c83fe4994ed1b62e1be54277ddd"
 SERVER_BASELINE_TREE = "ec259176eba3ce2f777d38c68fcc14e0a0e80cd3"
 SNAPSHOT_MANIFEST_SHA256 = (
-    "41dfa57a6f09417f7d990263fddc2fee3935b940dffda47207a4d59a63e882a3"
+    "2cf09911ac9dcaa4e8ae86f8eefa60f191955d0e1f1f115f763aba78a831a48c"
 )
 POSTGRES_IMAGE = (
     "docker.io/library/postgres@sha256:"
@@ -48,7 +48,7 @@ HELLO_RESPONSE = b"Hello, world!\n"
 CPK_COMMIT = "4fb75b7b6c1a16ec3b8c1d78dec6ad1a4ad1b40a"
 CPK_TREE = "6a405e4ab7e707ff7374205ca2ef4726d6225b86"
 PRODUCTION_DOCKERFILE_SHA256 = (
-    "65dae2993ab7d141564cf38c8f737d966d8f6cc43cce87a1745bd10c018f4689"
+    "7a95cf122c7bb7c5bd911c5bbe95c3c5da81f757aa8fb7d0fa014eb36a51d5eb"
 )
 HELLO_DESCRIPTOR_SHA256 = (
     "57ac661ca3f73ad4fa488df34390240e95da58e302bffb17c2197eeac29c2a24"
@@ -117,8 +117,8 @@ EXPECTED_ASSEMBLY = {
     "dependencies": {
         "control_plane_kit_interpreters": {
             "repository": "OpenJ92/control-plane-kit-interpreters",
-            "commit": "559096612033912e600ba1e2ebccbf7443302e23",
-            "tree": "cb01cb17bf4a4953f9bd193c315eecce59ac0af4",
+            "commit": "4c1a265075f2fa30e0290e7ea0e1996d32b70319",
+            "tree": "8cd60f5f640df38488efcd6c555675f292f37324",
         },
         "control_plane_kit_secrets": {
             "repository": "OpenJ92/control-plane-kit-secrets",
