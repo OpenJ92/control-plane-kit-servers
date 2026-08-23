@@ -63,7 +63,7 @@ OPERATIONS_WHEEL_BYTES = (
 CORE_WHEEL_SHA256 = "d" * 64
 OPERATIONS_WHEEL_SHA256 = "e" * 64
 STAGED_OVERLAY_SHA256 = (
-    "061d1e8def7f929046d0ad3ef67a52e74d5b569103b1320d9ca63e595613d18a"
+    "6195df4a3bd397070322bc31f4f4f5dfa7286c5b9455c74ea2a820a0dfdf7a1f"
 )
 STAGED_CORE_WHEEL_SHA256 = hashlib.sha256(CORE_WHEEL_BYTES).hexdigest()
 STAGED_OPERATIONS_WHEEL_SHA256 = hashlib.sha256(
@@ -121,13 +121,6 @@ INSTALLED_MODULE_PATHS = (
 )
 WORKSPACE_ID = "candidate-topology-1714"
 FOREIGN_RESOURCE_CANARY = "foreign-resource-1714"
-FAILED_BUILD_CONTAINER_ID = "sha256:" + "4" * 64
-FAILED_BUILD_CONTAINER_NAME = "candidate-build-intermediate-1714"
-FAILED_BUILD_IMAGE_ID = "sha256:" + "5" * 64
-CONCURRENT_CONTAINER_ID = "sha256:" + "6" * 64
-CONCURRENT_CONTAINER_NAME = "concurrent-foreign-container-1714"
-CONCURRENT_IMAGE_ID = "sha256:" + "7" * 64
-CONCURRENT_IMAGE_TAG = "concurrent-foreign-image-1714:latest"
 FOREIGN_INVENTORY = {
     "containers": ("foreign-container-1714",),
     "networks": ("foreign-network-1714",),
@@ -525,33 +518,12 @@ class HardenedRecordingCandidateEffects(RecordingCandidateEffects):
     fail_at: str | None = None
     wrong_hello: bool = False
     build_context: str | None = None
-    pre_inventory: dict[str, tuple[str, ...]] = field(
-        default_factory=lambda: deepcopy(FOREIGN_INVENTORY)
-    )
     build_error: BaseException = field(
         default_factory=lambda: RuntimeError("protected-build-failure")
     )
-    build_owned_containers: tuple[dict[str, Any], ...] = ()
-    build_owned_images: tuple[dict[str, Any], ...] = ()
-    concurrent_foreign_truth: dict[str, tuple[dict[str, Any], ...]] = field(
-        default_factory=lambda: {
-            "containers": (
-                {
-                    "id": CONCURRENT_CONTAINER_ID,
-                    "name": CONCURRENT_CONTAINER_NAME,
-                    "labels": {"org.openj92.foreign": "concurrent"},
-                },
-            ),
-            "images": (
-                {
-                    "id": CONCURRENT_IMAGE_ID,
-                    "tags": (CONCURRENT_IMAGE_TAG,),
-                    "labels": {"org.openj92.foreign": "concurrent"},
-                },
-            ),
-        }
+    pre_inventory: dict[str, tuple[str, ...]] = field(
+        default_factory=lambda: deepcopy(FOREIGN_INVENTORY)
     )
-    cleanup_observation: dict[str, Any] | None = None
 
     def preflight_inventory(self, assembly: dict[str, Any]) -> dict[str, Any]:
         observed = {
@@ -575,40 +547,11 @@ class HardenedRecordingCandidateEffects(RecordingCandidateEffects):
         base_image: str,
         candidate_image_tag: str | None = None,
     ) -> dict[str, Any]:
+        build_identity = (canonical_sha256(assembly), base_image)
+        if candidate_image_tag is not None:
+            build_identity = (*build_identity, candidate_image_tag)
         if self.fail_at == "build":
-            self.build_owned_containers = (
-                {
-                    "id": FAILED_BUILD_CONTAINER_ID,
-                    "name": FAILED_BUILD_CONTAINER_NAME,
-                    "image_id": FAILED_BUILD_IMAGE_ID,
-                    "status": "exited",
-                    "labels": {},
-                },
-            )
-            self.build_owned_images = (
-                {
-                    "id": FAILED_BUILD_IMAGE_ID,
-                    "tags": (),
-                    "labels": {},
-                },
-            )
-            self.ledger.append(
-                (
-                    "build-failure-residue",
-                    {
-                        "containers": deepcopy(self.build_owned_containers),
-                        "images": deepcopy(self.build_owned_images),
-                        "candidate_image_tag": candidate_image_tag,
-                        "candidate_image_tag_present": False,
-                    },
-                )
-            )
-            self.ledger.append(
-                (
-                    "concurrent-foreign-canary",
-                    deepcopy(self.concurrent_foreign_truth),
-                )
-            )
+            self.ledger.append(("build", build_identity))
             raise self.build_error
         if self.build_context is not None:
             root = Path(self.build_context)
@@ -635,15 +578,16 @@ class HardenedRecordingCandidateEffects(RecordingCandidateEffects):
                     {"root": str(root), "files": observed_files},
                 )
             )
-        build_identity = (canonical_sha256(assembly), base_image)
-        if candidate_image_tag is not None:
-            build_identity = (*build_identity, candidate_image_tag)
         self.ledger.append(("build", build_identity))
         return {
             "base_image": base_image,
             "image_id": CANDIDATE_IMAGE_ID,
             "image_tag": candidate_image_tag,
         }
+
+    def observe_candidate_image_tag(self, candidate_image_tag: str) -> bool:
+        self.ledger.append(("observe-candidate-image-tag", candidate_image_tag))
+        return False
 
     def start_candidate_server(self, built_image_id: str) -> dict[str, str]:
         self.ledger.append(("start-candidate-server", built_image_id))
@@ -699,26 +643,8 @@ class HardenedRecordingCandidateEffects(RecordingCandidateEffects):
         }
 
     def cleanup(self, *, reason: str) -> dict[str, Any]:
-        failed_build = bool(self.build_owned_containers or self.build_owned_images)
-        if failed_build:
-            for container in self.build_owned_containers:
-                self.ledger.append(
-                    (
-                        "build-container-remove",
-                        {"id": container["id"], "force": True},
-                    )
-                )
-            for image in self.build_owned_images:
-                self.ledger.append(
-                    (
-                        "build-image-remove",
-                        {"id": image["id"], "force": True},
-                    )
-                )
-            self.build_owned_containers = ()
-            self.build_owned_images = ()
         observed = super().cleanup(reason=reason)
-        hardened = {
+        return {
             **observed,
             "pre_inventory": deepcopy(self.pre_inventory),
             "post_inventory": deepcopy(self.pre_inventory),
@@ -727,22 +653,6 @@ class HardenedRecordingCandidateEffects(RecordingCandidateEffects):
                 "org.openj92.cpk.scenario": "candidate-topology-1714",
             },
         }
-        if failed_build:
-            hardened.update(
-                {
-                    "build_owned_containers": (),
-                    "build_owned_images": (),
-                    "candidate_image_tag_present": False,
-                    "concurrent_foreign_before": deepcopy(
-                        self.concurrent_foreign_truth
-                    ),
-                    "concurrent_foreign_after": deepcopy(
-                        self.concurrent_foreign_truth
-                    ),
-                }
-            )
-        self.cleanup_observation = deepcopy(hardened)
-        return hardened
 
 
 
@@ -792,9 +702,7 @@ class RecordingCandidateEffectsFactory:
         }
         if self.build_error is not None:
             effect_arguments["build_error"] = self.build_error
-        effects = HardenedRecordingCandidateEffects(
-            **effect_arguments,
-        )
+        effects = HardenedRecordingCandidateEffects(**effect_arguments)
         self.instances.append(effects)
         return effects
 

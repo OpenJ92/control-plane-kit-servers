@@ -24,10 +24,6 @@ from candidate_topology_fixture import (
     CANDIDATE_SERVER_ENVIRONMENT,
     CANDIDATE_TREE,
     CANDIDATE_WHEEL_SOURCES,
-    CONCURRENT_CONTAINER_ID,
-    CONCURRENT_CONTAINER_NAME,
-    CONCURRENT_IMAGE_ID,
-    CONCURRENT_IMAGE_TAG,
     CPK_SERVER_BASE_IMAGE,
     CORE_WHEEL_BYTES,
     CORE_WHEEL_PATH,
@@ -36,9 +32,6 @@ from candidate_topology_fixture import (
     DOCKER_SOCKET_GID,
     FOREIGN_INVENTORY,
     FOREIGN_RESOURCE_CANARY,
-    FAILED_BUILD_CONTAINER_ID,
-    FAILED_BUILD_CONTAINER_NAME,
-    FAILED_BUILD_IMAGE_ID,
     HELLO_DESCRIPTOR_SHA256,
     HELLO_IMAGE,
     HELLO_LOCAL_IMAGE_ID,
@@ -1243,127 +1236,55 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                 )
             except BaseException as error:
                 failure = error
-            failed_effects = (
-                failure_factory.instances[0]
-                if failure_factory.instances
-                else None
-            )
-            cleanup = (
-                failed_effects.cleanup_observation
-                if failed_effects is not None
-                and type(failed_effects.cleanup_observation) is dict
-                else {}
-            )
             report = (
                 json.loads(report_path.read_text(encoding="utf-8"))
                 if report_path.is_file()
                 else {}
             )
+            failure_names = tuple(name for name, _ in failure_ledger)
 
-            with self.subTest(build_failure="original-error-owner"):
+            with self.subTest(build_failure="identical-original-exception"):
                 self.assertIs(failure, build_error)
                 self.assertIsNone(build_error.__cause__)
                 self.assertIsNone(build_error.__context__)
-            with self.subTest(build_failure="exact-daemon-residue-observed"):
-                residue_rows = tuple(
-                    value
-                    for name, value in failure_ledger
-                    if name == "build-failure-residue"
+                self.assertFalse(
+                    hasattr(build_error, "candidate_terminal_report")
                 )
-                self.assertEqual(
-                    residue_rows,
-                    (
-                        {
-                            "containers": (
-                                {
-                                    "id": FAILED_BUILD_CONTAINER_ID,
-                                    "name": FAILED_BUILD_CONTAINER_NAME,
-                                    "image_id": FAILED_BUILD_IMAGE_ID,
-                                    "status": "exited",
-                                    "labels": {},
-                                },
-                            ),
-                            "images": (
-                                {
-                                    "id": FAILED_BUILD_IMAGE_ID,
-                                    "tags": (),
-                                    "labels": {},
-                                },
-                            ),
-                            "candidate_image_tag": candidate_tag,
-                            "candidate_image_tag_present": False,
-                        },
-                    ),
-                )
-            with self.subTest(build_failure="exact-id-cleanup"):
+            with self.subTest(build_failure="one-build-attempt-no-retry"):
                 self.assertEqual(
                     tuple(
-                        row
-                        for row in failure_ledger
-                        if row[0]
-                        in {
-                            "cleanup",
-                            "build-container-remove",
-                            "build-image-remove",
-                        }
+                        row for row in failure_ledger if row[0] == "build"
                     ),
                     (
                         (
-                            "build-container-remove",
-                            {"id": FAILED_BUILD_CONTAINER_ID, "force": True},
+                            "build",
+                            (
+                                canonical_sha256(expected_assembly),
+                                expected_inspection["images"][
+                                    "cpk_server_base"
+                                ],
+                                candidate_tag,
+                            ),
                         ),
-                        (
-                            "build-image-remove",
-                            {"id": FAILED_BUILD_IMAGE_ID, "force": True},
-                        ),
-                        ("cleanup", "error"),
                     ),
                 )
-            with self.subTest(build_failure="no-broad-prune-cleanup"):
-                self.assertFalse(
-                    any("prune" in name for name, _ in failure_ledger)
+            with self.subTest(
+                build_failure="post-build-effects-only-observe-candidate-tag"
+            ):
+                build_position = (
+                    failure_names.index("build")
+                    if "build" in failure_names
+                    else -1
                 )
-            with self.subTest(build_failure="candidate-tag-remains-absent"):
-                self.assertIs(
-                    cleanup.get("candidate_image_tag_present", True),
-                    False,
-                )
-            with self.subTest(build_failure="owned-container-ledger-empty"):
-                self.assertEqual(cleanup.get("build_owned_containers"), ())
-            with self.subTest(build_failure="owned-image-ledger-empty"):
-                self.assertEqual(cleanup.get("build_owned_images"), ())
+                self.assertGreaterEqual(build_position, 0)
+                if build_position >= 0:
+                    self.assertEqual(
+                        tuple(failure_ledger[build_position + 1 :]),
+                        (("observe-candidate-image-tag", candidate_tag),),
+                    )
             with self.subTest(build_failure="foreign-file-preserved"):
                 self.assertEqual(foreign_path.read_bytes(), foreign_bytes)
-            with self.subTest(build_failure="foreign-pre-inventory-preserved"):
-                self.assertEqual(cleanup.get("pre_inventory"), FOREIGN_INVENTORY)
-            with self.subTest(build_failure="foreign-post-inventory-preserved"):
-                self.assertEqual(cleanup.get("post_inventory"), FOREIGN_INVENTORY)
-            concurrent_truth = {
-                "containers": (
-                    {
-                        "id": CONCURRENT_CONTAINER_ID,
-                        "name": CONCURRENT_CONTAINER_NAME,
-                        "labels": {"org.openj92.foreign": "concurrent"},
-                    },
-                ),
-                "images": (
-                    {
-                        "id": CONCURRENT_IMAGE_ID,
-                        "tags": (CONCURRENT_IMAGE_TAG,),
-                        "labels": {"org.openj92.foreign": "concurrent"},
-                    },
-                ),
-            }
-            with self.subTest(build_failure="concurrent-before-preserved"):
-                self.assertEqual(
-                    cleanup.get("concurrent_foreign_before"),
-                    concurrent_truth,
-                )
-            with self.subTest(build_failure="concurrent-after-preserved"):
-                self.assertEqual(
-                    cleanup.get("concurrent_foreign_after"),
-                    concurrent_truth,
-                )
+
             artifact_states = (
                 ("core-wheel", staging_root / CORE_WHEEL_PATH, False),
                 ("core-wheel-part", staging_root / (CORE_WHEEL_PATH + ".part"), False),
@@ -1390,18 +1311,28 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
             )
             for artifact, path, expected_exists in artifact_states:
                 with self.subTest(
-                    build_failure="temporary-and-generated-cleanup",
+                    build_failure="runner-owned-filesystem-cleanup",
                     artifact=artifact,
                 ):
                     self.assertIs(path.exists(), expected_exists)
+
             with self.subTest(build_failure="terminal-report-status"):
                 self.assertEqual(report.get("status"), "failed")
             with self.subTest(build_failure="terminal-report-stage"):
                 self.assertEqual(report.get("first_failed_stage"), "build")
-            with self.subTest(build_failure="terminal-report-attachment"):
+            with self.subTest(build_failure="terminal-report-fixed-failure"):
                 self.assertEqual(
-                    getattr(build_error, "candidate_terminal_report", None),
-                    report,
+                    report.get("failure"),
+                    {
+                        "code": "candidate-image-build-failed",
+                        "message": "Candidate image build failed.",
+                    },
+                )
+            with self.subTest(build_failure="terminal-report-candidate-tag-absent"):
+                observations = report.get("observations", {})
+                self.assertIs(
+                    observations.get("candidate_image_tag_present"),
+                    False,
                 )
             with self.subTest(build_failure="terminal-report-digest"):
                 self.assertTrue(report)
@@ -1410,9 +1341,20 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                         report.get("report_sha256"),
                         canonical_report_sha256(report),
                     )
-            with self.subTest(
-                build_failure="terminal-evidence-redaction-after-publication"
-            ):
+            with self.subTest(build_failure="no-provider-cleanup-claims"):
+                self.assertTrue(report)
+                if report:
+                    rendered_report = json.dumps(report, sort_keys=True).lower()
+                    for forbidden in (
+                        "build_owned_containers",
+                        "build_owned_images",
+                        "build_residue",
+                        "cleanup_terminal",
+                        "layer_id",
+                    ):
+                        self.assertNotIn(forbidden, rendered_report)
+            with self.subTest(build_failure="terminal-evidence-is-redacted"):
+                self.assertTrue(report)
                 if report:
                     rendered_report = json.dumps(report, sort_keys=True).lower()
                     for forbidden in (
@@ -1893,26 +1835,31 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
             ],
         )
 
-    def test_success_cleanup_is_terminal_exact_and_foreign_preserving(self) -> None:
+    def test_success_report_attests_explicit_harness_resources_and_foreign_preservation(
+        self,
+    ) -> None:
         report, _, _, ledger = self._run_candidate()
+        cleanup = report["cleanup"]
 
         self.assertEqual(ledger[-1], ("cleanup", "success"))
-        self.assertEqual(
-            report["cleanup"],
-            {
-                "containers": (),
-                "networks": (),
-                "volumes": (),
-                "images": (),
-                "build_residue": (),
-                "postgres_relations": (),
-                "foreign_canary_after": (FOREIGN_RESOURCE_CANARY,),
-            },
-        )
-        self.assertFalse(report["cleanup"]["volumes"])
-        self.assertTrue(report["cleanup_terminal"])
+        for resource in ("containers", "networks", "volumes", "images"):
+            with self.subTest(harness_resource=resource):
+                self.assertEqual(cleanup[resource], ())
+        with self.subTest(harness_workspace_rows="postgres-relations"):
+            self.assertEqual(cleanup["postgres_relations"], ())
+        with self.subTest(foreign_canary="preserved"):
+            self.assertEqual(
+                cleanup["foreign_canary_after"],
+                (FOREIGN_RESOURCE_CANARY,),
+            )
+        with self.subTest(provider_internal_build_residue="not-claimed"):
+            self.assertNotIn("build_residue", cleanup)
+        with self.subTest(unqualified_cleanup_terminal="absent"):
+            self.assertNotIn("cleanup_terminal", report)
 
-    def test_abort_cleanup_is_bounded_terminal_and_classified(self) -> None:
+    def test_abort_removes_only_explicit_harness_resources_and_is_classified(
+        self,
+    ) -> None:
         candidate = self._candidate_module()
         ledger = []
         effects = RecordingCandidateEffects(ledger=ledger)
@@ -1934,7 +1881,9 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
         self.assertEqual(ledger[-1], ("cleanup", "abort"))
         self.assertNotIn("runner interrupted", json.dumps(ledger))
 
-    def test_timeout_cleanup_is_bounded_terminal_and_classified(self) -> None:
+    def test_timeout_removes_only_explicit_harness_resources_and_is_classified(
+        self,
+    ) -> None:
         candidate = self._candidate_module()
         ledger = []
         effects = RecordingCandidateEffects(ledger=ledger)
