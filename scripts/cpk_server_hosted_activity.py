@@ -1512,9 +1512,31 @@ def _execute_to_completion(
         if result["coordinator_status"] == "completed":
             return
         if result["coordinator_status"] in {"failed", "unsupported", "uncertain", "blocked"}:
-            timeline = _http(base_url, "GET", f"/workspaces/{workspace_id}/activity")
-            raise RuntimeError(f"execution stopped with {result}; timeline={timeline}")
+            events = _mcp_read(
+                base_url,
+                "read.run-events",
+                {"workspace_id": workspace_id, "run_id": run_id, "limit": 100},
+            )
+            raise RuntimeError(
+                f"execution stopped with {result}; "
+                f"failure_event={_latest_run_failure(events)}"
+            )
     raise RuntimeError("hosted activity execution did not complete")
+
+
+def _latest_run_failure(page: dict[str, Any]) -> dict[str, Any] | None:
+    items = page.get("items")
+    if not isinstance(items, list):
+        return None
+    for event in reversed(items):
+        if not isinstance(event, dict) or not isinstance(event.get("failure"), dict):
+            continue
+        return {
+            "event_type": event.get("event_type"),
+            "activity_id": event.get("activity_id"),
+            "failure": event["failure"],
+        }
+    return None
 
 
 def _sync_runtime_networks(server_container: str, *, workspace_id: str = WORKSPACE_ID) -> None:

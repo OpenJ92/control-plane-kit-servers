@@ -117,6 +117,65 @@ class HostedActivityReadinessTests(unittest.TestCase):
             ),
         )
 
+    def test_terminal_execution_reads_bounded_redacted_run_failure(self) -> None:
+        workflow = cpk_server_hosted_activity.HostedWorkflow(
+            "http://cpk-server",
+            workspace_id="candidate-topology-1714",
+            worker_id="worker-a",
+            server_container="candidate-server",
+        )
+        workflow._run_claim_generations["run-a"] = 7
+        run_events = {
+            "items": [
+                {
+                    "event_type": "step_uncertain",
+                    "activity_id": "start-node:hello",
+                    "failure": {
+                        "category": "uncertain",
+                        "code": "docker.effect-uncertain",
+                        "message": "bounded provider failure",
+                        "details": {},
+                    },
+                    "payload": {"secret": "must-not-be-rendered"},
+                }
+            ]
+        }
+
+        with (
+            patch.object(
+                cpk_server_hosted_activity,
+                "_mcp_tool",
+                return_value={
+                    "coordinator_status": "uncertain",
+                    "activity_id": "start-node:hello",
+                },
+            ),
+            patch.object(
+                cpk_server_hosted_activity,
+                "_mcp_read",
+                return_value=run_events,
+            ) as read,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "docker.effect-uncertain",
+            ) as raised:
+                workflow.execute_to_completion(
+                    "run-a",
+                    sync_runtime_networks=False,
+                )
+
+        read.assert_called_once_with(
+            "http://cpk-server",
+            "read.run-events",
+            {
+                "workspace_id": "candidate-topology-1714",
+                "run_id": "run-a",
+                "limit": 100,
+            },
+        )
+        self.assertNotIn("must-not-be-rendered", str(raised.exception))
+
     def test_run_claim_uses_current_bounded_lease_contract(self) -> None:
         workflow = cpk_server_hosted_activity.HostedWorkflow(
             "http://cpk-server",
