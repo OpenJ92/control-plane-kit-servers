@@ -3013,7 +3013,7 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                             "curl",
                             "--fail",
                             "--silent",
-                            f"http://{hello_container.name}:8080/",
+                            f"http://{hello_container.name}:8000/",
                         ),
                     )
                 ],

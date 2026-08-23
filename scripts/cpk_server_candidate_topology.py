@@ -1422,7 +1422,7 @@ class DockerCandidateEffects:
         if not attach_runtime_network:
             raise CandidateTopologyError(WORKFLOW_ERROR)
         result = probe_container.exec_run(
-            ["curl", "--fail", "--silent", f"http://{provider.name}:8080/"]
+            ["curl", "--fail", "--silent", f"http://{provider.name}:8000/"]
         )
         if result.exit_code != 0:
             raise CandidateTopologyError(WORKFLOW_ERROR)
