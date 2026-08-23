@@ -1137,6 +1137,7 @@ class DockerCandidateEffects:
         labels: dict[str, str],
         evidence_id: str,
         candidate_image_tag: str | None = None,
+        host_address: str = "127.0.0.1",
     ) -> None:
         import docker
 
@@ -1144,6 +1145,7 @@ class DockerCandidateEffects:
         self._labels = labels
         self._evidence_id = evidence_id
         self._candidate_image_tag = candidate_image_tag
+        self._host_address = host_address
         self._client = docker.from_env()
         self._probe = None
         self._server = None
@@ -1291,7 +1293,7 @@ class DockerCandidateEffects:
         return {
             "container_id": candidate_server.id,
             "image_id": built_image_id,
-            "base_url": f"http://127.0.0.1:{host_port}",
+            "base_url": f"http://{self._host_address}:{host_port}",
         }
 
     def inspect_candidate_server(self, container_id: str) -> dict[str, Any]:
@@ -1561,6 +1563,11 @@ def main(
         "--evidence-id",
         default=os.environ.get("CPK_CANDIDATE_EVIDENCE_ID", "candidate-topology"),
     )
+    parser.add_argument(
+        "--host-address",
+        choices=("127.0.0.1", "host.docker.internal"),
+        default=os.environ.get("CPK_CANDIDATE_HOST_ADDRESS", "127.0.0.1"),
+    )
     parser.add_argument("--package-image-only", action="store_true")
     parser.add_argument("--candidate-base-image")
     parser.add_argument("--candidate-image-tag")
@@ -1715,6 +1722,7 @@ def main(
                         labels=labels,
                         evidence_id=args.evidence_id,
                         candidate_image_tag=args.candidate_image_tag,
+                        host_address=args.host_address,
                     )
                 else:
                     effects = effects_factory(
@@ -1806,6 +1814,7 @@ def main(
                 labels=labels,
                 evidence_id=args.evidence_id,
                 candidate_image_tag=args.candidate_image_tag,
+                host_address=args.host_address,
             )
         else:
             effects = effects_factory(
@@ -1834,6 +1843,7 @@ def main(
             root=root,
             labels=labels,
             evidence_id=args.evidence_id,
+            host_address=args.host_address,
         )
     else:
         effects = effects_factory(

@@ -2319,7 +2319,11 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
     def test_docker_effects_start_one_pinned_postgres_and_supply_four_ephemeral_dsns(self) -> None:
         candidate = self._candidate_module()
         client = RecordingDockerClient()
-        effects = self._docker_effects(candidate, client)
+        effects = self._docker_effects(
+            candidate,
+            client,
+            host_address="host.docker.internal",
+        )
         postgres_name = effects._name("postgres")
         environment = {
             **CANDIDATE_SERVER_ENVIRONMENT,
@@ -2335,7 +2339,7 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
         )
         with patch.dict(candidate.os.environ, environment, clear=True):
             with self._lawful_docker_socket(candidate):
-                effects.start_candidate_server(CANDIDATE_IMAGE_ID)
+                server_observation = effects.start_candidate_server(CANDIDATE_IMAGE_ID)
 
         runs = client.container_runs
         postgres = [value for value in runs if value["image"] == POSTGRES_IMAGE]
@@ -2414,6 +2418,11 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                     server[0].get("ports"),
                     {"8080/tcp": ("127.0.0.1", 0)},
                 )
+        with self.subTest(boundary="driver-reachable-host-coordinate"):
+            self.assertEqual(
+                server_observation["base_url"],
+                "http://host.docker.internal:49171",
+            )
         with self.subTest(boundary="published-port-observed-after-reload"):
             server_name = effects._name("server")
             server_run = next(
@@ -3665,12 +3674,14 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
         client,
         *,
         candidate_image_tag=None,
+        host_address="127.0.0.1",
     ):
         docker_module = SimpleNamespace(from_env=lambda: client)
         kwargs = {
             "root": ROOT,
             "labels": dict(CANDIDATE_LABELS),
             "evidence_id": CANDIDATE_LABELS["org.openj92.cpk.evidence"],
+            "host_address": host_address,
         }
         if candidate_image_tag is not None:
             kwargs["candidate_image_tag"] = candidate_image_tag
