@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import unittest
 
@@ -398,6 +399,64 @@ class DockerHarnessTests(unittest.TestCase):
         self.assertIn("scripts/apply_coordinates.py", runner)
         self.assertIn("compileall", runner)
         self.assertIn("product_image_lane.py", runner)
+        normalized_dockerfile = dockerfile.replace("\\\n", " ")
+        apt_install_runs = tuple(
+            line.strip()
+            for line in normalized_dockerfile.splitlines()
+            if line.strip().startswith("RUN apt-get update ")
+            and " apt-get install " in line
+        )
+        apt_install_run = apt_install_runs[0] if len(apt_install_runs) == 1 else ""
+        expected_live_driver_packages = {
+            "coreutils",
+            "curl",
+            "docker.io",
+            "git",
+            "libdigest-sha-perl",
+            "mawk",
+        }
+        apt_install_operands = (
+            apt_install_run.split(" apt-get install -y --no-install-recommends ", 1)[1]
+            .split(" && rm -rf /var/lib/apt/lists/*", 1)[0]
+            .split()
+            if " apt-get install -y --no-install-recommends " in apt_install_run
+            and " && rm -rf /var/lib/apt/lists/*" in apt_install_run
+            else []
+        )
+        for package in sorted(expected_live_driver_packages):
+            with self.subTest(live_driver_package=package):
+                self.assertEqual(len(apt_install_runs), 1)
+                self.assertIn(
+                    " apt-get install -y --no-install-recommends ",
+                    apt_install_run,
+                )
+                self.assertEqual(
+                    set(apt_install_operands),
+                    expected_live_driver_packages,
+                )
+                self.assertIn(package, apt_install_operands)
+                self.assertTrue(
+                    apt_install_run.endswith(" && rm -rf /var/lib/apt/lists/*")
+                )
+        for executable in (
+            "awk",
+            "cp",
+            "curl",
+            "dirname",
+            "docker",
+            "git",
+            "mkdir",
+            "python",
+            "pwd",
+            "rm",
+            "sh",
+            "shasum",
+            "timeout",
+            "tr",
+            "wc",
+        ):
+            with self.subTest(live_driver_executable=executable):
+                self.assertIsNotNone(shutil.which(executable))
 
     def test_product_image_lane_reports_cpk_server_image_definition(self) -> None:
         result = subprocess.run(
