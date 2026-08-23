@@ -1276,7 +1276,7 @@ class DockerCandidateEffects:
             labels=self._labels,
             name=self._name("server"),
             network=self._network.name,
-            ports={"8080/tcp": ("127.0.0.1",)},
+            ports={"8080/tcp": ("127.0.0.1", 0)},
             volumes={
                 DOCKER_SOCKET: {
                     "bind": DOCKER_SOCKET,

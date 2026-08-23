@@ -2412,7 +2412,7 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
             if server:
                 self.assertEqual(
                     server[0].get("ports"),
-                    {"8080/tcp": ("127.0.0.1",)},
+                    {"8080/tcp": ("127.0.0.1", 0)},
                 )
         with self.subTest(boundary="published-port-observed-after-reload"):
             server_name = effects._name("server")
