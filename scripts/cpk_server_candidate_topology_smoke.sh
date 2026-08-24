@@ -6,6 +6,7 @@ CPK_CANDIDATE_ROOT=${CPK_CANDIDATE_ROOT:?CPK_CANDIDATE_ROOT is required}
 ASSEMBLY=${CPK_CANDIDATE_ASSEMBLY:-$ROOT/candidate-assembly.json}
 INSPECTION=${CPK_CANDIDATE_INSPECTION:-$ROOT/candidate-inspection.json}
 REPORT=${CPK_CANDIDATE_REPORT:-$ROOT/candidate-topology-report.json}
+LEDGER=${CPK_CANDIDATE_LEDGER:-$(dirname "$REPORT")/candidate-run-ledger.json}
 PROJECT_LABEL=org.openj92.project=control-plane-kit-servers
 SCENARIO_LABEL=org.openj92.cpk.scenario=candidate-topology-1714
 EVIDENCE_ID=${CPK_CANDIDATE_EVIDENCE_ID:?CPK_CANDIDATE_EVIDENCE_ID is required}
@@ -16,6 +17,8 @@ RFC8785_WHEEL_URL=https://files.pythonhosted.org/packages/4d/78/119878110660b2ad
 RFC8785_WHEEL_SHA256=520d690b448ecf0703691c76e1a34a24ddcd4fc5bc41d589cb7c58ec651bcd48
 RFC8785_WHEEL_SIZE=9240
 DIST_ROOT=$ROOT/dist
+INTERRUPT_AFTER=${CPK_CANDIDATE_INTERRUPT_AFTER:-}
+SUPERVISOR_CLASSIFICATION=failed-contained
 
 SERVER_COMMIT=$(git -C "$ROOT" rev-parse HEAD)
 SERVER_TREE=$(git -C "$ROOT" rev-parse HEAD^{tree})
@@ -30,21 +33,25 @@ sha256_file() {
     shasum -a 256 "$1" | awk '{print $1}'
 }
 
-cleanup() {
-    for container_id in $(docker ps -aq --filter "label=$EVIDENCE_LABEL"); do
-        docker rm -f "$container_id" 2>/dev/null || true
-    done
-    for network_id in $(docker network ls -q --filter "label=$EVIDENCE_LABEL"); do
-        docker network rm "$network_id" 2>/dev/null || true
-    done
-    for image_id in $(docker image ls -q --filter "label=$EVIDENCE_LABEL"); do
-        docker image rm "$image_id" 2>/dev/null || true
-    done
-    rm -f \
-        "$DIST_ROOT/control_plane_kit_core.whl" \
-        "$DIST_ROOT/control_plane_kit_operations.whl" \
-        "$DIST_ROOT/rfc8785-0.1.4-py3-none-any.whl"
+supervisor_cleanup() {
+    python -m scripts.cpk_server_candidate_lifecycle cleanup \
+        --ledger "$LEDGER" \
+        --classification "$SUPERVISOR_CLASSIFICATION"
 }
+
+cleanup() {
+    status=$?
+    trap - EXIT HUP INT TERM
+    supervisor_cleanup || exit 97
+    exit "$status"
+}
+
+python -m scripts.cpk_server_candidate_lifecycle declare \
+    --ledger "$LEDGER" \
+    --root "$ROOT" \
+    --evidence-id "$EVIDENCE_ID" \
+    --project-label "$PROJECT_LABEL" \
+    --scenario-label "$SCENARIO_LABEL"
 trap cleanup EXIT HUP INT TERM
 
 mkdir -p "$DIST_ROOT"
@@ -123,13 +130,37 @@ PY
 # The admitted inspection owns CPK_SERVER_BASE_IMAGE. The runner owns
 # sync_runtime_networks=False, the labelled probe, and terminal report truth.
 cd "$ROOT"
+if test -n "$INTERRUPT_AFTER"; then
+    test "$INTERRUPT_AFTER" = candidate-image-built
+    set -- --interrupt-after "$INTERRUPT_AFTER"
+else
+    set --
+fi
+set +e
 timeout "$TIMEOUT_SECONDS" python -m scripts.cpk_server_candidate_topology \
     --assembly "$ASSEMBLY" \
     --inspection "$INSPECTION" \
     --report "$REPORT" \
     --project-label "$PROJECT_LABEL" \
     --scenario-label "$SCENARIO_LABEL" \
-    --evidence-id "$EVIDENCE_ID"
+    --evidence-id "$EVIDENCE_ID" \
+    --ownership-ledger "$LEDGER" \
+    "$@"
+runner_exit=$?
+set -e
+
+if test -n "$INTERRUPT_AFTER"; then
+    test "$runner_exit" -eq 86
+    SUPERVISOR_CLASSIFICATION=interrupted-contained
+    supervisor_cleanup
+    trap - EXIT HUP INT TERM
+    exit 86
+fi
+if test "$runner_exit" -ne 0; then
+    supervisor_cleanup
+    trap - EXIT HUP INT TERM
+    exit "$runner_exit"
+fi
 
 test -s "$REPORT"
 python - "$REPORT" <<'PY'
@@ -156,3 +187,7 @@ PY
 
 CPK_CANDIDATE_EVIDENCE_ID="$EVIDENCE_ID" \
     sh "$ROOT/scripts/docker_residue_audit.sh"
+
+SUPERVISOR_CLASSIFICATION=passed
+supervisor_cleanup
+trap - EXIT HUP INT TERM
