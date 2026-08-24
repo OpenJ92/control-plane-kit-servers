@@ -33,11 +33,20 @@ class PackageGateContractTests(unittest.TestCase):
         ):
             self.assertIn(expected, self.source)
 
-    def test_image_smoke_cannot_inherit_a_build_disabling_option(self) -> None:
-        self.assertIn(
-            "CPK_SERVER_BUILD_IMAGE=1 sh scripts/cpk_server_image_smoke.sh",
-            self.source,
-        )
+    def test_image_smoke_uses_prebuilt_candidate_without_rebuild(self) -> None:
+        with self.subTest(boundary="prebuilt-candidate-exactly-once"):
+            self.assertEqual(
+                self.source.count(
+                    'CPK_SERVER_IMAGE="$CANDIDATE_IMAGE" CPK_SERVER_BUILD_IMAGE=0 '
+                    "sh scripts/cpk_server_image_smoke.sh"
+                ),
+                1,
+            )
+        with self.subTest(boundary="candidate-is-not-rebuilt"):
+            self.assertNotIn(
+                "CPK_SERVER_BUILD_IMAGE=1 sh scripts/cpk_server_image_smoke.sh",
+                self.source,
+            )
 
     def test_residue_audit_is_the_last_authoritative_phase(self) -> None:
         self.assertLess(

@@ -1,5 +1,6 @@
 import ast
 import base64
+import hashlib
 import importlib
 import importlib.util
 import json
@@ -25,6 +26,8 @@ COORDINATES = json.loads(
     (ROOT / "coordinates" / "server-products.json").read_text(encoding="utf-8")
 )
 CPK_PIN = COORDINATES["upstreams"]["control_plane_kit_commit"]
+CANDIDATE_CPK_COMMIT = "4fb75b7b6c1a16ec3b8c1d78dec6ad1a4ad1b40a"
+CANDIDATE_CPK_TREE = "6a405e4ab7e707ff7374205ca2ef4726d6225b86"
 INTERPRETERS_PIN = COORDINATES["upstreams"][
     "control_plane_kit_interpreters_commit"
 ]
@@ -35,6 +38,8 @@ STORE_ENVIRONMENT = [
     "CPK_GRAPH_TOPOLOGY_DATABASE_URL",
 ]
 SERVER_SOURCE = PRODUCT_SRC / "control_plane_kit_servers_cpk_server" / "server.py"
+CANDIDATE_OVERLAY = ROOT / "acceptance" / "candidate_topology" / "Dockerfile"
+CANDIDATE_RUNNER = ROOT / "scripts" / "cpk_server_candidate_topology.py"
 CONCRETE_PROVIDER_IMPORT_ROOTS = {
     "boto3",
     "botocore",
@@ -51,8 +56,784 @@ APPROVED_PROVIDER_FUNCTIONS = {
 }
 
 
+def _dotted_name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        owner = _dotted_name(node.value)
+        if owner is not None:
+            return f"{owner}.{node.attr}"
+    return None
+
+
 
 class CpkServerImageBootstrapTests(unittest.TestCase):
+    def test_candidate_overlay_installs_exact_wheels_without_mutating_production_recipe(
+        self,
+    ) -> None:
+        candidate_cpk_commit = "4fb75b7b6c1a16ec3b8c1d78dec6ad1a4ad1b40a"
+        self.assertTrue(
+            CANDIDATE_OVERLAY.is_file(),
+            "candidate acceptance overlay is not implemented",
+        )
+        overlay = CANDIDATE_OVERLAY.read_text(encoding="utf-8")
+        production = (PRODUCT / "Dockerfile").read_bytes()
+        test_dockerfile = (ROOT / "Dockerfile.test").read_text(encoding="utf-8")
+        pyproject = (ROOT / "pyproject.toml").read_bytes()
+        coordinates = (ROOT / "coordinates" / "server-products.json").read_bytes()
+
+        self.assertEqual(
+            hashlib.sha256(production).hexdigest(),
+            "7a95cf122c7bb7c5bd911c5bbe95c3c5da81f757aa8fb7d0fa014eb36a51d5eb",
+        )
+        self.assertEqual(
+            hashlib.sha256(pyproject).hexdigest(),
+            "132c47e0648c7074b06231b1c0ae6f595969a4756383fba6c69eacef5ecc4b83",
+        )
+        self.assertEqual(
+            hashlib.sha256(coordinates).hexdigest(),
+            "2cf09911ac9dcaa4e8ae86f8eefa60f191955d0e1f1f115f763aba78a831a48c",
+        )
+        overlay_lines = tuple(line.strip() for line in overlay.splitlines())
+        self.assertEqual(overlay_lines.count("ARG CPK_SERVER_BASE_IMAGE"), 1)
+        self.assertFalse(
+            any(line.startswith("ARG CPK_SERVER_BASE_IMAGE=") for line in overlay_lines)
+        )
+        self.assertIn("FROM ${CPK_SERVER_BASE_IMAGE}", overlay)
+        self.assertIn("control_plane_kit_core", overlay)
+        self.assertIn("control_plane_kit_operations", overlay)
+        self.assertIn("--force-reinstall", overlay)
+        self.assertIn("--no-deps", overlay)
+        self.assertIn("--no-index", overlay)
+        self.assertNotIn("products/cpk_server/Dockerfile", overlay)
+        self.assertNotIn("coordinates/server-products.json", overlay)
+        self.assertNotIn("git checkout", overlay)
+        offline_wheels = (
+            (
+                "dist/control_plane_kit_core.whl",
+                "/tmp/control_plane_kit_core-0.1.0-py3-none-any.whl",
+                "/tmp/control_plane_kit_core.whl",
+            ),
+            (
+                "dist/control_plane_kit_operations.whl",
+                "/tmp/control_plane_kit_operations-0.1.0-py3-none-any.whl",
+                "/tmp/control_plane_kit_operations.whl",
+            ),
+            (
+                "dist/rfc8785-0.1.4-py3-none-any.whl",
+                "/tmp/rfc8785-0.1.4-py3-none-any.whl",
+                None,
+            ),
+        )
+        for source, installed, rejected in offline_wheels:
+            with self.subTest(
+                candidate_overlay_offline_closure="canonical-copy",
+                source=source,
+            ):
+                self.assertEqual(overlay.count(f"COPY {source} {installed}"), 1)
+            with self.subTest(
+                candidate_overlay_offline_closure="install-and-remove",
+                installed=installed,
+            ):
+                self.assertEqual(overlay.count(installed), 3)
+            if rejected is not None:
+                with self.subTest(
+                    candidate_overlay_offline_closure="generic-tmp-rejected",
+                    rejected=rejected,
+                ):
+                    self.assertNotIn(rejected, overlay)
+        with self.subTest(candidate_overlay_offline_closure="one-transaction"):
+            self.assertEqual(overlay.count("--no-index"), 1)
+            self.assertEqual(overlay.count("--no-deps"), 1)
+
+        root_user = "USER root"
+        runtime_user = "USER cpk"
+        first_copy = "COPY dist/control_plane_kit_core.whl"
+        offline_install = "RUN python -m pip install --force-reinstall"
+        with self.subTest(candidate_overlay_user="root-install-boundary"):
+            self.assertEqual(overlay_lines.count(root_user), 1)
+        with self.subTest(candidate_overlay_user="restore-runtime-user"):
+            self.assertEqual(overlay_lines.count(runtime_user), 1)
+        with self.subTest(candidate_overlay_user="instruction-order"):
+            final_removal_operand = overlay.rfind(
+                "/tmp/rfc8785-0.1.4-py3-none-any.whl"
+            )
+            positions = tuple(
+                overlay.find(instruction)
+                for instruction in (
+                    "FROM ${CPK_SERVER_BASE_IMAGE}",
+                    root_user,
+                    first_copy,
+                    offline_install,
+                )
+            ) + (final_removal_operand, overlay.find(runtime_user))
+            self.assertTrue(
+                all(position >= 0 for position in positions),
+                "candidate overlay user-boundary instruction is missing",
+            )
+            if all(position >= 0 for position in positions):
+                self.assertEqual(tuple(sorted(positions)), positions)
+        with self.subTest(candidate_overlay_user="copy-chown-is-not-a-substitute"):
+            self.assertNotIn("COPY --chown", overlay)
+
+        normalized_test_dockerfile = " ".join(
+            line.strip().removesuffix("\\").strip()
+            for line in test_dockerfile.splitlines()
+            if line.strip()
+        )
+        candidate_core = (
+            "control-plane-kit-core @ "
+            "https://github.com/OpenJ92/control-plane-kit/archive/"
+            f"{candidate_cpk_commit}.zip#subdirectory=control-plane-kit-core"
+        )
+        candidate_operations = (
+            "control-plane-kit-operations @ "
+            "https://github.com/OpenJ92/control-plane-kit/archive/"
+            f"{candidate_cpk_commit}.zip#subdirectory=control-plane-kit-operations"
+        )
+        candidate_reinstall = (
+            "RUN python -m pip install --force-reinstall --no-deps "
+            f'"{candidate_core}" "{candidate_operations}"'
+        )
+        candidate_dependency = "rfc8785==0.1.4"
+        candidate_dependency_reinstall = (
+            f'{candidate_reinstall} "{candidate_dependency}"'
+        )
+
+        with self.subTest(candidate_acceptance_copy=True):
+            self.assertEqual(
+                test_dockerfile.count("COPY acceptance ./acceptance"),
+                1,
+            )
+        with self.subTest(candidate_reinstall=True):
+            self.assertEqual(
+                normalized_test_dockerfile.count(candidate_reinstall),
+                1,
+            )
+        with self.subTest(candidate_commit_multiplicity=True):
+            self.assertEqual(test_dockerfile.count(candidate_cpk_commit), 2)
+        with self.subTest(candidate_reinstall_order=True):
+            baseline_position = normalized_test_dockerfile.find(
+                "RUN python -m pip install ."
+            )
+            candidate_position = normalized_test_dockerfile.find(candidate_reinstall)
+            self.assertGreaterEqual(baseline_position, 0)
+            self.assertGreaterEqual(candidate_position, 0)
+            if baseline_position >= 0 and candidate_position >= 0:
+                self.assertLess(baseline_position, candidate_position)
+        with self.subTest(candidate_dependency_closure=True):
+            self.assertEqual(
+                normalized_test_dockerfile.count(candidate_dependency_reinstall),
+                1,
+            )
+        with self.subTest(candidate_dependency_pin_multiplicity=True):
+            self.assertEqual(
+                test_dockerfile.count(f'"{candidate_dependency}"'),
+                1,
+            )
+            self.assertEqual(test_dockerfile.count(candidate_dependency), 1)
+
+    def test_candidate_runner_attests_records_modules_recipes_wheels_and_image(
+        self,
+    ) -> None:
+        self.assertTrue(
+            CANDIDATE_RUNNER.is_file(),
+            "candidate topology runner is not implemented",
+        )
+        runner = CANDIDATE_RUNNER.read_text(encoding="utf-8")
+        tree = ast.parse(runner)
+
+        for required in (
+            "candidate-assembly.json",
+            "candidate-topology-report.json",
+            "cpk.candidate-assembly.v1",
+            "cpk.candidate-topology-report.v1",
+            "server_source",
+            "production_dockerfile_sha256",
+            "acceptance_overlay_sha256",
+            "wheel_sha256",
+            "rfc8785",
+            "dist/rfc8785-0.1.4-py3-none-any.whl",
+            "520d690b448ecf0703691c76e1a34a24ddcd4fc5bc41d589cb7c58ec651bcd48",
+            "RECORD",
+            "module_paths",
+            "CPK_SERVER_BASE_IMAGE",
+            "image_id",
+            "first_failed_stage",
+            "candidate-direct",
+            "supporting",
+            "published-digest",
+        ):
+            self.assertIn(required, runner)
+        with self.subTest(candidate_materialization="official-rfc8785-origin"):
+            self.assertIn("files.pythonhosted.org/packages/4d/78/", runner)
+            self.assertIn(
+                "119878110660b2ad709888c8a1614fce7e2fab39080ab960656dc8605bf6/",
+                runner,
+            )
+            self.assertIn("RFC8785_WHEEL_SIZE = 9240", runner)
+        self.assertNotIn(
+            'Path("coordinates/server-products.json").write',
+            runner,
+        )
+        self.assertNotIn(
+            'Path("products/cpk_server/Dockerfile").write',
+            runner,
+        )
+        hosted_imports = [
+            (node.module, alias.name, alias.asname)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            for alias in node.names
+            if alias.name == "HostedWorkflow"
+        ]
+        self.assertEqual(
+            hosted_imports,
+            [("scripts.cpk_server_hosted_activity", "HostedWorkflow", None)],
+        )
+        self.assertFalse(
+            any(
+                isinstance(node, ast.ClassDef) and node.name == "HostedWorkflow"
+                for node in ast.walk(tree)
+            )
+        )
+        calls = tuple(
+            name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            if (name := _dotted_name(node.func)) is not None
+        )
+        call_members = tuple(call.rsplit(".", 1)[-1] for call in calls)
+        hosted_assignments = [
+            node.targets[0].id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and isinstance(node.value, ast.Call)
+            and _dotted_name(node.value.func) == "HostedWorkflow"
+        ]
+        self.assertEqual(hosted_assignments, ["workflow"])
+        workflow_calls = tuple(
+            node.func.attr
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == hosted_assignments[0]
+        )
+        for required_call in (
+            "create_workspace",
+            "import_product",
+            "register_local_docker_authority",
+            "register_local_docker_delivery",
+            "start_session",
+            "set_desired_graph",
+            "plan_transition",
+            "request_approval",
+            "assert_approval_visible",
+            "approve",
+            "admit",
+            "claim",
+            "start_run",
+            "execute_to_completion",
+            "read_current_graph_http",
+            "read_current_graph_mcp",
+            "advance_current_graph",
+            "read_activity_http",
+            "read_activity_mcp",
+        ):
+            with self.subTest(workflow_call=required_call):
+                self.assertIn(required_call, workflow_calls)
+
+        for required_call in (
+            "DeploymentGraph",
+            "_single_hello_graph",
+            "start_candidate_server",
+            "exec_run",
+        ):
+            with self.subTest(candidate_call=required_call):
+                self.assertIn(required_call, call_members)
+        with self.subTest(candidate_request_origin="inside-labelled-probe"):
+            self.assertNotIn("urlopen", call_members)
+
+        installed_path_literals = tuple(
+            value
+            for value in (
+                node.value
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Constant) and type(node.value) is str
+            )
+            if "/site-packages/" in value
+        )
+        with self.subTest(installed_origins="container-inspected"):
+            self.assertEqual(installed_path_literals, ())
+
+        used_argument_members = {
+            node.attr
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "args"
+        }
+        for required_argument in (
+            "assembly",
+            "report",
+            "inspection",
+            "project_label",
+            "scenario_label",
+            "package_image_only",
+            "candidate_base_image",
+            "candidate_image_tag",
+            "staging_root",
+        ):
+            with self.subTest(used_argument=required_argument):
+                self.assertIn(required_argument, used_argument_members)
+        parser_options = {
+            argument.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "add_argument"
+            for argument in node.args
+            if isinstance(argument, ast.Constant)
+            and type(argument.value) is str
+            and argument.value.startswith("--")
+        }
+        for forbidden_argument in (
+            "--base-image",
+            "--base-url",
+            "--first-failed-stage",
+            "--foreign-canary",
+            "--server-container",
+        ):
+            with self.subTest(duplicate_input=forbidden_argument):
+                self.assertNotIn(forbidden_argument, parser_options)
+        with self.subTest(package_image_interface="closed"):
+            self.assertIn("--package-image-only", parser_options)
+            self.assertIn("--candidate-base-image", parser_options)
+            self.assertIn("--candidate-image-tag", parser_options)
+            self.assertIn("--staging-root", parser_options)
+
+        main_functions = [
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "main"
+        ]
+        with self.subTest(candidate_materializer_interface="injectable"):
+            self.assertEqual(len(main_functions), 1)
+            if main_functions:
+                main_keyword_parameters = tuple(
+                    argument.arg
+                    for argument in main_functions[0].args.kwonlyargs
+                )
+                self.assertIn("wheel_materializer", main_keyword_parameters)
+                self.assertIn(
+                    "source_coordinate_provider",
+                    main_keyword_parameters,
+                )
+
+        effects_factory_calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and _dotted_name(node.func) == "effects_factory"
+        ]
+        with self.subTest(candidate_package_image_seam="owned-effects-root"):
+            root_values = [
+                _dotted_name(keyword.value)
+                for call in effects_factory_calls
+                for keyword in call.keywords
+                if keyword.arg == "root"
+            ]
+            self.assertIn("staging_root", root_values)
+
+        materializers = [
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "materialize_candidate_wheels"
+        ]
+        with self.subTest(candidate_materialization="exact-coordinate"):
+            self.assertEqual(len(materializers), 1)
+            if materializers:
+                materializer_source = ast.unparse(materializers[0])
+                for required in (
+                    CANDIDATE_CPK_COMMIT,
+                    CANDIDATE_CPK_TREE,
+                    "control-plane-kit-core",
+                    "control-plane-kit-operations",
+                    "dist/control_plane_kit_core.whl",
+                    "dist/control_plane_kit_operations.whl",
+                ):
+                    self.assertIn(required, materializer_source)
+        with self.subTest(candidate_materialization="measured-provenance"):
+            for required in (
+                "candidate_commit",
+                "candidate_tree",
+                "sha256",
+                "subdirectory",
+            ):
+                self.assertIn(required, runner)
+        with self.subTest(candidate_materialization="physical-wheel-files"):
+            for required in (
+                "write_bytes",
+                "stat().st_size",
+                "read_bytes",
+                "dist/control_plane_kit_core.whl",
+                "dist/control_plane_kit_operations.whl",
+            ):
+                self.assertIn(required, runner)
+        with self.subTest(candidate_materialization="atomic-promotion"):
+            self.assertIn(".part", runner)
+            self.assertTrue("os.replace" in runner or ".replace(" in runner)
+        with self.subTest(candidate_materialization="bounded-rejection-cleanup"):
+            self.assertTrue("unlink(" in runner or "rmtree(" in runner)
+        with self.subTest(candidate_materialization="generated-manifest-outputs"):
+            main_source = ast.unparse(main_functions[0]) if main_functions else ""
+            for required in (
+                "args.assembly",
+                "args.inspection",
+                "source_coordinate_provider",
+                "server_source",
+                "runner",
+                "write_text",
+                "json.dumps",
+            ):
+                self.assertIn(required, main_source)
+        with self.subTest(candidate_materialization="owned-overlay-context"):
+            for required in (
+                "acceptance/candidate_topology/Dockerfile",
+                "staging_root",
+                "copy2",
+            ):
+                self.assertIn(required, runner)
+
+        candidate_server_targets = {
+            node.targets[0].id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and "candidate_server" in node.targets[0].id
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Attribute)
+            and node.value.func.attr == "run"
+        }
+        with self.subTest(candidate_server="just-built-image"):
+            self.assertEqual(len(candidate_server_targets), 1)
+
+        build_image_calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "build_candidate_image"
+        ]
+        self.assertEqual(len(build_image_calls), 1)
+        admitted_base_values = [
+            keyword.value
+            for call in build_image_calls
+            for keyword in call.keywords
+            if keyword.arg == "base_image"
+        ]
+        with self.subTest(candidate_package_image_seam="base-forwarding-count"):
+            self.assertEqual(len(admitted_base_values), 1)
+        admitted_base_value = (
+            admitted_base_values[0] if len(admitted_base_values) == 1 else None
+        )
+        with self.subTest(candidate_package_image_seam="base-forwarding-value"):
+            self.assertEqual(
+                _dotted_name(admitted_base_value),
+                "candidate_base_image",
+            )
+        buildarg_values = [
+            keyword.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            for keyword in node.keywords
+            if keyword.arg == "buildargs"
+        ]
+        self.assertEqual(len(buildarg_values), 1)
+        self.assertIsInstance(buildarg_values[0], ast.Dict)
+        self.assertEqual(
+            [
+                key.value
+                for key in buildarg_values[0].keys
+                if isinstance(key, ast.Constant) and type(key.value) is str
+            ],
+            ["CPK_SERVER_BASE_IMAGE"],
+        )
+        self.assertEqual(
+            [_dotted_name(value) for value in buildarg_values[0].values],
+            ["base_image"],
+        )
+        docker_effects = next(
+            (
+                node
+                for node in tree.body
+                if isinstance(node, ast.ClassDef)
+                and node.name == "DockerCandidateEffects"
+            ),
+            None,
+        )
+        docker_build_methods = (
+            [
+                node
+                for node in docker_effects.body
+                if isinstance(node, ast.FunctionDef)
+                and node.name == "build_candidate_image"
+            ]
+            if docker_effects is not None
+            else []
+        )
+        with self.subTest(candidate_package_image_seam="effects-interface"):
+            self.assertEqual(len(docker_build_methods), 1)
+            if docker_build_methods:
+                self.assertEqual(
+                    tuple(
+                        argument.arg
+                        for argument in docker_build_methods[0].args.kwonlyargs
+                    ),
+                    ("base_image", "candidate_image_tag"),
+                )
+        if docker_build_methods:
+            normalized_tag_assignments = [
+                node
+                for node in ast.walk(docker_build_methods[0])
+                if isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and _dotted_name(node.targets[0]) == "candidate_image_tag"
+            ]
+            with self.subTest(candidate_package_image_seam="normalized-tag"):
+                self.assertEqual(len(normalized_tag_assignments), 1)
+                if normalized_tag_assignments:
+                    normalized_tag_source = ast.unparse(
+                        normalized_tag_assignments[0].value
+                    )
+                    self.assertIn("candidate_image_tag", normalized_tag_source)
+                    self.assertIn("self._name('candidate')", normalized_tag_source)
+            image_build_calls = [
+                node
+                for node in ast.walk(docker_build_methods[0])
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "build"
+            ]
+            with self.subTest(candidate_package_image_seam="effects-forwarding"):
+                self.assertEqual(len(image_build_calls), 1)
+                tag_values = (
+                    [
+                        keyword.value
+                        for keyword in image_build_calls[0].keywords
+                        if keyword.arg == "tag"
+                    ]
+                    if image_build_calls
+                    else []
+                )
+                self.assertEqual(len(tag_values), 1)
+                if tag_values:
+                    self.assertEqual(
+                        _dotted_name(tag_values[0]),
+                        "candidate_image_tag",
+                    )
+            returned_image_tags = [
+                value
+                for node in ast.walk(docker_build_methods[0])
+                if isinstance(node, ast.Return)
+                and isinstance(node.value, ast.Dict)
+                for key, value in zip(node.value.keys, node.value.values)
+                if isinstance(key, ast.Constant)
+                and key.value == "image_tag"
+            ]
+            with self.subTest(candidate_package_image_seam="exact-return-tag"):
+                self.assertEqual(len(returned_image_tags), 1)
+                if returned_image_tags:
+                    self.assertEqual(
+                        _dotted_name(returned_image_tags[0]),
+                        "candidate_image_tag",
+                    )
+        package_build_functions = [
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "build_candidate_package_image"
+        ]
+        with self.subTest(candidate_package_image_seam="one"):
+            self.assertEqual(len(package_build_functions), 1)
+        if package_build_functions:
+            package_parameters = (
+                *(argument.arg for argument in package_build_functions[0].args.args),
+                *(argument.arg for argument in package_build_functions[0].args.kwonlyargs),
+            )
+            with self.subTest(candidate_package_image_seam="exact-interface"):
+                self.assertEqual(
+                    package_parameters,
+                    (
+                        "assembly",
+                        "inspection",
+                        "effects",
+                        "artifact_fetcher",
+                        "candidate_base_image",
+                        "candidate_image_tag",
+                    ),
+                )
+            package_source = ast.unparse(package_build_functions[0])
+            with self.subTest(candidate_package_image_seam="build-only"):
+                self.assertIn("build_candidate_image", package_source)
+                self.assertNotIn("HostedWorkflow", package_source)
+                self.assertNotIn("run_candidate_topology", package_source)
+                self.assertNotIn("probe_hello", package_source)
+            package_build_calls = [
+                node
+                for node in ast.walk(package_build_functions[0])
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "build_candidate_image"
+            ]
+            with self.subTest(candidate_package_image_seam="exact-forwarding"):
+                self.assertEqual(len(package_build_calls), 1)
+                self.assertEqual(
+                    {
+                        keyword.arg: _dotted_name(keyword.value)
+                        for keyword in package_build_calls[0].keywords
+                    },
+                    {
+                        "base_image": "candidate_base_image",
+                        "candidate_image_tag": "candidate_image_tag",
+                    },
+                )
+        main_functions = [
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "main"
+        ]
+        package_effect_tag_values = [
+            _dotted_name(keyword.value)
+            for node in (
+                ast.walk(main_functions[0]) if main_functions else ()
+            )
+            if isinstance(node, ast.Call)
+            and _dotted_name(node.func)
+            in {"DockerCandidateEffects", "effects_factory"}
+            for keyword in node.keywords
+            if keyword.arg == "candidate_image_tag"
+        ]
+        with self.subTest(candidate_package_image_seam="cli-tag-to-preflight"):
+            self.assertEqual(
+                package_effect_tag_values,
+                ["args.candidate_image_tag"] * 4,
+            )
+        prepare_functions = [
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "_prepare_candidate"
+        ]
+        self.assertEqual(len(prepare_functions), 1)
+        if prepare_functions:
+            with self.subTest(candidate_package_image_seam="shared"):
+                self.assertIn(
+                    "build_candidate_package_image",
+                    ast.unparse(prepare_functions[0]),
+                )
+            with self.subTest(candidate_package_image_seam="live-base-inspection"):
+                self.assertIn(
+                    "inspection['images']['cpk_server_base']",
+                    ast.unparse(prepare_functions[0]),
+                )
+        inspection_base_assignments = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign))
+            if any(
+                "cpk_server_base" in ast.unparse(target)
+                for target in (
+                    node.targets
+                    if isinstance(node, ast.Assign)
+                    else (node.target,)
+                )
+            )
+        ]
+        self.assertEqual(inspection_base_assignments, [])
+
+        imported_roots = {
+            node.module.split(".", 1)[0]
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module is not None
+        }
+        imported_roots.update(
+            alias.name.split(".", 1)[0]
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        )
+        self.assertTrue(imported_roots.isdisjoint({"psycopg", "sqlalchemy", "sqlite3"}))
+        self.assertNotIn("execute", call_members)
+        self.assertNotIn("delete_workspace", call_members)
+        self.assertNotIn("write_terminal_report", call_members)
+        rendered_literals = "\n".join(
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant) and type(node.value) is str
+        )
+        normalized_literals = "\n".join(
+            " ".join(value.upper().split())
+            for value in (
+                node.value
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Constant) and type(node.value) is str
+            )
+        )
+        for forbidden in (
+            "SELECT ",
+            "INSERT ",
+            "UPDATE ",
+            "DELETE FROM",
+            "DROP DATABASE",
+        ):
+            self.assertNotIn(forbidden, normalized_literals)
+        for forbidden in (
+            "docker network connect",
+            "sync_runtime_networks=True",
+            "_sync_runtime_networks",
+        ):
+            self.assertNotIn(forbidden, rendered_literals)
+        connect_calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "connect"
+        ]
+        self.assertEqual(connect_calls, [])
+        probe_runs = [
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == "probe_container"
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Attribute)
+            and node.value.func.attr == "run"
+        ]
+        self.assertEqual(len(probe_runs), 1)
+        network_keywords = [
+            keyword.value
+            for keyword in probe_runs[0].keywords
+            if keyword.arg == "network"
+        ]
+        self.assertEqual(len(network_keywords), 1)
+        self.assertIsInstance(network_keywords[0], ast.Attribute)
+        self.assertEqual(network_keywords[0].attr, "name")
+        self.assertIsInstance(network_keywords[0].value, ast.Name)
+        self.assertEqual(network_keywords[0].value.id, "provider_network")
+        self.assertFalse(
+            "DELETE" in normalized_literals
+            and "/WORKSPACES/" in normalized_literals
+        )
+
     def test_dockerfile_runs_cpk_server_as_non_root_with_explicit_entrypoint(self) -> None:
         dockerfile = (PRODUCT / "Dockerfile").read_text(encoding="utf-8")
 
@@ -1207,7 +1988,29 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("Mcp-Method: tools/call", smoke)
         self.assertIn("ready response leaked store endpoint", smoke)
         self.assertIn("org.openj92.project=control-plane-kit-servers", smoke)
-        self.assertIn("docker rm -f", smoke)
+        with self.subTest(cleanup="owned-postgres-anonymous-volumes"):
+            self.assertIn('docker rm -fv "$POSTGRES_CONTAINER"', smoke)
+        with self.subTest(failure="bounded-logs"):
+            self.assertIn('docker logs --tail 80 "$CONTAINER"', smoke)
+            self.assertIn('docker logs --tail 40 "$POSTGRES_CONTAINER"', smoke)
+        with self.subTest(failure="original-status-preserved"):
+            finish_start = smoke.find("finish()")
+            status_position = smoke.find("status=$?", finish_start)
+            cleanup_position = smoke.find("cleanup", status_position)
+            exit_position = smoke.find('exit "$status"', cleanup_position)
+            self.assertGreaterEqual(finish_start, 0)
+            self.assertGreaterEqual(status_position, 0)
+            self.assertGreaterEqual(cleanup_position, 0)
+            self.assertGreaterEqual(exit_position, 0)
+            if min(
+                finish_start,
+                status_position,
+                cleanup_position,
+                exit_position,
+            ) >= 0:
+                self.assertLess(finish_start, status_position)
+                self.assertLess(status_position, cleanup_position)
+                self.assertLess(cleanup_position, exit_position)
         self.assertIn("docker network rm", smoke)
         self.assertNotIn("docker system prune", smoke)
         self.assertNotIn("docker volume prune", smoke)

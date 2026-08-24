@@ -27,7 +27,7 @@ cleanup() {
     docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   fi
   if [ -n "$POSTGRES_CONTAINER" ]; then
-    docker rm -f "$POSTGRES_CONTAINER" >/dev/null 2>&1 || true
+    docker rm -fv "$POSTGRES_CONTAINER" >/dev/null 2>&1 || true
   fi
   docker network rm "$NETWORK" >/dev/null 2>&1 || true
 }

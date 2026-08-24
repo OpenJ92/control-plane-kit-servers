@@ -52,6 +52,7 @@ WORKSPACE_IDS = (
 )
 WORKER_ID = "hosted-worker"
 AUTHORIZATION = "Bearer present"
+APPROVAL_AUTHORIZATION = "Bearer manager-present"
 WORKER_AUTHORIZATION = "Bearer worker-present"
 LOCAL_DOCKER_AUTHORITY_REF = "local-docker"
 OPENJ92_INGRESS_AUTHORITY_REF = "openj92-cloudflare"
@@ -63,6 +64,11 @@ PUBLIC_GATEWAY_READY_ATTEMPTS = 60
 PUBLIC_GATEWAY_READY_RETRY_SECONDS = 2
 GATEWAY_PROBE_ISSUER = "urn:control-plane-kit:source-live"
 GATEWAY_PROBE_KEY_ID = "source-live-gateway-key"
+GHCR_PULL_CREDENTIAL_REFERENCE = "secret://docker-config/ghcr.io"
+GHCR_PROVIDER_CREDENTIAL_REFERENCE = (
+    "secret://docker-config/provider-credential"
+)
+OCI_PULL_CREDENTIAL_INTENT = "oci.pull-credential"
 
 
 @dataclass(frozen=True)
@@ -84,13 +90,18 @@ class HostedWorkflow:
         workspace_id: str,
         worker_id: str,
         server_container: str,
+        approval_authorization: str = APPROVAL_AUTHORIZATION,
         worker_authorization: str = WORKER_AUTHORIZATION,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.workspace_id = workspace_id
         self.worker_id = worker_id
         self.server_container = server_container
+        self.approval_authorization = approval_authorization
         self.worker_authorization = worker_authorization
+        self._desired_graph_coordinates: dict[str, tuple[str, int]] = {}
+        self._plan_execution_coordinates: dict[str, tuple[str, str, int]] = {}
+        self._run_claim_generations: dict[str, int] = {}
 
     def wait_ready(self, *, policy: VerificationPolicy | None = None) -> None:
         _wait_ready(self.base_url, policy=policy)
@@ -123,8 +134,42 @@ class HostedWorkflow:
         )
 
     def register_ghcr_pull_authority_from_docker_config(self) -> None:
+        provider = _http(
+            self.base_url,
+            "POST",
+            f"/workspaces/{self.workspace_id}/secret-providers",
+            {
+                "provider_id": "docker-config",
+                "provider_kind": "control-plane-kit-secrets",
+                "display_name": "Local development Docker credentials",
+                "endpoint_reference": "local-development-docker-config",
+                "credential_reference": GHCR_PROVIDER_CREDENTIAL_REFERENCE,
+                "allowed_reference_prefixes": [GHCR_PULL_CREDENTIAL_REFERENCE],
+                "allowed_intents": [OCI_PULL_CREDENTIAL_INTENT],
+                "admitted_at": _clock(),
+                "metadata": {"classification": "local-development"},
+                "idempotency_key": (
+                    f"{self.workspace_id}:secret-provider:docker-config"
+                ),
+            },
+        )
+        _http(
+            self.base_url,
+            "POST",
+            f"/workspaces/{self.workspace_id}/secret-references",
+            {
+                "reference": GHCR_PULL_CREDENTIAL_REFERENCE,
+                "provider_registration_id": str(provider["registration_id"]),
+                "allowed_intents": [OCI_PULL_CREDENTIAL_INTENT],
+                "admitted_at": _clock(),
+                "metadata": {"classification": "local-development"},
+                "idempotency_key": (
+                    f"{self.workspace_id}:secret-reference:ghcr"
+                ),
+            },
+        )
         self.register_ghcr_pull_authority(
-            credential_reference="secret://docker-config/ghcr.io"
+            credential_reference=GHCR_PULL_CREDENTIAL_REFERENCE
         )
 
     def register_ghcr_pull_authority(self, *, credential_reference: str) -> None:
@@ -288,6 +333,13 @@ class HostedWorkflow:
         title: str,
         expected_desired_graph_id: str | None,
     ) -> str:
+        expected_projection_id: str | None = None
+        expected_revision = 0
+        if expected_desired_graph_id is not None:
+            expected = self._desired_graph_coordinates.get(expected_desired_graph_id)
+            if expected is None:
+                raise RuntimeError("desired graph coordinates were not observed")
+            expected_projection_id, expected_revision = expected
         desired = _http(
             self.base_url,
             "POST",
@@ -297,10 +349,25 @@ class HostedWorkflow:
                 "actor_id": "operator-a",
                 "graph": DEFAULT_GRAPH_CODEC.encode(graph),
                 "expected_desired_graph_id": expected_desired_graph_id,
+                "expected_desired_realized_projection_id": expected_projection_id,
+                "expected_desired_graph_revision": expected_revision,
                 "idempotency_key": f"{self.workspace_id}:{title}:desired",
             },
         )
-        return str(desired["desired_graph_id"])
+        desired_graph_id = desired.get("desired_graph_id")
+        projection_id = desired.get("desired_realized_projection_id")
+        revision = desired.get("desired_graph_revision")
+        if (
+            not isinstance(desired_graph_id, str)
+            or not desired_graph_id
+            or not isinstance(projection_id, str)
+            or not projection_id
+            or type(revision) is not int
+            or revision < 1
+        ):
+            raise RuntimeError("desired graph response omitted coordinates")
+        self._desired_graph_coordinates[desired_graph_id] = (projection_id, revision)
+        return desired_graph_id
 
     def plan_transition(
         self,
@@ -321,10 +388,29 @@ class HostedWorkflow:
                 "expected_desired_graph_id": desired_graph_id,
                 "idempotency_key": f"{self.workspace_id}:{title}:plan",
             },
+            timeout=60,
         )
         if not planned.get("ready_for_execution", False):
             raise RuntimeError(f"plan was not approval-ready: {planned}")
-        return str(planned["plan_id"])
+        plan_id = str(planned["plan_id"])
+        base_projection = planned.get("base_realized_projection_id")
+        desired_projection = planned.get("desired_realized_projection_id")
+        desired_revision = planned.get("desired_graph_revision")
+        if (
+            not isinstance(base_projection, str)
+            or not base_projection
+            or not isinstance(desired_projection, str)
+            or not desired_projection
+            or type(desired_revision) is not int
+            or desired_revision < 0
+        ):
+            raise RuntimeError("plan omitted execution coordinates")
+        self._plan_execution_coordinates[plan_id] = (
+            base_projection,
+            desired_projection,
+            desired_revision,
+        )
+        return plan_id
 
     def request_approval(self, *, session_id: str, title: str, plan_id: str) -> dict[str, Any]:
         return _http(
@@ -343,7 +429,7 @@ class HostedWorkflow:
         pending = _mcp_read(
             self.base_url,
             "read.pending-approvals",
-            {"workspace_id": self.workspace_id, "limit": 10, "offset": 0},
+            {"workspace_id": self.workspace_id, "limit": 10},
         )
         if approval_id not in {item["request_id"] for item in pending["items"]}:
             raise RuntimeError("approval request was not visible in pending queue")
@@ -368,6 +454,7 @@ class HostedWorkflow:
                 "decision": "approved",
                 "idempotency_key": f"{self.workspace_id}:{title}:approval-decision",
             },
+            authorization=self.approval_authorization,
         )
 
     def admit(
@@ -401,12 +488,17 @@ class HostedWorkflow:
             {
                 "worker_id": self.worker_id,
                 "actor_scopes": [PolicyScope.EXECUTION_OPERATE.value],
-                "lease_expires_at": "2026-07-22T12:00:00Z",
+                "lease_duration_seconds": 1800,
                 "idempotency_key": f"{self.workspace_id}:{title}:claim",
             },
             extra_headers={"Authorization": self.worker_authorization},
         )
-        return str(claimed["run_id"])
+        run_id = str(claimed["run_id"])
+        claim_generation = claimed.get("claim_generation")
+        if type(claim_generation) is not int or claim_generation < 1:
+            raise RuntimeError("run claim omitted execution fence")
+        self._run_claim_generations[run_id] = claim_generation
+        return run_id
 
     def start_run(self, *, title: str, run_id: str) -> None:
         _http(
@@ -416,6 +508,7 @@ class HostedWorkflow:
             {
                 "worker_id": self.worker_id,
                 "actor_scopes": [PolicyScope.EXECUTION_OPERATE.value],
+                "claim_generation": self._claim_generation_for(run_id),
                 "idempotency_key": f"{self.workspace_id}:{title}:start",
             },
             extra_headers={"Authorization": self.worker_authorization},
@@ -431,6 +524,7 @@ class HostedWorkflow:
             self.base_url,
             self.server_container,
             run_id,
+            claim_generation=self._claim_generation_for(run_id),
             workspace_id=self.workspace_id,
             worker_id=self.worker_id,
             sync_runtime_networks=sync_runtime_networks,
@@ -446,6 +540,12 @@ class HostedWorkflow:
         current_graph_id: str,
         desired_graph_id: str,
     ) -> str:
+        try:
+            current_projection, desired_projection, desired_revision = (
+                self._plan_execution_coordinates[plan_id]
+            )
+        except KeyError as error:
+            raise RuntimeError("plan execution coordinates are unavailable") from error
         advanced = _http(
             self.base_url,
             "POST",
@@ -453,20 +553,58 @@ class HostedWorkflow:
             {
                 "plan_id": plan_id,
                 "expected_current_graph_id": current_graph_id,
+                "expected_current_realized_projection_id": current_projection,
                 "desired_graph_id": desired_graph_id,
+                "desired_realized_projection_id": desired_projection,
+                "expected_desired_graph_revision": desired_revision,
                 "worker_id": self.worker_id,
                 "actor_scopes": [PolicyScope.EXECUTION_OPERATE.value],
+                "claim_generation": self._claim_generation_for(run_id),
                 "idempotency_key": f"{self.workspace_id}:{title}:advance",
             },
             extra_headers={"Authorization": self.worker_authorization},
         )
         return str(advanced["to_graph_id"])
 
+    def _claim_generation_for(self, run_id: str) -> int:
+        try:
+            return self._run_claim_generations[run_id]
+        except KeyError as error:
+            raise RuntimeError("run execution fence is unavailable") from error
+
     def read_current_graph_id(self) -> str:
         current = _http(self.base_url, "GET", f"/workspaces/{self.workspace_id}/graphs/current")
         return str(current["graph_id"])
 
-    def read_activity(self, *, limit: int = 200) -> dict[str, Any]:
+    def read_current_graph_http(self) -> dict[str, Any]:
+        return _http(
+            self.base_url,
+            "GET",
+            f"/workspaces/{self.workspace_id}/graphs/current",
+        )
+
+    def read_current_graph_mcp(self) -> dict[str, Any]:
+        return _mcp_read(
+            self.base_url,
+            "read.current-graph",
+            {"workspace_id": self.workspace_id},
+        )
+
+    def read_activity_http(self, *, limit: int = 50) -> dict[str, Any]:
+        return _http(
+            self.base_url,
+            "GET",
+            f"/workspaces/{self.workspace_id}/activity?limit={limit}",
+        )
+
+    def read_activity_mcp(self, *, limit: int = 50) -> dict[str, Any]:
+        return _mcp_read(
+            self.base_url,
+            "read.activity",
+            {"workspace_id": self.workspace_id, "limit": limit},
+        )
+
+    def read_activity(self, *, limit: int = 50) -> dict[str, Any]:
         return _mcp_read(
             self.base_url,
             "read.activity",
@@ -1412,6 +1550,7 @@ def _execute_to_completion(
     server_container: str,
     run_id: str,
     *,
+    claim_generation: int,
     workspace_id: str = WORKSPACE_ID,
     worker_id: str = WORKER_ID,
     sync_runtime_networks: bool = True,
@@ -1427,7 +1566,11 @@ def _execute_to_completion(
                 "workspace_id": workspace_id,
                 "run_id": run_id,
                 "worker_id": worker_id,
-                "actor_scopes": [PolicyScope.EXECUTION_OPERATE.value],
+                "actor_scopes": [
+                    PolicyScope.EXECUTION_OPERATE.value,
+                    PolicyScope.SECRET_PROVIDER_USE.value,
+                ],
+                "claim_generation": claim_generation,
                 "idempotency_key": f"{workspace_id}:execute:{attempt}",
                 "max_effects": 1,
             },
@@ -1439,9 +1582,37 @@ def _execute_to_completion(
         if result["coordinator_status"] == "completed":
             return
         if result["coordinator_status"] in {"failed", "unsupported", "uncertain", "blocked"}:
-            timeline = _http(base_url, "GET", f"/workspaces/{workspace_id}/activity")
-            raise RuntimeError(f"execution stopped with {result}; timeline={timeline}")
+            events = _mcp_read(
+                base_url,
+                "read.run-events",
+                {"workspace_id": workspace_id, "run_id": run_id, "limit": 100},
+            )
+            raise RuntimeError(
+                f"execution stopped with {result}; "
+                f"failure_event={_latest_run_failure(events)}"
+            )
     raise RuntimeError("hosted activity execution did not complete")
+
+
+def _latest_run_failure(page: dict[str, Any]) -> dict[str, Any] | None:
+    items = page.get("items")
+    if not isinstance(items, list):
+        return None
+    fallback = None
+    for event in reversed(items):
+        if not isinstance(event, dict) or not isinstance(event.get("failure"), dict):
+            continue
+        projected = {
+            "event_type": event.get("event_type"),
+            "activity_id": event.get("activity_id"),
+            "failure": event["failure"],
+        }
+        activity_id = event.get("activity_id")
+        if isinstance(activity_id, str) and activity_id:
+            return projected
+        if fallback is None:
+            fallback = projected
+    return fallback
 
 
 def _sync_runtime_networks(server_container: str, *, workspace_id: str = WORKSPACE_ID) -> None:
@@ -1514,7 +1685,7 @@ def _wait_ready(
             continue
         if ready.get("status") == "ready":
             if ready.get("runtime_interpreters") != "docker":
-                raise RuntimeError(f"cpk-server did not boot with Docker runtime: {ready}")
+                raise RuntimeError("cpk-server did not boot with Docker runtime")
             return
     raise RuntimeError("cpk-server did not become ready")
 

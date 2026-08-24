@@ -47,6 +47,9 @@ from control_plane_kit_operations import (
     DelegationSigningKeyRegistrationService,
     ExecutionAdmissionCommandService,
     ExecutionCoordinator,
+    EffectAttemptFoldService,
+    EffectAttemptReconciliationService,
+    EffectAttemptStartService,
     FailureEvidence,
     GatewayProbeAttemptStatus,
     GatewayProbeCommandService,
@@ -730,21 +733,38 @@ def _operations_application(
     lifecycle = RunLifecycleCommandService(
         unit_of_work,
         clock=_clock,
-        id_factory=_id,
+        id_factory=_lifecycle_id,
     )
     secret_use_authorizer = SecretUseAuthorizationService(unit_of_work)
     secret_provider = _secret_provider_composition(config)
+    adapter = _activity_adapter(
+        config,
+        unit_of_work,
+        secret_use_authorizer,
+        secret_provider,
+    )
+    fold_service = EffectAttemptFoldService(
+        unit_of_work,
+        id_factory=_fold_id,
+    )
+    start_service = EffectAttemptStartService(
+        unit_of_work,
+        id_factory=_start_id,
+    )
+    reconciliation_service = EffectAttemptReconciliationService(
+        unit_of_work,
+        adapter,
+        fold_service,
+    )
     execution = ExecutionCoordinator(
         unit_of_work,
         lifecycle=lifecycle,
-        adapter=_activity_adapter(
-            config,
-            unit_of_work,
-            secret_use_authorizer,
-            secret_provider,
-        ),
+        adapter=adapter,
+        start_service=start_service,
+        fold_service=fold_service,
+        reconciliation_service=reconciliation_service,
         clock=_clock,
-        id_factory=_id,
+        id_factory=_coordinator_id,
     )
     return CpkServerOperationsApplication(
         cpk_server_services(
@@ -1304,6 +1324,22 @@ def _clock() -> str:
 
 def _id() -> str:
     return str(uuid4())
+
+
+def _lifecycle_id() -> str:
+    return _id()
+
+
+def _fold_id() -> str:
+    return _id()
+
+
+def _start_id() -> str:
+    return _id()
+
+
+def _coordinator_id() -> str:
+    return _id()
 
 
 def _json_response(status: int, payload: Mapping[str, object]) -> JSONResponse:
