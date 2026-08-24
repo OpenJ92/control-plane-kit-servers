@@ -66,11 +66,20 @@ printf '%s\n' \
   '  "repository": "OpenJ92/control-plane-kit-servers",' \
   '  "tree": "'"$SERVER_TREE"'"' \
   '}' > "$CANDIDATE_STAGING_ROOT/source-coordinate.json"
+HOST_UID="$(id -u)"
+HOST_GID="$(id -g)"
+DOCKER_SOCKET_GID="$(
+  stat -c '%g' /var/run/docker.sock 2>/dev/null \
+    || stat -f '%g' /var/run/docker.sock
+)"
 docker run --rm \
   -v "$ROOT:/source:ro" \
   -w /source \
   -v "$CANDIDATE_STAGING_ROOT:/candidate" \
   -v /var/run/docker.sock:/var/run/docker.sock \
+  --user "$HOST_UID:$HOST_GID" \
+  --group-add "$DOCKER_SOCKET_GID" \
+  -e HOME=/tmp \
   "$IMAGE" python -m scripts.cpk_server_candidate_topology \
   --package-image-only --candidate-base-image "$BASELINE_IMAGE" \
   --candidate-image-tag "$CANDIDATE_IMAGE" \
@@ -78,6 +87,7 @@ docker run --rm \
   --assembly /candidate/candidate-assembly.json \
   --inspection /candidate/candidate-inspection.json \
   --report /candidate/candidate-topology-report.json
+test -z "$(find "$CANDIDATE_STAGING_ROOT" ! -user "$HOST_UID" -print -quit)"
 CANDIDATE_IMAGE_OWNED=1
 CPK_SERVER_IMAGE="$CANDIDATE_IMAGE" CPK_SERVER_BUILD_IMAGE=0 sh scripts/cpk_server_image_smoke.sh
 sh scripts/docker_residue_audit.sh
