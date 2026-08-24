@@ -20,6 +20,12 @@ from urllib.request import urlretrieve
 
 from control_plane_kit_core.topology import DeploymentGraph
 
+from scripts.cpk_server_candidate_lifecycle import (
+    admit_candidate_ledger,
+    candidate_resource_name,
+    interrupt_candidate_run,
+    record_candidate_resource,
+)
 from scripts.cpk_server_hosted_activity import (
     HostedWorkflow,
     _product_document,
@@ -1166,6 +1172,8 @@ class DockerCandidateEffects:
         candidate_image_tag: str | None = None,
         host_address: str = "127.0.0.1",
         ghcr_pull_credential: str | None = None,
+        ownership_ledger: Path | None = None,
+        interrupt_after: str | None = None,
     ) -> None:
         import docker
 
@@ -1175,6 +1183,8 @@ class DockerCandidateEffects:
         self._candidate_image_tag = candidate_image_tag
         self._host_address = host_address
         self._ghcr_pull_credential = ghcr_pull_credential
+        self._ownership_ledger = ownership_ledger
+        self._interrupt_after = interrupt_after
         self._client = docker.from_env()
         self._probe = None
         self._server = None
@@ -1185,8 +1195,20 @@ class DockerCandidateEffects:
         self._foreign_canary = ""
 
     def _name(self, role: str) -> str:
-        digest = hashlib.sha256(self._evidence_id.encode("utf-8")).hexdigest()[:12]
-        return f"cpk-{digest}-{role}"
+        return candidate_resource_name(self._evidence_id, role)
+
+    def _record(self, kind: str, role: str, observed_id: str) -> None:
+        if self._ownership_ledger is not None:
+            record_candidate_resource(
+                self._ownership_ledger,
+                kind=kind,
+                role=role,
+                observed_id=observed_id,
+            )
+
+    def _record_created(self, kind: str, role: str, resource: Any) -> None:
+        if self._ownership_ledger is not None:
+            self._record(kind, role, resource.id)
 
     def _inventory(self) -> dict[str, tuple[str, ...]]:
         return {
@@ -1252,6 +1274,10 @@ class DockerCandidateEffects:
             rm=True,
         )
         self._image = image
+        self._record_created("image", "candidate", image)
+        if self._interrupt_after == "candidate-image-built":
+            assert self._ownership_ledger is not None
+            interrupt_candidate_run(self._ownership_ledger)
         return {
             "base_image": base_image,
             "image_id": image.id,
@@ -1273,6 +1299,7 @@ class DockerCandidateEffects:
             self._name("runtime"),
             labels=self._labels,
         )
+        self._record_created("network", "runtime", self._network)
         self._postgres = self._client.containers.run(
             POSTGRES_IMAGE,
             detach=True,
@@ -1286,6 +1313,7 @@ class DockerCandidateEffects:
             network=self._network.name,
             tmpfs={"/var/lib/postgresql/data": "rw"},
         )
+        self._record_created("container", "postgres", self._postgres)
         postgres_ready = False
         for attempt in range(POSTGRES_READY_ATTEMPTS):
             readiness = self._postgres.exec_run(
@@ -1319,6 +1347,7 @@ class DockerCandidateEffects:
             },
         )
         self._server = candidate_server
+        self._record_created("container", "server", candidate_server)
         candidate_server.reload()
         bindings = candidate_server.attrs["NetworkSettings"]["Ports"]["8080/tcp"]
         host_port = bindings[0]["HostPort"]
@@ -1429,6 +1458,7 @@ class DockerCandidateEffects:
             name=self._name("probe"),
         )
         self._probe = probe_container
+        self._record_created("container", "probe", probe_container)
         if not attach_runtime_network:
             raise CandidateTopologyError(WORKFLOW_ERROR)
         result = probe_container.exec_run(
@@ -1603,6 +1633,11 @@ def main(
     parser.add_argument("--candidate-base-image")
     parser.add_argument("--candidate-image-tag")
     parser.add_argument("--staging-root", type=Path)
+    parser.add_argument("--ownership-ledger", type=Path)
+    parser.add_argument(
+        "--interrupt-after",
+        choices=("candidate-image-built",),
+    )
     args = parser.parse_args(argv)
 
     package_arguments = (args.candidate_base_image, args.candidate_image_tag)
@@ -1611,6 +1646,12 @@ def main(
             parser.error("package image mode requires exact base image and candidate tag")
     elif any(package_arguments) or args.staging_root is not None:
         parser.error("package image arguments require package image mode")
+    if args.package_image_only and (
+        args.ownership_ledger is not None or args.interrupt_after is not None
+    ):
+        parser.error("candidate lifecycle arguments require live topology mode")
+    if args.interrupt_after is not None and args.ownership_ledger is None:
+        parser.error("candidate interruption requires an ownership ledger")
 
     startup_diagnostic_path = args.report.with_name(STARTUP_DIAGNOSTIC_FILENAME)
     startup_diagnostic_part_path = Path(str(startup_diagnostic_path) + ".part")
@@ -1626,6 +1667,13 @@ def main(
         "org.openj92.cpk.evidence": args.evidence_id,
     }
     root = Path(__file__).resolve().parents[1]
+    if args.ownership_ledger is not None:
+        admit_candidate_ledger(
+            args.ownership_ledger,
+            root=root,
+            labels=labels,
+            evidence_id=args.evidence_id,
+        )
     if args.package_image_only:
         if args.staging_root is not None:
             staging_root = args.staging_root
@@ -1882,8 +1930,17 @@ def main(
         effects = DockerCandidateEffects(
             **effects_arguments,
             host_address=args.host_address,
+            ownership_ledger=args.ownership_ledger,
+            interrupt_after=args.interrupt_after,
         )
     else:
+        if args.ownership_ledger is not None:
+            effects_arguments.update(
+                {
+                    "ownership_ledger": args.ownership_ledger,
+                    "interrupt_after": args.interrupt_after,
+                }
+            )
         effects = effects_factory(**effects_arguments)
 
     prepared: dict[str, Any] | None = None
