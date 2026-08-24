@@ -332,12 +332,14 @@ class DockerHarnessTests(unittest.TestCase):
             self.assertEqual(normalized.count('-e HOME=/tmp'), 1)
         with self.subTest(boundary="docker-socket-group-is-retained"):
             self.assertEqual(
-                test_sh.count(
-                    "stat -c '%g' /var/run/docker.sock 2>/dev/null "
-                    "\\\n    || stat -f '%g' /var/run/docker.sock"
+                normalized.count(
+                    "DOCKER_SOCKET_GID=\"$( docker run --rm --network none "
+                    "-v /var/run/docker.sock:/var/run/docker.sock:ro "
+                    "\"$IMAGE\" stat -c '%g' /var/run/docker.sock )\""
                 ),
                 1,
             )
+            self.assertNotIn("stat -f '%g' /var/run/docker.sock", test_sh)
             self.assertEqual(
                 normalized.count('--group-add "$DOCKER_SOCKET_GID"'),
                 1,
