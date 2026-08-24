@@ -188,6 +188,8 @@ PY
 CPK_CANDIDATE_EVIDENCE_ID="$EVIDENCE_ID" \
     sh "$ROOT/scripts/docker_residue_audit.sh"
 
+python -m scripts.cpk_server_candidate_lifecycle success \
+    --ledger "$LEDGER"
 SUPERVISOR_CLASSIFICATION=passed
 supervisor_cleanup
 trap - EXIT HUP INT TERM

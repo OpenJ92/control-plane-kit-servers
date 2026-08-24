@@ -49,6 +49,7 @@ PHASES = {
     "declared",
     "candidate-image-built",
     "interruption-requested",
+    "success-requested",
     "contained",
     "passed",
 }
@@ -58,6 +59,33 @@ CLASSIFICATIONS = {
     "interrupted-contained",
     "failed-contained",
     "passed",
+}
+STATE_PAIRS = {
+    ("declared", "incomplete"),
+    ("candidate-image-built", "incomplete"),
+    ("interruption-requested", "interrupted"),
+    ("success-requested", "incomplete"),
+    ("contained", "interrupted-contained"),
+    ("contained", "failed-contained"),
+    ("passed", "passed"),
+}
+TERMINAL_CLASSIFICATIONS = {
+    "interrupted-contained",
+    "failed-contained",
+    "passed",
+}
+TERMINAL_PHASES = {
+    "interrupted-contained": "contained",
+    "failed-contained": "contained",
+    "passed": "passed",
+}
+PRETERMINAL_STATES = {
+    "interrupted-contained": {("interruption-requested", "interrupted")},
+    "failed-contained": {
+        ("declared", "incomplete"),
+        ("candidate-image-built", "incomplete"),
+    },
+    "passed": {("success-requested", "incomplete")},
 }
 DISPOSITIONS = {"declared", "created", "removed", "absent"}
 EVIDENCE_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}\Z")
@@ -168,6 +196,7 @@ def _validate(ledger: Any) -> dict[str, Any]:
         or labels["org.openj92.cpk.evidence"] != evidence_id
         or ledger.get("phase") not in PHASES
         or ledger.get("classification") not in CLASSIFICATIONS
+        or (ledger.get("phase"), ledger.get("classification")) not in STATE_PAIRS
     ):
         raise CandidateLifecycleError(LIFECYCLE_ERROR)
     resources = ledger.get("resources")
@@ -323,6 +352,11 @@ def record_candidate_resource(
         raise CandidateLifecycleError(LIFECYCLE_ERROR)
 
     def transform(ledger: dict[str, Any]) -> None:
+        if (
+            ledger["classification"] != "incomplete"
+            or ledger["phase"] not in {"declared", "candidate-image-built"}
+        ):
+            raise CandidateLifecycleError(LIFECYCLE_ERROR)
         matches = [
             row
             for row in ledger["resources"]
@@ -343,13 +377,35 @@ def record_candidate_resource(
 
 def interrupt_candidate_run(path: Path) -> None:
     def transform(ledger: dict[str, Any]) -> None:
-        if ledger["phase"] != "candidate-image-built":
+        if (
+            ledger["phase"] != "candidate-image-built"
+            or ledger["classification"] != "incomplete"
+        ):
             raise CandidateLifecycleError(LIFECYCLE_ERROR)
         ledger["phase"] = "interruption-requested"
         ledger["classification"] = "interrupted"
 
     _rewrite(path, transform)
     os._exit(INTERRUPTION_EXIT)
+
+
+def mark_candidate_success(path: Path) -> dict[str, Any]:
+    def transform(ledger: dict[str, Any]) -> None:
+        docker_resources = tuple(
+            row for row in ledger["resources"] if row["kind"] != "path"
+        )
+        if (
+            (ledger["phase"], ledger["classification"])
+            != ("candidate-image-built", "incomplete")
+            or any(
+                row["observed_id"] is None or row["disposition"] != "created"
+                for row in docker_resources
+            )
+        ):
+            raise CandidateLifecycleError(LIFECYCLE_ERROR)
+        ledger["phase"] = "success-requested"
+
+    return _rewrite(path, transform)
 
 
 def _resource_labels(resource: Any, kind: str) -> dict[str, str]:
@@ -392,19 +448,24 @@ def cleanup_candidate_ledger(
     classification: str,
     not_found_error: Any = None,
 ) -> dict[str, Any]:
-    if classification not in {
-        "interrupted-contained",
-        "failed-contained",
-        "passed",
-    }:
+    if classification not in TERMINAL_CLASSIFICATIONS:
         raise CandidateLifecycleError(LIFECYCLE_ERROR)
     not_found = _not_found_type(not_found_error)
     ledger = load_candidate_ledger(path)
-    if ledger["classification"] == classification and all(
-        row["disposition"] in {"removed", "absent"}
-        for row in ledger["resources"]
-    ):
-        return ledger
+    state = (ledger["phase"], ledger["classification"])
+    if ledger["classification"] in TERMINAL_CLASSIFICATIONS:
+        if (
+            ledger["classification"] == classification
+            and ledger["phase"] == TERMINAL_PHASES[classification]
+            and all(
+                row["disposition"] in {"removed", "absent"}
+                for row in ledger["resources"]
+            )
+        ):
+            return ledger
+        raise CandidateLifecycleError(LIFECYCLE_ERROR)
+    if state not in PRETERMINAL_STATES[classification]:
+        raise CandidateLifecycleError(LIFECYCLE_ERROR)
     for index, row in enumerate(ledger["resources"]):
         if row["kind"] == "path":
             owned_path = Path(row["coordinate"])
@@ -459,7 +520,13 @@ def main(argv: list[str] | None = None) -> int:
         choices=("interrupted-contained", "failed-contained", "passed"),
         required=True,
     )
+    success = subparsers.add_parser("success")
+    success.add_argument("--ledger", type=Path, required=True)
     args = parser.parse_args(argv)
+
+    if args.command == "success":
+        mark_candidate_success(args.ledger)
+        return 0
 
     import docker
 
