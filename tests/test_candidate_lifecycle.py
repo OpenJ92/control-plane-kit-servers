@@ -144,11 +144,29 @@ class CandidateLifecycleTests(unittest.TestCase):
                 self.assertIsNone(row["observed_id"])
                 self.assertEqual(row["disposition"], "declared")
 
-            hostile = dict(ledger)
-            hostile["provider_message"] = "registry credential leaked"
-            ledger_path.write_text(json.dumps(hostile), encoding="utf-8")
-            with self.assertRaises(lifecycle.CandidateLifecycleError):
-                lifecycle.load_candidate_ledger(ledger_path)
+            hostile_documents = []
+            extra_top_level = json.loads(json.dumps(ledger))
+            extra_top_level["provider_message"] = "registry credential leaked"
+            hostile_documents.append(("extra-provider-key", extra_top_level))
+            extra_resource_key = json.loads(json.dumps(ledger))
+            extra_resource_key["resources"][0]["selector"] = "label=*"
+            hostile_documents.append(("broad-selector", extra_resource_key))
+            duplicate_identity = json.loads(json.dumps(ledger))
+            duplicate_identity["resources"][1]["role"] = "server"
+            hostile_documents.append(("duplicate-identity", duplicate_identity))
+            sensitive_identity = json.loads(json.dumps(ledger))
+            sensitive_identity["evidence_id"] = "password=protected"
+            hostile_documents.append(("sensitive-identity", sensitive_identity))
+            provider_coordinate = json.loads(json.dumps(ledger))
+            provider_coordinate["resources"][0]["coordinate"] = (
+                "https://credential@example.invalid/container"
+            )
+            hostile_documents.append(("provider-coordinate", provider_coordinate))
+            for boundary, hostile in hostile_documents:
+                with self.subTest(boundary=boundary):
+                    ledger_path.write_text(json.dumps(hostile), encoding="utf-8")
+                    with self.assertRaises(lifecycle.CandidateLifecycleError):
+                        lifecycle.load_candidate_ledger(ledger_path)
 
     def test_abrupt_barrier_bypasses_in_process_cleanup_and_stays_non_passing(
         self,
@@ -168,6 +186,12 @@ class CandidateLifecycleTests(unittest.TestCase):
                 evidence_id=EVIDENCE_ID,
                 client=client,
                 not_found_error=FakeNotFound,
+            )
+            lifecycle.record_candidate_resource(
+                ledger_path,
+                kind="image",
+                role="candidate",
+                observed_id="sha256:" + "a" * 64,
             )
             program = (
                 "from pathlib import Path;"
@@ -269,11 +293,16 @@ class CandidateLifecycleTests(unittest.TestCase):
 
             mismatch_path = root / "mismatch-ledger.json"
             mismatch_client = FakeDockerClient()
+            mismatch_evidence_id = "candidate-lifecycle-mismatch"
+            mismatch_labels = {
+                **LABELS,
+                "org.openj92.cpk.evidence": mismatch_evidence_id,
+            }
             mismatch = lifecycle.declare_candidate_ledger(
                 mismatch_path,
                 root=root,
-                labels=LABELS,
-                evidence_id="candidate-lifecycle-mismatch",
+                labels=mismatch_labels,
+                evidence_id=mismatch_evidence_id,
                 client=mismatch_client,
                 not_found_error=FakeNotFound,
             )
