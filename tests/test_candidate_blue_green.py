@@ -154,6 +154,7 @@ class RecordingBlueGreenEffects:
         default_factory=lambda: [response for _, response in RESPONSES]
     )
     ledger: list[tuple[str, Any]] = field(default_factory=list)
+    probe_container_id: str | None = None
 
     def probe_runtime_node(
         self,
@@ -163,6 +164,9 @@ class RecordingBlueGreenEffects:
         labelled: bool,
         attach_runtime_network: bool,
     ) -> dict[str, Any]:
+        if self.probe_container_id is None:
+            self.probe_container_id = "candidate-blue-green-probe"
+            self.ledger.append(("probe-created", self.probe_container_id))
         response = self.responses.pop(0)
         self.ledger.append(
             (
@@ -178,14 +182,16 @@ class RecordingBlueGreenEffects:
         )
         return {
             "response": response,
-            "container_id": "candidate-blue-green-probe",
+            "container_id": self.probe_container_id,
             "request_origin": "inside-probe",
             "target_image_id": "sha256:" + "7" * 64,
             "target_image_reference": expected_image_reference,
         }
 
     def remove_probe(self) -> None:
-        self.ledger.append(("remove-probe", None))
+        if self.probe_container_id is not None:
+            self.ledger.append(("remove-probe", self.probe_container_id))
+            self.probe_container_id = None
 
     def cleanup(self, *, reason: str) -> dict[str, Any]:
         self.ledger.append(("cleanup", reason))
@@ -430,6 +436,30 @@ class CandidateBlueGreenTests(unittest.TestCase):
                 [entry[1]["response"] for entry in ledger if entry[0] == "probe"],
                 [body for _, body in RESPONSES],
             )
+        with self.subTest(boundary="one-probe-is-reused-across-live-stages"):
+            self.assertEqual(
+                [entry for entry in ledger if entry[0] == "probe-created"],
+                [("probe-created", "candidate-blue-green-probe")],
+            )
+        with self.subTest(boundary="probe-is-removed-once-before-teardown"):
+            removals = [
+                index
+                for index, entry in enumerate(ledger)
+                if entry[0] == "remove-probe"
+            ]
+            teardown_plans = [
+                index
+                for index, entry in enumerate(ledger)
+                if entry == ("plan", "teardown")
+            ]
+            final_probes = [
+                index for index, entry in enumerate(ledger) if entry[0] == "probe"
+            ]
+            self.assertEqual(len(removals), 1)
+            self.assertEqual(len(teardown_plans), 1)
+            self.assertEqual(len(final_probes), 6)
+            self.assertLess(final_probes[-1], removals[0])
+            self.assertLess(removals[0], teardown_plans[0])
         with self.subTest(boundary="terminal-report-is-closed-and-redacted"):
             self.assertEqual(report.get("status"), "passed")
             self.assertEqual(report.get("first_failed_stage"), None)
