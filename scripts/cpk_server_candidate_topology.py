@@ -804,6 +804,8 @@ def run_candidate_blue_green(
     try:
         for title, graph, expected_response in profiles:
             failure_stage = title
+            if expected_response is None:
+                effects.remove_probe()
             transition = _public_transition(
                 workflow,
                 title=title,
@@ -822,7 +824,6 @@ def run_candidate_blue_green(
                 labelled=True,
                 attach_runtime_network=True,
             )
-            effects.remove_probe()
             body = observed["response"]
             if body != expected_response:
                 raise CandidateTopologyError(WORKFLOW_ERROR)
@@ -1775,17 +1776,38 @@ class DockerCandidateEffects:
         ):
             raise CandidateTopologyError(WORKFLOW_ERROR)
         labels = self._labels if labelled else {}
-        probe_container = self._client.containers.run(
+        probe_image = (
             "docker.io/curlimages/curl@sha256:"
-            "7c12af72ceb38b7432ab85e1a265cff6ae58e06f95539d539b654f2cfa64bb13",
-            ["sleep", "60"],
-            labels=labels,
-            detach=True,
-            network=provider_network.name,
-            name=self._name("probe"),
+            "7c12af72ceb38b7432ab85e1a265cff6ae58e06f95539d539b654f2cfa64bb13"
         )
-        self._probe = probe_container
-        self._record_created("container", "probe", probe_container)
+        if self._probe is None:
+            probe_container = self._client.containers.run(
+                probe_image,
+                ["sleep", "900"],
+                labels=labels,
+                detach=True,
+                network=provider_network.name,
+                name=self._name("probe"),
+            )
+            self._probe = probe_container
+            self._record_created("container", "probe", probe_container)
+        else:
+            probe_container = self._probe
+            probe_container.reload()
+            probe_networks = tuple(
+                probe_container.attrs.get("NetworkSettings", {}).get(
+                    "Networks", {}
+                )
+            )
+            if (
+                probe_container.name != self._name("probe")
+                or probe_container.attrs.get("State", {}).get("Status")
+                != "running"
+                or probe_container.attrs.get("Config", {}).get("Image")
+                != probe_image
+                or probe_networks != (provider_network.name,)
+            ):
+                raise CandidateTopologyError(WORKFLOW_ERROR)
         if not attach_runtime_network:
             raise CandidateTopologyError(WORKFLOW_ERROR)
         result = probe_container.exec_run(
