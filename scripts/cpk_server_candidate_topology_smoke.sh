@@ -11,6 +11,7 @@ PROJECT_LABEL=org.openj92.project=control-plane-kit-servers
 SCENARIO_LABEL=org.openj92.cpk.scenario=candidate-topology-1714
 EVIDENCE_ID=${CPK_CANDIDATE_EVIDENCE_ID:?CPK_CANDIDATE_EVIDENCE_ID is required}
 EVIDENCE_LABEL=org.openj92.cpk.evidence=$EVIDENCE_ID
+CPK_CANDIDATE_SCENARIO=${CPK_CANDIDATE_SCENARIO:-single-hello}
 CPK_SERVER_BASE_IMAGE=${CPK_SERVER_BASE_IMAGE:?CPK_SERVER_BASE_IMAGE is required}
 TIMEOUT_SECONDS=${CPK_CANDIDATE_TIMEOUT_SECONDS:-900}
 RFC8785_WHEEL_URL=https://files.pythonhosted.org/packages/4d/78/119878110660b2ad709888c8a1614fce7e2fab39080ab960656dc8605bf6/rfc8785-0.1.4-py3-none-any.whl
@@ -138,6 +139,7 @@ else
 fi
 set +e
 timeout "$TIMEOUT_SECONDS" python -m scripts.cpk_server_candidate_topology \
+    --scenario "$CPK_CANDIDATE_SCENARIO" \
     --assembly "$ASSEMBLY" \
     --inspection "$INSPECTION" \
     --report "$REPORT" \

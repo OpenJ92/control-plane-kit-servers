@@ -18,7 +18,16 @@ from time import sleep as _sleep
 from typing import Any, Callable
 from urllib.request import urlretrieve
 
-from control_plane_kit_core.topology import DeploymentGraph
+from control_plane_kit_core.algebra import (
+    DeploymentTopology,
+    DockerRuntime,
+    SocketConnection,
+)
+from control_plane_kit_core.products import (
+    ProductInstanceConfiguration,
+    instantiate_product,
+)
+from control_plane_kit_core.topology import DeploymentGraph, compile_topology
 
 from scripts.cpk_server_candidate_lifecycle import (
     admit_candidate_ledger,
@@ -30,6 +39,7 @@ from scripts.cpk_server_hosted_activity import (
     HostedWorkflow,
     _product_document,
     _single_hello_graph,
+    _with_public_environment,
 )
 
 
@@ -59,6 +69,16 @@ PRODUCTION_DOCKERFILE_SHA256 = (
 HELLO_DESCRIPTOR_SHA256 = (
     "57ac661ca3f73ad4fa488df34390240e95da58e302bffb17c2197eeac29c2a24"
 )
+ROUTER_DESCRIPTOR_SHA256 = (
+    "2e4c1ca0e0f59844c06bc754b41ca82a31826d3e12760912f49de1f15bd1f18d"
+)
+ROUTER_IMAGE = (
+    "ghcr.io/openj92/control-plane-kit-servers/http-active-router@sha256:"
+    "a58938fdc5c37bfda1b2b0dbd95fc0bf3ba7391f5ce3b8fdfb3956dccf0a01c8"
+)
+BLUE_GREEN_SCENARIO = "candidate.topology.blue-green.v1"
+BLUE_RESPONSE = b"Hello from blue\n"
+GREEN_RESPONSE = b"Hello from green\n"
 POSTGRES_DB = "cpk"
 POSTGRES_USER = "candidate"
 POSTGRES_PASSWORD = "candidate-password-not-for-output"
@@ -151,6 +171,13 @@ EXPECTED_ASSEMBLY = {
         "workspace_id": "candidate-topology-1714",
         "foreign_resource_canary": "foreign-resource-1714",
     },
+}
+EXPECTED_BLUE_GREEN_ASSEMBLY = deepcopy(EXPECTED_ASSEMBLY)
+EXPECTED_BLUE_GREEN_ASSEMBLY["scenario"] = BLUE_GREEN_SCENARIO
+EXPECTED_BLUE_GREEN_ASSEMBLY["products"]["http_active_router"] = {
+    "classification": "published-digest",
+    "reference": ROUTER_IMAGE,
+    "descriptor_sha256": ROUTER_DESCRIPTOR_SHA256,
 }
 EXPECTED_INSPECTION = {
     "candidate": {"commit": CPK_COMMIT, "tree": CPK_TREE, "clean": True},
@@ -450,6 +477,10 @@ def admit_candidate_assembly(
     assembly: dict[str, Any],
     inspection: dict[str, Any],
 ) -> dict[str, Any]:
+    expected = {
+        EXPECTED_ASSEMBLY["scenario"]: EXPECTED_ASSEMBLY,
+        EXPECTED_BLUE_GREEN_ASSEMBLY["scenario"]: EXPECTED_BLUE_GREEN_ASSEMBLY,
+    }.get(assembly.get("scenario"))
     if not _exact_keys(
         assembly,
         {
@@ -468,13 +499,12 @@ def admit_candidate_assembly(
         {"candidate", "server_source", "files", "images"},
     ):
         raise _fixed_assembly_error()
-    if (
+    if expected is None or (
         assembly["schema"] != ASSEMBLY_SCHEMA
-        or assembly["scenario"] != EXPECTED_ASSEMBLY["scenario"]
-        or assembly["acceptance_level"] != EXPECTED_ASSEMBLY["acceptance_level"]
-        or assembly["candidate"] != EXPECTED_ASSEMBLY["candidate"]
-        or assembly["dependencies"] != EXPECTED_ASSEMBLY["dependencies"]
-        or assembly["inputs"] != EXPECTED_ASSEMBLY["inputs"]
+        or assembly["acceptance_level"] != expected["acceptance_level"]
+        or assembly["candidate"] != expected["candidate"]
+        or assembly["dependencies"] != expected["dependencies"]
+        or assembly["inputs"] != expected["inputs"]
     ):
         raise _fixed_assembly_error()
     source = assembly["server_source"]
@@ -504,15 +534,19 @@ def admit_candidate_assembly(
     }:
         raise _fixed_assembly_error()
     products = assembly["products"]
-    if not _exact_keys(products, {"cpk_server", "hello"}):
+    if not _exact_keys(products, set(expected["products"])):
         raise _fixed_assembly_error()
     server_product = products["cpk_server"]
     if not _exact_keys(
         server_product,
         {"classification", "source_commit", "source_tree", "dockerfile_sha256"},
-    ) or server_product != EXPECTED_ASSEMBLY["products"]["cpk_server"]:
+    ) or server_product != expected["products"]["cpk_server"]:
         raise _fixed_assembly_error()
-    if products["hello"] != EXPECTED_ASSEMBLY["products"]["hello"]:
+    if products["hello"] != expected["products"]["hello"]:
+        raise _fixed_assembly_error()
+    if assembly["scenario"] == BLUE_GREEN_SCENARIO and products[
+        "http_active_router"
+    ] != expected["products"]["http_active_router"]:
         raise _fixed_assembly_error()
     files = inspection["files"]
     if not _exact_keys(
@@ -531,7 +565,7 @@ def admit_candidate_assembly(
         images["cpk_server_base"]
     ):
         raise _fixed_assembly_error()
-    if source == EXPECTED_ASSEMBLY["server_source"] and inspection != EXPECTED_INSPECTION:
+    if source == expected["server_source"] and inspection != EXPECTED_INSPECTION:
         raise _fixed_assembly_error()
     return assembly
 
@@ -604,6 +638,300 @@ def _public_transition(
         "successor_http": successor_http,
         "successor_mcp": successor_mcp,
     }
+
+
+def _candidate_blue_green_graph(
+    *,
+    hello_document: Any,
+    router_document: Any,
+    workspace_id: str,
+    present_roles: tuple[str, ...],
+    active_role: str,
+) -> DeploymentGraph:
+    allowed_roles = ("hello-blue", "hello-green")
+    allowed_profiles = (
+        ("hello-blue",),
+        ("hello-blue", "hello-green"),
+        ("hello-green",),
+    )
+    if present_roles not in allowed_profiles or active_role not in present_roles:
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+    hello_product = hello_document.product
+    messages = {
+        "hello-blue": BLUE_RESPONSE.decode("ascii").rstrip("\n"),
+        "hello-green": GREEN_RESPONSE.decode("ascii").rstrip("\n"),
+    }
+    hello_nodes = tuple(
+        instantiate_product(
+            hello_product,
+            role,
+            _with_public_environment(
+                ProductInstanceConfiguration.from_contract(
+                    hello_product.runtime_contract
+                ),
+                {"HELLO_MESSAGE": messages[role]},
+            ),
+        )
+        for role in allowed_roles
+        if role in present_roles
+    )
+    router_product = router_document.product
+    router = instantiate_product(
+        router_product,
+        "router",
+        ProductInstanceConfiguration.from_contract(router_product.runtime_contract),
+    )
+    return compile_topology(
+        DeploymentTopology(
+            workspace_id,
+            DockerRuntime(
+                runtime_id="docker",
+                network_name=f"control-plane-kit-{workspace_id}-docker",
+                children=(
+                    *hello_nodes,
+                    router,
+                    SocketConnection(
+                        active_role,
+                        "internal",
+                        "router",
+                        "active",
+                    ),
+                ),
+            ),
+        )
+    )
+
+
+def run_candidate_blue_green(
+    assembly: dict[str, Any],
+    *,
+    inspection: dict[str, Any],
+    workflow: Any,
+    effects: Any,
+    hello_document: Any,
+    router_document: Any,
+    empty_graph: DeploymentGraph,
+    current_graph_id: str,
+    prepared: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    admitted = admit_candidate_assembly(assembly, inspection)
+    if admitted["scenario"] != BLUE_GREEN_SCENARIO:
+        raise _fixed_assembly_error()
+    active_prepared = (
+        _prepare_candidate(admitted, inspection, effects)
+        if prepared is None
+        else prepared
+    )
+    workspace_id = admitted["inputs"]["workspace_id"]
+    profiles = (
+        (
+            "blue-realization",
+            _candidate_blue_green_graph(
+                hello_document=hello_document,
+                router_document=router_document,
+                workspace_id=workspace_id,
+                present_roles=("hello-blue",),
+                active_role="hello-blue",
+            ),
+            BLUE_RESPONSE,
+        ),
+        (
+            "green-preparation",
+            _candidate_blue_green_graph(
+                hello_document=hello_document,
+                router_document=router_document,
+                workspace_id=workspace_id,
+                present_roles=("hello-blue", "hello-green"),
+                active_role="hello-blue",
+            ),
+            BLUE_RESPONSE,
+        ),
+        (
+            "green-cutover",
+            _candidate_blue_green_graph(
+                hello_document=hello_document,
+                router_document=router_document,
+                workspace_id=workspace_id,
+                present_roles=("hello-blue", "hello-green"),
+                active_role="hello-green",
+            ),
+            GREEN_RESPONSE,
+        ),
+        (
+            "rollback-blue",
+            _candidate_blue_green_graph(
+                hello_document=hello_document,
+                router_document=router_document,
+                workspace_id=workspace_id,
+                present_roles=("hello-blue", "hello-green"),
+                active_role="hello-blue",
+            ),
+            BLUE_RESPONSE,
+        ),
+        (
+            "final-green",
+            _candidate_blue_green_graph(
+                hello_document=hello_document,
+                router_document=router_document,
+                workspace_id=workspace_id,
+                present_roles=("hello-blue", "hello-green"),
+                active_role="hello-green",
+            ),
+            GREEN_RESPONSE,
+        ),
+        (
+            "retire-blue",
+            _candidate_blue_green_graph(
+                hello_document=hello_document,
+                router_document=router_document,
+                workspace_id=workspace_id,
+                present_roles=("hello-green",),
+                active_role="hello-green",
+            ),
+            GREEN_RESPONSE,
+        ),
+        ("teardown", empty_graph, None),
+    )
+    transitions: list[dict[str, Any]] = []
+    responses: list[dict[str, Any]] = []
+    failure: BaseException | None = None
+    failure_stage = "blue-realization"
+    active_current_graph_id = current_graph_id
+    expected_desired_graph_id: str | None = None
+    history_http: dict[str, Any] | None = None
+    history_mcp: dict[str, Any] | None = None
+
+    try:
+        for title, graph, expected_response in profiles:
+            failure_stage = title
+            transition = _public_transition(
+                workflow,
+                title=title,
+                graph=graph,
+                current_graph_id=active_current_graph_id,
+                expected_desired_graph_id=expected_desired_graph_id,
+            )
+            transitions.append({"title": title, **transition})
+            active_current_graph_id = transition["advanced_graph_id"]
+            expected_desired_graph_id = transition["desired_graph_id"]
+            if expected_response is None:
+                continue
+            observed = effects.probe_runtime_node(
+                node_id="router",
+                expected_image_reference=ROUTER_IMAGE,
+                labelled=True,
+                attach_runtime_network=True,
+            )
+            effects.remove_probe()
+            body = observed["response"]
+            if body != expected_response:
+                raise CandidateTopologyError(WORKFLOW_ERROR)
+            responses.append(
+                {
+                    "stage": title,
+                    "response": body.decode("ascii"),
+                    "response_sha256": hashlib.sha256(body).hexdigest(),
+                    "request_origin": observed["request_origin"],
+                    "target_image_id": observed["target_image_id"],
+                    "target_image_reference": observed["target_image_reference"],
+                }
+            )
+        history_http = workflow.read_activity_http()
+        history_mcp = workflow.read_activity_mcp()
+    except BaseException as error:
+        failure = error
+
+    reason = "success" if failure is None else "error"
+    cleanup_failure: BaseException | None = None
+    try:
+        cleanup = effects.cleanup(reason=reason)
+    except BaseException as error:
+        cleanup_failure = error
+        cleanup = {
+            "containers": (),
+            "networks": (),
+            "volumes": (),
+            "images": (),
+            "postgres_relations": (),
+            "foreign_canary_after": (
+                admitted["inputs"]["foreign_resource_canary"],
+            ),
+        }
+    if failure is None and cleanup_failure is not None:
+        failure = cleanup_failure
+        failure_stage = "cleanup"
+    if failure is not None:
+        report = _failed_report(
+            admitted,
+            cleanup=cleanup,
+            first_failed_stage=failure_stage,
+            prepared=active_prepared,
+        )
+        _attach_report(failure, report)
+        raise failure
+
+    assert history_http is not None
+    assert history_mcp is not None
+    report = _base_report(
+        admitted,
+        cleanup=cleanup,
+        first_failed_stage=None,
+        status="passed",
+    )
+    build = active_prepared["build"]
+    attestation: dict[str, Any] = {
+        "image_id": build["image_id"],
+        "router_descriptor_sha256": ROUTER_DESCRIPTOR_SHA256,
+        "router_image": ROUTER_IMAGE,
+    }
+    if "base_image" in build:
+        attestation.update(_attestation(inspection, active_prepared))
+    report.update(
+        {
+            "attestation": attestation,
+            "workflow": {
+                "transitions": transitions,
+                "history_http": history_http,
+                "history_mcp": history_mcp,
+            },
+            "blue_green": {"responses": responses},
+            "observations": _observations(active_prepared, cleanup),
+            "evidence": [
+                {
+                    "claim": "candidate-server-attestation",
+                    "classification": "candidate-direct",
+                    "coordinate": build["image_id"],
+                },
+                {
+                    "claim": "blue-green-public-workflow",
+                    "classification": "candidate-direct",
+                    "coordinate": workspace_id,
+                },
+                {
+                    "claim": "router-published-digest",
+                    "classification": "published-digest",
+                    "coordinate": ROUTER_IMAGE,
+                },
+            ],
+            "stages": [
+                _stage(name)
+                for name in (
+                    "admission",
+                    "build",
+                    "blue-realization",
+                    "green-preparation",
+                    "green-cutover",
+                    "rollback-blue",
+                    "final-green",
+                    "retire-blue",
+                    "teardown",
+                    "cleanup",
+                )
+            ],
+        }
+    )
+    report["report_sha256"] = _report_sha256(report)
+    return report
 
 
 def _legacy_preflight(assembly: dict[str, Any]) -> dict[str, Any]:
@@ -1396,9 +1724,11 @@ class DockerCandidateEffects:
             }
         )
 
-    def probe_hello(
+    def probe_runtime_node(
         self,
         *,
+        node_id: str,
+        expected_image_reference: str,
         labelled: bool,
         attach_runtime_network: bool,
     ) -> dict[str, Any]:
@@ -1414,7 +1744,7 @@ class DockerCandidateEffects:
             and container.attrs.get("Config", {}).get("Labels", {}).get(
                 "org.openj92.cpk.node"
             )
-            == "hello"
+            == node_id
         ]
         if len(runtime_containers) != 1:
             raise CandidateTopologyError(WORKFLOW_ERROR)
@@ -1434,9 +1764,6 @@ class DockerCandidateEffects:
         )
         if provider_network is None:
             raise CandidateTopologyError(WORKFLOW_ERROR)
-        expected_image_reference = EXPECTED_ASSEMBLY["products"]["hello"][
-            "reference"
-        ]
         provider_config = provider.attrs.get("Config", {})
         provider_image_reference = provider_config.get("Image")
         provider_repo_digests = tuple(
@@ -1473,6 +1800,21 @@ class DockerCandidateEffects:
             "target_image_id": provider.image.id,
             "target_image_reference": provider_image_reference,
         }
+
+    def probe_hello(
+        self,
+        *,
+        labelled: bool,
+        attach_runtime_network: bool,
+    ) -> dict[str, Any]:
+        return self.probe_runtime_node(
+            node_id="hello",
+            expected_image_reference=EXPECTED_ASSEMBLY["products"]["hello"][
+                "reference"
+            ],
+            labelled=labelled,
+            attach_runtime_network=attach_runtime_network,
+        )
 
     def remove_probe(self) -> None:
         if self._probe is not None:
@@ -1628,6 +1970,11 @@ def main(
         "--host-address",
         choices=("127.0.0.1", "host.docker.internal"),
         default=os.environ.get("CPK_CANDIDATE_HOST_ADDRESS", "127.0.0.1"),
+    )
+    parser.add_argument(
+        "--scenario",
+        choices=("single-hello", "blue-green"),
+        default="single-hello",
     )
     parser.add_argument("--package-image-only", action="store_true")
     parser.add_argument("--candidate-base-image")
@@ -1916,6 +2263,13 @@ def main(
     assembly = _load_json(args.assembly)
     inspection = _load_json(args.inspection)
     admitted = admit_candidate_assembly(assembly, inspection)
+    expected_scenario = (
+        BLUE_GREEN_SCENARIO
+        if args.scenario == "blue-green"
+        else EXPECTED_ASSEMBLY["scenario"]
+    )
+    if admitted["scenario"] != expected_scenario:
+        raise _fixed_assembly_error()
 
     ghcr_pull_credential = os.environ.get(GHCR_PULL_CREDENTIAL_ENV)
     effects_arguments = {
@@ -1981,21 +2335,36 @@ def main(
         workflow.register_local_docker_delivery()
         hello_document = _product_document(root, "hello_server")
         workflow.import_product("hello", hello_document)
-        hello_graph = _single_hello_graph(
-            hello_document,
-            workspace_id=admitted["inputs"]["workspace_id"],
-        )
         empty_graph = DeploymentGraph(admitted["inputs"]["workspace_id"])
-        report = run_candidate_topology(
-            admitted,
-            inspection=inspection,
-            workflow=workflow,
-            effects=effects,
-            hello_graph=hello_graph,
-            empty_graph=empty_graph,
-            current_graph_id=current_graph_id,
-            prepared=prepared,
-        )
+        if args.scenario == "blue-green":
+            router_document = _product_document(root, "http_active_router")
+            workflow.import_product("http-active-router", router_document)
+            report = run_candidate_blue_green(
+                admitted,
+                inspection=inspection,
+                workflow=workflow,
+                effects=effects,
+                hello_document=hello_document,
+                router_document=router_document,
+                empty_graph=empty_graph,
+                current_graph_id=current_graph_id,
+                prepared=prepared,
+            )
+        else:
+            hello_graph = _single_hello_graph(
+                hello_document,
+                workspace_id=admitted["inputs"]["workspace_id"],
+            )
+            report = run_candidate_topology(
+                admitted,
+                inspection=inspection,
+                workflow=workflow,
+                effects=effects,
+                hello_graph=hello_graph,
+                empty_graph=empty_graph,
+                current_graph_id=current_graph_id,
+                prepared=prepared,
+            )
     except BaseException as error:
         failure = error
 
