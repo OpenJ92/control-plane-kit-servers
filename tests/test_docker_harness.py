@@ -170,7 +170,7 @@ class DockerHarnessTests(unittest.TestCase):
             ):
                 self.assertNotIn("cleanup_terminal", surface)
 
-    def test_candidate_smoke_cleanup_owns_abort_timeout_and_exact_labelled_residue(
+    def test_candidate_smoke_ledger_owns_interruption_and_exact_cleanup(
         self,
     ) -> None:
         self.assertTrue(
@@ -184,6 +184,30 @@ class DockerHarnessTests(unittest.TestCase):
         self.assertIn("org.openj92.cpk.scenario=candidate-topology-1714", smoke)
         self.assertIn("foreign_resource_canary", smoke)
         self.assertIn("first_failed_stage", smoke)
+        self.assertIn("candidate-run-ledger.json", smoke)
+        self.assertIn("scripts.cpk_server_candidate_lifecycle declare", smoke)
+        self.assertIn("scripts.cpk_server_candidate_lifecycle cleanup", smoke)
+        self.assertIn("--ownership-ledger", smoke)
+        self.assertIn("--interrupt-after", smoke)
+        declaration_position = smoke.find(
+            "scripts.cpk_server_candidate_lifecycle declare"
+        )
+        mutation_positions = tuple(
+            smoke.find(token)
+            for token in (
+                'mkdir -p "$DIST_ROOT"',
+                'cp "$CPK_CANDIDATE_ROOT/dist/control_plane_kit_core.whl"',
+                'curl -fsSL "$RFC8785_WHEEL_URL"',
+                "python -m scripts.cpk_server_candidate_topology",
+            )
+        )
+        self.assertGreaterEqual(declaration_position, 0)
+        self.assertTrue(all(position >= 0 for position in mutation_positions))
+        if declaration_position >= 0 and all(
+            position >= 0 for position in mutation_positions
+        ):
+            for mutation_position in mutation_positions:
+                self.assertLess(declaration_position, mutation_position)
         for stale_cli_input in (
             "--foreign-canary",
             "--first-failed-stage",
@@ -193,9 +217,17 @@ class DockerHarnessTests(unittest.TestCase):
                 self.assertNotIn(stale_cli_input, smoke)
         self.assertNotIn("--server-container", smoke)
         self.assertIn("timeout", smoke)
-        self.assertIn("docker rm -f", smoke)
-        self.assertIn("docker network rm", smoke)
-        self.assertIn("docker image rm", smoke)
+        for forbidden_cleanup in (
+            'docker ps -aq --filter "label=$EVIDENCE_LABEL"',
+            'docker network ls -q --filter "label=$EVIDENCE_LABEL"',
+            'docker image ls -q --filter "label=$EVIDENCE_LABEL"',
+            "docker system prune",
+            "docker container prune",
+            "docker network prune",
+            "docker image prune",
+        ):
+            with self.subTest(forbidden_cleanup=forbidden_cleanup):
+                self.assertNotIn(forbidden_cleanup, smoke)
         self.assertIn("candidate-topology-report.json", smoke)
         for required in ('test -s "$REPORT"', "CPK_CANDIDATE_EVIDENCE_ID"):
             with self.subTest(publication=required):
