@@ -242,6 +242,8 @@ class DockerHarnessTests(unittest.TestCase):
             'docker run --rm -v "$ROOT:/source:ro" -w /source '
             '-v "$CANDIDATE_STAGING_ROOT:/candidate" '
             '-v /var/run/docker.sock:/var/run/docker.sock '
+            '--user "$HOST_UID:$HOST_GID" '
+            '--group-add "$DOCKER_SOCKET_GID" -e HOME=/tmp '
             '"$IMAGE" python -m scripts.cpk_server_candidate_topology '
             "--package-image-only --candidate-base-image \"$BASELINE_IMAGE\" "
             "--candidate-image-tag \"$CANDIDATE_IMAGE\" "
@@ -323,6 +325,36 @@ class DockerHarnessTests(unittest.TestCase):
             self.assertIn('-v "$CANDIDATE_STAGING_ROOT:/candidate"', normalized)
             self.assertIn("--staging-root /candidate", normalized)
             self.assertNotIn("docker build -f acceptance/candidate_topology/Dockerfile", test_sh)
+        with self.subTest(boundary="candidate-container-runs-as-host-user"):
+            self.assertEqual(test_sh.count('HOST_UID="$(id -u)"'), 1)
+            self.assertEqual(test_sh.count('HOST_GID="$(id -g)"'), 1)
+            self.assertEqual(normalized.count('--user "$HOST_UID:$HOST_GID"'), 1)
+            self.assertEqual(normalized.count('-e HOME=/tmp'), 1)
+        with self.subTest(boundary="docker-socket-group-is-retained"):
+            self.assertEqual(
+                test_sh.count(
+                    "stat -c '%g' /var/run/docker.sock 2>/dev/null "
+                    "\\\n    || stat -f '%g' /var/run/docker.sock"
+                ),
+                1,
+            )
+            self.assertEqual(
+                normalized.count('--group-add "$DOCKER_SOCKET_GID"'),
+                1,
+            )
+        with self.subTest(boundary="host-removable-candidate-staging"):
+            ownership_witness = (
+                'test -z "$(find "$CANDIDATE_STAGING_ROOT" '
+                '! -user "$HOST_UID" -print -quit)"'
+            )
+            self.assertEqual(normalized.count(ownership_witness), 1)
+            self.assertLess(normalized.find(candidate_build), normalized.find(ownership_witness))
+            self.assertLess(
+                normalized.find(ownership_witness),
+                normalized.find("CANDIDATE_IMAGE_OWNED=1"),
+            )
+            self.assertNotIn("chmod", test_sh)
+            self.assertNotIn("chown", test_sh)
         with self.subTest(boundary="owned-staging-cleanup-only"):
             self.assertEqual(
                 test_sh.count('rm -rf -- "$CANDIDATE_STAGING_ROOT"'),
