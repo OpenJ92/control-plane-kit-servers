@@ -69,8 +69,9 @@ printf '%s\n' \
 HOST_UID="$(id -u)"
 HOST_GID="$(id -g)"
 DOCKER_SOCKET_GID="$(
-  stat -c '%g' /var/run/docker.sock 2>/dev/null \
-    || stat -f '%g' /var/run/docker.sock
+  docker run --rm --network none \
+    -v /var/run/docker.sock:/var/run/docker.sock:ro \
+    "$IMAGE" stat -c '%g' /var/run/docker.sock
 )"
 docker run --rm \
   -v "$ROOT:/source:ro" \
