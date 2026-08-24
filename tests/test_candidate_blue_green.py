@@ -12,6 +12,7 @@ from control_plane_kit_core.topology import DeploymentGraph
 
 from candidate_topology_fixture import (
     CANDIDATE_IMAGE_ID,
+    FOREIGN_INVENTORY,
     FOREIGN_RESOURCE_CANARY,
     exact_assembly,
     exact_inspection,
@@ -329,7 +330,10 @@ class CandidateBlueGreenTests(unittest.TestCase):
             current_graph_id="graph-predecessor",
             prepared={
                 "build": {"image_id": CANDIDATE_IMAGE_ID},
-                "preflight": {"inventory": {}, "foreign_canary_before": ()},
+                "preflight": {
+                    "inventory": deepcopy(FOREIGN_INVENTORY),
+                    "foreign_canary_before": (FOREIGN_RESOURCE_CANARY,),
+                },
                 "server": None,
             },
         )
@@ -469,7 +473,10 @@ class CandidateBlueGreenTests(unittest.TestCase):
                 current_graph_id="graph-predecessor",
                 prepared={
                     "build": {"image_id": CANDIDATE_IMAGE_ID},
-                    "preflight": {"inventory": {}, "foreign_canary_before": ()},
+                    "preflight": {
+                        "inventory": deepcopy(FOREIGN_INVENTORY),
+                        "foreign_canary_before": (FOREIGN_RESOURCE_CANARY,),
+                    },
                     "server": None,
                 },
             )
