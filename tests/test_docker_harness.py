@@ -187,6 +187,7 @@ class DockerHarnessTests(unittest.TestCase):
         self.assertIn("candidate-run-ledger.json", smoke)
         self.assertIn("scripts.cpk_server_candidate_lifecycle declare", smoke)
         self.assertIn("scripts.cpk_server_candidate_lifecycle cleanup", smoke)
+        self.assertIn("scripts.cpk_server_candidate_lifecycle success", smoke)
         self.assertIn("--ownership-ledger", smoke)
         self.assertIn("--interrupt-after", smoke)
         declaration_position = smoke.find(
@@ -238,6 +239,35 @@ class DockerHarnessTests(unittest.TestCase):
         self.assertNotIn("docker network connect", smoke)
         self.assertNotIn("sync_runtime_networks=True", smoke)
         self.assertNotIn("_sync_runtime_networks", smoke)
+        report_validation_position = smoke.find('test -s "$REPORT"')
+        residue_audit_position = smoke.find("scripts/docker_residue_audit.sh")
+        success_position = smoke.find(
+            "scripts.cpk_server_candidate_lifecycle success"
+        )
+        passed_cleanup_position = smoke.find("SUPERVISOR_CLASSIFICATION=passed")
+        self.assertTrue(
+            all(
+                position >= 0
+                for position in (
+                    report_validation_position,
+                    residue_audit_position,
+                    success_position,
+                    passed_cleanup_position,
+                )
+            )
+        )
+        if all(
+            position >= 0
+            for position in (
+                report_validation_position,
+                residue_audit_position,
+                success_position,
+                passed_cleanup_position,
+            )
+        ):
+            self.assertLess(report_validation_position, success_position)
+            self.assertLess(residue_audit_position, success_position)
+            self.assertLess(success_position, passed_cleanup_position)
         self.assertNotIn("delete_workspace", smoke)
         self.assertNotIn("-X DELETE", smoke)
         self.assertNotIn('"DELETE"', smoke)

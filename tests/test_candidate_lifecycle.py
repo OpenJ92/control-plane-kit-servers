@@ -219,6 +219,20 @@ class CandidateLifecycleTests(unittest.TestCase):
             self.assertEqual(ledger["classification"], "interrupted")
             self.assertNotEqual(ledger["classification"], "passed")
 
+            interrupted_bytes = ledger_path.read_bytes()
+            with self.assertRaises(lifecycle.CandidateLifecycleError):
+                lifecycle.cleanup_candidate_ledger(
+                    ledger_path,
+                    client=client,
+                    classification="passed",
+                    not_found_error=FakeNotFound,
+                )
+            self.assertEqual(ledger_path.read_bytes(), interrupted_bytes)
+            self.assertEqual(
+                lifecycle.load_candidate_ledger(ledger_path),
+                ledger,
+            )
+
     def test_external_cleanup_uses_only_exact_ledger_coordinates_and_is_idempotent(
         self,
     ) -> None:
@@ -252,6 +266,15 @@ class CandidateLifecycleTests(unittest.TestCase):
                 role="candidate",
                 observed_id=image.id,
             )
+            original_exit = lifecycle.os._exit
+            lifecycle.os._exit = lambda status: (_ for _ in ()).throw(
+                SystemExit(status)
+            )
+            try:
+                with self.assertRaisesRegex(SystemExit, str(lifecycle.INTERRUPTION_EXIT)):
+                    lifecycle.interrupt_candidate_run(ledger_path)
+            finally:
+                lifecycle.os._exit = original_exit
             for row in ledger["resources"]:
                 if row["kind"] == "path":
                     Path(row["coordinate"]).parent.mkdir(parents=True, exist_ok=True)
@@ -291,6 +314,23 @@ class CandidateLifecycleTests(unittest.TestCase):
                 )
             )
 
+            terminal_bytes = ledger_path.read_bytes()
+            with self.assertRaises(lifecycle.CandidateLifecycleError):
+                lifecycle.cleanup_candidate_ledger(
+                    ledger_path,
+                    client=client,
+                    classification="failed-contained",
+                    not_found_error=FakeNotFound,
+                )
+            with self.assertRaises(lifecycle.CandidateLifecycleError):
+                lifecycle.record_candidate_resource(
+                    ledger_path,
+                    kind="image",
+                    role="candidate",
+                    observed_id=image.id,
+                )
+            self.assertEqual(ledger_path.read_bytes(), terminal_bytes)
+
             mismatch_path = root / "mismatch-ledger.json"
             mismatch_client = FakeDockerClient()
             mismatch_evidence_id = "candidate-lifecycle-mismatch"
@@ -323,6 +363,95 @@ class CandidateLifecycleTests(unittest.TestCase):
                     not_found_error=FakeNotFound,
                 )
             self.assertFalse(wrong.removed)
+
+    def test_terminal_classifications_require_exact_preterminal_states(self) -> None:
+        lifecycle = self._module()
+        if lifecycle is None:
+            return
+        client = FakeDockerClient()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+
+            def declared_ledger(name: str) -> Path:
+                evidence_id = f"candidate-lifecycle-{name}"
+                path = root / f"{name}.json"
+                lifecycle.declare_candidate_ledger(
+                    path,
+                    root=root / name,
+                    labels={
+                        **LABELS,
+                        "org.openj92.cpk.evidence": evidence_id,
+                    },
+                    evidence_id=evidence_id,
+                    client=client,
+                    not_found_error=FakeNotFound,
+                )
+                return path
+
+            failed_path = declared_ledger("failed")
+            failed = lifecycle.cleanup_candidate_ledger(
+                failed_path,
+                client=client,
+                classification="failed-contained",
+                not_found_error=FakeNotFound,
+            )
+            self.assertEqual(failed["phase"], "contained")
+            self.assertEqual(failed["classification"], "failed-contained")
+
+            success_path = declared_ledger("success")
+            with self.assertRaises(lifecycle.CandidateLifecycleError):
+                lifecycle.cleanup_candidate_ledger(
+                    success_path,
+                    client=client,
+                    classification="passed",
+                    not_found_error=FakeNotFound,
+                )
+            with self.assertRaises(lifecycle.CandidateLifecycleError):
+                lifecycle.mark_candidate_success(success_path)
+            for index, (kind, role) in enumerate(lifecycle.RESOURCE_ROLES[:5]):
+                lifecycle.record_candidate_resource(
+                    success_path,
+                    kind=kind,
+                    role=role,
+                    observed_id="sha256:" + f"{index + 1:x}" * 64,
+                )
+            lifecycle.mark_candidate_success(success_path)
+            success = lifecycle.cleanup_candidate_ledger(
+                success_path,
+                client=client,
+                classification="passed",
+                not_found_error=FakeNotFound,
+            )
+            self.assertEqual(success["phase"], "passed")
+            self.assertEqual(success["classification"], "passed")
+
+            interrupted_path = declared_ledger("interrupted")
+            lifecycle.record_candidate_resource(
+                interrupted_path,
+                kind="image",
+                role="candidate",
+                observed_id="sha256:" + "c" * 64,
+            )
+            original_exit = lifecycle.os._exit
+            lifecycle.os._exit = lambda status: (_ for _ in ()).throw(
+                SystemExit(status)
+            )
+            try:
+                with self.assertRaisesRegex(SystemExit, str(lifecycle.INTERRUPTION_EXIT)):
+                    lifecycle.interrupt_candidate_run(interrupted_path)
+            finally:
+                lifecycle.os._exit = original_exit
+            interrupted = lifecycle.cleanup_candidate_ledger(
+                interrupted_path,
+                client=client,
+                classification="interrupted-contained",
+                not_found_error=FakeNotFound,
+            )
+            self.assertEqual(interrupted["phase"], "contained")
+            self.assertEqual(
+                interrupted["classification"],
+                "interrupted-contained",
+            )
 
 
 if __name__ == "__main__":
