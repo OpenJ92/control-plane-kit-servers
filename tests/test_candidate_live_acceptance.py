@@ -314,6 +314,22 @@ class CandidateLiveAcceptanceTests(unittest.TestCase):
         live = self._module()
         if live is None:
             return
+        approval_keys = frozenset(
+            (
+                "action_id",
+                "action_ordinal",
+                "destructive",
+                "max_risk",
+                "plan_id",
+                "replayed",
+                "request_id",
+                "requested_at",
+                "requested_by",
+                "required_scope",
+                "session_id",
+                "state",
+            )
+        )
         with self.subTest(boundary="closed-approval-type"):
             self.assertTrue(
                 hasattr(live, "CandidateApprovalProjection"),
@@ -345,7 +361,107 @@ class CandidateLiveAcceptanceTests(unittest.TestCase):
                     self.fail("closed approval projection rejected the live document")
         if projection is not None:
             self.assertEqual(projection.to_document(), approval)
+            self.assertEqual(frozenset(projection.to_document()), approval_keys)
             self.assertEqual(projection["request_id"], "approval-hello")
+        admitted_approval = {**approval, "max_risk": "high"}
+
+        for max_risk in (
+            "informational",
+            "low",
+            "medium",
+            "high",
+            "critical",
+        ):
+            with self.subTest(accepted_max_risk=max_risk):
+                candidate = {**approval, "max_risk": max_risk}
+                try:
+                    admitted = live.CandidateApprovalProjection.admit(
+                        candidate,
+                        expected_plan_id="plan-hello",
+                    )
+                except live.CandidateTopologyError:
+                    self.fail(f"closed approval rejected Core risk {max_risk}")
+                self.assertEqual(admitted.to_document(), candidate)
+
+        for destructive, required_scope in (
+            (False, "plan:approve"),
+            (True, "plan:approve-destructive"),
+        ):
+            for replayed in (False, True):
+                with self.subTest(
+                    destructive=destructive,
+                    required_scope=required_scope,
+                    replayed=replayed,
+                ):
+                    candidate = {
+                        **admitted_approval,
+                        "destructive": destructive,
+                        "replayed": replayed,
+                        "required_scope": required_scope,
+                    }
+                    self.assertEqual(
+                        live.CandidateApprovalProjection.admit(
+                            candidate,
+                            expected_plan_id="plan-hello",
+                        ).to_document(),
+                        candidate,
+                    )
+
+        rejected_values = (
+            ("action_id", ""),
+            ("action_ordinal", 0),
+            ("action_ordinal", -1),
+            ("action_ordinal", True),
+            ("destructive", 1),
+            ("max_risk", "moderate"),
+            ("max_risk", "destructive"),
+            ("max_risk", "CRITICAL"),
+            ("plan_id", "plan-other"),
+            ("replayed", 0),
+            ("request_id", "/tmp/request"),
+            ("requested_at", "2026-08-25"),
+            ("requested_by", "operator.internal.example"),
+            ("required_scope", "plan:request"),
+            ("required_scope", "plan:execute"),
+            ("session_id", "2001:db8::1"),
+            ("state", "approved"),
+            ("state", "rejected"),
+        )
+        for field_name, rejected in rejected_values:
+            with self.subTest(rejected_field=field_name, rejected_value=rejected):
+                with self.assertRaises(live.CandidateTopologyError):
+                    live.CandidateApprovalProjection.admit(
+                        {**admitted_approval, field_name: rejected},
+                        expected_plan_id="plan-hello",
+                    )
+
+        for destructive, required_scope in (
+            (False, "plan:approve-destructive"),
+            (True, "plan:approve"),
+        ):
+            with self.subTest(
+                rejected_destructive=destructive,
+                rejected_required_scope=required_scope,
+            ):
+                with self.assertRaises(live.CandidateTopologyError):
+                    live.CandidateApprovalProjection.admit(
+                        {
+                            **admitted_approval,
+                            "destructive": destructive,
+                            "required_scope": required_scope,
+                        },
+                        expected_plan_id="plan-hello",
+                    )
+
+        for missing in sorted(approval_keys):
+            with self.subTest(missing=missing):
+                candidate = dict(approval)
+                del candidate[missing]
+                with self.assertRaises(live.CandidateTopologyError):
+                    live.CandidateApprovalProjection.admit(
+                        candidate,
+                        expected_plan_id="plan-hello",
+                    )
 
         for extra in ("provider_message", "scenario_payload", "authorization"):
             with self.subTest(extra=extra):
