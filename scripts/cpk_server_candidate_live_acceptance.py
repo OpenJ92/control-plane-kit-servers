@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import ipaddress
 import json
 import re
 from typing import Any, Protocol
@@ -21,14 +22,32 @@ _IMAGE_PATTERN = re.compile(
 )
 _IMAGE_ID_PATTERN = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _IPV4_PATTERN = re.compile(r"(?:^|[^0-9])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?::[0-9]+)?(?:$|[^0-9])")
+_HOSTNAME_PATTERN = re.compile(
+    r"(?:^|[^A-Za-z0-9-])(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,63}(?:$|[^A-Za-z0-9-])"
+)
+_HTTP_PATH_PATTERN = re.compile(r"/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*\Z")
+_DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
+_TIMESTAMP_PATTERN = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.+-]+Z?\Z")
 _PROTECTED_TEXT = (
+    "access_key",
+    "api-key",
+    "api_key",
     "authorization:",
     "bearer ",
+    "buildkit",
+    "client_secret",
+    "containerd",
     "credential",
+    "docker daemon",
+    "dockerd",
     "docker.sock",
     "exception",
     "password",
+    "private key",
+    "provider error",
+    "provider message",
     "raw provider",
+    "session_cookie",
     "secret://",
     "token=",
     "traceback",
@@ -46,21 +65,54 @@ class CandidateTopologyError(RuntimeError):
 class CandidateWorkflowPort(Protocol):
     def start_session(self, title: str) -> str: ...
 
-    def set_desired_graph(self, **kwargs: Any) -> str: ...
+    def set_desired_graph(
+        self,
+        *,
+        session_id: str,
+        graph: DeploymentGraph,
+        title: str,
+        expected_desired_graph_id: str | None,
+    ) -> str: ...
 
-    def plan_transition(self, **kwargs: Any) -> str: ...
+    def plan_transition(
+        self,
+        *,
+        session_id: str,
+        title: str,
+        current_graph_id: str,
+        desired_graph_id: str,
+    ) -> str: ...
 
-    def request_approval(self, **kwargs: Any) -> dict[str, Any]: ...
+    def request_approval(
+        self,
+        *,
+        session_id: str,
+        title: str,
+        plan_id: str,
+    ) -> dict[str, object]: ...
 
     def assert_approval_visible(self, approval_id: str, plan_id: str) -> None: ...
 
-    def approve(self, **kwargs: Any) -> None: ...
+    def approve(
+        self,
+        *,
+        session_id: str,
+        title: str,
+        approval: CandidateApprovalProjection,
+    ) -> None: ...
 
-    def admit(self, **kwargs: Any) -> str: ...
+    def admit(
+        self,
+        *,
+        session_id: str,
+        title: str,
+        plan_id: str,
+        approval_id: str,
+    ) -> str: ...
 
-    def claim(self, **kwargs: Any) -> str: ...
+    def claim(self, *, title: str, request_id: str) -> str: ...
 
-    def start_run(self, **kwargs: Any) -> None: ...
+    def start_run(self, *, title: str, run_id: str) -> None: ...
 
     def execute_to_completion(
         self,
@@ -73,7 +125,15 @@ class CandidateWorkflowPort(Protocol):
 
     def read_current_graph_mcp(self) -> dict[str, Any]: ...
 
-    def advance_current_graph(self, **kwargs: Any) -> str: ...
+    def advance_current_graph(
+        self,
+        *,
+        title: str,
+        run_id: str,
+        plan_id: str,
+        current_graph_id: str,
+        desired_graph_id: str,
+    ) -> str: ...
 
     def read_activity_http(self) -> dict[str, Any]: ...
 
@@ -95,12 +155,334 @@ class CandidateProbePort(Protocol):
 
 def _reject_protected_text(value: str) -> None:
     lowered = value.lower()
+    try:
+        ipaddress.ip_address(value.strip("[]"))
+    except ValueError:
+        is_ip_address = False
+    else:
+        is_ip_address = True
     if (
         "://" in lowered
         or any(token in lowered for token in _PROTECTED_TEXT)
         or _IPV4_PATTERN.search(value) is not None
+        or _HOSTNAME_PATTERN.search(value) is not None
+        or is_ip_address
+        or value.startswith("/")
     ):
         raise CandidateTopologyError(WORKFLOW_ERROR)
+
+
+def _closed_object(value: Any, keys: frozenset[str]) -> dict[str, Any]:
+    if type(value) is not dict or frozenset(value) != keys:
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+    return value
+
+
+def _safe_text(value: Any) -> str:
+    if type(value) is not str or not value or len(value.encode("utf-8")) > 65536:
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+    _reject_protected_text(value)
+    return value
+
+
+def _safe_identity(value: Any) -> str:
+    value = _safe_text(value)
+    if _IDENTITY_PATTERN.fullmatch(value) is None:
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+    return value
+
+
+def _safe_sequence(value: Any) -> list[Any] | tuple[Any, ...]:
+    if type(value) not in {list, tuple}:
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+    return value
+
+
+def _validate_protocol(value: Any) -> None:
+    value = _closed_object(value, frozenset(("application", "transport")))
+    _safe_identity(value["application"])
+    _safe_identity(value["transport"])
+
+
+def _validate_lifecycle(value: Any) -> None:
+    value = _closed_object(value, frozenset(("compute", "data", "ownership")))
+    _safe_identity(value["compute"])
+    if _safe_sequence(value["data"]):
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+    _safe_identity(value["ownership"])
+
+
+def _validate_check(value: Any) -> None:
+    value = _closed_object(
+        value,
+        frozenset(
+            (
+                "check_id",
+                "expected_statuses",
+                "kind",
+                "path",
+                "policy",
+                "provider_socket",
+            )
+        ),
+    )
+    _safe_identity(value["check_id"])
+    statuses = _safe_sequence(value["expected_statuses"])
+    if not statuses or any(type(status) is not int for status in statuses):
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+    _safe_identity(value["kind"])
+    if type(value["path"]) is not str or _HTTP_PATH_PATTERN.fullmatch(value["path"]) is None:
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+    policy = _closed_object(
+        value["policy"],
+        frozenset(
+            (
+                "interval_seconds",
+                "maximum_attempts",
+                "maximum_evidence_bytes",
+                "timeout_seconds",
+            )
+        ),
+    )
+    if any(type(item) not in {int, float} or item <= 0 for item in policy.values()):
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+    _safe_identity(value["provider_socket"])
+
+
+def _validate_node(value: Any) -> None:
+    value = _closed_object(
+        value,
+        frozenset(
+            (
+                "block_family",
+                "block_spec",
+                "configuration_artifacts",
+                "endpoints",
+                "environment_bindings",
+                "kind",
+                "lifecycle",
+                "metadata",
+                "node_id",
+                "providers",
+                "requirements",
+                "runtime_id",
+                "secret_deliveries",
+            )
+        ),
+    )
+    _safe_identity(value["block_family"])
+    block = _closed_object(
+        value["block_spec"],
+        frozenset(
+            (
+                "capabilities",
+                "display_name",
+                "health_path",
+                "metadata",
+                "role_id",
+                "variant",
+                "verification",
+            )
+        ),
+    )
+    for capability in _safe_sequence(block["capabilities"]):
+        _safe_identity(capability)
+    _safe_identity(block["display_name"])
+    if block["health_path"] is not None:
+        if type(block["health_path"]) is not str or _HTTP_PATH_PATTERN.fullmatch(block["health_path"]) is None:
+            raise CandidateTopologyError(WORKFLOW_ERROR)
+    _closed_object(block["metadata"], frozenset())
+    _safe_identity(block["role_id"])
+    _safe_identity(block["variant"])
+    verification = _closed_object(block["verification"], frozenset(("checks",)))
+    for check in _safe_sequence(verification["checks"]):
+        _validate_check(check)
+    if _safe_sequence(value["configuration_artifacts"]):
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+    if type(value["endpoints"]) is not dict:
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+    for key, endpoint in value["endpoints"].items():
+        _safe_identity(key)
+        endpoint = _closed_object(endpoint, frozenset(("address", "protocol", "scope")))
+        if endpoint["address"] != "<redacted>":
+            raise CandidateTopologyError(WORKFLOW_ERROR)
+        _validate_protocol(endpoint["protocol"])
+        _safe_identity(endpoint["scope"])
+    for binding in _safe_sequence(value["environment_bindings"]):
+        if type(binding) is not dict or frozenset(binding) not in {
+            frozenset(("kind", "name", "value")),
+            frozenset(("edge_id", "kind", "name", "value")),
+        }:
+            raise CandidateTopologyError(WORKFLOW_ERROR)
+        if "edge_id" in binding:
+            _safe_identity(binding["edge_id"])
+        _safe_identity(binding["kind"])
+        _safe_identity(binding["name"])
+        if binding["value"] != "<redacted>":
+            raise CandidateTopologyError(WORKFLOW_ERROR)
+    _safe_identity(value["kind"])
+    _validate_lifecycle(value["lifecycle"])
+    metadata = _closed_object(
+        value["metadata"],
+        frozenset(
+            (
+                "block_family",
+                "capabilities",
+                "display_name",
+                "oci_image",
+                "product_descriptor_digest",
+                "product_identity",
+            )
+        ),
+    )
+    _safe_identity(metadata["block_family"])
+    for capability in _safe_sequence(metadata["capabilities"]):
+        capability = _closed_object(
+            capability,
+            frozenset(("description", "label", "name", "route_set")),
+        )
+        _safe_text(capability["description"])
+        _safe_identity(capability["label"])
+        _safe_identity(capability["name"])
+        _safe_identity(capability["route_set"])
+    _safe_identity(metadata["display_name"])
+    if type(metadata["oci_image"]) is not str or _IMAGE_PATTERN.fullmatch(metadata["oci_image"]) is None:
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+    if type(metadata["product_descriptor_digest"]) is not str or _DIGEST_PATTERN.fullmatch(metadata["product_descriptor_digest"]) is None:
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+    _safe_text(metadata["product_identity"])
+    _safe_identity(value["node_id"])
+    if type(value["providers"]) is not dict:
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+    for key, provider in value["providers"].items():
+        _safe_identity(key)
+        provider = _closed_object(provider, frozenset(("protocol",)))
+        _validate_protocol(provider["protocol"])
+    if type(value["requirements"]) is not dict:
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+    for key, requirement in value["requirements"].items():
+        _safe_identity(key)
+        requirement = _closed_object(
+            requirement,
+            frozenset(("binding", "env_bindings", "protocol", "required")),
+        )
+        _safe_identity(requirement["binding"])
+        for name in _safe_sequence(requirement["env_bindings"]):
+            _safe_identity(name)
+        _validate_protocol(requirement["protocol"])
+        if type(requirement["required"]) is not bool:
+            raise CandidateTopologyError(WORKFLOW_ERROR)
+    _safe_identity(value["runtime_id"])
+    if value["secret_deliveries"] != "<redacted>":
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+
+
+def _validate_graph_readback(value: Any) -> None:
+    compact_keys = frozenset(("activity", "graph_id"))
+    if type(value) is dict and frozenset(value) == compact_keys:
+        _safe_identity(value["graph_id"])
+        for event in _safe_sequence(value["activity"]):
+            _safe_identity(event)
+        return
+    value = _closed_object(
+        value,
+        frozenset(
+            (
+                "assigned",
+                "authored_graph_id",
+                "graph_descriptor",
+                "graph_id",
+                "graph_name",
+                "pointer",
+                "realized_projection_id",
+                "version",
+            )
+        ),
+    )
+    if type(value["assigned"]) is not bool or type(value["version"]) is not int:
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+    for key in ("authored_graph_id", "graph_id", "graph_name", "realized_projection_id"):
+        _safe_identity(value[key])
+    if value["pointer"] != "current":
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+    descriptor = _closed_object(
+        value["graph_descriptor"],
+        frozenset(("edges", "name", "nodes", "public_ingresses", "runtimes")),
+    )
+    _safe_identity(descriptor["name"])
+    if _safe_sequence(descriptor["public_ingresses"]):
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+    if type(descriptor["nodes"]) is not dict:
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+    for key, node in descriptor["nodes"].items():
+        _safe_identity(key)
+        _validate_node(node)
+    if type(descriptor["edges"]) is not dict:
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+    for key, edge in descriptor["edges"].items():
+        _safe_identity(key)
+        edge = _closed_object(
+            edge,
+            frozenset(("binding", "consumer", "edge_id", "env_assignments", "protocol", "provider")),
+        )
+        _safe_identity(edge["binding"])
+        for party, party_keys in (
+            (edge["consumer"], frozenset(("requirement", "role"))),
+            (edge["provider"], frozenset(("role", "socket"))),
+        ):
+            party = _closed_object(party, party_keys)
+            for item in party.values():
+                _safe_identity(item)
+        _safe_identity(edge["edge_id"])
+        if edge["env_assignments"] != "<redacted>":
+            raise CandidateTopologyError(WORKFLOW_ERROR)
+        _validate_protocol(edge["protocol"])
+    if type(descriptor["runtimes"]) is not dict:
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+    for key, runtime in descriptor["runtimes"].items():
+        _safe_identity(key)
+        runtime = _closed_object(
+            runtime,
+            frozenset(("authority_ref", "children", "kind", "lifecycle", "metadata")),
+        )
+        if runtime["authority_ref"] is not None:
+            raise CandidateTopologyError(WORKFLOW_ERROR)
+        for child in _safe_sequence(runtime["children"]):
+            _safe_identity(child)
+        _safe_identity(runtime["kind"])
+        _validate_lifecycle(runtime["lifecycle"])
+        metadata = _closed_object(runtime["metadata"], frozenset(("network_name",)))
+        _safe_identity(metadata["network_name"])
+
+
+def _validate_activity_history(value: Any) -> None:
+    if type(value) is dict and frozenset(value) == frozenset(("events",)):
+        for event in _safe_sequence(value["events"]):
+            _safe_identity(event)
+        return
+    value = _closed_object(
+        value,
+        frozenset(("items", "kind", "limit", "next_cursor", "workspace_id")),
+    )
+    if type(value["limit"]) is not int or value["limit"] < 1 or value["next_cursor"] is not None:
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+    _safe_identity(value["kind"])
+    _safe_identity(value["workspace_id"])
+    for item in _safe_sequence(value["items"]):
+        item = _closed_object(
+            item,
+            frozenset(("actor_id", "closed_at", "created_at", "metadata", "session_id", "status", "title", "workspace_id")),
+        )
+        for key in ("actor_id", "session_id", "status", "title", "workspace_id"):
+            _safe_identity(item[key])
+        if type(item["created_at"]) is not str or _TIMESTAMP_PATTERN.fullmatch(item["created_at"]) is None:
+            raise CandidateTopologyError(WORKFLOW_ERROR)
+        if item["closed_at"] is not None and (
+            type(item["closed_at"]) is not str
+            or _TIMESTAMP_PATTERN.fullmatch(item["closed_at"]) is None
+        ):
+            raise CandidateTopologyError(WORKFLOW_ERROR)
+        _closed_object(item["metadata"], frozenset())
 
 
 @dataclass(frozen=True)
@@ -157,11 +539,11 @@ def _thaw_json(value: Any) -> Any:
 
 
 @dataclass(frozen=True)
-class CandidatePublicProjection:
+class _CandidateClosedProjection:
     _value: _FrozenObject
 
     @classmethod
-    def admit(cls, value: Any) -> CandidatePublicProjection:
+    def _admit_validated(cls, value: Any) -> _CandidateClosedProjection:
         frozen = _freeze_json(value, depth=0, items=[0])
         if type(frozen) is not _FrozenObject:
             raise CandidateTopologyError(WORKFLOW_ERROR)
@@ -178,6 +560,91 @@ class CandidatePublicProjection:
 
     def to_document(self) -> dict[str, Any]:
         return _thaw_json(self._value)
+
+
+@dataclass(frozen=True)
+class CandidateGraphReadbackProjection(_CandidateClosedProjection):
+    @classmethod
+    def admit(cls, value: Any) -> CandidateGraphReadbackProjection:
+        _validate_graph_readback(value)
+        return cls._admit_validated(value)
+
+
+@dataclass(frozen=True)
+class CandidateActivityHistoryProjection(_CandidateClosedProjection):
+    @classmethod
+    def admit(cls, value: Any) -> CandidateActivityHistoryProjection:
+        _validate_activity_history(value)
+        return cls._admit_validated(value)
+
+
+@dataclass(frozen=True)
+class CandidateApprovalProjection:
+    request_id: str
+    required_scope: str
+    max_risk: str
+    destructive: bool
+    plan_id: str
+
+    @classmethod
+    def admit(
+        cls,
+        value: Any,
+        *,
+        expected_plan_id: str,
+    ) -> CandidateApprovalProjection:
+        value = _closed_object(
+            value,
+            frozenset(
+                (
+                    "destructive",
+                    "max_risk",
+                    "plan_id",
+                    "request_id",
+                    "required_scope",
+                )
+            ),
+        )
+        request_id = _safe_identity(value["request_id"])
+        plan_id = _safe_identity(value["plan_id"])
+        if plan_id != expected_plan_id:
+            raise CandidateTopologyError(WORKFLOW_ERROR)
+        if value["required_scope"] not in {
+            "plan:approve",
+            "plan:approve-destructive",
+        }:
+            raise CandidateTopologyError(WORKFLOW_ERROR)
+        if value["max_risk"] not in {"low", "moderate", "high", "destructive"}:
+            raise CandidateTopologyError(WORKFLOW_ERROR)
+        if type(value["destructive"]) is not bool:
+            raise CandidateTopologyError(WORKFLOW_ERROR)
+        return cls(
+            request_id=request_id,
+            required_scope=value["required_scope"],
+            max_risk=value["max_risk"],
+            destructive=value["destructive"],
+            plan_id=plan_id,
+        )
+
+    def __getitem__(self, key: str) -> object:
+        if key not in {
+            "request_id",
+            "required_scope",
+            "max_risk",
+            "destructive",
+            "plan_id",
+        }:
+            raise KeyError(key)
+        return getattr(self, key)
+
+    def to_document(self) -> dict[str, object]:
+        return {
+            "request_id": self.request_id,
+            "required_scope": self.required_scope,
+            "max_risk": self.max_risk,
+            "destructive": self.destructive,
+            "plan_id": self.plan_id,
+        }
 
 
 def _identity(value: Any) -> str:
@@ -325,10 +792,10 @@ class CandidateTransitionEvidence:
     run_id: str
     desired_graph_id: str
     advanced_graph_id: str
-    predecessor_http: CandidatePublicProjection
-    predecessor_mcp: CandidatePublicProjection
-    successor_http: CandidatePublicProjection
-    successor_mcp: CandidatePublicProjection
+    predecessor_http: CandidateGraphReadbackProjection
+    predecessor_mcp: CandidateGraphReadbackProjection
+    successor_http: CandidateGraphReadbackProjection
+    successor_mcp: CandidateGraphReadbackProjection
     probe: CandidateProbeEvidence | None
 
     def transition_document(self) -> dict[str, Any]:
@@ -355,8 +822,8 @@ class CandidateTransitionEvidence:
 @dataclass(frozen=True)
 class CandidateScenarioEvidence:
     transitions: tuple[CandidateTransitionEvidence, ...]
-    history_http: CandidatePublicProjection
-    history_mcp: CandidatePublicProjection
+    history_http: CandidateActivityHistoryProjection
+    history_mcp: CandidateActivityHistoryProjection
 
     def to_document(self) -> dict[str, Any]:
         return {
@@ -418,14 +885,15 @@ def execute_candidate_transitions(
                     desired_graph_id=desired_graph_id,
                 )
             )
-            approval = workflow.request_approval(
-                session_id=session_id,
-                title=spec.stage,
-                plan_id=plan_id,
+            approval = CandidateApprovalProjection.admit(
+                workflow.request_approval(
+                    session_id=session_id,
+                    title=spec.stage,
+                    plan_id=plan_id,
+                ),
+                expected_plan_id=plan_id,
             )
-            if type(approval) is not dict or "request_id" not in approval:
-                raise CandidateTopologyError(WORKFLOW_ERROR)
-            approval_id = _identity(approval["request_id"])
+            approval_id = approval.request_id
             workflow.assert_approval_visible(approval_id, plan_id)
             workflow.approve(
                 session_id=session_id,
@@ -448,10 +916,10 @@ def execute_candidate_transitions(
                 run_id,
                 sync_runtime_networks=False,
             )
-            predecessor_http = CandidatePublicProjection.admit(
+            predecessor_http = CandidateGraphReadbackProjection.admit(
                 workflow.read_current_graph_http()
             )
-            predecessor_mcp = CandidatePublicProjection.admit(
+            predecessor_mcp = CandidateGraphReadbackProjection.admit(
                 workflow.read_current_graph_mcp()
             )
             if predecessor_http.to_document() != predecessor_mcp.to_document():
@@ -469,10 +937,10 @@ def execute_candidate_transitions(
             )
             if advanced_graph_id != desired_graph_id:
                 raise CandidateTopologyError(WORKFLOW_ERROR)
-            successor_http = CandidatePublicProjection.admit(
+            successor_http = CandidateGraphReadbackProjection.admit(
                 workflow.read_current_graph_http()
             )
-            successor_mcp = CandidatePublicProjection.admit(
+            successor_mcp = CandidateGraphReadbackProjection.admit(
                 workflow.read_current_graph_mcp()
             )
             if successor_http.to_document() != successor_mcp.to_document():
@@ -513,10 +981,10 @@ def execute_candidate_transitions(
             raise
 
     try:
-        history_http = CandidatePublicProjection.admit(
+        history_http = CandidateActivityHistoryProjection.admit(
             workflow.read_activity_http()
         )
-        history_mcp = CandidatePublicProjection.admit(
+        history_mcp = CandidateActivityHistoryProjection.admit(
             workflow.read_activity_mcp()
         )
         if history_http.to_document() != history_mcp.to_document():
