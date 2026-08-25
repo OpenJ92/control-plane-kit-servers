@@ -511,6 +511,30 @@ class RecordingCandidateEffects:
         self.ledger.append(("probe", (labelled, attach_runtime_network)))
         return HELLO_RESPONSE
 
+    def probe_runtime_node(
+        self,
+        *,
+        node_id: str,
+        expected_image_reference: str,
+        labelled: bool,
+        attach_runtime_network: bool,
+    ) -> dict[str, Any]:
+        if node_id != "hello" or expected_image_reference != HELLO_IMAGE:
+            raise RuntimeError("candidate probe coordinate is invalid")
+        observed = self.probe_hello(
+            labelled=labelled,
+            attach_runtime_network=attach_runtime_network,
+        )
+        if type(observed) is dict:
+            return observed
+        return {
+            "response": observed,
+            "container_id": "candidate-consumer-probe",
+            "request_origin": "inside-probe",
+            "target_image_id": HELLO_LOCAL_IMAGE_ID,
+            "target_image_reference": HELLO_IMAGE,
+        }
+
     def remove_probe(self) -> None:
         self.ledger.append(("remove-probe", None))
 

@@ -29,6 +29,14 @@ from control_plane_kit_core.products import (
 )
 from control_plane_kit_core.topology import DeploymentGraph, compile_topology
 
+from scripts.cpk_server_candidate_live_acceptance import (
+    CandidateProbeSpec,
+    CandidateScenarioEvidence,
+    CandidateTopologyError,
+    CandidateTransitionProgram,
+    CandidateTransitionSpec,
+    execute_candidate_transitions,
+)
 from scripts.cpk_server_candidate_lifecycle import (
     admit_candidate_ledger,
     candidate_resource_name,
@@ -199,10 +207,6 @@ EXPECTED_INSPECTION = {
 
 class CandidateAssemblyError(ValueError):
     """Raised when the source-built candidate join is not exact."""
-
-
-class CandidateTopologyError(RuntimeError):
-    """Raised for a bounded candidate workflow failure."""
 
 
 def _canonical_sha256(document: dict[str, Any]) -> str:
@@ -580,66 +584,6 @@ def _stage(name: str) -> dict[str, str]:
     }
 
 
-def _public_transition(
-    workflow: Any,
-    *,
-    title: str,
-    graph: Any,
-    current_graph_id: str,
-    expected_desired_graph_id: str | None,
-) -> dict[str, Any]:
-    session_id = workflow.start_session(title)
-    desired_graph_id = workflow.set_desired_graph(
-        session_id=session_id,
-        graph=graph,
-        title=title,
-        expected_desired_graph_id=expected_desired_graph_id,
-    )
-    plan_id = workflow.plan_transition(
-        session_id=session_id,
-        title=title,
-        current_graph_id=current_graph_id,
-        desired_graph_id=desired_graph_id,
-    )
-    approval = workflow.request_approval(
-        session_id=session_id,
-        title=title,
-        plan_id=plan_id,
-    )
-    workflow.assert_approval_visible(approval["request_id"], plan_id)
-    workflow.approve(session_id=session_id, title=title, approval=approval)
-    request_id = workflow.admit(
-        session_id=session_id,
-        title=title,
-        plan_id=plan_id,
-        approval_id=approval["request_id"],
-    )
-    run_id = workflow.claim(title=title, request_id=request_id)
-    workflow.start_run(title=title, run_id=run_id)
-    workflow.execute_to_completion(run_id, sync_runtime_networks=False)
-    predecessor_http = workflow.read_current_graph_http()
-    predecessor_mcp = workflow.read_current_graph_mcp()
-    advanced = workflow.advance_current_graph(
-        title=title,
-        run_id=run_id,
-        plan_id=plan_id,
-        current_graph_id=current_graph_id,
-        desired_graph_id=desired_graph_id,
-    )
-    successor_http = workflow.read_current_graph_http()
-    successor_mcp = workflow.read_current_graph_mcp()
-    return {
-        "plan_id": plan_id,
-        "run_id": run_id,
-        "desired_graph_id": desired_graph_id,
-        "advanced_graph_id": advanced,
-        "predecessor_http": predecessor_http,
-        "predecessor_mcp": predecessor_mcp,
-        "successor_http": successor_http,
-        "successor_mcp": successor_mcp,
-    }
-
-
 def _candidate_blue_green_graph(
     *,
     hello_document: Any,
@@ -792,55 +736,42 @@ def run_candidate_blue_green(
         ),
         ("teardown", empty_graph, None),
     )
-    transitions: list[dict[str, Any]] = []
-    responses: list[dict[str, Any]] = []
+    program = CandidateTransitionProgram(
+        tuple(
+            CandidateTransitionSpec(
+                title,
+                graph,
+                (
+                    CandidateProbeSpec(
+                        node_id="router",
+                        image_reference=ROUTER_IMAGE,
+                        expected_response=expected_response,
+                    )
+                    if expected_response is not None
+                    else None
+                ),
+            )
+            for title, graph, expected_response in profiles
+        )
+    )
+    scenario_evidence: CandidateScenarioEvidence | None = None
     failure: BaseException | None = None
     failure_stage = "blue-realization"
-    active_current_graph_id = current_graph_id
-    expected_desired_graph_id: str | None = None
-    history_http: dict[str, Any] | None = None
-    history_mcp: dict[str, Any] | None = None
 
     try:
-        for title, graph, expected_response in profiles:
-            failure_stage = title
-            if expected_response is None:
-                effects.remove_probe()
-            transition = _public_transition(
-                workflow,
-                title=title,
-                graph=graph,
-                current_graph_id=active_current_graph_id,
-                expected_desired_graph_id=expected_desired_graph_id,
-            )
-            transitions.append({"title": title, **transition})
-            active_current_graph_id = transition["advanced_graph_id"]
-            expected_desired_graph_id = transition["desired_graph_id"]
-            if expected_response is None:
-                continue
-            observed = effects.probe_runtime_node(
-                node_id="router",
-                expected_image_reference=ROUTER_IMAGE,
-                labelled=True,
-                attach_runtime_network=True,
-            )
-            body = observed["response"]
-            if body != expected_response:
-                raise CandidateTopologyError(WORKFLOW_ERROR)
-            responses.append(
-                {
-                    "stage": title,
-                    "response": body.decode("ascii"),
-                    "response_sha256": hashlib.sha256(body).hexdigest(),
-                    "request_origin": observed["request_origin"],
-                    "target_image_id": observed["target_image_id"],
-                    "target_image_reference": observed["target_image_reference"],
-                }
-            )
-        history_http = workflow.read_activity_http()
-        history_mcp = workflow.read_activity_mcp()
+        scenario_evidence = execute_candidate_transitions(
+            workflow,
+            effects,
+            program,
+            current_graph_id=current_graph_id,
+        )
     except BaseException as error:
         failure = error
+        failure_stage = getattr(
+            error,
+            "candidate_transition_stage",
+            failure_stage,
+        )
 
     reason = "success" if failure is None else "error"
     cleanup_failure: BaseException | None = None
@@ -871,8 +802,27 @@ def run_candidate_blue_green(
         _attach_report(failure, report)
         raise failure
 
-    assert history_http is not None
-    assert history_mcp is not None
+    assert scenario_evidence is not None
+    transitions = [
+        {"title": transition.stage, **transition.transition_document()}
+        for transition in scenario_evidence.transitions
+    ]
+    responses = []
+    for transition in scenario_evidence.transitions:
+        probe = transition.probe
+        if probe is None:
+            continue
+        observed = probe.to_document()
+        responses.append(
+            {
+                "stage": transition.stage,
+                "response": observed["response"],
+                "response_sha256": observed["response_sha256"],
+                "request_origin": observed["request_origin"],
+                "target_image_id": observed["target_image_id"],
+                "target_image_reference": observed["target_image_reference"],
+            }
+        )
     report = _base_report(
         admitted,
         cleanup=cleanup,
@@ -892,8 +842,8 @@ def run_candidate_blue_green(
             "attestation": attestation,
             "workflow": {
                 "transitions": transitions,
-                "history_http": history_http,
-                "history_mcp": history_mcp,
+                "history_http": scenario_evidence.history_http.to_document(),
+                "history_mcp": scenario_evidence.history_mcp.to_document(),
             },
             "blue_green": {"responses": responses},
             "observations": _observations(active_prepared, cleanup),
@@ -1300,46 +1250,46 @@ def run_candidate_topology(
     cleanup: dict[str, Any] | None = None
     failure: BaseException | None = None
     failure_stage = "workflow"
-    hello = None
-    empty = None
-    history_http = None
-    history_mcp = None
-    probe_result: Any = None
+    scenario_evidence: CandidateScenarioEvidence | None = None
+    program_hello_graph = (
+        DeploymentGraph("candidate-hello")
+        if hello_graph is None
+        else hello_graph
+    )
+    program_empty_graph = (
+        DeploymentGraph("candidate-empty")
+        if empty_graph is None
+        else empty_graph
+    )
+    program = CandidateTransitionProgram(
+        (
+            CandidateTransitionSpec(
+                "hello",
+                program_hello_graph,
+                CandidateProbeSpec(
+                    node_id="hello",
+                    image_reference=admitted["products"]["hello"]["reference"],
+                    expected_response=HELLO_RESPONSE,
+                ),
+            ),
+            CandidateTransitionSpec("empty", program_empty_graph, None),
+        )
+    )
 
     try:
-        hello = _public_transition(
+        scenario_evidence = execute_candidate_transitions(
             workflow,
-            title="hello",
-            graph=hello_graph,
+            effects,
+            program,
             current_graph_id=current_graph_id,
-            expected_desired_graph_id=None,
         )
-        failure_stage = "probe"
-        probe_result = effects.probe_hello(
-            labelled=True,
-            attach_runtime_network=True,
-        )
-        effects.remove_probe()
-        body = (
-            probe_result["response"]
-            if type(probe_result) is dict
-            else probe_result
-        )
-        if body != HELLO_RESPONSE:
-            failure = CandidateTopologyError(WORKFLOW_ERROR)
-        else:
-            failure_stage = "workflow"
-            empty = _public_transition(
-                workflow,
-                title="empty",
-                graph=empty_graph,
-                current_graph_id=hello["advanced_graph_id"],
-                expected_desired_graph_id=hello["desired_graph_id"],
-            )
-            history_http = workflow.read_activity_http()
-            history_mcp = workflow.read_activity_mcp()
     except BaseException as error:
         failure = error
+        failure_stage = (
+            "probe"
+            if getattr(error, "candidate_transition_boundary", None) == "probe"
+            else "workflow"
+        )
 
     reason = "success"
     if failure is not None:
@@ -1382,13 +1332,13 @@ def run_candidate_topology(
         _attach_report(selected_error, report)
         raise selected_error
 
-    assert hello is not None
-    assert empty is not None
-    body = (
-        probe_result["response"]
-        if type(probe_result) is dict
-        else probe_result
-    )
+    assert scenario_evidence is not None
+    hello_evidence, empty_evidence = scenario_evidence.transitions
+    probe_evidence = hello_evidence.probe
+    assert probe_evidence is not None
+    hello = hello_evidence.transition_document()
+    empty = empty_evidence.transition_document()
+    body = probe_evidence.response
     report = _base_report(
         admitted,
         cleanup=cleanup,
@@ -1407,8 +1357,8 @@ def run_candidate_topology(
                 "empty_predecessor_mcp": empty["predecessor_mcp"],
                 "empty_http": empty["successor_http"],
                 "empty_mcp": empty["successor_mcp"],
-                "history_http": history_http,
-                "history_mcp": history_mcp,
+                "history_http": scenario_evidence.history_http.to_document(),
+                "history_mcp": scenario_evidence.history_mcp.to_document(),
             },
             "hello": {
                 "response": body.decode("ascii"),
@@ -1476,17 +1426,14 @@ def run_candidate_topology(
             ],
         }
     )
-    if type(probe_result) is dict:
-        report["hello"].update(
-            {
-                "container_id": probe_result["container_id"],
-                "request_origin": probe_result["request_origin"],
-                "target_image_id": probe_result["target_image_id"],
-                "target_image_reference": probe_result[
-                    "target_image_reference"
-                ],
-            }
-        )
+    report["hello"].update(
+        {
+            "container_id": probe_evidence.container_id,
+            "request_origin": probe_evidence.request_origin,
+            "target_image_id": probe_evidence.target_image_id,
+            "target_image_reference": probe_evidence.target_image_reference,
+        }
+    )
     report["report_sha256"] = _report_sha256(report)
     return report
 
@@ -1725,7 +1672,7 @@ class DockerCandidateEffects:
             }
         )
 
-    def probe_runtime_node(
+    def _probe_runtime_node(
         self,
         *,
         node_id: str,
@@ -1823,13 +1770,36 @@ class DockerCandidateEffects:
             "target_image_reference": provider_image_reference,
         }
 
+    def probe_runtime_node(
+        self,
+        *,
+        node_id: str,
+        expected_image_reference: str,
+        labelled: bool,
+        attach_runtime_network: bool,
+    ) -> dict[str, Any]:
+        hello_reference = EXPECTED_ASSEMBLY["products"]["hello"]["reference"]
+        if node_id == "hello":
+            if expected_image_reference != hello_reference:
+                raise CandidateTopologyError(WORKFLOW_ERROR)
+            return self.probe_hello(
+                labelled=labelled,
+                attach_runtime_network=attach_runtime_network,
+            )
+        return self._probe_runtime_node(
+            node_id=node_id,
+            expected_image_reference=expected_image_reference,
+            labelled=labelled,
+            attach_runtime_network=attach_runtime_network,
+        )
+
     def probe_hello(
         self,
         *,
         labelled: bool,
         attach_runtime_network: bool,
     ) -> dict[str, Any]:
-        return self.probe_runtime_node(
+        return self._probe_runtime_node(
             node_id="hello",
             expected_image_reference=EXPECTED_ASSEMBLY["products"]["hello"][
                 "reference"
