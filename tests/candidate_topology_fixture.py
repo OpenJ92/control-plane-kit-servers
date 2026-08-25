@@ -430,7 +430,7 @@ class RecordingHostedWorkflow:
             "action_id": f"action-{self.active_transition}",
             "action_ordinal": 1,
             "destructive": True,
-            "max_risk": "destructive",
+            "max_risk": "critical",
             "plan_id": f"plan-{self.active_transition}",
             "replayed": False,
             "request_id": f"approval-{self.active_transition}",
