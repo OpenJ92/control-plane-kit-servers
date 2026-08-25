@@ -625,14 +625,22 @@ class CandidateApprovalProjection:
         session_id = _safe_identity(value["session_id"])
         if plan_id != expected_plan_id:
             raise CandidateTopologyError(WORKFLOW_ERROR)
-        if value["required_scope"] not in {
-            "plan:approve",
-            "plan:approve-destructive",
-        }:
-            raise CandidateTopologyError(WORKFLOW_ERROR)
-        if value["max_risk"] not in {"low", "moderate", "high", "destructive"}:
-            raise CandidateTopologyError(WORKFLOW_ERROR)
         if type(value["destructive"]) is not bool:
+            raise CandidateTopologyError(WORKFLOW_ERROR)
+        expected_scope = (
+            "plan:approve-destructive"
+            if value["destructive"]
+            else "plan:approve"
+        )
+        if value["required_scope"] != expected_scope:
+            raise CandidateTopologyError(WORKFLOW_ERROR)
+        if value["max_risk"] not in {
+            "informational",
+            "low",
+            "medium",
+            "high",
+            "critical",
+        }:
             raise CandidateTopologyError(WORKFLOW_ERROR)
         if type(value["action_ordinal"]) is not int or value["action_ordinal"] < 1:
             raise CandidateTopologyError(WORKFLOW_ERROR)
