@@ -427,11 +427,18 @@ class RecordingHostedWorkflow:
     def request_approval(self, **kwargs: Any) -> dict[str, object]:
         self.ledger.append(("request-approval", self.active_transition))
         return {
-            "request_id": f"approval-{self.active_transition}",
-            "required_scope": "plan:approve-destructive",
-            "max_risk": "destructive",
+            "action_id": f"action-{self.active_transition}",
+            "action_ordinal": 1,
             "destructive": True,
+            "max_risk": "destructive",
             "plan_id": f"plan-{self.active_transition}",
+            "replayed": False,
+            "request_id": f"approval-{self.active_transition}",
+            "requested_at": "2026-08-25T12:00:00Z",
+            "requested_by": "operator-a",
+            "required_scope": "plan:approve-destructive",
+            "session_id": f"session-{self.active_transition}",
+            "state": "pending",
         }
 
     def assert_approval_visible(self, approval_id: str, plan_id: str) -> None:

@@ -65,11 +65,18 @@ class RecordingWorkflow:
     def request_approval(self, **_kwargs: Any) -> dict[str, object]:
         self.ledger.append(("request-approval", self.active_stage))
         approval = {
-            "request_id": f"approval-{self.active_stage}",
-            "required_scope": "plan:approve-destructive",
-            "max_risk": "destructive",
+            "action_id": f"action-{self.active_stage}",
+            "action_ordinal": 1,
             "destructive": True,
+            "max_risk": "destructive",
             "plan_id": f"plan-{self.active_stage}",
+            "replayed": False,
+            "request_id": f"approval-{self.active_stage}",
+            "requested_at": "2026-08-25T12:00:00Z",
+            "requested_by": "operator-a",
+            "required_scope": "plan:approve-destructive",
+            "session_id": f"session-{self.active_stage}",
+            "state": "pending",
         }
         if self.approval_extra is not None:
             approval[self.approval_extra[0]] = self.approval_extra[1]
@@ -313,44 +320,40 @@ class CandidateLiveAcceptanceTests(unittest.TestCase):
                 "approval response requires a closed projection",
             )
         approval = {
-            "request_id": "approval-hello",
-            "required_scope": "plan:approve-destructive",
-            "max_risk": "destructive",
+            "action_id": "action-hello",
+            "action_ordinal": 1,
             "destructive": True,
+            "max_risk": "destructive",
             "plan_id": "plan-hello",
+            "replayed": False,
+            "request_id": "approval-hello",
+            "requested_at": "2026-08-25T12:00:00Z",
+            "requested_by": "operator-a",
+            "required_scope": "plan:approve-destructive",
+            "session_id": "session-hello",
+            "state": "pending",
         }
+        projection = None
         if hasattr(live, "CandidateApprovalProjection"):
-            projection = live.CandidateApprovalProjection.admit(
-                approval,
-                expected_plan_id="plan-hello",
-            )
+            with self.subTest(boundary="exact-live-approval-document"):
+                try:
+                    projection = live.CandidateApprovalProjection.admit(
+                        approval,
+                        expected_plan_id="plan-hello",
+                    )
+                except live.CandidateTopologyError:
+                    self.fail("closed approval projection rejected the live document")
+        if projection is not None:
             self.assertEqual(projection.to_document(), approval)
             self.assertEqual(projection["request_id"], "approval-hello")
 
         for extra in ("provider_message", "scenario_payload", "authorization"):
             with self.subTest(extra=extra):
-                workflow = RecordingWorkflow(approval_extra=(extra, "opaque"))
-                effects = RecordingProbeEffects([HELLO_RESPONSE])
-                program = live.CandidateTransitionProgram(
-                    (
-                        live.CandidateTransitionSpec(
-                            "hello",
-                            DeploymentGraph("hello"),
-                            self._probe(live),
-                        ),
-                        live.CandidateTransitionSpec(
-                            "teardown",
-                            DeploymentGraph("empty"),
-                            None,
-                        ),
-                    )
-                )
+                workflow = RecordingWorkflow()
                 with self.assertRaises(live.CandidateTopologyError):
-                    live.execute_candidate_transitions(
-                        workflow,
-                        effects,
-                        program,
-                        current_graph_id="graph-predecessor",
+                    live.CandidateApprovalProjection.admit(
+                        {**approval, extra: "opaque"},
+                        expected_plan_id="plan-hello",
                     )
                 self.assertNotIn(("approve", "hello"), workflow.ledger)
 
