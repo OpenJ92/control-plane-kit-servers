@@ -62,7 +62,7 @@ class RecordingWorkflow:
         self.ledger.append(("plan", self.active_stage))
         return f"plan-{self.active_stage}"
 
-    def request_approval(self, **_kwargs: Any) -> dict[str, str]:
+    def request_approval(self, **_kwargs: Any) -> dict[str, object]:
         self.ledger.append(("request-approval", self.active_stage))
         approval = {
             "request_id": f"approval-{self.active_stage}",
