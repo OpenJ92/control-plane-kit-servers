@@ -228,6 +228,111 @@ class CandidateLiveAcceptanceTests(unittest.TestCase):
             "workspace_id": "candidate-topology-1723",
         }
 
+    def _graph_readback_with_node(self) -> dict[str, Any]:
+        document = self._graph_readback()
+        document["graph_descriptor"] = {
+            "edges": {},
+            "name": "candidate-topology-1723",
+            "nodes": {
+                "hello": {
+                    "block_family": "application",
+                    "block_spec": {
+                        "capabilities": ["health-checkable"],
+                        "display_name": "hello-server",
+                        "health_path": None,
+                        "metadata": {},
+                        "role_id": "hello",
+                        "variant": "block",
+                        "verification": {
+                            "checks": [
+                                {
+                                    "check_id": "live",
+                                    "expected_statuses": [200],
+                                    "kind": "http",
+                                    "path": "/health/live",
+                                    "policy": {
+                                        "interval_seconds": 1.0,
+                                        "maximum_attempts": 5,
+                                        "maximum_evidence_bytes": 16384,
+                                        "timeout_seconds": 5.0,
+                                    },
+                                    "provider_socket": "internal",
+                                }
+                            ]
+                        },
+                    },
+                    "configuration_artifacts": [],
+                    "endpoints": {
+                        "internal": {
+                            "address": "<redacted>",
+                            "protocol": {
+                                "application": "http",
+                                "transport": "tcp",
+                            },
+                            "scope": "private",
+                        }
+                    },
+                    "environment_bindings": [
+                        {
+                            "kind": "public-static",
+                            "name": "HELLO_MESSAGE",
+                            "value": "<redacted>",
+                        }
+                    ],
+                    "kind": "oci-container",
+                    "lifecycle": {
+                        "compute": "ephemeral",
+                        "data": [],
+                        "ownership": "owned",
+                    },
+                    "metadata": {
+                        "block_family": "ApplicationBlock",
+                        "capabilities": [
+                            {
+                                "description": "Node exposes health state.",
+                                "label": "Health",
+                                "name": "health-checkable",
+                                "route_set": "common-status",
+                            }
+                        ],
+                        "display_name": "hello-server",
+                        "oci_image": HELLO_IMAGE,
+                        "product_descriptor_digest": "1" * 64,
+                        "product_identity": "control-plane-kit/hello-server/1",
+                    },
+                    "node_id": "hello",
+                    "providers": {
+                        "internal": {
+                            "protocol": {
+                                "application": "http",
+                                "transport": "tcp",
+                            }
+                        }
+                    },
+                    "requirements": {},
+                    "runtime_id": "docker",
+                    "secret_deliveries": "<redacted>",
+                }
+            },
+            "public_ingresses": [],
+            "runtimes": {
+                "docker": {
+                    "authority_ref": None,
+                    "children": ["hello"],
+                    "kind": "docker",
+                    "lifecycle": {
+                        "compute": "ephemeral",
+                        "data": [],
+                        "ownership": "owned",
+                    },
+                    "metadata": {
+                        "network_name": "candidate-topology-1723-docker",
+                    },
+                }
+            },
+        }
+        return document
+
     def test_graph_readback_projection_is_closed_and_preserves_exact_document(self) -> None:
         live = self._module()
         if live is None:
@@ -268,6 +373,27 @@ class CandidateLiveAcceptanceTests(unittest.TestCase):
                 with self.assertRaises(live.CandidateTopologyError):
                     projection_type.admit(hostile)
                 self.assertEqual(workflow.ledger, [])
+
+    def test_graph_readback_projection_admits_only_schema_owned_coordinates(self) -> None:
+        live = self._module()
+        if live is None:
+            return
+        projection_type = live.CandidateGraphReadbackProjection
+        document = self._graph_readback_with_node()
+        with self.subTest(boundary="schema-owned-http-path-and-oci-coordinate"):
+            try:
+                projection = projection_type.admit(document)
+            except live.CandidateTopologyError:
+                self.fail("closed graph projection rejected schema-owned coordinates")
+            self.assertEqual(projection.to_document(), document)
+
+        hostile = json.loads(json.dumps(document))
+        hostile["graph_descriptor"]["nodes"]["hello"]["block_spec"][
+            "verification"
+        ]["checks"][0]["path"] = "/token=opaque-material"
+        with self.subTest(boundary="http-path-rejects-protected-material"):
+            with self.assertRaises(live.CandidateTopologyError):
+                projection_type.admit(hostile)
 
     def test_activity_history_projection_rejects_sensitive_surface_before_activity(self) -> None:
         live = self._module()
