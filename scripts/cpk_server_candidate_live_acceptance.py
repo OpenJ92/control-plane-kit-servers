@@ -198,6 +198,12 @@ def _safe_sequence(value: Any) -> list[Any] | tuple[Any, ...]:
     return value
 
 
+def _validate_http_path(value: Any) -> None:
+    if type(value) is not str or _HTTP_PATH_PATTERN.fullmatch(value) is None:
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+    _reject_protected_text(value.lstrip("/"))
+
+
 def _validate_protocol(value: Any) -> None:
     value = _closed_object(value, frozenset(("application", "transport")))
     _safe_identity(value["application"])
@@ -231,8 +237,7 @@ def _validate_check(value: Any) -> None:
     if not statuses or any(type(status) is not int for status in statuses):
         raise CandidateTopologyError(WORKFLOW_ERROR)
     _safe_identity(value["kind"])
-    if type(value["path"]) is not str or _HTTP_PATH_PATTERN.fullmatch(value["path"]) is None:
-        raise CandidateTopologyError(WORKFLOW_ERROR)
+    _validate_http_path(value["path"])
     policy = _closed_object(
         value["policy"],
         frozenset(
@@ -289,8 +294,7 @@ def _validate_node(value: Any) -> None:
         _safe_identity(capability)
     _safe_identity(block["display_name"])
     if block["health_path"] is not None:
-        if type(block["health_path"]) is not str or _HTTP_PATH_PATTERN.fullmatch(block["health_path"]) is None:
-            raise CandidateTopologyError(WORKFLOW_ERROR)
+        _validate_http_path(block["health_path"])
     _closed_object(block["metadata"], frozenset())
     _safe_identity(block["role_id"])
     _safe_identity(block["variant"])
@@ -507,7 +511,6 @@ def _freeze_json(value: Any, *, depth: int, items: list[int]) -> Any:
     if type(value) is str:
         if len(value.encode("utf-8")) > 65536:
             raise CandidateTopologyError(WORKFLOW_ERROR)
-        _reject_protected_text(value)
         return value
     if type(value) is dict:
         if not all(type(key) is str and key for key in value):
