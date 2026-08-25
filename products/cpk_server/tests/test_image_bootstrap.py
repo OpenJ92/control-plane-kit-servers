@@ -40,6 +40,9 @@ STORE_ENVIRONMENT = [
 SERVER_SOURCE = PRODUCT_SRC / "control_plane_kit_servers_cpk_server" / "server.py"
 CANDIDATE_OVERLAY = ROOT / "acceptance" / "candidate_topology" / "Dockerfile"
 CANDIDATE_RUNNER = ROOT / "scripts" / "cpk_server_candidate_topology.py"
+CANDIDATE_TRANSITIONS = (
+    ROOT / "scripts" / "cpk_server_candidate_live_acceptance.py"
+)
 CONCRETE_PROVIDER_IMPORT_ROOTS = {
     "boto3",
     "botocore",
@@ -240,8 +243,15 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             CANDIDATE_RUNNER.is_file(),
             "candidate topology runner is not implemented",
         )
+        self.assertTrue(
+            CANDIDATE_TRANSITIONS.is_file(),
+            "typed candidate transition boundary is not implemented",
+        )
         runner = CANDIDATE_RUNNER.read_text(encoding="utf-8")
         tree = ast.parse(runner)
+        transition_tree = ast.parse(
+            CANDIDATE_TRANSITIONS.read_text(encoding="utf-8")
+        )
 
         for required in (
             "candidate-assembly.json",
@@ -322,11 +332,23 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             and isinstance(node.func.value, ast.Name)
             and node.func.value.id == hosted_assignments[0]
         )
+        transition_workflow_calls = tuple(
+            node.func.attr
+            for node in ast.walk(transition_tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "workflow"
+        )
         for required_call in (
             "create_workspace",
             "import_product",
             "register_local_docker_authority",
             "register_local_docker_delivery",
+        ):
+            with self.subTest(workflow_call=required_call):
+                self.assertIn(required_call, workflow_calls)
+        for required_call in (
             "start_session",
             "set_desired_graph",
             "plan_transition",
@@ -344,7 +366,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             "read_activity_mcp",
         ):
             with self.subTest(workflow_call=required_call):
-                self.assertIn(required_call, workflow_calls)
+                self.assertIn(required_call, transition_workflow_calls)
 
         for required_call in (
             "DeploymentGraph",
