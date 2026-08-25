@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import FrozenInstanceError, dataclass, field
 import importlib
 import importlib.util
+import inspect
 import json
 from typing import Any
 import unittest
@@ -45,6 +46,7 @@ class RecordingWorkflow:
         default_factory=lambda: RuntimeError("protected-workflow-failure")
     )
     hostile_projection: Any = None
+    approval_extra: tuple[str, Any] | None = None
 
     def start_session(self, title: str) -> str:
         self.active_stage = title
@@ -62,7 +64,16 @@ class RecordingWorkflow:
 
     def request_approval(self, **_kwargs: Any) -> dict[str, str]:
         self.ledger.append(("request-approval", self.active_stage))
-        return {"request_id": f"approval-{self.active_stage}"}
+        approval = {
+            "request_id": f"approval-{self.active_stage}",
+            "required_scope": "plan:approve-destructive",
+            "max_risk": "destructive",
+            "destructive": True,
+            "plan_id": f"plan-{self.active_stage}",
+        }
+        if self.approval_extra is not None:
+            approval[self.approval_extra[0]] = self.approval_extra[1]
+        return approval
 
     def assert_approval_visible(self, approval_id: str, plan_id: str) -> None:
         self.ledger.append(("approval-visible", self.active_stage))
@@ -171,6 +182,234 @@ class CandidateLiveAcceptanceTests(unittest.TestCase):
             image_reference=HELLO_IMAGE,
             expected_response=response,
         )
+
+    def _graph_readback(self) -> dict[str, Any]:
+        return {
+            "assigned": True,
+            "authored_graph_id": "graph-authored",
+            "graph_descriptor": {
+                "edges": {},
+                "name": "candidate-topology-1723",
+                "nodes": {},
+                "public_ingresses": [],
+                "runtimes": {},
+            },
+            "graph_id": "graph-predecessor",
+            "graph_name": "candidate-topology-1723",
+            "pointer": "current",
+            "realized_projection_id": "projection-" + "1" * 64,
+            "version": 1,
+        }
+
+    def _activity_history(self) -> dict[str, Any]:
+        return {
+            "items": [
+                {
+                    "actor_id": "operator-a",
+                    "closed_at": None,
+                    "created_at": "2026-08-25T12:00:00Z",
+                    "metadata": {},
+                    "session_id": "session-hello",
+                    "status": "open",
+                    "title": "hello",
+                    "workspace_id": "candidate-topology-1723",
+                }
+            ],
+            "kind": "activity-sessions",
+            "limit": 50,
+            "next_cursor": None,
+            "workspace_id": "candidate-topology-1723",
+        }
+
+    def test_graph_readback_projection_is_closed_and_preserves_exact_document(self) -> None:
+        live = self._module()
+        if live is None:
+            return
+        with self.subTest(boundary="closed-graph-readback-type"):
+            self.assertTrue(
+                hasattr(live, "CandidateGraphReadbackProjection"),
+                "graph readback requires its own closed projection",
+            )
+        projection_type = getattr(
+            live,
+            "CandidateGraphReadbackProjection",
+            live.CandidatePublicProjection,
+        )
+        document = self._graph_readback()
+        self.assertEqual(projection_type.admit(document).to_document(), document)
+
+        hostile_documents = (
+            {**document, "scenario_payload": {"arbitrary": True}},
+            {**document, "provider_message": "failed"},
+            {**document, "arbitrary": {"object": {"accepted": True}}},
+            {
+                **document,
+                "graph_descriptor": {
+                    **document["graph_descriptor"],
+                    "scenario_payload": {},
+                },
+            },
+            {
+                **document,
+                "graph_descriptor": {
+                    **document["graph_descriptor"],
+                    "authorization": "redacted",
+                },
+            },
+        )
+        for hostile in hostile_documents:
+            with self.subTest(hostile=hostile):
+                workflow = RecordingWorkflow()
+                with self.assertRaises(live.CandidateTopologyError):
+                    projection_type.admit(hostile)
+                self.assertEqual(workflow.ledger, [])
+
+    def test_activity_history_projection_rejects_sensitive_surface_before_activity(self) -> None:
+        live = self._module()
+        if live is None:
+            return
+        with self.subTest(boundary="closed-activity-history-type"):
+            self.assertTrue(
+                hasattr(live, "CandidateActivityHistoryProjection"),
+                "activity history requires its own closed projection",
+            )
+        projection_type = getattr(
+            live,
+            "CandidateActivityHistoryProjection",
+            live.CandidatePublicProjection,
+        )
+        document = self._activity_history()
+        self.assertEqual(projection_type.admit(document).to_document(), document)
+
+        hostile_values = (
+            "worker.internal.example",
+            "2001:db8::1",
+            "/var/lib/control-plane-kit/state.json",
+            "/var/run/docker.sock",
+            "api_key=opaque-material",
+            "dockerd build session failed",
+        )
+        for hostile in hostile_values:
+            with self.subTest(hostile=hostile):
+                candidate = json.loads(json.dumps(document))
+                candidate["items"][0]["title"] = hostile
+                workflow = RecordingWorkflow()
+                with self.assertRaises(live.CandidateTopologyError):
+                    projection_type.admit(candidate)
+                self.assertEqual(workflow.ledger, [])
+
+        for key in ("scenario_payload", "provider_message", "authorization"):
+            with self.subTest(key=key):
+                candidate = json.loads(json.dumps(document))
+                candidate["items"][0][key] = {"arbitrary": True}
+                workflow = RecordingWorkflow()
+                with self.assertRaises(live.CandidateTopologyError):
+                    projection_type.admit(candidate)
+                self.assertEqual(workflow.ledger, [])
+
+    def test_approval_projection_is_closed_before_decision_activity(self) -> None:
+        live = self._module()
+        if live is None:
+            return
+        with self.subTest(boundary="closed-approval-type"):
+            self.assertTrue(
+                hasattr(live, "CandidateApprovalProjection"),
+                "approval response requires a closed projection",
+            )
+        approval = {
+            "request_id": "approval-hello",
+            "required_scope": "plan:approve-destructive",
+            "max_risk": "destructive",
+            "destructive": True,
+            "plan_id": "plan-hello",
+        }
+        if hasattr(live, "CandidateApprovalProjection"):
+            projection = live.CandidateApprovalProjection.admit(
+                approval,
+                expected_plan_id="plan-hello",
+            )
+            self.assertEqual(projection.to_document(), approval)
+            self.assertEqual(projection["request_id"], "approval-hello")
+
+        for extra in ("provider_message", "scenario_payload", "authorization"):
+            with self.subTest(extra=extra):
+                workflow = RecordingWorkflow(approval_extra=(extra, "opaque"))
+                effects = RecordingProbeEffects([HELLO_RESPONSE])
+                program = live.CandidateTransitionProgram(
+                    (
+                        live.CandidateTransitionSpec(
+                            "hello",
+                            DeploymentGraph("hello"),
+                            self._probe(live),
+                        ),
+                        live.CandidateTransitionSpec(
+                            "teardown",
+                            DeploymentGraph("empty"),
+                            None,
+                        ),
+                    )
+                )
+                with self.assertRaises(live.CandidateTopologyError):
+                    live.execute_candidate_transitions(
+                        workflow,
+                        effects,
+                        program,
+                        current_graph_id="graph-predecessor",
+                    )
+                self.assertNotIn(("approve", "hello"), workflow.ledger)
+
+    def test_workflow_port_has_explicit_candidate_owned_fencing_signatures(self) -> None:
+        live = self._module()
+        if live is None:
+            return
+        expected_parameters = {
+            "set_desired_graph": (
+                "self",
+                "session_id",
+                "graph",
+                "title",
+                "expected_desired_graph_id",
+            ),
+            "plan_transition": (
+                "self",
+                "session_id",
+                "title",
+                "current_graph_id",
+                "desired_graph_id",
+            ),
+            "request_approval": ("self", "session_id", "title", "plan_id"),
+            "approve": ("self", "session_id", "title", "approval"),
+            "admit": (
+                "self",
+                "session_id",
+                "title",
+                "plan_id",
+                "approval_id",
+            ),
+            "claim": ("self", "title", "request_id"),
+            "start_run": ("self", "title", "run_id"),
+            "advance_current_graph": (
+                "self",
+                "title",
+                "run_id",
+                "plan_id",
+                "current_graph_id",
+                "desired_graph_id",
+            ),
+        }
+        for name, expected in expected_parameters.items():
+            with self.subTest(name=name):
+                signature = inspect.signature(
+                    getattr(live.CandidateWorkflowPort, name)
+                )
+                self.assertEqual(tuple(signature.parameters), expected)
+                self.assertNotIn(
+                    inspect.Parameter.VAR_KEYWORD,
+                    tuple(
+                        parameter.kind
+                        for parameter in signature.parameters.values()
+                    ),
+                )
 
     def test_program_is_closed_immutable_and_validated_before_activity(self) -> None:
         live = self._module()
