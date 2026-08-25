@@ -230,11 +230,9 @@ class CandidateLiveAcceptanceTests(unittest.TestCase):
                 hasattr(live, "CandidateGraphReadbackProjection"),
                 "graph readback requires its own closed projection",
             )
-        projection_type = getattr(
-            live,
-            "CandidateGraphReadbackProjection",
-            live.CandidatePublicProjection,
-        )
+        projection_type = getattr(live, "CandidateGraphReadbackProjection", None)
+        if projection_type is None:
+            projection_type = live.CandidatePublicProjection
         document = self._graph_readback()
         self.assertEqual(projection_type.admit(document).to_document(), document)
 
@@ -273,11 +271,9 @@ class CandidateLiveAcceptanceTests(unittest.TestCase):
                 hasattr(live, "CandidateActivityHistoryProjection"),
                 "activity history requires its own closed projection",
             )
-        projection_type = getattr(
-            live,
-            "CandidateActivityHistoryProjection",
-            live.CandidatePublicProjection,
-        )
+        projection_type = getattr(live, "CandidateActivityHistoryProjection", None)
+        if projection_type is None:
+            projection_type = live.CandidatePublicProjection
         document = self._activity_history()
         self.assertEqual(projection_type.admit(document).to_document(), document)
 
