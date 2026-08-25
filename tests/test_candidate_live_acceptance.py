@@ -273,8 +273,13 @@ class CandidateLiveAcceptanceTests(unittest.TestCase):
             effects.ledger.index(("remove-probe", "candidate-probe")),
         )
         self.assertEqual(
-            json.loads(evidence.canonical_json()),
-            document,
+            evidence.canonical_json(),
+            json.dumps(
+                document,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
         )
 
     def test_seven_step_blue_green_preserves_rollback_and_one_probe(self) -> None:
