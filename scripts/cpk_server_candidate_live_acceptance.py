@@ -580,11 +580,18 @@ class CandidateActivityHistoryProjection(_CandidateClosedProjection):
 
 @dataclass(frozen=True)
 class CandidateApprovalProjection:
-    request_id: str
-    required_scope: str
-    max_risk: str
+    action_id: str
+    action_ordinal: int
     destructive: bool
+    max_risk: str
     plan_id: str
+    replayed: bool
+    request_id: str
+    requested_at: str
+    requested_by: str
+    required_scope: str
+    session_id: str
+    state: str
 
     @classmethod
     def admit(
@@ -597,16 +604,25 @@ class CandidateApprovalProjection:
             value,
             frozenset(
                 (
+                    "action_id",
+                    "action_ordinal",
                     "destructive",
                     "max_risk",
                     "plan_id",
+                    "replayed",
                     "request_id",
+                    "requested_at",
+                    "requested_by",
                     "required_scope",
+                    "session_id",
+                    "state",
                 )
             ),
         )
+        action_id = _safe_identity(value["action_id"])
         request_id = _safe_identity(value["request_id"])
         plan_id = _safe_identity(value["plan_id"])
+        session_id = _safe_identity(value["session_id"])
         if plan_id != expected_plan_id:
             raise CandidateTopologyError(WORKFLOW_ERROR)
         if value["required_scope"] not in {
@@ -618,12 +634,28 @@ class CandidateApprovalProjection:
             raise CandidateTopologyError(WORKFLOW_ERROR)
         if type(value["destructive"]) is not bool:
             raise CandidateTopologyError(WORKFLOW_ERROR)
+        if type(value["action_ordinal"]) is not int or value["action_ordinal"] < 1:
+            raise CandidateTopologyError(WORKFLOW_ERROR)
+        if type(value["replayed"]) is not bool:
+            raise CandidateTopologyError(WORKFLOW_ERROR)
+        if type(value["requested_at"]) is not str or _TIMESTAMP_PATTERN.fullmatch(value["requested_at"]) is None:
+            raise CandidateTopologyError(WORKFLOW_ERROR)
+        requested_by = _safe_identity(value["requested_by"])
+        if value["state"] != "pending":
+            raise CandidateTopologyError(WORKFLOW_ERROR)
         return cls(
-            request_id=request_id,
-            required_scope=value["required_scope"],
-            max_risk=value["max_risk"],
+            action_id=action_id,
+            action_ordinal=value["action_ordinal"],
             destructive=value["destructive"],
+            max_risk=value["max_risk"],
             plan_id=plan_id,
+            replayed=value["replayed"],
+            request_id=request_id,
+            requested_at=value["requested_at"],
+            requested_by=requested_by,
+            required_scope=value["required_scope"],
+            session_id=session_id,
+            state=value["state"],
         )
 
     def __getitem__(self, key: str) -> object:
@@ -633,17 +665,31 @@ class CandidateApprovalProjection:
             "max_risk",
             "destructive",
             "plan_id",
+            "action_id",
+            "action_ordinal",
+            "replayed",
+            "requested_at",
+            "requested_by",
+            "session_id",
+            "state",
         }:
             raise KeyError(key)
         return getattr(self, key)
 
     def to_document(self) -> dict[str, object]:
         return {
-            "request_id": self.request_id,
-            "required_scope": self.required_scope,
-            "max_risk": self.max_risk,
+            "action_id": self.action_id,
+            "action_ordinal": self.action_ordinal,
             "destructive": self.destructive,
+            "max_risk": self.max_risk,
             "plan_id": self.plan_id,
+            "replayed": self.replayed,
+            "request_id": self.request_id,
+            "requested_at": self.requested_at,
+            "requested_by": self.requested_by,
+            "required_scope": self.required_scope,
+            "session_id": self.session_id,
+            "state": self.state,
         }
 
 
