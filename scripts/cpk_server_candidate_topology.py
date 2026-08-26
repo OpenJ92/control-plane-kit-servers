@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import subprocess
@@ -27,7 +28,13 @@ from control_plane_kit_core.products import (
     ProductInstanceConfiguration,
     instantiate_product,
 )
-from control_plane_kit_core.topology import DeploymentGraph, compile_topology
+from control_plane_kit_core.planning import compile_activity_plan
+from control_plane_kit_core.topology import (
+    DeploymentGraph,
+    compile_topology,
+    diff_graphs,
+    validate_graph,
+)
 
 from scripts.cpk_server_candidate_lifecycle import (
     admit_candidate_ledger,
@@ -1280,6 +1287,183 @@ def _attach_report(error: BaseException, report: dict[str, Any]) -> None:
     setattr(error, "candidate_terminal_report", report)
 
 
+def _run_history_id(value: Any) -> bool:
+    return type(value) is str and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,255}", value) is not None
+
+
+def _run_history_json(value: Any) -> str:
+    encoded = json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False,
+    )
+    if len(encoded) > 262144:
+        raise ValueError(WORKFLOW_ERROR)
+    return encoded
+
+
+def _run_history_pointer(http: Any, mcp: Any, graph_id: str, version: int) -> dict[str, Any]:
+    required = {
+        "pointer", "assigned", "graph_id", "authored_graph_id",
+        "realized_projection_id", "version", "graph_name",
+    }
+    optional = {"graph_descriptor", "operator_graph"}
+    if (
+        type(http) is not dict or not required <= set(http) <= required | optional
+        or _run_history_json(http) != _run_history_json(mcp)
+        or http["pointer"] != "current" or http["assigned"] is not True
+        or not _run_history_id(graph_id)
+        or http["graph_id"] != graph_id or http["authored_graph_id"] != graph_id
+        or not _run_history_id(http["realized_projection_id"])
+        or type(http["version"]) is not int or http["version"] != version
+        or type(http["graph_name"]) is not str or not 0 < len(http["graph_name"]) <= 256
+        or any(type(http[key]) is not dict for key in optional & set(http))
+    ):
+        raise ValueError(WORKFLOW_ERROR)
+    return http
+
+
+def _validate_candidate_run_page(
+    page: Any,
+    *,
+    workspace_id: str,
+    plan_id: str,
+    run_id: str,
+    activity_ids: tuple[str, ...],
+    predecessor: dict[str, Any],
+    successor: dict[str, Any],
+    revision: int,
+    event_ids: set[str],
+) -> None:
+    if (
+        not _exact_keys(page, {"workspace_id", "kind", "limit", "items", "next_cursor"})
+        or page["workspace_id"] != workspace_id or page["kind"] != "run-events"
+        or type(page["limit"]) is not int or page["limit"] != 100
+        or type(page["items"]) is not list or page["next_cursor"] is not None
+    ):
+        raise ValueError(WORKFLOW_ERROR)
+    expected = [("run_opened", None), ("run_started", None)]
+    for activity_id in activity_ids:
+        expected.extend((("step_started", activity_id), ("step_succeeded", activity_id)))
+    expected.extend((("run_succeeded", None), ("current_graph_advanced", None)))
+    if len(page["items"]) != len(expected):
+        raise ValueError(WORKFLOW_ERROR)
+    for ordinal, (event, (kind, activity_id)) in enumerate(zip(page["items"], expected), 1):
+        if (
+            not _exact_keys(event, {
+                "event_id", "run_id", "ordinal", "event_type",
+                "occurred_at", "activity_id", "payload", "failure",
+            })
+            or not _run_history_id(event["event_id"]) or event["event_id"] in event_ids
+            or event["run_id"] != run_id
+            or type(event["ordinal"]) is not int or event["ordinal"] != ordinal
+            or event["event_type"] != kind or event["activity_id"] != activity_id
+            or event["failure"] is not None
+            or type(event["occurred_at"]) is not str or len(event["occurred_at"]) > 64
+        ):
+            raise ValueError(WORKFLOW_ERROR)
+        if datetime.fromisoformat(event["occurred_at"]).utcoffset() is None:
+            raise ValueError(WORKFLOW_ERROR)
+        event_ids.add(event["event_id"])
+        payload = event["payload"]
+        if kind == "run_opened":
+            if not _exact_keys(payload, {"attempt"}) or type(payload["attempt"]) is not int or payload["attempt"] != 1:
+                raise ValueError(WORKFLOW_ERROR)
+        elif kind == "run_started":
+            if not _exact_keys(payload, set()):
+                raise ValueError(WORKFLOW_ERROR)
+        elif kind in {"step_started", "step_succeeded"}:
+            if not _exact_keys(payload, {"effect_attempt"}):
+                raise ValueError(WORKFLOW_ERROR)
+            attempt = payload["effect_attempt"]
+            if (
+                not _exact_keys(attempt, {"attempt", "state_fingerprint"})
+                or type(attempt["attempt"]) is not int or attempt["attempt"] != 1
+                or not _hex_digest(attempt["state_fingerprint"], 64)
+            ):
+                raise ValueError(WORKFLOW_ERROR)
+        elif kind == "run_succeeded":
+            if not _exact_keys(payload, {"result"}) or payload["result"] != "all-activities-succeeded":
+                raise ValueError(WORKFLOW_ERROR)
+        else:
+            # Retain the public digest and fingerprints, without claiming to rederive them.
+            coordinates = {
+                "workspace_id": workspace_id, "plan_id": plan_id, "run_id": run_id,
+                "from_authored_graph_id": predecessor["authored_graph_id"],
+                "from_realized_projection_id": predecessor["realized_projection_id"],
+                "to_authored_graph_id": successor["authored_graph_id"],
+                "to_realized_projection_id": successor["realized_projection_id"],
+                "desired_graph_revision": revision,
+            }
+            if (
+                not _exact_keys(payload, set(coordinates) | {"to_realized_projection_digest"})
+                or any(payload[key] != value for key, value in coordinates.items())
+                or type(payload["desired_graph_revision"]) is not int
+                or not _hex_digest(payload["to_realized_projection_digest"], 64)
+            ):
+                raise ValueError(WORKFLOW_ERROR)
+
+
+def _capture_candidate_run_history(
+    workflow: Any,
+    *,
+    workspace_id: str,
+    current_graph_id: str,
+    hello_graph: DeploymentGraph,
+    empty_graph: DeploymentGraph,
+    hello: dict[str, Any],
+    empty: dict[str, Any],
+) -> dict[str, Any]:
+    history: dict[str, Any] | None = None
+    try:
+        if not _run_history_id(workspace_id):
+            raise ValueError(WORKFLOW_ERROR)
+        for key in ("plan_id", "run_id", "desired_graph_id", "advanced_graph_id"):
+            if not all(_run_history_id(row[key]) for row in (hello, empty)) or hello[key] == empty[key]:
+                raise ValueError(WORKFLOW_ERROR)
+        history = {}
+        event_ids: set[str] = set()
+        previous = None
+        # Only this fixed scenario has the identity projection used by these plans.
+        for revision, (title, transition, before, after, operations) in enumerate((
+            ("hello", hello, empty_graph, hello_graph, ("StartRuntime", "StartNode", "WaitForHealthy")),
+            ("empty", empty, hello_graph, empty_graph, ("StopNode", "RemoveNodeResource", "StopRuntime", "RemoveRuntimeResource")),
+        ), 1):
+            if transition["desired_graph_id"] != transition["advanced_graph_id"]:
+                raise ValueError(WORKFLOW_ERROR)
+            predecessor = _run_history_pointer(
+                transition["predecessor_http"], transition["predecessor_mcp"], current_graph_id, revision,
+            )
+            successor = _run_history_pointer(
+                transition["successor_http"], transition["successor_mcp"], transition["desired_graph_id"], revision + 1,
+            )
+            if previous is not None and _run_history_json(previous) != _run_history_json(predecessor):
+                raise ValueError(WORKFLOW_ERROR)
+            plan = compile_activity_plan(diff_graphs(validate_graph(before), validate_graph(after)))
+            if tuple(type(item.operation).__name__ for item in plan.activities) != operations:
+                raise ValueError(WORKFLOW_ERROR)
+            activity_ids = tuple(item.activity_id.value for item in plan.activities)
+            http = workflow.read_run_events_http(transition["run_id"], limit=100)
+            mcp = workflow.read_run_events_mcp(transition["run_id"], limit=100)
+            if _run_history_json(http) != _run_history_json(mcp):
+                raise ValueError(WORKFLOW_ERROR)
+            _validate_candidate_run_page(
+                http, workspace_id=workspace_id, plan_id=transition["plan_id"], run_id=transition["run_id"],
+                activity_ids=activity_ids, predecessor=predecessor, successor=successor,
+                revision=revision, event_ids=event_ids,
+            )
+            history[title] = {
+                "plan_id": transition["plan_id"], "run_id": transition["run_id"],
+                "http": deepcopy(http), "mcp": deepcopy(mcp),
+            }
+            current_graph_id = transition["advanced_graph_id"]
+            previous = successor
+    except Exception:
+        history = None
+    # Raise outside the handler so public failure evidence retains no raw context.
+    if history is None:
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+    return history
+
+
 def run_candidate_topology(
     assembly: dict[str, Any],
     *,
@@ -1304,6 +1488,7 @@ def run_candidate_topology(
     empty = None
     history_http = None
     history_mcp = None
+    run_history = None
     probe_result: Any = None
 
     try:
@@ -1338,6 +1523,15 @@ def run_candidate_topology(
             )
             history_http = workflow.read_activity_http()
             history_mcp = workflow.read_activity_mcp()
+            run_history = _capture_candidate_run_history(
+                workflow,
+                workspace_id=admitted["inputs"]["workspace_id"],
+                current_graph_id=current_graph_id,
+                hello_graph=hello_graph,
+                empty_graph=empty_graph,
+                hello=hello,
+                empty=empty,
+            )
     except BaseException as error:
         failure = error
 
@@ -1409,6 +1603,7 @@ def run_candidate_topology(
                 "empty_mcp": empty["successor_mcp"],
                 "history_http": history_http,
                 "history_mcp": history_mcp,
+                "run_history": run_history,
             },
             "hello": {
                 "response": body.decode("ascii"),
