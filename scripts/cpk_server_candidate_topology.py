@@ -61,10 +61,10 @@ POSTGRES_IMAGE = (
     "57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777"
 )
 HELLO_RESPONSE = b"Hello, world!\n"
-CPK_COMMIT = "4fb75b7b6c1a16ec3b8c1d78dec6ad1a4ad1b40a"
-CPK_TREE = "6a405e4ab7e707ff7374205ca2ef4726d6225b86"
+CPK_COMMIT = "2ae7f6fe1d34cad943e2e16a2cf93903d840ddc1"
+CPK_TREE = "c950b2f1769298949fa0d9e584be7d6d4008d500"
 PRODUCTION_DOCKERFILE_SHA256 = (
-    "7a95cf122c7bb7c5bd911c5bbe95c3c5da81f757aa8fb7d0fa014eb36a51d5eb"
+    "f6d84ddbdf21eb6fbf745b8d3ee601427cfcb1bc23d03adcb9519275fc5c3c40"
 )
 HELLO_DESCRIPTOR_SHA256 = (
     "57ac661ca3f73ad4fa488df34390240e95da58e302bffb17c2197eeac29c2a24"
@@ -142,8 +142,8 @@ EXPECTED_ASSEMBLY = {
     "dependencies": {
         "control_plane_kit_interpreters": {
             "repository": "OpenJ92/control-plane-kit-interpreters",
-            "commit": "4c1a265075f2fa30e0290e7ea0e1996d32b70319",
-            "tree": "8cd60f5f640df38488efcd6c555675f292f37324",
+            "commit": "662edd8d0ad3d489c12e958fe161e2e09f56a337",
+            "tree": "2651ecee7766e90eb3f55421a73af8eeceed3601",
         },
         "control_plane_kit_secrets": {
             "repository": "OpenJ92/control-plane-kit-secrets",
@@ -168,8 +168,8 @@ EXPECTED_ASSEMBLY = {
         },
     },
     "inputs": {
-        "workspace_id": "candidate-topology-1714",
-        "foreign_resource_canary": "foreign-resource-1714",
+        "workspace_id": "candidate-topology-1695-20260826a",
+        "foreign_resource_canary": "foreign-resource-1695-20260826a",
     },
 }
 EXPECTED_BLUE_GREEN_ASSEMBLY = deepcopy(EXPECTED_ASSEMBLY)
@@ -971,8 +971,8 @@ def materialize_candidate_wheels(
     candidate_tree: str,
     staging_root: str,
 ) -> dict[str, dict[str, Any]]:
-    candidate_pin = "4fb75b7b6c1a16ec3b8c1d78dec6ad1a4ad1b40a"
-    candidate_tree_pin = "6a405e4ab7e707ff7374205ca2ef4726d6225b86"
+    candidate_pin = "2ae7f6fe1d34cad943e2e16a2cf93903d840ddc1"
+    candidate_tree_pin = "c950b2f1769298949fa0d9e584be7d6d4008d500"
     if (
         candidate_commit != candidate_pin
         or candidate_tree != candidate_tree_pin
