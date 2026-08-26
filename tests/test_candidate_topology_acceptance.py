@@ -175,14 +175,14 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
             (
                 "43e9f359ca828c83fe4994ed1b62e1be54277ddd",
                 "ec259176eba3ce2f777d38c68fcc14e0a0e80cd3",
-                "4fb75b7b6c1a16ec3b8c1d78dec6ad1a4ad1b40a",
-                "6a405e4ab7e707ff7374205ca2ef4726d6225b86",
+                "2ae7f6fe1d34cad943e2e16a2cf93903d840ddc1",
+                "c950b2f1769298949fa0d9e584be7d6d4008d500",
                 "2cf09911ac9dcaa4e8ae86f8eefa60f191955d0e1f1f115f763aba78a831a48c",
-                "4c1a265075f2fa30e0290e7ea0e1996d32b70319",
-                "8cd60f5f640df38488efcd6c555675f292f37324",
+                "662edd8d0ad3d489c12e958fe161e2e09f56a337",
+                "2651ecee7766e90eb3f55421a73af8eeceed3601",
                 "96e86dc3248d578780d64d5d7fc5d6359631d1d6",
                 "b1740225a93410349a9e9199c539e330b408abae",
-                "7a95cf122c7bb7c5bd911c5bbe95c3c5da81f757aa8fb7d0fa014eb36a51d5eb",
+                "f6d84ddbdf21eb6fbf745b8d3ee601427cfcb1bc23d03adcb9519275fc5c3c40",
                 "sha256:" + "9" * 64,
                 "sha256:" + "f" * 64,
                 "docker.io/library/postgres@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777",
@@ -199,6 +199,31 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
             ),
         )
         self.assertNotEqual(CPK_SERVER_BASE_IMAGE, CANDIDATE_IMAGE_ID)
+
+    def test_candidate_bridge_coordinates_and_workspace_are_exact(self) -> None:
+        candidate = self._candidate_module()
+        expected = exact_assembly()
+        for key in ("candidate", "dependencies", "products", "inputs"):
+            with self.subTest(coordinate=key):
+                self.assertEqual(candidate.EXPECTED_ASSEMBLY[key], expected[key])
+        self.assertEqual(
+            expected["inputs"],
+            {
+                "workspace_id": "candidate-topology-1695-20260826a",
+                "foreign_resource_canary": "foreign-resource-1695-20260826a",
+            },
+        )
+
+    def test_retained_workspace_is_rejected_by_assembly_admission(self) -> None:
+        candidate = self._candidate_module()
+        # Keep other coordinates source-exact so they cannot mask workspace admission.
+        assembly = deepcopy(candidate.EXPECTED_ASSEMBLY)
+        inspection = deepcopy(candidate.EXPECTED_INSPECTION)
+        assembly["inputs"]["workspace_id"] = "candidate-topology-1714"
+        original = deepcopy(assembly)
+        with self.assertRaisesRegex(candidate.CandidateAssemblyError, ASSEMBLY_ERROR):
+            candidate.admit_candidate_assembly(assembly, inspection)
+        self.assertEqual(assembly, original)
 
     def test_control_fixture_assembly_is_closed_joined_and_secret_free(self) -> None:
         assembly = exact_assembly()
@@ -336,6 +361,7 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                 ("wrong-candidate", ("candidate", "commit"), "0" * 40),
                 ("wrong-server-tree", ("server_source", "tree"), "1" * 40),
                 ("runner-drift", ("runner", "commit"), "2" * 40),
+                ("retained-workspace", ("inputs", "workspace_id"), "candidate-topology-1714"),
                 ("mutable-reference", ("products", "hello", "reference"), "hello:latest"),
                 ("malformed-hash", ("products", "cpk_server", "dockerfile_sha256"), "ABC"),
                 ("wrong-classification", ("products", "cpk_server", "classification"), "published-digest"),
@@ -3261,6 +3287,40 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                 self.assertIsNone(residue_error.__context__)
             self.assertFalse(provider_container.removed)
             self.assertFalse(provider_network.removed)
+
+    def test_retained_workspace_network_is_foreign_and_preserved(self) -> None:
+        candidate = self._candidate_module()
+        client = RecordingDockerClient()
+        retained = RecordingDockerNetwork(
+            client=client,
+            name="cpk-net-candidate-topology-1714-docker-7e276f9acdbf",
+            labels={
+                "org.openj92.cpk.workspace": "candidate-topology-1714",
+                "org.openj92.cpk.kind": "runtime-network",
+            },
+        )
+        client.networks.values.append(retained)
+        before = deepcopy(retained.attrs)
+        effects = self._docker_effects(candidate, client)
+        observed = effects.preflight_inventory(exact_assembly())
+        cleanup = None
+        error = None
+        try:
+            cleanup = effects.cleanup(reason="success")
+        except candidate.CandidateTopologyError as caught:
+            error = caught
+        with self.subTest(boundary="retained-workspace-is-not-owned-residue"):
+            self.assertIsNone(error)
+        with self.subTest(boundary="retained-network-remains-byte-exact"):
+            self.assertFalse(retained.removed)
+            self.assertEqual(retained.attrs, before)
+            self.assertEqual(retained.connections, [])
+            self.assertEqual(client.ledger, [])
+            self.assertEqual(observed["collisions"], ())
+            self.assertIn(retained.name, observed["inventory"]["networks"])
+        if cleanup is not None:
+            with self.subTest(boundary="retained-network-is-visible-after-cleanup"):
+                self.assertEqual(cleanup["post_inventory"], observed["inventory"])
 
     def test_cleanup_filters_runtime_network_residue_by_exact_workspace(self) -> None:
         candidate = self._candidate_module()

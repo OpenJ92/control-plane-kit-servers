@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 import sys
 import unittest
@@ -35,6 +36,20 @@ def load_product_image_script_module():
 
 
 class CoordinateGenerationTests(unittest.TestCase):
+    def test_candidate_total_bridge_uses_accepted_baseline_dependencies(self) -> None:
+        coordinates = json.loads(
+            (ROOT / "coordinates/server-products.json").read_text(encoding="utf-8")
+        )
+        expected = {
+            "control_plane_kit_commit": "aeffde68381edb6246a930f2ac8578ea02e34471",
+            "control_plane_kit_interpreters_commit": "662edd8d0ad3d489c12e958fe161e2e09f56a337",
+            "control_plane_kit_secrets_commit": "96e86dc3248d578780d64d5d7fc5d6359631d1d6",
+        }
+        self.assertEqual(set(coordinates["upstreams"]), set(expected))
+        for key, commit in expected.items():
+            with self.subTest(upstream=key):
+                self.assertEqual(coordinates["upstreams"][key], commit)
+
     def test_coordinate_manifest_is_the_source_for_generated_files(self) -> None:
         module = load_script_module()
         coordinates = module.load_coordinates(module.COORDINATES)

@@ -14,17 +14,17 @@ from typing import Any
 
 SERVER_BASELINE_COMMIT = "43e9f359ca828c83fe4994ed1b62e1be54277ddd"
 SERVER_BASELINE_TREE = "ec259176eba3ce2f777d38c68fcc14e0a0e80cd3"
-CANDIDATE_COMMIT = "4fb75b7b6c1a16ec3b8c1d78dec6ad1a4ad1b40a"
-CANDIDATE_TREE = "6a405e4ab7e707ff7374205ca2ef4726d6225b86"
+CANDIDATE_COMMIT = "2ae7f6fe1d34cad943e2e16a2cf93903d840ddc1"
+CANDIDATE_TREE = "c950b2f1769298949fa0d9e584be7d6d4008d500"
 SNAPSHOT_MANIFEST_SHA256 = (
     "2cf09911ac9dcaa4e8ae86f8eefa60f191955d0e1f1f115f763aba78a831a48c"
 )
-INTERPRETERS_COMMIT = "4c1a265075f2fa30e0290e7ea0e1996d32b70319"
-INTERPRETERS_TREE = "8cd60f5f640df38488efcd6c555675f292f37324"
+INTERPRETERS_COMMIT = "662edd8d0ad3d489c12e958fe161e2e09f56a337"
+INTERPRETERS_TREE = "2651ecee7766e90eb3f55421a73af8eeceed3601"
 SECRETS_COMMIT = "96e86dc3248d578780d64d5d7fc5d6359631d1d6"
 SECRETS_TREE = "b1740225a93410349a9e9199c539e330b408abae"
 PRODUCTION_DOCKERFILE_SHA256 = (
-    "7a95cf122c7bb7c5bd911c5bbe95c3c5da81f757aa8fb7d0fa014eb36a51d5eb"
+    "f6d84ddbdf21eb6fbf745b8d3ee601427cfcb1bc23d03adcb9519275fc5c3c40"
 )
 POSTGRES_IMAGE = (
     "docker.io/library/postgres@sha256:"
@@ -119,8 +119,8 @@ INSTALLED_MODULE_PATHS = (
     "control_plane_kit_operations/__init__.py",
     "/usr/local/lib/python3.12/site-packages/rfc8785/__init__.py",
 )
-WORKSPACE_ID = "candidate-topology-1714"
-FOREIGN_RESOURCE_CANARY = "foreign-resource-1714"
+WORKSPACE_ID = "candidate-topology-1695-20260826a"
+FOREIGN_RESOURCE_CANARY = "foreign-resource-1695-20260826a"
 FOREIGN_INVENTORY = {
     "containers": ("foreign-container-1714",),
     "networks": ("foreign-network-1714",),
@@ -1124,7 +1124,7 @@ class RecordingDockerClient:
         )
         network = RecordingDockerNetwork(
             client=self,
-            name="cpk-runtime-candidate-topology-1714",
+            name=f"cpk-runtime-{WORKSPACE_ID}",
             labels={
                 "org.openj92.cpk.workspace": WORKSPACE_ID,
                 "org.openj92.cpk.kind": "runtime-network",
@@ -1133,7 +1133,7 @@ class RecordingDockerClient:
         container = RecordingDockerContainer(
             client=self,
             image_reference=HELLO_IMAGE,
-            name="cpk-runtime-candidate-topology-1714-hello",
+            name=f"cpk-runtime-{WORKSPACE_ID}-hello",
             identifier="sha256:" + "6" * 64,
             labels={
                 "org.openj92.cpk.workspace": WORKSPACE_ID,

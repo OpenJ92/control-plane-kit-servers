@@ -26,8 +26,8 @@ COORDINATES = json.loads(
     (ROOT / "coordinates" / "server-products.json").read_text(encoding="utf-8")
 )
 CPK_PIN = COORDINATES["upstreams"]["control_plane_kit_commit"]
-CANDIDATE_CPK_COMMIT = "4fb75b7b6c1a16ec3b8c1d78dec6ad1a4ad1b40a"
-CANDIDATE_CPK_TREE = "6a405e4ab7e707ff7374205ca2ef4726d6225b86"
+CANDIDATE_CPK_COMMIT = "2ae7f6fe1d34cad943e2e16a2cf93903d840ddc1"
+CANDIDATE_CPK_TREE = "c950b2f1769298949fa0d9e584be7d6d4008d500"
 INTERPRETERS_PIN = COORDINATES["upstreams"][
     "control_plane_kit_interpreters_commit"
 ]
@@ -71,7 +71,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
     def test_candidate_overlay_installs_exact_wheels_without_mutating_production_recipe(
         self,
     ) -> None:
-        candidate_cpk_commit = "4fb75b7b6c1a16ec3b8c1d78dec6ad1a4ad1b40a"
+        candidate_cpk_commit = "2ae7f6fe1d34cad943e2e16a2cf93903d840ddc1"
         self.assertTrue(
             CANDIDATE_OVERLAY.is_file(),
             "candidate acceptance overlay is not implemented",
@@ -82,18 +82,30 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         pyproject = (ROOT / "pyproject.toml").read_bytes()
         coordinates = (ROOT / "coordinates" / "server-products.json").read_bytes()
 
-        self.assertEqual(
-            hashlib.sha256(production).hexdigest(),
-            "7a95cf122c7bb7c5bd911c5bbe95c3c5da81f757aa8fb7d0fa014eb36a51d5eb",
-        )
-        self.assertEqual(
-            hashlib.sha256(pyproject).hexdigest(),
-            "132c47e0648c7074b06231b1c0ae6f595969a4756383fba6c69eacef5ecc4b83",
-        )
-        self.assertEqual(
-            hashlib.sha256(coordinates).hexdigest(),
-            "2cf09911ac9dcaa4e8ae86f8eefa60f191955d0e1f1f115f763aba78a831a48c",
-        )
+        for name, content, expected in (
+            (
+                "production",
+                production,
+                "f6d84ddbdf21eb6fbf745b8d3ee601427cfcb1bc23d03adcb9519275fc5c3c40",
+            ),
+            (
+                "pyproject",
+                pyproject,
+                "3c41179f47125f3b53cf1bd5bb8f4e7c12815b78f14e7952d97084127fe50c63",
+            ),
+            (
+                "coordinates",
+                coordinates,
+                "f7eeba2b64cd11a700697abec3d167627037f771b9246dbd9f6b6c016171084c",
+            ),
+        ):
+            with self.subTest(baseline_coordinate=name):
+                self.assertEqual(hashlib.sha256(content).hexdigest(), expected)
+        with self.subTest(candidate_overlay_offline_closure="unchanged-by-bridge"):
+            self.assertEqual(
+                hashlib.sha256(CANDIDATE_OVERLAY.read_bytes()).hexdigest(),
+                "87a1009c3d81c4fd9b861534f560712d15960faa3ceb715ef4e4353a38d98fdf",
+            )
         overlay_lines = tuple(line.strip() for line in overlay.splitlines())
         self.assertEqual(overlay_lines.count("ARG CPK_SERVER_BASE_IMAGE"), 1)
         self.assertFalse(
