@@ -94,8 +94,12 @@ from candidate_topology_fixture import (
     changed,
     exact_assembly,
     exact_inspection,
+    exact_run_event_page,
+    exact_session_page,
     package_staging_assembly,
     package_staging_inspection,
+    single_hello_activity_ids,
+    single_hello_graphs,
 )
 
 
@@ -474,6 +478,7 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                 inspection=exact_inspection(),
                 workflow=RecordingHostedWorkflow(ledger=ledger),
                 effects=RecordingCandidateEffects(ledger=ledger),
+                **single_hello_graphs(),
             )
 
         self.assertEqual(report["schema"], "cpk.candidate-topology-report.v1")
@@ -1900,6 +1905,7 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                 inspection=exact_inspection(),
                 workflow=RecordingHostedWorkflow(ledger=ledger),
                 effects=RecordingCandidateEffects(ledger=ledger),
+                **single_hello_graphs(),
             )
 
         rows = report["evidence"]
@@ -1935,9 +1941,11 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
         self.assertEqual(report["workflow"]["predecessor_http"], report["workflow"]["predecessor_mcp"])
         self.assertEqual(report["workflow"]["predecessor_http"]["graph_id"], "graph-predecessor")
         self.assertEqual(
-            report["workflow"]["predecessor_http"]["activity"],
-            ("hello-effect-attempt-complete",),
+            report["workflow"]["predecessor_http"]["version"],
+            1,
         )
+        self.assertEqual([value for name, value in ledger if name == "execute"],
+                         [("hello", False), ("empty", False)])
 
     def test_explicit_advance_precedes_successor_http_and_mcp_readback(self) -> None:
         report, _, _, ledger = self._run_candidate()
@@ -1991,12 +1999,11 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
             report["workflow"]["history_mcp"],
         )
         self.assertEqual(
-            report["workflow"]["history_http"]["events"],
-            (
-                "hello-effect-attempt-complete",
-                "empty-effect-attempt-complete",
-            ),
+            report["workflow"]["history_http"],
+            exact_session_page(),
         )
+        self.assertEqual(workflow.activity,
+                         ("hello-effect-attempt-complete", "empty-effect-attempt-complete"))
         self.assertEqual(workflow.current_graph_id, "graph-empty")
         empty_execute = ledger.index(("execute", ("empty", False)))
         predecessor_http = ledger.index(("empty-predecessor-http", "graph-hello"))
@@ -2054,7 +2061,9 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
             ),
             ("cleanup", "success"),
         )
-        self.assertEqual(tuple(ledger[ledger.index(("plan", "hello")) :]), complete)
+        prior_order = tuple(item for item in ledger[ledger.index(("plan", "hello")) :]
+                            if not item[0].startswith("run-events-"))
+        self.assertEqual(prior_order, complete)
         probe = ledger.index(("probe", (True, True)))
         remove_probe = ledger.index(("remove-probe", None))
         empty_start = ledger.index(("plan", "empty"))
@@ -3445,6 +3454,336 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                 )
             )
 
+    def test_single_hello_run_history_is_complete_before_cleanup(self) -> None:
+        from control_plane_kit_core.topology import GraphDescriptorCodec
+
+        report, _, _, ledger = self._run_candidate()
+        workflow = report["workflow"]
+        self.assertIn("run_history", workflow, "public-run-history-required")
+        history = workflow["run_history"]
+        self.assertEqual(set(history), {"hello", "empty"})
+        expected_reads = []
+        for title, event_count in (("hello", 10), ("empty", 12)):
+            row = history[title]
+            self.assertEqual(set(row), {"plan_id", "run_id", "http", "mcp"})
+            self.assertEqual(row["plan_id"], f"plan-{title}")
+            self.assertEqual(row["run_id"], f"run-{title}")
+            self.assertEqual(row["http"], exact_run_event_page(title))
+            self.assertEqual(row["http"], row["mcp"])
+            events = row["http"]["items"]
+            self.assertEqual(len(events), event_count)
+            self.assertEqual(
+                tuple(event["activity_id"] for event in events
+                      if event["event_type"] == "step_started"),
+                single_hello_activity_ids(title),
+            )
+            for event in events:
+                if event["activity_id"] is not None:
+                    self.assertEqual(set(event["payload"]), {"effect_attempt"})
+                    self.assertEqual(event["payload"]["effect_attempt"]["attempt"], 1)
+            expected_reads.extend((f"run-events-{protocol}", (f"run-{title}", 100))
+                                  for protocol in ("http", "mcp"))
+        self.assertEqual([item for item in ledger if item[0].startswith("run-events-")],
+                         expected_reads)
+        history_end = max(index for index, (name, _) in enumerate(ledger)
+                          if name in {"history-http", "history-mcp"})
+        self.assertLess(history_end, ledger.index(expected_reads[0]))
+        self.assertLess(ledger.index(expected_reads[-1]), ledger.index(("cleanup", "success")))
+        self.assertEqual([row for row in ledger if row[0] == "cleanup"], [("cleanup", "success")])
+        self.assertEqual(tuple(workflow[key]["version"] for key in
+                               ("predecessor_http", "successor_http", "empty_http")), (1, 2, 3))
+        self.assertEqual(report["schema"], "cpk.candidate-topology-report.v1")
+        self.assertEqual(report["report_sha256"], canonical_report_sha256(report))
+        altered = deepcopy(report)
+        altered["workflow"]["run_history"]["hello"]["http"]["items"][0]["event_id"] += "-changed"
+        self.assertNotEqual(canonical_report_sha256(altered), report["report_sha256"])
+        graphs = single_hello_graphs()
+        for name, graph in (("predecessor", graphs["empty_graph"]),
+                            ("successor", graphs["hello_graph"]),
+                            ("empty_predecessor", graphs["hello_graph"]),
+                            ("empty", graphs["empty_graph"])):
+            for protocol in ("http", "mcp"):
+                pointer = workflow[f"{name}_{protocol}"]
+                self.assertEqual(pointer["graph_descriptor"], GraphDescriptorCodec().encode(graph))
+                self.assertNotIn("operator_graph", pointer)
+        original_readback = RecordingHostedWorkflow._graph_readback
+        operator_graph = {"name": WORKSPACE_ID, "runtimes": [], "nodes": [], "edges": []}
+        for optional in ("absent", "operator"):
+            with self.subTest(optional=optional):
+                def optional_readback(recorder):
+                    pointer = original_readback(recorder)
+                    if optional == "absent":
+                        pointer.pop("graph_descriptor")
+                    elif recorder.current_graph_id == "graph-empty":
+                        pointer["operator_graph"] = deepcopy(operator_graph)
+                    return pointer
+
+                with patch.object(RecordingHostedWorkflow, "_graph_readback", new=optional_readback):
+                    optional_report, _, _, _ = self._run_candidate()
+                self.assertEqual(optional_report["workflow"]["run_history"], history)
+                for protocol in ("http", "mcp"):
+                    pointer = optional_report["workflow"][f"empty_{protocol}"]
+                    if optional == "absent":
+                        self.assertNotIn("graph_descriptor", pointer)
+                        self.assertNotIn("operator_graph", pointer)
+                    else:
+                        self.assertEqual(pointer["operator_graph"], operator_graph)
+                        self.assertEqual(pointer["graph_descriptor"], GraphDescriptorCodec().encode(graphs["empty_graph"]))
+                self.assertEqual(optional_report["report_sha256"], canonical_report_sha256(optional_report))
+
+    def test_single_hello_run_history_rejects_incomplete_or_invalid_events(self) -> None:
+        for title in ("hello", "empty"):
+            page = exact_run_event_page(title)
+            rows = page["items"]
+            wrong_activity = rows[2]["activity_id"].rsplit(":", 1)[0] + ":" + "0" * 16
+            self.assertNotEqual(wrong_activity, rows[2]["activity_id"])
+            cases = {
+                "missing-page": None,
+                "non-page": [],
+                "wrong-workspace": changed(page, ("workspace_id",), "foreign-workspace"),
+                "wrong-kind": changed(page, ("kind",), "activity-sessions"),
+                "wrong-limit": changed(page, ("limit",), 101),
+                "truncated-page": changed(page, ("next_cursor",), "cursor-1"),
+                "missing-event": changed(page, ("items",), rows[:-1]),
+                "extra-event": changed(page, ("items",), [*rows, rows[-1]]),
+                "duplicate-id": changed(page, ("items", 1, "event_id"), rows[0]["event_id"]),
+                "wrong-ordinal": changed(page, ("items", 2, "ordinal"), 4),
+                "bool-ordinal": changed(page, ("items", 0, "ordinal"), True),
+                "reordered-pair": changed(page, ("items",), [*rows[:2], rows[3], rows[2], *rows[4:]]),
+                "foreign-run": changed(page, ("items", 2, "run_id"), "run-foreign"),
+                "same-prefix-wrong-id": changed(page, ("items", 2, "activity_id"), wrong_activity),
+                "foreign-success-id": changed(page, ("items", 3, "activity_id"), wrong_activity),
+                "missing-attempt": changed(page, ("items", 2, "payload"), {}),
+                "wrong-attempt": changed(page, ("items", 2, "payload", "effect_attempt", "attempt"), 2),
+                "malformed-fingerprint": changed(page, ("items", 3, "payload", "effect_attempt", "state_fingerprint"), "x" * 64),
+                "failed": changed(page, ("items", 3, "event_type"), "step_failed"),
+                "uncertain": changed(page, ("items", 3, "event_type"), "step_uncertain"),
+                "unsupported": changed(page, ("items", 3, "event_type"), "step_unsupported"),
+                "failure-on-success": changed(page, ("items", 3, "failure"), {"code": "failed"}),
+                "wrong-run-open": changed(page, ("items", 0, "payload", "attempt"), 2),
+                "wrong-run-success": changed(page, ("items", len(rows) - 2, "payload", "result"), "partial"),
+            }
+            for boundary, value in cases.items():
+                with self.subTest(title=title, boundary=boundary):
+                    workflow = RecordingHostedWorkflow(run_event_overrides={
+                        (title, protocol): value for protocol in ("http", "mcp")
+                    })
+                    self._assert_run_history_rejected(workflow)
+
+    def test_single_hello_run_history_rejects_incongruent_advancement(self) -> None:
+        for title in ("hello", "empty"):
+            page = exact_run_event_page(title)
+            position = len(page["items"]) - 1
+            for field, value in (
+                ("workspace_id", "foreign-workspace"), ("plan_id", "plan-foreign"),
+                ("run_id", "run-foreign"), ("from_authored_graph_id", "graph-foreign"),
+                ("from_realized_projection_id", "projection-foreign"),
+                ("to_authored_graph_id", "graph-foreign"),
+                ("to_realized_projection_id", "projection-foreign"),
+                ("to_realized_projection_digest", "not-a-digest"),
+                ("desired_graph_revision", 9),
+            ):
+                with self.subTest(title=title, boundary=field):
+                    value_page = changed(page, ("items", position, "payload", field), value)
+                    self._assert_run_history_rejected(RecordingHostedWorkflow(run_event_overrides={
+                        (title, protocol): value_page for protocol in ("http", "mcp")
+                    }))
+            with self.subTest(title=title, boundary="http-mcp-complete-page-parity"):
+                value_page = changed(page, ("items", 0, "occurred_at"), "2026-08-26T00:00:01Z")
+                self._assert_run_history_rejected(RecordingHostedWorkflow(
+                    run_event_overrides={(title, "mcp"): value_page}))
+        for boundary, indices, field, value in (
+            ("predecessor-version", (0, 1), "version", 0),
+            ("hello-version", (2, 3), "version", 3),
+            ("empty-version", (6, 7), "version", 4),
+            ("pre-advance-changed", (4, 5), "graph_id", "graph-foreign"),
+            ("authored-alias", (2, 3), "authored_graph_id", "graph-foreign"),
+            ("graph-protocol-parity", (1,), "realized_projection_id", "projection-foreign"),
+        ):
+            with self.subTest(boundary=boundary):
+                workflow = RecordingHostedWorkflow()
+                readback = workflow._graph_readback
+                calls = []
+
+                def changed_readback():
+                    row = readback()
+                    index = len(calls)
+                    calls.append(index)
+                    if index in indices:
+                        row[field] = value
+                    return row
+
+                with patch.object(workflow, "_graph_readback", side_effect=changed_readback):
+                    self._assert_run_history_rejected(workflow)
+        with self.subTest(boundary="correlated-foreign-echo"):
+            page = exact_run_event_page("empty")
+            page["items"][-1]["payload"]["to_authored_graph_id"] = "graph-foreign"
+            page["items"][-1]["payload"]["to_realized_projection_id"] = "projection-foreign"
+            workflow = RecordingHostedWorkflow(run_event_overrides={
+                ("empty", protocol): page for protocol in ("http", "mcp")
+            })
+            original_readback = workflow._graph_readback
+
+            def foreign_echo_readback():
+                pointer = original_readback()
+                if workflow.current_graph_id == "graph-empty":
+                    pointer.update(graph_id="graph-foreign", authored_graph_id="graph-foreign",
+                                   realized_projection_id="projection-foreign")
+                return pointer
+
+            with patch.object(workflow, "_graph_readback", side_effect=foreign_echo_readback):
+                self._assert_run_history_rejected(workflow)
+            self.assertEqual(workflow.current_graph_id, "graph-empty")
+
+    def test_single_hello_run_history_rejects_protected_or_extra_fields(self) -> None:
+        page = exact_run_event_page("hello")
+        hostile = "Bearer credential-value https://private.example /run/private.sock"
+        cases = {
+            "page-extension": changed(page, ("scenario_payload",), {"value": hostile}),
+            "event-extension": changed(page, ("items", 0, "provider_message"), hostile),
+            "recovery-extension": changed(page, ("items", 0, "recovery"), {}),
+            "payload-extension": changed(page, ("items", 2, "payload", "environment"), {"TOKEN": hostile}),
+            "attempt-extension": changed(page, ("items", 2, "payload", "effect_attempt", "authority"), hostile),
+            "event-id-address": changed(page, ("items", 0, "event_id"), "https://private.example/event"),
+            "event-id-path": changed(page, ("items", 0, "event_id"), "/run/private.sock"),
+            "event-id-unbounded": changed(page, ("items", 0, "event_id"), "a" * 4097),
+            "timestamp-provider-text": changed(page, ("items", 0, "occurred_at"), hostile),
+            "advance-extension": changed(page, ("items", 9, "payload", "cleanup"), {"pruned": True}),
+        }
+        for boundary, value in cases.items():
+            with self.subTest(boundary=boundary):
+                workflow = RecordingHostedWorkflow(run_event_overrides={
+                    ("hello", protocol): value for protocol in ("http", "mcp")
+                })
+                self._assert_run_history_rejected(workflow)
+
+    def test_single_hello_run_history_read_failure_is_bounded_and_cleanup_preserved(self) -> None:
+        order = [(title, protocol) for title in ("hello", "empty") for protocol in ("http", "mcp")]
+        for index, (title, protocol) in enumerate(order):
+            with self.subTest(title=title, boundary=protocol):
+                original = RuntimeError("Bearer protected-credential https://private.example/provider-body")
+                workflow = RecordingHostedWorkflow(run_event_errors={(title, protocol): original})
+                self._assert_run_history_rejected(workflow)
+                self.assertEqual(
+                    [item for item in workflow.ledger if item[0].startswith("run-events-")],
+                    [(f"run-events-{method}", (f"run-{role}", 100)) for role, method in order[:index + 1]],
+                )
+
+    def test_single_hello_run_history_uses_returned_generated_coordinates(self) -> None:
+        graph_ids = {f"graph-{role}": f"graph-generated-{index}" for index, role in
+                     enumerate(("predecessor", "hello", "empty"), 31)}
+        projections = {f"projection-{role}": f"projection-generated-{index}" for index, role in
+                       enumerate(("predecessor", "hello", "empty"), 61)}
+        plans = {f"plan-{role}": f"plan-generated-{index}" for index, role in enumerate(("hello", "empty"), 81)}
+        runs = {f"run-{role}": f"run-generated-{index}" for index, role in enumerate(("hello", "empty"), 91)}
+
+        class GeneratedWorkflow(RecordingHostedWorkflow):
+            def set_desired_graph(self, **kwargs):
+                return graph_ids[super().set_desired_graph(**kwargs)]
+
+            def plan_transition(self, **kwargs):
+                return plans[super().plan_transition(**kwargs)]
+
+            def claim(self, **kwargs):
+                return runs[super().claim(**kwargs)]
+
+            def advance_current_graph(self, **kwargs):
+                inverse = {value: key for key, value in graph_ids.items()}
+                original = super().advance_current_graph(
+                    **{**kwargs, "desired_graph_id": inverse[kwargs["desired_graph_id"]]})
+                return graph_ids[original]
+
+            def _graph_readback(self):
+                row = super()._graph_readback()
+                for key in ("graph_id", "authored_graph_id"):
+                    row[key] = graph_ids[row[key]]
+                row["realized_projection_id"] = projections[row["realized_projection_id"]]
+                return row
+
+        workflow = GeneratedWorkflow()
+        for title in ("hello", "empty"):
+            page = exact_run_event_page(title)
+            for event in page["items"]:
+                event["run_id"] = runs[f"run-{title}"]
+                event["event_id"] = f"event-generated-{title}-{event['ordinal']}"
+            advance = page["items"][-1]["payload"]
+            for key in ("from_authored_graph_id", "to_authored_graph_id"):
+                advance[key] = graph_ids[advance[key]]
+            for key in ("from_realized_projection_id", "to_realized_projection_id"):
+                advance[key] = projections[advance[key]]
+            advance["plan_id"] = plans[advance["plan_id"]]
+            advance["run_id"] = runs[advance["run_id"]]
+            for protocol in ("http", "mcp"):
+                workflow.run_event_overrides[(runs[f"run-{title}"].removeprefix("run-"), protocol)] = page
+        candidate = self._candidate_module()
+        with self._admission_bridge(candidate):
+            report = candidate.run_candidate_topology(
+                exact_assembly(), inspection=exact_inspection(), workflow=workflow,
+                effects=RecordingCandidateEffects(), current_graph_id=graph_ids["graph-predecessor"],
+                **single_hello_graphs(),
+            )
+        self.assertIn("run_history", report["workflow"], "generated-run-history-required")
+        for title in ("hello", "empty"):
+            row = report["workflow"]["run_history"][title]
+            self.assertEqual(row["run_id"], runs[f"run-{title}"])
+            self.assertEqual(row["plan_id"], plans[f"plan-{title}"])
+            self.assertEqual(row["http"], row["mcp"])
+            self.assertEqual(row["http"]["items"][-1]["payload"]["to_authored_graph_id"], graph_ids[f"graph-{title}"])
+
+    def test_shared_public_transition_does_not_capture_run_history(self) -> None:
+        candidate = self._candidate_module()
+        workflow = RecordingHostedWorkflow()
+        result = candidate._public_transition(
+            workflow, title="hello", graph=single_hello_graphs()["hello_graph"],
+            current_graph_id="graph-predecessor", expected_desired_graph_id=None,
+        )
+        self.assertEqual(result["run_id"], "run-hello")
+        self.assertFalse(any(name.startswith("run-events-") for name, _ in workflow.ledger))
+
+    def test_primary_workflow_failure_does_not_capture_run_history(self) -> None:
+        candidate = self._candidate_module()
+        workflow = RecordingHostedWorkflow(fail_at="workflow")
+        effects = RecordingCandidateEffects(ledger=workflow.ledger)
+        original = RuntimeError("original-workflow-failure")
+        with patch.object(workflow, "start_session", side_effect=original):
+            with self._admission_bridge(candidate):
+                with self.assertRaises(RuntimeError) as caught:
+                    candidate.run_candidate_topology(
+                        exact_assembly(), inspection=exact_inspection(), workflow=workflow,
+                        effects=effects, **single_hello_graphs(),
+                    )
+        self.assertIs(caught.exception, original)
+        self.assertFalse(any(name.startswith("run-events-") for name, _ in workflow.ledger))
+        self.assertEqual([item for item in workflow.ledger if item[0] == "cleanup"], [("cleanup", "error")])
+        self.assertNotIn("workflow", original.candidate_terminal_report)
+
+    def _assert_run_history_rejected(self, workflow):
+        candidate = self._candidate_module()
+        effects = RecordingCandidateEffects(ledger=workflow.ledger)
+        error = None
+        with self._admission_bridge(candidate):
+            try:
+                candidate.run_candidate_topology(
+                    exact_assembly(), inspection=exact_inspection(), workflow=workflow,
+                    effects=effects, **single_hello_graphs(),
+                )
+            except BaseException as caught:
+                error = caught
+        self.assertIs(type(error), candidate.CandidateTopologyError, "invalid-public-run-history-must-fail")
+        self.assertEqual(str(error), WORKFLOW_ERROR)
+        self.assertIsNone(error.__cause__)
+        self.assertIsNone(error.__context__)
+        report = error.candidate_terminal_report
+        self.assertEqual(report["status"], "failed")
+        self.assertEqual(report["first_failed_stage"], "workflow")
+        self.assertNotIn("workflow", report)
+        self.assertEqual(report["report_sha256"], canonical_report_sha256(report))
+        self.assertEqual([item for item in workflow.ledger if item[0] == "cleanup"], [("cleanup", "error")])
+        self.assertEqual(report["cleanup"]["foreign_canary_after"], (FOREIGN_RESOURCE_CANARY,))
+        rendered = json.dumps(report)
+        for forbidden in ("Bearer", "credential-value", "protected-credential", "private.example", "private.sock", "provider-body"):
+            self.assertNotIn(forbidden, rendered)
+
     def _run_candidate(self):
         candidate = self._candidate_module()
         ledger = []
@@ -3456,6 +3795,7 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                 inspection=exact_inspection(),
                 workflow=workflow,
                 effects=effects,
+                **single_hello_graphs(),
             )
         return report, workflow, effects, ledger
 

@@ -340,9 +340,9 @@ def package_staging_inspection(
     }
 
 
-def changed(document: dict[str, Any], path: tuple[str, ...], value: Any) -> dict[str, Any]:
+def changed(document: dict[str, Any], path: tuple[str | int, ...], value: Any) -> dict[str, Any]:
     result = deepcopy(document)
-    owner: dict[str, Any] = result
+    owner: Any = result
     for part in path[:-1]:
         owner = owner[part]
     owner[path[-1]] = value
@@ -365,6 +365,104 @@ def canonical_report_sha256(document: dict[str, Any]) -> str:
     return canonical_sha256(projected)
 
 
+def single_hello_graphs() -> dict[str, Any]:
+    from control_plane_kit_core.algebra import DeploymentTopology, DockerRuntime
+    from control_plane_kit_core.products import (
+        ProductDescriptorCodec,
+        ProductInstanceConfiguration,
+        instantiate_product,
+    )
+    from control_plane_kit_core.topology import DeploymentGraph, compile_topology
+
+    root = Path(__file__).resolve().parents[1]
+    document = ProductDescriptorCodec().decode_document(
+        (root / "products/hello_server/product.cpk.json").read_bytes()
+    )
+    product = document.product
+    node = instantiate_product(
+        product, "hello", ProductInstanceConfiguration.from_contract(product.runtime_contract)
+    )
+    hello = compile_topology(
+        DeploymentTopology(
+            WORKSPACE_ID,
+            DockerRuntime(
+                runtime_id="docker",
+                network_name=f"control-plane-kit-{WORKSPACE_ID}-docker",
+                children=(node,),
+            ),
+        )
+    )
+    return {"hello_graph": hello, "empty_graph": DeploymentGraph(WORKSPACE_ID)}
+
+
+def single_hello_activity_ids(title: str) -> tuple[str, ...]:
+    from control_plane_kit_core.planning import compile_activity_plan
+    from control_plane_kit_core.topology import diff_graphs, validate_graph
+
+    graphs = single_hello_graphs()
+    before, after = graphs["empty_graph"], graphs["hello_graph"]
+    operations = ("StartRuntime", "StartNode", "WaitForHealthy")
+    if title == "empty":
+        before, after = after, before
+        operations = ("StopNode", "RemoveNodeResource", "StopRuntime", "RemoveRuntimeResource")
+    else:
+        assert title == "hello"
+    plan = compile_activity_plan(diff_graphs(validate_graph(before), validate_graph(after)))
+    assert tuple(type(item.operation).__name__ for item in plan.activities) == operations
+    return tuple(item.activity_id.value for item in plan.activities)
+
+
+def exact_run_event_page(title: str) -> dict[str, Any]:
+    activity_ids = single_hello_activity_ids(title)
+    rows: list[dict[str, Any]] = []
+
+    def event(kind: str, payload: dict[str, Any], activity_id: str | None = None) -> None:
+        ordinal = len(rows) + 1
+        rows.append({
+            "event_id": f"event-{title}-{ordinal}",
+            "run_id": f"run-{title}",
+            "ordinal": ordinal,
+            "event_type": kind,
+            "occurred_at": "2026-08-26T00:00:00Z",
+            "activity_id": activity_id,
+            "payload": payload,
+            "failure": None,
+        })
+
+    event("run_opened", {"attempt": 1})
+    event("run_started", {})
+    for activity_id in activity_ids:
+        for kind in ("step_started", "step_succeeded"):
+            fingerprint = hashlib.sha256(f"{title}:{activity_id}:{kind}".encode()).hexdigest()
+            event(kind, {"effect_attempt": {"attempt": 1, "state_fingerprint": fingerprint}}, activity_id)
+    event("run_succeeded", {"result": "all-activities-succeeded"})
+    before = "predecessor" if title == "hello" else "hello"
+    event("current_graph_advanced", {
+        "workspace_id": WORKSPACE_ID,
+        "plan_id": f"plan-{title}",
+        "run_id": f"run-{title}",
+        "from_authored_graph_id": f"graph-{before}",
+        "from_realized_projection_id": f"projection-{before}",
+        "to_authored_graph_id": f"graph-{title}",
+        "to_realized_projection_id": f"projection-{title}",
+        "to_realized_projection_digest": "c" * 64,
+        "desired_graph_revision": 1 if title == "hello" else 2,
+    })
+    return {"workspace_id": WORKSPACE_ID, "kind": "run-events", "limit": 100,
+            "items": rows, "next_cursor": None}
+
+
+def exact_session_page() -> dict[str, Any]:
+    return {
+        "workspace_id": WORKSPACE_ID, "kind": "activity-sessions", "limit": 50,
+        "items": [{"session_id": f"session-{title}", "workspace_id": WORKSPACE_ID,
+                   "actor_id": "operator-a", "title": title, "status": "open",
+                   "created_at": "2026-08-26T00:00:00Z", "closed_at": None,
+                   "metadata": {}} for title in ("hello", "empty")],
+        "next_cursor": None,
+    }
+
+
 @dataclass
 class RecordingHostedWorkflow:
     ledger: list[tuple[str, Any]] = field(default_factory=list)
@@ -375,6 +473,8 @@ class RecordingHostedWorkflow:
     graphs: dict[str, Any] = field(default_factory=dict)
     desired_predecessors: dict[str, str | None] = field(default_factory=dict)
     fail_at: str | None = None
+    run_event_overrides: dict[tuple[str, str], Any] = field(default_factory=dict)
+    run_event_errors: dict[tuple[str, str], BaseException] = field(default_factory=dict)
 
     def create_workspace(self, *, name: str, actor_id: str = "operator-a") -> str:
         self.ledger.append(("create-workspace", self.workspace_id))
@@ -456,11 +556,24 @@ class RecordingHostedWorkflow:
 
     def read_current_graph_http(self) -> dict[str, Any]:
         self.ledger.append((f"{self._graph_phase()}-http", self.current_graph_id))
-        return {"graph_id": self.current_graph_id, "activity": self.activity}
+        return self._graph_readback()
 
     def read_current_graph_mcp(self) -> dict[str, Any]:
         self.ledger.append((f"{self._graph_phase()}-mcp", self.current_graph_id))
-        return {"graph_id": self.current_graph_id, "activity": self.activity}
+        return self._graph_readback()
+
+    def _graph_readback(self) -> dict[str, Any]:
+        from control_plane_kit_core.topology import GraphDescriptorCodec
+
+        role = self.current_graph_id.removeprefix("graph-")
+        graphs = single_hello_graphs()
+        graph = graphs["hello_graph"] if role == "hello" else graphs["empty_graph"]
+        return {"pointer": "current", "assigned": True,
+                "graph_id": self.current_graph_id, "authored_graph_id": self.current_graph_id,
+                "realized_projection_id": f"projection-{role}",
+                "version": {"predecessor": 1, "hello": 2, "empty": 3}[role],
+                "graph_name": WORKSPACE_ID,
+                "graph_descriptor": GraphDescriptorCodec().encode(graph)}
 
     def advance_current_graph(self, **kwargs: Any) -> str:
         self.current_graph_id = kwargs["desired_graph_id"]
@@ -469,11 +582,26 @@ class RecordingHostedWorkflow:
 
     def read_activity_http(self) -> dict[str, Any]:
         self.ledger.append(("history-http", self.activity))
-        return {"events": self.activity}
+        return exact_session_page()
 
     def read_activity_mcp(self) -> dict[str, Any]:
         self.ledger.append(("history-mcp", self.activity))
-        return {"events": self.activity}
+        return exact_session_page()
+
+    def read_run_events_http(self, run_id: str, *, limit: int = 100) -> dict[str, Any]:
+        return self._run_events("http", run_id, limit)
+
+    def read_run_events_mcp(self, run_id: str, *, limit: int = 100) -> dict[str, Any]:
+        return self._run_events("mcp", run_id, limit)
+
+    def _run_events(self, protocol: str, run_id: str, limit: int) -> dict[str, Any]:
+        self.ledger.append((f"run-events-{protocol}", (run_id, limit)))
+        key = (run_id.removeprefix("run-"), protocol)
+        if key in self.run_event_errors:
+            raise self.run_event_errors[key]
+        if key in self.run_event_overrides:
+            return deepcopy(self.run_event_overrides[key])
+        return exact_run_event_page(key[0])
 
     def _graph_phase(self) -> str:
         if self.active_transition == "empty" and self.current_graph_id == "graph-hello":

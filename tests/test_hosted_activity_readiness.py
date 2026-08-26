@@ -512,7 +512,8 @@ class HostedActivityReadinessTests(unittest.TestCase):
             worker_id="worker-a",
             server_container="candidate-server",
         )
-        expected = {"events": [{"event_id": "event-a"}]}
+        expected = {"workspace_id": "candidate-topology-1714", "kind": "activity-sessions",
+                    "limit": 50, "items": [], "next_cursor": None}
         self.assertTrue(
             hasattr(workflow, "read_activity_http")
             and hasattr(workflow, "read_activity_mcp"),
@@ -546,6 +547,54 @@ class HostedActivityReadinessTests(unittest.TestCase):
             "read.activity",
             {"workspace_id": "candidate-topology-1714", "limit": 50},
         )
+
+    def test_candidate_run_events_use_distinct_bounded_public_transports(self) -> None:
+        workflow = cpk_server_hosted_activity.HostedWorkflow(
+            "http://cpk-server", workspace_id="workspace-evidence-a",
+            worker_id="worker-a", server_container="candidate-server",
+        )
+        self.assertTrue(callable(getattr(workflow, "read_run_events_http", None)),
+                        "candidate HTTP run-event read is missing")
+        self.assertTrue(callable(getattr(workflow, "read_run_events_mcp", None)),
+                        "candidate MCP run-event read is missing")
+        expected = {"workspace_id": "workspace-evidence-a", "kind": "run-events",
+                    "limit": 100, "items": [], "next_cursor": None}
+        with (
+            patch.object(cpk_server_hosted_activity, "_http", return_value=expected) as http,
+            patch.object(cpk_server_hosted_activity, "_mcp_read", return_value=expected) as mcp,
+        ):
+            self.assertIs(workflow.read_run_events_http("run-evidence-a"), expected)
+            self.assertIs(workflow.read_run_events_mcp("run-evidence-a"), expected)
+        http.assert_called_once_with(
+            "http://cpk-server", "GET",
+            "/workspaces/workspace-evidence-a/runs/run-evidence-a/events?limit=100",
+        )
+        mcp.assert_called_once_with(
+            "http://cpk-server", "read.run-events",
+            {"workspace_id": "workspace-evidence-a", "run_id": "run-evidence-a", "limit": 100},
+        )
+
+    def test_candidate_run_event_transport_preserves_existing_error_identity(self) -> None:
+        workflow = cpk_server_hosted_activity.HostedWorkflow(
+            "http://cpk-server", workspace_id="workspace-evidence-a",
+            worker_id="worker-a", server_container="candidate-server",
+        )
+        self.assertTrue(callable(getattr(workflow, "read_run_events_http", None)),
+                        "candidate run-event transport is missing")
+        self.assertTrue(callable(getattr(workflow, "read_run_events_mcp", None)))
+        for protocol, owner in (("http", "_http"), ("mcp", "_mcp_read")):
+            original = RuntimeError("protected-read-transport-failure")
+            with self.subTest(protocol=protocol), patch.object(
+                cpk_server_hosted_activity, owner, side_effect=original
+            ) as transport:
+                caught = None
+                try:
+                    getattr(workflow, f"read_run_events_{protocol}")("run-evidence-a", limit=100)
+                except BaseException as error:
+                    caught = error
+                self.assertIs(caught, original)
+                self.assertEqual(transport.call_count, 1)
+                self.assertNotIn("authorization", transport.call_args.kwargs)
 
     def test_policy_cadence_occurs_only_between_failed_attempts(self) -> None:
         policy = VerificationPolicy(
