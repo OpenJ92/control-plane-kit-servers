@@ -347,7 +347,7 @@ class CpkServerProcessCompositionTests(unittest.TestCase):
         with self.assertRaises(ModuleNotFoundError):
             importlib.import_module("control_plane_kit_servers_hello")
 
-    def test_server_composes_attempt_services_with_one_adapter_and_shared_fold(self) -> None:
+    def test_server_composes_distinct_executor_and_observer_with_shared_fold(self) -> None:
         tree = ast.parse(SERVER_SOURCE.read_text(encoding="utf-8"))
         function = next(
             node
@@ -386,6 +386,42 @@ class CpkServerProcessCompositionTests(unittest.TestCase):
             for name, call in assignments.items()
             if _call_name(call.func) == "_activity_adapter"
         )
+        observer_assignments = [
+            (name, call)
+            for name, call in assignments.items()
+            if _call_name(call.func) == "_runtime_observer"
+        ]
+        self.assertEqual(
+            len(observer_assignments),
+            1,
+            "cpk-server must compose one observer separately from execution",
+        )
+        if len(observer_assignments) != 1:
+            return
+        observer_name, observer_call = observer_assignments[0]
+        self.assertNotEqual(adapter_name, observer_name)
+        adapter_call = assignments[adapter_name]
+        self.assertGreaterEqual(len(adapter_call.args), 4)
+        self.assertEqual(len(observer_call.args), 1)
+        if len(adapter_call.args) < 4 or len(observer_call.args) != 1:
+            return
+        self.assertEqual(_name(adapter_call.args[0]), "config")
+        self.assertEqual(_name(observer_call.args[0]), _name(adapter_call.args[0]))
+        adapter_provider = _name(adapter_call.args[3])
+        observer_keywords = {
+            item.arg: item.value for item in observer_call.keywords
+        }
+        self.assertEqual(set(observer_keywords), {"secret_provider"})
+        self.assertEqual(
+            _name(observer_keywords["secret_provider"]),
+            adapter_provider,
+        )
+        provider_assignments = [
+            name
+            for name, call in assignments.items()
+            if _call_name(call.func) == "_secret_provider_composition"
+        ]
+        self.assertEqual(provider_assignments, [adapter_provider])
         fold_name = next(
             name
             for name, call in constructors.items()
@@ -403,7 +439,7 @@ class CpkServerProcessCompositionTests(unittest.TestCase):
         )
         self.assertEqual(
             [_name(argument) for argument in reconciliation.args[1:]],
-            [adapter_name, fold_name],
+            [observer_name, fold_name],
         )
 
         coordinator = next(
@@ -414,6 +450,7 @@ class CpkServerProcessCompositionTests(unittest.TestCase):
         )
         keywords = {item.arg: item.value for item in coordinator.keywords}
         self.assertEqual(_name(keywords["adapter"]), adapter_name)
+        self.assertNotIn("observer", keywords)
         self.assertEqual(_name(keywords["start_service"]), start_name)
         self.assertEqual(_name(keywords["fold_service"]), fold_name)
         self.assertEqual(
