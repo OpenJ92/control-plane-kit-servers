@@ -1,9 +1,18 @@
 import ast
+import asyncio
 import importlib
+import json
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
+from control_plane_kit_core.identity import (
+    AuthenticatedPrincipal,
+    PrincipalIdentity,
+    PrincipalKind,
+)
 from control_plane_kit_core.operations import (
     ControlPlaneServiceRole,
     CpkServerEntrypointHandoffContract,
@@ -15,6 +24,46 @@ from control_plane_kit_core.operations import (
 ROOT = Path(__file__).resolve().parents[3]
 PRODUCT_SRC = ROOT / "products" / "cpk_server" / "src"
 SERVER_SOURCE = PRODUCT_SRC / "control_plane_kit_servers_cpk_server" / "server.py"
+
+
+class ProcessCredentialVerifier:
+    def __init__(self) -> None:
+        self.credentials = []
+
+    def authenticate(self, credential: bytes) -> AuthenticatedPrincipal:
+        self.credentials.append(credential)
+        if credential != b"valid-token":
+            raise ValueError("credential rejected")
+        return AuthenticatedPrincipal(
+            PrincipalIdentity(
+                issuer="https://identity.openj92.dev",
+                subject_id="operator-jacob",
+                kind=PrincipalKind.OPERATOR,
+            )
+        )
+
+
+class ProcessRecordingService:
+    def __init__(self) -> None:
+        self.requests = []
+
+    def handle(self, request):
+        self.requests.append(request)
+        values = {**request.path_parameters, **request.payload}
+        limit = values.get("limit", 50)
+        return {
+            "schema": "cpk.test.run-events-page",
+            "workspace_id": values["workspace_id"],
+            "run_id": values["run_id"],
+            "limit": limit,
+            "items": [
+                {
+                    "event_id": f"event-{limit}",
+                    "ordinal": 1,
+                }
+            ],
+            "next_cursor": None,
+        }
 
 
 class CpkServerProcessCompositionTests(unittest.TestCase):
@@ -81,6 +130,127 @@ class CpkServerProcessCompositionTests(unittest.TestCase):
             "planning-service",
         )
         self.assertEqual(composition.command_identity_policy, "single-application-boundary")
+
+    def test_fastapi_run_event_limit_is_typed_and_matches_mcp_readback(self) -> None:
+        app, reads, verifier = self._process_app()
+
+        http_status, http_body = _asgi_json(
+            app,
+            method="GET",
+            path="/workspaces/workspace-a/runs/run-a/events",
+            query=b"limit=100",
+            headers=((b"authorization", b"Bearer valid-token"),),
+        )
+        mcp_status, mcp_body = _asgi_json(
+            app,
+            method="POST",
+            path="/mcp",
+            headers=(
+                (b"accept", b"application/json, text/event-stream"),
+                (b"authorization", b"Bearer valid-token"),
+                (b"content-type", b"application/json"),
+                (b"mcp-method", b"resources/read"),
+                (b"mcp-protocol-version", b"2025-06-18"),
+            ),
+            body=json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "events-a",
+                    "method": "resources/read",
+                    "params": {
+                        "name": "read.run-events",
+                        "arguments": {
+                            "workspace_id": "workspace-a",
+                            "run_id": "run-a",
+                            "limit": 100,
+                        },
+                    },
+                }
+            ).encode("utf-8"),
+        )
+
+        self.assertEqual((http_status, mcp_status), (200, 200))
+        self.assertEqual(http_body, mcp_body["result"])
+        self.assertEqual(
+            [request.payload for request in reads.requests],
+            [
+                {"limit": 100},
+                {
+                    "workspace_id": "workspace-a",
+                    "run_id": "run-a",
+                    "limit": 100,
+                },
+            ],
+        )
+        self.assertEqual(reads.requests[0].route_id, "read.run-events")
+        self.assertEqual(reads.requests[0].surface, "http")
+        self.assertEqual(
+            reads.requests[0].path_parameters,
+            {"workspace_id": "workspace-a", "run_id": "run-a"},
+        )
+        self.assertEqual(verifier.credentials, [b"valid-token", b"valid-token"])
+
+    def test_fastapi_run_event_query_defaults_and_rejects_invalid_before_dispatch(self) -> None:
+        app, reads, _ = self._process_app()
+        status, body = _asgi_json(
+            app,
+            method="GET",
+            path="/workspaces/workspace-a/runs/run-a/events",
+            headers=((b"authorization", b"Bearer valid-token"),),
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["limit"], 50)
+        self.assertEqual(reads.requests[0].payload, {})
+
+        cases = (
+            ("duplicate", b"limit=100&limit=1"),
+            ("malformed-text", b"limit=one"),
+            ("malformed-float", b"limit=1.0"),
+            ("below-range", b"limit=0"),
+            ("above-range", b"limit=101"),
+            ("unknown", b"unexpected=value"),
+        )
+        for title, query in cases:
+            with self.subTest(title=title):
+                app, reads, _ = self._process_app()
+                status, body = _asgi_json(
+                    app,
+                    method="GET",
+                    path="/workspaces/workspace-a/runs/run-a/events",
+                    query=query,
+                    headers=((b"authorization", b"Bearer valid-token"),),
+                )
+
+                self.assertEqual(status, 400)
+                self.assertEqual(
+                    body,
+                    {"error": {"message": "invalid query parameters", "status": 400}},
+                )
+                self.assertEqual(reads.requests, [])
+
+    def test_fastapi_query_rejection_preserves_auth_precedence_and_redaction(self) -> None:
+        app, reads, verifier = self._process_app()
+        protected = b"provider_message=registry.example.com%2Fprivate%2Fsecret"
+
+        status, body = _asgi_json(
+            app,
+            method="GET",
+            path="/workspaces/workspace-a/runs/run-a/events",
+            query=protected,
+            headers=((b"authorization", b"Bearer invalid-token"),),
+        )
+
+        self.assertEqual(status, 401)
+        self.assertEqual(
+            body,
+            {"error": {"message": "invalid credential", "status": 401}},
+        )
+        self.assertNotIn("registry.example.com", repr(body))
+        self.assertNotIn("private", repr(body))
+        self.assertNotIn("secret", repr(body))
+        self.assertEqual(reads.requests, [])
+        self.assertEqual(verifier.credentials, [b"invalid-token"])
 
     def test_execution_capable_composition_requires_auth_configuration(self) -> None:
         from control_plane_kit_servers_cpk_server import (
@@ -279,6 +449,36 @@ class CpkServerProcessCompositionTests(unittest.TestCase):
         )
         self.assertEqual(len(set(id_factories.values())), 4)
 
+    def _process_app(self):
+        import control_plane_kit_servers_cpk_server.server as server_module
+        from control_plane_kit_servers_cpk_server import CpkServerProcessConfiguration
+
+        reads = ProcessRecordingService()
+        services = {
+            role: (
+                reads
+                if role is ControlPlaneServiceRole.READS
+                else ProcessRecordingService()
+            )
+            for role in ControlPlaneServiceRole
+        }
+        config = SimpleNamespace(
+            process_configuration=lambda: CpkServerProcessConfiguration.execution_capable(
+                authentication_required=True
+            ),
+            runtime_dispatcher="none",
+            ingress_interpreters="none",
+            product_material_resolver="none",
+        )
+        verifier = ProcessCredentialVerifier()
+        with patch.object(
+            server_module,
+            "_operations_application",
+            return_value=SimpleNamespace(services=services),
+        ):
+            app = server_module.create_app(config, verifier)
+        return app, reads, verifier
+
 
 def _call_name(node: ast.expr) -> str:
     if isinstance(node, ast.Name):
@@ -290,6 +490,61 @@ def _call_name(node: ast.expr) -> str:
 
 def _name(node: ast.expr) -> str:
     return node.id if isinstance(node, ast.Name) else ""
+
+
+def _asgi_json(
+    app,
+    *,
+    method: str,
+    path: str,
+    headers: tuple[tuple[bytes, bytes], ...],
+    query: bytes = b"",
+    body: bytes = b"",
+) -> tuple[int, dict[str, object]]:
+    messages = []
+
+    async def invoke() -> None:
+        delivered = False
+
+        async def receive():
+            nonlocal delivered
+            if delivered:
+                return {"type": "http.disconnect"}
+            delivered = True
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        async def send(message):
+            messages.append(message)
+
+        await app(
+            {
+                "type": "http",
+                "asgi": {"spec_version": "2.3", "version": "3.0"},
+                "http_version": "1.1",
+                "method": method,
+                "scheme": "http",
+                "path": path,
+                "raw_path": path.encode("ascii"),
+                "query_string": query,
+                "root_path": "",
+                "headers": list(headers),
+                "client": ("127.0.0.1", 12345),
+                "server": ("cpk-server", 80),
+            },
+            receive,
+            send,
+        )
+
+    asyncio.run(invoke())
+    start = next(
+        message for message in messages if message["type"] == "http.response.start"
+    )
+    response_body = b"".join(
+        message.get("body", b"")
+        for message in messages
+        if message["type"] == "http.response.body"
+    )
+    return start["status"], json.loads(response_body.decode("utf-8"))
 
 
 if __name__ == "__main__":
