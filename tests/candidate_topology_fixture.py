@@ -463,6 +463,286 @@ def exact_session_page() -> dict[str, Any]:
     }
 
 
+RUN_HISTORY_REJECTION_FILENAME = "candidate-run-history-rejection.json"
+RUN_HISTORY_REJECTION_SCHEMA = "cpk.candidate-run-history-rejection.v1"
+RUN_HISTORY_PROTECTED = "Bearer private-history-token https://private.invalid /run/private.sock"
+RUN_HISTORY_REJECTION_REASONS = {
+    "input.workspace": ("identity-invalid",),
+    **{f"input.{name}": ("identity-invalid", "identity-reused") for name in (
+        "plan-id", "run-id", "desired-graph-id", "advanced-graph-id",
+    )},
+    "transition.advance": ("desired-advanced-mismatch",),
+    **{f"pointer.{name}": (
+        "pointer-shape", "http-mcp-mismatch", "not-current", "unassigned",
+        "expected-graph-invalid", "graph-mismatch", "authored-mismatch",
+        "projection-invalid", "version-mismatch", "name-invalid",
+        "descriptor-not-object", "operator-not-object", "json-invalid", "json-over-bound",
+    ) for name in ("predecessor", "successor")},
+    # Both pointers have already passed JSON validation before the lineage comparison.
+    "lineage": ("predecessor-discontinuity",),
+    "plan.before": (), "plan.after": (), "plan.diff": (), "plan.compile": (),
+    "plan.activities": (),
+    "plan.operations": ("operation-sequence",),
+    "events.http": (), "events.mcp": (),
+    "events.parity": ("http-mcp-mismatch", "json-invalid", "json-over-bound"),
+    "page": (
+        "page-shape", "workspace-mismatch", "kind-mismatch", "limit-mismatch",
+        "items-not-list", "cursor-present", "event-count",
+    ),
+    "event": (
+        "event-shape", "event-id-invalid", "event-id-duplicate", "run-mismatch",
+        "ordinal-mismatch", "kind-mismatch", "activity-mismatch", "failure-present",
+        "timestamp-shape", "timestamp-invalid", "timestamp-naive",
+    ),
+    "payload.run-opened": ("payload-shape", "attempt-mismatch"),
+    "payload.run-started": ("payload-shape",),
+    "payload.step": ("payload-shape", "attempt-shape", "attempt-mismatch", "fingerprint-invalid"),
+    "payload.run-succeeded": ("payload-shape", "result-mismatch"),
+    "payload.advance": (
+        "payload-shape", "workspace-mismatch", "plan-mismatch", "run-mismatch",
+        "from-authored-mismatch", "from-realized-mismatch", "to-authored-mismatch",
+        "to-realized-mismatch", "revision-mismatch", "revision-invalid", "digest-invalid",
+    ),
+    "history.copy": (), "unknown": (),
+}
+RUN_HISTORY_REJECTION_RELATION = frozenset(
+    [("rejected", location, reason)
+     for location, reasons in RUN_HISTORY_REJECTION_REASONS.items() for reason in reasons]
+    + [("unavailable", f"events.{protocol}", "read-unavailable") for protocol in ("http", "mcp")]
+    + [("unknown", location, "unknown") for location in RUN_HISTORY_REJECTION_REASONS]
+)
+
+
+def run_history_rejection_document(
+    *, location: str = "page", reason: str = "cursor-present", outcome: str = "rejected",
+    transition: str = "hello", event_ordinal: int | None = None,
+) -> dict[str, Any]:
+    document = {
+        "schema": RUN_HISTORY_REJECTION_SCHEMA, "classification": "supporting",
+        "phase": "run-history-capture", "outcome": outcome, "transition": transition,
+        "location": location, "reason": reason, "event_ordinal": event_ordinal,
+        "redaction_verified": True, "protected_material_retained": False,
+    }
+    document["diagnostic_sha256"] = canonical_sha256(document)
+    return document
+
+
+def run_history_capture_arguments() -> dict[str, Any]:
+    def pointer(role: str, version: int) -> dict[str, Any]:
+        return {
+            "pointer": "current", "assigned": True, "graph_id": f"graph-{role}",
+            "authored_graph_id": f"graph-{role}", "realized_projection_id": f"projection-{role}",
+            "version": version, "graph_name": WORKSPACE_ID,
+        }
+
+    arguments = {"workspace_id": WORKSPACE_ID, "current_graph_id": "graph-predecessor",
+                 **single_hello_graphs()}
+    for title, before, version in (("hello", "predecessor", 1), ("empty", "hello", 2)):
+        arguments[title] = {
+            "plan_id": f"plan-{title}", "run_id": f"run-{title}",
+            "desired_graph_id": f"graph-{title}", "advanced_graph_id": f"graph-{title}",
+            **{f"{side}_{protocol}": pointer(role, number)
+               for side, role, number in (("predecessor", before, version), ("successor", title, version + 1))
+               for protocol in ("http", "mcp")},
+        }
+    return arguments
+
+
+def run_history_rejection_cases() -> list[dict[str, Any]]:
+    cases = []
+
+    def add(name, location, reason, *, title="hello", ordinal=None, **configuration):
+        cases.append({"name": name, "expected": run_history_rejection_document(
+            location=location, reason=reason, transition=title, event_ordinal=ordinal,
+            outcome=configuration.pop("outcome", "rejected"),
+        ), **configuration})
+
+    add("workspace", "input.workspace", "identity-invalid", title="context",
+        edits=[(("workspace_id",), RUN_HISTORY_PROTECTED)])
+    for field in ("plan_id", "run_id", "desired_graph_id", "advanced_graph_id"):
+        for title in ("hello", "empty"):
+            add(f"{title}-{field}-invalid", "input." + field.replace("_", "-"), "identity-invalid",
+                title="context", edits=[((title, field), RUN_HISTORY_PROTECTED)])
+        add(f"{field}-reused", "input." + field.replace("_", "-"), "identity-reused",
+            title="context", copy_field=field)
+
+    pointer_rows = (
+        ("pointer", "desired", "not-current"), ("assigned", False, "unassigned"),
+        ("graph_id", "foreign-graph", "graph-mismatch"),
+        ("authored_graph_id", "foreign-graph", "authored-mismatch"),
+        ("realized_projection_id", RUN_HISTORY_PROTECTED, "projection-invalid"),
+        ("version", True, "version-mismatch"), ("graph_name", "", "name-invalid"),
+        ("graph_descriptor", [], "descriptor-not-object"), ("operator_graph", [], "operator-not-object"),
+    )
+    for title in ("hello", "empty"):
+        add(f"{title}-advance", "transition.advance", "desired-advanced-mismatch", title=title,
+            edits=[((title, "advanced_graph_id"), "different-graph")])
+        for side in ("predecessor", "successor"):
+            for field, value, reason in pointer_rows:
+                add(f"{title}-{side}-{field}", f"pointer.{side}", reason, title=title,
+                    edits=[((title, f"{side}_{protocol}", field), value) for protocol in ("http", "mcp")])
+            for value, reason in (([], "pointer-shape"), ({}, "pointer-shape")):
+                add(f"{title}-{side}-{type(value).__name__}", f"pointer.{side}", reason, title=title,
+                    edits=[((title, f"{side}_{protocol}"), value) for protocol in ("http", "mcp")])
+            add(f"{title}-{side}-parity", f"pointer.{side}", "http-mcp-mismatch", title=title,
+                edits=[((title, f"{side}_mcp", "graph_name"), "different-name")])
+            for value, reason in ((float("nan"), "json-invalid"), ("x" * 262145, "json-over-bound")):
+                add(f"{title}-{side}-{reason}", f"pointer.{side}", reason, title=title,
+                    edits=[((title, f"{side}_{protocol}", "graph_descriptor"), {"value": value})
+                           for protocol in ("http", "mcp")])
+            add(f"{title}-{side}-optional-shape-tie", f"pointer.{side}", "descriptor-not-object",
+                title=title, edits=[((title, f"{side}_{protocol}", field), [])
+                                   for protocol in ("http", "mcp")
+                                   for field in ("graph_descriptor", "operator_graph")])
+        for protocol in ("http", "mcp"):
+            add(f"{title}-{protocol}-read", f"events.{protocol}", "read-unavailable",
+                title=title, outcome="unavailable", read_error=(title, protocol))
+
+        page = exact_run_event_page(title)
+        rows = page["items"]
+        page_rows = (
+            ((), None, "page-shape"), ((), [], "page-shape"),
+            (("workspace_id",), "foreign", "workspace-mismatch"),
+            (("kind",), "other", "kind-mismatch"), (("limit",), True, "limit-mismatch"),
+            (("items",), {}, "items-not-list"), (("next_cursor",), "private-cursor", "cursor-present"),
+            (("items",), rows[:-1], "event-count"), (("items",), [*rows, rows[-1]], "event-count"),
+            (("extra",), RUN_HISTORY_PROTECTED, "page-shape"),
+        )
+        for index, (path, value, reason) in enumerate(page_rows):
+            add(f"{title}-page-{index}", "page", reason, title=title,
+                page=changed(page, path, value) if path else value)
+        event_rows = (
+            (("extra",), RUN_HISTORY_PROTECTED, "event-shape"),
+            (("event_id",), RUN_HISTORY_PROTECTED, "event-id-invalid"),
+            (("event_id",), rows[0]["event_id"], "event-id-duplicate"),
+            (("run_id",), "foreign", "run-mismatch"), (("ordinal",), True, "ordinal-mismatch"),
+            (("event_type",), "step_failed", "kind-mismatch"),
+            (("activity_id",), "foreign", "activity-mismatch"),
+            (("failure",), {"message": RUN_HISTORY_PROTECTED}, "failure-present"),
+            (("occurred_at",), False, "timestamp-shape"),
+            (("occurred_at",), "not-a-date", "timestamp-invalid"),
+            (("occurred_at",), "2026-08-26T00:00:00", "timestamp-naive"),
+        )
+        for index, (path, value, reason) in enumerate(event_rows):
+            add(f"{title}-event-{index}", "event", reason, title=title, ordinal=3,
+                page=changed(page, ("items", 2, *path), value))
+        for index in range(len(rows)):
+            add(f"{title}-ordinal-position-{index + 1}", "event", "ordinal-mismatch",
+                title=title, ordinal=index + 1,
+                page=changed(page, ("items", index, "ordinal"), (index + 1) % len(rows) + 1))
+        payload_rows = (
+            (0, (), {}, "run-opened", "payload-shape"),
+            (0, ("attempt",), True, "run-opened", "attempt-mismatch"),
+            (1, (), {"extra": RUN_HISTORY_PROTECTED}, "run-started", "payload-shape"),
+            (2, (), {}, "step", "payload-shape"),
+            (2, ("effect_attempt",), {}, "step", "attempt-shape"),
+            (2, ("effect_attempt", "attempt"), 2, "step", "attempt-mismatch"),
+            (2, ("effect_attempt", "state_fingerprint"), "x" * 64, "step", "fingerprint-invalid"),
+            (len(rows) - 2, (), {}, "run-succeeded", "payload-shape"),
+            (len(rows) - 2, ("result",), "partial", "run-succeeded", "result-mismatch"),
+            (len(rows) - 1, (), {}, "advance", "payload-shape"),
+        )
+        for index, path, value, location, reason in payload_rows:
+            add(f"{title}-{location}-{reason}", "payload." + location, reason, title=title, ordinal=index + 1,
+                page=changed(page, ("items", index, "payload", *path), value))
+        for ordinal in range(4, len(rows) - 1):
+            add(f"{title}-step-position-{ordinal}", "payload.step", "payload-shape",
+                title=title, ordinal=ordinal, page=changed(page, ("items", ordinal - 1, "payload"), {}))
+        for field, reason in (
+            ("workspace_id", "workspace-mismatch"), ("plan_id", "plan-mismatch"), ("run_id", "run-mismatch"),
+            ("from_authored_graph_id", "from-authored-mismatch"),
+            ("from_realized_projection_id", "from-realized-mismatch"),
+            ("to_authored_graph_id", "to-authored-mismatch"), ("to_realized_projection_id", "to-realized-mismatch"),
+            ("desired_graph_revision", "revision-mismatch"), ("to_realized_projection_digest", "digest-invalid"),
+        ):
+            add(f"{title}-advance-{field}", "payload.advance", reason, title=title, ordinal=len(rows),
+                page=changed(page, ("items", len(rows) - 1, "payload", field), "invalid"))
+        add(f"{title}-page-parity", "events.parity", "http-mcp-mismatch", title=title,
+            protocol="mcp", page=changed(page, ("items", 0, "occurred_at"), "2026-08-26T00:00:01Z"))
+        for value, reason in ((float("nan"), "json-invalid"), ("x" * 262145, "json-over-bound")):
+            add(f"{title}-{reason}", "events.parity", reason, title=title,
+                page=changed(page, ("extra",), value))
+        add(f"{title}-first-page-predicate", "page", "kind-mismatch", title=title,
+            page=changed(changed(page, ("kind",), "wrong"), ("next_cursor",), "wrong"))
+        add(f"{title}-first-event-predicate", "event", "event-id-duplicate", title=title, ordinal=3,
+            page=changed(changed(page, ("items", 2, "event_id"), rows[0]["event_id"]),
+                         ("items", 2, "run_id"), "foreign"))
+    add("predecessor-coordinate", "pointer.predecessor", "expected-graph-invalid",
+        edits=[(("current_graph_id",), RUN_HISTORY_PROTECTED)])
+    add("lineage", "lineage", "predecessor-discontinuity", title="empty",
+        edits=[(("empty", f"predecessor_{protocol}", "graph_name"), "changed-name") for protocol in ("http", "mcp")])
+    add("revision-type", "payload.advance", "revision-invalid", ordinal=10,
+        page=changed(exact_run_event_page("hello"), ("items", 9, "payload", "desired_graph_revision"), True))
+    for symbol, location in (("validate_graph", "plan.before"), ("diff_graphs", "plan.diff"),
+                             ("compile_activity_plan", "plan.compile"), ("deepcopy", "history.copy")):
+        add(symbol + "-unavailable", location, "unknown", outcome="unknown", fault=symbol)
+    add("after-validation-fault", "plan.after", "unknown", outcome="unknown", after_fault=True)
+    add("activity-id-fault", "plan.activities", "unknown", outcome="unknown", activity_id_fault=True)
+    add("operation-sequence", "plan.operations", "operation-sequence", wrong_plan=True)
+    return cases
+
+
+class RunHistoryActivityIdFault:
+    """Preserve the real compiled operation; fail only at activity-ID projection."""
+
+    def __init__(self, activity, reads):
+        self.operation = activity.operation
+        self.reads = reads
+
+    @property
+    def activity_id(self):
+        self.reads.append("activity-id")
+        raise RuntimeError(RUN_HISTORY_PROTECTED)
+
+
+@dataclass
+class RecordingRunHistoryRejectionSink:
+    ledger: list[tuple[str, Any]] = field(default_factory=list)
+    documents: list[dict[str, Any]] = field(default_factory=list)
+    error: BaseException | None = None
+
+    def __call__(self, document: dict[str, Any]) -> None:
+        self.ledger.append(("history-rejection", deepcopy(document)))
+        self.documents.append(deepcopy(document))
+        if self.error is not None:
+            raise self.error
+
+
+class RunHistoryCancellation(BaseException):
+    """Non-Exception control flow must bypass diagnostic normalization."""
+
+
+class RunHistoryWriteStream:
+    """Record real file writes and inject faults without implementing publication."""
+
+    def __init__(self, stream, *, after_write=None, write_error=None):
+        self.stream = stream
+        self.after_write = after_write
+        self.write_error = write_error
+
+    def __enter__(self):
+        self.stream.__enter__()
+        return self
+
+    def __exit__(self, *args):
+        return self.stream.__exit__(*args)
+
+    def write(self, payload):
+        if self.write_error is not None:
+            self.stream.write(payload[:8])
+            raise self.write_error
+        result = self.stream.write(payload)
+        if self.after_write is not None:
+            self.after_write()
+        return result
+
+    def flush(self):
+        return self.stream.flush()
+
+    def fileno(self):
+        return self.stream.fileno()
+
+
 @dataclass
 class RecordingHostedWorkflow:
     ledger: list[tuple[str, Any]] = field(default_factory=list)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import contextmanager, nullcontext
+from contextlib import ExitStack, contextmanager, nullcontext
 from copy import deepcopy
 import hashlib
 import importlib
@@ -76,7 +76,14 @@ from candidate_topology_fixture import (
     RecordingDockerNetwork,
     RecordingHostedWorkflow,
     RecordingHostedWorkflowFactory,
+    RecordingRunHistoryRejectionSink,
     RecordingServerSourceCoordinate,
+    RunHistoryActivityIdFault,
+    RunHistoryCancellation,
+    RunHistoryWriteStream,
+    RUN_HISTORY_PROTECTED,
+    RUN_HISTORY_REJECTION_FILENAME,
+    RUN_HISTORY_REJECTION_RELATION,
     RUNNER_COMMIT,
     RUNNER_TREE,
     SECRETS_COMMIT,
@@ -98,6 +105,9 @@ from candidate_topology_fixture import (
     exact_session_page,
     package_staging_assembly,
     package_staging_inspection,
+    run_history_capture_arguments,
+    run_history_rejection_cases,
+    run_history_rejection_document,
     single_hello_activity_ids,
     single_hello_graphs,
 )
@@ -3798,6 +3808,530 @@ class CandidateTopologyAcceptanceTests(unittest.TestCase):
                 **single_hello_graphs(),
             )
         return report, workflow, effects, ledger
+
+    def test_run_history_rejection_catalogue_is_exact(self) -> None:
+        candidate = self._candidate_module()
+        self._require_history_sink(candidate._capture_candidate_run_history)
+        for case in run_history_rejection_cases():
+            with self.subTest(boundary=case["name"]):
+                arguments = run_history_capture_arguments()
+                for path, value in case.get("edits", ()):
+                    arguments = changed(arguments, path, value)
+                if "copy_field" in case:
+                    field = case["copy_field"]
+                    arguments["empty"][field] = arguments["hello"][field]
+                workflow = RecordingHostedWorkflow()
+                title = case["expected"]["transition"]
+                if "page" in case:
+                    for protocol in (case["protocol"],) if "protocol" in case else ("http", "mcp"):
+                        workflow.run_event_overrides[(title, protocol)] = case["page"]
+                if "read_error" in case:
+                    workflow.run_event_errors[case["read_error"]] = RuntimeError(
+                        "cursor-present " + RUN_HISTORY_PROTECTED)
+                sink = RecordingRunHistoryRejectionSink(ledger=workflow.ledger)
+                boundary_reads = []
+                with ExitStack() as patches:
+                    if "fault" in case:
+                        patches.enter_context(patch.object(
+                            candidate, case["fault"], side_effect=RuntimeError(RUN_HISTORY_PROTECTED)))
+                    if case.get("after_fault"):
+                        validate = candidate.validate_graph
+
+                        def validate_after(graph):
+                            boundary_reads.append(graph)
+                            if len(boundary_reads) == 2:
+                                raise RuntimeError(RUN_HISTORY_PROTECTED)
+                            return validate(graph)
+
+                        patches.enter_context(patch.object(candidate, "validate_graph", side_effect=validate_after))
+                    if case.get("activity_id_fault"):
+                        compile_plan = candidate.compile_activity_plan
+
+                        def compile_with_id_fault(difference):
+                            plan = compile_plan(difference)
+                            return SimpleNamespace(activities=tuple(
+                                RunHistoryActivityIdFault(activity, boundary_reads) for activity in plan.activities))
+
+                        patches.enter_context(patch.object(
+                            candidate, "compile_activity_plan", side_effect=compile_with_id_fault))
+                    if case.get("wrong_plan"):
+                        patches.enter_context(patch.object(
+                            candidate, "compile_activity_plan", return_value=SimpleNamespace(activities=())))
+                    escaped = self._capture_history_error(
+                        candidate, workflow, sink, arguments)
+                if case.get("after_fault"):
+                    self.assertEqual(len(boundary_reads), 2)
+                    self.assertIs(boundary_reads[0], arguments["empty_graph"])
+                    self.assertIs(boundary_reads[1], arguments["hello_graph"])
+                if case.get("activity_id_fault"):
+                    self.assertEqual(boundary_reads, ["activity-id"])
+                self._assert_fixed_history_error(candidate, escaped)
+                self.assertEqual(sink.documents, [case["expected"]])
+                self.assertEqual(escaped.__dict__, {})
+                self.assertEqual([name for name, _ in workflow.ledger].count("history-rejection"), 1)
+                self.assertFalse(any(name == "cleanup" for name, _ in workflow.ledger))
+
+    def test_run_history_rejection_artifact_precedes_cleanup(self) -> None:
+        for title in ("hello", "empty"):
+            with self.subTest(transition=title), tempfile.TemporaryDirectory() as directory:
+                workflow = RecordingHostedWorkflow(run_event_overrides={
+                    (title, protocol): changed(exact_run_event_page(title), ("next_cursor",), "cursor")
+                    for protocol in ("http", "mcp")
+                })
+                result = self._invoke_history_main(Path(directory), workflow=workflow)
+                with self.subTest(boundary="fixed-public-failure-control"):
+                    self._assert_history_main_failure(result)
+                with self.subTest(boundary="private-artifact-required"):
+                    self.assertEqual(result["diagnostic"], run_history_rejection_document(transition=title))
+                if type(result["diagnostic"]) is not dict:
+                    continue
+                with self.subTest(boundary="artifact-complete-before-existing-cleanup"):
+                    self.assertEqual(result["before_cleanup"], [result["diagnostic"]])
+                    self.assertEqual(result["mode"], 0o600)
+                    self.assertLessEqual(result["size"], 4096)
+                    self.assertFalse(result["partial_present"])
+                    expected_reads = [(f"run-events-{protocol}", (f"run-{role}", 100))
+                                      for role in ("hello", "empty") for protocol in ("http", "mcp")]
+                    if title == "hello":
+                        expected_reads = expected_reads[:2]
+                    self.assertEqual([row for row in result["ledger"] if row[0].startswith("run-events-")],
+                                     expected_reads)
+                    self.assertEqual([row for row in result["ledger"] if row[0] == "cleanup"],
+                                     [("cleanup", "error")])
+
+    def test_run_history_rejection_schema_is_closed_bounded_and_redacted(self) -> None:
+        candidate = self._candidate_module()
+        builder = self._require_history_callable(candidate, "_run_history_rejection_diagnostic")
+        writer = self._require_history_callable(candidate, "_persist_run_history_rejection")
+        for outcome, location, reason in sorted(RUN_HISTORY_REJECTION_RELATION):
+            transitions = ("context",) if location.startswith("input.") else ("hello", "empty")
+            if location == "unknown":
+                transitions = ("context", "hello", "empty")
+            for transition in transitions:
+                for ordinal in self._history_ordinals(location, transition):
+                    values = dict(outcome=outcome, location=location, reason=reason,
+                                  transition=transition, event_ordinal=ordinal)
+                    with self.subTest(boundary="finite-relation", **values):
+                        document = builder(**values)
+                        self.assertEqual(document, run_history_rejection_document(**values))
+                        self.assertLessEqual(len(json.dumps(document).encode("ascii")), 4096)
+                        self.assertNotIn(RUN_HISTORY_PROTECTED, json.dumps(document))
+                        unsigned = {key: value for key, value in document.items() if key != "diagnostic_sha256"}
+                        self.assertEqual(document["diagnostic_sha256"], canonical_sha256(unsigned))
+        valid = dict(outcome="rejected", location="page", reason="cursor-present",
+                     transition="hello", event_ordinal=None)
+        invalid_values = (
+            {"location": RUN_HISTORY_PROTECTED}, {"reason": RUN_HISTORY_PROTECTED},
+            {"outcome": "success"}, {"outcome": "unavailable"}, {"reason": "ordinal-mismatch"},
+            {"transition": "context"}, {"event_ordinal": 1},
+            {"location": "lineage", "reason": "json-invalid"},
+            {"location": "lineage", "reason": "json-over-bound"},
+        )
+        for index, override in enumerate(invalid_values):
+            with self.subTest(boundary="invalid-relation", row=index):
+                with self.assertRaises(candidate.CandidateTopologyError) as caught:
+                    builder(**{**valid, **override})
+                self._assert_fixed_history_error(candidate, caught.exception)
+        for transition in ("hello", "empty"):
+            for location, reason in (
+                ("event", "ordinal-mismatch"), ("payload.run-opened", "attempt-mismatch"),
+                ("payload.run-started", "payload-shape"), ("payload.step", "payload-shape"),
+                ("payload.run-succeeded", "result-mismatch"), ("payload.advance", "payload-shape"),
+            ):
+                legal = self._history_ordinals(location, transition)
+                invalid_ordinals = (None, False, True, str(legal[0]), float(legal[0])) + tuple(
+                    ordinal for ordinal in range(-1, 14) if ordinal not in legal)
+                for ordinal in invalid_ordinals:
+                    with self.subTest(boundary="ordinal-relation", transition=transition, location=location,
+                                      ordinal=ordinal, ordinal_type=type(ordinal).__name__):
+                        with self.assertRaises(candidate.CandidateTopologyError) as caught:
+                            builder(outcome="rejected", location=location, reason=reason,
+                                    transition=transition, event_ordinal=ordinal)
+                        self._assert_fixed_history_error(candidate, caught.exception)
+        document = run_history_rejection_document()
+        invalid_documents = (
+            {**document, "extra": {"value": RUN_HISTORY_PROTECTED}},
+            {key: value for key, value in document.items() if key != "phase"},
+            {**document, "classification": "candidate-direct"},
+            {**document, "redaction_verified": 1}, {**document, "protected_material_retained": 0},
+            {**document, "diagnostic_sha256": "0" * 64},
+            {**document, "event_ordinal": float("nan")},
+            {**document, "reason": "x" * 4097},
+        )
+        for index, invalid in enumerate(invalid_documents):
+            with self.subTest(boundary="closed-document", row=index), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / RUN_HISTORY_REJECTION_FILENAME
+                with self.assertRaises(candidate.CandidateTopologyError) as caught:
+                    writer(path, invalid)
+                self._assert_fixed_history_error(candidate, caught.exception)
+                self.assertEqual(list(Path(directory).iterdir()), [])
+
+    def test_run_history_rejection_collision_preserves_preexisting_paths(self) -> None:
+        # The parent is a trusted private directory; final/partial entries may collide or be replaced.
+        for suffix in ("", ".part"):
+            for kind in ("file", "directory", "symlink", "dangling"):
+                with self.subTest(path=suffix, kind=kind), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    path = root / (RUN_HISTORY_REJECTION_FILENAME + suffix)
+                    foreign = root / "foreign"
+                    foreign.write_bytes(b"foreign-evidence")
+                    if kind == "file":
+                        path.write_bytes(b"preexisting-evidence")
+                    elif kind == "directory":
+                        path.mkdir()
+                        (path / "child").write_bytes(b"preexisting-child")
+                    else:
+                        path.symlink_to(foreign if kind == "symlink" else root / "absent")
+                    before = path.lstat()
+                    result = self._invoke_history_main(root)
+                    with self.subTest(boundary="collision-bytes-and-identity-preserved"):
+                        self.assertEqual(path.lstat().st_ino, before.st_ino)
+                        self.assertEqual(foreign.read_bytes(), b"foreign-evidence")
+                        if kind == "file":
+                            self.assertEqual(path.read_bytes(), b"preexisting-evidence")
+                        elif kind == "directory":
+                            self.assertEqual((path / "child").read_bytes(), b"preexisting-child")
+                        else:
+                            self.assertEqual(path.readlink(), foreign if kind == "symlink" else root / "absent")
+                    with self.subTest(boundary="preflight-fixed-collision-rejection"):
+                        self.assertIs(type(result["escaped"]), result["candidate"].CandidateAssemblyError)
+                        self.assertEqual(str(result["escaped"]), ASSEMBLY_ERROR)
+                    with self.subTest(boundary="collision-zero-effects"):
+                        self.assertEqual(result["ledger"], [])
+
+    def test_run_history_rejection_persistence_is_atomic_and_owned(self) -> None:
+        candidate = self._candidate_module()
+        writer = self._require_history_callable(candidate, "_persist_run_history_rejection")
+        real_open, real_fdopen = candidate.os.open, candidate.os.fdopen
+        for fault in ("none", "write", "final-race", "partial-replaced"):
+            with self.subTest(boundary=fault), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                path = root / RUN_HISTORY_REJECTION_FILENAME
+                partial = root / (RUN_HISTORY_REJECTION_FILENAME + ".part")
+                protected = {
+                    name: (root / name, ("foreign:" + name).encode("ascii")) for name in (
+                        "foreign", "candidate-topology-report.json", STARTUP_DIAGNOSTIC_FILENAME,
+                    )
+                }
+                for target, content in protected.values():
+                    target.write_bytes(content)
+                opens = []
+                primary = OSError("private-write-fault")
+
+                def record_open(name, flags, mode=0o777, **kwargs):
+                    opens.append((Path(name), flags, mode))
+                    return real_open(name, flags, mode, **kwargs)
+
+                def after_write():
+                    if fault == "final-race":
+                        path.write_bytes(b"foreign-final")
+                    elif fault == "partial-replaced":
+                        partial.unlink()
+                        partial.write_bytes(b"foreign-partial")
+
+                def record_stream(descriptor, *args, **kwargs):
+                    return RunHistoryWriteStream(
+                        real_fdopen(descriptor, *args, **kwargs), after_write=after_write,
+                        write_error=primary if fault == "write" else None)
+
+                escaped = None
+                with patch.object(candidate.os, "open", side_effect=record_open), \
+                     patch.object(candidate.os, "fdopen", side_effect=record_stream):
+                    try:
+                        writer(path, run_history_rejection_document())
+                    except BaseException as error:
+                        escaped = error
+                for target, content in protected.values():
+                    self.assertEqual(target.read_bytes(), content)
+                write_opens = [row for row in opens if row[1] & (os.O_WRONLY | os.O_RDWR | os.O_CREAT)]
+                self.assertEqual(len(write_opens), 1)
+                self.assertEqual(write_opens[0][0], partial)
+                self.assertEqual(write_opens[0][1] & (os.O_CREAT | os.O_EXCL), os.O_CREAT | os.O_EXCL)
+                self.assertEqual(write_opens[0][2], 0o600)
+                if fault == "none":
+                    self.assertIsNone(escaped)
+                    self.assertEqual(self._read_history_document(path), run_history_rejection_document())
+                    self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+                    self.assertFalse(partial.exists())
+                elif fault == "write":
+                    self.assertIs(escaped, primary)
+                    self.assertFalse(path.exists())
+                    self.assertFalse(partial.exists())
+                elif fault == "final-race":
+                    self.assertIsInstance(escaped, Exception)
+                    self.assertEqual(path.read_bytes(), b"foreign-final")
+                    self.assertFalse(partial.exists())
+                else:
+                    self.assertIsInstance(escaped, Exception)
+                    self.assertFalse(path.exists())
+                    self.assertEqual(partial.read_bytes(), b"foreign-partial")
+
+    def test_run_history_rejection_secondary_faults_preserve_primary(self) -> None:
+        candidate = self._candidate_module()
+        self._require_history_sink(candidate.run_candidate_topology)
+        self._require_history_callable(candidate, "_run_history_rejection_diagnostic")
+        self._require_history_callable(candidate, "_persist_run_history_rejection")
+        for fault in ("sink", "serialization", "open", "write", "publish", "part-cleanup"):
+            with self.subTest(boundary=fault), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                path = root / RUN_HISTORY_REJECTION_FILENAME
+                partial = root / (RUN_HISTORY_REJECTION_FILENAME + ".part")
+                ledger = []
+                workflow = RecordingHostedWorkflow(ledger=ledger, run_event_errors={
+                    ("hello", "http"): RuntimeError("private-read-fault")})
+                effects = RecordingCandidateEffects(ledger=ledger)
+                secondary = OSError("private-secondary-fault")
+                sink = RecordingRunHistoryRejectionSink(ledger=ledger, error=secondary)
+                original_attach = candidate._attach_report
+                attached = []
+                real_open, real_fdopen, real_unlink = candidate.os.open, candidate.os.fdopen, Path.unlink
+
+                def attach(error, report):
+                    attached.append(error)
+                    original_attach(error, report)
+
+                def guarded_open(name, *args, **kwargs):
+                    if Path(name) == partial:
+                        raise secondary
+                    return real_open(name, *args, **kwargs)
+
+                def broken_stream(descriptor, *args, **kwargs):
+                    return RunHistoryWriteStream(real_fdopen(descriptor, *args, **kwargs), write_error=secondary)
+
+                def guarded_unlink(target, *args, **kwargs):
+                    if target == partial:
+                        raise OSError("private-unlink-fault")
+                    return real_unlink(target, *args, **kwargs)
+
+                with ExitStack() as patches:
+                    patches.enter_context(patch.object(candidate, "_attach_report", side_effect=attach))
+                    if fault != "sink":
+                        sink = lambda document: candidate._persist_run_history_rejection(path, document)
+                    if fault == "serialization":
+                        patches.enter_context(patch.object(candidate, "_run_history_rejection_diagnostic", side_effect=secondary))
+                    elif fault == "open":
+                        patches.enter_context(patch.object(candidate.os, "open", side_effect=guarded_open))
+                    elif fault in {"write", "part-cleanup"}:
+                        patches.enter_context(patch.object(candidate.os, "fdopen", side_effect=broken_stream))
+                        if fault == "part-cleanup":
+                            patches.enter_context(patch.object(Path, "unlink", new=guarded_unlink))
+                    elif fault == "publish":
+                        patches.enter_context(patch.object(candidate.os, "link", side_effect=secondary))
+                    escaped = self._run_history_with_sink(candidate, workflow, effects, sink)
+                self._assert_fixed_history_error(candidate, escaped)
+                self.assertEqual(len(attached), 1)
+                self.assertIs(escaped, attached[0])
+                self.assertEqual(set(escaped.__dict__), {"candidate_terminal_report"})
+                self.assertEqual([row for row in ledger if row[0] == "cleanup"], [("cleanup", "error")])
+                self.assertNotIn("private-", json.dumps(escaped.candidate_terminal_report))
+                self.assertFalse(path.exists())
+                if fault != "part-cleanup":
+                    self.assertFalse(partial.exists())
+
+    def test_run_history_rejection_emission_scope_and_cancellation(self) -> None:
+        candidate = self._candidate_module()
+        for phase in ("success", "admission", "build", "start", "workflow", "probe", "blue-green", "package"):
+            with self.subTest(boundary=phase), tempfile.TemporaryDirectory() as directory:
+                result = self._invoke_history_main(Path(directory), phase=phase)
+                self.assertIsNone(result["diagnostic"])
+                self.assertFalse(result["partial_present"])
+                if phase == "success":
+                    self.assertIsNone(result["escaped"])
+                    self.assertIs(type(result["report"]), dict)
+                    self.assertIn("workflow", result["report"])
+                    self.assertIn("run_history", result["report"]["workflow"])
+                else:
+                    self.assertIsNotNone(result["escaped"])
+                    if phase in {"package", "blue-green"}:
+                        self.assertIn(("excluded-mode", phase), result["ledger"])
+        for phase in ("blue-green", "package"):
+            for suffix in ("", ".part"):
+                with self.subTest(boundary="excluded-mode-preserves-foreign-diagnostic-path",
+                                  phase=phase, path=suffix or "final"), \
+                     tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    path = root / (RUN_HISTORY_REJECTION_FILENAME + suffix)
+                    content = ("foreign-" + phase + (suffix or "-final")).encode("ascii")
+                    path.write_bytes(content)
+                    before = path.lstat()
+                    result = self._invoke_history_main(root, phase=phase)
+                    self.assertEqual(path.lstat().st_ino, before.st_ino)
+                    self.assertEqual(path.read_bytes(), content)
+                    self.assertIn(("excluded-mode", phase), result["ledger"])
+                    self.assertIsNotNone(result["escaped"])
+        self._require_history_sink(candidate.run_candidate_topology)
+        for title in ("hello", "empty"):
+            for protocol in ("http", "mcp"):
+                for error_type in (KeyboardInterrupt, SystemExit, RunHistoryCancellation):
+                    with self.subTest(transition=title, protocol=protocol, cancellation=error_type.__name__):
+                        original = error_type("private-cancellation")
+                        workflow = RecordingHostedWorkflow(run_event_errors={(title, protocol): original})
+                        effects = RecordingCandidateEffects(ledger=workflow.ledger)
+                        sink = RecordingRunHistoryRejectionSink(ledger=workflow.ledger)
+                        escaped = self._run_history_with_sink(candidate, workflow, effects, sink)
+                        self.assertIs(escaped, original)
+                        self.assertIsNone(escaped.__cause__)
+                        self.assertIsNone(escaped.__context__)
+                        self.assertEqual(sink.documents, [])
+                        reason = "abort" if error_type is KeyboardInterrupt else "error"
+                        self.assertEqual([row for row in workflow.ledger if row[0] == "cleanup"], [("cleanup", reason)])
+        for error_type in (KeyboardInterrupt, SystemExit, RunHistoryCancellation):
+            with self.subTest(boundary="sink-cancellation", cancellation=error_type.__name__):
+                original = error_type("private-sink-cancellation")
+                workflow = RecordingHostedWorkflow(run_event_errors={
+                    ("hello", "http"): RuntimeError("private-read-failure")})
+                effects = RecordingCandidateEffects(ledger=workflow.ledger)
+                sink = RecordingRunHistoryRejectionSink(ledger=workflow.ledger, error=original)
+                escaped = self._run_history_with_sink(candidate, workflow, effects, sink)
+                self._assert_fixed_history_error(candidate, escaped)
+                self.assertEqual(set(escaped.__dict__), {"candidate_terminal_report"})
+                self.assertEqual(len(sink.documents), 1)
+                self.assertNotIn("private-sink-cancellation", json.dumps(escaped.candidate_terminal_report))
+                self.assertEqual([row for row in workflow.ledger if row[0] == "cleanup"], [("cleanup", "error")])
+        workflow = RecordingHostedWorkflow(run_event_errors={("hello", "http"): TimeoutError("private-timeout")})
+        sink = RecordingRunHistoryRejectionSink(ledger=workflow.ledger)
+        escaped = self._run_history_with_sink(candidate, workflow, RecordingCandidateEffects(ledger=workflow.ledger), sink)
+        self._assert_fixed_history_error(candidate, escaped)
+        self.assertEqual(sink.documents, [run_history_rejection_document(
+            outcome="unavailable", location="events.http", reason="read-unavailable")])
+
+    def _require_history_callable(self, candidate, name):
+        function = getattr(candidate, name, None)
+        self.assertTrue(callable(function), "run-history diagnostic interface is not published: " + name)
+        return function
+
+    def _require_history_sink(self, function):
+        self.assertIn("run_history_rejection_sink", inspect.signature(function).parameters,
+                      "run-history diagnostic sink is not published")
+
+    def _history_ordinals(self, location, transition):
+        if location == "event":
+            return tuple(range(1, 11 if transition == "hello" else 13))
+        if location == "payload.run-opened":
+            return (1,)
+        if location == "payload.run-started":
+            return (2,)
+        if location == "payload.step":
+            return tuple(range(3, 9 if transition == "hello" else 11))
+        if location == "payload.run-succeeded":
+            return (9 if transition == "hello" else 11,)
+        if location == "payload.advance":
+            return (10 if transition == "hello" else 12,)
+        return (None,)
+
+    def _assert_fixed_history_error(self, candidate, error):
+        self.assertIs(type(error), candidate.CandidateTopologyError)
+        self.assertEqual(str(error), WORKFLOW_ERROR)
+        self.assertIsNone(error.__cause__)
+        self.assertIsNone(error.__context__)
+
+    def _capture_history_error(self, candidate, workflow, sink, arguments):
+        try:
+            candidate._capture_candidate_run_history(workflow, **arguments, run_history_rejection_sink=sink)
+        except BaseException as error:
+            return error
+        return None
+
+    def _run_history_with_sink(self, candidate, workflow, effects, sink):
+        with self._admission_bridge(candidate):
+            try:
+                candidate.run_candidate_topology(
+                    exact_assembly(), inspection=exact_inspection(), workflow=workflow,
+                    effects=effects, **single_hello_graphs(), run_history_rejection_sink=sink)
+            except BaseException as error:
+                return error
+        return None
+
+    def _assert_history_main_failure(self, result):
+        self._assert_fixed_history_error(result["candidate"], result["escaped"])
+        self.assertEqual(len(result["attached"]), 1)
+        self.assertIs(result["escaped"], result["attached"][0])
+        self.assertEqual(set(result["escaped"].__dict__), {"candidate_terminal_report"})
+        report = result["report"]
+        self.assertIs(type(report), dict)
+        self.assertEqual(set(report), {
+            "schema", "assembly", "assembly_sha256", "external_coordinates", "status",
+            "first_failed_stage", "cleanup", "redaction_verified", "protected_material_retained",
+            "observations", "stages", "report_sha256",
+        })
+        self.assertEqual((report["status"], report["first_failed_stage"], report["stages"]), ("failed", "workflow", []))
+        self.assertEqual(report["report_sha256"], canonical_report_sha256(report))
+        self.assertNotIn(RUN_HISTORY_REJECTION_FILENAME, json.dumps(report))
+        self.assertEqual(report["cleanup"]["foreign_canary_after"], [FOREIGN_RESOURCE_CANARY])
+
+    def _read_history_document(self, path):
+        if not path.is_file() or path.is_symlink():
+            return None
+        try:
+            return json.loads(path.read_bytes())
+        except (ValueError, OSError):
+            return None
+
+    def _invoke_history_main(self, root, *, workflow=None, phase="success"):
+        candidate = self._candidate_module()
+        workflow = workflow if workflow is not None else RecordingHostedWorkflow()
+        ledger = workflow.ledger
+        effects = HardenedRecordingCandidateEffects(ledger=ledger, fail_at=phase if phase in {"build", "probe"} else None)
+        path = root / RUN_HISTORY_REJECTION_FILENAME
+        partial = root / (RUN_HISTORY_REJECTION_FILENAME + ".part")
+        report_path = root / "candidate-topology-report.json"
+        assembly_path, inspection_path = root / "assembly.json", root / "inspection.json"
+        assembly = deepcopy(candidate.EXPECTED_BLUE_GREEN_ASSEMBLY) if phase == "blue-green" else exact_assembly()
+        assembly_path.write_text(json.dumps(assembly), encoding="utf-8")
+        inspection_path.write_text(json.dumps(exact_inspection()), encoding="utf-8")
+        attached, before_cleanup = [], []
+        original_attach, original_cleanup = candidate._attach_report, effects.cleanup
+
+        read_document = self._read_history_document
+
+        def attach(error, report):
+            attached.append(error)
+            original_attach(error, report)
+
+        def cleanup(*, reason):
+            before_cleanup.append(read_document(path))
+            return original_cleanup(reason=reason)
+
+        def effects_factory(**kwargs):
+            ledger.append(("effects-factory", None))
+            return effects
+
+        def excluded_mode(*args, **kwargs):
+            ledger.append(("excluded-mode", phase))
+            raise RuntimeError("private-excluded-mode")
+
+        argv = ["--assembly", str(assembly_path), "--inspection", str(inspection_path), "--report", str(report_path)]
+        escaped = None
+        with ExitStack() as patches:
+            patches.enter_context(patch.dict(os.environ, {}, clear=True))
+            patches.enter_context(patch.object(candidate, "_attach_report", side_effect=attach))
+            patches.enter_context(patch.object(effects, "cleanup", side_effect=cleanup))
+            if phase == "admission":
+                assembly_path.write_text("{}", encoding="utf-8")
+            elif phase == "start":
+                patches.enter_context(patch.object(effects, "start_candidate_server", side_effect=RuntimeError("private-start")))
+            elif phase == "workflow":
+                patches.enter_context(patch.object(workflow, "start_session", side_effect=RuntimeError("private-workflow")))
+            elif phase == "blue-green":
+                argv += ["--scenario", "blue-green"]
+                patches.enter_context(patch.object(candidate, "run_candidate_blue_green", side_effect=excluded_mode))
+            elif phase == "package":
+                argv += ["--package-image-only", "--candidate-base-image", CPK_SERVER_BASE_IMAGE,
+                         "--candidate-image-tag", "candidate:test"]
+                patches.enter_context(patch.object(candidate, "build_candidate_package_image", side_effect=excluded_mode))
+            try:
+                candidate.main(argv, workflow_factory=lambda *args, **kwargs: workflow, effects_factory=effects_factory,
+                               artifact_fetcher=RecordingArtifactFetcher(ledger=ledger))
+            except BaseException as error:
+                escaped = error
+        document = read_document(path)
+        return {
+            "candidate": candidate, "escaped": escaped, "ledger": ledger, "attached": attached,
+            "before_cleanup": before_cleanup, "report": read_document(report_path), "diagnostic": document,
+            "partial_present": partial.exists() or partial.is_symlink(),
+            "mode": stat.S_IMODE(path.stat().st_mode) if path.is_file() else None,
+            "size": path.stat().st_size if path.is_file() else 0,
+        }
 
     def test_readiness_failure_emits_one_private_bounded_startup_diagnostic(
         self,
