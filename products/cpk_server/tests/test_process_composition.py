@@ -209,6 +209,7 @@ class CpkServerProcessCompositionTests(unittest.TestCase):
             ("malformed-float", b"limit=1.0"),
             ("below-range", b"limit=0"),
             ("above-range", b"limit=101"),
+            ("overlong-decimal", b"limit=" + (b"9" * 5000)),
             ("unknown", b"unexpected=value"),
         )
         for title, query in cases:
