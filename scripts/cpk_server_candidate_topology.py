@@ -73,7 +73,7 @@ HELLO_RESPONSE = b"Hello, world!\n"
 CPK_COMMIT = "2ae7f6fe1d34cad943e2e16a2cf93903d840ddc1"
 CPK_TREE = "c950b2f1769298949fa0d9e584be7d6d4008d500"
 PRODUCTION_DOCKERFILE_SHA256 = (
-    "3b72cad8c90a773d534a711cb65cfed92a4b9da84e706fd7f2f827554d7a4c95"
+    "f5e6139e0272adbd5e30e8f66e83f3fdda2554c68fcbd31145b9b8d566f0d157"
 )
 HELLO_DESCRIPTOR_SHA256 = (
     "57ac661ca3f73ad4fa488df34390240e95da58e302bffb17c2197eeac29c2a24"
@@ -151,8 +151,8 @@ EXPECTED_ASSEMBLY = {
     "dependencies": {
         "control_plane_kit_interpreters": {
             "repository": "OpenJ92/control-plane-kit-interpreters",
-            "commit": "2d6f1044e7ccc88b49f8689cec30f0c7c905414d",
-            "tree": "733575f85da057e7d9f1965c10b695217a6140ed",
+            "commit": "25eef5efff83d74a957e9647e03eb0547f7d6def",
+            "tree": "157dc69b5cc5d7ecc4ef84400a0b9d368e090c8f",
         },
         "control_plane_kit_secrets": {
             "repository": "OpenJ92/control-plane-kit-secrets",
