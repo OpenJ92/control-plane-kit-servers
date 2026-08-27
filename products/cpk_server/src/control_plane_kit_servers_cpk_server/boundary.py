@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import re
-from typing import Any, Mapping, Protocol
+from typing import Any, Mapping, Protocol, Sequence
 
 from control_plane_kit_core.identity import (
     AuthenticatedPrincipal,
@@ -96,6 +96,7 @@ class CpkServerHttpProcessBoundary:
         path: str,
         headers: Mapping[str, str],
         body: bytes,
+        query_parameters: Sequence[tuple[str, str]] = (),
     ) -> CpkServerBoundaryResponse:
         route_match = _match_http_route(self.composition, method, path)
         if route_match is None:
@@ -107,7 +108,7 @@ class CpkServerHttpProcessBoundary:
             return _error(401, "invalid credential")
         if len(body) > route.request_schema.max_bytes:
             return _error(413, "request body too large")
-        payload = _decode_http_payload(route, body)
+        payload = _decode_http_payload(route, body, query_parameters)
         if isinstance(payload, CpkServerBoundaryResponse):
             return payload
         request = CpkServerServiceRequest(
@@ -202,10 +203,13 @@ def _match_path_template(template: str, path: str) -> dict[str, str] | None:
 def _decode_http_payload(
     route: HttpApiRouteContract,
     body: bytes,
+    query_parameters: Sequence[tuple[str, str]],
 ) -> Mapping[str, object] | CpkServerBoundaryResponse:
     if route.method is HttpMethod.GET:
         if body not in {b"", None}:
             return _error(400, "read routes do not accept request bodies")
+        if route.route_id == "read.run-events":
+            return _decode_run_event_query(query_parameters)
         return {}
     if body == b"":
         return {}
@@ -216,6 +220,22 @@ def _decode_http_payload(
     if not isinstance(decoded, dict):
         return _error(400, "request body must be an object")
     return decoded
+
+
+def _decode_run_event_query(
+    query_parameters: Sequence[tuple[str, str]],
+) -> Mapping[str, object] | CpkServerBoundaryResponse:
+    if not query_parameters:
+        return {}
+    if len(query_parameters) != 1:
+        return _error(400, "invalid query parameters")
+    name, value = query_parameters[0]
+    if name != "limit" or len(value) > 3 or not value.isascii() or not value.isdecimal():
+        return _error(400, "invalid query parameters")
+    limit = int(value)
+    if value != str(limit) or not 1 <= limit <= 100:
+        return _error(400, "invalid query parameters")
+    return {"limit": limit}
 
 
 def _validate_mcp_headers(headers: Mapping[str, str]) -> CpkServerBoundaryResponse | None:
