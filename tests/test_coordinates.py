@@ -10,6 +10,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "apply_coordinates.py"
 PRODUCT_IMAGE_SCRIPT = ROOT / "scripts" / "product_image_coordinate.py"
+ACCEPTED_CORE_OPERATIONS_COMMIT = "be60608ae11745d0ac1cfa7f696ca22be1f706ce"
 
 
 def load_script_module():
@@ -36,12 +37,12 @@ def load_product_image_script_module():
 
 
 class CoordinateGenerationTests(unittest.TestCase):
-    def test_candidate_total_bridge_uses_accepted_baseline_dependencies(self) -> None:
+    def test_observer_composition_uses_accepted_merged_dependencies(self) -> None:
         coordinates = json.loads(
             (ROOT / "coordinates/server-products.json").read_text(encoding="utf-8")
         )
         expected = {
-            "control_plane_kit_commit": "aeffde68381edb6246a930f2ac8578ea02e34471",
+            "control_plane_kit_commit": ACCEPTED_CORE_OPERATIONS_COMMIT,
             "control_plane_kit_interpreters_commit": "2d6f1044e7ccc88b49f8689cec30f0c7c905414d",
             "control_plane_kit_secrets_commit": "96e86dc3248d578780d64d5d7fc5d6359631d1d6",
         }
@@ -49,6 +50,26 @@ class CoordinateGenerationTests(unittest.TestCase):
         for key, commit in expected.items():
             with self.subTest(upstream=key):
                 self.assertEqual(coordinates["upstreams"][key], commit)
+
+    def test_test_image_uses_accepted_core_and_operations_coordinate(self) -> None:
+        dockerfile = (ROOT / "Dockerfile.test").read_text(encoding="utf-8")
+
+        for distribution, subdirectory in (
+            ("control-plane-kit-core", "control-plane-kit-core"),
+            ("control-plane-kit-operations", "control-plane-kit-operations"),
+        ):
+            expected = (
+                f"{distribution} @ https://github.com/OpenJ92/control-plane-kit/"
+                f"archive/{ACCEPTED_CORE_OPERATIONS_COMMIT}.zip#subdirectory="
+                f"{subdirectory}"
+            )
+            with self.subTest(distribution=distribution):
+                self.assertIn(expected, dockerfile)
+                self.assertNotIn(
+                    f"{distribution} @ https://github.com/OpenJ92/control-plane-kit/"
+                    "archive/2ae7f6fe1d34cad943e2e16a2cf93903d840ddc1.zip",
+                    dockerfile,
+                )
 
     def test_coordinate_manifest_is_the_source_for_generated_files(self) -> None:
         module = load_script_module()
