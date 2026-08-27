@@ -89,17 +89,17 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             (
                 "production",
                 production,
-                "23042b9a4ce52702fefd947b792d862b5cefdb80c920bba84dfc81ba04244362",
+                "f5e6139e0272adbd5e30e8f66e83f3fdda2554c68fcbd31145b9b8d566f0d157",
             ),
             (
                 "pyproject",
                 pyproject,
-                "63c1909511e793d4fabd5fb4e769375e94b244f53b353f04b4037ad80e650e57",
+                "36980785d6168a015f3b14e4106736ddb25a9edd17a98af0294df171ae18c2d8",
             ),
             (
                 "coordinates",
                 coordinates,
-                "eb65e12993a56d4ff46c477649ccadc797270f5c0eb6fbd12241f421b8e6c6c3",
+                "4b82803e7963aaeedde3b4ddc6212cbe086a4e35131b48e2c8d21a1549ff9e36",
             ),
         ):
             with self.subTest(baseline_coordinate=name):

@@ -43,7 +43,7 @@ class CoordinateGenerationTests(unittest.TestCase):
         )
         expected = {
             "control_plane_kit_commit": ACCEPTED_CORE_OPERATIONS_COMMIT,
-            "control_plane_kit_interpreters_commit": "2d6f1044e7ccc88b49f8689cec30f0c7c905414d",
+            "control_plane_kit_interpreters_commit": "25eef5efff83d74a957e9647e03eb0547f7d6def",
             "control_plane_kit_secrets_commit": "96e86dc3248d578780d64d5d7fc5d6359631d1d6",
         }
         self.assertEqual(set(coordinates["upstreams"]), set(expected))
