@@ -509,6 +509,7 @@ def create_app(
             path=request.url.path,
             headers=request.headers,
             body=await request.body(),
+            query_parameters=tuple(request.query_params.multi_items()),
         )
         return _json_response(response.status, response.body)
 

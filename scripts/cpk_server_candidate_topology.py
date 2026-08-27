@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import subprocess
@@ -27,7 +28,13 @@ from control_plane_kit_core.products import (
     ProductInstanceConfiguration,
     instantiate_product,
 )
-from control_plane_kit_core.topology import DeploymentGraph, compile_topology
+from control_plane_kit_core.planning import compile_activity_plan
+from control_plane_kit_core.topology import (
+    DeploymentGraph,
+    compile_topology,
+    diff_graphs,
+    validate_graph,
+)
 
 from scripts.cpk_server_candidate_lifecycle import (
     admit_candidate_ledger,
@@ -47,6 +54,8 @@ ASSEMBLY_SCHEMA = "cpk.candidate-assembly.v1"
 REPORT_SCHEMA = "cpk.candidate-topology-report.v1"
 STARTUP_DIAGNOSTIC_SCHEMA = "cpk.candidate-startup-diagnostic.v1"
 STARTUP_DIAGNOSTIC_FILENAME = "candidate-startup-diagnostic.json"
+RUN_HISTORY_REJECTION_SCHEMA = "cpk.candidate-run-history-rejection.v1"
+RUN_HISTORY_REJECTION_FILENAME = "candidate-run-history-rejection.json"
 ASSEMBLY_ERROR = "candidate assembly is invalid"
 WORKFLOW_ERROR = "candidate topology workflow failed"
 PACKAGE_BUILD_FAILURE_CODE = "candidate-image-build-failed"
@@ -205,6 +214,30 @@ class CandidateTopologyError(RuntimeError):
     """Raised for a bounded candidate workflow failure."""
 
 
+class _RunHistoryRejection(Exception):
+    """Candidate-local control value for closed run-history rejection evidence."""
+
+    def __init__(
+        self,
+        *,
+        outcome: str,
+        location: str,
+        reason: str,
+        transition: str,
+        event_ordinal: int | None = None,
+    ) -> None:
+        self.outcome = outcome
+        self.location = location
+        self.reason = reason
+        self.transition = transition
+        self.event_ordinal = event_ordinal
+
+
+class _RunHistoryJsonError(Exception):
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+
+
 def _canonical_sha256(document: dict[str, Any]) -> str:
     payload = json.dumps(
         document,
@@ -225,6 +258,249 @@ def _startup_diagnostic_sha256(diagnostic: dict[str, Any]) -> str:
     projected = deepcopy(diagnostic)
     projected.pop("diagnostic_sha256", None)
     return _canonical_sha256(projected)
+
+
+_RUN_HISTORY_REJECTION_REASONS = {
+    "input.workspace": ("identity-invalid",),
+    **{
+        f"input.{name}": ("identity-invalid", "identity-reused")
+        for name in (
+            "plan-id",
+            "run-id",
+            "desired-graph-id",
+            "advanced-graph-id",
+        )
+    },
+    "transition.advance": ("desired-advanced-mismatch",),
+    **{
+        f"pointer.{name}": (
+            "pointer-shape",
+            "http-mcp-mismatch",
+            "not-current",
+            "unassigned",
+            "expected-graph-invalid",
+            "graph-mismatch",
+            "authored-mismatch",
+            "projection-invalid",
+            "version-mismatch",
+            "name-invalid",
+            "descriptor-not-object",
+            "operator-not-object",
+            "json-invalid",
+            "json-over-bound",
+        )
+        for name in ("predecessor", "successor")
+    },
+    "lineage": ("predecessor-discontinuity",),
+    "plan.before": (),
+    "plan.after": (),
+    "plan.diff": (),
+    "plan.compile": (),
+    "plan.activities": (),
+    "plan.operations": ("operation-sequence",),
+    "events.http": (),
+    "events.mcp": (),
+    "events.parity": ("http-mcp-mismatch", "json-invalid", "json-over-bound"),
+    "page": (
+        "page-shape",
+        "workspace-mismatch",
+        "kind-mismatch",
+        "limit-mismatch",
+        "items-not-list",
+        "cursor-present",
+        "event-count",
+    ),
+    "event": (
+        "event-shape",
+        "event-id-invalid",
+        "event-id-duplicate",
+        "run-mismatch",
+        "ordinal-mismatch",
+        "kind-mismatch",
+        "activity-mismatch",
+        "failure-present",
+        "timestamp-shape",
+        "timestamp-invalid",
+        "timestamp-naive",
+    ),
+    "payload.run-opened": ("payload-shape", "attempt-mismatch"),
+    "payload.run-started": ("payload-shape",),
+    "payload.step": (
+        "payload-shape",
+        "attempt-shape",
+        "attempt-mismatch",
+        "fingerprint-invalid",
+    ),
+    "payload.run-succeeded": ("payload-shape", "result-mismatch"),
+    "payload.advance": (
+        "payload-shape",
+        "workspace-mismatch",
+        "plan-mismatch",
+        "run-mismatch",
+        "from-authored-mismatch",
+        "from-realized-mismatch",
+        "to-authored-mismatch",
+        "to-realized-mismatch",
+        "revision-mismatch",
+        "revision-invalid",
+        "digest-invalid",
+    ),
+    "history.copy": (),
+    "unknown": (),
+}
+_RUN_HISTORY_REJECTION_RELATION = frozenset(
+    ("rejected", location, reason)
+    for location, reasons in _RUN_HISTORY_REJECTION_REASONS.items()
+    for reason in reasons
+) | frozenset(
+    ("unavailable", f"events.{protocol}", "read-unavailable")
+    for protocol in ("http", "mcp")
+) | frozenset(
+    ("unknown", location, "unknown")
+    for location in _RUN_HISTORY_REJECTION_REASONS
+)
+
+
+def _run_history_rejection_ordinals(
+    location: str, transition: str
+) -> tuple[int | None, ...]:
+    event_count = 10 if transition == "hello" else 12
+    if location == "event":
+        return tuple(range(1, event_count + 1))
+    if location == "payload.run-opened":
+        return (1,)
+    if location == "payload.run-started":
+        return (2,)
+    if location == "payload.step":
+        return tuple(range(3, event_count - 1))
+    if location == "payload.run-succeeded":
+        return (event_count - 1,)
+    if location == "payload.advance":
+        return (event_count,)
+    return (None,)
+
+
+def _run_history_rejection_diagnostic(
+    *,
+    outcome: str,
+    location: str,
+    reason: str,
+    transition: str,
+    event_ordinal: int | None = None,
+) -> dict[str, Any]:
+    string_values = (outcome, location, reason, transition)
+    relation = (outcome, location, reason)
+    transition_valid = (
+        transition == "context"
+        if location.startswith("input.")
+        else transition in ({"context", "hello", "empty"} if location == "unknown" else {"hello", "empty"})
+    )
+    if (
+        not all(type(value) is str for value in string_values)
+        or relation not in _RUN_HISTORY_REJECTION_RELATION
+        or not transition_valid
+        or type(event_ordinal) not in {int, type(None)}
+        or event_ordinal not in _run_history_rejection_ordinals(location, transition)
+    ):
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+    diagnostic = {
+        "schema": RUN_HISTORY_REJECTION_SCHEMA,
+        "classification": "supporting",
+        "phase": "run-history-capture",
+        "outcome": outcome,
+        "transition": transition,
+        "location": location,
+        "reason": reason,
+        "event_ordinal": event_ordinal,
+        "redaction_verified": True,
+        "protected_material_retained": False,
+    }
+    diagnostic["diagnostic_sha256"] = _canonical_sha256(diagnostic)
+    return diagnostic
+
+
+def _validated_run_history_rejection_diagnostic(
+    diagnostic: Any,
+) -> dict[str, Any]:
+    valid = False
+    expected: dict[str, Any] | None = None
+    if type(diagnostic) is dict and set(diagnostic) == {
+        "schema",
+        "classification",
+        "phase",
+        "outcome",
+        "transition",
+        "location",
+        "reason",
+        "event_ordinal",
+        "redaction_verified",
+        "protected_material_retained",
+        "diagnostic_sha256",
+    }:
+        try:
+            if (
+                type(diagnostic["redaction_verified"]) is not bool
+                or type(diagnostic["protected_material_retained"]) is not bool
+            ):
+                raise CandidateTopologyError(WORKFLOW_ERROR)
+            expected = _run_history_rejection_diagnostic(
+                outcome=diagnostic["outcome"],
+                location=diagnostic["location"],
+                reason=diagnostic["reason"],
+                transition=diagnostic["transition"],
+                event_ordinal=diagnostic["event_ordinal"],
+            )
+            valid = diagnostic == expected
+        except Exception:
+            pass
+    if not valid or expected is None:
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+    return expected
+
+
+def _same_file_identity(path: Path, identity: tuple[int, int]) -> bool:
+    try:
+        observed = path.lstat()
+    except FileNotFoundError:
+        return False
+    return (observed.st_dev, observed.st_ino) == identity
+
+
+def _persist_run_history_rejection(
+    path: Path, diagnostic: dict[str, Any]
+) -> None:
+    accepted = _validated_run_history_rejection_diagnostic(diagnostic)
+    payload = (
+        json.dumps(accepted, ensure_ascii=True, indent=2, sort_keys=True) + "\n"
+    ).encode("ascii")
+    if len(payload) > 4096:
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+    temporary = Path(str(path) + ".part")
+    descriptor: int | None = None
+    identity: tuple[int, int] | None = None
+    try:
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+        )
+        opened = os.fstat(descriptor)
+        identity = (opened.st_dev, opened.st_ino)
+        with os.fdopen(descriptor, "wb") as stream:
+            descriptor = None
+            stream.write(payload)
+        if not _same_file_identity(temporary, identity):
+            raise CandidateTopologyError(WORKFLOW_ERROR)
+        if _path_exists_without_following(path):
+            raise CandidateAssemblyError(ASSEMBLY_ERROR)
+        os.link(temporary, path)
+        temporary.unlink()
+        identity = None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        if identity is not None and _same_file_identity(temporary, identity):
+            temporary.unlink()
 
 
 _CANDIDATE_CONTAINER_STATES = frozenset(
@@ -1280,6 +1556,350 @@ def _attach_report(error: BaseException, report: dict[str, Any]) -> None:
     setattr(error, "candidate_terminal_report", report)
 
 
+def _run_history_id(value: Any) -> bool:
+    return type(value) is str and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,255}", value) is not None
+
+
+def _run_history_json(value: Any) -> str:
+    try:
+        encoded = json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        )
+    except (TypeError, ValueError):
+        raise _RunHistoryJsonError("json-invalid") from None
+    if len(encoded) > 262144:
+        raise _RunHistoryJsonError("json-over-bound")
+    return encoded
+
+
+def _reject_run_history(
+    location: str,
+    reason: str,
+    transition: str,
+    *,
+    outcome: str = "rejected",
+    event_ordinal: int | None = None,
+) -> None:
+    raise _RunHistoryRejection(
+        outcome=outcome,
+        location=location,
+        reason=reason,
+        transition=transition,
+        event_ordinal=event_ordinal,
+    )
+
+
+def _run_history_call(
+    location: str,
+    transition: str,
+    callback: Callable[[], Any],
+) -> Any:
+    try:
+        return callback()
+    except _RunHistoryRejection:
+        raise
+    except Exception:
+        _reject_run_history(location, "unknown", transition, outcome="unknown")
+
+
+def _run_history_pointer(
+    http: Any,
+    mcp: Any,
+    graph_id: str,
+    version: int,
+    *,
+    location: str,
+    transition: str,
+) -> dict[str, Any]:
+    required = {
+        "pointer", "assigned", "graph_id", "authored_graph_id",
+        "realized_projection_id", "version", "graph_name",
+    }
+    optional = {"graph_descriptor", "operator_graph"}
+    if (
+        type(http) is not dict
+        or type(mcp) is not dict
+        or not required <= set(http) <= required | optional
+        or not required <= set(mcp) <= required | optional
+    ):
+        _reject_run_history(location, "pointer-shape", transition)
+    try:
+        http_json = _run_history_json(http)
+        mcp_json = _run_history_json(mcp)
+    except _RunHistoryJsonError as error:
+        _reject_run_history(location, error.reason, transition)
+    if http_json != mcp_json:
+        _reject_run_history(location, "http-mcp-mismatch", transition)
+    if http["pointer"] != "current":
+        _reject_run_history(location, "not-current", transition)
+    if http["assigned"] is not True:
+        _reject_run_history(location, "unassigned", transition)
+    if not _run_history_id(graph_id):
+        _reject_run_history(location, "expected-graph-invalid", transition)
+    if http["graph_id"] != graph_id:
+        _reject_run_history(location, "graph-mismatch", transition)
+    if http["authored_graph_id"] != graph_id:
+        _reject_run_history(location, "authored-mismatch", transition)
+    if not _run_history_id(http["realized_projection_id"]):
+        _reject_run_history(location, "projection-invalid", transition)
+    if type(http["version"]) is not int or http["version"] != version:
+        _reject_run_history(location, "version-mismatch", transition)
+    if type(http["graph_name"]) is not str or not 0 < len(http["graph_name"]) <= 256:
+        _reject_run_history(location, "name-invalid", transition)
+    if "graph_descriptor" in http and type(http["graph_descriptor"]) is not dict:
+        _reject_run_history(location, "descriptor-not-object", transition)
+    if "operator_graph" in http and type(http["operator_graph"]) is not dict:
+        _reject_run_history(location, "operator-not-object", transition)
+    return http
+
+
+def _validate_candidate_run_page(
+    page: Any,
+    *,
+    workspace_id: str,
+    plan_id: str,
+    run_id: str,
+    activity_ids: tuple[str, ...],
+    predecessor: dict[str, Any],
+    successor: dict[str, Any],
+    revision: int,
+    event_ids: set[str],
+    transition: str,
+) -> None:
+    if not _exact_keys(page, {"workspace_id", "kind", "limit", "items", "next_cursor"}):
+        _reject_run_history("page", "page-shape", transition)
+    if page["workspace_id"] != workspace_id:
+        _reject_run_history("page", "workspace-mismatch", transition)
+    if page["kind"] != "run-events":
+        _reject_run_history("page", "kind-mismatch", transition)
+    if type(page["limit"]) is not int or page["limit"] != 100:
+        _reject_run_history("page", "limit-mismatch", transition)
+    if type(page["items"]) is not list:
+        _reject_run_history("page", "items-not-list", transition)
+    if page["next_cursor"] is not None:
+        _reject_run_history("page", "cursor-present", transition)
+    expected = [("run_opened", None), ("run_started", None)]
+    for activity_id in activity_ids:
+        expected.extend((("step_started", activity_id), ("step_succeeded", activity_id)))
+    expected.extend((("run_succeeded", None), ("current_graph_advanced", None)))
+    if len(page["items"]) != len(expected):
+        _reject_run_history("page", "event-count", transition)
+    for ordinal, (event, (kind, activity_id)) in enumerate(zip(page["items"], expected), 1):
+        if not _exact_keys(event, {
+            "event_id", "run_id", "ordinal", "event_type",
+            "occurred_at", "activity_id", "payload", "failure",
+        }):
+            _reject_run_history("event", "event-shape", transition, event_ordinal=ordinal)
+        if not _run_history_id(event["event_id"]):
+            _reject_run_history("event", "event-id-invalid", transition, event_ordinal=ordinal)
+        if event["event_id"] in event_ids:
+            _reject_run_history("event", "event-id-duplicate", transition, event_ordinal=ordinal)
+        if event["run_id"] != run_id:
+            _reject_run_history("event", "run-mismatch", transition, event_ordinal=ordinal)
+        if type(event["ordinal"]) is not int or event["ordinal"] != ordinal:
+            _reject_run_history("event", "ordinal-mismatch", transition, event_ordinal=ordinal)
+        if event["event_type"] != kind:
+            _reject_run_history("event", "kind-mismatch", transition, event_ordinal=ordinal)
+        if event["activity_id"] != activity_id:
+            _reject_run_history("event", "activity-mismatch", transition, event_ordinal=ordinal)
+        if event["failure"] is not None:
+            _reject_run_history("event", "failure-present", transition, event_ordinal=ordinal)
+        if type(event["occurred_at"]) is not str or len(event["occurred_at"]) > 64:
+            _reject_run_history("event", "timestamp-shape", transition, event_ordinal=ordinal)
+        try:
+            occurred_at = datetime.fromisoformat(event["occurred_at"])
+        except ValueError:
+            _reject_run_history("event", "timestamp-invalid", transition, event_ordinal=ordinal)
+        if occurred_at.utcoffset() is None:
+            _reject_run_history("event", "timestamp-naive", transition, event_ordinal=ordinal)
+        payload = event["payload"]
+        if kind == "run_opened":
+            if not _exact_keys(payload, {"attempt"}):
+                _reject_run_history("payload.run-opened", "payload-shape", transition, event_ordinal=ordinal)
+            if type(payload["attempt"]) is not int or payload["attempt"] != 1:
+                _reject_run_history("payload.run-opened", "attempt-mismatch", transition, event_ordinal=ordinal)
+        elif kind == "run_started":
+            if not _exact_keys(payload, set()):
+                _reject_run_history("payload.run-started", "payload-shape", transition, event_ordinal=ordinal)
+        elif kind in {"step_started", "step_succeeded"}:
+            if not _exact_keys(payload, {"effect_attempt"}):
+                _reject_run_history("payload.step", "payload-shape", transition, event_ordinal=ordinal)
+            attempt = payload["effect_attempt"]
+            if not _exact_keys(attempt, {"attempt", "state_fingerprint"}):
+                _reject_run_history("payload.step", "attempt-shape", transition, event_ordinal=ordinal)
+            if type(attempt["attempt"]) is not int or attempt["attempt"] != 1:
+                _reject_run_history("payload.step", "attempt-mismatch", transition, event_ordinal=ordinal)
+            if not _hex_digest(attempt["state_fingerprint"], 64):
+                _reject_run_history("payload.step", "fingerprint-invalid", transition, event_ordinal=ordinal)
+        elif kind == "run_succeeded":
+            if not _exact_keys(payload, {"result"}):
+                _reject_run_history("payload.run-succeeded", "payload-shape", transition, event_ordinal=ordinal)
+            if payload["result"] != "all-activities-succeeded":
+                _reject_run_history("payload.run-succeeded", "result-mismatch", transition, event_ordinal=ordinal)
+        else:
+            # Retain the public digest and fingerprints, without claiming to rederive them.
+            coordinates = {
+                "workspace_id": workspace_id, "plan_id": plan_id, "run_id": run_id,
+                "from_authored_graph_id": predecessor["authored_graph_id"],
+                "from_realized_projection_id": predecessor["realized_projection_id"],
+                "to_authored_graph_id": successor["authored_graph_id"],
+                "to_realized_projection_id": successor["realized_projection_id"],
+                "desired_graph_revision": revision,
+            }
+            if not _exact_keys(payload, set(coordinates) | {"to_realized_projection_digest"}):
+                _reject_run_history("payload.advance", "payload-shape", transition, event_ordinal=ordinal)
+            reasons = {
+                "workspace_id": "workspace-mismatch",
+                "plan_id": "plan-mismatch",
+                "run_id": "run-mismatch",
+                "from_authored_graph_id": "from-authored-mismatch",
+                "from_realized_projection_id": "from-realized-mismatch",
+                "to_authored_graph_id": "to-authored-mismatch",
+                "to_realized_projection_id": "to-realized-mismatch",
+                "desired_graph_revision": "revision-mismatch",
+            }
+            for key, value in coordinates.items():
+                if payload[key] != value:
+                    _reject_run_history("payload.advance", reasons[key], transition, event_ordinal=ordinal)
+            if type(payload["desired_graph_revision"]) is not int:
+                _reject_run_history("payload.advance", "revision-invalid", transition, event_ordinal=ordinal)
+            if not _hex_digest(payload["to_realized_projection_digest"], 64):
+                _reject_run_history("payload.advance", "digest-invalid", transition, event_ordinal=ordinal)
+        event_ids.add(event["event_id"])
+
+
+def _capture_candidate_run_history(
+    workflow: Any,
+    *,
+    workspace_id: str,
+    current_graph_id: str,
+    hello_graph: DeploymentGraph,
+    empty_graph: DeploymentGraph,
+    hello: dict[str, Any],
+    empty: dict[str, Any],
+    run_history_rejection_sink: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
+    history: dict[str, Any] | None = None
+    rejection: _RunHistoryRejection | None = None
+    active_transition = "context"
+    active_location = "unknown"
+    try:
+        if not _run_history_id(workspace_id):
+            _reject_run_history("input.workspace", "identity-invalid", "context")
+        for key in ("plan_id", "run_id", "desired_graph_id", "advanced_graph_id"):
+            location = "input." + key.replace("_", "-")
+            if not all(_run_history_id(row[key]) for row in (hello, empty)):
+                _reject_run_history(location, "identity-invalid", "context")
+            if hello[key] == empty[key]:
+                _reject_run_history(location, "identity-reused", "context")
+        history = {}
+        event_ids: set[str] = set()
+        previous = None
+        # Only this fixed scenario has the identity projection used by these plans.
+        for revision, (title, transition, before, after, operations) in enumerate((
+            ("hello", hello, empty_graph, hello_graph, ("StartRuntime", "StartNode", "WaitForHealthy")),
+            ("empty", empty, hello_graph, empty_graph, ("StopNode", "RemoveNodeResource", "StopRuntime", "RemoveRuntimeResource")),
+        ), 1):
+            active_transition = title
+            active_location = "transition.advance"
+            if transition["desired_graph_id"] != transition["advanced_graph_id"]:
+                _reject_run_history("transition.advance", "desired-advanced-mismatch", title)
+            predecessor = _run_history_pointer(
+                transition["predecessor_http"], transition["predecessor_mcp"], current_graph_id, revision,
+                location="pointer.predecessor", transition=title,
+            )
+            successor = _run_history_pointer(
+                transition["successor_http"], transition["successor_mcp"], transition["desired_graph_id"], revision + 1,
+                location="pointer.successor", transition=title,
+            )
+            active_location = "lineage"
+            if previous is not None and _run_history_json(previous) != _run_history_json(predecessor):
+                _reject_run_history("lineage", "predecessor-discontinuity", title)
+            active_location = "plan.before"
+            valid_before = _run_history_call("plan.before", title, lambda: validate_graph(before))
+            active_location = "plan.after"
+            valid_after = _run_history_call("plan.after", title, lambda: validate_graph(after))
+            active_location = "plan.diff"
+            difference = _run_history_call("plan.diff", title, lambda: diff_graphs(valid_before, valid_after))
+            active_location = "plan.compile"
+            plan = _run_history_call("plan.compile", title, lambda: compile_activity_plan(difference))
+            active_location = "plan.operations"
+            if tuple(type(item.operation).__name__ for item in plan.activities) != operations:
+                _reject_run_history("plan.operations", "operation-sequence", title)
+            active_location = "plan.activities"
+            activity_ids = _run_history_call(
+                "plan.activities", title,
+                lambda: tuple(item.activity_id.value for item in plan.activities),
+            )
+            active_location = "events.http"
+            try:
+                http = workflow.read_run_events_http(transition["run_id"], limit=100)
+            except Exception:
+                _reject_run_history("events.http", "read-unavailable", title, outcome="unavailable")
+            active_location = "events.mcp"
+            try:
+                mcp = workflow.read_run_events_mcp(transition["run_id"], limit=100)
+            except Exception:
+                _reject_run_history("events.mcp", "read-unavailable", title, outcome="unavailable")
+            active_location = "events.parity"
+            try:
+                parity = _run_history_json(http) == _run_history_json(mcp)
+            except _RunHistoryJsonError as error:
+                _reject_run_history("events.parity", error.reason, title)
+            if not parity:
+                _reject_run_history("events.parity", "http-mcp-mismatch", title)
+            active_location = "page"
+            _validate_candidate_run_page(
+                http, workspace_id=workspace_id, plan_id=transition["plan_id"], run_id=transition["run_id"],
+                activity_ids=activity_ids, predecessor=predecessor, successor=successor,
+                revision=revision, event_ids=event_ids, transition=title,
+            )
+            active_location = "history.copy"
+            history[title] = _run_history_call(
+                "history.copy",
+                title,
+                lambda: {
+                    "plan_id": transition["plan_id"],
+                    "run_id": transition["run_id"],
+                    "http": deepcopy(http),
+                    "mcp": deepcopy(mcp),
+                },
+            )
+            current_graph_id = transition["advanced_graph_id"]
+            previous = successor
+    except _RunHistoryRejection as error:
+        rejection = error
+        history = None
+    except Exception:
+        rejection = _RunHistoryRejection(
+            outcome="unknown",
+            location=active_location,
+            reason="unknown",
+            transition=active_transition,
+        )
+        history = None
+    # Raise outside the handler so public failure evidence retains no raw context.
+    if history is None:
+        assert rejection is not None
+        if run_history_rejection_sink is not None:
+            try:
+                run_history_rejection_sink(_run_history_rejection_diagnostic(
+                    outcome=rejection.outcome,
+                    location=rejection.location,
+                    reason=rejection.reason,
+                    transition=rejection.transition,
+                    event_ordinal=rejection.event_ordinal,
+                ))
+            except BaseException:
+                pass
+        raise CandidateTopologyError(WORKFLOW_ERROR)
+    return history
+
+
 def run_candidate_topology(
     assembly: dict[str, Any],
     *,
@@ -1290,6 +1910,7 @@ def run_candidate_topology(
     empty_graph: Any = None,
     current_graph_id: str = "graph-predecessor",
     prepared: dict[str, Any] | None = None,
+    run_history_rejection_sink: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     admitted = admit_candidate_assembly(assembly, inspection)
     active_prepared = (
@@ -1304,6 +1925,7 @@ def run_candidate_topology(
     empty = None
     history_http = None
     history_mcp = None
+    run_history = None
     probe_result: Any = None
 
     try:
@@ -1338,6 +1960,16 @@ def run_candidate_topology(
             )
             history_http = workflow.read_activity_http()
             history_mcp = workflow.read_activity_mcp()
+            run_history = _capture_candidate_run_history(
+                workflow,
+                workspace_id=admitted["inputs"]["workspace_id"],
+                current_graph_id=current_graph_id,
+                hello_graph=hello_graph,
+                empty_graph=empty_graph,
+                hello=hello,
+                empty=empty,
+                run_history_rejection_sink=run_history_rejection_sink,
+            )
     except BaseException as error:
         failure = error
 
@@ -1409,6 +2041,7 @@ def run_candidate_topology(
                 "empty_mcp": empty["successor_mcp"],
                 "history_http": history_http,
                 "history_mcp": history_mcp,
+                "run_history": run_history,
             },
             "hello": {
                 "response": body.decode("ascii"),
@@ -2030,6 +2663,28 @@ def main(
     ):
         raise _fixed_assembly_error()
 
+    run_history_rejection_path = args.report.with_name(
+        RUN_HISTORY_REJECTION_FILENAME
+    )
+    run_history_rejection_part_path = Path(
+        str(run_history_rejection_path) + ".part"
+    )
+    run_history_rejection_sink: Callable[[dict[str, Any]], None] | None = None
+    if not args.package_image_only and args.scenario == "single-hello":
+        if (
+            _path_exists_without_following(run_history_rejection_path)
+            or _path_exists_without_following(run_history_rejection_part_path)
+        ):
+            raise _fixed_assembly_error()
+
+        def persist_run_history_rejection(diagnostic: dict[str, Any]) -> None:
+            _persist_run_history_rejection(
+                run_history_rejection_path,
+                diagnostic,
+            )
+
+        run_history_rejection_sink = persist_run_history_rejection
+
     labels = {
         args.project_label.split("=", 1)[0]: args.project_label.split("=", 1)[1],
         args.scenario_label.split("=", 1)[0]: args.scenario_label.split("=", 1)[1],
@@ -2386,6 +3041,7 @@ def main(
                 empty_graph=empty_graph,
                 current_graph_id=current_graph_id,
                 prepared=prepared,
+                run_history_rejection_sink=run_history_rejection_sink,
             )
     except BaseException as error:
         failure = error

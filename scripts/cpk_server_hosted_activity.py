@@ -604,6 +604,24 @@ class HostedWorkflow:
             {"workspace_id": self.workspace_id, "limit": limit},
         )
 
+    def read_run_events_http(self, run_id: str, *, limit: int = 100) -> dict[str, Any]:
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("candidate run event limit is invalid")
+        return _http(
+            self.base_url,
+            "GET",
+            f"/workspaces/{self.workspace_id}/runs/{run_id}/events?limit={limit}",
+        )
+
+    def read_run_events_mcp(self, run_id: str, *, limit: int = 100) -> dict[str, Any]:
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("candidate run event limit is invalid")
+        return _mcp_read(
+            self.base_url,
+            "read.run-events",
+            {"workspace_id": self.workspace_id, "run_id": run_id, "limit": limit},
+        )
+
     def read_activity(self, *, limit: int = 50) -> dict[str, Any]:
         return _mcp_read(
             self.base_url,
