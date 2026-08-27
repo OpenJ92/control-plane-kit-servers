@@ -744,6 +744,10 @@ def _operations_application(
         secret_use_authorizer,
         secret_provider,
     )
+    observer = _runtime_observer(
+        config,
+        secret_provider=secret_provider,
+    )
     fold_service = EffectAttemptFoldService(
         unit_of_work,
         id_factory=_fold_id,
@@ -754,7 +758,7 @@ def _operations_application(
     )
     reconciliation_service = EffectAttemptReconciliationService(
         unit_of_work,
-        adapter,
+        observer,
         fold_service,
     )
     execution = ExecutionCoordinator(
@@ -1013,6 +1017,37 @@ class _UnsupportedExecutionAdapter:
         )
 
 
+class _UnsupportedRuntimeEffectObserver:
+    """Closed read-only fallback when runtime observation is disabled."""
+
+    def observe(self, request, authority):
+        from control_plane_kit_core.runtime_effect_observation import (
+            RuntimeEffectObservationEvidence,
+            RuntimeEffectObservationFailure,
+            RuntimeEffectObservationRequest,
+            RuntimeEffectObserverUnsupported,
+        )
+
+        if type(request) is not RuntimeEffectObservationRequest:
+            raise TypeError(
+                "Runtime observer requires RuntimeEffectObservationRequest"
+            )
+        return RuntimeEffectObserverUnsupported(
+            effect_id=request.effect_id,
+            request_fingerprint=request.request_fingerprint,
+            evidence=RuntimeEffectObservationEvidence(
+                {
+                    "operation": "runtime-effect",
+                    "postcondition": "unsupported",
+                }
+            ),
+            failure=RuntimeEffectObservationFailure(
+                code="runtime.observer-unsupported",
+                message="Runtime effect observation is disabled.",
+            ),
+        )
+
+
 def _activity_adapter(
     config: CpkServerBootstrapConfiguration,
     unit_of_work,
@@ -1033,6 +1068,22 @@ def _activity_adapter(
         secret_use_authorizer=secret_use_authorizer,
     )
     return ActivityExecutionDispatcher(runtime=runtime, ingress=ingress)
+
+
+def _runtime_observer(
+    config: CpkServerBootstrapConfiguration,
+    *,
+    secret_provider: "_SecretProviderComposition | None" = None,
+):
+    if not config.runtime_dispatcher.enabled:
+        return _UnsupportedRuntimeEffectObserver()
+    provider = secret_provider or _secret_provider_composition(config)
+    runtime_kinds = config.runtime_dispatcher.runtime_kinds
+    if runtime_kinds == (RuntimeKind.DOCKER,):
+        return _docker_runtime_observer(config, provider)
+    raise BootstrapConfigurationError(
+        "runtime observation requires exactly one Docker runtime provider"
+    )
 
 
 def _runtime_adapter(
@@ -1058,6 +1109,31 @@ def _runtime_adapter(
     return RuntimeInterpreterDispatcher(
         interpreters,
         secret_use_authorizer=secret_use_authorizer,
+    )
+
+
+def _docker_runtime_observer(
+    config: CpkServerBootstrapConfiguration,
+    secret_provider: "_SecretProviderComposition | None" = None,
+):
+    try:
+        from control_plane_kit_interpreters.docker import (
+            DockerLocalAmbientClientConfig,
+            DockerRuntimeEffectObserver,
+            DockerSdkClient,
+        )
+    except ModuleNotFoundError as error:
+        raise BootstrapConfigurationError(
+            "CPK_RUNTIME_INTERPRETERS=docker requires "
+            "control-plane-kit-interpreters[docker]"
+        ) from error
+    provider = secret_provider or _secret_provider_composition(config)
+    return DockerRuntimeEffectObserver(
+        DockerSdkClient.from_authority(
+            DockerLocalAmbientClientConfig(),
+            connect_on_init=False,
+        ),
+        authorized_secret_resolver=provider.authorized_resolver,
     )
 
 
