@@ -55,7 +55,6 @@ from cpk_server_hosted_activity import (
     GATEWAY_PROBE_KEY_ID,
     LOCAL_DOCKER_AUTHORITY_REF,
     GATEWAY_PROBE_ISSUER,
-    HostedReleaseResult,
     HostedWorkflow,
     _assert_activity_mentions,
     _assert_gateway_probe_succeeded,
@@ -83,6 +82,7 @@ from cpk_server_hosted_activity import (
 )
 from cpk_server_source_live_abort import (
     ExactOwnedIngressResource,
+    SourceLiveAbortError,
     SourceLiveCheckpoint,
     compensate_abort,
     read_checkpoint,
@@ -616,7 +616,6 @@ def _assert_owned_cloudflare_epoch_states(
     *,
     workspace_id: str,
     expected_statuses: tuple[str, ...],
-    retained_reservation: bool = False,
 ) -> None:
     evidence = _owned_cloudflare_epoch_evidence(
         operations_database_url,
@@ -633,10 +632,7 @@ def _assert_owned_cloudflare_epoch_states(
         if len(set(identities)) != len(identities):
             raise RuntimeError(f"public ingress recreation reused {label} identity")
     dns_identities = {row[3] for row in evidence}
-    if retained_reservation:
-        if len(dns_identities) != 1:
-            raise RuntimeError("retained DNS reservation identity changed across epochs")
-    elif len(dns_identities) != len(evidence):
+    if len(dns_identities) != len(evidence):
         raise RuntimeError("public ingress recreation reused DNS identity")
 
 
@@ -665,128 +661,6 @@ def _assert_removed_ingress_token_versions_revoked(
     }
     if not removed_versions.issubset(revoked_versions):
         raise RuntimeError("removed ingress token version remained active")
-
-
-def _assert_retained_cloudflare_reservation_present(
-    operations_database_url: str,
-    *,
-    workspace_id: str,
-    api_token_file: Path,
-) -> None:
-    query = """
-        SELECT tunnel_id, dns_record_id, hostname, zone_id, status
-        FROM cpk_cloudflare_ingress_resources
-        WHERE workspace_id = %s
-        ORDER BY epoch
-    """
-    with psycopg.connect(operations_database_url) as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(query, (workspace_id,))
-            resources = cursor.fetchall()
-    if not resources:
-        raise RuntimeError("retained Cloudflare reservation evidence was unavailable")
-    dns_ids = {str(row[1]) for row in resources}
-    hostnames = {str(row[2]) for row in resources}
-    zone_ids = {str(row[3]) for row in resources}
-    if len(dns_ids) != 1 or len(hostnames) != 1 or len(zone_ids) != 1:
-        raise RuntimeError("retained DNS reservation identity changed")
-    hostname = next(iter(hostnames))
-    if hostname != _required_env("CPK_PUBLIC_GATEWAY_HOSTNAME"):
-        raise RuntimeError("retained DNS reservation changed the test hostname")
-    status, payload = _cloudflare_api_get_json(
-        f"/zones/{next(iter(zone_ids))}/dns_records/{next(iter(dns_ids))}",
-        api_token_file,
-    )
-    result = payload.get("result") if isinstance(payload, dict) else None
-    if (
-        status != 200
-        or not isinstance(result, dict)
-        or result.get("id") != next(iter(dns_ids))
-        or result.get("name") != hostname
-        or result.get("type") != "CNAME"
-    ):
-        raise RuntimeError("retained DNS reservation was not exactly present")
-    active_tunnels = [str(row[0]) for row in resources if row[4] == "active"]
-    expected_tunnel_id = active_tunnels[-1] if active_tunnels else str(resources[-1][0])
-    if result.get("content") != f"{expected_tunnel_id}.cfargotunnel.com":
-        raise RuntimeError("retained DNS reservation target changed unexpectedly")
-    for tunnel_id, _dns_id, _hostname, _zone_id, resource_status in resources:
-        if resource_status == "removed":
-            _assert_cloudflare_tunnel_deleted(
-                account_id=_required_env("OPENJ92_CLOUDFLARE_ACCOUNT_ID"),
-                tunnel_id=str(tunnel_id),
-                api_token_file=api_token_file,
-            )
-
-
-def _assert_public_hostname_resolves(hostname: str) -> None:
-    try:
-        addresses = socket.getaddrinfo(
-            hostname,
-            443,
-            type=socket.SOCK_STREAM,
-        )
-    except OSError as error:
-        raise RuntimeError(
-            "public hostname did not resolve: "
-            f"{type(error).__name__}"
-        ) from None
-    if not addresses:
-        raise RuntimeError("public hostname did not resolve")
-
-
-def _release_retained_public_ingress(
-    workflow: HostedWorkflow,
-    *,
-    realization_statuses: tuple[str, ...],
-) -> HostedReleaseResult:
-    reservation = _assert_retained_public_ingress_read(
-        workflow,
-        reservation_status="reserved",
-        realization_statuses=realization_statuses,
-    )
-    released = workflow.run_approved_public_ingress_reservation_release(
-        title="Final retained public ingress reservation release",
-        reservation=reservation,
-    )
-    _assert_retained_public_ingress_read(
-        workflow,
-        reservation_status="released",
-        realization_statuses=realization_statuses,
-    )
-    _assert_public_ingress_release_evidence(workflow, released)
-    return released
-
-
-def _assert_public_ingress_release_evidence(
-    workflow: HostedWorkflow,
-    released: HostedReleaseResult,
-) -> None:
-    detail = workflow.read_plan_detail(released.plan_id)
-    plan = detail.get("plan")
-    payload = plan.get("payload") if isinstance(plan, dict) else None
-    activities = payload.get("activities") if isinstance(payload, dict) else None
-    if not isinstance(activities, list) or len(activities) != 1:
-        raise RuntimeError("reservation release plan evidence was malformed")
-    activity = activities[0]
-    operation = activity.get("operation") if isinstance(activity, dict) else None
-    target = operation.get("target") if isinstance(operation, dict) else None
-    if (
-        not isinstance(operation, dict)
-        or operation.get("kind") != "release-public-ingress-reservation"
-        or not isinstance(target, dict)
-        or target.get("kind") != "public-ingress-reservation"
-    ):
-        raise RuntimeError("reservation release plan changed destructive intent")
-    activity_id = activity.get("activity_id")
-    events = _events_for_run(workflow.read_activity(limit=200), released.run_id)
-    if not any(
-        event.get("event_type") == "step_succeeded"
-        and event.get("activity_id") == activity_id
-        for event in events
-    ):
-        raise RuntimeError("reservation release activity did not succeed durably")
-
 
 
 def _run_gateway_verifier_projection(
@@ -2085,7 +1959,7 @@ def _run_cloudflare_tunnel_custody(
         workspace_id=workspace_id,
         authority_ref=RuntimeAuthorityReference(LOCAL_DOCKER_AUTHORITY_REF),
         public_hostname=public_hostname,
-        lifecycle=PublicIngressLifecycle.RETAINED,
+        lifecycle=PublicIngressLifecycle.EPHEMERAL,
     )
     private_graph = _single_hello_graph(
         hello_document,
@@ -2096,12 +1970,23 @@ def _run_cloudflare_tunnel_custody(
     _record_source_live_cloudflare_inventory(
         bootstrap_dir / "cloudflare-api-token"
     )
+    _checkpoint_cloudflare_phase(
+        workflow,
+        phase="prepared",
+        current_graph_id=current_graph_id,
+        desired_graph_id=current_graph_id,
+    )
 
     public_on = workflow.run_approved_transition(
         title="Cloudflare custody public overlay on",
         graph=public_graph,
         current_graph_id=current_graph_id,
         sync_runtime_networks=False,
+    )
+    _checkpoint_cloudflare_phase(
+        workflow,
+        phase="public-on-committed",
+        result=public_on,
     )
     _assert_public_overlay_transition_evidence(
         workflow,
@@ -2112,11 +1997,6 @@ def _run_cloudflare_tunnel_custody(
         },
         expected_connector_operations={"start-node", "wait-for-healthy"},
         stable_workload_nodes=set(),
-    )
-    _checkpoint_cloudflare_phase(
-        workflow,
-        phase="public-on-committed",
-        result=public_on,
     )
     _assert_activity_mentions(workflow, public_on.run_id, "gateway")
     _assert_activity_mentions(workflow, public_on.run_id, "hello")
@@ -2136,11 +2016,6 @@ def _run_cloudflare_tunnel_custody(
         workspace_id,
         ("gateway", "hello"),
     )
-    _assert_retained_public_ingress_read(
-        workflow,
-        reservation_status="bound",
-        realization_statuses=("active",),
-    )
     _sync_runtime_networks(server_container, workspace_id=workspace_id)
     private_probe = workflow.request_gateway_probe_http(
         request_id=f"{workspace_id}:gateway-probe:first",
@@ -2159,6 +2034,11 @@ def _run_cloudflare_tunnel_custody(
         expected_desired_graph_id=public_on.desired_graph_id,
         sync_runtime_networks=False,
     )
+    _checkpoint_cloudflare_phase(
+        workflow,
+        phase="public-off-committed",
+        result=public_off,
+    )
     _assert_public_overlay_transition_evidence(
         workflow,
         public_off,
@@ -2166,29 +2046,17 @@ def _run_cloudflare_tunnel_custody(
         expected_connector_operations={"stop-node", "remove-node-resource"},
         stable_workload_nodes={"gateway", "hello"},
     )
-    _checkpoint_cloudflare_phase(
-        workflow,
-        phase="public-off-committed",
-        result=public_off,
-    )
     _assert_activity_mentions(workflow, public_off.run_id, "cloudflared-gateway")
     _assert_public_gateway_unreachable(public_hostname)
-    _assert_public_hostname_resolves(public_hostname)
     _assert_runtime_node_identities(workspace_id, workload_identities)
     _assert_named_public_gateway_probes_unavailable(
         workflow,
         current_graph_id=public_off.current_graph_id,
     )
-    _assert_retained_public_ingress_read(
-        workflow,
-        reservation_status="reserved",
-        realization_statuses=("removed",),
-    )
     _assert_owned_cloudflare_epoch_states(
         operations_database_url,
         workspace_id=workspace_id,
         expected_statuses=("removed",),
-        retained_reservation=True,
     )
     _assert_removed_ingress_token_versions_revoked(
         provider_container,
@@ -2196,10 +2064,11 @@ def _run_cloudflare_tunnel_custody(
         workspace_id=workspace_id,
         expected_count=1,
     )
-    _assert_retained_cloudflare_reservation_present(
+    _assert_owned_cloudflare_resources_removed(
         operations_database_url,
         workspace_id=workspace_id,
         api_token_file=bootstrap_dir / "cloudflare-api-token",
+        expected_minimum=1,
     )
 
     public_on_again = workflow.run_approved_transition(
@@ -2208,6 +2077,11 @@ def _run_cloudflare_tunnel_custody(
         current_graph_id=public_off.current_graph_id,
         expected_desired_graph_id=public_off.desired_graph_id,
         sync_runtime_networks=False,
+    )
+    _checkpoint_cloudflare_phase(
+        workflow,
+        phase="public-on-again-committed",
+        result=public_on_again,
     )
     _assert_public_overlay_transition_evidence(
         workflow,
@@ -2219,11 +2093,6 @@ def _run_cloudflare_tunnel_custody(
         expected_connector_operations={"start-node", "wait-for-healthy"},
         stable_workload_nodes={"gateway", "hello"},
     )
-    _checkpoint_cloudflare_phase(
-        workflow,
-        phase="public-on-again-committed",
-        result=public_on_again,
-    )
     _assert_activity_mentions(workflow, public_on_again.run_id, "gateway")
     _assert_activity_mentions(workflow, public_on_again.run_id, "cloudflared-gateway")
     _wait_public_gateway_ready(public_hostname)
@@ -2232,16 +2101,10 @@ def _run_cloudflare_tunnel_custody(
         workspace_id=workspace_id,
     )
     _assert_runtime_node_identities(workspace_id, workload_identities)
-    _assert_retained_public_ingress_read(
-        workflow,
-        reservation_status="bound",
-        realization_statuses=("removed", "active"),
-    )
     _assert_owned_cloudflare_epoch_states(
         operations_database_url,
         workspace_id=workspace_id,
         expected_statuses=("removed", "active"),
-        retained_reservation=True,
     )
     _disconnect_runtime_networks(server_container, workspace_id=workspace_id)
     removed = workflow.run_approved_transition(
@@ -2251,6 +2114,11 @@ def _run_cloudflare_tunnel_custody(
         expected_desired_graph_id=public_on_again.desired_graph_id,
         sync_runtime_networks=False,
     )
+    _checkpoint_cloudflare_phase(
+        workflow,
+        phase="final-teardown-committed",
+        result=removed,
+    )
     _assert_public_overlay_transition_evidence(
         workflow,
         removed,
@@ -2258,45 +2126,19 @@ def _run_cloudflare_tunnel_custody(
         expected_connector_operations={"stop-node", "remove-node-resource"},
         stable_workload_nodes=set(),
     )
-    _checkpoint_cloudflare_phase(
-        workflow,
-        phase="final-teardown-committed",
-        result=removed,
-    )
     _assert_activity_mentions(workflow, removed.run_id, "cloudflared-gateway")
     _assert_public_gateway_unreachable(public_hostname)
-    _assert_public_hostname_resolves(public_hostname)
-    _assert_retained_public_ingress_read(
-        workflow,
-        reservation_status="reserved",
-        realization_statuses=("removed", "removed"),
-    )
     _assert_no_runtime_networks(workspace_id)
     _assert_owned_cloudflare_epoch_states(
         operations_database_url,
         workspace_id=workspace_id,
         expected_statuses=("removed", "removed"),
-        retained_reservation=True,
     )
     _assert_removed_ingress_token_versions_revoked(
         provider_container,
         operations_database_url,
         workspace_id=workspace_id,
         expected_count=2,
-    )
-    _assert_retained_cloudflare_reservation_present(
-        operations_database_url,
-        workspace_id=workspace_id,
-        api_token_file=bootstrap_dir / "cloudflare-api-token",
-    )
-    released = _release_retained_public_ingress(
-        workflow,
-        realization_statuses=("removed", "removed"),
-    )
-    _checkpoint_cloudflare_phase(
-        workflow,
-        phase="final-release-committed",
-        result=released,
     )
     _assert_owned_cloudflare_resources_removed(
         operations_database_url,
@@ -2319,91 +2161,29 @@ def _run_cloudflare_tunnel_custody(
     )
 
 
-def _assert_retained_public_ingress_read(
-    workflow: HostedWorkflow,
-    *,
-    reservation_status: str,
-    realization_statuses: tuple[str, ...],
-) -> dict[str, Any]:
-    item, observed_statuses = _read_retained_public_ingress(workflow)
-    if (
-        item.get("status") != reservation_status
-        or observed_statuses != realization_statuses
-    ):
-        raise RuntimeError("retained public ingress readback changed lifecycle truth")
-    return item
-
-
-def _read_retained_public_ingress(
-    workflow: HostedWorkflow,
-) -> tuple[dict[str, Any], tuple[str, ...]]:
-    readback = workflow.read_public_ingress_resources()
-    mcp_readback = workflow.read_public_ingress_resources_mcp()
-    if mcp_readback != readback:
-        raise RuntimeError("retained public ingress HTTP/MCP readback changed")
-    items = readback.get("items")
-    if not isinstance(items, list) or len(items) != 1:
-        raise RuntimeError("retained public ingress readback was malformed")
-    item = items[0]
-    if not isinstance(item, dict):
-        raise RuntimeError("retained public ingress item was malformed")
-    realizations = item.get("realizations")
-    if not isinstance(realizations, list):
-        raise RuntimeError("retained public ingress realizations were malformed")
-    if item.get("lifecycle") != PublicIngressLifecycle.RETAINED.value:
-        raise RuntimeError("retained public ingress readback changed lifecycle truth")
-    statuses: list[str] = []
-    for value in realizations:
-        status = value.get("status") if isinstance(value, dict) else None
-        if not isinstance(status, str):
-            raise RuntimeError("retained public ingress realizations were malformed")
-        statuses.append(status)
-    _assert_public_ingress_readback_is_provider_neutral(readback)
-    return item, tuple(statuses)
-
-
-def _assert_public_ingress_readback_is_provider_neutral(value: object) -> None:
-    forbidden_keys = {
-        "account_id",
-        "api_token",
-        "api_token_ref",
-        "dns_record_id",
-        "provider_version_id",
-        "secret_ref",
-        "token",
-        "tunnel_id",
-        "zone_id",
-    }
-    if isinstance(value, dict):
-        if forbidden_keys.intersection(value):
-            raise RuntimeError("retained public ingress readback leaked provider material")
-        for child in value.values():
-            _assert_public_ingress_readback_is_provider_neutral(child)
-    elif isinstance(value, list):
-        for child in value:
-            _assert_public_ingress_readback_is_provider_neutral(child)
-
-
 def _checkpoint_cloudflare_phase(
     workflow: HostedWorkflow,
     *,
     phase: str,
-    result: PreparedRun | HostedReleaseResult,
+    result: PreparedRun | None = None,
+    current_graph_id: str | None = None,
+    desired_graph_id: str | None = None,
 ) -> None:
     state_file = os.environ.get("CPK_SOURCE_LIVE_STATE_FILE")
     if not state_file:
         return
+    if result is not None:
+        current_graph_id = result.current_graph_id
+        desired_graph_id = result.desired_graph_id
+    if current_graph_id is None or desired_graph_id is None:
+        raise RuntimeError("source-live checkpoint graph identity is unavailable")
     record_checkpoint(
         Path(state_file),
         SourceLiveCheckpoint(
             workspace_id=workflow.workspace_id,
             phase=phase,
-            current_graph_id=result.current_graph_id,
-            desired_graph_id=getattr(
-                result,
-                "desired_graph_id",
-                result.current_graph_id,
-            ),
+            current_graph_id=current_graph_id,
+            desired_graph_id=desired_graph_id,
         ),
         fail_after_phase=os.environ.get("CPK_SOURCE_LIVE_FAIL_AFTER_PHASE"),
     )
@@ -2432,7 +2212,7 @@ def _run_cloudflare_abort_cleanup(
         operations_database_url,
         workspace_id=workspace_id,
     )
-    if not resources:
+    if not resources and checkpoint.phase != "prepared":
         raise RuntimeError("source-live exact Cloudflare evidence was unavailable")
     failed_connector_effects: dict[str, ExactFailedDockerNodeEffect] = {}
     uncertain_connector_runs: set[str] = set()
@@ -2440,17 +2220,22 @@ def _run_cloudflare_abort_cleanup(
         {resource.source_run_id for resource in active_resources}
     ):
         try:
-            effect = _load_exact_failed_connector_effect(
+            effect = _load_exact_connector_run_evidence(
                 operations_database_url,
                 workspace_id=workspace_id,
                 source_run_id=source_run_id,
                 connector_node_id="cloudflared-gateway",
+                accepted_graph_id=checkpoint.current_graph_id,
             )
-            if effect.desired_graph_id == checkpoint.current_graph_id:
-                raise RuntimeError("failed connector evidence is uncertain")
-            failed_connector_effects[source_run_id] = effect
+            if effect is not None:
+                failed_connector_effects[source_run_id] = effect
         except Exception:
             uncertain_connector_runs.add(source_run_id)
+    emergency_resources = tuple(
+        resource
+        for resource in active_resources
+        if resource.source_run_id in failed_connector_effects
+    )
     _print_bounded_abort_snapshot(
         checkpoint,
         resources,
@@ -2485,24 +2270,15 @@ def _run_cloudflare_abort_cleanup(
             expected_desired_graph_id=desired_graph_id,
             sync_runtime_networks=False,
         )
-        reservation, realization_statuses = _read_retained_public_ingress(workflow)
-        if not realization_statuses or any(
-            status != "removed" for status in realization_statuses
-        ):
-            raise RuntimeError("abort cleanup retained realizations were not removed")
-        if reservation.get("status") == "reserved":
-            workflow.run_approved_public_ingress_reservation_release(
-                title=f"Source-live abort release {checkpoint.phase}",
-                reservation=reservation,
-            )
-        elif reservation.get("status") != "released":
-            raise RuntimeError("abort cleanup reservation state was uncertain")
 
     def verify_authoritative_absence() -> None:
+        if uncertain_connector_runs:
+            raise RuntimeError("failed connector absence is uncertain")
+        _assert_no_node_containers(workspace_id, "cloudflared-gateway")
         _assert_failed_connectors_absent(
-            active_resources,
+            emergency_resources,
             failed_connector_effects=failed_connector_effects,
-            uncertain_connector_runs=uncertain_connector_runs,
+            uncertain_connector_runs=set(),
         )
         _assert_abort_generated_secret_versions_revoked(
             resources,
@@ -2513,10 +2289,11 @@ def _run_cloudflare_abort_cleanup(
             operations_database_url,
             workspace_id=workspace_id,
             api_token_file=bootstrap_dir / "cloudflare-api-token",
-            expected_minimum=1,
+            expected_minimum=0 if checkpoint.phase == "prepared" else 1,
         )
 
     def verify_emergency_absence() -> None:
+        _assert_no_node_containers(workspace_id, "cloudflared-gateway")
         _assert_abort_generated_secret_versions_revoked(
             resources,
             provider_container=provider_container,
@@ -2530,6 +2307,7 @@ def _run_cloudflare_abort_cleanup(
         if active_resources == resources:
             _assert_abort_resources_physically_absent(
                 resources,
+                connector_resources=emergency_resources,
                 **verification_arguments,
             )
         else:
@@ -2544,6 +2322,7 @@ def _run_cloudflare_abort_cleanup(
         verify_authoritative_absence=verify_authoritative_absence,
         verify_emergency_absence=verify_emergency_absence,
         resources=resources,
+        emergency_resources=emergency_resources,
         emergency_compensators={
             "cloudflare": lambda resource: _emergency_compensate_cloudflare(
                 resource,
@@ -2582,17 +2361,17 @@ def _load_exact_owned_ingress_resources(
 ) -> tuple[ExactOwnedIngressResource, ...]:
     query = """
         SELECT
-          resource.provider_kind,
-          resource.ingress_id,
+          left(resource.provider_kind, 256),
+          left(resource.ingress_id, 256),
           resource.epoch,
-          resource.tunnel_id,
-          resource.dns_record_id,
-          resource.hostname,
-          resource.zone_id,
-          resource.source_run_id,
-          generated.secret_ref,
-          generated.metadata->>'provider_version_id',
-          (generated.metadata->>'provider_version_number')::integer
+          left(resource.tunnel_id, 256),
+          left(resource.dns_record_id, 256),
+          left(resource.hostname, 256),
+          left(resource.zone_id, 256),
+          left(resource.source_run_id, 256),
+          left(generated.secret_ref, 257),
+          left(generated.metadata->>'provider_version_id', 256),
+          left(generated.metadata->>'provider_version_number', 11)
         FROM cpk_cloudflare_ingress_resources AS resource
         JOIN cpk_generated_ingress_secret_references AS generated
           ON generated.workspace_id = resource.workspace_id
@@ -2601,30 +2380,13 @@ def _load_exact_owned_ingress_resources(
          AND generated.source_event_id = resource.source_event_id
         WHERE resource.workspace_id = %s
           AND resource.status <> 'removed'
-        ORDER BY resource.ingress_id, resource.epoch
+        ORDER BY left(resource.ingress_id, 256), resource.epoch
     """
     with psycopg.connect(operations_database_url) as connection:
         with connection.cursor() as cursor:
             cursor.execute(query, (workspace_id,))
             rows = cursor.fetchall()
-    return tuple(
-        ExactOwnedIngressResource(
-            provider_kind=str(row[0]),
-            ingress_id=str(row[1]),
-            epoch=int(row[2]),
-            public_provider_coordinates={
-                "tunnel_id": str(row[3]),
-                "dns_record_id": str(row[4]),
-                "hostname": str(row[5]),
-                "zone_id": str(row[6]),
-            },
-            source_run_id=str(row[7]),
-            secret_reference=str(row[8]),
-            provider_version_id=str(row[9]),
-            provider_version_number=int(row[10]),
-        )
-        for row in rows
-    )
+    return _decode_exact_owned_ingress_resources(tuple(rows))
 
 
 def _load_all_exact_owned_ingress_resources(
@@ -2634,17 +2396,17 @@ def _load_all_exact_owned_ingress_resources(
 ) -> tuple[ExactOwnedIngressResource, ...]:
     query = """
         SELECT
-          resource.provider_kind,
-          resource.ingress_id,
+          left(resource.provider_kind, 256),
+          left(resource.ingress_id, 256),
           resource.epoch,
-          resource.tunnel_id,
-          resource.dns_record_id,
-          resource.hostname,
-          resource.zone_id,
-          resource.source_run_id,
-          generated.secret_ref,
-          generated.metadata->>'provider_version_id',
-          (generated.metadata->>'provider_version_number')::integer
+          left(resource.tunnel_id, 256),
+          left(resource.dns_record_id, 256),
+          left(resource.hostname, 256),
+          left(resource.zone_id, 256),
+          left(resource.source_run_id, 256),
+          left(generated.secret_ref, 257),
+          left(generated.metadata->>'provider_version_id', 256),
+          left(generated.metadata->>'provider_version_number', 11)
         FROM cpk_cloudflare_ingress_resources AS resource
         JOIN cpk_generated_ingress_secret_references AS generated
           ON generated.workspace_id = resource.workspace_id
@@ -2652,30 +2414,69 @@ def _load_all_exact_owned_ingress_resources(
          AND generated.source_activity_id = resource.source_activity_id
          AND generated.source_event_id = resource.source_event_id
         WHERE resource.workspace_id = %s
-        ORDER BY resource.ingress_id, resource.epoch
+        ORDER BY left(resource.ingress_id, 256), resource.epoch
     """
     with psycopg.connect(operations_database_url) as connection:
         with connection.cursor() as cursor:
             cursor.execute(query, (workspace_id,))
             rows = cursor.fetchall()
-    return tuple(
-        ExactOwnedIngressResource(
-            provider_kind=str(row[0]),
-            ingress_id=str(row[1]),
-            epoch=int(row[2]),
-            public_provider_coordinates={
-                "tunnel_id": str(row[3]),
-                "dns_record_id": str(row[4]),
-                "hostname": str(row[5]),
-                "zone_id": str(row[6]),
-            },
-            source_run_id=str(row[7]),
-            secret_reference=str(row[8]),
-            provider_version_id=str(row[9]),
-            provider_version_number=int(row[10]),
-        )
-        for row in rows
-    )
+    return _decode_exact_owned_ingress_resources(tuple(rows))
+
+
+def _decode_exact_owned_ingress_resources(
+    rows: tuple[tuple[Any, ...], ...],
+) -> tuple[ExactOwnedIngressResource, ...]:
+    resources: list[ExactOwnedIngressResource] = []
+    identities: set[tuple[str, int]] = set()
+    for row in rows:
+        if (
+            len(row) != 11
+            or row[0] != "cloudflare"
+            or type(row[2]) is not int
+            or type(row[10]) is not str
+            or any(
+                type(row[index]) is not str
+                for index in (*range(0, 2), *range(3, 10))
+            )
+        ):
+            raise RuntimeError("owned ingress evidence is uncertain")
+        identity = (row[1], row[2])
+        if identity in identities:
+            raise RuntimeError("owned ingress evidence is uncertain")
+        identities.add(identity)
+        provider_version_number = _decode_provider_version_number(row[10])
+        if provider_version_number is None:
+            raise RuntimeError("owned ingress evidence is uncertain")
+        invalid_resource = False
+        try:
+            resource = ExactOwnedIngressResource(
+                provider_kind=row[0],
+                ingress_id=row[1],
+                epoch=row[2],
+                public_provider_coordinates={
+                    "tunnel_id": row[3],
+                    "dns_record_id": row[4],
+                    "hostname": row[5],
+                    "zone_id": row[6],
+                },
+                source_run_id=row[7],
+                secret_reference=row[8],
+                provider_version_id=row[9],
+                provider_version_number=provider_version_number,
+            )
+        except (SourceLiveAbortError, TypeError, ValueError):
+            invalid_resource = True
+        if invalid_resource:
+            raise RuntimeError("owned ingress evidence is uncertain")
+        resources.append(resource)
+    return tuple(resources)
+
+
+def _decode_provider_version_number(candidate: str) -> int | None:
+    if re.fullmatch(r"[1-9][0-9]{0,9}", candidate) is None:
+        return None
+    decoded = int(candidate)
+    return decoded if decoded <= 2_147_483_647 else None
 
 
 def _load_exact_failed_connector_effect(
@@ -2685,6 +2486,81 @@ def _load_exact_failed_connector_effect(
     source_run_id: str,
     connector_node_id: str,
 ) -> ExactFailedDockerNodeEffect:
+    rows = _load_connector_run_rows(
+        operations_database_url,
+        source_run_id=source_run_id,
+    )
+    return _decode_exact_failed_connector_effect(
+        expected_workspace_id=workspace_id,
+        expected_run_id=source_run_id,
+        connector_node_id=connector_node_id,
+        rows=rows,
+    )
+
+
+def _load_exact_connector_run_evidence(
+    operations_database_url: str,
+    *,
+    workspace_id: str,
+    source_run_id: str,
+    connector_node_id: str,
+    accepted_graph_id: str,
+) -> ExactFailedDockerNodeEffect | None:
+    rows = _load_connector_run_rows(
+        operations_database_url,
+        source_run_id=source_run_id,
+    )
+    return _decode_exact_connector_run_evidence(
+        expected_workspace_id=workspace_id,
+        expected_run_id=source_run_id,
+        connector_node_id=connector_node_id,
+        accepted_graph_id=accepted_graph_id,
+        rows=rows,
+    )
+
+
+def _decode_exact_connector_run_evidence(
+    *,
+    expected_workspace_id: str,
+    expected_run_id: str,
+    connector_node_id: str,
+    accepted_graph_id: str,
+    rows: tuple[tuple[Any, ...], ...],
+) -> ExactFailedDockerNodeEffect | None:
+    if not rows or any(len(row) != 7 for row in rows):
+        raise RuntimeError("connector run evidence is uncertain")
+    identity = rows[0][:6]
+    if any(row[:6] != identity for row in rows):
+        raise RuntimeError("connector run evidence is uncertain")
+    run_id, run_status, row_workspace_id, plan_id, desired_graph_id, payload = (
+        identity
+    )
+    if run_status == "succeeded":
+        if (
+            run_id != expected_run_id
+            or row_workspace_id != expected_workspace_id
+            or desired_graph_id != accepted_graph_id
+            or type(plan_id) is not str
+            or not plan_id
+            or type(payload) is not dict
+        ):
+            raise RuntimeError("connector run evidence is uncertain")
+        return None
+    if run_status != "failed":
+        raise RuntimeError("connector run evidence is uncertain")
+    return _decode_exact_failed_connector_effect(
+        expected_workspace_id=expected_workspace_id,
+        expected_run_id=expected_run_id,
+        connector_node_id=connector_node_id,
+        rows=rows,
+    )
+
+
+def _load_connector_run_rows(
+    operations_database_url: str,
+    *,
+    source_run_id: str,
+) -> tuple[tuple[Any, ...], ...]:
     query = """
         SELECT
           run.run_id,
@@ -2709,13 +2585,7 @@ def _load_exact_failed_connector_effect(
     with psycopg.connect(operations_database_url) as connection:
         with connection.cursor() as cursor:
             cursor.execute(query, (source_run_id,))
-            rows = tuple(cursor.fetchall())
-    return _decode_exact_failed_connector_effect(
-        expected_workspace_id=workspace_id,
-        expected_run_id=source_run_id,
-        connector_node_id=connector_node_id,
-        rows=rows,
-    )
+            return tuple(cursor.fetchall())
 
 
 def _decode_exact_failed_connector_effect(
@@ -2799,14 +2669,9 @@ def _print_bounded_abort_snapshot(
                 "workspace_id": checkpoint.workspace_id,
                 "current_graph_id": checkpoint.current_graph_id,
                 "desired_graph_id": checkpoint.desired_graph_id,
-                "owned_resources": [
-                    resource.bounded_descriptor() for resource in resources
-                ],
-                "failed_connectors": [
-                    failed_connector_effects[source_run_id].bounded_descriptor()
-                    for source_run_id in sorted(failed_connector_effects)
-                ],
-                "uncertain_connector_run_ids": sorted(uncertain_connector_runs),
+                "owned_resource_count": len(resources),
+                "failed_connector_count": len(failed_connector_effects),
+                "uncertain_connector_count": len(uncertain_connector_runs),
             },
             separators=(",", ":"),
             sort_keys=True,
