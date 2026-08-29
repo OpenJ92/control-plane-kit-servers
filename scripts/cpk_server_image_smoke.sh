@@ -104,7 +104,7 @@ POSTGRES_CONTAINER="$(docker run -d \
 phase "wait for Postgres semantic readiness"
 POSTGRES_READY=0
 for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
-  if docker exec "$POSTGRES_CONTAINER" psql -U cpk -d cpk -c 'SELECT 1' >/dev/null 2>&1; then
+  if docker exec -e PGPASSWORD=cpk "$POSTGRES_CONTAINER" psql -h 127.0.0.1 -U cpk -d cpk -c 'SELECT 1' >/dev/null 2>&1; then
     POSTGRES_READY=1
     break
   fi
