@@ -55,7 +55,6 @@ from control_plane_kit_operations import (
     CpkServerOperationsApplication,
     CurrentGraphAdvancementCommandService,
     DesiredGraphCommandService,
-    DelegationKeyGenerationEvidence,
     DelegationSigningKeyRegistrationService,
     ExecutionAdmissionCommandService,
     ExecutionCoordinator,
@@ -65,23 +64,12 @@ from control_plane_kit_operations import (
     GatewayProbeDispatch,
     GatewayProbeDispatchError,
     GatewayProbeDispatchResult,
-    GatewayKeyGenerationResult,
-    GatewayKeyRotationApplicationService,
-    GatewayKeyRotationProgramExecutor,
-    GatewayKeyRotationRevocationEffectOutcome,
-    GatewayKeyRotationRevocationEffectResult,
     ImagePullAuthorityRegistrationService,
     IngressAuthorityProviderKind,
     IngressAuthorityRegistrationService,
     IngressRealizationAdapter,
-    IngressReservationCoordinates,
-    IngressReservationObservation,
-    IngressResourcePresence,
-    IngressTunnelObservation,
     OperationCommandService,
     ProductRegistrationService,
-    PublicIngressReservationReleasePlanningService,
-    RetainedIngressDeactivationResult,
     RuntimeAuthorityRegistrationService,
     RuntimeDispatcherBootstrapConfiguration,
     RuntimeDispatcherBootstrapError,
@@ -782,11 +770,6 @@ def _operations_application(
         clock=_clock,
         id_factory=_id,
     )
-    gateway_key_rotations = _gateway_key_rotation_application(
-        unit_of_work,
-        secret_provider,
-        execution,
-    )
     return CpkServerOperationsApplication(
         cpk_server_services(
             unit_of_work_factory=unit_of_work,
@@ -804,11 +787,6 @@ def _operations_application(
             image_pull_authorities=ImagePullAuthorityRegistrationService(unit_of_work),
             runtime_authorities=RuntimeAuthorityRegistrationService(unit_of_work),
             ingress_authorities=IngressAuthorityRegistrationService(unit_of_work),
-            ingress_reservation_releases=PublicIngressReservationReleasePlanningService(
-                unit_of_work,
-                clock=_clock,
-                id_factory=_id,
-            ),
             secret_providers=SecretProviderRegistrationService(unit_of_work),
             delegation_signing_keys=DelegationSigningKeyRegistrationService(
                 unit_of_work
@@ -846,7 +824,6 @@ def _operations_application(
                 secret_use_authorizer,
                 secret_provider,
             ),
-            gateway_key_rotations=gateway_key_rotations,
             clock=lambda: datetime.now(timezone.utc),
         )
     )
@@ -1287,7 +1264,6 @@ def _cloudflare_ingress_interpreter(
     try:
         from control_plane_kit_interpreters.cloudflare import (
             CloudflareNamedIngressInterpreter,
-            CloudflareOwnedHostnameReservation,
             CloudflareOwnedIngressResources,
             CloudflareZoneAuthority,
         )
@@ -1347,65 +1323,6 @@ def _cloudflare_ingress_interpreter(
                 secret_custody_grant=secret_custody_grant,
             )
 
-        def rebind(
-            self,
-            ingress,
-            *,
-            authority: CloudflareZoneIngressAuthority,
-            reservation: IngressReservationCoordinates,
-            allocation_name: str,
-            origin_service_url: str,
-            secret_resolution_grant,
-            secret_custody_grant,
-        ):
-            return self._inner.rebind(
-                ingress,
-                authority=self._authority(authority),
-                reservation=self._reservation(reservation),
-                allocation_name=allocation_name,
-                origin_service_url=origin_service_url,
-                secret_resolution_grant=secret_resolution_grant,
-                secret_custody_grant=secret_custody_grant,
-            )
-
-        def deactivate_preserving_reservation(
-            self,
-            *,
-            authority: CloudflareZoneIngressAuthority,
-            reservation: IngressReservationCoordinates,
-            resources: CloudflareOwnedIngressResource,
-            secret_resolution_grant,
-            secret_custody_grant,
-        ) -> RetainedIngressDeactivationResult:
-            result = self._inner.deactivate_preserving_reservation(
-                authority=self._authority(authority),
-                reservation=self._reservation(reservation),
-                resources=self._resources(resources),
-                secret_resolution_grant=secret_resolution_grant,
-                secret_custody_grant=secret_custody_grant,
-            )
-            return RetainedIngressDeactivationResult(
-                reservation=self._reservation_observation(result.reservation),
-                tunnel=IngressTunnelObservation(
-                    tunnel_id=result.tunnel.tunnel_id,
-                    presence=IngressResourcePresence(result.tunnel.presence.value),
-                ),
-            )
-
-        def release_reservation(
-            self,
-            *,
-            authority: CloudflareZoneIngressAuthority,
-            reservation: IngressReservationCoordinates,
-            secret_resolution_grant,
-        ) -> IngressReservationObservation:
-            result = self._inner.release_reservation(
-                authority=self._authority(authority),
-                reservation=self._reservation(reservation),
-                secret_resolution_grant=secret_resolution_grant,
-            )
-            return self._reservation_observation(result)
-
         @staticmethod
         def _authority(authority: CloudflareZoneIngressAuthority):
             return CloudflareZoneAuthority(
@@ -1417,29 +1334,12 @@ def _cloudflare_ingress_interpreter(
             )
 
         @staticmethod
-        def _reservation(reservation: IngressReservationCoordinates):
-            return CloudflareOwnedHostnameReservation(
-                dns_record_id=reservation.dns_record_id,
-                hostname=reservation.hostname,
-                expected_tunnel_id=reservation.expected_tunnel_id,
-            )
-
-        @staticmethod
         def _resources(resources: CloudflareOwnedIngressResource):
             return CloudflareOwnedIngressResources(
                 tunnel_id=resources.tunnel_id,
                 dns_record_id=resources.dns_record_id,
                 tunnel_name=resources.tunnel_name,
                 hostname=resources.hostname,
-            )
-
-        @staticmethod
-        def _reservation_observation(result) -> IngressReservationObservation:
-            return IngressReservationObservation(
-                dns_record_id=result.dns_record_id,
-                hostname=result.hostname,
-                presence=IngressResourcePresence(result.presence.value),
-                tunnel_id=result.tunnel_id,
             )
 
         def __repr__(self) -> str:
@@ -1460,125 +1360,6 @@ class _SecretProviderComposition:
             "SecretProviderComposition("
             f"configured={self.bootstrap_registry is not None})"
         )
-
-
-@dataclass(frozen=True, repr=False)
-class _GatewayRotationGenerationAdapter:
-    bootstrap_registry: object = field(repr=False)
-    transport: object | None = field(default=None, repr=False)
-
-    def generate(self, grant):
-        from control_plane_kit_interpreters.secret_provider import (
-            ControlPlaneKitSecretsClient,
-            SecretProviderClientError,
-            SecretProviderOutcomeCertainty,
-        )
-
-        custody = grant.custody_grant
-        try:
-            configuration = self.bootstrap_registry.configuration_for(
-                endpoint_reference=custody.endpoint_reference,
-                credential_reference=custody.credential_reference,
-            )
-            provider_result = ControlPlaneKitSecretsClient(
-                configuration,
-                transport=self.transport,
-            ).generate_delegation_key(
-                workspace_id=grant.workspace_id,
-                reference=grant.reference,
-                purpose=grant.purpose,
-                issuer=grant.issuer,
-                caller_subject=grant.actor_subject,
-                correlation_id=grant.correlation_id,
-            )
-            evidence = DelegationKeyGenerationEvidence.from_provider_result(
-                grant,
-                provider_result,
-            )
-            return GatewayKeyGenerationResult.generated(evidence)
-        except SecretProviderClientError as error:
-            code = f"provider-{error.code.value}"
-            if error.certainty is SecretProviderOutcomeCertainty.UNCERTAIN:
-                return GatewayKeyGenerationResult.uncertain(code)
-            return GatewayKeyGenerationResult.definite_failure(code)
-        except (TypeError, ValueError):
-            return GatewayKeyGenerationResult.uncertain(
-                "provider-malformed-generation-evidence"
-            )
-
-    def __repr__(self) -> str:
-        return "GatewayRotationGenerationAdapter(<redacted>)"
-
-
-@dataclass(frozen=True, repr=False)
-class _GatewayRotationRevocationAdapter:
-    custodian: object = field(repr=False)
-
-    def revoke_version(self, grant):
-        from control_plane_kit_interpreters.secret_provider import (
-            SecretProviderClientError,
-            SecretProviderOutcomeCertainty,
-        )
-
-        try:
-            receipt = self.custodian.revoke_version(grant)
-            return GatewayKeyRotationRevocationEffectResult(
-                GatewayKeyRotationRevocationEffectOutcome.REVOKED,
-                receipt=receipt,
-            )
-        except SecretProviderClientError as error:
-            code = f"provider-{error.code.value}"
-            outcome = (
-                GatewayKeyRotationRevocationEffectOutcome.UNCERTAIN
-                if error.certainty is SecretProviderOutcomeCertainty.UNCERTAIN
-                else GatewayKeyRotationRevocationEffectOutcome.DEFINITE_FAILURE
-            )
-            return GatewayKeyRotationRevocationEffectResult(
-                outcome,
-                failure_code=code,
-            )
-        except (TypeError, ValueError):
-            return GatewayKeyRotationRevocationEffectResult(
-                GatewayKeyRotationRevocationEffectOutcome.UNCERTAIN,
-                failure_code="provider-malformed-revocation-evidence",
-            )
-
-    def __repr__(self) -> str:
-        return "GatewayRotationRevocationAdapter(<redacted>)"
-
-
-def _gateway_key_rotation_application(
-    unit_of_work,
-    secret_provider: "_SecretProviderComposition",
-    execution: ExecutionCoordinator,
-):
-    if (
-        secret_provider.bootstrap_registry is None
-        or secret_provider.secret_custodian is None
-    ):
-        return None
-    executor = GatewayKeyRotationProgramExecutor(
-        unit_of_work,
-        generation_adapter=_GatewayRotationGenerationAdapter(
-            secret_provider.bootstrap_registry,
-            secret_provider.transport,
-        ),
-        revocation_adapter=_GatewayRotationRevocationAdapter(
-            secret_provider.secret_custodian,
-        ),
-        coordinator=execution,
-        clock=_clock,
-        trusted_epoch_clock=lambda: int(time.time()),
-        lease_expiry_clock=_lease_expiry_clock,
-        id_factory=_id,
-    )
-    return GatewayKeyRotationApplicationService(
-        unit_of_work,
-        clock=_clock,
-        trusted_epoch_clock=lambda: int(time.time()),
-        id_factory=_id,
-        phase_executor=executor,
-    )
 
 
 @dataclass(frozen=True, repr=False)

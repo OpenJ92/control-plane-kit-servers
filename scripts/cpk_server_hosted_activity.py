@@ -104,20 +104,6 @@ class HostedWorkflow:
     def wait_ready(self, *, policy: VerificationPolicy | None = None) -> None:
         _wait_ready(self.base_url, policy=policy)
 
-    def read_public_ingress_resources(self) -> dict[str, Any]:
-        return _http(
-            self.base_url,
-            "GET",
-            f"/workspaces/{self.workspace_id}/public-ingress-resources",
-        )
-
-    def read_public_ingress_resources_mcp(self) -> dict[str, Any]:
-        return _mcp_read(
-            self.base_url,
-            "list_public_ingress_resources",
-            {"workspace_id": self.workspace_id},
-        )
-
     def create_workspace(self, *, name: str, actor_id: str = "operator-a") -> str:
         workspace = _http(
             self.base_url,
