@@ -1306,6 +1306,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         smoke = (ROOT / "scripts" / "cpk_server_image_smoke.sh").read_text(
             encoding="utf-8"
         )
+        normalized_smoke = " ".join(smoke.replace("\\\n", " ").split())
 
         self.assertIn("localhost/control-plane-kit-servers/cpk-server:local", smoke)
         self.assertIn("docker build", smoke)
@@ -1319,6 +1320,22 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("CPK_RUNTIME_INTERPRETERS", smoke)
         self.assertIn("CPK_SERVER_SMOKE_HOST", smoke)
         self.assertIn('CPK_SERVER_SMOKE_HOST:-127.0.0.1', smoke)
+        self.assertIn(
+            "for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do",
+            normalized_smoke,
+        )
+        self.assertIn(
+            'docker exec -e PGPASSWORD=cpk "$POSTGRES_CONTAINER" '
+            "psql -h 127.0.0.1 -U cpk -d cpk -c 'SELECT 1'",
+            normalized_smoke,
+        )
+        self.assertNotIn(
+            'docker exec "$POSTGRES_CONTAINER" '
+            "psql -U cpk -d cpk -c 'SELECT 1'",
+            normalized_smoke,
+        )
+        self.assertIn('if [ "$POSTGRES_READY" != "1" ]; then', normalized_smoke)
+        self.assertIn("postgres did not become query-ready", smoke)
         self.assertIn("/health/live", smoke)
         self.assertIn("/health/ready", smoke)
         self.assertIn("/workspaces", smoke)
