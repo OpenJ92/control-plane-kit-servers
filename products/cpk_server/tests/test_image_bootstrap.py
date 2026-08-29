@@ -1269,11 +1269,8 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("RuntimeDispatcherBootstrapConfiguration", source)
         self.assertIn("RuntimeInterpreterDispatcher", source)
         self.assertIn("IngressRealizationAdapter", source)
-        self.assertIn("PublicIngressReservationReleasePlanningService", source)
-        self.assertIn(
-            "ingress_reservation_releases=PublicIngressReservationReleasePlanningService",
-            source,
-        )
+        self.assertNotIn("PublicIngressReservationReleasePlanningService", source)
+        self.assertNotIn("ingress_reservation_releases=", source)
         self.assertIn("_public_ingress_readiness_verifier", source)
         self.assertIn("readiness_verifier=", source)
         self.assertIn("IngressAuthorityRegistrationService", source)
@@ -1284,16 +1281,8 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         )
         self.assertIn("GatewayProbeCommandService", source)
         self.assertIn("gateway_probes=_gateway_probe_service", source)
-        self.assertEqual(
-            source.count(
-                "gateway_key_rotations = _gateway_key_rotation_application("
-            ),
-            1,
-        )
-        self.assertIn(
-            "gateway_key_rotations=gateway_key_rotations",
-            source,
-        )
+        self.assertNotIn("_gateway_key_rotation_application", source)
+        self.assertNotIn("gateway_key_rotations=", source)
         self.assertIn("control_plane_kit_interpreters.docker", source)
         self.assertIn("control_plane_kit_interpreters.cloudflare", source)
         self.assertIn("control_plane_kit_interpreters.probes", source)
