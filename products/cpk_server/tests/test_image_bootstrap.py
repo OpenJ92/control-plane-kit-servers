@@ -1350,6 +1350,20 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("org.openj92.project=control-plane-kit-servers", smoke)
         self.assertIn("docker rm -f", smoke)
         self.assertIn("docker network rm", smoke)
+        for tail, container in (
+            (80, '"$CONTAINER"'),
+            (40, '"$POSTGRES_CONTAINER"'),
+        ):
+            with self.subTest(log_tail=tail):
+                suppressed = (
+                    f"docker logs --tail {tail} {container} "
+                    ">&2 2>/dev/null || true"
+                )
+                preserving = (
+                    f"docker logs --tail {tail} {container} >&2 || true"
+                )
+                self.assertNotIn(suppressed, normalized_smoke)
+                self.assertIn(preserving, normalized_smoke)
         self.assertNotIn("docker system prune", smoke)
         self.assertNotIn("docker volume prune", smoke)
 
