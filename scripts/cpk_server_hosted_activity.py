@@ -2249,7 +2249,6 @@ def _named_public_gateway_ingress(
         target=PublicIngressTarget(target_node_id, target_provider_socket),
         connector_node_id=connector_node_id,
         hostname=public_hostname,
-        readiness_check_id="ready",
         lifecycle=lifecycle,
     )
 
