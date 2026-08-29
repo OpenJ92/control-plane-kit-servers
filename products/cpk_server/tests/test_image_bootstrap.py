@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import sys
 import time
+from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -47,6 +48,7 @@ APPROVED_PROVIDER_FUNCTIONS = {
     "_GatewayRotationGenerationAdapter.generate",
     "_GatewayRotationRevocationAdapter.revoke_version",
     "_cloudflare_ingress_interpreter",
+    "_docker_runtime_observer",
     "_docker_runtime_interpreter",
     "_gateway_probe_dispatcher",
     "_public_dns_resolver",
@@ -1156,9 +1158,235 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             )
 
             adapter = server_module._runtime_adapter(config)
+            observer_factory = getattr(server_module, "_runtime_observer", None)
 
             self.assertEqual(type(adapter).__name__, "_UnsupportedExecutionAdapter")
+            self.assertTrue(
+                callable(observer_factory),
+                "cpk-server must compose a closed runtime observer fallback",
+            )
+            if not callable(observer_factory):
+                return
+            observer = observer_factory(config)
+            self.assertEqual(
+                type(observer).__name__,
+                "_UnsupportedRuntimeEffectObserver",
+            )
             self.assertNotIn("control_plane_kit_interpreters.docker", sys.modules)
+        finally:
+            sys.path.remove(str(PRODUCT_SRC))
+            for name in list(sys.modules):
+                if name == "control_plane_kit_servers_cpk_server" or name.startswith(
+                    "control_plane_kit_servers_cpk_server."
+                ):
+                    sys.modules.pop(name, None)
+
+    def test_docker_runtime_observer_selection_defers_client_and_preserves_identity(
+        self,
+    ) -> None:
+        sys.path.insert(0, str(PRODUCT_SRC))
+        try:
+            server_module = importlib.import_module(
+                "control_plane_kit_servers_cpk_server.server"
+            )
+            observer_factory = getattr(server_module, "_runtime_observer", None)
+            self.assertTrue(
+                callable(observer_factory),
+                "cpk-server must compose the accepted Docker runtime observer",
+            )
+            if not callable(observer_factory):
+                return
+
+            config = server_module.CpkServerBootstrapConfiguration.from_environment(
+                {
+                    "CPK_SERVER_MODE": "execution-capable",
+                    "CPK_CONTROL_AUTH_CONFIGURED": "true",
+                    "CPK_PORT": "8080",
+                    "CPK_RUNTIME_INTERPRETERS": "docker",
+                    "CPK_WORKPLACE_DATABASE_URL": "postgres://user:pass@db/cpk",
+                    "CPK_ACTIVITY_HISTORY_DATABASE_URL": "postgres://user:pass@db/cpk",
+                    "CPK_OBSERVER_STATE_DATABASE_URL": "postgres://user:pass@db/cpk",
+                    "CPK_GRAPH_TOPOLOGY_DATABASE_URL": "postgres://user:pass@db/cpk",
+                }
+            )
+            resolver = object()
+            provider = SimpleNamespace(authorized_resolver=resolver)
+            client = object()
+            factory_calls = []
+
+            class DockerLocalAmbientClientConfig:
+                pass
+
+            class DockerSdkClient:
+                @classmethod
+                def from_authority(cls, authority, *, connect_on_init):
+                    factory_calls.append((authority, connect_on_init))
+                    return client
+
+            class DockerRuntimeEffectObserver:
+                def __init__(self, supplied_client, *, authorized_secret_resolver):
+                    self.client = supplied_client
+                    self.authorized_secret_resolver = authorized_secret_resolver
+                    self.observed = None
+
+                def observe(self, request, authority):
+                    self.observed = (request, authority)
+                    return "observed"
+
+            docker_module = ModuleType("control_plane_kit_interpreters.docker")
+            docker_module.DockerLocalAmbientClientConfig = DockerLocalAmbientClientConfig
+            docker_module.DockerRuntimeEffectObserver = DockerRuntimeEffectObserver
+            docker_module.DockerSdkClient = DockerSdkClient
+            with patch.dict(
+                sys.modules,
+                {"control_plane_kit_interpreters.docker": docker_module},
+            ):
+                observer = observer_factory(config, secret_provider=provider)
+
+            self.assertIs(type(observer), DockerRuntimeEffectObserver)
+            self.assertIs(observer.client, client)
+            self.assertIs(observer.authorized_secret_resolver, resolver)
+            self.assertEqual(len(factory_calls), 1)
+            ambient, connect_on_init = factory_calls[0]
+            self.assertIs(type(ambient), DockerLocalAmbientClientConfig)
+            self.assertIs(connect_on_init, False)
+            request = object()
+            authority = object()
+            self.assertEqual(observer.observe(request, authority), "observed")
+            self.assertEqual(observer.observed, (request, authority))
+            self.assertIs(observer.observed[0], request)
+            self.assertIs(observer.observed[1], authority)
+        finally:
+            sys.path.remove(str(PRODUCT_SRC))
+            for name in list(sys.modules):
+                if name == "control_plane_kit_servers_cpk_server" or name.startswith(
+                    "control_plane_kit_servers_cpk_server."
+                ):
+                    sys.modules.pop(name, None)
+
+    def test_runtime_disabled_observer_is_zero_io_closed_and_redacted(self) -> None:
+        sys.path.insert(0, str(PRODUCT_SRC))
+        try:
+            sys.modules.pop("control_plane_kit_interpreters.docker", None)
+            server_module = importlib.import_module(
+                "control_plane_kit_servers_cpk_server.server"
+            )
+            observer_factory = getattr(server_module, "_runtime_observer", None)
+            self.assertTrue(
+                callable(observer_factory),
+                "cpk-server must compose a closed runtime observer fallback",
+            )
+            if not callable(observer_factory):
+                return
+
+            config = server_module.CpkServerBootstrapConfiguration.from_environment(
+                {
+                    "CPK_SERVER_MODE": "execution-capable",
+                    "CPK_CONTROL_AUTH_CONFIGURED": "true",
+                    "CPK_PORT": "8080",
+                    "CPK_RUNTIME_INTERPRETERS": "none",
+                    "CPK_WORKPLACE_DATABASE_URL": "postgres://user:pass@db/cpk",
+                    "CPK_ACTIVITY_HISTORY_DATABASE_URL": "postgres://user:pass@db/cpk",
+                    "CPK_OBSERVER_STATE_DATABASE_URL": "postgres://user:pass@db/cpk",
+                    "CPK_GRAPH_TOPOLOGY_DATABASE_URL": "postgres://user:pass@db/cpk",
+                }
+            )
+
+            class ForbiddenProvider:
+                @property
+                def authorized_resolver(self):
+                    raise AssertionError("disabled observation resolved protected material")
+
+            observer = observer_factory(
+                config,
+                secret_provider=ForbiddenProvider(),
+            )
+            self.assertEqual(
+                type(observer).__name__,
+                "_UnsupportedRuntimeEffectObserver",
+            )
+            self.assertNotIn("control_plane_kit_interpreters.docker", sys.modules)
+
+            from control_plane_kit_core.runtime_effect_observation import (
+                RuntimeEffectObservationRequest,
+                RuntimeEffectObserverUnsupported,
+            )
+            from control_plane_kit_core.operations.run_identity import RunId
+            from control_plane_kit_core.planning import (
+                ActivityId,
+                RuntimeTarget,
+                StartRuntime,
+            )
+            from control_plane_kit_core.runtime_effects import (
+                RuntimeEffectKind,
+                RuntimeEffectRequest,
+                RuntimeEffectSource,
+            )
+            from control_plane_kit_core.types import RuntimeKind
+
+            request = RuntimeEffectObservationRequest(
+                RuntimeEffectRequest(
+                    effect_id="effect-observer-disabled",
+                    kind=RuntimeEffectKind.REALIZE_ACTIVITY,
+                    runtime_kind=RuntimeKind.DOCKER,
+                    source=RuntimeEffectSource(
+                        workspace_id="workspace-observer-disabled",
+                        request_id="request-observer-disabled",
+                        run_id=RunId("run-observer-disabled"),
+                        plan_id="plan-observer-disabled",
+                        base_graph_id="graph-base",
+                        desired_graph_id="graph-desired",
+                        intent_event_id="effect-observer-disabled",
+                    ),
+                    activity_id=ActivityId("activity-observer-disabled"),
+                    operation=StartRuntime(RuntimeTarget("docker")),
+                    products=(),
+                )
+            )
+
+            class ProtectedAuthority:
+                def __repr__(self):
+                    return "token=private https://provider.internal:2376"
+
+            result = observer.observe(request, ProtectedAuthority())
+            self.assertIs(type(result), RuntimeEffectObserverUnsupported)
+            self.assertEqual(
+                result.descriptor(),
+                {
+                    "kind": "observer-unsupported",
+                    "effect_id": "effect-observer-disabled",
+                    "request_fingerprint": request.request_fingerprint,
+                    "evidence": {
+                        "operation": "runtime-effect",
+                        "postcondition": "unsupported",
+                    },
+                    "failure": {
+                        "code": "runtime.observer-unsupported",
+                        "message": "Runtime effect observation is disabled.",
+                        "details": {},
+                    },
+                    "observations": [],
+                },
+            )
+            malformed = SimpleNamespace(
+                effect_id=request.effect_id,
+                request_fingerprint=request.request_fingerprint,
+            )
+            with self.assertRaisesRegex(
+                TypeError,
+                "^Runtime observer requires RuntimeEffectObservationRequest$",
+            ):
+                observer.observe(malformed, ProtectedAuthority())
+            rendered = json.dumps(result.descriptor(), sort_keys=True)
+            for forbidden in (
+                "token=",
+                "provider.internal",
+                ":2376",
+                "postgres://",
+                "user:pass",
+            ):
+                self.assertNotIn(forbidden, rendered)
+                self.assertNotIn(forbidden, repr(result))
         finally:
             sys.path.remove(str(PRODUCT_SRC))
             for name in list(sys.modules):
@@ -1175,6 +1403,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn("DockerLocalAmbientClientConfig", source)
+        self.assertIn("DockerRuntimeEffectObserver", source)
         self.assertIn("DockerSdkClient.from_authority", source)
         self.assertIn("connect_on_init=False", source)
         self.assertNotIn("DockerSdkClient(),", source)
