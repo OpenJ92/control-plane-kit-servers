@@ -12,6 +12,8 @@ MISSING_CONFIG_OUTPUT="/tmp/cpk-server-missing-config-$$.out"
 IMPORT_BODY="/tmp/cpk-server-import-product-$$.json"
 UNAUTHORIZED_BODY="/tmp/cpk-server-unauthorized-$$.json"
 MCP_UNAUTHORIZED_BODY="/tmp/cpk-server-mcp-unauthorized-$$.json"
+HOST_CURL_ERROR="/tmp/cpk-server-host-curl-$$.err"
+HOST_CURL_ERROR_LIMIT=512
 DATABASE_URL="${CPK_DATABASE_URL:-postgresql://cpk:cpk@cpk-postgres:5432/cpk}"
 WORKPLACE_DATABASE_URL="${CPK_WORKPLACE_DATABASE_URL:-$DATABASE_URL}"
 ACTIVITY_HISTORY_DATABASE_URL="${CPK_ACTIVITY_HISTORY_DATABASE_URL:-$DATABASE_URL}"
@@ -23,7 +25,8 @@ HEALTH_ATTEMPTS="${CPK_SERVER_HEALTH_ATTEMPTS:-30}"
 REQUEST_HOST="${CPK_SERVER_SMOKE_HOST:-127.0.0.1}"
 
 cleanup() {
-  rm -f "$MISSING_CONFIG_OUTPUT" "$IMPORT_BODY" "$UNAUTHORIZED_BODY" "$MCP_UNAUTHORIZED_BODY"
+  rm -f "$MISSING_CONFIG_OUTPUT" "$IMPORT_BODY" "$UNAUTHORIZED_BODY" \
+    "$MCP_UNAUTHORIZED_BODY" "$HOST_CURL_ERROR"
   if [ -n "$CONTAINER" ]; then
     docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   fi
@@ -69,6 +72,92 @@ curl_with_retry() {
     attempt=$((attempt + 1))
   done
   return 1
+}
+
+internal_liveness_probe() {
+  docker exec "$CONTAINER" python -I -c \
+'import json,urllib.request
+response=urllib.request.urlopen("http://127.0.0.1:8080/health/live",timeout=2)
+body=response.read(513)
+raise SystemExit(
+    0
+    if response.status == 200
+    and len(body) <= 512
+    and json.loads(body) == {"status": "live"}
+    else 1
+)' >/dev/null 2>&1
+}
+
+liveness_with_diagnostics() {
+  url="$1"
+  output=""
+  attempt=1
+  HOST_CURL_STATUS=0
+  CONTAINER_RUNNING="unknown"
+  CONTAINER_EXIT_CODE="unknown"
+  CONTAINER_OOM_KILLED="unknown"
+
+  while [ "$attempt" -le "$HEALTH_ATTEMPTS" ]; do
+    if output="$(curl --connect-timeout 1 --max-time 2 --fail --silent \
+      --show-error "$url" 2>"$HOST_CURL_ERROR")"; then
+      printf '%s' "$output"
+      return 0
+    else
+      HOST_CURL_STATUS=$?
+    fi
+
+    if ! CONTAINER_STATE="$(docker inspect --format \
+      '{{.State.Running}}|{{.State.ExitCode}}|{{.State.OOMKilled}}' \
+      "$CONTAINER" 2>/dev/null)"; then
+      echo "cpk-server liveness category=container-state-unavailable" >&2
+      return 1
+    fi
+    CONTAINER_RUNNING="${CONTAINER_STATE%%|*}"
+    CONTAINER_STATE_REMAINDER="${CONTAINER_STATE#*|}"
+    CONTAINER_EXIT_CODE="${CONTAINER_STATE_REMAINDER%%|*}"
+    CONTAINER_OOM_KILLED="${CONTAINER_STATE_REMAINDER#*|}"
+    case "$CONTAINER_RUNNING" in
+      true|false) ;;
+      *)
+        echo "cpk-server liveness category=container-state-invalid" >&2
+        return 1
+        ;;
+    esac
+    case "$CONTAINER_EXIT_CODE" in
+      ''|*[!0-9]*)
+        echo "cpk-server liveness category=container-state-invalid" >&2
+        return 1
+        ;;
+    esac
+    case "$CONTAINER_OOM_KILLED" in
+      true|false) ;;
+      *)
+        echo "cpk-server liveness category=container-state-invalid" >&2
+        return 1
+        ;;
+    esac
+    if [ "$CONTAINER_RUNNING" != "true" ]; then
+      echo "cpk-server liveness category=container-exited running=$CONTAINER_RUNNING exit_code=$CONTAINER_EXIT_CODE oom_killed=$CONTAINER_OOM_KILLED" >&2
+      return 1
+    fi
+
+    sleep 1
+    attempt=$((attempt + 1))
+  done
+
+  HOST_CURL_ERROR_DETAIL="$(head -c "$HOST_CURL_ERROR_LIMIT" \
+    "$HOST_CURL_ERROR" | tr '\r\n' '  ' | tr -cd '[:print:]')"
+  if internal_liveness_probe; then
+    echo "cpk-server liveness category=internal-live-host-unreachable running=$CONTAINER_RUNNING exit_code=$CONTAINER_EXIT_CODE oom_killed=$CONTAINER_OOM_KILLED host_curl_exit=$HOST_CURL_STATUS host_error=$HOST_CURL_ERROR_DETAIL" >&2
+  else
+    echo "cpk-server liveness category=internal-not-live running=$CONTAINER_RUNNING exit_code=$CONTAINER_EXIT_CODE oom_killed=$CONTAINER_OOM_KILLED host_curl_exit=$HOST_CURL_STATUS host_error=$HOST_CURL_ERROR_DETAIL" >&2
+  fi
+  return 1
+}
+
+invalid_published_port() {
+    echo "cpk-server liveness category=invalid-published-port" >&2
+    exit 1
 }
 
 trap finish EXIT
@@ -133,11 +222,26 @@ CONTAINER="$(docker run -d \
   -e CPK_GRAPH_TOPOLOGY_DATABASE_URL="$GRAPH_TOPOLOGY_DATABASE_URL" \
   "$IMAGE")"
 
-PORT="$(docker port "$CONTAINER" 8080/tcp | sed 's/.*://')"
+PORT_BINDING="$(docker port "$CONTAINER" 8080/tcp)"
+PORT_BINDING_LINES="$(printf '%s\n' "$PORT_BINDING" | wc -l | tr -d ' ')"
+if [ "$PORT_BINDING_LINES" != "1" ]; then
+  invalid_published_port
+fi
+case "$PORT_BINDING" in
+  127.0.0.1:*) ;;
+  *) invalid_published_port ;;
+esac
+PORT="${PORT_BINDING#127.0.0.1:}"
+case "$PORT" in
+  ''|*[!0-9]*) invalid_published_port ;;
+esac
+if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+  invalid_published_port
+fi
 BASE="http://$REQUEST_HOST:$PORT"
 
 phase "wait for cpk-server liveness"
-if ! live="$(curl_with_retry "$BASE/health/live")"; then
+if ! live="$(liveness_with_diagnostics "$BASE/health/live")"; then
   echo "cpk-server did not become live" >&2
   exit 1
 fi
