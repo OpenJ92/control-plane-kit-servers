@@ -1353,6 +1353,213 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertNotIn("docker system prune", smoke)
         self.assertNotIn("docker volume prune", smoke)
 
+    def test_host_side_smoke_liveness_diagnostics_are_bounded_and_causal(
+        self,
+    ) -> None:
+        smoke = (ROOT / "scripts" / "cpk_server_image_smoke.sh").read_text(
+            encoding="utf-8"
+        )
+        normalized_smoke = " ".join(smoke.replace("\\\n", " ").split())
+
+        with self.subTest(boundary="published-port"):
+            self.assertIn(
+                'PORT_BINDING="$(docker port "$CONTAINER" 8080/tcp)"', smoke
+            )
+            self.assertIn(
+                'PORT_BINDING_LINES="$(printf \'%s\\n\' "$PORT_BINDING" '
+                "| wc -l | tr -d ' ')\"",
+                normalized_smoke,
+            )
+            self.assertIn('[ "$PORT_BINDING_LINES" != "1" ]', smoke)
+            self.assertIn('PORT="${PORT_BINDING#127.0.0.1:}"', smoke)
+            self.assertIn("''|*[!0-9]*)", smoke)
+            self.assertIn(
+                '[ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]',
+                normalized_smoke,
+            )
+            invalid_port_lines = [
+                line
+                for line in smoke.splitlines()
+                if "category=invalid-published-port" in line
+            ]
+            self.assertEqual(
+                invalid_port_lines,
+                [
+                    '    echo "cpk-server liveness '
+                    'category=invalid-published-port" >&2'
+                ],
+            )
+            self.assertNotIn("sed 's/.*://'", smoke)
+
+        with self.subTest(boundary="host-timeout"):
+            self.assertIn("liveness_with_diagnostics() {", smoke)
+            liveness_start = smoke.index("liveness_with_diagnostics() {")
+            liveness_end = smoke.index("\n}\n", liveness_start) + 3
+            liveness = smoke[liveness_start:liveness_end]
+            self.assertIn(
+                "curl --connect-timeout 1 --max-time 2 --fail --silent "
+                "--show-error",
+                " ".join(liveness.replace("\\\n", " ").split()),
+            )
+
+        with self.subTest(boundary="host-error-bound"):
+            self.assertIn("HOST_CURL_ERROR_LIMIT=512", smoke)
+            self.assertIn('head -c "$HOST_CURL_ERROR_LIMIT"', normalized_smoke)
+            self.assertIn("HOST_CURL_STATUS=$?", smoke)
+            self.assertIn("tr '\\r\\n' '  '", smoke)
+            self.assertIn("tr -cd '[:print:]'", normalized_smoke)
+
+        with self.subTest(boundary="container-state"):
+            self.assertIn("liveness_with_diagnostics() {", smoke)
+            liveness_start = smoke.index("liveness_with_diagnostics() {")
+            liveness_end = smoke.index("\n}\n", liveness_start) + 3
+            liveness = smoke[liveness_start:liveness_end]
+            self.assertIn(
+                "docker inspect --format "
+                "'{{.State.Running}}|{{.State.ExitCode}}|{{.State.OOMKilled}}' "
+                '"$CONTAINER"',
+                " ".join(liveness.replace("\\\n", " ").split()),
+            )
+            failed_probe = liveness.index("HOST_CURL_STATUS=$?")
+            state_inspection = liveness.index("docker inspect --format")
+            successful_return = liveness.index("return 0")
+            self.assertLess(successful_return, failed_probe)
+            self.assertLess(failed_probe, state_inspection)
+            self.assertNotIn(".Config.Env", smoke)
+            self.assertNotIn("{{json .}}", smoke)
+            self.assertNotIn(".State.Error", smoke)
+
+        with self.subTest(boundary="container-state-unavailable"):
+            self.assertIn("liveness_with_diagnostics() {", smoke)
+            liveness_start = smoke.index("liveness_with_diagnostics() {")
+            liveness_end = smoke.index("\n}\n", liveness_start) + 3
+            liveness = smoke[liveness_start:liveness_end]
+            self.assertIn("category=container-state-unavailable", liveness)
+            unavailable_lines = [
+                line
+                for line in liveness.splitlines()
+                if "category=container-state-unavailable" in line
+            ]
+            self.assertEqual(
+                unavailable_lines,
+                [
+                    '      echo "cpk-server liveness '
+                    'category=container-state-unavailable" >&2'
+                ],
+            )
+            inspect_failure = liveness.index('if ! CONTAINER_STATE="$(')
+            unavailable = liveness.index("category=container-state-unavailable")
+            inspect_failure_end = liveness.index("\n    fi\n", inspect_failure)
+            self.assertLess(inspect_failure, unavailable)
+            self.assertLess(unavailable, inspect_failure_end)
+            self.assertIn("return 1", liveness[unavailable:inspect_failure_end])
+
+        with self.subTest(boundary="container-state-invalid"):
+            self.assertIn("liveness_with_diagnostics() {", smoke)
+            liveness_start = smoke.index("liveness_with_diagnostics() {")
+            liveness_end = smoke.index("\n}\n", liveness_start) + 3
+            liveness = smoke[liveness_start:liveness_end]
+            self.assertEqual(liveness.count("category=container-state-invalid"), 3)
+            invalid_lines = [
+                line
+                for line in liveness.splitlines()
+                if "category=container-state-invalid" in line
+            ]
+            self.assertEqual(
+                invalid_lines,
+                [
+                    '        echo "cpk-server liveness '
+                    'category=container-state-invalid" >&2'
+                ]
+                * 3,
+            )
+            parsed_state = liveness.index(
+                'CONTAINER_RUNNING="${CONTAINER_STATE%%|*}"'
+            )
+            first_invalid = liveness.index("category=container-state-invalid")
+            running_decision = liveness.index(
+                'if [ "$CONTAINER_RUNNING" != "true" ]; then'
+            )
+            self.assertLess(parsed_state, first_invalid)
+            self.assertLess(first_invalid, running_decision)
+
+        with self.subTest(boundary="exited-fast"):
+            self.assertIn("liveness_with_diagnostics() {", smoke)
+            liveness_start = smoke.index("liveness_with_diagnostics() {")
+            liveness_end = smoke.index("\n}\n", liveness_start) + 3
+            liveness = smoke[liveness_start:liveness_end]
+            self.assertEqual(liveness.count("category=container-exited"), 1)
+            running_case = liveness.index('case "$CONTAINER_RUNNING" in')
+            exit_code_case = liveness.index('case "$CONTAINER_EXIT_CODE" in')
+            oom_case = liveness.index('case "$CONTAINER_OOM_KILLED" in')
+            running_decision = liveness.index(
+                'if [ "$CONTAINER_RUNNING" != "true" ]; then'
+            )
+            exited = liveness.index("category=container-exited")
+            next_sleep = liveness.index("sleep 1", exited)
+            self.assertLess(running_case, running_decision)
+            self.assertLess(exit_code_case, running_decision)
+            self.assertLess(oom_case, running_decision)
+            self.assertLess(running_decision, exited)
+            self.assertIn("running=$CONTAINER_RUNNING", liveness[exited:next_sleep])
+            self.assertIn("exit_code=$CONTAINER_EXIT_CODE", liveness[exited:next_sleep])
+            self.assertIn("oom_killed=$CONTAINER_OOM_KILLED", liveness[exited:next_sleep])
+            self.assertIn("return 1", liveness[exited:next_sleep])
+
+        with self.subTest(boundary="internal-probe"):
+            self.assertIn("internal_liveness_probe() {", smoke)
+            self.assertEqual(
+                smoke.count('docker exec "$CONTAINER" python -I -c'), 1
+            )
+            internal_start = smoke.index("internal_liveness_probe() {")
+            internal_end = smoke.index("\n}\n", internal_start) + 3
+            internal_probe = smoke[internal_start:internal_end]
+            self.assertIn(
+                'urllib.request.urlopen("http://127.0.0.1:8080/health/live",'
+                "timeout=2)",
+                " ".join(internal_probe.replace("\\\n", " ").split()),
+            )
+            self.assertIn("response.read(513)", internal_probe)
+            self.assertIn("len(body) <= 512", internal_probe)
+            self.assertIn(
+                'json.loads(body) == {"status": "live"}', internal_probe
+            )
+            self.assertIn(">/dev/null 2>&1", internal_probe)
+            self.assertNotIn("print(", internal_probe)
+            self.assertNotIn("sys.stdout", internal_probe)
+            self.assertNotIn("body.decode", internal_probe)
+
+            self.assertIn("liveness_with_diagnostics() {", smoke)
+            liveness_start = smoke.index("liveness_with_diagnostics() {")
+            liveness_end = smoke.index("\n}\n", liveness_start) + 3
+            liveness = smoke[liveness_start:liveness_end]
+            loop_end = liveness.index("\n  done\n")
+            internal_call = liveness.index("if internal_liveness_probe; then")
+            internal_live = liveness.index(
+                "category=internal-live-host-unreachable"
+            )
+            self.assertLess(loop_end, internal_call)
+            self.assertLess(internal_call, internal_live)
+
+        with self.subTest(boundary="internal-not-live"):
+            self.assertIn("category=internal-not-live", smoke)
+
+        with self.subTest(boundary="internal-live-host-unreachable"):
+            self.assertIn("category=internal-live-host-unreachable", smoke)
+
+        self.assertIn(
+            'HEALTH_ATTEMPTS="${CPK_SERVER_HEALTH_ATTEMPTS:-30}"', smoke
+        )
+        self.assertIn("trap finish EXIT", smoke)
+        self.assertIn("docker logs --tail 80", smoke)
+        self.assertIn("docker logs --tail 40", smoke)
+        self.assertIn("Authorization: Bearer valid-token", smoke)
+        self.assertIn("ready response leaked store endpoint", smoke)
+        self.assertIn("docker rm -f", smoke)
+        self.assertIn("docker network rm", smoke)
+        self.assertNotIn("docker system prune", smoke)
+        self.assertNotIn("docker volume prune", smoke)
+
     def test_published_image_smoke_uses_ghcr_digest_without_rebuilding(self) -> None:
         smoke = (ROOT / "scripts" / "cpk_server_published_image_smoke.sh").read_text(
             encoding="utf-8"
