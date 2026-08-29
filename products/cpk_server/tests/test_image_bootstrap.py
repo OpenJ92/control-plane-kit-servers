@@ -50,7 +50,6 @@ APPROVED_PROVIDER_FUNCTIONS = {
     "_docker_runtime_interpreter",
     "_gateway_probe_dispatcher",
     "_public_dns_resolver",
-    "_public_ingress_readiness_verifier",
     "_secret_provider_composition",
 }
 
@@ -1271,8 +1270,10 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("IngressRealizationAdapter", source)
         self.assertNotIn("PublicIngressReservationReleasePlanningService", source)
         self.assertNotIn("ingress_reservation_releases=", source)
-        self.assertIn("_public_ingress_readiness_verifier", source)
-        self.assertIn("readiness_verifier=", source)
+        self.assertNotIn("_PublicIngressReadinessVerifierAdapter", source)
+        self.assertNotIn("_public_ingress_readiness_verifier", source)
+        self.assertNotIn("readiness_verifier=", source)
+        self.assertIn("_public_dns_resolver", source)
         self.assertIn("IngressAuthorityRegistrationService", source)
         self.assertIn("SecretProviderRegistrationService", source)
         self.assertIn(
@@ -1470,7 +1471,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn('"cloudflared_connector"', controller)
         self.assertIn('"cloudflared-gateway"', controller)
         self.assertIn("cpk-gateway-001.openj92.dev", controller)
-        self.assertIn('readiness_check_id="ready"', controller)
+        self.assertNotIn("readiness_check_id=", controller)
         self.assertIn("def _assert_public_gateway_http_probe", controller)
         self.assertIn("def _assert_public_gateway_postgres_query_ready", controller)
         self.assertIn("def _assert_public_gateway_unreachable", controller)
