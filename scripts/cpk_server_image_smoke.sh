@@ -43,11 +43,11 @@ finish() {
     echo "cpk-server image smoke failed during phase: $PHASE" >&2
     if [ -n "$CONTAINER" ]; then
       echo "cpk-server bounded log tail:" >&2
-      docker logs --tail 80 "$CONTAINER" >&2 2>/dev/null || true
+      docker logs --tail 80 "$CONTAINER" >&2 || true
     fi
     if [ -n "$POSTGRES_CONTAINER" ]; then
       echo "postgres bounded log tail:" >&2
-      docker logs --tail 40 "$POSTGRES_CONTAINER" >&2 2>/dev/null || true
+      docker logs --tail 40 "$POSTGRES_CONTAINER" >&2 || true
     fi
   fi
   cleanup
