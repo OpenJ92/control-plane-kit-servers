@@ -144,6 +144,107 @@ class EphemeralSourceLiveLifecycleTests(unittest.TestCase):
                 self.assertLess(transitions[result], checkpoints[phase])
                 self.assertLess(checkpoints[phase], assertions[result])
 
+    def test_public_gateway_probe_retries_unresolved_endpoint_with_fresh_ids(
+        self,
+    ) -> None:
+        with _controller_module() as controller:
+            workflow = MagicMock()
+            workflow.workspace_id = "workspace-ephemeral"
+            workflow.request_gateway_probe_http.side_effect = (
+                _gateway_probe_result(
+                    status="failed",
+                    target_id="hello.internal",
+                    result_code="gateway-endpoint-unresolved-endpoint",
+                    key_id="key-b",
+                ),
+                _gateway_probe_result(
+                    status="succeeded",
+                    target_id="hello.internal",
+                    result_code="probe-succeeded",
+                    key_id="key-b",
+                ),
+            )
+            workflow.request_gateway_probe_mcp.return_value = _gateway_probe_result(
+                status="succeeded",
+                target_id="postgres.postgres",
+                result_code="probe-succeeded",
+                key_id="key-b",
+            )
+
+            with patch.object(
+                controller,
+                "verification_attempts",
+                side_effect=(iter((1, 2)), iter((1,))),
+            ) as attempts:
+                controller._assert_public_gateway_probe_pair(
+                    workflow,
+                    current_graph_id="graph-current",
+                    expected_key_id="key-b",
+                    request_prefix="workspace-ephemeral:public-ready",
+                )
+
+            self.assertEqual(workflow.request_gateway_probe_http.call_count, 2)
+            request_ids = [
+                call.kwargs["request_id"]
+                for call in workflow.request_gateway_probe_http.call_args_list
+            ]
+            self.assertEqual(
+                request_ids,
+                [
+                    "workspace-ephemeral:public-ready:http:attempt-1",
+                    "workspace-ephemeral:public-ready:http:attempt-2",
+                ],
+            )
+            self.assertEqual(len(set(request_ids)), 2)
+            self.assertEqual(attempts.call_count, 2)
+            self.assertTrue(
+                all(
+                    call.args == (controller.PUBLIC_GATEWAY_PROBE_POLICY,)
+                    for call in attempts.call_args_list
+                )
+            )
+
+    def test_public_gateway_probe_retries_cloudflare_tunnel_warmup_530(self) -> None:
+        with _controller_module() as controller:
+            request_ids: list[str] = []
+
+            def request(request_id: str) -> dict[str, object]:
+                request_ids.append(request_id)
+                if len(request_ids) == 1:
+                    return _gateway_probe_result(
+                        status="failed",
+                        target_id="hello.internal",
+                        result_code="gateway-transport-failed",
+                        key_id="key-b",
+                        evidence={"http_status": 530},
+                    )
+                return _gateway_probe_result(
+                    status="succeeded",
+                    target_id="hello.internal",
+                    result_code="probe-succeeded",
+                    key_id="key-b",
+                )
+
+            with patch.object(
+                controller,
+                "verification_attempts",
+                return_value=iter((1, 2)),
+            ):
+                controller._assert_public_gateway_probe(
+                    request,
+                    request_id_prefix="workspace-ephemeral:public-ready:http",
+                    expected_key_id="key-b",
+                )
+
+            self.assertEqual(
+                request_ids,
+                [
+                    "workspace-ephemeral:public-ready:http:attempt-1",
+                    "workspace-ephemeral:public-ready:http:attempt-2",
+                ],
+            )
+            self.assertEqual(len(set(request_ids)), 2)
+
     def test_retained_reservation_surface_is_absent_but_failed_effect_fallback_remains(
         self,
     ) -> None:
@@ -218,6 +319,25 @@ def _keyword_string(call: ast.Call, name: str) -> str | None:
         ):
             return keyword.value.value
     return None
+
+
+def _gateway_probe_result(
+    *,
+    status: str,
+    target_id: str,
+    result_code: str,
+    key_id: str,
+    evidence: dict[str, object] | None = None,
+) -> dict[str, object]:
+    return {
+        "gateway_probe": {
+            "status": status,
+            "target_id": target_id,
+            "result_code": result_code,
+            "grant": {"key_id": key_id},
+            "evidence": evidence or {},
+        }
+    }
 
 
 if __name__ == "__main__":
