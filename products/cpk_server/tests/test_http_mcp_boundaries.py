@@ -191,12 +191,36 @@ class CpkServerHttpMcpBoundaryTests(unittest.TestCase):
         composition, services, application, _ = self._application()
         http = CpkServerHttpProcessBoundary(composition, application)
         self._require_raw_query_boundary(http)
+        nested_63: object = "bounded"
+        for _ in range(63):
+            nested_63 = [nested_63]
+        depth_64 = {"nested": nested_63}
+        depth_64_document = json.dumps(
+            depth_64,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        depth_64_query = b"after=" + quote_from_bytes(
+            depth_64_document,
+            safe="",
+        ).encode("ascii")
+        self.assertLessEqual(
+            len(depth_64_query),
+            composition.http_api.route("read.run-events").request_schema.max_bytes,
+        )
         documents = (
-            b'{"alpha":1,"nested":{"beta":2}}',
-            b'{ "nested" : { "beta" : 2 }, "alpha" : 1 }',
+            (
+                b'{"alpha":1,"nested":{"beta":2}}',
+                {"alpha": 1, "nested": {"beta": 2}},
+            ),
+            (
+                b'{ "nested" : { "beta" : 2 }, "alpha" : 1 }',
+                {"alpha": 1, "nested": {"beta": 2}},
+            ),
+            (b'{"finite":1.25}', {"finite": 1.25}),
+            (depth_64_document, depth_64),
         )
 
-        for document in documents:
+        for document, _expected in documents:
             with self.subTest(document=document):
                 response = http.handle(
                     method="GET",
@@ -214,8 +238,8 @@ class CpkServerHttpMcpBoundaryTests(unittest.TestCase):
                 for request in services[ControlPlaneServiceRole.READS].requests
             ],
             [
-                {"after": {"alpha": 1, "nested": {"beta": 2}}},
-                {"after": {"alpha": 1, "nested": {"beta": 2}}},
+                {"after": expected}
+                for _document, expected in documents
             ],
         )
 
@@ -225,13 +249,18 @@ class CpkServerHttpMcpBoundaryTests(unittest.TestCase):
         composition, services, application, _ = self._application()
         http = CpkServerHttpProcessBoundary(composition, application)
         self._require_raw_query_boundary(http)
-        nested: object = {"leaf": "bounded"}
-        for _ in range(65):
-            nested = {"next": nested}
-        nested_query = b"after=" + quote_from_bytes(
-            json.dumps(nested).encode("utf-8"),
+        nested_64: object = "bounded"
+        for _ in range(64):
+            nested_64 = [nested_64]
+        depth_65 = {"nested": nested_64}
+        depth_65_query = b"after=" + quote_from_bytes(
+            json.dumps(depth_65, separators=(",", ":")).encode("utf-8"),
             safe="",
         ).encode("ascii")
+        self.assertLessEqual(
+            len(depth_65_query),
+            composition.http_api.route("read.run-events").request_schema.max_bytes,
+        )
         cases = (
             b"limit=1&limit=2",
             b"l%69mit=1&limit=2",
@@ -263,8 +292,10 @@ class CpkServerHttpMcpBoundaryTests(unittest.TestCase):
             b"after=%7B%22value%22%3ANaN%7D",
             b"after=%7B%22value%22%3AInfinity%7D",
             b"after=%7B%22value%22%3A-Infinity%7D",
+            b"after=%7B%22value%22%3A1e9999%7D",
+            b"after=%7B%22value%22%3A-1e9999%7D",
             b"credential=must-not-reflect",
-            nested_query,
+            depth_65_query,
         )
         for query_string in cases:
             with self.subTest(query_string=query_string[:80]):
