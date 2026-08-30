@@ -1524,6 +1524,36 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertNotIn("_DemoService", source)
         self.assertNotIn("import docker", source)
 
+    def test_hosted_process_forwards_raw_asgi_query_bytes_to_http_boundary(self) -> None:
+        tree = ast.parse(SERVER_SOURCE.read_text(encoding="utf-8"))
+        handlers = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "http"
+        ]
+        self.assertEqual(len(handlers), 1)
+        calls = [
+            node
+            for node in ast.walk(handlers[0])
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "http_boundary"
+            and node.func.attr == "handle"
+        ]
+        self.assertEqual(len(calls), 1)
+        keywords = {
+            keyword.arg: keyword.value
+            for keyword in calls[0].keywords
+            if keyword.arg is not None
+        }
+        self.assertIn("query_string", keywords)
+        query = keywords["query_string"]
+        self.assertIsInstance(query, ast.Subscript)
+        self.assertEqual(ast.unparse(query.value), "request.scope")
+        self.assertEqual(ast.literal_eval(query.slice), "query_string")
+
     def test_product_descriptor_is_now_published_contract_data(self) -> None:
         descriptor = json.loads((PRODUCT / "product.cpk.json").read_text(encoding="utf-8"))
 
