@@ -18,7 +18,7 @@ SERVER_SOURCE = (
     PRODUCT_SRC / "control_plane_kit_servers_cpk_server" / "server.py"
 )
 CPK_COMMIT = "99aea011df81b20cdb644749b796e12bc8f829c3"
-INTERPRETERS_COMMIT = "851514d1e054d699eded1bd59427f2d67b3896f8"
+INTERPRETERS_COMMIT = "ecd96e7bec4d0947cd12cb09c9a252faa4e4a28d"
 STALE_OPERATIONS_NAMES = frozenset(
     {
         "GatewayKeyRotationApplicationService",
