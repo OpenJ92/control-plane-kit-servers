@@ -43,6 +43,7 @@ from cpk_server_hosted_activity import (
     _mcp_read,
     _mcp_tool,
     _required_env,
+    _sanitized_main,
     _wait_ready,
 )
 
@@ -511,12 +512,12 @@ def _assert_child_ready(url: str) -> None:
 
 
 def _assert_activity_mentions(base_url: str, run_id: str, node_id: str) -> None:
-    timeline = _mcp_read(
+    events = HostedWorkflow(
         base_url,
-        "read.activity",
-        {"workspace_id": CHILD_WORKSPACE_ID, "limit": 200},
-    )
-    events = _events_for_run(timeline, run_id)
+        workspace_id=CHILD_WORKSPACE_ID,
+        worker_id=CHILD_WORKER_ID,
+        server_container="",
+    ).read_run_events(run_id, limit=100)
     for event in events:
         payload = event.get("payload", {})
         if payload.get("node_id") == node_id and event.get("event_type") == "step_succeeded":
@@ -525,12 +526,12 @@ def _assert_activity_mentions(base_url: str, run_id: str, node_id: str) -> None:
 
 
 def _assert_parent_mentions(base_url: str, run_id: str, node_id: str) -> None:
-    timeline = _mcp_read(
+    events = HostedWorkflow(
         base_url,
-        "read.activity",
-        {"workspace_id": PARENT_WORKSPACE_ID, "limit": 200},
-    )
-    events = _events_for_run(timeline, run_id)
+        workspace_id=PARENT_WORKSPACE_ID,
+        worker_id=PARENT_WORKER_ID,
+        server_container="",
+    ).read_run_events(run_id, limit=100)
     for event in events:
         payload = event.get("payload", {})
         if payload.get("node_id") == node_id and event.get("event_type") == "step_succeeded":
@@ -538,16 +539,5 @@ def _assert_parent_mentions(base_url: str, run_id: str, node_id: str) -> None:
     raise RuntimeError(f"parent activity timeline did not record successful step for {node_id}")
 
 
-def _events_for_run(timeline: dict[str, Any], run_id: str) -> list[dict[str, Any]]:
-    for session in timeline.get("sessions", []):
-        for plan in session.get("plans", []):
-            for run in plan.get("runs", []):
-                if run.get("run_id") == run_id:
-                    events = run.get("events")
-                    if isinstance(events, list):
-                        return events
-    raise RuntimeError(f"activity timeline did not expose run {run_id}")
-
-
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(_sanitized_main(main))
