@@ -1927,6 +1927,9 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         paths = {
             "hosted": ROOT / "scripts" / "cpk_server_hosted_activity.py",
             "recursive": ROOT / "scripts" / "cpk_server_recursive_activity.py",
+            "recursive-tls": (
+                ROOT / "scripts" / "cpk_server_recursive_tls_activity.py"
+            ),
             "secret-provider": (
                 ROOT / "scripts" / "cpk_server_secret_provider_source_live.py"
             ),
@@ -1947,6 +1950,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
                 "command.deployment.execute",
                 "advance-current-graph",
             ),
+            "recursive-tls": (),
             "secret-provider": ("command.deployment.execute",),
             "remote-tls": ("command.deployment.execute",),
         }
@@ -1996,15 +2000,57 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
                     if isinstance(node, ast.Call)
                     and isinstance(node.func, ast.Name)
                     and node.func.id == "_events_for_run"
-                    and any(
-                        isinstance(child, ast.Call)
-                        and isinstance(child.func, ast.Attribute)
-                        and child.func.attr == "read_activity"
-                        for argument in (*node.args, *[item.value for item in node.keywords])
-                        for child in ast.walk(argument)
-                    )
                 ]
                 self.assertFalse(legacy_event_derivations)
+                for marker in ("read.activity", "read.run-events"):
+                    for call_node in marked_calls(tree, marker):
+                        arguments = [
+                            node
+                            for node in ast.walk(call_node)
+                            if isinstance(node, ast.Dict)
+                        ]
+                        for argument in arguments:
+                            keys = {
+                                key.value
+                                for key in argument.keys
+                                if isinstance(key, ast.Constant)
+                                and isinstance(key.value, str)
+                            }
+                            self.assertNotIn("offset", keys)
+                            for key, value in zip(
+                                argument.keys,
+                                argument.values,
+                                strict=True,
+                            ):
+                                if (
+                                    isinstance(key, ast.Constant)
+                                    and key.value == "limit"
+                                    and isinstance(value, ast.Constant)
+                                ):
+                                    self.assertIs(type(value.value), int)
+                                    self.assertLessEqual(value.value, 100)
+                        for keyword in call_node.keywords:
+                            self.assertNotEqual(keyword.arg, "offset")
+                            if (
+                                keyword.arg == "limit"
+                                and isinstance(keyword.value, ast.Constant)
+                            ):
+                                self.assertIs(type(keyword.value.value), int)
+                                self.assertLessEqual(keyword.value.value, 100)
+                for call_node in marked_calls(tree, "read.plan-detail"):
+                    rendered = ast.unparse(call_node)
+                    self.assertNotIn("'offset':", rendered)
+                    self.assertNotIn("'limit':", rendered)
+                sanitized_footers = [
+                    node
+                    for node in ast.walk(tree)
+                    if isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "_sanitized_main"
+                    and [ast.unparse(argument) for argument in node.args]
+                    == ["main"]
+                ]
+                self.assertEqual(len(sanitized_footers), 1)
                 self.assertNotIn("lease_expires_at", source)
                 self.assertNotIn("next_attempt_not_before", source)
                 self.assertNotIn('"waiting"', source)
@@ -2013,6 +2059,24 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
                     self.assertIn('"lease_duration_seconds": 600', source)
                     self.assertIn("def read_activity", source)
                     self.assertIn('"read.activity"', source)
+                    activity_readers = [
+                        node
+                        for node in tree.body
+                        if isinstance(node, ast.ClassDef)
+                        and node.name == "HostedWorkflow"
+                        for child in node.body
+                        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and child.name == "read_activity"
+                    ]
+                    self.assertEqual(len(activity_readers), 1)
+                    self.assertEqual(
+                        [
+                            ast.unparse(value)
+                            for value in activity_readers[0].args.kw_defaults
+                            if value is not None
+                        ],
+                        ["100"],
+                    )
                     self.assertIn("_run_negative_cleanup", source)
                 elif owner == "secret-provider":
                     self.assertIn("_run_cloudflare_abort_cleanup", source)

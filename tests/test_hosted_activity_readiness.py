@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import io
 import inspect
+import json
 import unittest
 from unittest.mock import call, patch
+from urllib.parse import quote_from_bytes
 
 from control_plane_kit_core.verification import VerificationPolicy
 
@@ -177,6 +180,7 @@ class HostedActivityReadinessTests(unittest.TestCase):
         run_id: str = "run-a",
         ordinal: int = 1,
         event_type: str = "run_started",
+        occurred_at: str = "2026-08-30T12:00:00Z",
         activity_id: str | None = None,
         payload: dict[str, object] | None = None,
         recovery: dict[str, object] | None = None,
@@ -186,7 +190,7 @@ class HostedActivityReadinessTests(unittest.TestCase):
             "run_id": run_id,
             "ordinal": ordinal,
             "event_type": event_type,
-            "occurred_at": "2026-08-30T12:00:00Z",
+            "occurred_at": occurred_at,
             "activity_id": activity_id,
             "payload": {} if payload is None else payload,
             "failure": None,
@@ -215,6 +219,7 @@ class HostedActivityReadinessTests(unittest.TestCase):
                     run_id=run_id,
                     ordinal=2,
                     event_type="step_succeeded",
+                    occurred_at="2026-08-30T12:00:00.123456Z",
                     activity_id="start-node:hello-a",
                     payload={"node_id": "hello-a", "outcome": "succeeded"},
                 ),
@@ -400,10 +405,171 @@ class HostedActivityReadinessTests(unittest.TestCase):
         )
         sleep.assert_not_called()
 
+        completed = (
+            self._execute_result(
+                run_status="succeeded",
+                coordinator_status="completed",
+                effects_attempted=0,
+                activity_id=None,
+            ),
+            self._execute_result(
+                run_status="succeeded",
+                coordinator_status="completed",
+                effects_attempted=1,
+                activity_id=None,
+            ),
+        )
+        for index, response in enumerate(completed):
+            with self.subTest(completed=index, response=response):
+                with patch.object(
+                    cpk_server_hosted_activity,
+                    "_mcp_tool",
+                    return_value=response,
+                ) as execute:
+                    self._workflow().execute_to_completion(
+                        claimed_run=claimed,
+                        sync_runtime_networks=False,
+                    )
+                self.assertEqual(execute.call_count, 1)
+
+        terminal = (
+            self._execute_result(
+                run_status="failed",
+                coordinator_status="failed",
+                effects_attempted=1,
+            ),
+            self._execute_result(
+                run_status="failed",
+                coordinator_status="unsupported",
+                effects_attempted=1,
+            ),
+            self._execute_result(
+                run_status="failed",
+                coordinator_status="failed",
+                effects_attempted=0,
+                activity_id=None,
+            ),
+            self._execute_result(
+                run_status="failed",
+                coordinator_status="failed",
+                effects_attempted=1,
+                activity_id=None,
+            ),
+            self._execute_result(
+                coordinator_status="uncertain",
+                effects_attempted=1,
+            ),
+            self._execute_result(
+                coordinator_status="uncertain",
+                effects_attempted=0,
+            ),
+            *(
+                self._execute_result(
+                    run_status=run_status,
+                    coordinator_status="blocked",
+                    effects_attempted=0,
+                    activity_id=None,
+                )
+                for run_status in (
+                    "paused",
+                    "cancelled",
+                    "compensating",
+                    "compensated",
+                    "partially_failed",
+                    "uncompensated_failure",
+                    "running",
+                )
+            ),
+            self._execute_result(
+                run_status="running",
+                coordinator_status="blocked",
+                effects_attempted=1,
+                activity_id=None,
+            ),
+        )
+        for index, response in enumerate(terminal):
+            with self.subTest(terminal=index, response=response):
+                with (
+                    patch.object(
+                        cpk_server_hosted_activity,
+                        "_mcp_tool",
+                        return_value=response,
+                    ) as execute,
+                    patch.object(cpk_server_hosted_activity, "_http") as timeline,
+                ):
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        "^deployment execution stopped$",
+                    ) as raised:
+                        self._workflow().execute_to_completion(
+                            claimed_run=claimed,
+                            sync_runtime_networks=False,
+                        )
+                self.assertEqual(execute.call_count, 1)
+                timeline.assert_not_called()
+                self.assertEqual(str(raised.exception), "deployment execution stopped")
+
         hostile = (
             self._execute_result(
-                run_status="completed",
+                run_status="running",
                 coordinator_status="completed",
+                effects_attempted=0,
+                activity_id=None,
+            ),
+            self._execute_result(
+                run_status="succeeded",
+                coordinator_status="completed",
+                effects_attempted=1,
+                activity_id="activity-a",
+            ),
+            self._execute_result(
+                run_status="succeeded",
+                coordinator_status="completed",
+                effects_attempted=0,
+                activity_id="activity-a",
+            ),
+            self._execute_result(
+                run_status="running",
+                coordinator_status="failed",
+                effects_attempted=1,
+            ),
+            self._execute_result(
+                run_status="failed",
+                coordinator_status="failed",
+                effects_attempted=0,
+            ),
+            self._execute_result(
+                run_status="failed",
+                coordinator_status="unsupported",
+                effects_attempted=0,
+                activity_id=None,
+            ),
+            self._execute_result(
+                coordinator_status="uncertain",
+                effects_attempted=0,
+                activity_id=None,
+            ),
+            self._execute_result(
+                run_status="failed",
+                coordinator_status="uncertain",
+                effects_attempted=1,
+            ),
+            self._execute_result(
+                coordinator_status="blocked",
+                effects_attempted=1,
+            ),
+            self._execute_result(
+                run_status="failed",
+                coordinator_status="blocked",
+                effects_attempted=0,
+                activity_id=None,
+            ),
+            self._execute_result(
+                run_status="failed",
+                coordinator_status="progressed",
+            ),
+            self._execute_result(
+                coordinator_status="in-flight",
                 effects_attempted=0,
                 activity_id=None,
             ),
@@ -428,32 +594,6 @@ class HostedActivityReadinessTests(unittest.TestCase):
                         )
                 self.assertEqual(execute.call_count, 1)
                 self.assertEqual(str(raised.exception), "execution result is invalid")
-
-        for status in ("failed", "uncertain", "unsupported", "blocked"):
-            with self.subTest(status=status):
-                with (
-                    patch.object(
-                        cpk_server_hosted_activity,
-                        "_mcp_tool",
-                        return_value=self._execute_result(
-                            coordinator_status=status,
-                            effects_attempted=0,
-                            activity_id=None,
-                        ),
-                    ) as execute,
-                    patch.object(cpk_server_hosted_activity, "_http") as timeline,
-                ):
-                    with self.assertRaisesRegex(
-                        RuntimeError,
-                        "^deployment execution stopped$",
-                    ) as raised:
-                        self._workflow().execute_to_completion(
-                            claimed_run=claimed,
-                            sync_runtime_networks=False,
-                        )
-                self.assertEqual(execute.call_count, 1)
-                timeline.assert_not_called()
-                self.assertEqual(str(raised.exception), "deployment execution stopped")
 
     def test_advance_contract_carries_and_validates_complete_lineage(self) -> None:
         claimed = self._claimed_type()("run-a", 7)
@@ -566,6 +706,12 @@ class HostedActivityReadinessTests(unittest.TestCase):
                 self.assertEqual(str(raised.exception), "advance result is invalid")
 
     def test_plan_detail_is_nonpaged_authenticated_and_protocol_equal(self) -> None:
+        self.assertNotIn(
+            "offset",
+            inspect.signature(
+                cpk_server_hosted_activity.HostedWorkflow.read_plan_detail
+            ).parameters,
+        )
         plan = self._plan_detail()
         with (
             patch.object(
@@ -644,6 +790,22 @@ class HostedActivityReadinessTests(unittest.TestCase):
                 self._plan_detail_with_plan(recovery={}),
                 self._plan_detail_with_plan(recovery={}),
             ),
+            (
+                self._plan_detail_with_plan(
+                    created_at="2026-08-30T12:00:00.1Z"
+                ),
+                self._plan_detail_with_plan(
+                    created_at="2026-08-30T12:00:00.1Z"
+                ),
+            ),
+            (
+                self._plan_detail_with_plan(
+                    created_at="2026-02-30T12:00:00Z"
+                ),
+                self._plan_detail_with_plan(
+                    created_at="2026-02-30T12:00:00Z"
+                ),
+            ),
             (self._plan_detail(unexpected="truth"), plan),
             (plan, self._plan_detail_with_plan(status="superseded")),
         )
@@ -680,6 +842,8 @@ class HostedActivityReadinessTests(unittest.TestCase):
             None,
         )
         self.assertIsNotNone(reader, "hosted workflow lacks run-event reads")
+        self.assertNotIn("offset", inspect.signature(reader).parameters)
+        self.assertIn("after", inspect.signature(reader).parameters)
         page = self._run_event_page()
         with (
             patch.object(
@@ -714,6 +878,70 @@ class HostedActivityReadinessTests(unittest.TestCase):
                 "resources/read",
                 "read.run-events",
                 {"workspace_id": "workspace-a", "run_id": "run-a", "limit": 100},
+            ),
+        )
+        self.assertEqual(
+            mcp.call_args.kwargs["authorization"],
+            cpk_server_hosted_activity.AUTHORIZATION,
+        )
+
+        after_page = self._run_event_page()
+        after_page["items"] = list(after_page["items"])[1:]
+        cursor = {
+            "format_version": 1,
+            "collection": "run-events",
+            "scope": {"workspace_id": "workspace-a", "run_id": "run-a"},
+            "position": {"ordinal": 1, "item_id": "event-a"},
+        }
+        encoded_cursor = quote_from_bytes(
+            json.dumps(
+                cursor,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8"),
+            safe="",
+        )
+        with (
+            patch.object(
+                cpk_server_hosted_activity,
+                "_http",
+                return_value=after_page,
+            ) as http,
+            patch.object(
+                cpk_server_hosted_activity,
+                "_mcp",
+                return_value=after_page,
+            ) as mcp,
+        ):
+            events = self._workflow().read_run_events(
+                "run-a",
+                limit=100,
+                after=cursor,
+            )
+
+        self.assertEqual(events, tuple(after_page["items"]))
+        self.assertEqual(
+            http.call_args.args,
+            (
+                "http://cpk-server",
+                "GET",
+                "/workspaces/workspace-a/runs/run-a/events"
+                f"?limit=100&after={encoded_cursor}",
+            ),
+        )
+        self.assertNotEqual(http.call_args.kwargs.get("authorize"), False)
+        self.assertEqual(
+            mcp.call_args.args,
+            (
+                "http://cpk-server",
+                "resources/read",
+                "read.run-events",
+                {
+                    "workspace_id": "workspace-a",
+                    "run_id": "run-a",
+                    "limit": 100,
+                    "after": cursor,
+                },
             ),
         )
         self.assertEqual(
@@ -768,6 +996,18 @@ class HostedActivityReadinessTests(unittest.TestCase):
             **noncanonical_timestamp["items"][0],
             "occurred_at": "2026-08-30T12:00:00+00:00",
         }
+        arbitrary_fraction = self._run_event_page()
+        arbitrary_fraction["items"] = list(arbitrary_fraction["items"])
+        arbitrary_fraction["items"][0] = {
+            **arbitrary_fraction["items"][0],
+            "occurred_at": "2026-08-30T12:00:00.1Z",
+        }
+        invalid_date = self._run_event_page()
+        invalid_date["items"] = list(invalid_date["items"])
+        invalid_date["items"][0] = {
+            **invalid_date["items"][0],
+            "occurred_at": "2026-02-30T12:00:00Z",
+        }
         malformed_recovery = self._run_event_page()
         malformed_recovery["items"] = list(malformed_recovery["items"])
         malformed_recovery["items"][2] = {
@@ -795,6 +1035,8 @@ class HostedActivityReadinessTests(unittest.TestCase):
             (foreign_event, foreign_event),
             (unexpected_event, unexpected_event),
             (noncanonical_timestamp, noncanonical_timestamp),
+            (arbitrary_fraction, arbitrary_fraction),
+            (invalid_date, invalid_date),
             (malformed_recovery, malformed_recovery),
             (secret_event, secret_event),
             (self._run_event_page(workspace_id="workspace-foreign"), page),
@@ -1011,6 +1253,44 @@ class HostedActivityReadinessTests(unittest.TestCase):
                     "claim|generation|state",
                 ):
                     decoder(state)
+
+    def test_process_boundary_redacts_uncaught_chained_failures(self) -> None:
+        boundary = getattr(cpk_server_hosted_activity, "_sanitized_main", None)
+        self.assertIsNotNone(boundary, "hosted workflow lacks sanitized main boundary")
+        primary = _PrimaryTransportFailure(
+            "raw-response-not-for-output from http://private.example "
+            "token-not-for-output credential-not-for-output"
+        )
+        try:
+            raise primary
+        except _PrimaryTransportFailure as error:
+            try:
+                raise RuntimeError("deployment execution failed") from error
+            except RuntimeError as wrapped:
+                failure = wrapped
+        self.assertIs(failure.__cause__, primary)
+
+        def fail() -> int:
+            raise failure
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with (
+            patch("sys.stdout", stdout),
+            patch("sys.stderr", stderr),
+        ):
+            self.assertEqual(boundary(lambda: 0), 0)
+            self.assertEqual(boundary(fail), 1)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertEqual(stderr.getvalue(), "cpk source-live execution failed\n")
+        rendered = stdout.getvalue() + stderr.getvalue()
+        for forbidden in (
+            "raw-response-not-for-output",
+            "private.example",
+            "token-not-for-output",
+            "credential-not-for-output",
+        ):
+            self.assertNotIn(forbidden, rendered)
 
     def test_policy_cadence_occurs_only_between_failed_attempts(self) -> None:
         policy = VerificationPolicy(
