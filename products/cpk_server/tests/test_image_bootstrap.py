@@ -1924,6 +1924,37 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
                         values.append(ast.unparse(value))
             return values
 
+        def mapping_values(call_node: ast.Call, name: str) -> list[str]:
+            values: list[str] = []
+            for node in ast.walk(call_node):
+                if not isinstance(node, ast.Dict):
+                    continue
+                for key, value in zip(node.keys, node.values, strict=True):
+                    if isinstance(key, ast.Constant) and key.value == name:
+                        values.append(ast.unparse(value))
+            return values
+
+        def authorization_values(call_node: ast.Call) -> list[str]:
+            values = [
+                ast.unparse(keyword.value)
+                for keyword in call_node.keywords
+                if keyword.arg == "authorization"
+            ]
+            for keyword in call_node.keywords:
+                if keyword.arg != "extra_headers" or not isinstance(
+                    keyword.value,
+                    ast.Dict,
+                ):
+                    continue
+                for key, value in zip(
+                    keyword.value.keys,
+                    keyword.value.values,
+                    strict=True,
+                ):
+                    if isinstance(key, ast.Constant) and key.value == "Authorization":
+                        values.append(ast.unparse(value))
+            return values
+
         paths = {
             "hosted": ROOT / "scripts" / "cpk_server_hosted_activity.py",
             "recursive": ROOT / "scripts" / "cpk_server_recursive_activity.py",
@@ -2060,7 +2091,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
                     self.assertIn("def read_activity", source)
                     self.assertIn('"read.activity"', source)
                     activity_readers = [
-                        node
+                        child
                         for node in tree.body
                         if isinstance(node, ast.ClassDef)
                         and node.name == "HostedWorkflow"
@@ -2078,6 +2109,37 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
                         ["100"],
                     )
                     self.assertIn("_run_negative_cleanup", source)
+                elif owner == "recursive":
+                    recursive_calls = {
+                        "claim": marked_calls(tree, "/claim"),
+                        "start": marked_calls(tree, "/start"),
+                        "execute": marked_calls(
+                            tree,
+                            "command.deployment.execute",
+                        ),
+                        "advance": marked_calls(tree, "advance-current-graph"),
+                    }
+                    for boundary, calls in recursive_calls.items():
+                        with self.subTest(
+                            owner=owner,
+                            boundary=f"{boundary}-worker-authorization",
+                        ):
+                            self.assertEqual(len(calls), 1)
+                            self.assertEqual(
+                                authorization_values(calls[0]),
+                                ["WORKER_AUTHORIZATION"],
+                            )
+                    with self.subTest(
+                        owner=owner,
+                        boundary="execute-workspace",
+                    ):
+                        self.assertEqual(
+                            mapping_values(
+                                recursive_calls["execute"][0],
+                                "workspace_id",
+                            ),
+                            ["WORKSPACE_ID"],
+                        )
                 elif owner == "secret-provider":
                     self.assertIn("_run_cloudflare_abort_cleanup", source)
                 elif owner == "remote-tls":
