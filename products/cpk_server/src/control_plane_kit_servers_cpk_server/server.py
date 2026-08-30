@@ -521,6 +521,7 @@ def create_app(
             path=request.url.path,
             headers=request.headers,
             body=await request.body(),
+            query_string=request.scope["query_string"],
         )
         return _json_response(response.status, response.body)
 
