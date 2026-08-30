@@ -2183,6 +2183,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         controller = (ROOT / "scripts" / "cpk_server_hosted_activity.py").read_text(
             encoding="utf-8"
         )
+        controller_tree = ast.parse(controller)
 
         self.assertIn("command.deployment.plan", controller)
         self.assertIn("/image-pull-authorities", controller)
@@ -2211,7 +2212,66 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("runtime network attachment failed", controller)
         self.assertNotIn('name.startswith(f"cpk-net-{workspace_id}")', controller)
         self.assertIn("/plans/{plan_id}/approval", controller)
-        self.assertIn("/runs/{run_id}/advance-current-graph", controller)
+        hosted_workflows = [
+            node
+            for node in controller_tree.body
+            if isinstance(node, ast.ClassDef) and node.name == "HostedWorkflow"
+        ]
+        self.assertEqual(len(hosted_workflows), 1)
+        advance_methods = [
+            node
+            for node in hosted_workflows[0].body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "advance_current_graph"
+        ]
+        self.assertEqual(len(advance_methods), 1)
+        advance_method = advance_methods[0]
+        parameter_names = [argument.arg for argument in advance_method.args.args]
+        parameter_names.extend(
+            argument.arg for argument in advance_method.args.kwonlyargs
+        )
+        self.assertIn("claimed_run", parameter_names)
+        self.assertNotIn("run_id", parameter_names)
+        advance_calls = [
+            node
+            for node in ast.walk(advance_method)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_http"
+            and "advance-current-graph" in ast.unparse(node)
+        ]
+        self.assertEqual(len(advance_calls), 1)
+        advance_call = advance_calls[0]
+        self.assertGreaterEqual(len(advance_call.args), 4)
+        route = advance_call.args[2]
+        self.assertIsInstance(route, ast.JoinedStr)
+        self.assertEqual(
+            [
+                ast.unparse(part.value)
+                for part in route.values
+                if isinstance(part, ast.FormattedValue)
+            ],
+            ["self.workspace_id", "claimed_run.run_id"],
+        )
+        self.assertEqual(
+            "".join(
+                str(part.value)
+                for part in route.values
+                if isinstance(part, ast.Constant)
+            ),
+            "/workspaces//runs//advance-current-graph",
+        )
+        payload = advance_call.args[3]
+        self.assertIsInstance(payload, ast.Dict)
+        self.assertEqual(
+            [
+                ast.unparse(value)
+                for key, value in zip(payload.keys, payload.values, strict=True)
+                if isinstance(key, ast.Constant)
+                and key.value == "claim_generation"
+            ],
+            ["claimed_run.claim_generation"],
+        )
         self.assertIn("self.workspace_id", controller)
         self.assertIn("self.worker_id", controller)
         self.assertIn("ProductDescriptorCodec", controller)
@@ -3198,6 +3258,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         controller = (ROOT / "scripts" / "cpk_server_recursive_activity.py").read_text(
             encoding="utf-8"
         )
+        controller_tree = ast.parse(controller)
 
         self.assertIn('WORKSPACE_ID = "recursive-cpk-server"', controller)
         self.assertIn("MAX_LOCAL_CHAIN_DEPTH = 10", controller)
@@ -3221,11 +3282,68 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("command.deployment.plan", controller)
         self.assertIn("command.approval.decide", controller)
         self.assertIn("command.deployment.execute", controller)
-        self.assertIn("/activity", controller)
         self.assertIn("_assert_parent_observations", controller)
-        self.assertIn("parent activity timeline did not expose run", controller)
-        self.assertIn('session.get("plans", [])', controller)
-        self.assertIn('plan.get("runs", [])', controller)
+        functions = {
+            node.name: node
+            for node in controller_tree.body
+            if isinstance(node, ast.FunctionDef)
+        }
+        for function_name in (
+            "_assert_parent_observations",
+            "_assert_activity_step",
+        ):
+            with self.subTest(function=function_name):
+                function = functions.get(function_name)
+                self.assertIsNotNone(function)
+                run_event_calls = [
+                    node
+                    for node in ast.walk(function)
+                    if isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "read_run_events"
+                ]
+                self.assertEqual(len(run_event_calls), 1)
+                call_node = run_event_calls[0]
+                self.assertIsInstance(call_node.func.value, ast.Call)
+                self.assertIsInstance(call_node.func.value.func, ast.Name)
+                self.assertEqual(call_node.func.value.func.id, "HostedWorkflow")
+                self.assertEqual(
+                    [ast.unparse(argument) for argument in call_node.args],
+                    ["run_id"],
+                )
+                self.assertEqual(
+                    [
+                        ast.unparse(keyword.value)
+                        for keyword in call_node.keywords
+                        if keyword.arg == "limit"
+                    ],
+                    ["100"],
+                )
+                self.assertFalse(
+                    [
+                        keyword
+                        for keyword in call_node.keywords
+                        if keyword.arg == "offset"
+                    ]
+                )
+                legacy_calls = [
+                    node
+                    for node in ast.walk(function)
+                    if isinstance(node, ast.Call)
+                    and (
+                        (
+                            isinstance(node.func, ast.Name)
+                            and node.func.id == "_events_for_run"
+                        )
+                        or (
+                            isinstance(node.func, ast.Attribute)
+                            and node.func.attr == "read_activity"
+                        )
+                        or "read.activity" in ast.unparse(node)
+                        or "/activity" in ast.unparse(node)
+                    )
+                ]
+                self.assertFalse(legacy_calls)
         self.assertIn("parent did not record health evidence", controller)
         self.assertIn("docker.io/library/postgres@sha256:", controller)
         self.assertIn("ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:", controller)
