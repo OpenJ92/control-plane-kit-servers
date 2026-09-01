@@ -5,11 +5,14 @@ from pathlib import Path
 import sys
 import tomllib
 import unittest
+from unittest.mock import patch
 
 from control_plane_kit_core.operations import (
+    ControlPlaneServiceRole,
     operator_command_http_routes,
     operator_read_http_routes,
 )
+from control_plane_kit_operations.cpk_server import cpk_server_services
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -17,8 +20,29 @@ PRODUCT_SRC = ROOT / "products" / "cpk_server" / "src"
 SERVER_SOURCE = (
     PRODUCT_SRC / "control_plane_kit_servers_cpk_server" / "server.py"
 )
-CPK_COMMIT = "99aea011df81b20cdb644749b796e12bc8f829c3"
-INTERPRETERS_COMMIT = "ecd96e7bec4d0947cd12cb09c9a252faa4e4a28d"
+CPK_COMMIT = "29bebd527d02dd769d0749bdb8fa8cea1538a923"
+INTERPRETERS_COMMIT = "0679c16c5984416d5469119b685b0ada232d5a63"
+PUBLIC_DEPLOYMENT_COMMAND_ROUTES = frozenset(
+    {
+        "command.deployment.prepare",
+        "command.approval.decide",
+        "command.deployment.admit",
+        "command.run.claim",
+        "command.run.start",
+        "command.deployment.execute",
+        "command.graph.advance-current",
+    }
+)
+PUBLIC_DEPLOYMENT_READ_ROUTES = frozenset(
+    {
+        "read.current-graph",
+        "read.desired-graph",
+        "read.plan-detail",
+        "read.approval-detail",
+        "read.plan-runs",
+        "read.run-events",
+    }
+)
 STALE_OPERATIONS_NAMES = frozenset(
     {
         "GatewayKeyRotationApplicationService",
@@ -171,6 +195,103 @@ class CurrentCpkServerCompositionTests(unittest.TestCase):
         self.assertNotIn("ingress_reservation_releases", keywords)
         self.assertIn("gateway_probes", keywords)
         self.assertIn("delegation_signing_keys", keywords)
+
+    def test_public_deployment_prepare_is_installed_and_configured(self) -> None:
+        command_routes = {
+            route.route_id: route for route in operator_command_http_routes()
+        }
+        read_routes = {
+            route.route_id: route for route in operator_read_http_routes()
+        }
+        self.assertEqual(
+            PUBLIC_DEPLOYMENT_COMMAND_ROUTES - command_routes.keys(),
+            set(),
+        )
+        self.assertEqual(
+            PUBLIC_DEPLOYMENT_READ_ROUTES - read_routes.keys(),
+            set(),
+        )
+
+        sys.path.insert(0, str(PRODUCT_SRC))
+        try:
+            from control_plane_kit_servers_cpk_server import (
+                create_cpk_server_composition,
+            )
+
+            composition = create_cpk_server_composition()
+        finally:
+            sys.path.remove(str(PRODUCT_SRC))
+
+        route = composition.http_api.route("command.deployment.prepare")
+        binding = next(
+            item
+            for item in composition.handoff.command_parity.commands
+            if item.http_route_id == route.route_id
+        )
+        self.assertEqual(
+            (
+                route.path_template,
+                route.service_role,
+                binding.operation_id,
+                binding.mcp_tool_name,
+                binding.service_role,
+            ),
+            (
+                "/workspaces/{workspace_id}/deployments/prepare",
+                ControlPlaneServiceRole.PLANNING,
+                "deployment.prepare",
+                "prepare_deployment",
+                ControlPlaneServiceRole.PLANNING,
+            ),
+        )
+
+        tree = ast.parse(
+            SERVER_SOURCE.read_text(encoding="utf-8"), filename=str(SERVER_SOURCE)
+        )
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "cpk_server_services"
+        ]
+        self.assertEqual(len(calls), 1)
+        keywords = {keyword.arg for keyword in calls[0].keywords}
+        self.assertEqual(
+            {"planning", "approval", "operations", "desired_graphs"} - keywords,
+            set(),
+        )
+
+        planning = object()
+        approval = object()
+        operations = object()
+        desired_graphs = object()
+        deployment_program = object()
+        with patch(
+            "control_plane_kit_operations.cpk_server.DeploymentProgram",
+            return_value=deployment_program,
+        ) as constructor:
+            services = cpk_server_services(
+                unit_of_work_factory=lambda: None,
+                planning=planning,
+                approval=approval,
+                admission=object(),
+                lifecycle=object(),
+                execution=object(),
+                operations=operations,
+                desired_graphs=desired_graphs,
+            )
+
+        constructor.assert_called_once_with(
+            operations,
+            desired_graphs,
+            planning,
+            approval,
+        )
+        self.assertIs(
+            services[ControlPlaneServiceRole.PLANNING]._deployment_program,
+            deployment_program,
+        )
 
 
 if __name__ == "__main__":
