@@ -13,12 +13,11 @@ class ServerRepositoryPolicyTests(unittest.TestCase):
         normalized_agents = agents.lower()
 
         for required in (
-            "inspect governing frozen tests",
-            "extract behavioral law cards",
-            "dry-run source and architecture",
-            "focused target tests",
-            "prove focused target red",
-            "Docker-first validation",
+            "cpk-agent-contract/v1",
+            "current issue and public contract",
+            "bounded implementation and proportional tests",
+            "authoritative Docker-backed ./test.sh",
+            "concrete review",
             "one product implementation lane owns one directory",
             "Core never imports servers",
             "cpk-server and Hello have different roles",

@@ -81,33 +81,27 @@ contracts, process handoff contracts, and tests. Core never imports servers.
 - Do not create implementation directories before the issue for that product
   opens.
 - Do not use broad Docker prune. Inspect Docker resources first and preserve
-  unrelated containers, retained volumes, and all Pottery Factory resources.
+  every unrelated or foreign container, network, volume, image, and mapping.
 
 ## Issue Loop
 
-For every non-trivial issue, use this loop:
+For every non-trivial issue, use this calibrated loop:
 
 ```text
-inspect governing frozen tests and new requirements
-  -> extract behavioral law cards
-    -> dry-run source and architecture with those laws in view
-      -> design the target interface and refine issue topology
-        -> write focused target tests
-          -> prove focused target red
-            -> implement to green
-              -> focused validation
-                -> broader validation required by the issue
-                  -> PR
-                    -> review pass
-                      -> hardening issue/PR where warranted
-                        -> decision log with curated snippets
-                          -> handoff to the next topological issue
+current issue and public contract
+  -> inspect the owned source and tests
+    -> bounded implementation and proportional tests
+      -> authoritative Docker-backed ./test.sh
+        -> concrete review
+          -> decision log and dependent handoff
 ```
 
-Do not copy tests mechanically before understanding the behavioral laws. Do not
-weaken assertions, add unjustified skips, hide tests from collection, preserve
-obsolete structure merely because a frozen test referenced it, or point
-successor tests back at the frozen implementation.
+Use behavioral law cards, frozen-test translation, and focused target-red
+evidence only for an explicitly governed migration/parity issue or when a
+focused failure is needed to establish causality for missing behavior. Do not
+copy tests mechanically, weaken assertions, add unjustified skips, hide tests
+from collection, preserve obsolete structure merely because a fixture
+referenced it, or point successor tests at a frozen implementation.
 
 ## Testing
 
