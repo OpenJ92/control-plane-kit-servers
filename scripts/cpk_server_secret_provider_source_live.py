@@ -55,6 +55,7 @@ from cpk_server_hosted_activity import (
     GATEWAY_PROBE_KEY_ID,
     LOCAL_DOCKER_AUTHORITY_REF,
     GATEWAY_PROBE_ISSUER,
+    ClaimedRun,
     HostedWorkflow,
     _assert_activity_mentions,
     _assert_gateway_probe_succeeded,
@@ -67,16 +68,17 @@ from cpk_server_hosted_activity import (
     _bootstrap_workspace,
     _clock,
     _disconnect_runtime_networks,
-    _events_for_run,
     _http,
     _mcp_read,
     _mcp_tool,
     _product_document,
     _public_gateway_ingress_graph,
     _public_gateway_overlay,
+    _sanitized_main,
     _single_hello_graph,
     _single_docker_container,
     _sync_runtime_networks,
+    _validate_execute_result,
     _with_public_environment,
     _wait_public_gateway_ready,
 )
@@ -141,10 +143,14 @@ PUBLIC_GATEWAY_PROBE_POLICY = VerificationPolicy(
 
 @dataclass(frozen=True)
 class PreparedRun:
-    run_id: str
+    claimed_run: ClaimedRun
     plan_id: str
     current_graph_id: str
     desired_graph_id: str
+
+    @property
+    def run_id(self) -> str:
+        return self.claimed_run.run_id
 
 
 @dataclass(frozen=True)
@@ -1229,7 +1235,7 @@ def _assert_initial_gateway_transition_evidence(
             f"plan_id={transition.plan_id}"
         )
 
-    events = _events_for_run(workflow.read_activity(limit=200), transition.run_id)
+    events = workflow.read_run_events(transition.run_id, limit=100)
     succeeded_activity_ids = {
         str(event.get("activity_id"))
         for event in events
@@ -1314,7 +1320,7 @@ def _assert_public_overlay_transition_evidence(
     if forbidden_workload_mutations:
         raise RuntimeError("public overlay plan mutated stable workload nodes")
 
-    events = _events_for_run(workflow.read_activity(limit=200), transition.run_id)
+    events = workflow.read_run_events(transition.run_id, limit=100)
     succeeded_activity_ids = {
         str(event.get("activity_id"))
         for event in events
@@ -3114,7 +3120,7 @@ def _run_revoked_before_use(
         current_graph_id=runtime_only.current_graph_id,
         expected_desired_graph_id=runtime_only.desired_graph_id,
     )
-    terminal = _execute_until_terminal(workflow, prepared.run_id)
+    terminal = _execute_until_terminal(workflow, prepared.claimed_run)
     if terminal.get("coordinator_status") not in {
         "failed",
         "unsupported",
@@ -3356,7 +3362,7 @@ def _run_denied_case(
             graph=_postgres_graph(postgres_document, workspace_id),
             current_graph_id=current_graph_id,
         )
-        terminal = _execute_until_terminal(workflow, prepared.run_id)
+        terminal = _execute_until_terminal(workflow, prepared.claimed_run)
         if terminal.get("coordinator_status") not in {
             "failed",
             "unsupported",
@@ -3473,12 +3479,12 @@ def _assert_provider_metadata_is_secret_free(workflow: HostedWorkflow) -> None:
     providers = _mcp_read(
         workflow.base_url,
         "read.secret-providers",
-        {"workspace_id": workflow.workspace_id, "limit": 10, "offset": 0},
+        {"workspace_id": workflow.workspace_id, "limit": 10},
     )
     references = _mcp_read(
         workflow.base_url,
         "read.secret-references",
-        {"workspace_id": workflow.workspace_id, "limit": 10, "offset": 0},
+        {"workspace_id": workflow.workspace_id, "limit": 10},
     )
     rendered = json.dumps(
         {"providers": providers, "references": references},
@@ -3558,10 +3564,10 @@ def _prepare_run(
         plan_id=plan_id,
         approval_id=approval_id,
     )
-    run_id = workflow.claim(title=title, request_id=request_id)
-    workflow.start_run(title=title, run_id=run_id)
+    claimed_run = workflow.claim(title=title, request_id=request_id)
+    workflow.start_run(title=title, claimed_run=claimed_run)
     return PreparedRun(
-        run_id=run_id,
+        claimed_run=claimed_run,
         plan_id=plan_id,
         current_graph_id=current_graph_id,
         desired_graph_id=desired_graph_id,
@@ -3570,30 +3576,35 @@ def _prepare_run(
 
 def _execute_until_terminal(
     workflow: HostedWorkflow,
-    run_id: str,
+    claimed_run: ClaimedRun,
 ) -> dict[str, Any]:
     for attempt in range(40):
         _sync_runtime_networks(
             workflow.server_container,
             workspace_id=workflow.workspace_id,
         )
-        result = _mcp_tool(
-            workflow.base_url,
-            "command.deployment.execute",
-            {
-                "workspace_id": workflow.workspace_id,
-                "run_id": run_id,
-                "worker_id": workflow.worker_id,
-                "actor_scopes": [PolicyScope.EXECUTION_OPERATE.value],
-                "idempotency_key": (
-                    f"{workflow.workspace_id}:denied-execute:{attempt}"
-                ),
-                "max_effects": 1,
-            },
-            timeout=60,
-            authorization=workflow.worker_authorization,
-        )
-        if result["coordinator_status"] in {
+        try:
+            result = _mcp_tool(
+                workflow.base_url,
+                "command.deployment.execute",
+                {
+                    "workspace_id": workflow.workspace_id,
+                    "run_id": claimed_run.run_id,
+                    "worker_id": workflow.worker_id,
+                    "actor_scopes": [PolicyScope.EXECUTION_OPERATE.value],
+                    "idempotency_key": (
+                        f"{workflow.workspace_id}:denied-execute:{attempt}"
+                    ),
+                    "claim_generation": claimed_run.claim_generation,
+                    "max_effects": 1,
+                },
+                timeout=60,
+                authorization=workflow.worker_authorization,
+            )
+        except Exception as error:
+            raise RuntimeError("denied source-live execution failed") from error
+        status = _validate_execute_result(result, claimed_run)
+        if status in {
             "completed",
             "failed",
             "unsupported",
@@ -4434,7 +4445,7 @@ def _assert_run_resolved_version(
 
 def _assert_activity_is_secret_free(workflow: HostedWorkflow) -> None:
     rendered = json.dumps(
-        workflow.read_activity(limit=400),
+        workflow.read_activity(limit=100),
         separators=(",", ":"),
         sort_keys=True,
     ).lower()
@@ -4456,4 +4467,4 @@ def _required_env(name: str) -> str:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(_sanitized_main(main))

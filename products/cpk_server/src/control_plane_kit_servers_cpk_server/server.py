@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import json
-from math import isfinite
 import os
 from pathlib import Path
 import time
@@ -28,20 +27,9 @@ from control_plane_kit_core.policies import PolicyScope
 from control_plane_kit_core.probe_intents import (
     EndpointContext,
     LiteralEndpointMaterial,
-    RuntimeEndpointObservation,
-)
-from control_plane_kit_core.public_ingress import (
-    NamedPublicIngress,
-    PublicIngressObservation,
-    PublicIngressObservationStatus,
 )
 from control_plane_kit_core.secrets import SecretReference, SecretResolutionError
 from control_plane_kit_core.types import RuntimeKind
-from control_plane_kit_core.verification import (
-    HttpCheck,
-    VerificationCompleted,
-    VerificationOutcome,
-)
 from control_plane_kit_operations import (
     ActivityExecutionDispatcher,
     ActivityExecutionOutcome,
@@ -55,33 +43,24 @@ from control_plane_kit_operations import (
     CpkServerOperationsApplication,
     CurrentGraphAdvancementCommandService,
     DesiredGraphCommandService,
-    DelegationKeyGenerationEvidence,
     DelegationSigningKeyRegistrationService,
     ExecutionAdmissionCommandService,
     ExecutionCoordinator,
+    EffectAttemptFoldService,
+    EffectAttemptReconciliationService,
+    EffectAttemptStartService,
     FailureEvidence,
     GatewayProbeAttemptStatus,
     GatewayProbeCommandService,
     GatewayProbeDispatch,
     GatewayProbeDispatchError,
     GatewayProbeDispatchResult,
-    GatewayKeyGenerationResult,
-    GatewayKeyRotationApplicationService,
-    GatewayKeyRotationProgramExecutor,
-    GatewayKeyRotationRevocationEffectOutcome,
-    GatewayKeyRotationRevocationEffectResult,
     ImagePullAuthorityRegistrationService,
     IngressAuthorityProviderKind,
     IngressAuthorityRegistrationService,
     IngressRealizationAdapter,
-    IngressReservationCoordinates,
-    IngressReservationObservation,
-    IngressResourcePresence,
-    IngressTunnelObservation,
     OperationCommandService,
     ProductRegistrationService,
-    PublicIngressReservationReleasePlanningService,
-    RetainedIngressDeactivationResult,
     RuntimeAuthorityRegistrationService,
     RuntimeDispatcherBootstrapConfiguration,
     RuntimeDispatcherBootstrapError,
@@ -542,6 +521,7 @@ def create_app(
             path=request.url.path,
             headers=request.headers,
             body=await request.body(),
+            query_string=request.scope["query_string"],
         )
         return _json_response(response.status, response.body)
 
@@ -766,26 +746,42 @@ def _operations_application(
     lifecycle = RunLifecycleCommandService(
         unit_of_work,
         clock=_clock,
-        id_factory=_id,
+        id_factory=_lifecycle_id,
     )
     secret_use_authorizer = SecretUseAuthorizationService(unit_of_work)
     secret_provider = _secret_provider_composition(config)
+    adapter = _activity_adapter(
+        config,
+        unit_of_work,
+        secret_use_authorizer,
+        secret_provider,
+    )
+    observer = _runtime_observer(
+        config,
+        secret_provider=secret_provider,
+    )
+    fold_service = EffectAttemptFoldService(
+        unit_of_work,
+        id_factory=_fold_id,
+    )
+    start_service = EffectAttemptStartService(
+        unit_of_work,
+        id_factory=_start_id,
+    )
+    reconciliation_service = EffectAttemptReconciliationService(
+        unit_of_work,
+        observer,
+        fold_service,
+    )
     execution = ExecutionCoordinator(
         unit_of_work,
         lifecycle=lifecycle,
-        adapter=_activity_adapter(
-            config,
-            unit_of_work,
-            secret_use_authorizer,
-            secret_provider,
-        ),
+        adapter=adapter,
+        start_service=start_service,
+        fold_service=fold_service,
+        reconciliation_service=reconciliation_service,
         clock=_clock,
-        id_factory=_id,
-    )
-    gateway_key_rotations = _gateway_key_rotation_application(
-        unit_of_work,
-        secret_provider,
-        execution,
+        id_factory=_coordinator_id,
     )
     return CpkServerOperationsApplication(
         cpk_server_services(
@@ -804,11 +800,6 @@ def _operations_application(
             image_pull_authorities=ImagePullAuthorityRegistrationService(unit_of_work),
             runtime_authorities=RuntimeAuthorityRegistrationService(unit_of_work),
             ingress_authorities=IngressAuthorityRegistrationService(unit_of_work),
-            ingress_reservation_releases=PublicIngressReservationReleasePlanningService(
-                unit_of_work,
-                clock=_clock,
-                id_factory=_id,
-            ),
             secret_providers=SecretProviderRegistrationService(unit_of_work),
             delegation_signing_keys=DelegationSigningKeyRegistrationService(
                 unit_of_work
@@ -846,7 +837,6 @@ def _operations_application(
                 secret_use_authorizer,
                 secret_provider,
             ),
-            gateway_key_rotations=gateway_key_rotations,
             clock=lambda: datetime.now(timezone.utc),
         )
     )
@@ -1031,116 +1021,6 @@ def _gateway_probe_dispatcher(
     )
 
 
-@dataclass(frozen=True)
-class _PublicIngressReadinessVerifierAdapter:
-    """Compose operations readiness with the concrete HTTP interpreter."""
-
-    interpreter_factory: object
-    material_factory: object
-    clock: object
-
-    def observe(
-        self,
-        *,
-        ingress: NamedPublicIngress,
-        check: HttpCheck,
-        endpoint: RuntimeEndpointObservation,
-        attempt_timeout_seconds: float,
-    ) -> PublicIngressObservation:
-        if (
-            not isinstance(attempt_timeout_seconds, (int, float))
-            or isinstance(attempt_timeout_seconds, bool)
-            or not isfinite(attempt_timeout_seconds)
-            or attempt_timeout_seconds <= 0
-        ):
-            raise ValueError("public ingress readiness attempt timeout is invalid")
-        bounded_check = replace(
-            check,
-            policy=replace(
-                check.policy,
-                timeout_seconds=min(
-                    float(attempt_timeout_seconds),
-                    float(check.policy.timeout_seconds),
-                ),
-                maximum_attempts=1,
-            ),
-        )
-        interpreter = self.interpreter_factory(ingress.hostname)
-        material = self.material_factory(
-            ingress.target.node_id,
-            endpoint.graph_id,
-            bounded_check,
-            endpoint,
-        )
-        result = interpreter.execute(material)
-        status = PublicIngressObservationStatus.UNKNOWN
-        if isinstance(result, VerificationCompleted):
-            if result.outcome is VerificationOutcome.PASSED:
-                status = PublicIngressObservationStatus.READY
-            elif result.outcome in {
-                VerificationOutcome.FAILED,
-                VerificationOutcome.TIMED_OUT,
-                VerificationOutcome.MALFORMED,
-            }:
-                status = PublicIngressObservationStatus.UNREADY
-        return PublicIngressObservation(
-            ingress_id=ingress.ingress_id,
-            hostname=ingress.hostname,
-            url=f"https://{ingress.hostname}",
-            target=ingress.target,
-            observed_at=self.clock(),
-            status=status,
-            evidence=_public_readiness_evidence(result),
-        )
-
-
-def _public_readiness_evidence(result) -> dict[str, object]:
-    evidence: dict[str, object] = {
-        "verification_type": (
-            "completed"
-            if isinstance(result, VerificationCompleted)
-            else "unsupported"
-        ),
-        "verification_capability": result.capability.value,
-    }
-    if not isinstance(result, VerificationCompleted):
-        return evidence
-    evidence["verification_outcome"] = result.outcome.value
-    evidence["verification_attempts"] = result.attempts
-    if result.evidence is not None:
-        evidence.update(
-            {
-                f"verification_{key}": value
-                for key, value in result.evidence.descriptor().items()
-            }
-        )
-    return evidence
-
-
-def _public_ingress_readiness_verifier(*, public_resolver, transport=None):
-    try:
-        from control_plane_kit_interpreters.probes import ProbeAddressPolicy
-        from control_plane_kit_interpreters.verification import (
-            HttpVerificationInterpreter,
-            VerificationCheckMaterial,
-        )
-    except ModuleNotFoundError as error:
-        raise BootstrapConfigurationError(
-            "public ingress readiness requires "
-            "control-plane-kit-interpreters[http]"
-        ) from error
-
-    return _PublicIngressReadinessVerifierAdapter(
-        interpreter_factory=lambda hostname: HttpVerificationInterpreter(
-            ProbeAddressPolicy(public_hosts=frozenset((hostname,))),
-            public_resolver=public_resolver,
-            transport=transport,
-        ),
-        material_factory=VerificationCheckMaterial,
-        clock=_clock,
-    )
-
-
 def _public_dns_resolver(
     config: CpkServerBootstrapConfiguration,
     *,
@@ -1184,12 +1064,42 @@ class _UnsupportedExecutionAdapter:
         )
 
 
+class _UnsupportedRuntimeEffectObserver:
+    """Closed read-only fallback when runtime observation is disabled."""
+
+    def observe(self, request, authority):
+        from control_plane_kit_core.runtime_effect_observation import (
+            RuntimeEffectObservationEvidence,
+            RuntimeEffectObservationFailure,
+            RuntimeEffectObservationRequest,
+            RuntimeEffectObserverUnsupported,
+        )
+
+        if type(request) is not RuntimeEffectObservationRequest:
+            raise TypeError(
+                "Runtime observer requires RuntimeEffectObservationRequest"
+            )
+        return RuntimeEffectObserverUnsupported(
+            effect_id=request.effect_id,
+            request_fingerprint=request.request_fingerprint,
+            evidence=RuntimeEffectObservationEvidence(
+                {
+                    "operation": "runtime-effect",
+                    "postcondition": "unsupported",
+                }
+            ),
+            failure=RuntimeEffectObservationFailure(
+                code="runtime.observer-unsupported",
+                message="Runtime effect observation is disabled.",
+            ),
+        )
+
+
 def _activity_adapter(
     config: CpkServerBootstrapConfiguration,
     unit_of_work,
     secret_use_authorizer,
     secret_provider: "_SecretProviderComposition",
-    public_resolver=None,
 ) -> ActivityExecutionAdapter:
     runtime = _runtime_adapter(
         config,
@@ -1203,11 +1113,24 @@ def _activity_adapter(
         interpreters=_ingress_interpreters(config, secret_provider),
         clock=_clock,
         secret_use_authorizer=secret_use_authorizer,
-        readiness_verifier=_public_ingress_readiness_verifier(
-            public_resolver=(public_resolver or _public_dns_resolver(config)),
-        ),
     )
     return ActivityExecutionDispatcher(runtime=runtime, ingress=ingress)
+
+
+def _runtime_observer(
+    config: CpkServerBootstrapConfiguration,
+    *,
+    secret_provider: "_SecretProviderComposition | None" = None,
+):
+    if not config.runtime_dispatcher.enabled:
+        return _UnsupportedRuntimeEffectObserver()
+    provider = secret_provider or _secret_provider_composition(config)
+    runtime_kinds = config.runtime_dispatcher.runtime_kinds
+    if runtime_kinds == (RuntimeKind.DOCKER,):
+        return _docker_runtime_observer(config, provider)
+    raise BootstrapConfigurationError(
+        "runtime observation requires exactly one Docker runtime provider"
+    )
 
 
 def _runtime_adapter(
@@ -1233,6 +1156,31 @@ def _runtime_adapter(
     return RuntimeInterpreterDispatcher(
         interpreters,
         secret_use_authorizer=secret_use_authorizer,
+    )
+
+
+def _docker_runtime_observer(
+    config: CpkServerBootstrapConfiguration,
+    secret_provider: "_SecretProviderComposition | None" = None,
+):
+    try:
+        from control_plane_kit_interpreters.docker import (
+            DockerLocalAmbientClientConfig,
+            DockerRuntimeEffectObserver,
+            DockerSdkClient,
+        )
+    except ModuleNotFoundError as error:
+        raise BootstrapConfigurationError(
+            "CPK_RUNTIME_INTERPRETERS=docker requires "
+            "control-plane-kit-interpreters[docker]"
+        ) from error
+    provider = secret_provider or _secret_provider_composition(config)
+    return DockerRuntimeEffectObserver(
+        DockerSdkClient.from_authority(
+            DockerLocalAmbientClientConfig(),
+            connect_on_init=False,
+        ),
+        authorized_secret_resolver=provider.authorized_resolver,
     )
 
 
@@ -1287,7 +1235,6 @@ def _cloudflare_ingress_interpreter(
     try:
         from control_plane_kit_interpreters.cloudflare import (
             CloudflareNamedIngressInterpreter,
-            CloudflareOwnedHostnameReservation,
             CloudflareOwnedIngressResources,
             CloudflareZoneAuthority,
         )
@@ -1347,65 +1294,6 @@ def _cloudflare_ingress_interpreter(
                 secret_custody_grant=secret_custody_grant,
             )
 
-        def rebind(
-            self,
-            ingress,
-            *,
-            authority: CloudflareZoneIngressAuthority,
-            reservation: IngressReservationCoordinates,
-            allocation_name: str,
-            origin_service_url: str,
-            secret_resolution_grant,
-            secret_custody_grant,
-        ):
-            return self._inner.rebind(
-                ingress,
-                authority=self._authority(authority),
-                reservation=self._reservation(reservation),
-                allocation_name=allocation_name,
-                origin_service_url=origin_service_url,
-                secret_resolution_grant=secret_resolution_grant,
-                secret_custody_grant=secret_custody_grant,
-            )
-
-        def deactivate_preserving_reservation(
-            self,
-            *,
-            authority: CloudflareZoneIngressAuthority,
-            reservation: IngressReservationCoordinates,
-            resources: CloudflareOwnedIngressResource,
-            secret_resolution_grant,
-            secret_custody_grant,
-        ) -> RetainedIngressDeactivationResult:
-            result = self._inner.deactivate_preserving_reservation(
-                authority=self._authority(authority),
-                reservation=self._reservation(reservation),
-                resources=self._resources(resources),
-                secret_resolution_grant=secret_resolution_grant,
-                secret_custody_grant=secret_custody_grant,
-            )
-            return RetainedIngressDeactivationResult(
-                reservation=self._reservation_observation(result.reservation),
-                tunnel=IngressTunnelObservation(
-                    tunnel_id=result.tunnel.tunnel_id,
-                    presence=IngressResourcePresence(result.tunnel.presence.value),
-                ),
-            )
-
-        def release_reservation(
-            self,
-            *,
-            authority: CloudflareZoneIngressAuthority,
-            reservation: IngressReservationCoordinates,
-            secret_resolution_grant,
-        ) -> IngressReservationObservation:
-            result = self._inner.release_reservation(
-                authority=self._authority(authority),
-                reservation=self._reservation(reservation),
-                secret_resolution_grant=secret_resolution_grant,
-            )
-            return self._reservation_observation(result)
-
         @staticmethod
         def _authority(authority: CloudflareZoneIngressAuthority):
             return CloudflareZoneAuthority(
@@ -1417,29 +1305,12 @@ def _cloudflare_ingress_interpreter(
             )
 
         @staticmethod
-        def _reservation(reservation: IngressReservationCoordinates):
-            return CloudflareOwnedHostnameReservation(
-                dns_record_id=reservation.dns_record_id,
-                hostname=reservation.hostname,
-                expected_tunnel_id=reservation.expected_tunnel_id,
-            )
-
-        @staticmethod
         def _resources(resources: CloudflareOwnedIngressResource):
             return CloudflareOwnedIngressResources(
                 tunnel_id=resources.tunnel_id,
                 dns_record_id=resources.dns_record_id,
                 tunnel_name=resources.tunnel_name,
                 hostname=resources.hostname,
-            )
-
-        @staticmethod
-        def _reservation_observation(result) -> IngressReservationObservation:
-            return IngressReservationObservation(
-                dns_record_id=result.dns_record_id,
-                hostname=result.hostname,
-                presence=IngressResourcePresence(result.presence.value),
-                tunnel_id=result.tunnel_id,
             )
 
         def __repr__(self) -> str:
@@ -1460,125 +1331,6 @@ class _SecretProviderComposition:
             "SecretProviderComposition("
             f"configured={self.bootstrap_registry is not None})"
         )
-
-
-@dataclass(frozen=True, repr=False)
-class _GatewayRotationGenerationAdapter:
-    bootstrap_registry: object = field(repr=False)
-    transport: object | None = field(default=None, repr=False)
-
-    def generate(self, grant):
-        from control_plane_kit_interpreters.secret_provider import (
-            ControlPlaneKitSecretsClient,
-            SecretProviderClientError,
-            SecretProviderOutcomeCertainty,
-        )
-
-        custody = grant.custody_grant
-        try:
-            configuration = self.bootstrap_registry.configuration_for(
-                endpoint_reference=custody.endpoint_reference,
-                credential_reference=custody.credential_reference,
-            )
-            provider_result = ControlPlaneKitSecretsClient(
-                configuration,
-                transport=self.transport,
-            ).generate_delegation_key(
-                workspace_id=grant.workspace_id,
-                reference=grant.reference,
-                purpose=grant.purpose,
-                issuer=grant.issuer,
-                caller_subject=grant.actor_subject,
-                correlation_id=grant.correlation_id,
-            )
-            evidence = DelegationKeyGenerationEvidence.from_provider_result(
-                grant,
-                provider_result,
-            )
-            return GatewayKeyGenerationResult.generated(evidence)
-        except SecretProviderClientError as error:
-            code = f"provider-{error.code.value}"
-            if error.certainty is SecretProviderOutcomeCertainty.UNCERTAIN:
-                return GatewayKeyGenerationResult.uncertain(code)
-            return GatewayKeyGenerationResult.definite_failure(code)
-        except (TypeError, ValueError):
-            return GatewayKeyGenerationResult.uncertain(
-                "provider-malformed-generation-evidence"
-            )
-
-    def __repr__(self) -> str:
-        return "GatewayRotationGenerationAdapter(<redacted>)"
-
-
-@dataclass(frozen=True, repr=False)
-class _GatewayRotationRevocationAdapter:
-    custodian: object = field(repr=False)
-
-    def revoke_version(self, grant):
-        from control_plane_kit_interpreters.secret_provider import (
-            SecretProviderClientError,
-            SecretProviderOutcomeCertainty,
-        )
-
-        try:
-            receipt = self.custodian.revoke_version(grant)
-            return GatewayKeyRotationRevocationEffectResult(
-                GatewayKeyRotationRevocationEffectOutcome.REVOKED,
-                receipt=receipt,
-            )
-        except SecretProviderClientError as error:
-            code = f"provider-{error.code.value}"
-            outcome = (
-                GatewayKeyRotationRevocationEffectOutcome.UNCERTAIN
-                if error.certainty is SecretProviderOutcomeCertainty.UNCERTAIN
-                else GatewayKeyRotationRevocationEffectOutcome.DEFINITE_FAILURE
-            )
-            return GatewayKeyRotationRevocationEffectResult(
-                outcome,
-                failure_code=code,
-            )
-        except (TypeError, ValueError):
-            return GatewayKeyRotationRevocationEffectResult(
-                GatewayKeyRotationRevocationEffectOutcome.UNCERTAIN,
-                failure_code="provider-malformed-revocation-evidence",
-            )
-
-    def __repr__(self) -> str:
-        return "GatewayRotationRevocationAdapter(<redacted>)"
-
-
-def _gateway_key_rotation_application(
-    unit_of_work,
-    secret_provider: "_SecretProviderComposition",
-    execution: ExecutionCoordinator,
-):
-    if (
-        secret_provider.bootstrap_registry is None
-        or secret_provider.secret_custodian is None
-    ):
-        return None
-    executor = GatewayKeyRotationProgramExecutor(
-        unit_of_work,
-        generation_adapter=_GatewayRotationGenerationAdapter(
-            secret_provider.bootstrap_registry,
-            secret_provider.transport,
-        ),
-        revocation_adapter=_GatewayRotationRevocationAdapter(
-            secret_provider.secret_custodian,
-        ),
-        coordinator=execution,
-        clock=_clock,
-        trusted_epoch_clock=lambda: int(time.time()),
-        lease_expiry_clock=_lease_expiry_clock,
-        id_factory=_id,
-    )
-    return GatewayKeyRotationApplicationService(
-        unit_of_work,
-        clock=_clock,
-        trusted_epoch_clock=lambda: int(time.time()),
-        id_factory=_id,
-        phase_executor=executor,
-    )
 
 
 @dataclass(frozen=True, repr=False)
@@ -1708,6 +1460,22 @@ def _lease_expiry_clock() -> str:
 
 def _id() -> str:
     return str(uuid4())
+
+
+def _lifecycle_id() -> str:
+    return _id()
+
+
+def _fold_id() -> str:
+    return _id()
+
+
+def _start_id() -> str:
+    return _id()
+
+
+def _coordinator_id() -> str:
+    return _id()
 
 
 def _json_response(status: int, payload: Mapping[str, object]) -> JSONResponse:

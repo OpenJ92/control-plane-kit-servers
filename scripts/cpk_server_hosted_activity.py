@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime
 from hashlib import sha256
 import http.client
 import os
 import ssl
+import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
 import socket
 import time
-from typing import Any
+from typing import Any, Callable
 from urllib.error import HTTPError
+from urllib.parse import quote_from_bytes
 from urllib.request import Request, urlopen
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -67,9 +69,9 @@ PUBLIC_GATEWAY_HOSTNAME = os.environ.get(
 )
 PUBLIC_GATEWAY_READY_ATTEMPTS = 60
 PUBLIC_GATEWAY_READY_RETRY_SECONDS = 2
-COORDINATOR_WAIT_SLEEP_LIMIT_SECONDS = 5.0
 GATEWAY_PROBE_ISSUER = "cpk-source-live"
 GATEWAY_PROBE_KEY_ID = "source-live-gateway-key"
+MAX_CLAIM_GENERATION = 2**63 - 1
 
 
 @dataclass(frozen=True)
@@ -79,6 +81,405 @@ class HostedTransitionResult:
     plan_id: str
     approval_id: str
     run_id: str
+
+
+@dataclass(frozen=True)
+class ClaimedRun:
+    run_id: str
+    claim_generation: int
+
+    def __post_init__(self) -> None:
+        if not _nonempty_string(self.run_id):
+            raise RuntimeError("claimed run id is invalid")
+        if not _claim_generation(self.claim_generation):
+            raise RuntimeError("claimed run generation is invalid")
+
+    def descriptor(self) -> dict[str, object]:
+        return {
+            "run_id": self.run_id,
+            "claim_generation": self.claim_generation,
+        }
+
+    @classmethod
+    def from_descriptor(cls, descriptor: object) -> ClaimedRun:
+        if not isinstance(descriptor, dict) or set(descriptor) != {
+            "run_id",
+            "claim_generation",
+        }:
+            raise RuntimeError("claimed run state is invalid")
+        return cls(
+            run_id=descriptor["run_id"],
+            claim_generation=descriptor["claim_generation"],
+        )
+
+
+def _nonempty_string(value: object) -> bool:
+    return type(value) is str and bool(value) and len(value) <= 4096
+
+
+def _positive_integer(value: object, *, maximum: int = MAX_CLAIM_GENERATION) -> bool:
+    return type(value) is int and 1 <= value <= maximum
+
+
+def _claim_generation(value: object) -> bool:
+    return _positive_integer(value)
+
+
+def _closed_mapping(value: object, keys: set[str]) -> bool:
+    return isinstance(value, dict) and set(value) == keys
+
+
+def _canonical_timestamp(value: object) -> bool:
+    if type(value) is not str:
+        return False
+    if len(value) == 20:
+        format_string = "%Y-%m-%dT%H:%M:%SZ"
+    elif len(value) == 27 and value[19] == ".":
+        format_string = "%Y-%m-%dT%H:%M:%S.%fZ"
+    else:
+        return False
+    try:
+        datetime.strptime(value, format_string)
+    except ValueError:
+        return False
+    return True
+
+
+def _bounded_json(value: object, *, maximum_bytes: int = 1_048_576) -> bool:
+    try:
+        encoded = json.dumps(value, separators=(",", ":"), sort_keys=True)
+    except (TypeError, ValueError):
+        return False
+    return len(encoded.encode("utf-8")) <= maximum_bytes
+
+
+def _claimed_run_from_result(
+    result: object,
+    *,
+    request_id: str,
+) -> ClaimedRun:
+    keys = {
+        "execution_request_id",
+        "run_id",
+        "run_status",
+        "event_id",
+        "event_type",
+        "event_ordinal",
+        "action_id",
+        "action_type",
+        "replayed",
+        "claim_generation",
+    }
+    if (
+        not _closed_mapping(result, keys)
+        or result["execution_request_id"] != request_id
+        or not _nonempty_string(result["run_id"])
+        or result["run_status"] != "claimed"
+        or not _nonempty_string(result["event_id"])
+        or result["event_type"] != "run_opened"
+        or type(result["event_ordinal"]) is not int
+        or result["event_ordinal"] != 1
+        or not _nonempty_string(result["action_id"])
+        or result["action_type"] != "claim-run"
+        or type(result["replayed"]) is not bool
+        or not _claim_generation(result["claim_generation"])
+    ):
+        raise RuntimeError("claim result is invalid")
+    return ClaimedRun(
+        run_id=result["run_id"],
+        claim_generation=result["claim_generation"],
+    )
+
+
+def _validate_start_result(result: object, claimed_run: ClaimedRun) -> None:
+    keys = {
+        "execution_request_id",
+        "run_id",
+        "run_status",
+        "event_id",
+        "event_type",
+        "event_ordinal",
+        "action_id",
+        "action_type",
+        "replayed",
+        "claim_generation",
+    }
+    if (
+        not _closed_mapping(result, keys)
+        or not _nonempty_string(result["execution_request_id"])
+        or result["run_id"] != claimed_run.run_id
+        or result["run_status"] != "running"
+        or not _nonempty_string(result["event_id"])
+        or result["event_type"] != "run_started"
+        or type(result["event_ordinal"]) is not int
+        or result["event_ordinal"] != 2
+        or not _nonempty_string(result["action_id"])
+        or result["action_type"] != "start-run"
+        or type(result["replayed"]) is not bool
+        or result["claim_generation"] != claimed_run.claim_generation
+    ):
+        raise RuntimeError("start result is invalid")
+
+
+def _validate_execute_result(result: object, claimed_run: ClaimedRun) -> str:
+    keys = {
+        "run_id",
+        "run_status",
+        "coordinator_status",
+        "effects_attempted",
+        "activity_id",
+    }
+    if (
+        not _closed_mapping(result, keys)
+        or result["run_id"] != claimed_run.run_id
+        or not _nonempty_string(result["run_status"])
+        or not _nonempty_string(result["coordinator_status"])
+        or type(result["effects_attempted"]) is not int
+        or not 0 <= result["effects_attempted"] <= 1
+        or (
+            result["activity_id"] is not None
+            and not _nonempty_string(result["activity_id"])
+        )
+    ):
+        raise RuntimeError("execution result is invalid")
+    status = result["coordinator_status"]
+    run_status = result["run_status"]
+    effects_attempted = result["effects_attempted"]
+    activity_id = result["activity_id"]
+    if status in {"progressed", "in-flight"}:
+        if run_status != "running" or activity_id is None:
+            raise RuntimeError("execution result is invalid")
+    elif status == "completed":
+        if (
+            run_status != "succeeded"
+            or activity_id is not None
+        ):
+            raise RuntimeError("execution result is invalid")
+    elif status == "failed":
+        if (
+            run_status != "failed"
+            or (effects_attempted == 0 and activity_id is not None)
+        ):
+            raise RuntimeError("execution result is invalid")
+    elif status == "unsupported":
+        if (
+            run_status != "failed"
+            or effects_attempted != 1
+            or activity_id is None
+        ):
+            raise RuntimeError("execution result is invalid")
+    elif status == "uncertain":
+        if run_status != "running" or activity_id is None:
+            raise RuntimeError("execution result is invalid")
+    elif status == "blocked":
+        if (
+            run_status
+            not in {
+                "paused",
+                "cancelled",
+                "compensating",
+                "compensated",
+                "partially_failed",
+                "uncompensated_failure",
+                "running",
+            }
+            or activity_id is not None
+        ):
+            raise RuntimeError("execution result is invalid")
+    else:
+        raise RuntimeError("execution result is invalid")
+    return status
+
+
+def _validate_advance_result(
+    result: object,
+    *,
+    workspace_id: str,
+    claimed_run: ClaimedRun,
+    plan_id: str,
+    current_graph_id: str,
+    current_projection_id: str,
+    desired_graph_id: str,
+    desired_projection_id: str,
+    desired_revision: int,
+) -> None:
+    keys = {
+        "workspace_id",
+        "from_authored_graph_id",
+        "from_realized_projection_id",
+        "to_authored_graph_id",
+        "to_realized_projection_id",
+        "to_realized_projection_digest",
+        "desired_graph_revision",
+        "from_graph_id",
+        "to_graph_id",
+        "run_id",
+        "plan_id",
+        "event_id",
+        "action_id",
+        "replayed",
+    }
+    digest = result.get("to_realized_projection_digest") if isinstance(result, dict) else None
+    if (
+        not _closed_mapping(result, keys)
+        or result["workspace_id"] != workspace_id
+        or result["from_authored_graph_id"] != current_graph_id
+        or result["from_graph_id"] != current_graph_id
+        or result["from_realized_projection_id"] != current_projection_id
+        or result["to_authored_graph_id"] != desired_graph_id
+        or result["to_graph_id"] != desired_graph_id
+        or result["to_realized_projection_id"] != desired_projection_id
+        or type(digest) is not str
+        or len(digest) != 64
+        or any(character not in "0123456789abcdef" for character in digest)
+        or result["desired_graph_revision"] != desired_revision
+        or result["run_id"] != claimed_run.run_id
+        or result["plan_id"] != plan_id
+        or not _nonempty_string(result["event_id"])
+        or not _nonempty_string(result["action_id"])
+        or type(result["replayed"]) is not bool
+    ):
+        raise RuntimeError("advance result is invalid")
+
+
+def _valid_activity_plan(value: object) -> bool:
+    return (
+        _closed_mapping(value, {"schema", "version", "activities"})
+        and value["schema"] == "control-plane-kit.activity-plan"
+        and value["version"] == 1
+        and isinstance(value["activities"], list)
+        and _bounded_json(value)
+    )
+
+
+def _valid_plan_detail(value: object, workspace_id: str, plan_id: str) -> bool:
+    if not _closed_mapping(value, {"workspace_id", "kind", "plan"}):
+        return False
+    plan = value["plan"]
+    plan_keys = {
+        "plan_id", "session_id", "base_graph_id", "desired_graph_id",
+        "base_realized_projection_id", "desired_realized_projection_id",
+        "desired_graph_revision", "status", "created_at", "payload",
+        "risk_summary", "recovery",
+    }
+    if (
+        value["workspace_id"] != workspace_id
+        or value["kind"] != "plan-detail"
+        or not _closed_mapping(plan, plan_keys)
+        or plan["plan_id"] != plan_id
+        or any(not _nonempty_string(plan[key]) for key in (
+            "session_id", "base_graph_id", "desired_graph_id",
+            "base_realized_projection_id", "desired_realized_projection_id",
+        ))
+        or not _positive_integer(plan["desired_graph_revision"])
+        or plan["status"] != "planned"
+        or not _canonical_timestamp(plan["created_at"])
+        or not _valid_activity_plan(plan["payload"])
+    ):
+        return False
+    risk = plan["risk_summary"]
+    if not _closed_mapping(risk, {
+        "max_risk", "counts", "destructive_count", "review_blocker_count",
+        "ready_for_execution",
+    }):
+        return False
+    counts = risk["counts"]
+    if (
+        risk["max_risk"] not in {"informational", "low", "medium", "high", "critical"}
+        or not _closed_mapping(counts, {"informational", "low", "medium", "high", "critical"})
+        or any(type(counts[key]) is not int or counts[key] < 0 for key in counts)
+        or type(risk["destructive_count"]) is not int
+        or risk["destructive_count"] < 0
+        or type(risk["review_blocker_count"]) is not int
+        or risk["review_blocker_count"] < 0
+        or type(risk["ready_for_execution"]) is not bool
+    ):
+        return False
+    recovery = plan["recovery"]
+    if not _closed_mapping(recovery, {
+        "schema", "version", "mode", "source_graph_name", "target_graph_name",
+        "plan", "approval", "requires_manual_review", "assessments", "limitations",
+    }):
+        return False
+    approval = recovery["approval"]
+    return (
+        recovery["schema"] == "control-plane-kit.recovery-candidate"
+        and recovery["version"] == 1
+        and recovery["mode"] == "reverse-transition"
+        and _nonempty_string(recovery["source_graph_name"])
+        and _nonempty_string(recovery["target_graph_name"])
+        and _valid_activity_plan(recovery["plan"])
+        and _closed_mapping(approval, {"required_scope", "max_risk", "destructive"})
+        and _nonempty_string(approval["required_scope"])
+        and approval["max_risk"] in {"informational", "low", "medium", "high", "critical"}
+        and type(approval["destructive"]) is bool
+        and type(recovery["requires_manual_review"]) is bool
+        and isinstance(recovery["assessments"], list)
+        and isinstance(recovery["limitations"], list)
+        and _bounded_json(recovery)
+    )
+
+
+def _valid_fence(value: object) -> bool:
+    return (
+        _closed_mapping(value, {"worker_id", "generation"})
+        and _nonempty_string(value["worker_id"])
+        and _claim_generation(value["generation"])
+    )
+
+
+def _valid_run_event(event: object, run_id: str) -> bool:
+    base_keys = {
+        "event_id", "run_id", "ordinal", "event_type", "occurred_at",
+        "activity_id", "payload", "failure",
+    }
+    if not isinstance(event, dict) or set(event) not in (base_keys, base_keys | {"recovery"}):
+        return False
+    if (
+        not _nonempty_string(event["event_id"])
+        or event["run_id"] != run_id
+        or not _positive_integer(event["ordinal"])
+        or not _nonempty_string(event["event_type"])
+        or not _canonical_timestamp(event["occurred_at"])
+        or (event["activity_id"] is not None and not _nonempty_string(event["activity_id"]))
+        or not isinstance(event["payload"], dict)
+        or not _bounded_json(event["payload"], maximum_bytes=65_536)
+        or (event["failure"] is not None and not isinstance(event["failure"], dict))
+    ):
+        return False
+    if "recovery" not in event:
+        return True
+    recovery = event["recovery"]
+    return (
+        _closed_mapping(recovery, {"decision", "retained_run_id", "prior_fence", "replacement_fence"})
+        and _nonempty_string(recovery["decision"])
+        and recovery["retained_run_id"] == run_id
+        and _valid_fence(recovery["prior_fence"])
+        and (recovery["replacement_fence"] is None or _valid_fence(recovery["replacement_fence"]))
+    )
+
+
+def _validate_run_event_page(
+    value: object, *, workspace_id: str, run_id: str, limit: int
+) -> tuple[dict[str, Any], ...] | None:
+    if (
+        not _closed_mapping(value, {"workspace_id", "kind", "limit", "items", "next_cursor"})
+        or value["workspace_id"] != workspace_id
+        or value["kind"] != "run-events"
+        or value["limit"] != limit
+        or value["next_cursor"] is not None
+        or not isinstance(value["items"], list)
+        or len(value["items"]) > limit
+    ):
+        return None
+    items = value["items"]
+    if not all(_valid_run_event(item, run_id) for item in items):
+        return None
+    ordinals = [item["ordinal"] for item in items]
+    event_ids = [item["event_id"] for item in items]
+    if ordinals != sorted(ordinals) or len(set(ordinals)) != len(ordinals) or len(set(event_ids)) != len(event_ids):
+        return None
+    return tuple(items)
 
 
 class HostedWorkflow:
@@ -103,20 +504,6 @@ class HostedWorkflow:
 
     def wait_ready(self, *, policy: VerificationPolicy | None = None) -> None:
         _wait_ready(self.base_url, policy=policy)
-
-    def read_public_ingress_resources(self) -> dict[str, Any]:
-        return _http(
-            self.base_url,
-            "GET",
-            f"/workspaces/{self.workspace_id}/public-ingress-resources",
-        )
-
-    def read_public_ingress_resources_mcp(self) -> dict[str, Any]:
-        return _mcp_read(
-            self.base_url,
-            "list_public_ingress_resources",
-            {"workspace_id": self.workspace_id},
-        )
 
     def create_workspace(self, *, name: str, actor_id: str = "operator-a") -> str:
         workspace = _http(
@@ -551,7 +938,7 @@ class HostedWorkflow:
         pending = _mcp_read(
             self.base_url,
             "read.pending-approvals",
-            {"workspace_id": self.workspace_id, "limit": 10, "offset": 0},
+            {"workspace_id": self.workspace_id, "limit": 10},
         )
         if approval_id not in {item["request_id"] for item in pending["items"]}:
             raise RuntimeError("approval request was not visible in pending queue")
@@ -601,7 +988,7 @@ class HostedWorkflow:
         )
         return str(admitted["execution_request_id"])
 
-    def claim(self, *, title: str, request_id: str) -> str:
+    def claim(self, *, title: str, request_id: str) -> ClaimedRun:
         claimed = _http(
             self.base_url,
             "POST",
@@ -609,36 +996,38 @@ class HostedWorkflow:
             {
                 "worker_id": self.worker_id,
                 "actor_scopes": [PolicyScope.EXECUTION_OPERATE.value],
-                "lease_expires_at": "2026-07-22T12:00:00Z",
+                "lease_duration_seconds": 600,
                 "idempotency_key": f"{self.workspace_id}:{title}:claim",
             },
             extra_headers={"Authorization": self.worker_authorization},
         )
-        return str(claimed["run_id"])
+        return _claimed_run_from_result(claimed, request_id=request_id)
 
-    def start_run(self, *, title: str, run_id: str) -> None:
-        _http(
+    def start_run(self, *, title: str, claimed_run: ClaimedRun) -> None:
+        started = _http(
             self.base_url,
             "POST",
-            f"/workspaces/{self.workspace_id}/runs/{run_id}/start",
+            f"/workspaces/{self.workspace_id}/runs/{claimed_run.run_id}/start",
             {
                 "worker_id": self.worker_id,
                 "actor_scopes": [PolicyScope.EXECUTION_OPERATE.value],
+                "claim_generation": claimed_run.claim_generation,
                 "idempotency_key": f"{self.workspace_id}:{title}:start",
             },
             extra_headers={"Authorization": self.worker_authorization},
         )
+        _validate_start_result(started, claimed_run)
 
     def execute_to_completion(
         self,
-        run_id: str,
+        claimed_run: ClaimedRun,
         *,
         sync_runtime_networks: bool = True,
     ) -> None:
         _execute_to_completion(
             self.base_url,
             self.server_container,
-            run_id,
+            claimed_run,
             workspace_id=self.workspace_id,
             worker_id=self.worker_id,
             sync_runtime_networks=sync_runtime_networks,
@@ -649,7 +1038,7 @@ class HostedWorkflow:
         self,
         *,
         title: str,
-        run_id: str,
+        claimed_run: ClaimedRun,
         plan_id: str,
         current_graph_id: str,
         desired_graph_id: str,
@@ -662,7 +1051,7 @@ class HostedWorkflow:
         advanced = _http(
             self.base_url,
             "POST",
-            f"/workspaces/{self.workspace_id}/runs/{run_id}/advance-current-graph",
+            f"/workspaces/{self.workspace_id}/runs/{claimed_run.run_id}/advance-current-graph",
             {
                 "plan_id": plan_id,
                 "expected_current_graph_id": current_graph_id,
@@ -670,13 +1059,25 @@ class HostedWorkflow:
                 "desired_graph_id": desired_graph_id,
                 "desired_realized_projection_id": desired_projection_id,
                 "expected_desired_graph_revision": desired_revision,
+                "claim_generation": claimed_run.claim_generation,
                 "worker_id": self.worker_id,
                 "actor_scopes": [PolicyScope.EXECUTION_OPERATE.value],
                 "idempotency_key": f"{self.workspace_id}:{title}:advance",
             },
             extra_headers={"Authorization": self.worker_authorization},
         )
-        return str(advanced["to_graph_id"])
+        _validate_advance_result(
+            advanced,
+            workspace_id=self.workspace_id,
+            claimed_run=claimed_run,
+            plan_id=plan_id,
+            current_graph_id=current_graph_id,
+            current_projection_id=current_projection_id,
+            desired_graph_id=desired_graph_id,
+            desired_projection_id=desired_projection_id,
+            desired_revision=desired_revision,
+        )
+        return desired_graph_id
 
     def read_current_graph_id(self) -> str:
         current = _http(self.base_url, "GET", f"/workspaces/{self.workspace_id}/graphs/current")
@@ -697,13 +1098,84 @@ class HostedWorkflow:
         )
 
     def read_plan_detail(self, plan_id: str) -> dict[str, Any]:
-        return _mcp_read(
-            self.base_url,
-            "read.plan-detail",
-            {"workspace_id": self.workspace_id, "plan_id": plan_id, "limit": 100},
-        )
+        try:
+            http_detail = _http(
+                self.base_url,
+                "GET",
+                f"/workspaces/{self.workspace_id}/plans/{plan_id}",
+            )
+            mcp_detail = _mcp(
+                self.base_url,
+                "resources/read",
+                "read.plan-detail",
+                {"workspace_id": self.workspace_id, "plan_id": plan_id},
+                authorization=AUTHORIZATION,
+            )
+        except Exception as error:
+            raise RuntimeError("plan detail read failed") from error
+        if http_detail != mcp_detail or not _valid_plan_detail(
+            http_detail, self.workspace_id, plan_id
+        ):
+            raise RuntimeError("plan detail is invalid")
+        return http_detail
 
-    def read_activity(self, *, limit: int = 200) -> dict[str, Any]:
+    def read_run_events(
+        self,
+        run_id: str,
+        *,
+        limit: int = 100,
+        after: dict[str, object] | None = None,
+    ) -> tuple[dict[str, Any], ...]:
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise RuntimeError("run event limit is invalid")
+        if after is not None and (
+            not isinstance(after, dict)
+            or not _bounded_json(after, maximum_bytes=65_536)
+        ):
+            raise RuntimeError("run event cursor is invalid")
+        path = f"/workspaces/{self.workspace_id}/runs/{run_id}/events?limit={limit}"
+        arguments: dict[str, object] = {
+            "workspace_id": self.workspace_id,
+            "run_id": run_id,
+            "limit": limit,
+        }
+        if after is not None:
+            encoded_after = quote_from_bytes(
+                json.dumps(
+                    after,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ).encode("utf-8"),
+                safe="",
+            )
+            path += f"&after={encoded_after}"
+            arguments["after"] = after
+        try:
+            http_page = _http(
+                self.base_url,
+                "GET",
+                path,
+            )
+            mcp_page = _mcp(
+                self.base_url,
+                "resources/read",
+                "read.run-events",
+                arguments,
+                authorization=AUTHORIZATION,
+            )
+        except Exception as error:
+            raise RuntimeError("run event read failed") from error
+        events = _validate_run_event_page(
+            http_page,
+            workspace_id=self.workspace_id,
+            run_id=run_id,
+            limit=limit,
+        )
+        if events is None or http_page != mcp_page:
+            raise RuntimeError("run events are invalid")
+        return events
+
+    def read_activity(self, *, limit: int = 100) -> dict[str, Any]:
         return _mcp_read(
             self.base_url,
             "read.activity",
@@ -820,12 +1292,15 @@ class HostedWorkflow:
             plan_id=plan_id,
             approval_id=approval_id,
         )
-        run_id = self.claim(title=title, request_id=request_id)
-        self.start_run(title=title, run_id=run_id)
-        self.execute_to_completion(run_id, sync_runtime_networks=sync_runtime_networks)
+        claimed_run = self.claim(title=title, request_id=request_id)
+        self.start_run(title=title, claimed_run=claimed_run)
+        self.execute_to_completion(
+            claimed_run=claimed_run,
+            sync_runtime_networks=sync_runtime_networks,
+        )
         advanced_graph_id = self.advance_current_graph(
             title=title,
-            run_id=run_id,
+            claimed_run=claimed_run,
             plan_id=plan_id,
             current_graph_id=current_graph_id,
             desired_graph_id=desired_graph_id,
@@ -842,7 +1317,7 @@ class HostedWorkflow:
             desired_graph_id=desired_graph_id,
             plan_id=plan_id,
             approval_id=approval_id,
-            run_id=run_id,
+            run_id=claimed_run.run_id,
         )
 
 def main() -> int:
@@ -1516,7 +1991,7 @@ def _assert_activity_mentions(
     run_id: str,
     node_id: str,
 ) -> None:
-    events = _events_for_run(workflow.read_activity(limit=200), run_id)
+    events = workflow.read_run_events(run_id, limit=100)
     for event in events:
         payload = event.get("payload", {})
         if payload.get("node_id") == node_id and event.get("event_type") == "step_succeeded":
@@ -1529,7 +2004,7 @@ def _assert_runtime_activity_mentions(
     run_id: str,
     runtime_id: str,
 ) -> None:
-    events = _events_for_run(workflow.read_activity(limit=200), run_id)
+    events = workflow.read_run_events(run_id, limit=100)
     for event in events:
         payload = event.get("payload", {})
         if (
@@ -1540,17 +2015,6 @@ def _assert_runtime_activity_mentions(
     raise RuntimeError(
         f"activity timeline did not record successful runtime step for {runtime_id}"
     )
-
-
-def _events_for_run(timeline: dict[str, Any], run_id: str) -> list[dict[str, Any]]:
-    for session in timeline.get("sessions", []):
-        for plan in session.get("plans", []):
-            for run in plan.get("runs", []):
-                if run.get("run_id") == run_id:
-                    events = run.get("events")
-                    if isinstance(events, list):
-                        return events
-    raise RuntimeError(f"activity timeline did not expose run {run_id}")
 
 
 def _assert_gateway_probe_succeeded(
@@ -1655,7 +2119,7 @@ def _assert_gateway_rejects_replay_while_alive(workspace_id: str) -> None:
 def _execute_to_completion(
     base_url: str,
     server_container: str,
-    run_id: str,
+    claimed_run: ClaimedRun,
     *,
     workspace_id: str = WORKSPACE_ID,
     worker_id: str = WORKER_ID,
@@ -1665,21 +2129,25 @@ def _execute_to_completion(
     for attempt in range(80):
         if sync_runtime_networks:
             _sync_runtime_networks(server_container, workspace_id=workspace_id)
-        result = _mcp_tool(
-            base_url,
-            "command.deployment.execute",
-            {
-                "workspace_id": workspace_id,
-                "run_id": run_id,
-                "worker_id": worker_id,
-                "actor_scopes": [PolicyScope.EXECUTION_OPERATE.value],
-                "idempotency_key": f"{workspace_id}:execute:{attempt}",
-                "max_effects": 1,
-            },
-            timeout=60,
-            authorization=worker_authorization,
-        )
-        coordinator_status = result["coordinator_status"]
+        try:
+            result = _mcp_tool(
+                base_url,
+                "command.deployment.execute",
+                {
+                    "workspace_id": workspace_id,
+                    "run_id": claimed_run.run_id,
+                    "worker_id": worker_id,
+                    "actor_scopes": [PolicyScope.EXECUTION_OPERATE.value],
+                    "idempotency_key": f"{workspace_id}:execute:{attempt}",
+                    "claim_generation": claimed_run.claim_generation,
+                    "max_effects": 1,
+                },
+                timeout=60,
+                authorization=worker_authorization,
+            )
+        except Exception as error:
+            raise RuntimeError("deployment execution failed") from error
+        coordinator_status = _validate_execute_result(result, claimed_run)
         if sync_runtime_networks:
             _sync_runtime_networks(
                 server_container,
@@ -1689,27 +2157,8 @@ def _execute_to_completion(
         if coordinator_status == "completed":
             return
         if coordinator_status in {"failed", "unsupported", "uncertain", "blocked"}:
-            timeline = _http(base_url, "GET", f"/workspaces/{workspace_id}/activity")
-            raise RuntimeError(f"execution stopped with {result}; timeline={timeline}")
-        if coordinator_status == "waiting":
-            delay = _coordinator_retry_delay(result)
-            if delay > 0:
-                time.sleep(delay)
+            raise RuntimeError("deployment execution stopped")
     raise RuntimeError("hosted activity execution did not complete")
-
-
-def _coordinator_retry_delay(result: dict[str, object]) -> float:
-    not_before = result.get("next_attempt_not_before")
-    if not isinstance(not_before, str) or not not_before.strip():
-        raise RuntimeError("waiting coordinator result lacks retry timestamp")
-    try:
-        retry_at = datetime.fromisoformat(not_before.replace("Z", "+00:00"))
-    except ValueError as error:
-        raise RuntimeError("waiting coordinator retry timestamp is malformed") from error
-    if retry_at.tzinfo is None:
-        raise RuntimeError("waiting coordinator retry timestamp lacks timezone")
-    remaining = (retry_at.astimezone(timezone.utc) - datetime.now(timezone.utc)).total_seconds()
-    return min(max(remaining, 0.0), COORDINATOR_WAIT_SLEEP_LIMIT_SECONDS)
 
 
 def _sync_runtime_networks(
@@ -2263,7 +2712,6 @@ def _named_public_gateway_ingress(
         target=PublicIngressTarget(target_node_id, target_provider_socket),
         connector_node_id=connector_node_id,
         hostname=public_hostname,
-        readiness_check_id="ready",
         lifecycle=lifecycle,
     )
 
@@ -2863,7 +3311,7 @@ def _assert_no_runtime_networks(workspace_id: str) -> None:
 
 
 def _assert_secret_absent_from_activity(workflow: HostedWorkflow, secret_value: str) -> None:
-    encoded = json.dumps(workflow.read_activity(limit=200), sort_keys=True)
+    encoded = json.dumps(workflow.read_activity(limit=100), sort_keys=True)
     if secret_value in encoded:
         raise RuntimeError("postgres secret value leaked into activity readback")
 
@@ -2915,5 +3363,13 @@ def _required_env(name: str) -> str:
     return value
 
 
+def _sanitized_main(entrypoint: Callable[[], int]) -> int:
+    try:
+        return entrypoint()
+    except Exception:
+        print("cpk source-live execution failed", file=sys.stderr)
+        return 1
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(_sanitized_main(main))

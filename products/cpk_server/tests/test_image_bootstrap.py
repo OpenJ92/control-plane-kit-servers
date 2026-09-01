@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import sys
 import time
+from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -47,10 +48,10 @@ APPROVED_PROVIDER_FUNCTIONS = {
     "_GatewayRotationGenerationAdapter.generate",
     "_GatewayRotationRevocationAdapter.revoke_version",
     "_cloudflare_ingress_interpreter",
+    "_docker_runtime_observer",
     "_docker_runtime_interpreter",
     "_gateway_probe_dispatcher",
     "_public_dns_resolver",
-    "_public_ingress_readiness_verifier",
     "_secret_provider_composition",
 }
 
@@ -1157,9 +1158,235 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             )
 
             adapter = server_module._runtime_adapter(config)
+            observer_factory = getattr(server_module, "_runtime_observer", None)
 
             self.assertEqual(type(adapter).__name__, "_UnsupportedExecutionAdapter")
+            self.assertTrue(
+                callable(observer_factory),
+                "cpk-server must compose a closed runtime observer fallback",
+            )
+            if not callable(observer_factory):
+                return
+            observer = observer_factory(config)
+            self.assertEqual(
+                type(observer).__name__,
+                "_UnsupportedRuntimeEffectObserver",
+            )
             self.assertNotIn("control_plane_kit_interpreters.docker", sys.modules)
+        finally:
+            sys.path.remove(str(PRODUCT_SRC))
+            for name in list(sys.modules):
+                if name == "control_plane_kit_servers_cpk_server" or name.startswith(
+                    "control_plane_kit_servers_cpk_server."
+                ):
+                    sys.modules.pop(name, None)
+
+    def test_docker_runtime_observer_selection_defers_client_and_preserves_identity(
+        self,
+    ) -> None:
+        sys.path.insert(0, str(PRODUCT_SRC))
+        try:
+            server_module = importlib.import_module(
+                "control_plane_kit_servers_cpk_server.server"
+            )
+            observer_factory = getattr(server_module, "_runtime_observer", None)
+            self.assertTrue(
+                callable(observer_factory),
+                "cpk-server must compose the accepted Docker runtime observer",
+            )
+            if not callable(observer_factory):
+                return
+
+            config = server_module.CpkServerBootstrapConfiguration.from_environment(
+                {
+                    "CPK_SERVER_MODE": "execution-capable",
+                    "CPK_CONTROL_AUTH_CONFIGURED": "true",
+                    "CPK_PORT": "8080",
+                    "CPK_RUNTIME_INTERPRETERS": "docker",
+                    "CPK_WORKPLACE_DATABASE_URL": "postgres://user:pass@db/cpk",
+                    "CPK_ACTIVITY_HISTORY_DATABASE_URL": "postgres://user:pass@db/cpk",
+                    "CPK_OBSERVER_STATE_DATABASE_URL": "postgres://user:pass@db/cpk",
+                    "CPK_GRAPH_TOPOLOGY_DATABASE_URL": "postgres://user:pass@db/cpk",
+                }
+            )
+            resolver = object()
+            provider = SimpleNamespace(authorized_resolver=resolver)
+            client = object()
+            factory_calls = []
+
+            class DockerLocalAmbientClientConfig:
+                pass
+
+            class DockerSdkClient:
+                @classmethod
+                def from_authority(cls, authority, *, connect_on_init):
+                    factory_calls.append((authority, connect_on_init))
+                    return client
+
+            class DockerRuntimeEffectObserver:
+                def __init__(self, supplied_client, *, authorized_secret_resolver):
+                    self.client = supplied_client
+                    self.authorized_secret_resolver = authorized_secret_resolver
+                    self.observed = None
+
+                def observe(self, request, authority):
+                    self.observed = (request, authority)
+                    return "observed"
+
+            docker_module = ModuleType("control_plane_kit_interpreters.docker")
+            docker_module.DockerLocalAmbientClientConfig = DockerLocalAmbientClientConfig
+            docker_module.DockerRuntimeEffectObserver = DockerRuntimeEffectObserver
+            docker_module.DockerSdkClient = DockerSdkClient
+            with patch.dict(
+                sys.modules,
+                {"control_plane_kit_interpreters.docker": docker_module},
+            ):
+                observer = observer_factory(config, secret_provider=provider)
+
+            self.assertIs(type(observer), DockerRuntimeEffectObserver)
+            self.assertIs(observer.client, client)
+            self.assertIs(observer.authorized_secret_resolver, resolver)
+            self.assertEqual(len(factory_calls), 1)
+            ambient, connect_on_init = factory_calls[0]
+            self.assertIs(type(ambient), DockerLocalAmbientClientConfig)
+            self.assertIs(connect_on_init, False)
+            request = object()
+            authority = object()
+            self.assertEqual(observer.observe(request, authority), "observed")
+            self.assertEqual(observer.observed, (request, authority))
+            self.assertIs(observer.observed[0], request)
+            self.assertIs(observer.observed[1], authority)
+        finally:
+            sys.path.remove(str(PRODUCT_SRC))
+            for name in list(sys.modules):
+                if name == "control_plane_kit_servers_cpk_server" or name.startswith(
+                    "control_plane_kit_servers_cpk_server."
+                ):
+                    sys.modules.pop(name, None)
+
+    def test_runtime_disabled_observer_is_zero_io_closed_and_redacted(self) -> None:
+        sys.path.insert(0, str(PRODUCT_SRC))
+        try:
+            sys.modules.pop("control_plane_kit_interpreters.docker", None)
+            server_module = importlib.import_module(
+                "control_plane_kit_servers_cpk_server.server"
+            )
+            observer_factory = getattr(server_module, "_runtime_observer", None)
+            self.assertTrue(
+                callable(observer_factory),
+                "cpk-server must compose a closed runtime observer fallback",
+            )
+            if not callable(observer_factory):
+                return
+
+            config = server_module.CpkServerBootstrapConfiguration.from_environment(
+                {
+                    "CPK_SERVER_MODE": "execution-capable",
+                    "CPK_CONTROL_AUTH_CONFIGURED": "true",
+                    "CPK_PORT": "8080",
+                    "CPK_RUNTIME_INTERPRETERS": "none",
+                    "CPK_WORKPLACE_DATABASE_URL": "postgres://user:pass@db/cpk",
+                    "CPK_ACTIVITY_HISTORY_DATABASE_URL": "postgres://user:pass@db/cpk",
+                    "CPK_OBSERVER_STATE_DATABASE_URL": "postgres://user:pass@db/cpk",
+                    "CPK_GRAPH_TOPOLOGY_DATABASE_URL": "postgres://user:pass@db/cpk",
+                }
+            )
+
+            class ForbiddenProvider:
+                @property
+                def authorized_resolver(self):
+                    raise AssertionError("disabled observation resolved protected material")
+
+            observer = observer_factory(
+                config,
+                secret_provider=ForbiddenProvider(),
+            )
+            self.assertEqual(
+                type(observer).__name__,
+                "_UnsupportedRuntimeEffectObserver",
+            )
+            self.assertNotIn("control_plane_kit_interpreters.docker", sys.modules)
+
+            from control_plane_kit_core.runtime_effect_observation import (
+                RuntimeEffectObservationRequest,
+                RuntimeEffectObserverUnsupported,
+            )
+            from control_plane_kit_core.operations.run_identity import RunId
+            from control_plane_kit_core.planning import (
+                ActivityId,
+                RuntimeTarget,
+                StartRuntime,
+            )
+            from control_plane_kit_core.runtime_effects import (
+                RuntimeEffectKind,
+                RuntimeEffectRequest,
+                RuntimeEffectSource,
+            )
+            from control_plane_kit_core.types import RuntimeKind
+
+            request = RuntimeEffectObservationRequest(
+                RuntimeEffectRequest(
+                    effect_id="effect-observer-disabled",
+                    kind=RuntimeEffectKind.REALIZE_ACTIVITY,
+                    runtime_kind=RuntimeKind.DOCKER,
+                    source=RuntimeEffectSource(
+                        workspace_id="workspace-observer-disabled",
+                        request_id="request-observer-disabled",
+                        run_id=RunId("run-observer-disabled"),
+                        plan_id="plan-observer-disabled",
+                        base_graph_id="graph-base",
+                        desired_graph_id="graph-desired",
+                        intent_event_id="effect-observer-disabled",
+                    ),
+                    activity_id=ActivityId("activity-observer-disabled"),
+                    operation=StartRuntime(RuntimeTarget("docker")),
+                    products=(),
+                )
+            )
+
+            class ProtectedAuthority:
+                def __repr__(self):
+                    return "token=private https://provider.internal:2376"
+
+            result = observer.observe(request, ProtectedAuthority())
+            self.assertIs(type(result), RuntimeEffectObserverUnsupported)
+            self.assertEqual(
+                result.descriptor(),
+                {
+                    "kind": "observer-unsupported",
+                    "effect_id": "effect-observer-disabled",
+                    "request_fingerprint": request.request_fingerprint,
+                    "evidence": {
+                        "operation": "runtime-effect",
+                        "postcondition": "unsupported",
+                    },
+                    "failure": {
+                        "code": "runtime.observer-unsupported",
+                        "message": "Runtime effect observation is disabled.",
+                        "details": {},
+                    },
+                    "observations": [],
+                },
+            )
+            malformed = SimpleNamespace(
+                effect_id=request.effect_id,
+                request_fingerprint=request.request_fingerprint,
+            )
+            with self.assertRaisesRegex(
+                TypeError,
+                "^Runtime observer requires RuntimeEffectObservationRequest$",
+            ):
+                observer.observe(malformed, ProtectedAuthority())
+            rendered = json.dumps(result.descriptor(), sort_keys=True)
+            for forbidden in (
+                "token=",
+                "provider.internal",
+                ":2376",
+                "postgres://",
+                "user:pass",
+            ):
+                self.assertNotIn(forbidden, rendered)
+                self.assertNotIn(forbidden, repr(result))
         finally:
             sys.path.remove(str(PRODUCT_SRC))
             for name in list(sys.modules):
@@ -1176,6 +1403,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn("DockerLocalAmbientClientConfig", source)
+        self.assertIn("DockerRuntimeEffectObserver", source)
         self.assertIn("DockerSdkClient.from_authority", source)
         self.assertIn("connect_on_init=False", source)
         self.assertNotIn("DockerSdkClient(),", source)
@@ -1269,13 +1497,12 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("RuntimeDispatcherBootstrapConfiguration", source)
         self.assertIn("RuntimeInterpreterDispatcher", source)
         self.assertIn("IngressRealizationAdapter", source)
-        self.assertIn("PublicIngressReservationReleasePlanningService", source)
-        self.assertIn(
-            "ingress_reservation_releases=PublicIngressReservationReleasePlanningService",
-            source,
-        )
-        self.assertIn("_public_ingress_readiness_verifier", source)
-        self.assertIn("readiness_verifier=", source)
+        self.assertNotIn("PublicIngressReservationReleasePlanningService", source)
+        self.assertNotIn("ingress_reservation_releases=", source)
+        self.assertNotIn("_PublicIngressReadinessVerifierAdapter", source)
+        self.assertNotIn("_public_ingress_readiness_verifier", source)
+        self.assertNotIn("readiness_verifier=", source)
+        self.assertIn("_public_dns_resolver", source)
         self.assertIn("IngressAuthorityRegistrationService", source)
         self.assertIn("SecretProviderRegistrationService", source)
         self.assertIn(
@@ -1284,16 +1511,8 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         )
         self.assertIn("GatewayProbeCommandService", source)
         self.assertIn("gateway_probes=_gateway_probe_service", source)
-        self.assertEqual(
-            source.count(
-                "gateway_key_rotations = _gateway_key_rotation_application("
-            ),
-            1,
-        )
-        self.assertIn(
-            "gateway_key_rotations=gateway_key_rotations",
-            source,
-        )
+        self.assertNotIn("_gateway_key_rotation_application", source)
+        self.assertNotIn("gateway_key_rotations=", source)
         self.assertIn("control_plane_kit_interpreters.docker", source)
         self.assertIn("control_plane_kit_interpreters.cloudflare", source)
         self.assertIn("control_plane_kit_interpreters.probes", source)
@@ -1304,6 +1523,36 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertNotIn("ThreadingHTTPServer", source)
         self.assertNotIn("_DemoService", source)
         self.assertNotIn("import docker", source)
+
+    def test_hosted_process_forwards_raw_asgi_query_bytes_to_http_boundary(self) -> None:
+        tree = ast.parse(SERVER_SOURCE.read_text(encoding="utf-8"))
+        handlers = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "http"
+        ]
+        self.assertEqual(len(handlers), 1)
+        calls = [
+            node
+            for node in ast.walk(handlers[0])
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "http_boundary"
+            and node.func.attr == "handle"
+        ]
+        self.assertEqual(len(calls), 1)
+        keywords = {
+            keyword.arg: keyword.value
+            for keyword in calls[0].keywords
+            if keyword.arg is not None
+        }
+        self.assertIn("query_string", keywords)
+        query = keywords["query_string"]
+        self.assertIsInstance(query, ast.Subscript)
+        self.assertEqual(ast.unparse(query.value), "request.scope")
+        self.assertEqual(ast.literal_eval(query.slice), "query_string")
 
     def test_product_descriptor_is_now_published_contract_data(self) -> None:
         descriptor = json.loads((PRODUCT / "product.cpk.json").read_text(encoding="utf-8"))
@@ -1316,6 +1565,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         smoke = (ROOT / "scripts" / "cpk_server_image_smoke.sh").read_text(
             encoding="utf-8"
         )
+        normalized_smoke = " ".join(smoke.replace("\\\n", " ").split())
 
         self.assertIn("localhost/control-plane-kit-servers/cpk-server:local", smoke)
         self.assertIn("docker build", smoke)
@@ -1329,6 +1579,22 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("CPK_RUNTIME_INTERPRETERS", smoke)
         self.assertIn("CPK_SERVER_SMOKE_HOST", smoke)
         self.assertIn('CPK_SERVER_SMOKE_HOST:-127.0.0.1', smoke)
+        self.assertIn(
+            "for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do",
+            normalized_smoke,
+        )
+        self.assertIn(
+            'docker exec -e PGPASSWORD=cpk "$POSTGRES_CONTAINER" '
+            "psql -h 127.0.0.1 -U cpk -d cpk -c 'SELECT 1'",
+            normalized_smoke,
+        )
+        self.assertNotIn(
+            'docker exec "$POSTGRES_CONTAINER" '
+            "psql -U cpk -d cpk -c 'SELECT 1'",
+            normalized_smoke,
+        )
+        self.assertIn('if [ "$POSTGRES_READY" != "1" ]; then', normalized_smoke)
+        self.assertIn("postgres did not become query-ready", smoke)
         self.assertIn("/health/live", smoke)
         self.assertIn("/health/ready", smoke)
         self.assertIn("/workspaces", smoke)
@@ -1341,6 +1607,227 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("Mcp-Method: tools/call", smoke)
         self.assertIn("ready response leaked store endpoint", smoke)
         self.assertIn("org.openj92.project=control-plane-kit-servers", smoke)
+        self.assertIn("docker rm -f", smoke)
+        self.assertIn("docker network rm", smoke)
+        for tail, container in (
+            (80, '"$CONTAINER"'),
+            (40, '"$POSTGRES_CONTAINER"'),
+        ):
+            with self.subTest(log_tail=tail):
+                suppressed = (
+                    f"docker logs --tail {tail} {container} "
+                    ">&2 2>/dev/null || true"
+                )
+                preserving = (
+                    f"docker logs --tail {tail} {container} >&2 || true"
+                )
+                self.assertNotIn(suppressed, normalized_smoke)
+                self.assertIn(preserving, normalized_smoke)
+        self.assertNotIn("docker system prune", smoke)
+        self.assertNotIn("docker volume prune", smoke)
+
+    def test_host_side_smoke_liveness_diagnostics_are_bounded_and_causal(
+        self,
+    ) -> None:
+        smoke = (ROOT / "scripts" / "cpk_server_image_smoke.sh").read_text(
+            encoding="utf-8"
+        )
+        normalized_smoke = " ".join(smoke.replace("\\\n", " ").split())
+
+        with self.subTest(boundary="published-port"):
+            self.assertIn(
+                'PORT_BINDING="$(docker port "$CONTAINER" 8080/tcp)"', smoke
+            )
+            self.assertIn(
+                'PORT_BINDING_LINES="$(printf \'%s\\n\' "$PORT_BINDING" '
+                "| wc -l | tr -d ' ')\"",
+                normalized_smoke,
+            )
+            self.assertIn('[ "$PORT_BINDING_LINES" != "1" ]', smoke)
+            self.assertIn('PORT="${PORT_BINDING#127.0.0.1:}"', smoke)
+            self.assertIn("''|*[!0-9]*)", smoke)
+            self.assertIn(
+                '[ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]',
+                normalized_smoke,
+            )
+            invalid_port_lines = [
+                line
+                for line in smoke.splitlines()
+                if "category=invalid-published-port" in line
+            ]
+            self.assertEqual(
+                invalid_port_lines,
+                [
+                    '    echo "cpk-server liveness '
+                    'category=invalid-published-port" >&2'
+                ],
+            )
+            self.assertNotIn("sed 's/.*://'", smoke)
+
+        with self.subTest(boundary="host-timeout"):
+            self.assertIn("liveness_with_diagnostics() {", smoke)
+            liveness_start = smoke.index("liveness_with_diagnostics() {")
+            liveness_end = smoke.index("\n}\n", liveness_start) + 3
+            liveness = smoke[liveness_start:liveness_end]
+            self.assertIn(
+                "curl --connect-timeout 1 --max-time 2 --fail --silent "
+                "--show-error",
+                " ".join(liveness.replace("\\\n", " ").split()),
+            )
+
+        with self.subTest(boundary="host-error-bound"):
+            self.assertIn("HOST_CURL_ERROR_LIMIT=512", smoke)
+            self.assertIn('head -c "$HOST_CURL_ERROR_LIMIT"', normalized_smoke)
+            self.assertIn("HOST_CURL_STATUS=$?", smoke)
+            self.assertIn("tr '\\r\\n' '  '", smoke)
+            self.assertIn("tr -cd '[:print:]'", normalized_smoke)
+
+        with self.subTest(boundary="container-state"):
+            self.assertIn("liveness_with_diagnostics() {", smoke)
+            liveness_start = smoke.index("liveness_with_diagnostics() {")
+            liveness_end = smoke.index("\n}\n", liveness_start) + 3
+            liveness = smoke[liveness_start:liveness_end]
+            self.assertIn(
+                "docker inspect --format "
+                "'{{.State.Running}}|{{.State.ExitCode}}|{{.State.OOMKilled}}' "
+                '"$CONTAINER"',
+                " ".join(liveness.replace("\\\n", " ").split()),
+            )
+            failed_probe = liveness.index("HOST_CURL_STATUS=$?")
+            state_inspection = liveness.index("docker inspect --format")
+            successful_return = liveness.index("return 0")
+            self.assertLess(successful_return, failed_probe)
+            self.assertLess(failed_probe, state_inspection)
+            self.assertNotIn(".Config.Env", smoke)
+            self.assertNotIn("{{json .}}", smoke)
+            self.assertNotIn(".State.Error", smoke)
+
+        with self.subTest(boundary="container-state-unavailable"):
+            self.assertIn("liveness_with_diagnostics() {", smoke)
+            liveness_start = smoke.index("liveness_with_diagnostics() {")
+            liveness_end = smoke.index("\n}\n", liveness_start) + 3
+            liveness = smoke[liveness_start:liveness_end]
+            self.assertIn("category=container-state-unavailable", liveness)
+            unavailable_lines = [
+                line
+                for line in liveness.splitlines()
+                if "category=container-state-unavailable" in line
+            ]
+            self.assertEqual(
+                unavailable_lines,
+                [
+                    '      echo "cpk-server liveness '
+                    'category=container-state-unavailable" >&2'
+                ],
+            )
+            inspect_failure = liveness.index('if ! CONTAINER_STATE="$(')
+            unavailable = liveness.index("category=container-state-unavailable")
+            inspect_failure_end = liveness.index("\n    fi\n", inspect_failure)
+            self.assertLess(inspect_failure, unavailable)
+            self.assertLess(unavailable, inspect_failure_end)
+            self.assertIn("return 1", liveness[unavailable:inspect_failure_end])
+
+        with self.subTest(boundary="container-state-invalid"):
+            self.assertIn("liveness_with_diagnostics() {", smoke)
+            liveness_start = smoke.index("liveness_with_diagnostics() {")
+            liveness_end = smoke.index("\n}\n", liveness_start) + 3
+            liveness = smoke[liveness_start:liveness_end]
+            self.assertEqual(liveness.count("category=container-state-invalid"), 3)
+            invalid_lines = [
+                line
+                for line in liveness.splitlines()
+                if "category=container-state-invalid" in line
+            ]
+            self.assertEqual(
+                invalid_lines,
+                [
+                    '        echo "cpk-server liveness '
+                    'category=container-state-invalid" >&2'
+                ]
+                * 3,
+            )
+            parsed_state = liveness.index(
+                'CONTAINER_RUNNING="${CONTAINER_STATE%%|*}"'
+            )
+            first_invalid = liveness.index("category=container-state-invalid")
+            running_decision = liveness.index(
+                'if [ "$CONTAINER_RUNNING" != "true" ]; then'
+            )
+            self.assertLess(parsed_state, first_invalid)
+            self.assertLess(first_invalid, running_decision)
+
+        with self.subTest(boundary="exited-fast"):
+            self.assertIn("liveness_with_diagnostics() {", smoke)
+            liveness_start = smoke.index("liveness_with_diagnostics() {")
+            liveness_end = smoke.index("\n}\n", liveness_start) + 3
+            liveness = smoke[liveness_start:liveness_end]
+            self.assertEqual(liveness.count("category=container-exited"), 1)
+            running_case = liveness.index('case "$CONTAINER_RUNNING" in')
+            exit_code_case = liveness.index('case "$CONTAINER_EXIT_CODE" in')
+            oom_case = liveness.index('case "$CONTAINER_OOM_KILLED" in')
+            running_decision = liveness.index(
+                'if [ "$CONTAINER_RUNNING" != "true" ]; then'
+            )
+            exited = liveness.index("category=container-exited")
+            next_sleep = liveness.index("sleep 1", exited)
+            self.assertLess(running_case, running_decision)
+            self.assertLess(exit_code_case, running_decision)
+            self.assertLess(oom_case, running_decision)
+            self.assertLess(running_decision, exited)
+            self.assertIn("running=$CONTAINER_RUNNING", liveness[exited:next_sleep])
+            self.assertIn("exit_code=$CONTAINER_EXIT_CODE", liveness[exited:next_sleep])
+            self.assertIn("oom_killed=$CONTAINER_OOM_KILLED", liveness[exited:next_sleep])
+            self.assertIn("return 1", liveness[exited:next_sleep])
+
+        with self.subTest(boundary="internal-probe"):
+            self.assertIn("internal_liveness_probe() {", smoke)
+            self.assertEqual(
+                smoke.count('docker exec "$CONTAINER" python -I -c'), 1
+            )
+            internal_start = smoke.index("internal_liveness_probe() {")
+            internal_end = smoke.index("\n}\n", internal_start) + 3
+            internal_probe = smoke[internal_start:internal_end]
+            self.assertIn(
+                'urllib.request.urlopen("http://127.0.0.1:8080/health/live",'
+                "timeout=2)",
+                " ".join(internal_probe.replace("\\\n", " ").split()),
+            )
+            self.assertIn("response.read(513)", internal_probe)
+            self.assertIn("len(body) <= 512", internal_probe)
+            self.assertIn(
+                'json.loads(body) == {"status": "live"}', internal_probe
+            )
+            self.assertIn(">/dev/null 2>&1", internal_probe)
+            self.assertNotIn("print(", internal_probe)
+            self.assertNotIn("sys.stdout", internal_probe)
+            self.assertNotIn("body.decode", internal_probe)
+
+            self.assertIn("liveness_with_diagnostics() {", smoke)
+            liveness_start = smoke.index("liveness_with_diagnostics() {")
+            liveness_end = smoke.index("\n}\n", liveness_start) + 3
+            liveness = smoke[liveness_start:liveness_end]
+            loop_end = liveness.index("\n  done\n")
+            internal_call = liveness.index("if internal_liveness_probe; then")
+            internal_live = liveness.index(
+                "category=internal-live-host-unreachable"
+            )
+            self.assertLess(loop_end, internal_call)
+            self.assertLess(internal_call, internal_live)
+
+        with self.subTest(boundary="internal-not-live"):
+            self.assertIn("category=internal-not-live", smoke)
+
+        with self.subTest(boundary="internal-live-host-unreachable"):
+            self.assertIn("category=internal-live-host-unreachable", smoke)
+
+        self.assertIn(
+            'HEALTH_ATTEMPTS="${CPK_SERVER_HEALTH_ATTEMPTS:-30}"', smoke
+        )
+        self.assertIn("trap finish EXIT", smoke)
+        self.assertIn("docker logs --tail 80", smoke)
+        self.assertIn("docker logs --tail 40", smoke)
+        self.assertIn("Authorization: Bearer valid-token", smoke)
+        self.assertIn("ready response leaked store endpoint", smoke)
         self.assertIn("docker rm -f", smoke)
         self.assertIn("docker network rm", smoke)
         self.assertNotIn("docker system prune", smoke)
@@ -1416,12 +1903,287 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertNotIn("docker system prune", smoke)
         self.assertNotIn("docker volume prune", smoke)
 
+    def test_source_live_clients_share_fenced_run_contract(self) -> None:
+        def marked_calls(tree: ast.AST, marker: str) -> list[ast.Call]:
+            return [
+                node
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Call) and marker in ast.unparse(node)
+            ]
+
+        def generation_values(call_node: ast.Call) -> list[str]:
+            values: list[str] = []
+            for node in ast.walk(call_node):
+                if not isinstance(node, ast.Dict):
+                    continue
+                for key, value in zip(node.keys, node.values, strict=True):
+                    if (
+                        isinstance(key, ast.Constant)
+                        and key.value == "claim_generation"
+                    ):
+                        values.append(ast.unparse(value))
+            return values
+
+        def mapping_values(call_node: ast.Call, name: str) -> list[str]:
+            values: list[str] = []
+            for node in ast.walk(call_node):
+                if not isinstance(node, ast.Dict):
+                    continue
+                for key, value in zip(node.keys, node.values, strict=True):
+                    if isinstance(key, ast.Constant) and key.value == name:
+                        values.append(ast.unparse(value))
+            return values
+
+        def authorization_values(call_node: ast.Call) -> list[str]:
+            values = [
+                ast.unparse(keyword.value)
+                for keyword in call_node.keywords
+                if keyword.arg == "authorization"
+            ]
+            for keyword in call_node.keywords:
+                if keyword.arg != "extra_headers" or not isinstance(
+                    keyword.value,
+                    ast.Dict,
+                ):
+                    continue
+                for key, value in zip(
+                    keyword.value.keys,
+                    keyword.value.values,
+                    strict=True,
+                ):
+                    if isinstance(key, ast.Constant) and key.value == "Authorization":
+                        values.append(ast.unparse(value))
+            return values
+
+        paths = {
+            "hosted": ROOT / "scripts" / "cpk_server_hosted_activity.py",
+            "recursive": ROOT / "scripts" / "cpk_server_recursive_activity.py",
+            "recursive-tls": (
+                ROOT / "scripts" / "cpk_server_recursive_tls_activity.py"
+            ),
+            "secret-provider": (
+                ROOT / "scripts" / "cpk_server_secret_provider_source_live.py"
+            ),
+            "remote-tls": (
+                ROOT
+                / "scripts"
+                / "cpk_server_remote_tls_secret_custody_source_live.py"
+            ),
+        }
+        direct_payloads = {
+            "hosted": (
+                "/start",
+                "command.deployment.execute",
+                "advance-current-graph",
+            ),
+            "recursive": (
+                "/start",
+                "command.deployment.execute",
+                "advance-current-graph",
+            ),
+            "recursive-tls": (),
+            "secret-provider": ("command.deployment.execute",),
+            "remote-tls": ("command.deployment.execute",),
+        }
+        for owner, path in paths.items():
+            source = path.read_text(encoding="utf-8")
+            tree = ast.parse(source)
+            with self.subTest(owner=owner):
+                for marker in direct_payloads[owner]:
+                    calls = marked_calls(tree, marker)
+                    self.assertEqual(len(calls), 1)
+                    self.assertEqual(
+                        generation_values(calls[0]),
+                        ["claimed_run.claim_generation"],
+                    )
+
+                delegated_starts = [
+                    node
+                    for node in ast.walk(tree)
+                    if isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "start_run"
+                ]
+                for call_node in delegated_starts:
+                    claimed_keywords = [
+                        ast.unparse(keyword.value)
+                        for keyword in call_node.keywords
+                        if keyword.arg == "claimed_run"
+                    ]
+                    self.assertEqual(claimed_keywords, ["claimed_run"])
+
+                run_event_reads = [
+                    node
+                    for node in ast.walk(tree)
+                    if isinstance(node, ast.Call)
+                    and (
+                        "read.run-events" in ast.unparse(node)
+                        or (
+                            isinstance(node.func, ast.Attribute)
+                            and node.func.attr == "read_run_events"
+                        )
+                    )
+                ]
+                self.assertTrue(run_event_reads)
+                legacy_event_derivations = [
+                    node
+                    for node in ast.walk(tree)
+                    if isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "_events_for_run"
+                ]
+                self.assertFalse(legacy_event_derivations)
+                for marker in ("read.activity", "read.run-events"):
+                    for call_node in marked_calls(tree, marker):
+                        arguments = [
+                            node
+                            for node in ast.walk(call_node)
+                            if isinstance(node, ast.Dict)
+                        ]
+                        for argument in arguments:
+                            keys = {
+                                key.value
+                                for key in argument.keys
+                                if isinstance(key, ast.Constant)
+                                and isinstance(key.value, str)
+                            }
+                            self.assertNotIn("offset", keys)
+                            for key, value in zip(
+                                argument.keys,
+                                argument.values,
+                                strict=True,
+                            ):
+                                if (
+                                    isinstance(key, ast.Constant)
+                                    and key.value == "limit"
+                                    and isinstance(value, ast.Constant)
+                                ):
+                                    self.assertIs(type(value.value), int)
+                                    self.assertLessEqual(value.value, 100)
+                        for keyword in call_node.keywords:
+                            self.assertNotEqual(keyword.arg, "offset")
+                            if (
+                                keyword.arg == "limit"
+                                and isinstance(keyword.value, ast.Constant)
+                            ):
+                                self.assertIs(type(keyword.value.value), int)
+                                self.assertLessEqual(keyword.value.value, 100)
+                for call_node in marked_calls(tree, "read.plan-detail"):
+                    rendered = ast.unparse(call_node)
+                    self.assertNotIn("'offset':", rendered)
+                    self.assertNotIn("'limit':", rendered)
+                sanitized_footers = [
+                    node
+                    for node in ast.walk(tree)
+                    if isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "_sanitized_main"
+                    and [ast.unparse(argument) for argument in node.args]
+                    == ["main"]
+                ]
+                self.assertEqual(len(sanitized_footers), 1)
+                self.assertNotIn("lease_expires_at", source)
+                self.assertNotIn("next_attempt_not_before", source)
+                self.assertNotIn('"waiting"', source)
+                if owner == "hosted":
+                    self.assertIn("@dataclass(frozen=True)\nclass ClaimedRun", source)
+                    self.assertIn('"lease_duration_seconds": 600', source)
+                    self.assertIn("def read_activity", source)
+                    self.assertIn('"read.activity"', source)
+                    activity_readers = [
+                        child
+                        for node in tree.body
+                        if isinstance(node, ast.ClassDef)
+                        and node.name == "HostedWorkflow"
+                        for child in node.body
+                        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and child.name == "read_activity"
+                    ]
+                    self.assertEqual(len(activity_readers), 1)
+                    self.assertEqual(
+                        [
+                            ast.unparse(value)
+                            for value in activity_readers[0].args.kw_defaults
+                            if value is not None
+                        ],
+                        ["100"],
+                    )
+                    self.assertIn("_run_negative_cleanup", source)
+                elif owner == "recursive":
+                    recursive_calls = {
+                        "claim": marked_calls(tree, "/claim"),
+                        "start": marked_calls(tree, "/start"),
+                        "execute": marked_calls(
+                            tree,
+                            "command.deployment.execute",
+                        ),
+                        "advance": marked_calls(tree, "advance-current-graph"),
+                    }
+                    for boundary, calls in recursive_calls.items():
+                        with self.subTest(
+                            owner=owner,
+                            boundary=f"{boundary}-worker-authorization",
+                        ):
+                            self.assertEqual(len(calls), 1)
+                            self.assertEqual(
+                                authorization_values(calls[0]),
+                                ["WORKER_AUTHORIZATION"],
+                            )
+                    with self.subTest(
+                        owner=owner,
+                        boundary="execute-workspace",
+                    ):
+                        self.assertEqual(
+                            mapping_values(
+                                recursive_calls["execute"][0],
+                                "workspace_id",
+                            ),
+                            ["WORKSPACE_ID"],
+                        )
+                elif owner == "secret-provider":
+                    self.assertIn("_run_cloudflare_abort_cleanup", source)
+                elif owner == "remote-tls":
+                    persisted_generation = [
+                        value
+                        for call_node in marked_calls(tree, "_write_state")
+                        for value in generation_values(call_node)
+                    ]
+                    self.assertIn(
+                        "prepared.claimed_run.claim_generation",
+                        persisted_generation,
+                    )
+                    decoders = [
+                        node
+                        for node in ast.walk(tree)
+                        if isinstance(node, ast.Call)
+                        and isinstance(node.func, ast.Attribute)
+                        and isinstance(node.func.value, ast.Name)
+                        and node.func.value.id == "ClaimedRun"
+                        and node.func.attr == "from_descriptor"
+                        and [ast.unparse(argument) for argument in node.args]
+                        == ["state"]
+                    ]
+                    self.assertEqual(len(decoders), 1)
+                    resumed = [
+                        node
+                        for node in ast.walk(tree)
+                        if isinstance(node, ast.Call)
+                        and isinstance(node.func, ast.Name)
+                        and node.func.id == "_execute_until_terminal"
+                        and [ast.unparse(argument) for argument in node.args[1:]]
+                        == ["claimed_run"]
+                    ]
+                    self.assertEqual(len(resumed), 1)
+                    self.assertLess(decoders[0].lineno, resumed[0].lineno)
+                    self.assertIn("_resume_update_and_teardown", source)
+
     def test_hosted_activity_controller_drives_public_workflow_over_http_and_mcp(
         self,
     ) -> None:
         controller = (ROOT / "scripts" / "cpk_server_hosted_activity.py").read_text(
             encoding="utf-8"
         )
+        controller_tree = ast.parse(controller)
 
         self.assertIn("command.deployment.plan", controller)
         self.assertIn("/image-pull-authorities", controller)
@@ -1450,7 +2212,66 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("runtime network attachment failed", controller)
         self.assertNotIn('name.startswith(f"cpk-net-{workspace_id}")', controller)
         self.assertIn("/plans/{plan_id}/approval", controller)
-        self.assertIn("/runs/{run_id}/advance-current-graph", controller)
+        hosted_workflows = [
+            node
+            for node in controller_tree.body
+            if isinstance(node, ast.ClassDef) and node.name == "HostedWorkflow"
+        ]
+        self.assertEqual(len(hosted_workflows), 1)
+        advance_methods = [
+            node
+            for node in hosted_workflows[0].body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "advance_current_graph"
+        ]
+        self.assertEqual(len(advance_methods), 1)
+        advance_method = advance_methods[0]
+        parameter_names = [argument.arg for argument in advance_method.args.args]
+        parameter_names.extend(
+            argument.arg for argument in advance_method.args.kwonlyargs
+        )
+        self.assertIn("claimed_run", parameter_names)
+        self.assertNotIn("run_id", parameter_names)
+        advance_calls = [
+            node
+            for node in ast.walk(advance_method)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_http"
+            and "advance-current-graph" in ast.unparse(node)
+        ]
+        self.assertEqual(len(advance_calls), 1)
+        advance_call = advance_calls[0]
+        self.assertGreaterEqual(len(advance_call.args), 4)
+        route = advance_call.args[2]
+        self.assertIsInstance(route, ast.JoinedStr)
+        self.assertEqual(
+            [
+                ast.unparse(part.value)
+                for part in route.values
+                if isinstance(part, ast.FormattedValue)
+            ],
+            ["self.workspace_id", "claimed_run.run_id"],
+        )
+        self.assertEqual(
+            "".join(
+                str(part.value)
+                for part in route.values
+                if isinstance(part, ast.Constant)
+            ),
+            "/workspaces//runs//advance-current-graph",
+        )
+        payload = advance_call.args[3]
+        self.assertIsInstance(payload, ast.Dict)
+        self.assertEqual(
+            [
+                ast.unparse(value)
+                for key, value in zip(payload.keys, payload.values, strict=True)
+                if isinstance(key, ast.Constant)
+                and key.value == "claim_generation"
+            ],
+            ["claimed_run.claim_generation"],
+        )
         self.assertIn("self.workspace_id", controller)
         self.assertIn("self.worker_id", controller)
         self.assertIn("ProductDescriptorCodec", controller)
@@ -1481,7 +2302,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn('"cloudflared_connector"', controller)
         self.assertIn('"cloudflared-gateway"', controller)
         self.assertIn("cpk-gateway-001.openj92.dev", controller)
-        self.assertIn('readiness_check_id="ready"', controller)
+        self.assertNotIn("readiness_check_id=", controller)
         self.assertIn("def _assert_public_gateway_http_probe", controller)
         self.assertIn("def _assert_public_gateway_postgres_query_ready", controller)
         self.assertIn("def _assert_public_gateway_unreachable", controller)
@@ -2437,6 +3258,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         controller = (ROOT / "scripts" / "cpk_server_recursive_activity.py").read_text(
             encoding="utf-8"
         )
+        controller_tree = ast.parse(controller)
 
         self.assertIn('WORKSPACE_ID = "recursive-cpk-server"', controller)
         self.assertIn("MAX_LOCAL_CHAIN_DEPTH = 10", controller)
@@ -2460,11 +3282,68 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("command.deployment.plan", controller)
         self.assertIn("command.approval.decide", controller)
         self.assertIn("command.deployment.execute", controller)
-        self.assertIn("/activity", controller)
         self.assertIn("_assert_parent_observations", controller)
-        self.assertIn("parent activity timeline did not expose run", controller)
-        self.assertIn('session.get("plans", [])', controller)
-        self.assertIn('plan.get("runs", [])', controller)
+        functions = {
+            node.name: node
+            for node in controller_tree.body
+            if isinstance(node, ast.FunctionDef)
+        }
+        for function_name in (
+            "_assert_parent_observations",
+            "_assert_activity_step",
+        ):
+            with self.subTest(function=function_name):
+                function = functions.get(function_name)
+                self.assertIsNotNone(function)
+                run_event_calls = [
+                    node
+                    for node in ast.walk(function)
+                    if isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "read_run_events"
+                ]
+                self.assertEqual(len(run_event_calls), 1)
+                call_node = run_event_calls[0]
+                self.assertIsInstance(call_node.func.value, ast.Call)
+                self.assertIsInstance(call_node.func.value.func, ast.Name)
+                self.assertEqual(call_node.func.value.func.id, "HostedWorkflow")
+                self.assertEqual(
+                    [ast.unparse(argument) for argument in call_node.args],
+                    ["run_id"],
+                )
+                self.assertEqual(
+                    [
+                        ast.unparse(keyword.value)
+                        for keyword in call_node.keywords
+                        if keyword.arg == "limit"
+                    ],
+                    ["100"],
+                )
+                self.assertFalse(
+                    [
+                        keyword
+                        for keyword in call_node.keywords
+                        if keyword.arg == "offset"
+                    ]
+                )
+                legacy_calls = [
+                    node
+                    for node in ast.walk(function)
+                    if isinstance(node, ast.Call)
+                    and (
+                        (
+                            isinstance(node.func, ast.Name)
+                            and node.func.id == "_events_for_run"
+                        )
+                        or (
+                            isinstance(node.func, ast.Attribute)
+                            and node.func.attr == "read_activity"
+                        )
+                        or "read.activity" in ast.unparse(node)
+                        or "/activity" in ast.unparse(node)
+                    )
+                ]
+                self.assertFalse(legacy_calls)
         self.assertIn("parent did not record health evidence", controller)
         self.assertIn("docker.io/library/postgres@sha256:", controller)
         self.assertIn("ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:", controller)

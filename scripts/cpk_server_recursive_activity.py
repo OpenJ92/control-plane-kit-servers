@@ -35,12 +35,19 @@ from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC, DeploymentGraph
 from control_plane_kit_core.policies import PolicyScope
 
 from cpk_server_hosted_activity import (
+    ClaimedRun,
     HostedWorkflow,
+    WORKER_AUTHORIZATION,
+    _claimed_run_from_result,
     _clock,
     _http,
     _mcp_read,
     _mcp_tool,
     _required_env,
+    _sanitized_main,
+    _validate_advance_result,
+    _validate_execute_result,
+    _validate_start_result,
     _wait_ready,
 )
 
@@ -123,6 +130,10 @@ def main() -> int:
         },
     )
     desired_graph_id = str(desired["desired_graph_id"])
+    desired_projection_id = str(desired["desired_realized_projection_id"])
+    desired_revision = int(desired["desired_graph_revision"])
+    current = _http(base_url, "GET", f"/workspaces/{WORKSPACE_ID}/graphs/current")
+    current_projection_id = str(current["realized_projection_id"])
 
     planned = _mcp_tool(
         base_url,
@@ -133,6 +144,9 @@ def main() -> int:
             "actor_id": "operator-a",
             "expected_current_graph_id": current_graph_id,
             "expected_desired_graph_id": desired_graph_id,
+            "expected_current_realized_projection_id": current_projection_id,
+            "expected_desired_realized_projection_id": desired_projection_id,
+            "expected_desired_graph_revision": desired_revision,
             "idempotency_key": f"{WORKSPACE_ID}:plan",
         },
     )
@@ -188,42 +202,60 @@ def main() -> int:
         {
             "worker_id": WORKER_ID,
             "actor_scopes": [PolicyScope.EXECUTION_OPERATE.value],
-            "lease_expires_at": "2026-07-22T12:00:00Z",
+            "lease_duration_seconds": 600,
             "idempotency_key": f"{WORKSPACE_ID}:claim",
         },
+        extra_headers={"Authorization": WORKER_AUTHORIZATION},
     )
-    run_id = str(claimed["run_id"])
+    claimed_run = _claimed_run_from_result(claimed, request_id=request_id)
 
-    _http(
+    started = _http(
         base_url,
         "POST",
-        f"/workspaces/{WORKSPACE_ID}/runs/{run_id}/start",
+        f"/workspaces/{WORKSPACE_ID}/runs/{claimed_run.run_id}/start",
         {
             "worker_id": WORKER_ID,
             "actor_scopes": [PolicyScope.EXECUTION_OPERATE.value],
+            "claim_generation": claimed_run.claim_generation,
             "idempotency_key": f"{WORKSPACE_ID}:start",
         },
+        extra_headers={"Authorization": WORKER_AUTHORIZATION},
     )
+    _validate_start_result(started, claimed_run)
 
-    _execute_to_completion(base_url, parent_container, run_id)
-    _assert_parent_observations(base_url, run_id)
+    _execute_to_completion(base_url, parent_container, claimed_run)
+    _assert_parent_observations(base_url, claimed_run.run_id)
     _assert_child_health(expect_runtime_interpreters="docker" if chain_depth > 1 else "none")
 
     advanced = _http(
         base_url,
         "POST",
-        f"/workspaces/{WORKSPACE_ID}/runs/{run_id}/advance-current-graph",
+        f"/workspaces/{WORKSPACE_ID}/runs/{claimed_run.run_id}/advance-current-graph",
         {
             "plan_id": plan_id,
             "expected_current_graph_id": current_graph_id,
+            "expected_current_realized_projection_id": current_projection_id,
             "desired_graph_id": desired_graph_id,
+            "desired_realized_projection_id": desired_projection_id,
+            "expected_desired_graph_revision": desired_revision,
+            "claim_generation": claimed_run.claim_generation,
             "worker_id": WORKER_ID,
             "actor_scopes": [PolicyScope.EXECUTION_OPERATE.value],
             "idempotency_key": f"{WORKSPACE_ID}:advance",
         },
+        extra_headers={"Authorization": WORKER_AUTHORIZATION},
     )
-    if advanced["to_graph_id"] != desired_graph_id:
-        raise RuntimeError(f"current graph did not advance: {advanced}")
+    _validate_advance_result(
+        advanced,
+        workspace_id=WORKSPACE_ID,
+        claimed_run=claimed_run,
+        plan_id=plan_id,
+        current_graph_id=current_graph_id,
+        current_projection_id=current_projection_id,
+        desired_graph_id=desired_graph_id,
+        desired_projection_id=desired_projection_id,
+        desired_revision=desired_revision,
+    )
 
     current = _http(base_url, "GET", f"/workspaces/{WORKSPACE_ID}/graphs/current")
     if current["graph_id"] != desired_graph_id:
@@ -366,7 +398,7 @@ def _assert_approval_visible(base_url: str, approval_id: str, plan_id: str) -> N
     pending = _mcp_read(
         base_url,
         "read.pending-approvals",
-        {"workspace_id": WORKSPACE_ID, "limit": 10, "offset": 0},
+        {"workspace_id": WORKSPACE_ID, "limit": 10},
     )
     if approval_id not in {item["request_id"] for item in pending["items"]}:
         raise RuntimeError("recursive approval request was not visible")
@@ -379,36 +411,49 @@ def _assert_approval_visible(base_url: str, approval_id: str, plan_id: str) -> N
         raise RuntimeError("recursive approval detail exposed the wrong plan")
 
 
-def _execute_to_completion(base_url: str, parent_container: str, run_id: str) -> None:
+def _execute_to_completion(
+    base_url: str,
+    parent_container: str,
+    claimed_run: ClaimedRun,
+) -> None:
     for attempt in range(140):
         _sync_runtime_networks(parent_container)
-        result = _mcp_tool(
-            base_url,
-            "command.deployment.execute",
-            {
-                "run_id": run_id,
-                "worker_id": WORKER_ID,
-                "actor_scopes": [PolicyScope.EXECUTION_OPERATE.value],
-                "idempotency_key": f"{WORKSPACE_ID}:execute:{attempt}",
-                "max_effects": 1,
-            },
-        )
+        try:
+            result = _mcp_tool(
+                base_url,
+                "command.deployment.execute",
+                {
+                    "workspace_id": WORKSPACE_ID,
+                    "run_id": claimed_run.run_id,
+                    "worker_id": WORKER_ID,
+                    "actor_scopes": [PolicyScope.EXECUTION_OPERATE.value],
+                    "idempotency_key": f"{WORKSPACE_ID}:execute:{attempt}",
+                    "claim_generation": claimed_run.claim_generation,
+                    "max_effects": 1,
+                },
+                authorization=WORKER_AUTHORIZATION,
+            )
+        except Exception as error:
+            raise RuntimeError("recursive execution failed") from error
         _sync_runtime_networks(parent_container)
-        if result["coordinator_status"] == "completed":
+        status = _validate_execute_result(result, claimed_run)
+        if status == "completed":
             return
-        if result["coordinator_status"] in {"failed", "unsupported", "uncertain", "blocked"}:
-            timeline = _http(base_url, "GET", f"/workspaces/{WORKSPACE_ID}/activity")
-            raise RuntimeError(f"recursive execution stopped with {result}; timeline={timeline}")
+        if status in {"failed", "unsupported", "uncertain", "blocked"}:
+            raise RuntimeError("recursive execution stopped")
     raise RuntimeError("recursive activity execution did not complete")
 
 
 def _assert_parent_observations(base_url: str, run_id: str) -> None:
-    timeline = _mcp_read(
+    events = HostedWorkflow(
         base_url,
-        "read.activity",
-        {"workspace_id": WORKSPACE_ID, "limit": 200},
+        workspace_id=WORKSPACE_ID,
+        worker_id=WORKER_ID,
+        server_container="",
+    ).read_run_events(
+        run_id,
+        limit=100,
     )
-    events = _events_for_run(timeline, run_id)
     _assert_step_evidence(
         events,
         node_id="child-postgres",
@@ -435,19 +480,8 @@ def _assert_parent_observations(base_url: str, run_id: str) -> None:
     )
 
 
-def _events_for_run(timeline: dict[str, Any], run_id: str) -> list[dict[str, Any]]:
-    for session in timeline.get("sessions", []):
-        for plan in session.get("plans", []):
-            for run in plan.get("runs", []):
-                if run.get("run_id") == run_id:
-                    events = run.get("events")
-                    if isinstance(events, list):
-                        return events
-    raise RuntimeError(f"parent activity timeline did not expose run {run_id}")
-
-
 def _assert_step_evidence(
-    events: list[dict[str, Any]],
+    events: tuple[dict[str, Any], ...],
     *,
     node_id: str,
     action: str,
@@ -695,12 +729,12 @@ def _assert_activity_step(
     run_id: str,
     node_id: str,
 ) -> None:
-    timeline = _mcp_read(
+    events = HostedWorkflow(
         base_url,
-        "read.activity",
-        {"workspace_id": workspace_id, "limit": 200},
-    )
-    events = _events_for_run(timeline, run_id)
+        workspace_id=workspace_id,
+        worker_id=WORKER_ID,
+        server_container="",
+    ).read_run_events(run_id, limit=100)
     for event in events:
         payload = event.get("payload", {})
         if payload.get("node_id") == node_id and event.get("event_type") == "step_succeeded":
@@ -709,4 +743,4 @@ def _assert_activity_step(
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(_sanitized_main(main))
