@@ -10,6 +10,10 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 : "${CPK_PUBLIC_CONVERGENCE_EVIDENCE_PARENT:?supply a durable evidence parent outside bootstrap}"
 test "$CPK_PUBLIC_CONVERGENCE_APPROVED" = 1
 test "$CPK_PUBLIC_CONVERGENCE_DESTRUCTIVE_APPROVED" = 1
+if [ "${CPK_PUBLIC_CONVERGENCE_PULL_CONFIG+x}" = x ]; then
+  printf '%s\n' 'public convergence requires cached images; registry configuration is unsupported' >&2
+  exit 2
+fi
 for image in "$CPK_SERVER_IMAGE" "$CPK_SERVERS_TEST_IMAGE"; do
   case "$image" in sha256:*|*@sha256:*) ;; *) exit 1 ;; esac
 done
@@ -40,7 +44,7 @@ finish() {
     if [ "$status" -eq 0 ]; then
       rm -f "$BOOTSTRAP/server.env" "$BOOTSTRAP/controller.env" "$BOOTSTRAP/postgres.env"
       rm -f "$BOOTSTRAP/server.id" "$BOOTSTRAP/controller.id" "$BOOTSTRAP/postgres.id"
-      rmdir "$BOOTSTRAP/empty-pull-config" "$BOOTSTRAP"
+      rmdir "$BOOTSTRAP"
     fi
   else
     printf '%s\n' 'public convergence stopped; bootstrap and durable history retained' >&2
@@ -55,15 +59,6 @@ for name in "$RESOURCE-server" "$RESOURCE-postgres" "$RESOURCE-controller"; do
   if docker container inspect "$name" >/dev/null 2>&1; then exit 1; fi
 done
 if docker network inspect "$RESOURCE" >/dev/null 2>&1; then exit 1; fi
-mkdir "$BOOTSTRAP/empty-pull-config"
-PULL_CONFIG="${CPK_PUBLIC_CONVERGENCE_PULL_CONFIG:-$BOOTSTRAP/empty-pull-config}"
-PULL_RESOLVER=none
-PULL_AUTHORITY=0
-if [ -n "${CPK_PUBLIC_CONVERGENCE_PULL_CONFIG:-}" ]; then
-  test -f "$PULL_CONFIG/config.json"
-  PULL_RESOLVER=docker-config
-  PULL_AUTHORITY=1
-fi
 
 docker run --rm --pull=never --network none --read-only \
   --tmpfs /tmp:rw,nosuid,size=16m \
@@ -94,12 +89,10 @@ docker run -d --pull=never --name "$RESOURCE-server" \
   --network "$NETWORK" --network-alias cpk-server \
   --group-add "${CPK_DOCKER_SOCKET_GROUP:-0}" \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$PULL_CONFIG:/tmp/cpk-docker-config:ro" \
   --env-file "$BOOTSTRAP/server.env" \
   -e CPK_SERVER_MODE=execution-capable -e CPK_CONTROL_AUTH_VERIFIER=static-development \
   -e CPK_RUNTIME_INTERPRETERS=docker -e CPK_INGRESS_INTERPRETERS=none \
   -e CPK_PORT=8080 -e CPK_PRODUCT_MATERIAL_RESOLVER=none \
-  -e CPK_IMAGE_PULL_CREDENTIAL_RESOLVER="$PULL_RESOLVER" -e DOCKER_CONFIG=/tmp/cpk-docker-config \
   "$CPK_SERVER_IMAGE" > "$BOOTSTRAP/server.id"
 read -r SERVER_CONTAINER < "$BOOTSTRAP/server.id"
 
@@ -107,7 +100,7 @@ docker run -d --pull=never --read-only --name "$RESOURCE-controller" \
   --network "$NETWORK" --tmpfs /tmp:rw,nosuid,size=64m \
   -v "$ROOT:/source:ro" -v "$EVIDENCE:/evidence:rw" -w /source --env-file "$BOOTSTRAP/controller.env" \
   -e PYTHONDONTWRITEBYTECODE=1 -e CPK_PUBLIC_CONVERGENCE_WORKSPACE \
-  -e CPK_PUBLIC_CONVERGENCE_PULL_AUTHORITY="$PULL_AUTHORITY" \
+  -e CPK_PUBLIC_CONVERGENCE_PULL_AUTHORITY=0 \
   "$CPK_SERVERS_TEST_IMAGE" python -B -m scripts.cpk_server_public_graph_convergence \
   --approve-transitions --approve-destructive \
   --report /evidence/public-convergence.json \

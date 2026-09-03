@@ -3681,6 +3681,36 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         ]
         self.assertEqual(len(server_runs), 1)
         self.assertEqual(len(controller_runs), 1)
+        with self.subTest(boundary="cached-image-bootstrap"):
+            self.assertFalse(any(
+                token.startswith(("CPK_IMAGE_PULL_CREDENTIAL_RESOLVER=", "DOCKER_CONFIG="))
+                or ":/tmp/cpk-docker-config" in token
+                for token in server_runs[0]
+            ))
+            self.assertIn("CPK_PUBLIC_CONVERGENCE_PULL_AUTHORITY=0", controller_runs[0])
+        with self.subTest(boundary="unsupported-registry-input-before-provisioning"):
+            with tempfile.TemporaryDirectory() as directory:
+                result = subprocess.run(
+                    ["sh", str(launcher)],
+                    env={
+                        "PATH": os.defpath,
+                        "TMPDIR": directory,
+                        "CPK_SERVER_IMAGE": "sha256:" + "1" * 64,
+                        "CPK_SERVERS_TEST_IMAGE": "sha256:" + "2" * 64,
+                        "CPK_PUBLIC_CONVERGENCE_APPROVED": "1",
+                        "CPK_PUBLIC_CONVERGENCE_DESTRUCTIVE_APPROVED": "1",
+                        "CPK_PUBLIC_CONVERGENCE_EVIDENCE_PARENT": directory,
+                        "CPK_PUBLIC_CONVERGENCE_PULL_CONFIG": directory,
+                    },
+                    capture_output=True, text=True, timeout=5, check=False,
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.stdout, "")
+                self.assertEqual(
+                    result.stderr,
+                    "public convergence requires cached images; registry configuration is unsupported\n",
+                )
+                self.assertEqual(list(Path(directory).iterdir()), [])
         self.assertIn("$EVIDENCE:/evidence:rw", controller_runs[0])
         self.assertIn("/evidence/public-convergence.json", controller_runs[0])
         socket_mount = "/var/run/docker.sock:/var/run/docker.sock"
