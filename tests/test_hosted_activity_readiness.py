@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from hashlib import sha256
 import importlib
 import io
@@ -1705,7 +1706,53 @@ class HostedActivityReadinessTests(unittest.TestCase):
             )
 
         fixture = _PublicConvergenceFixture(self)
-        result = invoke(fixture)
+        with patch.object(controller, "datetime") as clock:
+            clock.now.return_value = datetime(2026, 9, 3, 12, 0, 0, 123456, tzinfo=timezone.utc)
+            result = invoke(fixture)
+
+        timestamps = [
+            row["arguments"][key]
+            for row in fixture.calls
+            for key in ("imported_at", "admitted_at")
+            if key in row["arguments"]
+        ]
+        self.assertEqual(timestamps, ["2026-09-03T12:00:00.123456Z"] * 4)
+
+        for status, body, category in (
+            (400, b"private-response-token", "http-rejected"),
+            (200, b'{"error":{"message":"private-response-token"}}', "rpc-rejected"),
+            (200, b"private-response-token", "response-invalid"),
+        ):
+            with self.subTest(bootstrap_failure=category):
+                rejected_fixture = _PublicConvergenceFixture(self)
+                original_invoke = rejected_fixture.invoke
+                requests = []
+
+                def respond(request):
+                    requests.append(request)
+                    return controller.httpx.Response(status, content=body)
+
+                with controller.httpx.Client(
+                    base_url="http://fixture.invalid", transport=controller.httpx.MockTransport(respond),
+                ) as client:
+                    transport = controller.McpTransport(client)
+
+                    def reject_import(route, arguments, *, authorization):
+                        if route == "command.product.import":
+                            return transport.invoke(route, arguments, authorization=authorization)
+                        return original_invoke(route, arguments, authorization=authorization)
+
+                    with patch.object(rejected_fixture, "invoke", side_effect=reject_import):
+                        rejected = invoke(rejected_fixture)
+                self.assertEqual(rejected["status"], "attention-required")
+                self.assertEqual(rejected["bootstrap_step"], "hello-product-import")
+                self.assertEqual(rejected["failure"], {"category": category, "http_status": status})
+                self.assertEqual(len(requests), 1)
+                self.assertEqual([row["route_id"] for row in rejected_fixture.calls], ["command.workspace.create"])
+                self.assertEqual(rejected["transitions"], [])
+                rendered = json.dumps(rejected)
+                self.assertNotIn("private-response-token", rendered)
+                self.assertNotIn(rejected_fixture.operator_bearer, rendered)
 
         self.assertEqual(result["status"], "converged")
         self.assertEqual(result["final_graph_id"], fixture.current_graph_id)

@@ -41,6 +41,15 @@ ATTENTION_STATUSES = {"in-flight", "uncertain", "blocked", "failed", "unsupporte
 class PublicConvergenceError(RuntimeError):
     """A fixed, non-provider diagnostic; the caller must not redispatch."""
 
+    def __init__(self, message: str = "public convergence evidence unavailable", *,
+                 category: str = "validation-failed", http_status: int | None = None) -> None:
+        super().__init__(message)
+        self.category = category if category in {
+            "validation-failed", "http-rejected", "rpc-rejected",
+            "transport-unavailable", "response-invalid",
+        } else "unknown"
+        self.http_status = http_status if type(http_status) is int and 100 <= http_status <= 599 else None
+
 
 def _require(condition: bool) -> None:
     if not condition:
@@ -190,6 +199,7 @@ def run_public_graph_convergence(
         "workspace_id": workspace_id, "transitions": [],
     }
     phase = "admission"
+    bootstrap_step = None
     deadline = time.monotonic() + 1800
     invocation = uuid4().hex
 
@@ -252,20 +262,26 @@ def run_public_graph_convergence(
                           for _, nodes, selected in phases]
 
         phase = "workspace-bootstrap"
+        bootstrap_step = "workspace-create"
         workspace = command("command.workspace.create", "workspace", name=workspace_id)["workspace"]
+        bootstrap_step = "workspace-current-pointer"
         _require(workspace["workspace_id"] == workspace_id and _pointer(workspace, "current") is not None)
         for name, document in documents.items():
+            bootstrap_step = {"hello_server": "hello-product-import", "http_active_router": "router-product-import"}[name]
             command("command.product.import", f"import:{name}",
                     descriptor_document=json.loads(document.content), imported_at=_clock())
+        bootstrap_step = "runtime-authority-register"
         command("command.runtime-authority.register", "authority",
                 authority_ref=AUTHORITY, runtime_kind="docker",
                 authority={"kind": "local-docker-socket"}, admitted_at=_clock())
+        bootstrap_step = "runtime-authority-delivery-register"
         command("command.runtime-authority-delivery.register", "delivery", delivery={
             "authority_ref": {"reference_id": AUTHORITY},
             "delivery_kind": "local-docker-socket-mount", "secret_references": [],
         }, admitted_at=_clock())
         if register_pull_authority:
             for name, document in documents.items():
+                bootstrap_step = {"hello_server": "hello-pull-authority-register", "http_active_router": "router-pull-authority-register"}[name]
                 image = json.loads(document.content)["product"]["image"]
                 _require(image["registry"] == "ghcr.io")
                 command("command.image-pull-authority.register", f"pull-authority:{name}",
@@ -399,14 +415,20 @@ def run_public_graph_convergence(
             row.update(status="converged", graph_id=graph_id, event_count=len(events))
         report["status"] = "converged"
         report["final_graph_id"] = report["last_observed_graph_id"]
-    except Exception:
+    except Exception as error:
         # A failed/ambiguous call is never repeated or converted into success.
         report.update(status="attention-required", phase=phase)
+        if phase == "workspace-bootstrap":
+            report["bootstrap_step"] = bootstrap_step
+        report["failure"] = {
+            "category": error.category if isinstance(error, PublicConvergenceError) else "unknown",
+            "http_status": error.http_status if isinstance(error, PublicConvergenceError) else None,
+        }
     return report
 
 
 def _clock() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 class McpTransport:
@@ -417,17 +439,29 @@ class McpTransport:
         method = "resources/read" if route.startswith("read.") else "tools/call"
         payload = {"jsonrpc": "2.0", "id": uuid4().hex, "method": method,
                    "params": {"name": route, "arguments": arguments}}
-        with self.client.stream("POST", "/mcp", json=payload, headers={
-            "Authorization": authorization, "MCP-Protocol-Version": "2025-06-18", "Mcp-Method": method,
-        }) as response:
-            _require(response.status_code == 200)
-            body = bytearray()
-            for chunk in response.iter_bytes():
-                _require(len(body) + len(chunk) <= MAX_RESPONSE_BYTES)
-                body.extend(chunk)
-        decoded = json.loads(body)
-        _require(isinstance(decoded, dict) and "error" not in decoded)
-        _require(isinstance(decoded.get("result"), dict))
+        try:
+            with self.client.stream("POST", "/mcp", json=payload, headers={
+                "Authorization": authorization, "MCP-Protocol-Version": "2025-06-18", "Mcp-Method": method,
+            }) as response:
+                if response.status_code != 200:
+                    raise PublicConvergenceError(category="http-rejected", http_status=response.status_code)
+                body = bytearray()
+                for chunk in response.iter_bytes():
+                    if len(body) + len(chunk) > MAX_RESPONSE_BYTES:
+                        raise PublicConvergenceError(category="response-invalid", http_status=200)
+                    body.extend(chunk)
+        except httpx.TransportError:
+            raise PublicConvergenceError(category="transport-unavailable") from None
+        try:
+            decoded = json.loads(body)
+        except (ValueError, UnicodeError):
+            raise PublicConvergenceError(category="response-invalid", http_status=200) from None
+        if not isinstance(decoded, dict):
+            raise PublicConvergenceError(category="response-invalid", http_status=200)
+        if "error" in decoded:
+            raise PublicConvergenceError(category="rpc-rejected", http_status=200)
+        if not isinstance(decoded.get("result"), dict):
+            raise PublicConvergenceError(category="response-invalid", http_status=200)
         return decoded["result"]
 
 
