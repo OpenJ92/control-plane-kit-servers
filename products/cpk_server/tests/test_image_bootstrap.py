@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import tempfile
 import sys
@@ -3649,6 +3650,73 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertNotIn("python3", wrapper)
         self.assertNotIn("cpk-server:source-", wrapper)
         self.assertNotIn("cpk-local-gateway:source-", wrapper)
+
+    def test_public_graph_convergence_launcher_keeps_runtime_authority_in_server(
+        self,
+    ) -> None:
+        launcher = ROOT / "scripts" / "cpk_server_public_graph_convergence_smoke.sh"
+        self.assertTrue(
+            launcher.is_file(),
+            "public graph convergence launcher is not implemented",
+        )
+        source = launcher.read_text(encoding="utf-8")
+        logical_source = source.replace("\\\n", " ")
+        docker_runs: list[list[str]] = []
+        for line in logical_source.splitlines():
+            if "docker run" not in line:
+                continue
+            command = line[line.index("docker run") :].strip()
+            command = command.removesuffix('")').removesuffix(")")
+            docker_runs.append(shlex.split(command))
+
+        server_runs = [
+            command
+            for command in docker_runs
+            if any("CPK_SERVER_MODE=execution-capable" in token for token in command)
+        ]
+        controller_runs = [
+            command
+            for command in docker_runs
+            if "scripts.cpk_server_public_graph_convergence" in command
+        ]
+        self.assertEqual(len(server_runs), 1)
+        self.assertEqual(len(controller_runs), 1)
+        self.assertIn("$EVIDENCE:/evidence:rw", controller_runs[0])
+        self.assertIn("/evidence/public-convergence.json", controller_runs[0])
+        socket_mount = "/var/run/docker.sock:/var/run/docker.sock"
+        socket_holders = [
+            command
+            for command in docker_runs
+            if any(socket_mount in token for token in command)
+        ]
+        self.assertEqual(socket_holders, server_runs)
+        self.assertFalse(
+            any(socket_mount in token for token in controller_runs[0])
+        )
+        self.assertFalse(
+            any("DATABASE_URL" in token for token in controller_runs[0])
+        )
+        self.assertFalse(
+            any(
+                token in logical_source
+                for token in (
+                    "docker ps",
+                    "docker volume",
+                    "docker network ls",
+                    "--filter",
+                    "_sync_runtime_networks",
+                    "_disconnect_runtime_networks",
+                )
+            )
+        )
+        self.assertIn(
+            'docker rm -f "$CONTROLLER_CONTAINER" "$SERVER_CONTAINER" '
+            '"$POSTGRES_CONTAINER"',
+            logical_source,
+        )
+        self.assertIn('docker network rm "$NETWORK"', logical_source)
+        self.assertNotIn("docker system prune", logical_source)
+        self.assertNotIn("docker volume prune", logical_source)
 
     def test_secrets_image_smoke_covers_private_delegation_contract(self) -> None:
         wrapper = (
