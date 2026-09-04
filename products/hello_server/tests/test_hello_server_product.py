@@ -142,6 +142,7 @@ class HelloServerProductTests(unittest.TestCase):
         self.assertEqual(
             product.runtime_contract.public_environment,
             (
+                PublicStaticEnvironmentBinding("HELLO_COLOR", "blue"),
                 PublicStaticEnvironmentBinding("HELLO_DEPENDENCIES_JSON", "[]"),
                 PublicStaticEnvironmentBinding("HELLO_MESSAGE", "Hello, world!"),
             ),
