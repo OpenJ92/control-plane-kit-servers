@@ -122,7 +122,8 @@ CPK_PUBLIC_CONVERGENCE_MODE=attach \
 
 Run each command only after the prior one is green. Keep `CPK_DEMO_CREATE_WORKSPACE`
 unset after the first submission. Visit the exact root `https://YOUR-HOSTNAME/`;
-the Hello product returns plain text, not a colored HTML page. Its exact-root
+the current Hello product returns an HTML greeting with its configured accent.
+Older immutable Hello images still return plaintext. Its exact-root
 handler does not accept cache-busting query strings. A graph count/selection
 repeated after successful completion can produce `no-changes`, with no run;
 that is not authority to replay an uncertain failed invocation.
@@ -151,10 +152,71 @@ For custom names/messages or individually reviewed plans, construct the desired
 graph using Core `ProductDescriptorCodec`, `ProductInstanceConfiguration`,
 `instantiate_product`, `DeploymentTopology`, `DockerRuntime`, `SocketConnection`
 and `DEFAULT_GRAPH_CODEC.encode(compile_topology(...))`. This is local value
-construction, not provider execution. Use the existing Hello `HELLO_MESSAGE`
+construction, not provider execution. Use Hello `HELLO_MESSAGE` and `HELLO_COLOR`
 configuration, stable identities, and a router expected-response check matching
 the selected node. The retained demonstration used Jacob/blue, Mia/purple and
 Elliot/green this way; the count-based CLI does not accept those custom names.
+
+### Add HTML Alongside An Older Image
+
+The current Hello descriptor pins
+`ghcr.io/openj92/control-plane-kit-servers/hello-server@sha256:e3256ca3aeb52077527143c88d96b3b460080862459686e259d2464f41c1669b`
+from source `cae307b34884e234ee8d96517012fe39c45e3dea`, under Hello contract revision 2.
+Revision 1 remains the prior recorded plaintext contract, not a renderer mode.
+It is **linux/amd64 only**;
+confirm the runtime supports that platform before approving a plan. Registry
+access remains private; importing a descriptor does not prove image access.
+
+For example, construct the new product value from this repository's descriptor:
+
+```python
+from dataclasses import replace
+from hashlib import sha256
+from pathlib import Path
+from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
+from control_plane_kit_core.products import (
+    ProductDescriptorCodec, ProductInstanceConfiguration, instantiate_product,
+)
+from control_plane_kit_servers_hello_server.server import render_hello
+
+product = ProductDescriptorCodec().decode_document(
+    Path("products/hello_server/product.cpk.json").read_bytes()
+).product
+configuration = ProductInstanceConfiguration.from_contract(product.runtime_contract)
+values = {"HELLO_MESSAGE": "Hello Jacob", "HELLO_COLOR": "blue"}
+configuration = replace(configuration, public_environment=tuple(
+    PublicStaticEnvironmentBinding(binding.name, values.get(binding.name, binding.value))
+    for binding in configuration.public_environment
+))
+html_jacob = instantiate_product(product, "hello-jacob-html-blue", configuration)
+expected_root_digest = sha256(render_hello("Hello Jacob", "blue")).hexdigest()
+```
+
+Run authoring code only in the repository's matching Docker client environment;
+no host dependency setup is needed. The palette is exactly blue (default), purple,
+green and red. Greeting text is escaped, and invalid colors stop startup. Graph
+display metadata is not process configuration.
+
+Keep the original authoring inputs/descriptors for all existing nodes. Append
+`html_jacob` to those retained runtime children without changing their image,
+environment, secret references or the current router edge. Do not regenerate
+old nodes using the new catalogue: that is an image update, not preservation.
+Do not replay the count-based attach example against a mixed old/new graph.
+
+Submit that encoded full desired graph through `command.deployment.prepare`
+below, using freshly read current/desired coordinates. Inspect its actual plan:
+only the new node should be created; a runtime membership ensure must not change
+the network or replace old containers. Approve/execute and verify the new node's
+public health evidence. Only then submit a second desired graph changing the
+router's `active` socket edge to `hello-jacob-html-blue` and its `root-response`
+HttpCheck to `expected_root_digest`. Keep every node in both graphs. Verify the
+successful public run/current graph and fresh exact HTTPS HTML response.
+
+Using an existing node ID instead would update that node and can replace its
+container with a brief outage; it needs that different inspected plan and
+approval. Publishing, changing a descriptor, or adding an unselected node does
+not itself switch the router. Old-node removal, DNS/tunnel changes and control
+plane replacement are not part of this addition-and-switch procedure.
 
 Use your authenticated client and the published CPK contract. For example, the
 following JSON-RPC request reads current workspace coordinates:
