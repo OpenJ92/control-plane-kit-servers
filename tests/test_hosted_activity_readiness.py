@@ -1664,8 +1664,18 @@ class HostedActivityReadinessTests(unittest.TestCase):
         node = {"node_id": "hello-retained", "name": "Hello", "color": "green",
                 "message": "Hello through public ingress"}
         histories = {}
+        public_descriptors = []
 
-        def run(fixture, *, create_workspace=True):
+        def public_descriptor(descriptor):
+            projected = json.loads(json.dumps(descriptor))
+            # Representative public redaction, not a second redactor implementation.
+            for value in projected["nodes"].values():
+                if "secret_deliveries" in value:
+                    value["secret_deliveries"] = "<redacted>"
+            public_descriptors.append(projected)
+            return projected
+
+        def run(fixture, *, create_workspace=True, current_projection_drift=False):
             plans = histories.setdefault(id(fixture), {})
 
             def invoke(route, arguments, *, authorization):
@@ -1684,12 +1694,20 @@ class HostedActivityReadinessTests(unittest.TestCase):
                     if route == "read.session-plans":
                         return {"items": [value for value in plans.values() if value["session_id"] == arguments["session_id"]]}
                     if route == "read.desired-graph":
-                        return {"graph_descriptor": fixture.pending_descriptor}
+                        return {
+                            "graph_id": fixture.desired_graph_id,
+                            "realized_projection_id": fixture.desired_projection_id,
+                            "graph_descriptor": public_descriptor(fixture.pending_descriptor),
+                        }
                     return {"plan": plans[arguments["plan_id"]]}
                 if route == "read.plan-runs" and not plans[arguments["plan_id"]]["payload"]["activities"]:
                     fixture.calls.append({"route_id": route, "arguments": arguments})
                     return {"items": []}
                 result = fixture.invoke(route, arguments, authorization=authorization)
+                if route == "read.current-graph":
+                    result["graph_descriptor"] = public_descriptor(fixture.current_descriptor)
+                    if current_projection_drift:
+                        result["realized_projection_id"] = f"projection-{uuid4().hex}"
                 if route == "command.deployment.prepare" and result["status"] == "no-changes":
                     # A real no-op prepare persists new desired coordinates but no run.
                     fixture.desired_graph_id = f"graph-{uuid4().hex}"
@@ -1729,14 +1747,21 @@ class HostedActivityReadinessTests(unittest.TestCase):
         self.assertEqual(edge["provider"]["role"], node["node_id"])
         self.assertEqual(edge["consumer"]["role"], "application-router")
         self.assertEqual(fixture.current_descriptor, prepared[0])
+        self.assertTrue(public_descriptors)
+        self.assertNotEqual(public_descriptors[-1], prepared[0])
         self.assertTrue(all(row["route_id"].startswith(("read.", "command.")) for row in fixture.calls))
         self.assertFalse(any("ingress-authority" in row["route_id"] for row in fixture.calls))
         for bearer in (fixture.operator_bearer, fixture.worker_bearer, fixture.approver_bearer):
             self.assertNotIn(bearer, json.dumps(result))
 
         no_op = run(fixture, create_workspace=False)
+        self.assertEqual(no_op["status"], "converged")
         self.assertEqual(no_op["transitions"][0]["status"], "no-changes")
         self.assertNotEqual(fixture.desired_graph_id, fixture.current_graph_id)
+        before_drift = len(fixture.calls)
+        self.assertEqual(run(fixture, create_workspace=False, current_projection_drift=True)["status"],
+                         "attention-required")
+        self.assertTrue(all(row["route_id"].startswith("read.") for row in fixture.calls[before_drift:]))
         node["message"] = "Hello after a completed no-op"
         continued = run(fixture, create_workspace=False)
         self.assertEqual(continued["status"], "converged")

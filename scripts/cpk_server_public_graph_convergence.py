@@ -321,7 +321,13 @@ def run_public_graph_convergence(
                 else:
                     _require(not prior_runs and prior["base_graph_id"] == current_pointer["authored_graph_id"]
                              and prior["base_realized_projection_id"] == current_pointer["realized_projection_id"])
-                    _require(call("read.desired-graph")["graph_descriptor"] == call("read.current-graph")["graph_descriptor"])
+                    # An empty public plan establishes no changes; descriptors
+                    # are redacted projections, not round-trip intent values.
+                    for route, pointer in (("read.desired-graph", desired_pointer),
+                                           ("read.current-graph", current_pointer)):
+                        observed = call(route)
+                        _require(observed["graph_id"] == pointer["authored_graph_id"]
+                                 and observed["realized_projection_id"] == pointer["realized_projection_id"])
         for name, document in documents.items():
             bootstrap_step = {"hello_server": "hello-product-import", "http_active_router": "router-product-import",
                               "cloudflared_connector": "connector-product-import"}[name]
@@ -456,8 +462,6 @@ def run_public_graph_convergence(
             observed_current = call("read.current-graph")
             _require(observed_current["graph_id"] == graph_id)
             _require(observed_current["realized_projection_id"] == projection_id)
-            if retained_application:
-                _require(observed_current["graph_descriptor"] == desired)
             report["last_observed_graph_id"] = graph_id
             row["graph_id"] = graph_id
             runs = page("read.plan-runs", plan_id=plan_id)
