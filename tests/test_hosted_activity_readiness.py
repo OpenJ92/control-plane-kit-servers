@@ -1658,6 +1658,100 @@ class HostedActivityReadinessTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, rendered)
 
+    def test_retained_application_uses_public_commands_and_explicit_connector_reference(self) -> None:
+        controller = importlib.import_module("scripts.cpk_server_public_graph_convergence")
+        reference = "secret://demo/application/tunnel-token"
+        node = {"node_id": "hello-retained", "name": "Hello", "color": "green",
+                "message": "Hello through public ingress"}
+        histories = {}
+
+        def run(fixture, *, create_workspace=True):
+            plans = histories.setdefault(id(fixture), {})
+
+            def invoke(route, arguments, *, authorization):
+                if route in {"command.secret-provider.register", "command.secret-reference.register"}:
+                    self.assertEqual(authorization, fixture.operator_bearer)
+                    self.assertEqual(arguments["allowed_intents"], ["cloudflare.tunnel-token"])
+                    fixture.calls.append({"route_id": route, "arguments": arguments})
+                    return {"registration_id": "fixture-provider"}
+                if route in {"read.activity", "read.session-plans", "read.desired-graph"} or (
+                    route == "read.plan-detail" and arguments["plan_id"] in plans
+                ):
+                    self.assertEqual(authorization, fixture.operator_bearer)
+                    fixture.calls.append({"route_id": route, "arguments": arguments})
+                    if route == "read.activity":
+                        return {"items": [{"session_id": value["session_id"]} for value in plans.values()]}
+                    if route == "read.session-plans":
+                        return {"items": [value for value in plans.values() if value["session_id"] == arguments["session_id"]]}
+                    if route == "read.desired-graph":
+                        return {"graph_descriptor": fixture.pending_descriptor}
+                    return {"plan": plans[arguments["plan_id"]]}
+                if route == "read.plan-runs" and not plans[arguments["plan_id"]]["payload"]["activities"]:
+                    fixture.calls.append({"route_id": route, "arguments": arguments})
+                    return {"items": []}
+                result = fixture.invoke(route, arguments, authorization=authorization)
+                if route == "command.deployment.prepare" and result["status"] == "no-changes":
+                    # A real no-op prepare persists new desired coordinates but no run.
+                    fixture.desired_graph_id = f"graph-{uuid4().hex}"
+                    fixture.desired_projection_id = f"projection-{uuid4().hex}"
+                    fixture.desired_revision += 1
+                if route == "read.plan-detail":
+                    result["plan"]["status"] = "planned"
+                    plans[arguments["plan_id"]] = json.loads(json.dumps(result["plan"]))
+                return result
+
+            return controller.run_public_graph_convergence(
+                invoke, servers_repo=Path(__file__).resolve().parents[1],
+                workspace_id=fixture.workspace_id, router_id="application-router", hello_nodes=(node,),
+                initial_node_id=node["node_id"], rewire_node_id=node["node_id"], retained_node_ids=(),
+                authorization=fixture.operator_bearer, worker_authorization=fixture.worker_bearer,
+                approver_authorization=fixture.approver_bearer, capacity=4,
+                connector_token_reference=reference, destructive_approved=False,
+                create_workspace=create_workspace,
+            )
+
+        fixture = _PublicConvergenceFixture(self)
+        result = run(fixture)
+        self.assertEqual(result["status"], "converged")
+        self.assertEqual([row["phase"] for row in result["transitions"]], ["application"])
+        prepared = [row["arguments"]["desired_graph"] for row in fixture.calls
+                    if row["route_id"] == "command.deployment.prepare"]
+        self.assertEqual(len(prepared), 1)
+        graph = controller.DEFAULT_GRAPH_CODEC.decode(prepared[0])
+        self.assertEqual(set(prepared[0]["nodes"]), {node["node_id"], "application-router", "application-ingress"})
+        connector = graph.node("application-ingress")
+        self.assertEqual(connector.secret_deliveries, (
+            controller.SecretEnvironmentDelivery("TUNNEL_TOKEN", controller.SecretReference(reference),
+                                                 controller.SecretUseIntent.CLOUDFLARE_TUNNEL_TOKEN),
+        ))
+        self.assertFalse(prepared[0].get("public_ingresses"))
+        edge = next(iter(prepared[0]["edges"].values()))
+        self.assertEqual(edge["provider"]["role"], node["node_id"])
+        self.assertEqual(edge["consumer"]["role"], "application-router")
+        self.assertEqual(fixture.current_descriptor, prepared[0])
+        self.assertTrue(all(row["route_id"].startswith(("read.", "command.")) for row in fixture.calls))
+        self.assertFalse(any("ingress-authority" in row["route_id"] for row in fixture.calls))
+        for bearer in (fixture.operator_bearer, fixture.worker_bearer, fixture.approver_bearer):
+            self.assertNotIn(bearer, json.dumps(result))
+
+        no_op = run(fixture, create_workspace=False)
+        self.assertEqual(no_op["transitions"][0]["status"], "no-changes")
+        self.assertNotEqual(fixture.desired_graph_id, fixture.current_graph_id)
+        node["message"] = "Hello after a completed no-op"
+        continued = run(fixture, create_workspace=False)
+        self.assertEqual(continued["status"], "converged")
+        self.assertEqual(continued["transitions"][0]["phase"], "application")
+        self.assertEqual(sum(row["route_id"] == "command.workspace.create" for row in fixture.calls), 1)
+
+        attention = _PublicConvergenceFixture(self, attention_status="uncertain")
+        stopped = run(attention)
+        self.assertEqual(stopped["status"], "attention-required")
+        self.assertEqual(sum(row["route_id"] == "command.deployment.execute" for row in attention.calls), 1)
+        self.assertFalse(any(row["route_id"] == "command.graph.advance-current" for row in attention.calls))
+        self.assertEqual(sum(row["route_id"] == "command.deployment.prepare" for row in attention.calls), 1)
+        self.assertEqual(run(attention, create_workspace=False)["status"], "attention-required")
+        self.assertEqual(sum(row["route_id"] == "command.deployment.execute" for row in attention.calls), 1)
+
     def test_public_graph_convergence_uses_only_authenticated_public_requests(
         self,
     ) -> None:

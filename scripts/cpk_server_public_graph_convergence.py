@@ -15,6 +15,7 @@ import sys
 import time
 from typing import Any, Callable
 from uuid import uuid4
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -24,6 +25,7 @@ from control_plane_kit_core.products import (
     ProductDescriptorCodec, ProductInstanceConfiguration, instantiate_product,
 )
 from control_plane_kit_core.runtime_authority import RuntimeAuthorityReference
+from control_plane_kit_core.secrets import SecretEnvironmentDelivery, SecretReference, SecretUseIntent
 from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC, DeploymentGraph, compile_topology
 from control_plane_kit_core.verification import HttpCheck, VerificationContract
 
@@ -80,6 +82,7 @@ def _pointer(workspace: dict[str, Any], prefix: str) -> dict[str, str] | None:
 def _graph(
     workspace_id: str, router_id: str, nodes: tuple[dict[str, str], ...],
     selected: str, documents: dict[str, Any],
+    *, connector_id: str | None = None, token_reference: str | None = None,
 ) -> dict[str, Any]:
     if not nodes:
         return DEFAULT_GRAPH_CODEC.encode(DeploymentGraph(workspace_id))
@@ -98,10 +101,21 @@ def _graph(
         instantiate_product(product, router_id, ProductInstanceConfiguration.from_contract(product.runtime_contract)),
         SocketConnection(selected, "internal", router_id, "active"),
     ))
+    if connector_id is not None:
+        product = documents["cloudflared_connector"].product
+        children.append(instantiate_product(
+            product, connector_id, ProductInstanceConfiguration.from_contract(product.runtime_contract),
+        ))
     graph = compile_topology(DeploymentTopology(workspace_id, DockerRuntime(
         runtime_id="docker", network_name=f"cpk-{workspace_id}",
         authority_ref=RuntimeAuthorityReference(AUTHORITY), children=tuple(children),
     )))
+    if connector_id is not None:
+        connector = graph.node(connector_id)
+        graph = graph.update_node(replace(connector, secret_deliveries=(
+            SecretEnvironmentDelivery("TUNNEL_TOKEN", SecretReference(token_reference),
+                                      SecretUseIntent.CLOUDFLARE_TUNNEL_TOKEN),
+        )))
     for node in nodes:
         value = graph.node(node["node_id"])
         graph = graph.update_node(replace(value, metadata={
@@ -188,8 +202,10 @@ def run_public_graph_convergence(
     initial_node_id: str, rewire_node_id: str, retained_node_ids: tuple[str, ...],
     authorization: str, worker_authorization: str, approver_authorization: str, capacity: int = 32,
     max_steps: int = 512, register_pull_authority: bool = False,
+    connector_token_reference: str | None = None, connector_id: str = "application-ingress",
+    create_workspace: bool = True, destructive_approved: bool = False,
 ) -> dict[str, Any]:
-    """Execute six explicitly preauthorized desired-graph submissions, then stop.
+    """Execute the approved scenario, or one retained application submission.
 
     Calling this function authorizes its fixed scenario, including removals.
     The CLI additionally requires separate affirmative approval switches.
@@ -202,6 +218,7 @@ def run_public_graph_convergence(
     bootstrap_step = None
     deadline = time.monotonic() + 1800
     invocation = uuid4().hex
+    retained_application = connector_token_reference is not None
 
     def call(route: str, **arguments: Any) -> dict[str, Any]:
         _require(time.monotonic() < deadline)
@@ -234,42 +251,93 @@ def run_public_graph_convergence(
         raise PublicConvergenceError("public history page budget exhausted")
 
     try:
-        _require(type(capacity) is int and 3 <= capacity <= 128)
-        _require(3 <= len(hello_nodes) <= capacity and 1 <= max_steps <= 4096)
+        minimum = 1 if retained_application else 3
+        _require(type(capacity) is int and minimum <= capacity <= 128)
+        _require(minimum <= len(hello_nodes) <= capacity and 1 <= max_steps <= 4096)
         _require(len({authorization, worker_authorization, approver_authorization}) == 3
                  and all((authorization, worker_authorization, approver_authorization)))
         ids = [node["node_id"] for node in hello_nodes]
         _require(len(ids) == len(set(ids)) and router_id not in ids)
-        for identity in [workspace_id, router_id, *ids]:
+        for identity in [workspace_id, router_id, *ids, *([connector_id] if retained_application else [])]:
             _require(re.fullmatch(r"[a-z][a-z0-9-]{0,62}", identity) is not None)
         for node in hello_nodes:
             for field, bound in (("name", 64), ("color", 64), ("message", 512)):
                 _require(isinstance(node[field], str) and 0 < len(node[field].encode()) <= bound)
-        _require(initial_node_id in ids and rewire_node_id in ids and initial_node_id != rewire_node_id)
-        _require(0 < len(retained_node_ids) < len(ids) and len(set(retained_node_ids)) == len(retained_node_ids))
-        _require(set(retained_node_ids) <= set(ids) and rewire_node_id in retained_node_ids)
+        _require(initial_node_id in ids)
+        if retained_application:
+            _require(connector_id not in {*ids, router_id} and not register_pull_authority)
+            SecretReference(connector_token_reference)
+        else:
+            _require(rewire_node_id in ids and initial_node_id != rewire_node_id)
+            _require(0 < len(retained_node_ids) < len(ids) and len(set(retained_node_ids)) == len(retained_node_ids))
+            _require(set(retained_node_ids) <= set(ids) and rewire_node_id in retained_node_ids)
         documents = {name: ProductDescriptorCodec().decode_document(
             (servers_repo / "products" / name / "product.cpk.json").read_bytes()
-        ) for name in ("hello_server", "http_active_router")}
+        ) for name in (("hello_server", "http_active_router", "cloudflared_connector")
+                      if retained_application else ("hello_server", "http_active_router"))}
         initial = tuple(node for node in hello_nodes if node["node_id"] == initial_node_id)
         retained = tuple(node for node in hello_nodes if node["node_id"] in retained_node_ids)
-        phases = (
+        phases = (("application", hello_nodes, initial_node_id),) if retained_application else (
             ("initial", initial, initial_node_id), ("multi-add", hello_nodes, initial_node_id),
             ("rewire", hello_nodes, rewire_node_id), ("subset-removal", retained, rewire_node_id),
             ("no-op", retained, rewire_node_id), ("teardown", (), rewire_node_id),
         )
-        desired_graphs = [_graph(workspace_id, router_id, nodes, selected, documents)
+        desired_graphs = [_graph(workspace_id, router_id, nodes, selected, documents,
+                                connector_id=connector_id if retained_application else None,
+                                token_reference=connector_token_reference)
                           for _, nodes, selected in phases]
 
         phase = "workspace-bootstrap"
         bootstrap_step = "workspace-create"
-        workspace = command("command.workspace.create", "workspace", name=workspace_id)["workspace"]
+        workspace = (command("command.workspace.create", "workspace", name=workspace_id)["workspace"]
+                     if create_workspace else call("read.workspace")["workspace"])
         bootstrap_step = "workspace-current-pointer"
         _require(workspace["workspace_id"] == workspace_id and _pointer(workspace, "current") is not None)
+        admitted_workspace = (
+            _pointer(workspace, "current"), _pointer(workspace, "desired"), workspace["desired_graph_revision"],
+        )
+        if retained_application:
+            # No-op preparation may persist new desired coordinates without a run.
+            # Use public plan/outcome truth, not pointer equality, to admit another edit.
+            desired_pointer = _pointer(workspace, "desired")
+            current_pointer = _pointer(workspace, "current")
+            if desired_pointer is not None:
+                sessions = page("read.activity")
+                _require(len(sessions) <= 64)
+                matches = []
+                for session in sessions:
+                    for prior in page("read.session-plans", session_id=_coordinate(session["session_id"])):
+                        if (prior["desired_graph_id"] == desired_pointer["authored_graph_id"]
+                                and prior["desired_realized_projection_id"] == desired_pointer["realized_projection_id"]
+                                and prior["desired_graph_revision"] == workspace["desired_graph_revision"]):
+                            matches.append(prior)
+                _require(len(matches) == 1)
+                prior = call("read.plan-detail", plan_id=_coordinate(matches[0]["plan_id"]))["plan"]
+                _require(prior["status"] == "planned")
+                prior_runs = page("read.plan-runs", plan_id=prior["plan_id"])
+                if prior["payload"]["activities"]:
+                    _require(desired_pointer == current_pointer and bool(prior_runs)
+                             and all(run["status"] == "succeeded" for run in prior_runs))
+                else:
+                    _require(not prior_runs and prior["base_graph_id"] == current_pointer["authored_graph_id"]
+                             and prior["base_realized_projection_id"] == current_pointer["realized_projection_id"])
+                    _require(call("read.desired-graph")["graph_descriptor"] == call("read.current-graph")["graph_descriptor"])
         for name, document in documents.items():
-            bootstrap_step = {"hello_server": "hello-product-import", "http_active_router": "router-product-import"}[name]
+            bootstrap_step = {"hello_server": "hello-product-import", "http_active_router": "router-product-import",
+                              "cloudflared_connector": "connector-product-import"}[name]
             command("command.product.import", f"import:{name}",
                     descriptor_document=json.loads(document.content), imported_at=_clock())
+        if retained_application and create_workspace:
+            bootstrap_step = "secret-provider-registration"
+            provider = command("command.secret-provider.register", "secret-provider",
+                               provider_id="persistent-demo-secrets", provider_kind="control-plane-kit-secrets",
+                               display_name="Persistent application custody", endpoint_reference="persistent-demo-secrets",
+                               credential_reference="secret://bootstrap/provider/demo-client-token",
+                               allowed_reference_prefixes=[connector_token_reference],
+                               allowed_intents=["cloudflare.tunnel-token"], admitted_at=_clock(), metadata={})
+            command("command.secret-reference.register", "tunnel-reference",
+                    reference=connector_token_reference, provider_registration_id=_coordinate(provider["registration_id"]),
+                    allowed_intents=["cloudflare.tunnel-token"], admitted_at=_clock(), metadata={})
         bootstrap_step = "runtime-authority-register"
         command("command.runtime-authority.register", "authority",
                 authority_ref=AUTHORITY, runtime_kind="docker",
@@ -292,6 +360,9 @@ def run_public_graph_convergence(
         previous_desired = None
         for (phase, _, _), desired in zip(phases, desired_graphs):
             workspace = call("read.workspace")["workspace"]
+            if retained_application:
+                _require((_pointer(workspace, "current"), _pointer(workspace, "desired"),
+                          workspace["desired_graph_revision"]) == admitted_workspace)
             current = _pointer(workspace, "current")
             _require(current is not None)
             report["last_observed_graph_id"] = current["authored_graph_id"]
@@ -308,7 +379,7 @@ def run_public_graph_convergence(
             plan = call("read.plan-detail", plan_id=row["plan_id"])["plan"]
             row["plan"] = _plan_evidence(plan)
             if prepared["status"] == "no-changes":
-                _require(phase == "no-op")
+                _require(phase == "no-op" or retained_application)
                 row["status"] = "no-changes"
                 continue
             if prepared["status"] != "approval-required":
@@ -326,6 +397,8 @@ def run_public_graph_convergence(
             _require(plan["base_graph_id"] == current["authored_graph_id"])
             _require(plan["base_realized_projection_id"] == current["realized_projection_id"])
             _require(approval["required_scope"] in {"plan:approve", "plan:approve-destructive"})
+            if retained_application and (approval["destructive"] or approval["required_scope"] == "plan:approve-destructive"):
+                _require(destructive_approved)
             if phase in {"subset-removal", "teardown"}:
                 _require(approval["destructive"] is True and approval["required_scope"] == "plan:approve-destructive")
             decided = command("command.approval.decide", f"{phase}:approve",
@@ -383,6 +456,8 @@ def run_public_graph_convergence(
             observed_current = call("read.current-graph")
             _require(observed_current["graph_id"] == graph_id)
             _require(observed_current["realized_projection_id"] == projection_id)
+            if retained_application:
+                _require(observed_current["graph_descriptor"] == desired)
             report["last_observed_graph_id"] = graph_id
             row["graph_id"] = graph_id
             runs = page("read.plan-runs", plan_id=plan_id)
@@ -399,15 +474,18 @@ def run_public_graph_convergence(
                 router_activities = [item for item in row["plan"]["activities"]
                                      if item["target"] == {"kind": "node", "node_id": router_id}]
                 checks_router = any(item["operation"] == "wait-for-healthy" for item in router_activities)
-                if not checks_router:
+                if not checks_router and retained_application:
+                    row["response"] = {"basis": "not-observed", "freshness": "unknown"}
+                elif not checks_router:
                     _require(not router_activities and previous_response is not None and previous_desired is not None)
                     _require(desired["nodes"][router_id] == previous_desired["nodes"][router_id])
                     _require(desired["edges"] == previous_desired["edges"])
                     _require(phase not in {"initial", "rewire"})
-                row["response"] = _observed_response(
-                    page("read.observed-state"), desired, graph_id, run_id, router_id,
-                    previous=None if checks_router else previous_response,
-                )
+                if checks_router or not retained_application:
+                    row["response"] = _observed_response(
+                        page("read.observed-state"), desired, graph_id, run_id, router_id,
+                        previous=None if checks_router else previous_response,
+                    )
                 previous_response = row["response"]
                 previous_desired = desired
             else:
@@ -465,18 +543,25 @@ class McpTransport:
         return decoded["result"]
 
 
-def write_bootstrap(directory: Path) -> None:
+def write_bootstrap(directory: Path, *, workspaces: tuple[str, ...] | None = None,
+                    application_workspace: str | None = None, provider_endpoint: str | None = None) -> None:
     """Generate private local bootstrap files in a fresh invocation directory."""
     workspace = os.environ["CPK_PUBLIC_CONVERGENCE_WORKSPACE"]
+    workspaces = workspaces or (workspace,)
     operator, approver, worker, password = (secrets.token_hex(32) for _ in range(4))
     grants = ["hub:instance:create", "hub:instance:read", "instance:workspace:read",
               "instance:workspace:edit", "plan:request",
               "plan:execute", "runtime-authority:register", "runtime-authority:use",
               "runtime-authority-delivery:register"]
     principals = [
-        {"credential": operator, "subject_id": "convergence-operator", "kind": "operator", "workspace_grants": {workspace: grants}},
-        {"credential": approver, "subject_id": "convergence-approver", "kind": "operator", "workspace_grants": {workspace: ["plan:approve", "plan:approve-destructive"]}},
-        {"credential": worker, "subject_id": "convergence-worker", "kind": "worker", "workspace_grants": {workspace: ["execution:operate"]}},
+        {"credential": operator, "subject_id": "convergence-operator", "kind": "operator", "workspace_grants": {
+            name: grants + (["secret-provider:register", "secret-provider:read", "secret-provider:use"]
+                            if name == application_workspace else []) for name in workspaces}},
+        {"credential": approver, "subject_id": "convergence-approver", "kind": "operator", "workspace_grants": {
+            name: ["plan:approve", "plan:approve-destructive"] for name in workspaces}},
+        {"credential": worker, "subject_id": "convergence-worker", "kind": "worker", "workspace_grants": {
+            name: ["execution:operate"] + (["secret-provider:use"] if name == application_workspace else [])
+            for name in workspaces}},
     ]
     database = f"postgresql://cpk:{password}@cpk-postgres:5432/cpk"
     server = {"CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON": json.dumps(principals, separators=(",", ":")),
@@ -485,28 +570,82 @@ def write_bootstrap(directory: Path) -> None:
     controller = {"CPK_PUBLIC_CONVERGENCE_OPERATOR": operator, "CPK_PUBLIC_CONVERGENCE_APPROVER": approver,
                   "CPK_PUBLIC_CONVERGENCE_WORKER": worker}
     postgres = {"POSTGRES_DB": "cpk", "POSTGRES_USER": "cpk", "POSTGRES_PASSWORD": password}
+    if provider_endpoint is not None:
+        server.update({
+            "CPK_MATERIAL_PROVIDER_ROUTES_JSON": json.dumps({"persistent-demo-secrets": provider_endpoint}),
+            "CPK_MATERIAL_PROVIDER_BOOTSTRAP_FILES_JSON": json.dumps({
+                "secret://bootstrap/provider/demo-client-token": "/run/secrets/cpk-provider/client-token",
+            }),
+        })
     for name, values in (("server.env", server), ("controller.env", controller), ("postgres.env", postgres)):
         descriptor = os.open(directory / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "w") as output:
             output.write("".join(f"{key}={value}\n" for key, value in values.items()))
 
 
+def write_persistent_bootstrap(directory: Path) -> None:
+    """Fresh installation only; existing provider authority is copied, never minted."""
+    workspace = os.environ["CPK_PUBLIC_CONVERGENCE_WORKSPACE"]
+    workspaces = tuple(os.environ["CPK_DEMO_WORKSPACES"].split(","))
+    _require(1 <= len(workspaces) <= 16 and len(set(workspaces)) == len(workspaces))
+    _require(workspace in workspaces)
+    for value in workspaces:
+        _require(re.fullmatch(r"[a-z][a-z0-9-]{0,62}", value) is not None)
+    endpoint = os.environ["CPK_DEMO_PROVIDER_URL"]
+    parsed = urlsplit(endpoint)
+    _require(parsed.scheme in {"http", "https"} and parsed.hostname is not None
+             and parsed.username is None and parsed.password is None and not parsed.query
+             and not parsed.fragment and len(endpoint) <= 1024 and "\n" not in endpoint)
+    reference = SecretReference(os.environ["CPK_DEMO_TOKEN_REFERENCE"])
+    provider_credential = Path("/provider-credential").read_bytes()
+    _require(0 < len(provider_credential) <= 16384)
+    write_bootstrap(directory, workspaces=workspaces, application_workspace=workspace, provider_endpoint=endpoint)
+    for name, content in (
+        ("ownership.id", uuid4().hex.encode() + b"\n"),
+        ("provider-client-token", provider_credential),
+        ("application.json", json.dumps({"workspace_id": workspace, "token_reference": reference.reference_id},
+                                       sort_keys=True).encode()),
+    ):
+        descriptor = os.open(directory / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as output:
+            if name == "provider-client-token":
+                # Only the pinned non-root server reads this individual bind mount.
+                os.fchown(output.fileno(), 10001, 10001)
+            output.write(content)
+            output.flush()
+            os.fsync(output.fileno())
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--approve-transitions", action="store_true", required=True)
-    parser.add_argument("--approve-destructive", action="store_true", required=True)
+    parser.add_argument("--approve-destructive", action="store_true")
+    parser.add_argument("--retained-application", type=Path)
+    parser.add_argument("--create-workspace", action="store_true")
+    parser.add_argument("--active-node", type=int, default=1)
     parser.add_argument("--nodes", type=int, default=4)
     parser.add_argument("--capacity", type=int, default=32)
     parser.add_argument("--report", type=Path, required=True)
     args = parser.parse_args()
-    _require(3 <= args.nodes <= args.capacity <= 128)
+    retained = args.retained_application is not None
+    _require((1 if retained else 3) <= args.nodes <= args.capacity <= 128)
+    _require(retained or args.approve_destructive)
+    _require(1 <= args.active_node <= args.nodes)
     workspace = os.environ["CPK_PUBLIC_CONVERGENCE_WORKSPACE"]
+    application = None
+    if retained:
+        raw = args.retained_application.read_bytes()
+        _require(len(raw) <= 4096)
+        application = json.loads(raw)
+        _require(set(application) == {"workspace_id", "token_reference"} and application["workspace_id"] == workspace)
+        SecretReference(application["token_reference"])
     colors = ("red", "green", "blue", "gold", "violet", "teal")
-    nodes = tuple({"node_id": f"hello-{uuid4().hex[:12]}", "name": f"service-{i + 1}",
+    nodes = tuple({"node_id": f"hello-{i + 1}" if retained else f"hello-{uuid4().hex[:12]}", "name": f"service-{i + 1}",
                    "color": colors[i % len(colors)],
                    "message": f"Hello from service-{i + 1} in {colors[i % len(colors)]}"}
                   for i in range(args.nodes))
-    with httpx.Client(base_url="http://cpk-server:8080", timeout=120, trust_env=False, follow_redirects=False) as client:
+    with httpx.Client(base_url=os.environ.get("CPK_PUBLIC_CONVERGENCE_URL", "http://cpk-server:8080"),
+                      timeout=120, trust_env=False, follow_redirects=False) as client:
         ready = False
         for attempt in range(30):
             try:
@@ -529,14 +668,17 @@ def main() -> int:
         _require(ready)
         report = run_public_graph_convergence(
             McpTransport(client).invoke, servers_repo=Path("/source"), workspace_id=workspace,
-            router_id=f"router-{uuid4().hex[:12]}", hello_nodes=nodes,
-            initial_node_id=nodes[0]["node_id"], rewire_node_id=nodes[-1]["node_id"],
+            router_id="application-router" if retained else f"router-{uuid4().hex[:12]}", hello_nodes=nodes,
+            initial_node_id=nodes[args.active_node - 1 if retained else 0]["node_id"], rewire_node_id=nodes[-1]["node_id"],
             retained_node_ids=tuple(node["node_id"] for node in nodes[1::2]) if args.nodes % 2 == 0
             else tuple(node["node_id"] for node in nodes[::2]),
             authorization="Bearer " + os.environ["CPK_PUBLIC_CONVERGENCE_OPERATOR"],
             worker_authorization="Bearer " + os.environ["CPK_PUBLIC_CONVERGENCE_WORKER"],
             approver_authorization="Bearer " + os.environ["CPK_PUBLIC_CONVERGENCE_APPROVER"],
             capacity=args.capacity, register_pull_authority=os.environ.get("CPK_PUBLIC_CONVERGENCE_PULL_AUTHORITY") == "1",
+            connector_token_reference=application["token_reference"] if retained else None,
+            create_workspace=args.create_workspace if retained else True,
+            destructive_approved=args.approve_destructive,
         )
     rendered = json.dumps(report, sort_keys=True, separators=(",", ":"))
     _require(len(rendered.encode()) <= MAX_REPORT_BYTES)
