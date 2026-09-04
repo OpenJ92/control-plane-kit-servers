@@ -2,6 +2,15 @@
 
 Reusable OCI server products and descriptors for `control-plane-kit`.
 
+## Try The Persistent Hello Demo
+
+See [the persistent public Hello guide](docs/persistent-hello-demo.md) for
+prerequisites, bootstrap, adding/selecting/removing Hello nodes through CPK,
+approval and history reads, and explicit shutdown boundaries. It uses your own
+installation, images, hostname and secret custody, not the maintainers' demo
+credentials. Private image access is currently a prerequisite; this is not an
+anonymous one-command cloud deployment.
+
 ## Validation
 
 The authoritative clean-checkout package gate is:

@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from hashlib import sha256
+import importlib
 import io
 import inspect
 import json
+from pathlib import Path
 import unittest
 from unittest.mock import call, patch
 from urllib.parse import quote_from_bytes
+from uuid import uuid4
 
 from control_plane_kit_core.verification import VerificationPolicy
 
@@ -14,6 +19,367 @@ from scripts import cpk_server_hosted_activity
 
 class _PrimaryTransportFailure(RuntimeError):
     pass
+
+
+class _PublicConvergenceFixture:
+    """Small public-route fixture; CPK owns the command semantics behind it."""
+
+    def __init__(
+        self,
+        case: unittest.TestCase,
+        *,
+        attention_status: str | None = None,
+        observation_fault: str | None = None,
+    ) -> None:
+        self.case = case
+        self.workspace_id = f"workspace-{uuid4().hex[:12]}"
+        self.operator_bearer = f"Bearer operator-{uuid4().hex}"
+        self.worker_bearer = f"Bearer worker-{uuid4().hex}"
+        self.approver_bearer = f"Bearer approver-{uuid4().hex}"
+        self.approver_scopes = {"plan:approve", "plan:approve-destructive"}
+        self.router_observation = None
+        self.attention_status = attention_status
+        self.observation_fault = observation_fault
+        self.calls: list[dict[str, object]] = []
+        self.coordinates: dict[str, str] = {}
+        self.execute_calls = 0
+        self.completed = False
+        self.approved = False
+        self.transition = -1
+        self.current_graph_id = f"graph-{uuid4().hex}"
+        self.current_projection_id = f"projection-{uuid4().hex}"
+        self.current_descriptor: dict[str, object] = {
+            "name": self.workspace_id,
+            "runtimes": {},
+            "nodes": {},
+            "edges": {},
+            "public_ingresses": [],
+        }
+        self.pending_descriptor = self.current_descriptor
+        self.desired_graph_id: str | None = None
+        self.desired_projection_id: str | None = None
+        self.desired_revision = 0
+
+    def invoke(
+        self,
+        route_id: str,
+        arguments: dict[str, object],
+        *,
+        authorization: str,
+    ) -> dict[str, object]:
+        worker_routes = {
+            "command.run.claim",
+            "command.run.start",
+            "command.deployment.execute",
+            "command.graph.advance-current",
+        }
+        self.case.assertEqual(
+            authorization,
+            self.approver_bearer if route_id == "command.approval.decide" else
+            self.worker_bearer if route_id in worker_routes else self.operator_bearer,
+            f"wrong trusted principal for {route_id}",
+        )
+        self._expect(arguments, workspace_id=self.workspace_id)
+        call_record = {
+            "route_id": route_id,
+            "arguments": json.loads(json.dumps(arguments)),
+            "authorization": authorization,
+            "transition": self.transition,
+        }
+        self.calls.append(call_record)
+        if route_id == "command.workspace.create":
+            return {"workspace": self._workspace()}
+        if route_id in {
+            "command.product.import",
+            "command.runtime-authority.register",
+            "command.runtime-authority-delivery.register",
+        }:
+            return {"status": "accepted"}
+        if route_id == "read.workspace":
+            return {"workspace": self._workspace()}
+        if route_id == "read.current-graph":
+            return {
+                "workspace_id": self.workspace_id,
+                "kind": "current-graph",
+                "graph_id": self.current_graph_id,
+                "authored_graph_id": self.current_graph_id,
+                "realized_projection_id": self.current_projection_id,
+                "graph_descriptor": self.current_descriptor,
+            }
+        if route_id == "command.deployment.prepare":
+            self._expect(
+                arguments,
+                expected_current={
+                    "authored_graph_id": self.current_graph_id,
+                    "realized_projection_id": self.current_projection_id,
+                },
+                expected_desired=(
+                    None if self.desired_graph_id is None else {
+                        "authored_graph_id": self.desired_graph_id,
+                        "realized_projection_id": self.desired_projection_id,
+                    }
+                ),
+                expected_desired_graph_revision=self.desired_revision,
+            )
+            self.transition += 1
+            call_record["transition"] = self.transition
+            self.coordinates = {
+                key: f"{key}-{uuid4().hex}"
+                for key in ("plan", "session", "approval", "request", "run")
+            }
+            self.execute_calls = 0
+            self.completed = False
+            self.approved = False
+            desired = arguments["desired_graph"]
+            if desired == self.current_descriptor:
+                return {
+                    "status": "no-changes",
+                    "workspace_id": self.workspace_id,
+                    "plan_id": self.coordinates["plan"],
+                }
+            self.pending_descriptor = desired
+            self.desired_revision += 1
+            self.desired_graph_id = f"graph-{uuid4().hex}"
+            self.desired_projection_id = f"projection-{uuid4().hex}"
+            return {
+                "status": "approval-required",
+                "workspace_id": self.workspace_id,
+                "plan_id": self.coordinates["plan"],
+                "approval_request_id": self.coordinates["approval"],
+            }
+        if route_id == "read.plan-detail":
+            self._expect(arguments, plan_id=self.coordinates["plan"])
+            # Representative public plan output, not a fixture planner. The router
+            # has a health activity only in the initial and rewire submissions.
+            activities = []
+            if self.transition in {0, 2}:
+                router_id = next(iter(self.pending_descriptor["edges"].values()))["consumer"]["role"]
+                activities.append({
+                    "activity_id": f"health-{uuid4().hex}",
+                    "operation": {"kind": "wait-for-healthy", "target": {"kind": "node", "node_id": router_id}},
+                    "dependencies": [], "risk": "low", "impact": "non-destructive",
+                })
+            return {
+                "workspace_id": self.workspace_id,
+                "kind": "plan-detail",
+                "plan": {
+                    "plan_id": self.coordinates["plan"],
+                    "session_id": self.coordinates["session"],
+                    "base_graph_id": self.current_graph_id,
+                    "desired_graph_id": self.desired_graph_id,
+                    "base_realized_projection_id": self.current_projection_id,
+                    "desired_realized_projection_id": self.desired_projection_id,
+                    "desired_graph_revision": self.desired_revision,
+                    "risk_summary": {
+                        "destructive_count": 1 if self.transition in {3, 5} else 0,
+                    },
+                    "payload": {"activities": activities},
+                },
+            }
+        if route_id == "read.approval-detail":
+            self._expect(arguments, approval_id=self.coordinates["approval"])
+            destructive = self.transition in {3, 5}
+            return {
+                "approval": {
+                    "request_id": self.coordinates["approval"],
+                    "session_id": self.coordinates["session"],
+                    "required_scope": (
+                        "plan:approve-destructive" if destructive else "plan:approve"
+                    ),
+                    "destructive": destructive,
+                    "state": "approved" if self.approved else "pending",
+                    "requested_by": "convergence-operator",
+                    "decision": None if not self.approved else {
+                        "decision_id": f"decision-{uuid4().hex}", "actor_id": "convergence-approver",
+                        "decision": "approved", "scope": "plan:approve-destructive" if destructive else "plan:approve",
+                        "decided_at": "2026-09-03T12:00:00+00:00",
+                    },
+                }
+            }
+        if route_id == "command.approval.decide":
+            self._expect(
+                arguments,
+                approval_id=self.coordinates["approval"],
+                session_id=self.coordinates["session"],
+                decision="approved",
+            )
+            required = (
+                "plan:approve-destructive" if self.transition in {3, 5}
+                else "plan:approve"
+            )
+            self.case.assertIn(required, self.approver_scopes)
+            self.case.assertNotEqual(authorization, self.operator_bearer)
+            self.approved = True
+            return {"state": "approved", "replayed": False}
+        if route_id == "command.deployment.admit":
+            self._expect(
+                arguments,
+                plan_id=self.coordinates["plan"],
+                session_id=self.coordinates["session"],
+                approval_request_id=self.coordinates["approval"],
+            )
+            return {
+                "execution_request_id": self.coordinates["request"],
+                "replayed": False,
+            }
+        if route_id == "command.run.claim":
+            self._expect(arguments, run_id=self.coordinates["request"])
+            self.claim_generation = self.transition + 41
+            return {
+                "run_id": self.coordinates["run"],
+                "claim_generation": self.claim_generation,
+                "replayed": False,
+            }
+        if route_id == "command.run.start":
+            self._expect(
+                arguments, run_id=self.coordinates["run"],
+                claim_generation=self.claim_generation,
+            )
+            return {"run_status": "running", "replayed": False}
+        if route_id == "command.deployment.execute":
+            self._expect(
+                arguments, run_id=self.coordinates["run"],
+                claim_generation=self.claim_generation, max_effects=1,
+            )
+            self.execute_calls += 1
+            self.case.assertLessEqual(self.execute_calls, 2)
+            if self.attention_status is not None:
+                return {
+                    "run_id": self.coordinates["run"],
+                    "run_status": "running",
+                    "coordinator_status": self.attention_status,
+                    "effects_attempted": 1,
+                    "activity_id": f"activity-{self.transition}",
+                }
+            self.completed = self.execute_calls == 2
+            call_record["returned_status"] = "completed" if self.completed else "progressed"
+            return {
+                "run_id": self.coordinates["run"],
+                "run_status": "succeeded" if self.completed else "running",
+                "coordinator_status": call_record["returned_status"],
+                "effects_attempted": 1,
+                "activity_id": None if self.completed else f"activity-{uuid4().hex}",
+            }
+        if route_id == "command.graph.advance-current":
+            self.case.assertTrue(self.completed, "advanced before completed response")
+            self._expect(
+                arguments,
+                run_id=self.coordinates["run"], plan_id=self.coordinates["plan"],
+                claim_generation=self.claim_generation,
+                expected_current_graph_id=self.current_graph_id,
+                expected_current_realized_projection_id=self.current_projection_id,
+                desired_graph_id=self.desired_graph_id,
+                desired_realized_projection_id=self.desired_projection_id,
+                expected_desired_graph_revision=self.desired_revision,
+            )
+            self.current_graph_id = str(self.desired_graph_id)
+            self.current_projection_id = str(self.desired_projection_id)
+            self.current_descriptor = self.pending_descriptor
+            return {
+                "from_graph_id": arguments["expected_current_graph_id"],
+                "to_graph_id": self.current_graph_id,
+                "to_realized_projection_id": self.current_projection_id,
+                "desired_graph_revision": self.desired_revision,
+                "replayed": False,
+            }
+        if route_id == "read.run-events":
+            self._expect(arguments, run_id=self.coordinates["run"])
+            cursor = {
+                "format_version": 1, "collection": "run-events",
+                "scope": {"workspace_id": self.workspace_id, "run_id": self.coordinates["run"]},
+                "position": {"ordinal": 1, "item_id": f"event-{self.transition}-1"},
+            }
+            second = "after" in arguments
+            if second:
+                self.case.assertEqual(self.transition, 0)
+                self.case.assertEqual(arguments["after"], cursor)
+            self.case.assertNotIn("cursor", arguments)
+            ordinal = 2 if second else 1
+            return {
+                "workspace_id": self.workspace_id,
+                "kind": "run-events",
+                "limit": 100,
+                "items": [{
+                    "event_id": f"event-{self.transition}-{ordinal}", "run_id": self.coordinates["run"],
+                    "ordinal": ordinal, "event_type": "run-succeeded" if second else "run-started",
+                    "occurred_at": "2026-09-03T12:00:00+00:00", "activity_id": None,
+                }],
+                "next_cursor": cursor if self.transition == 0 and not second else None,
+            }
+        if route_id == "read.plan-runs":
+            self._expect(arguments, plan_id=self.coordinates["plan"])
+            return {
+                "workspace_id": self.workspace_id,
+                "kind": "plan-runs",
+                "limit": 100,
+                "items": [{"run_id": self.coordinates["run"], "status": "succeeded"}],
+                "next_cursor": None,
+            }
+        if route_id == "read.observed-state":
+            items = []
+            for edge in self.current_descriptor["edges"].values():
+                router_id = edge["consumer"]["role"]
+                router = self.current_descriptor["nodes"][router_id]
+                check = next(
+                    value for value in router["block_spec"]["verification"]["checks"]
+                    if value.get("path") == "/"
+                )
+                selected = self.current_descriptor["nodes"][edge["provider"]["role"]]
+                message = next(
+                    binding["value"] for binding in selected["environment_bindings"]
+                    if binding["name"] == "HELLO_MESSAGE"
+                )
+                evidence = {
+                    "run_id": self.coordinates["run"],
+                    "node_id": router_id, "check_id": check["check_id"],
+                    "path": "/", "http_status": 200,
+                    "response_bytes": len((message + "\n").encode()),
+                    "expected_body_sha256": check["expected_body_sha256"],
+                    "body_sha256_matches": True,
+                }
+                if self.observation_fault == "digest":
+                    evidence["expected_body_sha256"] = "0" * 64
+                if self.observation_fault == "match":
+                    evidence["body_sha256_matches"] = False
+                observation = {
+                    "observation_id": f"observation-{uuid4().hex}",
+                    "observed_at": "2026-09-03T12:00:00+00:00",
+                    "subject_id": f"verification:{uuid4().hex}{uuid4().hex}",
+                    "graph_id": (
+                        f"graph-{uuid4().hex}" if self.observation_fault == "graph"
+                        else self.current_graph_id
+                    ),
+                    "status": "verified", "freshness": "fresh", "stale_reason": None,
+                    "payload": {"http_verification": evidence},
+                }
+                if self.transition in {0, 2}:
+                    self.router_observation = observation
+                else:
+                    self.case.assertIsNotNone(self.router_observation)
+                    observation = {**self.router_observation, "freshness": "stale", "stale_reason": "graph-changed"}
+                items.append(observation)
+            return {
+                "workspace_id": self.workspace_id,
+                "kind": "observed-state",
+                "items": items, "next_cursor": None,
+            }
+        raise AssertionError(f"unexpected public route: {route_id}")
+
+    def _expect(self, arguments: dict[str, object], **expected: object) -> None:
+        self.case.assertEqual(
+            {key: arguments.get(key) for key in expected}, expected,
+            "public upstream coordinates were not carried forward",
+        )
+
+    def _workspace(self) -> dict[str, object]:
+        return {
+            "workspace_id": self.workspace_id,
+            "current_graph_id": self.current_graph_id,
+            "current_realized_projection_id": self.current_projection_id,
+            "desired_graph_id": self.desired_graph_id,
+            "desired_realized_projection_id": self.desired_projection_id,
+            "desired_graph_revision": self.desired_revision,
+        }
 
 
 class HostedActivityReadinessTests(unittest.TestCase):
@@ -1291,6 +1657,386 @@ class HostedActivityReadinessTests(unittest.TestCase):
             "credential-not-for-output",
         ):
             self.assertNotIn(forbidden, rendered)
+
+    def test_retained_application_uses_public_commands_and_explicit_connector_reference(self) -> None:
+        controller = importlib.import_module("scripts.cpk_server_public_graph_convergence")
+        reference = "secret://demo/application/tunnel-token"
+        node = {"node_id": "hello-retained", "name": "Hello", "color": "green",
+                "message": "Hello through public ingress"}
+        histories = {}
+        public_descriptors = []
+
+        def public_descriptor(descriptor):
+            projected = json.loads(json.dumps(descriptor))
+            # Representative public redaction, not a second redactor implementation.
+            for value in projected["nodes"].values():
+                if "secret_deliveries" in value:
+                    value["secret_deliveries"] = "<redacted>"
+            public_descriptors.append(projected)
+            return projected
+
+        def run(fixture, *, create_workspace=True, current_projection_drift=False):
+            plans = histories.setdefault(id(fixture), {})
+
+            def invoke(route, arguments, *, authorization):
+                if route in {"command.secret-provider.register", "command.secret-reference.register"}:
+                    self.assertEqual(authorization, fixture.operator_bearer)
+                    self.assertEqual(arguments["allowed_intents"], ["cloudflare.tunnel-token"])
+                    fixture.calls.append({"route_id": route, "arguments": arguments})
+                    return {"registration_id": "fixture-provider"}
+                if route in {"read.activity", "read.session-plans", "read.desired-graph"} or (
+                    route == "read.plan-detail" and arguments["plan_id"] in plans
+                ):
+                    self.assertEqual(authorization, fixture.operator_bearer)
+                    fixture.calls.append({"route_id": route, "arguments": arguments})
+                    if route == "read.activity":
+                        return {"items": [{"session_id": value["session_id"]} for value in plans.values()]}
+                    if route == "read.session-plans":
+                        return {"items": [value for value in plans.values() if value["session_id"] == arguments["session_id"]]}
+                    if route == "read.desired-graph":
+                        return {
+                            "graph_id": fixture.desired_graph_id,
+                            "realized_projection_id": fixture.desired_projection_id,
+                            "graph_descriptor": public_descriptor(fixture.pending_descriptor),
+                        }
+                    return {"plan": plans[arguments["plan_id"]]}
+                if route == "read.plan-runs" and not plans[arguments["plan_id"]]["payload"]["activities"]:
+                    fixture.calls.append({"route_id": route, "arguments": arguments})
+                    return {"items": []}
+                result = fixture.invoke(route, arguments, authorization=authorization)
+                if route == "read.current-graph":
+                    result["graph_descriptor"] = public_descriptor(fixture.current_descriptor)
+                    if current_projection_drift:
+                        result["realized_projection_id"] = f"projection-{uuid4().hex}"
+                if route == "command.deployment.prepare" and result["status"] == "no-changes":
+                    # A real no-op prepare persists new desired coordinates but no run.
+                    fixture.desired_graph_id = f"graph-{uuid4().hex}"
+                    fixture.desired_projection_id = f"projection-{uuid4().hex}"
+                    fixture.desired_revision += 1
+                if route == "read.plan-detail":
+                    result["plan"]["status"] = "planned"
+                    plans[arguments["plan_id"]] = json.loads(json.dumps(result["plan"]))
+                return result
+
+            return controller.run_public_graph_convergence(
+                invoke, servers_repo=Path(__file__).resolve().parents[1],
+                workspace_id=fixture.workspace_id, router_id="application-router", hello_nodes=(node,),
+                initial_node_id=node["node_id"], rewire_node_id=node["node_id"], retained_node_ids=(),
+                authorization=fixture.operator_bearer, worker_authorization=fixture.worker_bearer,
+                approver_authorization=fixture.approver_bearer, capacity=4,
+                connector_token_reference=reference, destructive_approved=False,
+                create_workspace=create_workspace,
+            )
+
+        fixture = _PublicConvergenceFixture(self)
+        result = run(fixture)
+        self.assertEqual(result["status"], "converged")
+        self.assertEqual([row["phase"] for row in result["transitions"]], ["application"])
+        prepared = [row["arguments"]["desired_graph"] for row in fixture.calls
+                    if row["route_id"] == "command.deployment.prepare"]
+        self.assertEqual(len(prepared), 1)
+        graph = controller.DEFAULT_GRAPH_CODEC.decode(prepared[0])
+        self.assertEqual(set(prepared[0]["nodes"]), {node["node_id"], "application-router", "application-ingress"})
+        connector = graph.node("application-ingress")
+        self.assertEqual(connector.secret_deliveries, (
+            controller.SecretEnvironmentDelivery("TUNNEL_TOKEN", controller.SecretReference(reference),
+                                                 controller.SecretUseIntent.CLOUDFLARE_TUNNEL_TOKEN),
+        ))
+        self.assertFalse(prepared[0].get("public_ingresses"))
+        edge = next(iter(prepared[0]["edges"].values()))
+        self.assertEqual(edge["provider"]["role"], node["node_id"])
+        self.assertEqual(edge["consumer"]["role"], "application-router")
+        self.assertEqual(fixture.current_descriptor, prepared[0])
+        self.assertTrue(public_descriptors)
+        self.assertNotEqual(public_descriptors[-1], prepared[0])
+        self.assertTrue(all(row["route_id"].startswith(("read.", "command.")) for row in fixture.calls))
+        self.assertFalse(any("ingress-authority" in row["route_id"] for row in fixture.calls))
+        for bearer in (fixture.operator_bearer, fixture.worker_bearer, fixture.approver_bearer):
+            self.assertNotIn(bearer, json.dumps(result))
+
+        no_op = run(fixture, create_workspace=False)
+        self.assertEqual(no_op["status"], "converged")
+        self.assertEqual(no_op["transitions"][0]["status"], "no-changes")
+        self.assertNotEqual(fixture.desired_graph_id, fixture.current_graph_id)
+        before_drift = len(fixture.calls)
+        self.assertEqual(run(fixture, create_workspace=False, current_projection_drift=True)["status"],
+                         "attention-required")
+        self.assertTrue(all(row["route_id"].startswith("read.") for row in fixture.calls[before_drift:]))
+        node["message"] = "Hello after a completed no-op"
+        continued = run(fixture, create_workspace=False)
+        self.assertEqual(continued["status"], "converged")
+        self.assertEqual(continued["transitions"][0]["phase"], "application")
+        self.assertEqual(sum(row["route_id"] == "command.workspace.create" for row in fixture.calls), 1)
+
+        attention = _PublicConvergenceFixture(self, attention_status="uncertain")
+        stopped = run(attention)
+        self.assertEqual(stopped["status"], "attention-required")
+        self.assertEqual(sum(row["route_id"] == "command.deployment.execute" for row in attention.calls), 1)
+        self.assertFalse(any(row["route_id"] == "command.graph.advance-current" for row in attention.calls))
+        self.assertEqual(sum(row["route_id"] == "command.deployment.prepare" for row in attention.calls), 1)
+        self.assertEqual(run(attention, create_workspace=False)["status"], "attention-required")
+        self.assertEqual(sum(row["route_id"] == "command.deployment.execute" for row in attention.calls), 1)
+
+    def test_public_graph_convergence_uses_only_authenticated_public_requests(
+        self,
+    ) -> None:
+        try:
+            controller = importlib.import_module(
+                "scripts.cpk_server_public_graph_convergence"
+            )
+        except ModuleNotFoundError:
+            controller = None
+        self.assertIsNotNone(
+            controller,
+            "public graph convergence controller is not implemented",
+        )
+        run = getattr(controller, "run_public_graph_convergence", None)
+        self.assertTrue(callable(run), "public convergence entrypoint is unavailable")
+
+        colors = ("red", "green", "blue", "gold")
+        hello_nodes = tuple(
+            {
+                "node_id": f"hello-{uuid4().hex[:12]}",
+                "name": f"service-{index}",
+                "color": color,
+                "message": f"Hello from service-{index} in {color}",
+            }
+            for index, color in enumerate(colors, start=1)
+        )
+        router_id = f"router-{uuid4().hex[:12]}"
+        retained_node_ids = (
+            hello_nodes[1]["node_id"],
+            hello_nodes[3]["node_id"],
+        )
+
+        def invoke(fixture: _PublicConvergenceFixture) -> dict[str, object]:
+            return run(
+                fixture.invoke,
+                servers_repo=Path(__file__).resolve().parents[1],
+                workspace_id=fixture.workspace_id,
+                router_id=router_id,
+                hello_nodes=hello_nodes,
+                initial_node_id=hello_nodes[0]["node_id"],
+                rewire_node_id=hello_nodes[3]["node_id"],
+                retained_node_ids=retained_node_ids,
+                authorization=fixture.operator_bearer,
+                worker_authorization=fixture.worker_bearer,
+                approver_authorization=fixture.approver_bearer,
+            )
+
+        fixture = _PublicConvergenceFixture(self)
+        with patch.object(controller, "datetime") as clock:
+            clock.now.return_value = datetime(2026, 9, 3, 12, 0, 0, 123456, tzinfo=timezone.utc)
+            result = invoke(fixture)
+
+        timestamps = [
+            row["arguments"][key]
+            for row in fixture.calls
+            for key in ("imported_at", "admitted_at")
+            if key in row["arguments"]
+        ]
+        self.assertEqual(timestamps, ["2026-09-03T12:00:00.123456Z"] * 4)
+
+        for status, body, category in (
+            (400, b"private-response-token", "http-rejected"),
+            (200, b'{"error":{"message":"private-response-token"}}', "rpc-rejected"),
+            (200, b"private-response-token", "response-invalid"),
+        ):
+            with self.subTest(bootstrap_failure=category):
+                rejected_fixture = _PublicConvergenceFixture(self)
+                original_invoke = rejected_fixture.invoke
+                requests = []
+
+                def respond(request):
+                    requests.append(request)
+                    return controller.httpx.Response(status, content=body)
+
+                with controller.httpx.Client(
+                    base_url="http://fixture.invalid", transport=controller.httpx.MockTransport(respond),
+                ) as client:
+                    transport = controller.McpTransport(client)
+
+                    def reject_import(route, arguments, *, authorization):
+                        if route == "command.product.import":
+                            return transport.invoke(route, arguments, authorization=authorization)
+                        return original_invoke(route, arguments, authorization=authorization)
+
+                    with patch.object(rejected_fixture, "invoke", side_effect=reject_import):
+                        rejected = invoke(rejected_fixture)
+                self.assertEqual(rejected["status"], "attention-required")
+                self.assertEqual(rejected["bootstrap_step"], "hello-product-import")
+                self.assertEqual(rejected["failure"], {"category": category, "http_status": status})
+                self.assertEqual(len(requests), 1)
+                self.assertEqual([row["route_id"] for row in rejected_fixture.calls], ["command.workspace.create"])
+                self.assertEqual(rejected["transitions"], [])
+                rendered = json.dumps(rejected)
+                self.assertNotIn("private-response-token", rendered)
+                self.assertNotIn(rejected_fixture.operator_bearer, rendered)
+
+        self.assertEqual(result["status"], "converged")
+        self.assertEqual(result["final_graph_id"], fixture.current_graph_id)
+        self.assertEqual(len(result["transitions"]), 6)
+        self.assertTrue(
+            all(
+                call_record["route_id"].startswith(("command.", "read."))
+                for call_record in fixture.calls
+            )
+        )
+
+        prepare_calls = [
+            call_record
+            for call_record in fixture.calls
+            if call_record["route_id"] == "command.deployment.prepare"
+        ]
+        self.assertEqual(len(prepare_calls), 6)
+        descriptors = [
+            call_record["arguments"]["desired_graph"]
+            for call_record in prepare_calls
+        ]
+        node_ids = tuple(node["node_id"] for node in hello_nodes)
+        expected_node_sets = (
+            {node_ids[0], router_id},
+            {*node_ids, router_id},
+            {*node_ids, router_id},
+            {*retained_node_ids, router_id},
+            {*retained_node_ids, router_id},
+            set(),
+        )
+        selected_ids = (
+            node_ids[0],
+            node_ids[0],
+            node_ids[3],
+            node_ids[3],
+            node_ids[3],
+        )
+        messages = {node["node_id"]: node["message"] for node in hello_nodes}
+        for index, descriptor in enumerate(descriptors):
+            with self.subTest(transition=index):
+                self.assertEqual(set(descriptor["nodes"]), expected_node_sets[index])
+                if index == 5:
+                    self.assertEqual(descriptor["edges"], {})
+                    continue
+                edge = next(iter(descriptor["edges"].values()))
+                self.assertEqual(edge["provider"]["role"], selected_ids[index])
+                self.assertEqual(edge["consumer"]["role"], router_id)
+                router = descriptor["nodes"][router_id]
+                body_check = next(
+                    check
+                    for check in router["block_spec"]["verification"]["checks"]
+                    if check.get("path") == "/"
+                )
+                self.assertEqual(
+                    body_check["expected_body_sha256"],
+                    sha256((messages[selected_ids[index]] + "\n").encode()).hexdigest(),
+                )
+                for node_id in expected_node_sets[index] - {router_id}:
+                    bindings = descriptor["nodes"][node_id]["environment_bindings"]
+                    hello_message = next(
+                        binding["value"]
+                        for binding in bindings
+                        if binding["name"] == "HELLO_MESSAGE"
+                    )
+                    self.assertEqual(hello_message, messages[node_id])
+
+        self.assertEqual(descriptors[3], descriptors[4], "no-op graph drifted")
+        no_op_commands = [
+            call_record["route_id"]
+            for call_record in fixture.calls
+            if call_record["transition"] == 4
+            and call_record["route_id"].startswith("command.")
+        ]
+        self.assertEqual(no_op_commands, ["command.deployment.prepare"])
+        destructive_approvals = [
+            call_record
+            for call_record in fixture.calls
+            if call_record["route_id"] == "command.approval.decide"
+            and call_record["transition"] in {3, 5}
+        ]
+        self.assertEqual(len(destructive_approvals), 2)
+        self.assertTrue(
+            all(
+                call_record["authorization"] == fixture.approver_bearer
+                for call_record in destructive_approvals
+            )
+        )
+        self.assertNotEqual(fixture.operator_bearer, fixture.approver_bearer)
+        self.assertEqual(len(result["transitions"][0]["events"]), 2)
+        self.assertEqual([event["ordinal"] for event in result["transitions"][0]["events"]], [1, 2])
+        for fresh, unchanged in ((0, 1), (2, 3)):
+            original = result["transitions"][fresh]["response"]
+            historical = result["transitions"][unchanged]["response"]
+            self.assertEqual(original["basis"], "current-run")
+            self.assertEqual(historical["basis"], "historical-unchanged-router")
+            self.assertEqual(historical["freshness"], "stale")
+            for key in ("observation_id", "graph_id", "run_id"):
+                self.assertEqual(historical[key], original[key])
+            self.assertNotEqual(historical["graph_id"], result["transitions"][unchanged]["graph_id"])
+        for transition in (0, 1, 2, 3, 5):
+            with self.subTest(completed_transition=transition):
+                calls = [row for row in fixture.calls if row["transition"] == transition]
+                executions = [
+                    row for row in calls if row["route_id"] == "command.deployment.execute"
+                ]
+                self.assertEqual(
+                    [row["returned_status"] for row in executions],
+                    ["progressed", "completed"],
+                )
+                self.assertEqual(
+                    len({row["arguments"]["idempotency_key"] for row in executions}), 2,
+                )
+                advance = next(
+                    row for row in calls if row["route_id"] == "command.graph.advance-current"
+                )
+                self.assertGreater(calls.index(advance), calls.index(executions[-1]))
+                self.assertTrue(any(
+                    row["route_id"] == "read.current-graph"
+                    for row in calls[calls.index(advance) + 1:]
+                ))
+                self.assertTrue(any(row["route_id"] == "read.run-events" for row in calls))
+                retained = result["transitions"][transition]
+                self.assertIn("activities", retained["plan"])
+                self.assertNotEqual(retained["approval"]["requested_by"], retained["approval"]["decision"]["actor_id"])
+                self.assertTrue(retained["events"])
+                self.assertEqual(retained["outcomes"][-1]["coordinator_status"], "completed")
+                if transition != 5:
+                    self.assertTrue(any(row["route_id"] == "read.observed-state" for row in calls))
+
+        for fault in ("graph", "digest", "match"):
+            with self.subTest(observation=fault):
+                mismatched = _PublicConvergenceFixture(self, observation_fault=fault)
+                rejected = invoke(mismatched)
+                self.assertEqual(rejected["status"], "attention-required")
+                self.assertTrue(any(
+                    row["route_id"] == "read.observed-state" for row in mismatched.calls
+                ))
+                self.assertEqual(sum(
+                    row["route_id"] == "command.deployment.prepare" for row in mismatched.calls
+                ), 1)
+
+        attention = _PublicConvergenceFixture(self, attention_status="uncertain")
+        stopped = invoke(attention)
+        self.assertEqual(stopped["status"], "attention-required")
+        self.assertEqual(stopped["coordinator_status"], "uncertain")
+        self.assertEqual(
+            sum(
+                call_record["route_id"] == "command.deployment.execute"
+                for call_record in attention.calls
+            ),
+            1,
+        )
+        self.assertFalse(
+            any(
+                call_record["route_id"] == "command.graph.advance-current"
+                for call_record in attention.calls
+            )
+        )
+        self.assertEqual(
+            sum(
+                call_record["route_id"] == "command.deployment.prepare"
+                for call_record in attention.calls
+            ),
+            1,
+        )
 
     def test_policy_cadence_occurs_only_between_failed_attempts(self) -> None:
         policy = VerificationPolicy(

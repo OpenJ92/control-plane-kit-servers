@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import tempfile
 import sys
@@ -3649,6 +3650,149 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertNotIn("python3", wrapper)
         self.assertNotIn("cpk-server:source-", wrapper)
         self.assertNotIn("cpk-local-gateway:source-", wrapper)
+
+    def test_public_graph_convergence_launcher_keeps_runtime_authority_in_server(
+        self,
+    ) -> None:
+        launcher = ROOT / "scripts" / "cpk_server_public_graph_convergence_smoke.sh"
+        self.assertTrue(
+            launcher.is_file(),
+            "public graph convergence launcher is not implemented",
+        )
+        source = launcher.read_text(encoding="utf-8")
+        logical_source = source.replace("\\\n", " ")
+        docker_runs: list[list[str]] = []
+        pending = None
+        for line in logical_source.splitlines():
+            if pending is None:
+                if "docker run" not in line:
+                    continue
+                pending = line[line.index("docker run") :].strip()
+            else:
+                pending += "\n" + line
+            command = pending.strip()
+            command = command.removesuffix('")').removesuffix(")")
+            try:
+                words = shlex.split(command)
+            except ValueError as error:
+                self.assertEqual(str(error), "No closing quotation")
+                continue
+            docker_runs.append(words)
+            pending = None
+        self.assertIsNone(pending, "unterminated shell command")
+
+        persistent_source, dispatch = logical_source.split(
+            '\ncase "${CPK_PUBLIC_CONVERGENCE_MODE:-disposable}" in\n', 1,
+        )
+        disposable_source = dispatch.split("\nesac\n", 1)[1]
+        bootstrap_source, attach_source = persistent_source.split('  test "$mode" = attach', 1)
+
+        server_runs = [
+            command
+            for command in docker_runs
+            if any("CPK_SERVER_MODE=execution-capable" in token for token in command)
+        ]
+        controller_runs = [
+            command
+            for command in docker_runs
+            if "scripts.cpk_server_public_graph_convergence" in command
+        ]
+        self.assertEqual(len(server_runs), 2)
+        self.assertEqual(len(controller_runs), 2)
+        self.assertEqual(sum("CPK_PRODUCT_MATERIAL_RESOLVER=provider" in command for command in server_runs), 1)
+        self.assertEqual(sum("CPK_PRODUCT_MATERIAL_RESOLVER=none" in command for command in server_runs), 1)
+        self.assertEqual(sum("$INSTALLATION/application.json:/application.json:ro" in command for command in controller_runs), 1)
+        with self.subTest(boundary="cached-image-bootstrap"):
+            self.assertFalse(any(
+                token.startswith(("CPK_IMAGE_PULL_CREDENTIAL_RESOLVER=", "DOCKER_CONFIG="))
+                or ":/tmp/cpk-docker-config" in token
+                for command in server_runs for token in command
+            ))
+            for command in controller_runs:
+                self.assertIn("CPK_PUBLIC_CONVERGENCE_PULL_AUTHORITY=0", command)
+            for command in docker_runs:
+                self.assertIn("--pull=never", command)
+        with self.subTest(boundary="unsupported-registry-input-before-provisioning"):
+            with tempfile.TemporaryDirectory() as directory:
+                result = subprocess.run(
+                    ["sh", str(launcher)],
+                    env={
+                        "PATH": os.defpath,
+                        "TMPDIR": directory,
+                        "CPK_SERVER_IMAGE": "sha256:" + "1" * 64,
+                        "CPK_SERVERS_TEST_IMAGE": "sha256:" + "2" * 64,
+                        "CPK_PUBLIC_CONVERGENCE_APPROVED": "1",
+                        "CPK_PUBLIC_CONVERGENCE_DESTRUCTIVE_APPROVED": "1",
+                        "CPK_PUBLIC_CONVERGENCE_EVIDENCE_PARENT": directory,
+                        "CPK_PUBLIC_CONVERGENCE_PULL_CONFIG": directory,
+                    },
+                    capture_output=True, text=True, timeout=5, check=False,
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.stdout, "")
+                self.assertEqual(
+                    result.stderr,
+                    "public convergence requires cached images; registry configuration is unsupported\n",
+                )
+                self.assertEqual(list(Path(directory).iterdir()), [])
+        socket_mount = "/var/run/docker.sock:/var/run/docker.sock"
+        socket_holders = [
+            command
+            for command in docker_runs
+            if any(socket_mount in token for token in command)
+        ]
+        self.assertEqual(socket_holders, server_runs)
+        for command in controller_runs:
+            self.assertIn("$ROOT:/source:ro", command)
+            self.assertIn("$EVIDENCE:/evidence:rw", command)
+            self.assertIn("/evidence/public-convergence.json", command)
+            self.assertFalse(any(socket_mount in token or "DATABASE_URL" in token
+                                 or "provider-client-token" in token or "provider-credential" in token
+                                 for token in command))
+        custody_bootstraps = [command for command in docker_runs
+                              if "$CPK_DEMO_PROVIDER_CREDENTIAL_FILE:/provider-credential:ro" in command]
+        self.assertEqual(len(custody_bootstraps), 1)
+        self.assertEqual(custody_bootstraps[0][custody_bootstraps[0].index("--network") + 1], "none")
+        self.assertIn("--read-only", custody_bootstraps[0])
+        self.assertFalse(any(socket_mount in token for token in custody_bootstraps[0]))
+        self.assertEqual(sum("$INSTALLATION/provider-client-token:/run/secrets/cpk-provider/client-token:ro" in command
+                             for command in server_runs), 1)
+        self.assertFalse(
+            any(
+                token in logical_source
+                for token in (
+                    "docker ps",
+                    "docker network ls",
+                    "--filter",
+                    "_sync_runtime_networks",
+                    "_disconnect_runtime_networks",
+                )
+            )
+        )
+        self.assertNotIn("docker volume", disposable_source)
+        self.assertIn("--tmpfs /var/lib/postgresql/data:rw,nosuid,size=512m", disposable_source)
+        self.assertIn(
+            'docker rm -f "$CONTROLLER_CONTAINER" "$SERVER_CONTAINER" '
+            '"$POSTGRES_CONTAINER"',
+            disposable_source,
+        )
+        self.assertIn('docker network rm "$NETWORK"', disposable_source)
+        self.assertIn('mkdir -m 700 "$INSTALLATION"', bootstrap_source)
+        self.assertIn('test ! -e "$INSTALLATION"', bootstrap_source)
+        self.assertIn('test ! -L "$INSTALLATION"', bootstrap_source)
+        self.assertIn('type=volume,source=$RESOURCE-postgres-data,target=/var/lib/postgresql/data', bootstrap_source)
+        self.assertIn('docker volume create --label "org.openj92.cpk.installation=$OWNERSHIP"', bootstrap_source)
+        self.assertIn('"$INSTALLATION/volume-created"', attach_source)
+        self.assertIn('test "$recorded" = "$CPK_SERVER_IMAGE"', attach_source)
+        self.assertIn('docker rm "$CONTROLLER_CONTAINER"', attach_source)
+        for forbidden in ("docker network create", "docker volume create", "docker start", "docker restart",
+                          "docker network connect", "write_persistent_bootstrap", "mkdir"):
+            self.assertNotIn(forbidden, attach_source)
+        for forbidden in ("docker volume rm", "docker network rm", 'docker rm -f', 'rm -f "$INSTALLATION',
+                          'rmdir "$INSTALLATION"'):
+            self.assertNotIn(forbidden, persistent_source)
+        self.assertNotIn("docker system prune", logical_source)
+        self.assertNotIn("docker volume prune", logical_source)
 
     def test_secrets_image_smoke_covers_private_delegation_contract(self) -> None:
         wrapper = (
