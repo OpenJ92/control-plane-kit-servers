@@ -19,6 +19,7 @@ from control_plane_kit_core.verification import VerificationContract
 
 from cpk_server_hosted_activity import (
     AUTHORIZATION,
+    ClaimedRun,
     HostedWorkflow,
     _assert_activity_mentions,
     _assert_runtime_activity_mentions,
@@ -26,7 +27,9 @@ from cpk_server_hosted_activity import (
     _http,
     _mcp,
     _product_document,
+    _sanitized_main,
     _single_hello_graph,
+    _validate_execute_result,
 )
 
 
@@ -243,10 +246,14 @@ def _resume_update_and_teardown(
 
 @dataclass(frozen=True)
 class PreparedDenialRun:
-    run_id: str
+    claimed_run: ClaimedRun
     plan_id: str
     current_graph_id: str
     desired_graph_id: str
+
+    @property
+    def run_id(self) -> str:
+        return self.claimed_run.run_id
 
 
 def _prepare_denial(
@@ -321,7 +328,10 @@ def _prepare_denial(
         state_file,
         {
             "denial_case": denial_case,
-            "run_id": prepared.run_id,
+            "claimed_run": {
+                "run_id": prepared.claimed_run.run_id,
+                "claim_generation": prepared.claimed_run.claim_generation,
+            },
             "plan_id": prepared.plan_id,
             "current_graph_id": prepared.current_graph_id,
             "desired_graph_id": prepared.desired_graph_id,
@@ -337,10 +347,12 @@ def _execute_denial(
     bootstrap_dir: Path,
     state_file: Path,
 ) -> None:
-    state = _read_state(state_file)
-    if state.get("denial_case") != denial_case:
+    persisted = _read_state(state_file)
+    if persisted.get("denial_case") != denial_case:
         raise RuntimeError("remote Docker TLS denial state does not match case")
-    terminal = _execute_until_terminal(workflow, str(state["run_id"]))
+    state = persisted.get("claimed_run")
+    claimed_run = ClaimedRun.from_descriptor(state)
+    terminal = _execute_until_terminal(workflow, claimed_run)
     if terminal.get("coordinator_status") not in {
         "failed",
         "unsupported",
@@ -348,15 +360,11 @@ def _execute_denial(
         "blocked",
     }:
         raise RuntimeError("remote Docker TLS denial did not stop execution")
-    if workflow.read_current_graph_id() != str(state["current_graph_id"]):
+    if workflow.read_current_graph_id() != str(persisted["current_graph_id"]):
         raise RuntimeError("denied remote Docker TLS run advanced current graph")
-    timeline = _http(
-        workflow.base_url,
-        "GET",
-        f"/workspaces/{workflow.workspace_id}/activity",
-    )
+    events = workflow.read_run_events(claimed_run.run_id, limit=100)
     rendered = json.dumps(
-        {"terminal": terminal, "timeline": timeline},
+        {"terminal": terminal, "events": events},
         separators=(",", ":"),
         sort_keys=True,
     )
@@ -417,10 +425,10 @@ def _prepare_denied_run(
         plan_id=plan_id,
         approval_id=approval_id,
     )
-    run_id = workflow.claim(title=title, request_id=request_id)
-    workflow.start_run(title=title, run_id=run_id)
+    claimed_run = workflow.claim(title=title, request_id=request_id)
+    workflow.start_run(title=title, claimed_run=claimed_run)
     return PreparedDenialRun(
-        run_id=run_id,
+        claimed_run=claimed_run,
         plan_id=plan_id,
         current_graph_id=current_graph_id,
         desired_graph_id=desired_graph_id,
@@ -429,27 +437,32 @@ def _prepare_denied_run(
 
 def _execute_until_terminal(
     workflow: HostedWorkflow,
-    run_id: str,
+    claimed_run: ClaimedRun,
 ) -> dict[str, Any]:
     for attempt in range(40):
-        result = _mcp(
-            workflow.base_url,
-            "tools/call",
-            "command.deployment.execute",
-            {
-                "workspace_id": workflow.workspace_id,
-                "run_id": run_id,
-                "worker_id": workflow.worker_id,
-                "actor_scopes": [PolicyScope.EXECUTION_OPERATE.value],
-                "idempotency_key": (
-                    f"{workflow.workspace_id}:denied-execute:{attempt}"
-                ),
-                "max_effects": 1,
-            },
-            timeout=90,
-            authorization=workflow.worker_authorization,
-        )
-        if result.get("coordinator_status") in {
+        try:
+            result = _mcp(
+                workflow.base_url,
+                "tools/call",
+                "command.deployment.execute",
+                {
+                    "workspace_id": workflow.workspace_id,
+                    "run_id": claimed_run.run_id,
+                    "worker_id": workflow.worker_id,
+                    "actor_scopes": [PolicyScope.EXECUTION_OPERATE.value],
+                    "idempotency_key": (
+                        f"{workflow.workspace_id}:denied-execute:{attempt}"
+                    ),
+                    "claim_generation": claimed_run.claim_generation,
+                    "max_effects": 1,
+                },
+                timeout=90,
+                authorization=workflow.worker_authorization,
+            )
+        except Exception as error:
+            raise RuntimeError("remote Docker TLS execution failed") from error
+        status = _validate_execute_result(result, claimed_run)
+        if status in {
             "completed",
             "failed",
             "unsupported",
@@ -612,14 +625,14 @@ def _assert_public_metadata_is_secret_free(workflow: HostedWorkflow) -> None:
         workflow.base_url,
         "resources/read",
         "read.secret-providers",
-        {"workspace_id": workflow.workspace_id, "limit": 10, "offset": 0},
+        {"workspace_id": workflow.workspace_id, "limit": 10},
         authorization=AUTHORIZATION,
     )
     references = _mcp(
         workflow.base_url,
         "resources/read",
         "read.secret-references",
-        {"workspace_id": workflow.workspace_id, "limit": 10, "offset": 0},
+        {"workspace_id": workflow.workspace_id, "limit": 10},
         authorization=AUTHORIZATION,
     )
     authorities = _mcp(
@@ -770,4 +783,4 @@ def _required_env(name: str) -> str:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(_sanitized_main(main))

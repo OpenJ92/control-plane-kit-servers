@@ -13,9 +13,13 @@ from pathlib import Path
 import re
 from types import MappingProxyType
 from typing import Callable, Mapping
+from urllib.parse import urlsplit
 
 
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$")
+_SECRET_PROVIDER_ID = re.compile(r"[a-z][a-z0-9-]{0,62}\Z")
+_SECRET_REFERENCE_SEGMENT = re.compile(r"[A-Za-z0-9._-]{1,128}\Z")
+_MAX_SECRET_REFERENCE_BYTES = 256
 
 
 class SourceLiveAbortError(RuntimeError):
@@ -71,7 +75,7 @@ class ExactOwnedIngressResource:
             "public_provider_coordinates",
             MappingProxyType(coordinates),
         )
-        if not self.secret_reference.startswith("secret://"):
+        if not _is_bounded_secret_reference(self.secret_reference):
             raise SourceLiveAbortError("owned resource secret reference is invalid")
         if type(self.epoch) is not int or self.epoch < 1:
             raise SourceLiveAbortError("owned resource epoch is invalid")
@@ -93,6 +97,36 @@ class ExactOwnedIngressResource:
             "provider_version_id": self.provider_version_id,
             "provider_version_number": self.provider_version_number,
         }
+
+
+def _is_bounded_secret_reference(candidate: object) -> bool:
+    if not isinstance(candidate, str):
+        return False
+    try:
+        encoded = candidate.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    if len(encoded) > _MAX_SECRET_REFERENCE_BYTES:
+        return False
+    try:
+        parsed = urlsplit(candidate)
+    except ValueError:
+        return False
+    path = tuple(part for part in parsed.path.split("/") if part)
+    return (
+        candidate == f"secret://{parsed.netloc}{parsed.path}"
+        and parsed.scheme == "secret"
+        and _SECRET_PROVIDER_ID.fullmatch(parsed.netloc) is not None
+        and not parsed.query
+        and not parsed.fragment
+        and bool(path)
+        and parsed.path == "/" + "/".join(path)
+        and all(
+            part not in (".", "..")
+            and _SECRET_REFERENCE_SEGMENT.fullmatch(part) is not None
+            for part in path
+        )
+    )
 
 
 @dataclass(frozen=True)
@@ -148,38 +182,49 @@ def compensate_abort(
     verify_authoritative_absence: Callable[[], None],
     verify_emergency_absence: Callable[[], None],
     resources: tuple[ExactOwnedIngressResource, ...],
+    emergency_resources: tuple[ExactOwnedIngressResource, ...],
     emergency_compensators: Mapping[str, EmergencyCompensator],
 ) -> AbortCompensationReport:
+    if any(resource not in resources for resource in emergency_resources):
+        raise SourceLiveAbortError("emergency cleanup evidence is incongruent")
     try:
         authoritative_cleanup()
     except Exception:
         pass
+    absence_failed = False
     try:
         verify_authoritative_absence()
     except Exception:
-        failed: list[str] = []
-        for resource in resources:
-            compensator = emergency_compensators.get(resource.provider_kind)
-            if compensator is None:
-                failed.append(f"provider:{resource.provider_kind}")
-                continue
-            for stage in compensator(resource):
-                failed.append(f"{resource.provider_kind}:{stage}")
-        try:
-            verify_emergency_absence()
-        except Exception:
-            failed.append("absence-verification")
-        if failed:
-            raise SourceLiveAbortError(
-                "source-live exact cleanup is uncertain: " + ",".join(failed)
-            ) from None
+        absence_failed = True
+    if not absence_failed:
         return AbortCompensationReport(
-            authoritative=False,
-            emergency_attempted=True,
+            authoritative=True,
+            emergency_attempted=False,
             resource_count=len(resources),
         )
+
+    failed: list[str] = []
+    for resource in emergency_resources:
+        compensator = emergency_compensators.get(resource.provider_kind)
+        if compensator is None:
+            failed.append(f"provider:{resource.provider_kind}")
+            continue
+        for stage in compensator(resource):
+            failed.append(f"{resource.provider_kind}:{stage}")
+    emergency_absence_failed = False
+    try:
+        verify_emergency_absence()
+    except Exception:
+        emergency_absence_failed = True
+    if emergency_absence_failed:
+        failed.append("absence-verification")
+    if failed or not emergency_resources:
+        categories = failed or ["unproven-emergency-authority"]
+        raise SourceLiveAbortError(
+            "source-live exact cleanup is uncertain: " + ",".join(categories)
+        )
     return AbortCompensationReport(
-        authoritative=True,
-        emergency_attempted=False,
+        authoritative=False,
+        emergency_attempted=True,
         resource_count=len(resources),
     )

@@ -88,12 +88,16 @@ def _state(
 
 
 class SourceLiveRestartDiagnosticTests(unittest.TestCase):
-    def test_rotation_fixture_leaves_bounded_time_to_observe_waiting(self) -> None:
+    def test_public_gateway_retry_policy_is_bounded(self) -> None:
         module = _load_source_live_module()
 
-        self.assertGreaterEqual(
-            module.GATEWAY_ROTATION_GRANT_LIFETIME_SECONDS,
-            10,
+        self.assertEqual(
+            module.PUBLIC_GATEWAY_PROBE_POLICY,
+            module.VerificationPolicy(
+                timeout_seconds=5,
+                interval_seconds=2,
+                maximum_attempts=5,
+            ),
         )
 
     def test_restart_rejects_container_that_exits_after_transient_running(self) -> None:

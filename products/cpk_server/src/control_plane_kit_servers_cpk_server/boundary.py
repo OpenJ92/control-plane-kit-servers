@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import math
 import re
 from typing import Any, Mapping, Protocol
 
@@ -96,6 +97,7 @@ class CpkServerHttpProcessBoundary:
         path: str,
         headers: Mapping[str, str],
         body: bytes,
+        query_string: bytes = b"",
     ) -> CpkServerBoundaryResponse:
         route_match = _match_http_route(self.composition, method, path)
         if route_match is None:
@@ -105,9 +107,7 @@ class CpkServerHttpProcessBoundary:
             principal = self.application.authenticate(headers)
         except CredentialAuthenticationError:
             return _error(401, "invalid credential")
-        if len(body) > route.request_schema.max_bytes:
-            return _error(413, "request body too large")
-        payload = _decode_http_payload(route, body)
+        payload = _decode_http_payload(route, body, query_string)
         if isinstance(payload, CpkServerBoundaryResponse):
             return payload
         request = CpkServerServiceRequest(
@@ -202,11 +202,18 @@ def _match_path_template(template: str, path: str) -> dict[str, str] | None:
 def _decode_http_payload(
     route: HttpApiRouteContract,
     body: bytes,
+    query_string: bytes,
 ) -> Mapping[str, object] | CpkServerBoundaryResponse:
     if route.method is HttpMethod.GET:
         if body not in {b"", None}:
             return _error(400, "read routes do not accept request bodies")
-        return {}
+        if len(query_string) > route.request_schema.max_bytes:
+            return _error(413, "request query too large")
+        return _decode_http_read_query(query_string)
+    if query_string != b"":
+        return _error(400, "command routes do not accept query arguments")
+    if len(body) > route.request_schema.max_bytes:
+        return _error(413, "request body too large")
     if body == b"":
         return {}
     try:
@@ -216,6 +223,103 @@ def _decode_http_payload(
     if not isinstance(decoded, dict):
         return _error(400, "request body must be an object")
     return decoded
+
+
+def _decode_http_read_query(
+    query_string: bytes,
+) -> Mapping[str, object] | CpkServerBoundaryResponse:
+    if query_string == b"":
+        return {}
+    if not isinstance(query_string, bytes):
+        return _error(400, "invalid query arguments")
+
+    arguments: dict[str, object] = {}
+    for field in query_string.split(b"&"):
+        if field == b"" or b"=" not in field:
+            return _error(400, "invalid query arguments")
+        encoded_name, encoded_value = field.split(b"=", 1)
+        try:
+            name = _strict_percent_decode(encoded_name).decode("utf-8")
+            value = _strict_percent_decode(encoded_value).decode("utf-8")
+        except (UnicodeDecodeError, ValueError):
+            return _error(400, "invalid query arguments")
+        if name not in {"limit", "after"} or name in arguments:
+            return _error(400, "invalid query arguments")
+        if name == "limit":
+            if re.fullmatch(r"[1-9][0-9]*", value) is None:
+                return _error(400, "invalid query arguments")
+            try:
+                arguments[name] = int(value)
+            except ValueError:
+                return _error(400, "invalid query arguments")
+            continue
+        try:
+            cursor = json.loads(
+                value,
+                object_pairs_hook=_unique_json_object,
+                parse_constant=_reject_json_constant,
+                parse_float=_parse_finite_json_float,
+            )
+        except (json.JSONDecodeError, RecursionError, ValueError):
+            return _error(400, "invalid query arguments")
+        if not isinstance(cursor, dict) or _json_nesting(cursor) > 64:
+            return _error(400, "invalid query arguments")
+        arguments[name] = cursor
+    return arguments
+
+
+def _strict_percent_decode(value: bytes) -> bytes:
+    decoded = bytearray()
+    index = 0
+    while index < len(value):
+        byte = value[index]
+        if byte != ord("%"):
+            decoded.append(byte)
+            index += 1
+            continue
+        if index + 2 >= len(value):
+            raise ValueError("incomplete percent escape")
+        digits = value[index + 1 : index + 3]
+        if any(digit not in b"0123456789ABCDEFabcdef" for digit in digits):
+            raise ValueError("invalid percent escape")
+        decoded.append(int(digits, 16))
+        index += 3
+    return bytes(decoded)
+
+
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON object key")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(_value: str) -> object:
+    raise ValueError("invalid JSON constant")
+
+
+def _parse_finite_json_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError("non-finite JSON number")
+    return parsed
+
+
+def _json_nesting(value: object) -> int:
+    maximum = 0
+    pending = [(value, 1)]
+    while pending:
+        current, depth = pending.pop()
+        if not isinstance(current, (Mapping, list)):
+            continue
+        maximum = max(maximum, depth)
+        if maximum > 64:
+            return maximum
+        children = current.values() if isinstance(current, Mapping) else current
+        pending.extend((child, depth + 1) for child in children)
+    return maximum
 
 
 def _validate_mcp_headers(headers: Mapping[str, str]) -> CpkServerBoundaryResponse | None:

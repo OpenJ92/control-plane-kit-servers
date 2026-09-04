@@ -1,7 +1,9 @@
 import ast
 import json
 from pathlib import Path
+import subprocess
 import sys
+import textwrap
 import tomllib
 import unittest
 
@@ -47,8 +49,13 @@ class PackageMetadataTests(unittest.TestCase):
         self.assertEqual(project["requires-python"], ">=3.12")
 
     def test_root_import_is_lightweight_and_exposes_catalogue_entrance(self) -> None:
-        sys.path.insert(0, str(SRC))
-        try:
+        # Other owners may legitimately import HTTP clients in the suite process.
+        checks = textwrap.dedent("""
+            import sys
+            import unittest
+
+            sys.path.insert(0, sys.argv[1])
+            self = unittest.TestCase()
             import control_plane_kit_servers
 
             self.assertEqual(control_plane_kit_servers.__version__, "0.1.0")
@@ -84,10 +91,15 @@ class PackageMetadataTests(unittest.TestCase):
                 "control_plane_kit_servers_cpk_local_gateway.server",
                 sys.modules,
             )
-        finally:
-            sys.path.remove(str(SRC))
-            sys.modules.pop("control_plane_kit_servers", None)
-            sys.modules.pop("control_plane_kit_servers.catalogue", None)
+        """)
+        result = subprocess.run(
+            [sys.executable, "-I", "-B", "-c", checks, str(SRC)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_catalogue_is_completed_immutable_declaration_assembly(self) -> None:
         sys.path.insert(0, str(SRC))
