@@ -161,7 +161,9 @@ Elliot/green this way; the count-based CLI does not accept those custom names.
 
 The current Hello descriptor pins
 `ghcr.io/openj92/control-plane-kit-servers/hello-server@sha256:e3256ca3aeb52077527143c88d96b3b460080862459686e259d2464f41c1669b`
-from source `cae307b34884e234ee8d96517012fe39c45e3dea`. It is **linux/amd64 only**;
+from source `cae307b34884e234ee8d96517012fe39c45e3dea`, under Hello contract revision 2.
+Revision 1 remains the prior recorded plaintext contract, not a renderer mode.
+It is **linux/amd64 only**;
 confirm the runtime supports that platform before approving a plan. Registry
 access remains private; importing a descriptor does not prove image access.
 

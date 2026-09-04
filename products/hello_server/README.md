@@ -15,6 +15,7 @@ effects. There is no plaintext/HTML mode switch, JavaScript, or external asset.
 
 Previously published image digests still serve their original plaintext response.
 The catalogue pairs the HTML image with its `HELLO_COLOR` descriptor binding;
+this changed contract is revision 2, distinct from the old plaintext revision 1.
 the demo client uses the same product-owned HTML bytes for response verification.
 Changing the catalogue alone does not change a deployed node. Preserve the old
 descriptor and authored graph when adding alongside an existing plaintext node.

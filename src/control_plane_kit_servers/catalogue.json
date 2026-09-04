@@ -52,7 +52,7 @@
     },
     {
       "descriptor_path": "products/hello_server/product.cpk.json",
-      "descriptor_sha256": "bc8cc5c69eec69e9475adde74662134656d71aaf6199db2c8427c46cc2b388ef",
+      "descriptor_sha256": "cc3a0d300f27fa4b1373281f8d8b4d1e2e448cd6991e1bf2e26acda23a710af9",
       "image_digest": "sha256:e3256ca3aeb52077527143c88d96b3b460080862459686e259d2464f41c1669b",
       "image_ref": "ghcr.io/openj92/control-plane-kit-servers/hello-server:hello-html-129-3a580e8",
       "owner_directory": "products/hello_server",

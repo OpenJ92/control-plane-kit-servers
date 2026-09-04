@@ -108,7 +108,7 @@ class HelloServerProductTests(unittest.TestCase):
 
         self.assertEqual(
             product.identity,
-            ProductIdentity("control-plane-kit", "hello-server", 1),
+            ProductIdentity("control-plane-kit", "hello-server", 2),
         )
         self.assertEqual(product.display_name, "hello-server")
         self.assertIs(product.product_family, ProductFamily.SERVER)
