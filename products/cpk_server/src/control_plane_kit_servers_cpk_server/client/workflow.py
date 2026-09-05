@@ -179,16 +179,12 @@ class TopologyClient:
             raise ClientInputError("exact plan execution confirmation is required")
         with self.journal.mutation_lock(operation_ref):
             journal = self._load(operation_ref)
-            if journal["pending_request"] is not None:
-                recovered = self._replay_pending(journal)
-                if isinstance(recovered, ClientResult):
-                    return recovered
-                if journal["phase"] == "prepared":
-                    self._finish_prepare(journal, recovered)
-            if journal["phase"] == "no-changes":
-                return self._status_from_journal(journal)
-            if journal["phase"] == "attention-required":
-                return self._status_from_journal(journal, attention=True)
+            pending = journal["pending_request"]
+            pending_route = (
+                pending.get("route_id") if isinstance(pending, dict) else None
+            )
+            if pending_route == "command.deployment.prepare":
+                raise ClientInputError("pending preparation must be resumed with plan")
             coordinates = _coordinates(journal)
             plan_id = _coordinate(coordinates, "plan_id")
             if execute_plan != plan_id:
@@ -196,10 +192,12 @@ class TopologyClient:
             plan = self._plan_detail(plan_id)
             self._validate_plan(journal, plan)
             approval_id = coordinates.get("approval_request_id")
+            approval_pending = False
             if approval_id is not None:
                 approval = self._approval_detail(_text_coordinate(approval_id))
                 self._validate_approval(plan, _text_coordinate(approval_id), approval)
                 if approval.get("state") == "pending":
+                    approval_pending = True
                     destructive = _boolean(approval, "destructive")
                     supplied = approve_destructive_plan if destructive else approve_plan
                     if supplied != plan_id:
@@ -207,26 +205,48 @@ class TopologyClient:
                     wrong = approve_plan if destructive else approve_destructive_plan
                     if wrong is not None:
                         raise ClientInputError("approval kind does not match the plan")
-                    decided = self._mutate(
-                        journal,
-                        route_id="command.approval.decide",
-                        path_parameters={
-                            "workspace_id": self.profile.workspace_id,
-                            "approval_id": _text_coordinate(approval_id),
-                        },
-                        body={
-                            "session_id": _text(plan, "session_id"),
-                            "decision": "approved",
-                            "idempotency_key": self._new_key(),
-                        },
-                        credential_role="approver",
-                    )
-                    if isinstance(decided, ClientResult):
-                        return decided
-                    if decided.get("state") != "approved":
-                        return self._attention(journal, next_public_read="read.approval-detail")
+                    if pending_route not in {None, "command.approval.decide"}:
+                        return self._attention(
+                            journal,
+                            next_public_read="read.approval-detail",
+                        )
                 elif approval.get("state") != "approved":
-                    return self._attention(journal, next_public_read="read.approval-detail")
+                    return self._attention(
+                        journal,
+                        next_public_read="read.approval-detail",
+                    )
+            if pending is not None:
+                recovered = self._replay_pending(journal)
+                if isinstance(recovered, ClientResult):
+                    return recovered
+            if journal["phase"] == "no-changes":
+                return self._status_from_journal(journal)
+            if journal["phase"] == "attention-required":
+                return self._status_from_journal(journal, attention=True)
+            if approval_pending and pending_route is None:
+                if approval_id is None:
+                    raise JournalError("approval coordinate is missing")
+                decided = self._mutate(
+                    journal,
+                    route_id="command.approval.decide",
+                    path_parameters={
+                        "workspace_id": self.profile.workspace_id,
+                        "approval_id": _text_coordinate(approval_id),
+                    },
+                    body={
+                        "session_id": _text(plan, "session_id"),
+                        "decision": "approved",
+                        "idempotency_key": self._new_key(),
+                    },
+                    credential_role="approver",
+                )
+                if isinstance(decided, ClientResult):
+                    return decided
+                if decided.get("state") != "approved":
+                    return self._attention(
+                        journal,
+                        next_public_read="read.approval-detail",
+                    )
             if "execution_request_id" not in coordinates:
                 admitted = self._mutate(
                     journal,

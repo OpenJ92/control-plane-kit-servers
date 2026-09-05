@@ -287,7 +287,10 @@ class TopologyClientTests(unittest.TestCase):
         destructive_transport = ScriptedTransport(destructive=True)
         destructive_client = self.client(destructive_transport, state="destructive-state")
         destructive_plan = destructive_client.plan(self.desired_path)
-        from control_plane_kit_servers_cpk_server.client import ClientInputError
+        from control_plane_kit_servers_cpk_server.client import (
+            ClientInputError,
+            ClientTransportError,
+        )
 
         for arguments in (
             {"execute_plan": "plan-b"},
@@ -302,6 +305,48 @@ class TopologyClientTests(unittest.TestCase):
             )
         )
         self.assertEqual(destructive_plan.changes[0]["operation"], "delete-node")
+
+        class LostApprovalTransport(ScriptedTransport):
+            def __init__(self) -> None:
+                super().__init__()
+                self.lost = False
+
+            def call(self, route_id, *, path_parameters, payload, credential_role):
+                if route_id == "command.approval.decide" and not self.lost:
+                    self.lost = True
+                    self.calls.append(
+                        {
+                            "route_id": route_id,
+                            "path_parameters": dict(path_parameters),
+                            "payload": dict(payload),
+                            "credential_role": credential_role,
+                        }
+                    )
+                    raise ClientTransportError()
+                return super().call(
+                    route_id,
+                    path_parameters=path_parameters,
+                    payload=payload,
+                    credential_role=credential_role,
+                )
+
+        pending_transport = LostApprovalTransport()
+        pending_client = self.client(pending_transport, state="pending-state")
+        pending_plan = pending_client.plan(self.desired_path)
+        unresolved = pending_client.apply(
+            pending_plan.operation_ref,
+            execute_plan="plan-a",
+            approve_plan="plan-a",
+        )
+        calls_before_wrong_plan = tuple(pending_transport.calls)
+        with self.assertRaises(ClientInputError):
+            pending_client.apply(
+                pending_plan.operation_ref,
+                execute_plan="plan-b",
+                approve_plan="plan-b",
+            )
+        self.assertEqual(unresolved.status, "attention-required")
+        self.assertEqual(tuple(pending_transport.calls), calls_before_wrong_plan)
 
     def _assert_profile_and_cli_contract(self) -> None:
         from control_plane_kit_servers_cpk_server.client import (
