@@ -18,6 +18,7 @@ from uuid import uuid4
 from urllib.parse import urlsplit
 
 import httpx
+from control_plane_kit_servers_hello_server.server import render_hello
 
 from control_plane_kit_core.algebra import DeploymentTopology, DockerRuntime, SocketConnection
 from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
@@ -92,7 +93,9 @@ def _graph(
         configuration = ProductInstanceConfiguration.from_contract(product.runtime_contract)
         configuration = replace(configuration, public_environment=tuple(
             PublicStaticEnvironmentBinding(binding.name, node["message"])
-            if binding.name == "HELLO_MESSAGE" else binding
+            if binding.name == "HELLO_MESSAGE" else
+            PublicStaticEnvironmentBinding(binding.name, node["color"])
+            if binding.name == "HELLO_COLOR" else binding
             for binding in configuration.public_environment
         ))
         children.append(instantiate_product(product, node["node_id"], configuration))
@@ -121,11 +124,11 @@ def _graph(
         graph = graph.update_node(replace(value, metadata={
             **value.metadata, "display_name": node["name"], "color": node["color"],
         }))
-    message = next(node["message"] for node in nodes if node["node_id"] == selected)
+    active = next(node for node in nodes if node["node_id"] == selected)
     router = graph.node(router_id)
     check = HttpCheck(
         check_id="root-response", provider_socket="internal", path="/",
-        expected_body_sha256=sha256((message + "\n").encode()).hexdigest(),
+        expected_body_sha256=sha256(render_hello(active["message"], active["color"])).hexdigest(),
     )
     graph = graph.update_node(replace(router, block_spec=replace(
         router.block_spec,
@@ -643,7 +646,7 @@ def main() -> int:
         application = json.loads(raw)
         _require(set(application) == {"workspace_id", "token_reference"} and application["workspace_id"] == workspace)
         SecretReference(application["token_reference"])
-    colors = ("red", "green", "blue", "gold", "violet", "teal")
+    colors = ("red", "green", "blue", "purple")
     nodes = tuple({"node_id": f"hello-{i + 1}" if retained else f"hello-{uuid4().hex[:12]}", "name": f"service-{i + 1}",
                    "color": colors[i % len(colors)],
                    "message": f"Hello from service-{i + 1} in {colors[i % len(colors)]}"}

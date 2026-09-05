@@ -3,9 +3,13 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+import os
 from pathlib import Path
 import sys
+from threading import Thread
 import unittest
+from unittest.mock import patch
+from urllib.request import urlopen
 
 from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
 from control_plane_kit_core.products import (
@@ -39,13 +43,72 @@ class HelloServerProductTests(unittest.TestCase):
     def decode(self):
         return ProductDescriptorCodec().decode_document(DESCRIPTOR.read_bytes())
 
+    def test_root_serves_escaped_html_and_preserves_health_and_dependencies(self) -> None:
+        from control_plane_kit_servers_hello_server.server import (
+            HelloHandler,
+            ThreadingHTTPServer,
+            render_hello,
+        )
+
+        for message, color, escaped in (
+            ("Hello Jacob", "blue", "Hello Jacob"),
+            ('Hello Zo\u00eb <script> & "friends"', "purple", 'Hello Zo\u00eb &lt;script&gt; &amp; &quot;friends&quot;'),
+        ):
+            with self.subTest(color=color), patch.dict(os.environ, {
+                "HELLO_MESSAGE": message,
+                "HELLO_COLOR": color,
+                "HELLO_DEPENDENCIES_JSON": "[]",
+            }):
+                with ThreadingHTTPServer(("127.0.0.1", 0), HelloHandler) as server:
+                    thread = Thread(target=server.serve_forever, daemon=True)
+                    thread.start()
+                    try:
+                        root = f"http://127.0.0.1:{server.server_port}"
+                        with urlopen(root + "/", timeout=2) as response:
+                            body = response.read()
+                            self.assertEqual(response.status, 200)
+                            self.assertEqual(response.headers["Content-Type"], "text/html; charset=utf-8")
+                            self.assertEqual(int(response.headers["Content-Length"]), len(body))
+                            self.assertEqual(body, render_hello(message, color))
+                            self.assertIn(f"<h1>{escaped}</h1>", body.decode("utf-8"))
+                            self.assertNotIn(b"<script>", body)
+                        for path, expected in (
+                            ("/health/live", b"live\n"),
+                            ("/health/ready", b"ready\n"),
+                            ("/dependencies", b"[]"),
+                        ):
+                            with urlopen(root + path, timeout=2) as response:
+                                self.assertEqual(response.status, 200)
+                                self.assertEqual(response.read(), expected)
+                    finally:
+                        server.shutdown()
+                        thread.join(timeout=2)
+
+    def test_palette_defaults_safely_and_rejects_invalid_color_before_listening(self) -> None:
+        from control_plane_kit_servers_hello_server import server
+
+        self.assertEqual(server.render_hello("Hello"), server.render_hello("Hello", "blue"))
+        for color, accent in (
+            ("blue", "#2563eb"), ("purple", "#7e22ce"),
+            ("green", "#15803d"), ("red", "#b91c1c"),
+        ):
+            with self.subTest(color=color):
+                self.assertIn(accent.encode(), server.render_hello("Hello", color))
+        with patch.dict(os.environ, {"HELLO_COLOR": "blue; background: url(secret)"}), patch.object(
+            server, "ThreadingHTTPServer"
+        ) as listener:
+            with self.assertRaises(server.HelloConfigurationError) as caught:
+                server.main()
+            self.assertEqual(str(caught.exception), "HELLO_COLOR must be blue, purple, green or red")
+            listener.assert_not_called()
+
     def test_descriptor_round_trips_as_external_product_contract(self) -> None:
         document = self.decode()
         product = document.product
 
         self.assertEqual(
             product.identity,
-            ProductIdentity("control-plane-kit", "hello-server", 1),
+            ProductIdentity("control-plane-kit", "hello-server", 2),
         )
         self.assertEqual(product.display_name, "hello-server")
         self.assertIs(product.product_family, ProductFamily.SERVER)
@@ -79,6 +142,7 @@ class HelloServerProductTests(unittest.TestCase):
         self.assertEqual(
             product.runtime_contract.public_environment,
             (
+                PublicStaticEnvironmentBinding("HELLO_COLOR", "blue"),
                 PublicStaticEnvironmentBinding("HELLO_DEPENDENCIES_JSON", "[]"),
                 PublicStaticEnvironmentBinding("HELLO_MESSAGE", "Hello, world!"),
             ),

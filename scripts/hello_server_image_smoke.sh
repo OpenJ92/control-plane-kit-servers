@@ -36,8 +36,9 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
 done
 
 MESSAGE="$(curl -fsS "http://127.0.0.1:$PORT/")"
-if [ "$MESSAGE" != "Hello, seed!" ]; then
-  echo "unexpected hello response: $MESSAGE" >&2
+EXPECTED="$(docker exec "$CONTAINER" python -c 'import os, sys; from control_plane_kit_servers_hello_server.server import render_hello; sys.stdout.buffer.write(render_hello(os.environ["HELLO_MESSAGE"], os.environ.get("HELLO_COLOR", "blue")))')"
+if [ "$MESSAGE" != "$EXPECTED" ]; then
+  echo "unexpected hello HTML response" >&2
   exit 1
 fi
 
@@ -56,4 +57,4 @@ if printf '%s' "$OBSERVATIONS" | grep -Eiq 'headers|body|secret'; then
   exit 1
 fi
 
-echo "hello-server image smoke passed: $MESSAGE"
+echo "hello-server HTML image smoke passed"
