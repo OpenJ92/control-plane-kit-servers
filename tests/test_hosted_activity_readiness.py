@@ -13,6 +13,7 @@ from urllib.parse import quote_from_bytes
 from uuid import uuid4
 
 from control_plane_kit_core.verification import VerificationPolicy
+from control_plane_kit_servers_hello_server.server import render_hello
 
 from scripts import cpk_server_hosted_activity
 
@@ -329,11 +330,15 @@ class _PublicConvergenceFixture:
                     binding["value"] for binding in selected["environment_bindings"]
                     if binding["name"] == "HELLO_MESSAGE"
                 )
+                color = next(
+                    binding["value"] for binding in selected["environment_bindings"]
+                    if binding["name"] == "HELLO_COLOR"
+                )
                 evidence = {
                     "run_id": self.coordinates["run"],
                     "node_id": router_id, "check_id": check["check_id"],
                     "path": "/", "http_status": 200,
-                    "response_bytes": len((message + "\n").encode()),
+                    "response_bytes": len(render_hello(message, color)),
                     "expected_body_sha256": check["expected_body_sha256"],
                     "body_sha256_matches": True,
                 }
@@ -1793,7 +1798,7 @@ class HostedActivityReadinessTests(unittest.TestCase):
         run = getattr(controller, "run_public_graph_convergence", None)
         self.assertTrue(callable(run), "public convergence entrypoint is unavailable")
 
-        colors = ("red", "green", "blue", "gold")
+        colors = ("red", "green", "blue", "purple")
         hello_nodes = tuple(
             {
                 "node_id": f"hello-{uuid4().hex[:12]}",
@@ -1910,6 +1915,7 @@ class HostedActivityReadinessTests(unittest.TestCase):
             node_ids[3],
         )
         messages = {node["node_id"]: node["message"] for node in hello_nodes}
+        accents = {node["node_id"]: node["color"] for node in hello_nodes}
         for index, descriptor in enumerate(descriptors):
             with self.subTest(transition=index):
                 self.assertEqual(set(descriptor["nodes"]), expected_node_sets[index])
@@ -1927,7 +1933,7 @@ class HostedActivityReadinessTests(unittest.TestCase):
                 )
                 self.assertEqual(
                     body_check["expected_body_sha256"],
-                    sha256((messages[selected_ids[index]] + "\n").encode()).hexdigest(),
+                    sha256(render_hello(messages[selected_ids[index]], accents[selected_ids[index]])).hexdigest(),
                 )
                 for node_id in expected_node_sets[index] - {router_id}:
                     bindings = descriptor["nodes"][node_id]["environment_bindings"]
@@ -1937,6 +1943,8 @@ class HostedActivityReadinessTests(unittest.TestCase):
                         if binding["name"] == "HELLO_MESSAGE"
                     )
                     self.assertEqual(hello_message, messages[node_id])
+                    self.assertEqual(next(binding["value"] for binding in bindings
+                                          if binding["name"] == "HELLO_COLOR"), accents[node_id])
 
         self.assertEqual(descriptors[3], descriptors[4], "no-op graph drifted")
         no_op_commands = [

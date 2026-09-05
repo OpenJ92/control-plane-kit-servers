@@ -3,6 +3,7 @@ FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app/products/hello_server/src \
     HELLO_MESSAGE="Hello, world!" \
+    HELLO_COLOR="blue" \
     HELLO_DEPENDENCIES_JSON="[]"
 
 WORKDIR /app

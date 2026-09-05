@@ -2,6 +2,13 @@
 
 Reusable OCI server products and descriptors for `control-plane-kit`.
 
+## Use The Public Topology Client
+
+The installed `cpk` command plans, applies, and observes complete desired
+graphs through an existing cpk-server's authenticated public HTTP routes. See
+[the public topology client guide](products/cpk_server/docs/client.md) for the
+profile, exact plan-bound approval, replay, journal, and security boundaries.
+
 ## Try The Persistent Hello Demo
 
 See [the persistent public Hello guide](docs/persistent-hello-demo.md) for

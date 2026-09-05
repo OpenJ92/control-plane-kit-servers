@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
+from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -22,10 +23,55 @@ _MAX_RESPONSE_BYTES = 16_384
 _OBSERVED_REQUEST_LIMIT = 20
 _OBSERVED_REQUESTS: deque[dict[str, str]] = deque(maxlen=_OBSERVED_REQUEST_LIMIT)
 _OBSERVED_REQUESTS_LOCK = Lock()
+_ACCENTS = {
+    "blue": ("#2563eb", "#eff6ff"),
+    "purple": ("#7e22ce", "#faf5ff"),
+    "green": ("#15803d", "#f0fdf4"),
+    "red": ("#b91c1c", "#fef2f2"),
+}
 
 
 class HelloConfigurationError(ValueError):
     """Raised when runtime-supplied Hello configuration is malformed."""
+
+
+def render_hello(message: str, color: str = "blue") -> bytes:
+    """Return the deterministic root response for this Hello image contract."""
+
+    if color not in _ACCENTS:
+        raise HelloConfigurationError("HELLO_COLOR must be blue, purple, green or red")
+    accent, fill = _ACCENTS[color]
+    greeting = escape(message)
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{greeting}</title>
+<style>
+* {{ box-sizing: border-box; }}
+html {{ background: #fff; color: #171717; }}
+body {{ margin: 0; min-height: 100svh; display: grid; place-items: center;
+  padding: 24px; font-family: system-ui, sans-serif; letter-spacing: 0; }}
+main {{ width: 100%; max-width: 880px; border: 2px solid {accent};
+  padding: 24px; background: {fill}; }}
+.frame {{ border: 2px solid {accent}; padding: 24px; }}
+.greeting {{ min-height: 300px; display: grid; place-items: center;
+  background: #fff; text-align: center; }}
+h1 {{ margin: 0; max-width: 100%; font-size: 48px; line-height: 1.2;
+  font-weight: 650; overflow-wrap: anywhere; }}
+@media (max-width: 600px) {{
+  body, main, .frame {{ padding: 12px; }}
+  .greeting {{ min-height: 240px; }}
+  h1 {{ font-size: 32px; }}
+}}
+</style>
+</head>
+<body>
+<main><div class="frame"><div class="frame greeting"><h1>{greeting}</h1></div></div></main>
+</body>
+</html>
+""".encode("utf-8")
 
 
 class NoRedirects(HTTPRedirectHandler):
@@ -153,7 +199,11 @@ class HelloHandler(BaseHTTPRequestHandler):
         if self.path == "/":
             _record_observed_request("GET", self.path)
             message = os.environ.get("HELLO_MESSAGE", "Hello, world!")
-            self._send(200, (message + "\n").encode("utf-8"))
+            self._send(
+                200,
+                render_hello(message, os.environ.get("HELLO_COLOR", "blue")),
+                content_type="text/html; charset=utf-8",
+            )
             return
         self._send(404, b"not found\n")
 
@@ -176,6 +226,10 @@ class HelloHandler(BaseHTTPRequestHandler):
 
 def main() -> int:
     port = _port(os.environ.get("HELLO_PORT", "8000"))
+    render_hello(
+        os.environ.get("HELLO_MESSAGE", "Hello, world!"),
+        os.environ.get("HELLO_COLOR", "blue"),
+    )
     server = ThreadingHTTPServer(("0.0.0.0", port), HelloHandler)
     server.serve_forever()
     return 0
