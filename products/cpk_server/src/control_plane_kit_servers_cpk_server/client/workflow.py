@@ -189,13 +189,38 @@ class TopologyClient:
             plan_id = _coordinate(coordinates, "plan_id")
             if execute_plan != plan_id:
                 raise ClientInputError("execution confirmation does not match the prepared plan")
-            plan = self._plan_detail(plan_id)
-            self._validate_plan(journal, plan)
+            try:
+                plan = self._plan_detail(plan_id)
+                self._validate_plan(journal, plan)
+            except ClientAuthorizationError:
+                raise
+            except (ClientInputError, ClientTransportError):
+                return self._attention(
+                    journal,
+                    execution="unverified",
+                    next_public_read="read.plan-detail",
+                )
+            if "session_id" not in coordinates:
+                _record_plan_coordinates(coordinates, plan)
+                self.journal.write(operation_ref, journal)
             approval_id = coordinates.get("approval_request_id")
             approval_pending = False
             if approval_id is not None:
-                approval = self._approval_detail(_text_coordinate(approval_id))
-                self._validate_approval(plan, _text_coordinate(approval_id), approval)
+                try:
+                    approval = self._approval_detail(_text_coordinate(approval_id))
+                    self._validate_approval(
+                        plan,
+                        _text_coordinate(approval_id),
+                        approval,
+                    )
+                except ClientAuthorizationError:
+                    raise
+                except (ClientInputError, ClientTransportError):
+                    return self._attention(
+                        journal,
+                        execution="unverified",
+                        next_public_read="read.approval-detail",
+                    )
                 if approval.get("state") == "pending":
                     approval_pending = True
                     destructive = _boolean(approval, "destructive")
@@ -215,6 +240,25 @@ class TopologyClient:
                         journal,
                         next_public_read="read.approval-detail",
                     )
+            if "run_id" in coordinates:
+                observed_progress = self._public_status(journal)
+                if pending is None and observed_progress.status == "attention-required":
+                    return observed_progress
+                if journal["phase"] in {"executed", "advanced", "converged"}:
+                    if observed_progress.execution != "succeeded":
+                        return self._attention(
+                            journal,
+                            execution="unverified",
+                            next_public_read="read.plan-runs",
+                        )
+                if journal["phase"] in {"advanced", "converged"}:
+                    if observed_progress.advancement != "advanced":
+                        return self._attention(
+                            journal,
+                            execution="succeeded",
+                            advancement="unverified",
+                            next_public_read="read.current-graph",
+                        )
             if pending is not None:
                 recovered = self._replay_pending(journal)
                 if isinstance(recovered, ClientResult):
@@ -322,7 +366,9 @@ class TopologyClient:
                         return self._attention(
                             journal,
                             execution=(
-                                status
+                                "running"
+                                if status == "in-flight"
+                                else status
                                 if status in ATTENTION_STATUSES
                                 else "unverified"
                             ),
@@ -336,10 +382,32 @@ class TopologyClient:
                     )
             coordinates = _coordinates(journal)
             if journal["phase"] != "advanced":
-                current = _pointer(self._workspace(), "current")
+                try:
+                    current = _pointer(self._workspace(), "current")
+                except ClientAuthorizationError:
+                    raise
+                except (ClientInputError, ClientTransportError):
+                    return self._attention(
+                        journal,
+                        execution="succeeded",
+                        advancement="unverified",
+                        next_public_read="read.current-graph",
+                    )
                 if current is None:
                     return self._attention(
                         journal,
+                        advancement="unverified",
+                        next_public_read="read.current-graph",
+                    )
+                if current != {
+                    "authored_graph_id": _text(plan, "base_graph_id"),
+                    "realized_projection_id": _text(
+                        plan, "base_realized_projection_id"
+                    ),
+                }:
+                    return self._attention(
+                        journal,
+                        execution="succeeded",
                         advancement="unverified",
                         next_public_read="read.current-graph",
                     )
@@ -370,10 +438,20 @@ class TopologyClient:
                 )
                 if isinstance(advanced, ClientResult):
                     return advanced
-            observed = self._read(
-                "read.current-graph",
-                path_parameters={"workspace_id": self.profile.workspace_id},
-            )
+            try:
+                observed = self._read(
+                    "read.current-graph",
+                    path_parameters={"workspace_id": self.profile.workspace_id},
+                )
+            except ClientAuthorizationError:
+                raise
+            except (ClientInputError, ClientTransportError):
+                return self._attention(
+                    journal,
+                    execution="succeeded",
+                    advancement="unverified",
+                    next_public_read="read.current-graph",
+                )
             if (
                 observed.get("graph_id") != plan.get("desired_graph_id")
                 or observed.get("realized_projection_id")
@@ -405,17 +483,37 @@ class TopologyClient:
         coordinates["plan_id"] = plan_id
         if "approval_request_id" in prepared:
             coordinates["approval_request_id"] = _text(prepared, "approval_request_id")
-        plan = self._plan_detail(plan_id)
-        self._validate_plan(journal, plan)
+        try:
+            plan = self._plan_detail(plan_id)
+            self._validate_plan(journal, plan)
+        except ClientAuthorizationError:
+            raise
+        except (ClientInputError, ClientTransportError):
+            return self._attention(
+                journal,
+                execution="unverified",
+                next_public_read="read.plan-detail",
+            )
         _record_plan_coordinates(coordinates, plan)
         approval = None
         if "approval_request_id" in coordinates:
-            approval = self._approval_detail(_coordinate(coordinates, "approval_request_id"))
-            self._validate_approval(
-                plan,
-                _coordinate(coordinates, "approval_request_id"),
-                approval,
-            )
+            try:
+                approval = self._approval_detail(
+                    _coordinate(coordinates, "approval_request_id")
+                )
+                self._validate_approval(
+                    plan,
+                    _coordinate(coordinates, "approval_request_id"),
+                    approval,
+                )
+            except ClientAuthorizationError:
+                raise
+            except (ClientInputError, ClientTransportError):
+                return self._attention(
+                    journal,
+                    execution="unverified",
+                    next_public_read="read.approval-detail",
+                )
         journal["phase"] = (
             "no-changes"
             if status == "no-changes"
@@ -685,12 +783,20 @@ class TopologyClient:
         try:
             workspace = self._workspace()
             current = _pointer(workspace, "current")
+            plan = None
             if "plan_id" in coordinates:
                 plan = self._plan_detail(_coordinate(coordinates, "plan_id"))
                 self._validate_plan(journal, plan)
             if "approval_request_id" in coordinates:
+                if plan is None:
+                    raise ClientInputError("public plan coordinates are invalid")
                 approval = self._approval_detail(
                     _coordinate(coordinates, "approval_request_id")
+                )
+                self._validate_approval(
+                    plan,
+                    _coordinate(coordinates, "approval_request_id"),
+                    approval,
                 )
                 approval_problem = approval.get("state") not in {"pending", "approved"}
             run_id = coordinates.get("run_id")
@@ -881,6 +987,8 @@ class TopologyClient:
         for name in (
             "plan_id",
             "session_id",
+            "base_graph_id",
+            "base_realized_projection_id",
             "desired_graph_id",
             "desired_realized_projection_id",
             "desired_graph_revision",
@@ -984,11 +1092,20 @@ def _plan_result(
     for activity in raw_activities:
         if not isinstance(activity, dict):
             raise ClientInputError("public plan activities are invalid")
+        operation = _mapping(activity, "operation")
+        target = _mapping(operation, "target")
+        projected_target = {
+            key: _text_coordinate(value)
+            for key, value in target.items()
+            if key in {"kind", "node_id", "runtime_id", "edge_id"}
+        }
+        if "kind" not in projected_target:
+            raise ClientInputError("public plan activity target is invalid")
         changes.append(
             {
-                key: activity[key]
-                for key in ("activity_id", "operation", "target")
-                if key in activity
+                "activity_id": _text(activity, "activity_id"),
+                "operation": _text(operation, "kind"),
+                "target": projected_target,
             }
         )
     required_scope = None
@@ -1157,7 +1274,13 @@ def _response_is_bound(
 
 
 def _is_text_coordinate(value: object) -> bool:
-    return isinstance(value, str) and 0 < len(value.encode("utf-8")) <= 512
+    if not isinstance(value, str):
+        return False
+    try:
+        size = len(value.encode("utf-8"))
+    except UnicodeEncodeError:
+        return False
+    return 0 < size <= 512
 
 
 def _is_positive_integer(value: object) -> bool:

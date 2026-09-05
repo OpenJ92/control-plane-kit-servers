@@ -21,11 +21,13 @@ class ScriptedTransport:
         lose_prepare_once: bool = False,
         destructive: bool = False,
         progress_once: bool = False,
+        attention_status: str | None = None,
     ) -> None:
         self.calls = []
         self.lose_prepare_once = lose_prepare_once
         self.destructive = destructive
         self.progress_once = progress_once
+        self.attention_status = attention_status
         self.approved = False
         self.advanced = False
 
@@ -76,10 +78,17 @@ class ScriptedTransport:
                         "activities": [
                             {
                                 "activity_id": "activity-a",
-                                "operation": (
-                                    "delete-node" if self.destructive else "create-node"
-                                ),
-                                "target": {"kind": "node", "node_id": "hello-a"},
+                                "operation": {
+                                    "kind": (
+                                        "delete-node"
+                                        if self.destructive
+                                        else "create-node"
+                                    ),
+                                    "target": {
+                                        "kind": "node",
+                                        "node_id": "hello-a",
+                                    },
+                                },
                             }
                         ]
                     },
@@ -119,6 +128,14 @@ class ScriptedTransport:
                 "replayed": False,
             }
         if route_id == "command.deployment.execute":
+            if self.attention_status is not None:
+                return {
+                    "run_id": "run-a",
+                    "run_status": "running",
+                    "coordinator_status": self.attention_status,
+                    "effects_attempted": 1,
+                    "activity_id": "activity-a",
+                }
             if self.progress_once:
                 self.progress_once = False
                 return {
@@ -165,6 +182,67 @@ class ScriptedTransport:
         if route_id == "read.run-events":
             return {"items": [], "next_cursor": None}
         raise AssertionError(f"unexpected route: {route_id}")
+
+
+class LostWorkspaceAfterExecuteTransport(ScriptedTransport):
+    def __init__(self) -> None:
+        super().__init__()
+        self.executed = False
+        self.lost = False
+
+    def call(self, route_id, *, path_parameters, payload, credential_role):
+        if route_id == "read.workspace" and self.executed and not self.lost:
+            self.lost = True
+            self.calls.append(
+                {
+                    "route_id": route_id,
+                    "path_parameters": dict(path_parameters),
+                    "payload": dict(payload),
+                    "credential_role": credential_role,
+                }
+            )
+            from control_plane_kit_servers_cpk_server.client import ClientTransportError
+
+            raise ClientTransportError()
+        result = super().call(
+            route_id,
+            path_parameters=path_parameters,
+            payload=payload,
+            credential_role=credential_role,
+        )
+        if (
+            route_id == "command.deployment.execute"
+            and result.get("coordinator_status") == "completed"
+        ):
+            self.executed = True
+        return result
+
+
+class LostCurrentAfterAdvanceTransport(ScriptedTransport):
+    def __init__(self) -> None:
+        super().__init__()
+        self.lost = False
+
+    def call(self, route_id, *, path_parameters, payload, credential_role):
+        if route_id == "read.current-graph" and self.advanced and not self.lost:
+            self.lost = True
+            self.calls.append(
+                {
+                    "route_id": route_id,
+                    "path_parameters": dict(path_parameters),
+                    "payload": dict(payload),
+                    "credential_role": credential_role,
+                }
+            )
+            from control_plane_kit_servers_cpk_server.client import ClientTransportError
+
+            raise ClientTransportError()
+        return super().call(
+            route_id,
+            path_parameters=path_parameters,
+            payload=payload,
+            credential_role=credential_role,
+        )
 
 
 class DeterministicIds:
@@ -243,6 +321,10 @@ class TopologyClientTests(unittest.TestCase):
 
         self.assertEqual(planned.status, "planned")
         self.assertEqual(planned.changes[0]["operation"], "create-node")
+        self.assertEqual(
+            planned.changes[0]["target"],
+            {"kind": "node", "node_id": "hello-a"},
+        )
         self.assertFalse(
             any(
                 call["route_id"].startswith("command.")
@@ -447,12 +529,60 @@ class TopologyClientTests(unittest.TestCase):
         self.assertEqual(prepare_calls[0], prepare_calls[1])
         self.assertEqual(resumed.status, "planned")
 
+        class LostPlanReadTransport(ScriptedTransport):
+            def __init__(self) -> None:
+                super().__init__()
+                self.lost = False
+
+            def call(self, route_id, *, path_parameters, payload, credential_role):
+                if route_id == "read.plan-detail" and not self.lost:
+                    self.lost = True
+                    self.calls.append(
+                        {
+                            "route_id": route_id,
+                            "path_parameters": dict(path_parameters),
+                            "payload": dict(payload),
+                            "credential_role": credential_role,
+                        }
+                    )
+                    from control_plane_kit_servers_cpk_server.client import (
+                        ClientTransportError,
+                    )
+
+                    raise ClientTransportError()
+                return super().call(
+                    route_id,
+                    path_parameters=path_parameters,
+                    payload=payload,
+                    credential_role=credential_role,
+                )
+
+        lost_read_transport = LostPlanReadTransport()
+        lost_read_client = self.client(lost_read_transport, state="lost-plan-state")
+        lost_read = lost_read_client.plan(self.desired_path)
+        self.assertEqual(lost_read.status, "attention-required")
+        self.assertEqual(lost_read.next_public_read, "read.plan-detail")
+        self.assertTrue(lost_read.operation_ref)
+        self.assertEqual(
+            [
+                call["route_id"]
+                for call in lost_read_transport.calls
+                if call["route_id"].startswith("command.")
+            ],
+            ["command.deployment.prepare"],
+        )
+
     def test_unresolved_dispatch_is_unverified_attention_with_nonzero_exit(self) -> None:
         from control_plane_kit_servers_cpk_server.client import ClientTransportError
 
         class LostExecuteTransport(ScriptedTransport):
+            def __init__(self) -> None:
+                super().__init__()
+                self.lost = False
+
             def call(self, route_id, **arguments):
-                if route_id == "command.deployment.execute":
+                if route_id == "command.deployment.execute" and not self.lost:
+                    self.lost = True
                     self.calls.append({"route_id": route_id, **arguments})
                     raise ClientTransportError()
                 return super().call(route_id, **arguments)
@@ -478,6 +608,63 @@ class TopologyClientTests(unittest.TestCase):
                 for call in transport.calls
             )
         )
+        calls_before_resume = len(transport.calls)
+        resumed = client.apply(
+            planned.operation_ref,
+            execute_plan="plan-a",
+        )
+        resumed_calls = transport.calls[calls_before_resume:]
+        replay_index = next(
+            index
+            for index, call in enumerate(resumed_calls)
+            if call["route_id"] == "command.deployment.execute"
+        )
+        self.assertEqual(resumed.status, "converged")
+        self.assertTrue(
+            any(
+                call["route_id"] == "read.plan-runs"
+                for call in resumed_calls[:replay_index]
+            )
+        )
+        self.assertTrue(
+            any(
+                call["route_id"] == "read.run-events"
+                for call in resumed_calls[:replay_index]
+            )
+        )
+
+        in_flight_transport = ScriptedTransport(attention_status="in-flight")
+        in_flight_client = self.client(in_flight_transport, state="in-flight-state")
+        in_flight_plan = in_flight_client.plan(self.desired_path)
+        in_flight = in_flight_client.apply(
+            in_flight_plan.operation_ref,
+            execute_plan="plan-a",
+            approve_plan="plan-a",
+        )
+        self.assertEqual(in_flight.status, "attention-required")
+        self.assertEqual(in_flight.execution, "running")
+        self.assertNotEqual(in_flight.execution, "in-flight")
+
+        for name, transport_type in (
+            ("workspace-after-execute", LostWorkspaceAfterExecuteTransport),
+            ("current-after-advance", LostCurrentAfterAdvanceTransport),
+        ):
+            with self.subTest(readback=name):
+                readback_transport = transport_type()
+                readback_client = self.client(
+                    readback_transport,
+                    state=f"{name}-state",
+                )
+                readback_plan = readback_client.plan(self.desired_path)
+                readback = readback_client.apply(
+                    readback_plan.operation_ref,
+                    execute_plan="plan-a",
+                    approve_plan="plan-a",
+                )
+                self.assertEqual(readback.status, "attention-required")
+                self.assertEqual(readback.execution, "succeeded")
+                self.assertEqual(readback.advancement, "unverified")
+                self.assertEqual(readback.next_public_read, "read.current-graph")
 
     def test_status_reads_truth_during_writer_lock_and_never_rebinds_target(self) -> None:
         from control_plane_kit_servers_cpk_server.client import JournalError, TopologyClient
@@ -517,6 +704,16 @@ class TopologyClientTests(unittest.TestCase):
         )
         raw = journal_path.read_text(encoding="utf-8")
         document = json.loads(raw)
+
+        semantic_corruption = dict(document)
+        semantic_corruption["phase"] = "converged"
+        semantic_corruption["pending_request"] = None
+        journal_path.write_text(json.dumps(semantic_corruption), encoding="utf-8")
+        calls_before_corruption = tuple(transport.calls)
+        with self.assertRaises(JournalError):
+            client.status(unresolved.operation_ref)
+        self.assertEqual(tuple(transport.calls), calls_before_corruption)
+        journal_path.write_text(raw, encoding="utf-8")
 
         self.assertNotIn("Hello", raw)
         self.assertNotIn("secret://hello/token", raw)
