@@ -669,9 +669,15 @@ class TopologyClientTests(unittest.TestCase):
     def test_status_reads_truth_during_writer_lock_and_never_rebinds_target(self) -> None:
         from control_plane_kit_servers_cpk_server.client import JournalError, TopologyClient
 
-        transport = ScriptedTransport()
+        transport = ScriptedTransport(destructive=True)
         client = self.client(transport)
         planned = client.plan(self.desired_path)
+        journal_path = client.journal.root / f"{planned.operation_ref}.json"
+        journal = json.loads(journal_path.read_text(encoding="utf-8"))
+        journal["last_result"]["changes"][0]["operation"] = "create-node"
+        journal["last_result"]["required_scope"] = "plan:approve"
+        journal["last_result"]["destructive"] = False
+        journal_path.write_text(json.dumps(journal), encoding="utf-8")
         calls_before = len(transport.calls)
 
         with client.journal.mutation_lock(planned.operation_ref):
@@ -689,6 +695,9 @@ class TopologyClientTests(unittest.TestCase):
             mismatched.status(planned.operation_ref)
 
         self.assertEqual(status.status, "planned")
+        self.assertEqual(status.changes[0]["operation"], "delete-node")
+        self.assertEqual(status.required_scope, "plan:approve-destructive")
+        self.assertIs(status.destructive, True)
         status_calls = transport.calls[calls_before:]
         self.assertTrue(status_calls)
         self.assertTrue(all(call["route_id"].startswith("read.") for call in status_calls))

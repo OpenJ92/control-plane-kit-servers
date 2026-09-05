@@ -686,6 +686,8 @@ class TopologyClient:
         execution: str | None = None,
         advancement: str | None = None,
         next_public_read: str | None = None,
+        plan: Mapping[str, object] | None = None,
+        approval: Mapping[str, object] | None = None,
     ) -> ClientResult:
         coordinates = _coordinates(journal)
         phase = _text(journal, "phase")
@@ -717,24 +719,11 @@ class TopologyClient:
                 if phase == "no-changes"
                 else "not-attempted"
             )
-        last = journal.get("last_result")
-        changes = ()
-        required_scope = None
-        destructive = None
-        if isinstance(last, dict):
-            raw_changes = last.get("changes", [])
-            if isinstance(raw_changes, list):
-                changes = tuple(item for item in raw_changes if isinstance(item, dict))
-            required_scope = (
-                last.get("required_scope")
-                if isinstance(last.get("required_scope"), str)
-                else None
-            )
-            destructive = (
-                last.get("destructive")
-                if type(last.get("destructive")) is bool
-                else None
-            )
+        changes = _plan_changes(plan) if plan is not None else ()
+        required_scope = (
+            _text(approval, "required_scope") if approval is not None else None
+        )
+        destructive = _boolean(approval, "destructive") if approval is not None else None
         return ClientResult(
             status=status,
             operation_ref=_text(journal, "operation_ref"),
@@ -784,6 +773,7 @@ class TopologyClient:
             workspace = self._workspace()
             current = _pointer(workspace, "current")
             plan = None
+            approval = None
             if "plan_id" in coordinates:
                 plan = self._plan_detail(_coordinate(coordinates, "plan_id"))
                 self._validate_plan(journal, plan)
@@ -868,6 +858,8 @@ class TopologyClient:
                 execution="unverified" if pending is not None else execution,
                 advancement="unverified" if pending is not None else advancement,
                 next_public_read=next_read,
+                plan=plan,
+                approval=approval,
             )
         if pending is not None:
             route_id = pending.get("route_id") if isinstance(pending, Mapping) else None
@@ -885,6 +877,8 @@ class TopologyClient:
                     else advancement
                 ),
                 next_public_read=next_read,
+                plan=plan,
+                approval=approval,
             )
         phase = _text(journal, "phase")
         attention = (
@@ -898,6 +892,8 @@ class TopologyClient:
             execution=execution,
             advancement=advancement,
             next_public_read=next_read if attention else None,
+            plan=plan,
+            approval=approval,
         )
 
     def _workspace(self) -> Mapping[str, object]:
@@ -1084,6 +1080,36 @@ def _plan_result(
     approval: Mapping[str, object] | None,
     preparation_status: str,
 ) -> ClientResult:
+    changes = _plan_changes(plan)
+    required_scope = None
+    destructive = None
+    if approval is not None:
+        required_scope = _text(approval, "required_scope")
+        destructive = _boolean(approval, "destructive")
+    return ClientResult(
+        status=(
+            "no-changes"
+            if preparation_status == "no-changes"
+            else "attention-required"
+            if preparation_status == "review-blocked"
+            else "planned"
+        ),
+        operation_ref=_text(journal, "operation_ref"),
+        workspace_id=_text(_mapping(journal, "target"), "workspace_id"),
+        plan_id=_text(plan, "plan_id"),
+        approval_request_id=(
+            _text(approval, "request_id") if approval is not None else None
+        ),
+        required_scope=required_scope,
+        destructive=destructive,
+        changes=changes,
+        advancement="unchanged" if preparation_status == "no-changes" else "not-attempted",
+        next_command=("cpk apply" if preparation_status == "approval-required" else None),
+        next_public_read="read.plan-detail",
+    )
+
+
+def _plan_changes(plan: Mapping[str, object]) -> tuple[Mapping[str, object], ...]:
     payload = _mapping(plan, "payload")
     raw_activities = payload.get("activities", [])
     if not isinstance(raw_activities, list):
@@ -1108,32 +1134,7 @@ def _plan_result(
                 "target": projected_target,
             }
         )
-    required_scope = None
-    destructive = None
-    if approval is not None:
-        required_scope = _text(approval, "required_scope")
-        destructive = _boolean(approval, "destructive")
-    return ClientResult(
-        status=(
-            "no-changes"
-            if preparation_status == "no-changes"
-            else "attention-required"
-            if preparation_status == "review-blocked"
-            else "planned"
-        ),
-        operation_ref=_text(journal, "operation_ref"),
-        workspace_id=_text(_mapping(journal, "target"), "workspace_id"),
-        plan_id=_text(plan, "plan_id"),
-        approval_request_id=(
-            _text(approval, "request_id") if approval is not None else None
-        ),
-        required_scope=required_scope,
-        destructive=destructive,
-        changes=tuple(changes),
-        advancement="unchanged" if preparation_status == "no-changes" else "not-attempted",
-        next_command=("cpk apply" if preparation_status == "approval-required" else None),
-        next_public_read="read.plan-detail",
-    )
+    return tuple(changes)
 
 
 def _response_coordinates(route_id: str, response: Mapping[str, object]) -> dict[str, object]:
