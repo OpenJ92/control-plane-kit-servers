@@ -572,6 +572,69 @@ class TopologyClientTests(unittest.TestCase):
             ["command.deployment.prepare"],
         )
 
+        class MalformedPlanActivityTransport(ScriptedTransport):
+            def __init__(self, *, malformed: bool) -> None:
+                super().__init__()
+                self.malformed = malformed
+
+            def call(self, route_id, *, path_parameters, payload, credential_role):
+                response = super().call(
+                    route_id,
+                    path_parameters=path_parameters,
+                    payload=payload,
+                    credential_role=credential_role,
+                )
+                if route_id == "read.plan-detail" and self.malformed:
+                    response["plan"]["payload"]["activities"][0]["operation"] = {
+                        "kind": "create-node"
+                    }
+                return response
+
+        malformed_prepare_transport = MalformedPlanActivityTransport(malformed=True)
+        malformed_prepare_client = self.client(
+            malformed_prepare_transport,
+            state="malformed-prepare-state",
+        )
+        malformed_prepare = malformed_prepare_client.plan(self.desired_path)
+        self.assertEqual(malformed_prepare.status, "attention-required")
+        self.assertEqual(malformed_prepare.next_public_read, "read.plan-detail")
+        self.assertTrue(
+            (
+                malformed_prepare_client.journal.root
+                / f"{malformed_prepare.operation_ref}.json"
+            ).exists()
+        )
+        self.assertEqual(
+            [
+                call["route_id"]
+                for call in malformed_prepare_transport.calls
+                if call["route_id"].startswith("command.")
+            ],
+            ["command.deployment.prepare"],
+        )
+
+        malformed_status_transport = MalformedPlanActivityTransport(malformed=False)
+        malformed_status_client = self.client(
+            malformed_status_transport,
+            state="malformed-status-state",
+        )
+        malformed_status_plan = malformed_status_client.plan(self.desired_path)
+        malformed_status_transport.malformed = True
+        calls_before_malformed_status = len(malformed_status_transport.calls)
+        malformed_status = malformed_status_client.status(
+            malformed_status_plan.operation_ref
+        )
+        self.assertEqual(malformed_status.status, "attention-required")
+        self.assertEqual(malformed_status.next_public_read, "read.plan-detail")
+        self.assertTrue(
+            all(
+                call["route_id"].startswith("read.")
+                for call in malformed_status_transport.calls[
+                    calls_before_malformed_status:
+                ]
+            )
+        )
+
     def test_unresolved_dispatch_is_unverified_attention_with_nonzero_exit(self) -> None:
         from control_plane_kit_servers_cpk_server.client import ClientTransportError
 

@@ -486,6 +486,7 @@ class TopologyClient:
         try:
             plan = self._plan_detail(plan_id)
             self._validate_plan(journal, plan)
+            changes = _plan_changes(plan)
         except ClientAuthorizationError:
             raise
         except (ClientInputError, ClientTransportError):
@@ -521,7 +522,7 @@ class TopologyClient:
             if status == "review-blocked"
             else "prepared"
         )
-        result = _plan_result(journal, plan, approval, status)
+        result = _plan_result(journal, plan, approval, status, changes)
         journal["last_result"] = result.descriptor()
         self.journal.write(_text(journal, "operation_ref"), journal)
         return result
@@ -686,7 +687,7 @@ class TopologyClient:
         execution: str | None = None,
         advancement: str | None = None,
         next_public_read: str | None = None,
-        plan: Mapping[str, object] | None = None,
+        changes: tuple[Mapping[str, object], ...] = (),
         approval: Mapping[str, object] | None = None,
     ) -> ClientResult:
         coordinates = _coordinates(journal)
@@ -719,7 +720,6 @@ class TopologyClient:
                 if phase == "no-changes"
                 else "not-attempted"
             )
-        changes = _plan_changes(plan) if plan is not None else ()
         required_scope = (
             _text(approval, "required_scope") if approval is not None else None
         )
@@ -769,14 +769,16 @@ class TopologyClient:
         advancement = None
         approval_problem = False
         next_read = _next_read(journal)
+        changes: tuple[Mapping[str, object], ...] = ()
+        plan = None
+        approval = None
         try:
             workspace = self._workspace()
             current = _pointer(workspace, "current")
-            plan = None
-            approval = None
             if "plan_id" in coordinates:
                 plan = self._plan_detail(_coordinate(coordinates, "plan_id"))
                 self._validate_plan(journal, plan)
+                changes = _plan_changes(plan)
             if "approval_request_id" in coordinates:
                 if plan is None:
                     raise ClientInputError("public plan coordinates are invalid")
@@ -858,7 +860,7 @@ class TopologyClient:
                 execution="unverified" if pending is not None else execution,
                 advancement="unverified" if pending is not None else advancement,
                 next_public_read=next_read,
-                plan=plan,
+                changes=changes,
                 approval=approval,
             )
         if pending is not None:
@@ -877,7 +879,7 @@ class TopologyClient:
                     else advancement
                 ),
                 next_public_read=next_read,
-                plan=plan,
+                changes=changes,
                 approval=approval,
             )
         phase = _text(journal, "phase")
@@ -892,7 +894,7 @@ class TopologyClient:
             execution=execution,
             advancement=advancement,
             next_public_read=next_read if attention else None,
-            plan=plan,
+            changes=changes,
             approval=approval,
         )
 
@@ -1079,8 +1081,8 @@ def _plan_result(
     plan: Mapping[str, object],
     approval: Mapping[str, object] | None,
     preparation_status: str,
+    changes: tuple[Mapping[str, object], ...],
 ) -> ClientResult:
-    changes = _plan_changes(plan)
     required_scope = None
     destructive = None
     if approval is not None:
