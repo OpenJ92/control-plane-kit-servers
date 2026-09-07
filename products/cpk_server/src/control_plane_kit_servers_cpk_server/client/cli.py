@@ -11,12 +11,14 @@ from typing import Sequence
 from .journal import JournalError
 from .profile import ClientConfigurationError, load_profile
 from .transport import ClientAuthorizationError, ClientTransportError
-from .workflow import ClientInputError, ClientResult, TopologyClient, _unique_object
+from .workflow import ClientInputError, ClientResult, SavedDesiredRevision, TopologyClient, _unique_object
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _parser()
     arguments = parser.parse_args(argv)
+    if arguments.command == "plan" and ((arguments.draft is None) != (arguments.revision is None)):
+        parser.error("--draft and --revision must be supplied together")
     try:
         profile = load_profile(arguments.profile)
         client = TopologyClient(profile)
@@ -38,6 +40,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif arguments.command == "plan":
             if arguments.resume is not None:
                 result = client.resume_prepare(arguments.resume)
+            elif arguments.draft is not None:
+                result = client.plan(SavedDesiredRevision(arguments.draft, arguments.revision), title=arguments.title)
             elif arguments.desired_graph is not None:
                 result = client.plan(arguments.desired_graph, title=arguments.title)
             else:
@@ -75,6 +79,8 @@ def _parser() -> argparse.ArgumentParser:
     source = plan.add_mutually_exclusive_group(required=True)
     source.add_argument("desired_graph", nargs="?", type=Path)
     source.add_argument("--resume", metavar="OPERATION_REF")
+    source.add_argument("--draft", metavar="DRAFT_ID")
+    plan.add_argument("--revision", type=_catalogue_integer)
     plan.add_argument("--title", default="Topology deployment")
     plan.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
 
