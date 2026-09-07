@@ -9,10 +9,12 @@ from .transport import (
 )
 from .workflow import ClientInputError, ClientResult, SavedDesiredRevision, TopologyClient
 from .catalogue import CatalogueResult
+from .report import ReportResult
 
 
 __all__ = (
     "CatalogueResult",
+    "ReportResult",
     "ClientAuthorizationError",
     "ClientConfigurationError",
     "ClientInputError",
