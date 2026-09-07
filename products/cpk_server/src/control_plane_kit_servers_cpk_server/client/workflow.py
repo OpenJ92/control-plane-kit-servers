@@ -138,6 +138,10 @@ class TopologyClient:
         self.journal = journal or JournalStore(profile.state_directory)
         self._identity_factory = identity_factory or (lambda: str(uuid4()))
 
+    def report(self, operation_refs):
+        from .report import collect
+        return collect(self, operation_refs)
+
     def overview(self) -> CatalogueResult:
         from .catalogue import read
         return read(self, "overview")

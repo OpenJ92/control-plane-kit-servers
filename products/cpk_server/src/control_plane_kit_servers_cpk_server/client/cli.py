@@ -22,7 +22,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         profile = load_profile(arguments.profile)
         client = TopologyClient(profile)
-        if arguments.command == "overview":
+        if arguments.command == "report":
+            result = client.report(arguments.operation_refs)
+        elif arguments.command == "overview":
             result = client.overview()
         elif arguments.command == "draft":
             if arguments.draft_command == "list":
@@ -95,6 +97,9 @@ def _parser() -> argparse.ArgumentParser:
     status = commands.add_parser("status")
     status.add_argument("operation_ref")
     status.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
+    report = commands.add_parser("report")
+    report.add_argument("operation_refs", nargs="+")
+    report.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
     overview = commands.add_parser("overview")
     overview.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
     draft = commands.add_parser("draft")
@@ -150,7 +155,7 @@ def _render(result: ClientResult, *, json_output: bool) -> None:
     if json_output:
         print(json.dumps(value, sort_keys=True, separators=(",", ":")))
         return
-    if value.get("schema", "").startswith("cpk.client-catalogue-"):
+    if value.get("schema") == "cpk.client-report.v1" or value.get("schema", "").startswith("cpk.client-catalogue-"):
         print(json.dumps(value, sort_keys=True, indent=2))
         return
     print(f"status: {result.status}")

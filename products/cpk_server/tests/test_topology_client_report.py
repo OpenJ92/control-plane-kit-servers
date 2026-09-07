@@ -157,3 +157,58 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(value["limits"], {"operations": 4, "calls": 32, "pages_per_collection": 1,
             "runs_per_plan": 2, "events_per_run": 10, "scheduling_seconds": 60, "output_bytes": 262144})
         self.assertLessEqual(value["calls"], 32)
+
+    def test_file_and_catalogue_transport_provenance_stay_distinct(self):
+        path = self.root / "private-graph.json"
+        path.write_text('{"opaque": "SECRET-GRAPH"}')
+        file_operation = self.client.plan(path)
+        from test_topology_client_catalogue import CatalogueTransport
+        self.client.transport = CatalogueTransport()
+        catalogue_operation = self.client.draft_save(path, title="SECRET-TITLE")
+        self.client.transport = self.transport
+        self.transport.calls.clear()
+        value = self.client.report([file_operation.operation_ref, catalogue_operation.operation_ref]).descriptor()
+        file_row, catalogue_row = value["operations"]
+        self.assertEqual(file_row["requested"]["data"]["source"], "file")
+        self.assertIsNone(file_row["requested"]["data"]["revision"])
+        requested = catalogue_row["requested"]["data"]
+        self.assertEqual(requested["source"], "catalogue")
+        self.assertIsNone(requested["revision"])
+        self.assertEqual(requested["receipt_revision"], {"draft_id": "draft-a", "revision": 1, "graph_id": "graph-new"})
+        self.assertNotIn(str(path), json.dumps(value))
+        self.assertNotIn("SECRET", json.dumps(value))
+        self.assertTrue(all(call["route_id"].startswith("read.") for call in self.transport.calls))
+
+    def test_maximum_shape_is_finite_and_cli_renders_same_closed_envelope(self):
+        refs = [self.operation.operation_ref]
+        for _ in range(3):
+            refs.append(self.client.plan(self.api.SavedDesiredRevision("draft-a", 1)).operation_ref)
+        def expand(route, value):
+            if route == "read.plan-runs":
+                value["items"] = [{"run_id": "run-" + str(i), "plan_id": "plan-a", "status": "running"} for i in range(2)]
+            if route == "read.run-events":
+                run_id = self.transport.calls[-1]["path_parameters"]["run_id"]
+                value["items"] = [{"event_id": "event-" + str(i), "run_id": run_id, "ordinal": i + 1,
+                                   "event_type": "step_started", "activity_id": "activity-" + str(i)} for i in range(10)]
+            return value
+        self.transport.corrupt = expand
+        self.transport.calls.clear()
+        value = self.client.report(refs).descriptor()
+        self.assertEqual(value["calls"], 29)
+        self.assertEqual(len(value["operations"]), 4)
+        self.assertEqual(sum(len(run["events"]["data"]) for row in value["operations"] for run in row["runs"]["data"]), 80)
+        self.assertLess(len(json.dumps(value).encode()), 262144)
+        from control_plane_kit_servers_cpk_server.client import cli
+        from control_plane_kit_servers_cpk_server.client import report as report_module
+        import contextlib
+        import io
+        outputs = []
+        with patch.object(cli, "load_profile", return_value=self.client.profile), patch.object(cli, "TopologyClient", return_value=self.client), patch.object(report_module, "monotonic", return_value=0):
+            for suffix in ([], ["--json"]):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    code = cli.main(["--profile", "private", "report", refs[0], *suffix])
+                self.assertEqual(code, 0)
+                outputs.append(json.loads(output.getvalue()))
+        self.assertEqual(outputs[0], outputs[1])
+        self.assertEqual(set(outputs[0]), ROOT_KEYS)
