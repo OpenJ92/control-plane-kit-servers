@@ -261,6 +261,10 @@ class JournalStore:
 
 
 def _validate_journal(value: object, operation_ref: str) -> None:
+    if isinstance(value, dict) and value.get("schema") == "cpk.client-catalogue-invocation.v1":
+        from .catalogue import validate_journal
+        validate_journal(value, operation_ref)
+        return
     if not isinstance(value, dict) or set(value) != _JOURNAL_KEYS:
         raise JournalError("operation journal is invalid")
     if value["schema"] != JOURNAL_SCHEMA or value["operation_ref"] != operation_ref:

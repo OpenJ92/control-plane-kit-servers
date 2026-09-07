@@ -8,7 +8,10 @@ import json
 import os
 from pathlib import Path
 import stat
-from typing import Callable, Mapping, Protocol
+from typing import TYPE_CHECKING, Callable, Mapping, Protocol
+
+if TYPE_CHECKING:
+    from .catalogue import CatalogueResult
 from uuid import uuid4
 
 from .journal import (
@@ -118,6 +121,34 @@ class TopologyClient:
         self.transport = transport or PublicHttpTransport(profile)
         self.journal = journal or JournalStore(profile.state_directory)
         self._identity_factory = identity_factory or (lambda: str(uuid4()))
+
+    def overview(self) -> CatalogueResult:
+        from .catalogue import read
+        return read(self, "overview")
+
+    def draft_list(self, *, limit: int = 50, cursor: dict | None = None) -> CatalogueResult:
+        from .catalogue import read
+        return read(self, "draft-list", limit=limit, cursor=cursor)
+
+    def draft_show(self, draft_id: str, revision: int) -> CatalogueResult:
+        from .catalogue import read
+        return read(self, "draft-revision", draft_id=draft_id, revision_number=revision)
+
+    def draft_save(self, path: Path, *, title: str | None = None) -> CatalogueResult:
+        from .catalogue import mutate
+        return mutate(self, "create", path=path, title=title)
+
+    def draft_revise(self, draft_id: str, path: Path, expected_head_revision: int) -> CatalogueResult:
+        from .catalogue import mutate
+        return mutate(self, "revise", path=path, draft_id=draft_id, expected_head_revision=expected_head_revision)
+
+    def draft_select(self, draft_id: str, revision: int) -> CatalogueResult:
+        from .catalogue import mutate
+        return mutate(self, "select", draft_id=draft_id, revision_number=revision)
+
+    def draft_resume(self, operation_ref: str) -> CatalogueResult:
+        from .catalogue import resume
+        return resume(self, operation_ref)
 
     def plan(self, desired_path: Path, *, title: str = "Topology deployment") -> ClientResult:
         source, desired = _read_desired(desired_path)
@@ -754,6 +785,8 @@ class TopologyClient:
 
     def _load(self, operation_ref: str) -> dict[str, object]:
         journal = self.journal.read(operation_ref)
+        if journal.get("schema") != JOURNAL_SCHEMA:
+            raise JournalError("operation is not a deployment invocation")
         target = _mapping(journal, "target")
         if (
             target.get("endpoint_sha256") != self.profile.target_digest

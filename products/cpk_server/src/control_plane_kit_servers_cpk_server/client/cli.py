@@ -11,7 +11,7 @@ from typing import Sequence
 from .journal import JournalError
 from .profile import ClientConfigurationError, load_profile
 from .transport import ClientAuthorizationError, ClientTransportError
-from .workflow import ClientInputError, ClientResult, TopologyClient
+from .workflow import ClientInputError, ClientResult, TopologyClient, _unique_object
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -20,7 +20,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         profile = load_profile(arguments.profile)
         client = TopologyClient(profile)
-        if arguments.command == "plan":
+        if arguments.command == "overview":
+            result = client.overview()
+        elif arguments.command == "draft":
+            if arguments.draft_command == "list":
+                result = client.draft_list(limit=arguments.limit, cursor=arguments.cursor)
+            elif arguments.draft_command == "show":
+                result = client.draft_show(arguments.draft_id, arguments.revision)
+            elif arguments.draft_command == "save":
+                result = client.draft_save(arguments.graph, title=arguments.title)
+            elif arguments.draft_command == "revise":
+                result = client.draft_revise(arguments.draft_id, arguments.graph, arguments.expected_head)
+            elif arguments.draft_command == "select":
+                result = client.draft_select(arguments.draft_id, arguments.revision)
+            else:
+                result = client.draft_resume(arguments.operation_ref)
+        elif arguments.command == "plan":
             if arguments.resume is not None:
                 result = client.resume_prepare(arguments.resume)
             elif arguments.desired_graph is not None:
@@ -74,13 +89,63 @@ def _parser() -> argparse.ArgumentParser:
     status = commands.add_parser("status")
     status.add_argument("operation_ref")
     status.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
+    overview = commands.add_parser("overview")
+    overview.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
+    draft = commands.add_parser("draft")
+    catalogue = draft.add_subparsers(dest="draft_command", required=True)
+    for name in ("list", "show", "save", "revise", "select", "resume"):
+        command = catalogue.add_parser(name)
+        command.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
+        if name in {"show", "revise", "select"}:
+            command.add_argument("draft_id")
+        if name in {"show", "select"}:
+            command.add_argument("--revision", required=True, type=_catalogue_integer)
+        if name in {"save", "revise"}:
+            command.add_argument("graph", type=Path)
+        if name == "save":
+            command.add_argument("--title")
+        if name == "revise":
+            command.add_argument("--expected-head", required=True, type=_catalogue_integer)
+        if name == "resume":
+            command.add_argument("operation_ref")
+        if name == "list":
+            command.add_argument("--limit", default=50, type=_catalogue_integer)
+            command.add_argument("--cursor", type=_catalogue_cursor)
     return parser
+
+
+def _catalogue_integer(value):
+    if not value.isascii() or not value.isdigit() or value.startswith("0") or len(value) > 19:
+        raise argparse.ArgumentTypeError("expected a canonical positive integer")
+    number = int(value)
+    if number > 2**63 - 1:
+        raise argparse.ArgumentTypeError("integer exceeds the public bound")
+    return number
+
+
+def _invalid_json_constant(value):
+    raise ValueError("nonstandard JSON constant")
+
+
+def _catalogue_cursor(value):
+    try:
+        if len(value.encode()) > 16384:
+            raise ValueError
+        result = json.loads(value, object_pairs_hook=_unique_object, parse_constant=_invalid_json_constant)
+        if not isinstance(result, dict):
+            raise ValueError
+        return result
+    except (ValueError, RecursionError):
+        raise argparse.ArgumentTypeError("cursor must be a bounded JSON object") from None
 
 
 def _render(result: ClientResult, *, json_output: bool) -> None:
     value = result.descriptor()
     if json_output:
         print(json.dumps(value, sort_keys=True, separators=(",", ":")))
+        return
+    if value.get("schema", "").startswith("cpk.client-catalogue-"):
+        print(json.dumps(value, sort_keys=True, indent=2))
         return
     print(f"status: {result.status}")
     print(f"operation: {result.operation_ref}")
