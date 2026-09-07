@@ -207,3 +207,189 @@ Only the server's plan and `no-changes` response establish that result. A new
 plan never automatically approves or applies effects. File-v1 journals,
 catalogue journals, existing approval requirements and result-v1 output remain
 unchanged.
+
+## Bounded report
+
+```bash
+cpk --profile PROFILE report INITIAL_OPERATION CHANGE_OPERATION --json
+```
+
+Supply one to four distinct operation references, including deployment or
+catalogue references. `cpk.client-report.v1` is a separate envelope; existing
+plan/apply/status result-v1 is unchanged. Human output is the same projection in
+indented JSON. `observed` means the requested evidence was read, not that a run
+succeeded or the workspace is currently converged.
+
+The report separates:
+
+- `requested`: private transport provenance, with file/saved/catalogue source;
+  a catalogue receipt revision is distinct from its authoring request;
+- `session`: fresh public session status and only four explicitly labelled
+  server-reported saved metadata fields, without fingerprint validation;
+- `association`: a fresh immutable revision-to-plan graph comparison, not proof
+  of historical admission;
+- `plan`, `approval`, `runs`: correlated public coordinates/statuses and bounded
+  event kinds, without provider payloads or inferred health;
+- `latest_overview`: a separate public observation read last, which may differ
+  from all earlier operation observations.
+
+Missing, mismatched or truncated evidence produces attention-required output.
+Historical success never becomes a claim of current convergence. Current graph
+coordinates do not imply a current draft revision. Collection elapsed time is
+not provider freshness; `provider_freshness` stays `unknown` and
+`atomic_snapshot` stays `false`.
+
+Limits are four operations, 32 GET calls, one page per collection, two runs per
+plan, ten events per run, and 256 KiB serialized output. The present composition
+uses at most 29 calls and 80 events; no cursor is followed. Valid Unicode
+identifiers can expand when JSON encoded, so output overflow returns an explicit
+truncated shell. Credentials, graph bodies, arbitrary metadata, request keys,
+file paths, titles and provider/failure payloads are omitted.
+
+A 60-second monotonic scheduling budget prevents starting another read once
+exhausted, including the final overview. This is not a hard total duration:
+the existing transport uses a 30-second socket timeout by default and cannot
+cancel an entire in-flight read at the scheduling boundary. The report never
+calls a command route, replays an operation, or writes its journal.
+
+## Install and configure the maintained client
+
+Use Python 3.12 or newer. This source checkpoint contains the maintained client
+and report; its normal metadata pins Core/Operations to
+`e3d773d022fd36e727ee1d94f4c4396b25c722c6` and Interpreters to
+`ed5dd9ed28193c60c76e96d3380f6e4812d4b3a1`:
+
+```bash
+git clone https://github.com/OpenJ92/control-plane-kit-servers.git cpk-client-source
+cd cpk-client-source
+git checkout d8430cd0ad60fbe45935a60bc163d28944565494
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install .
+cpk --help
+```
+
+The exact CPK repository coordinates are reproducible; transitive third-party
+packages still use the declared version ranges, not a complete lockfile. The
+current distribution includes server dependencies; this does not start a server
+or grant runtime authority. Access to private source repositories must already
+be configured through your normal Git/package credentials.
+
+Create a private configuration directory and copy **already issued**, scoped
+credential files from their protected custody location. Do not paste tokens into
+commands or reports:
+
+```bash
+umask 077
+mkdir -p "$HOME/.config/cpk/profiles" "$HOME/.local/state/cpk"
+chmod 700 "$HOME/.config/cpk" "$HOME/.config/cpk/profiles" "$HOME/.local/state/cpk"
+install -m 600 /protected/issued/operator.token "$HOME/.config/cpk/operator.token"
+install -m 600 /protected/issued/approver.token "$HOME/.config/cpk/approver.token"
+install -m 600 /protected/issued/worker.token "$HOME/.config/cpk/worker.token"
+```
+
+Create `~/.config/cpk/profiles/PROFILE.json` using the profile shape above, with
+your authenticated server endpoint, existing workspace ID, and **absolute**
+credential/state paths; then `chmod 600` that file. Operator, approver and worker
+roles remain separate. No token minting, workspace bootstrap, provider changes
+or new network exposure is performed by client installation.
+
+## Complete saved-topology operator loop
+
+This is the acceptance procedure, not an executed live result. Start with an
+existing authorized workspace, its registered products/runtimes, and retained
+valid graph inputs: `initial.json` for the representative Hello deployment,
+`changed.json` for the reviewed change/removal, and `teardown.json` preserving
+anything outside the explicitly owned application resources. Use the existing
+[Hello authoring and ownership guidance](../../../docs/persistent-hello-demo.md)
+and [servers #123 convergence evidence](https://github.com/OpenJ92/control-plane-kit-servers/issues/123).
+Do not regenerate unrelated nodes from a newer descriptor or interpret an empty
+graph as permission to delete everything. The graph inputs are owner-authored
+values; this client does not build another convergence scenario matrix.
+
+Inspect and save the initial intent:
+
+```bash
+cpk --profile PROFILE overview
+cpk --profile PROFILE draft save initial.json --title 'Reviewed Hello deployment'
+cpk --profile PROFILE draft list
+cpk --profile PROFILE draft show DRAFT_ID --revision 1
+cpk --profile PROFILE draft select DRAFT_ID --revision 1
+cpk --profile PROFILE plan --draft DRAFT_ID --revision 1
+```
+
+Copy actual returned draft, operation and plan IDs; names in capitals here are
+placeholders, never preapproved identifiers. `draft show` returns coordinates,
+not a replacement graph/title editor. Read the prepared plan's activities,
+required scope and destructive flag. Review the exact affected identities,
+network exposure, capacity/cost and preservation of unrelated resources. If the
+plan differs from intended ownership, stop and revise the graph instead of
+approving it.
+
+Only after approving that exact non-destructive plan:
+
+```bash
+cpk --profile PROFILE apply INITIAL_OPERATION --execute-plan INITIAL_PLAN \
+  --approve-plan INITIAL_PLAN
+cpk --profile PROFILE status INITIAL_OPERATION
+cpk --profile PROFILE report INITIAL_OPERATION --json
+```
+
+Prepare the change as another immutable revision. `--expected-head` names the
+head actually inspected; head conflicts require renewed inspection:
+
+```bash
+cpk --profile PROFILE draft revise DRAFT_ID changed.json --expected-head 1
+cpk --profile PROFILE draft show DRAFT_ID --revision 2
+cpk --profile PROFILE draft select DRAFT_ID --revision 2
+cpk --profile PROFILE plan --draft DRAFT_ID --revision 2
+```
+
+Inspect this new plan independently. For a removal, obtain explicit destructive
+permission for this exact plan before the separate call:
+
+```bash
+cpk --profile PROFILE apply CHANGE_OPERATION --execute-plan CHANGE_PLAN \
+  --approve-destructive-plan CHANGE_PLAN
+cpk --profile PROFILE status CHANGE_OPERATION
+cpk --profile PROFILE report INITIAL_OPERATION CHANGE_OPERATION --json
+```
+
+After successful advancement, ask for a fresh converged no-op using the same
+selected revision. Do not select again and do not resume the old preparation:
+
+```bash
+cpk --profile PROFILE plan --draft DRAFT_ID --revision 2
+cpk --profile PROFILE report NOOP_OPERATION --json
+```
+
+The fresh invocation uses fresh fences/key. Only its server-produced no-changes
+plan establishes the no-op; it needs no approval or execution. A lost response
+instead uses `plan --resume THE_SAME_OPERATION` with its exact retained request.
+An uncertain effect is inspected through status/report and owner evidence,
+never blindly redispatched as a fresh command.
+
+Teardown is a new, separately reviewed intent and permission decision:
+
+```bash
+cpk --profile PROFILE draft revise DRAFT_ID teardown.json --expected-head 2
+cpk --profile PROFILE draft select DRAFT_ID --revision 3
+cpk --profile PROFILE plan --draft DRAFT_ID --revision 3
+```
+
+Review retained control-plane, shared runtime, ingress, secret-reference and
+unrelated application ownership before granting destructive approval. Only if
+that exact teardown plan is authorized:
+
+```bash
+cpk --profile PROFILE apply TEARDOWN_OPERATION --execute-plan TEARDOWN_PLAN \
+  --approve-destructive-plan TEARDOWN_PLAN
+cpk --profile PROFILE status TEARDOWN_OPERATION
+cpk --profile PROFILE report INITIAL_OPERATION CHANGE_OPERATION NOOP_OPERATION TEARDOWN_OPERATION --json
+```
+
+This teardown does not authorize deleting the control-plane installation,
+database volume or shared infrastructure. Provider-owned inspection is still
+needed to establish external cleanup/health. The report truthfully limits itself
+to its correlated public evidence; parent #1752 live acceptance, final integrated
+review and roadmap promotion remain separate gates.
