@@ -1,0 +1,159 @@
+"""Bounded report laws over scripted owning public envelopes."""
+import copy
+import json
+from pathlib import Path
+import sys
+from tempfile import TemporaryDirectory
+import unittest
+from unittest.mock import patch
+from uuid import UUID
+
+ROOT = Path(__file__).resolve().parents[3]
+PRODUCT_SRC = ROOT / "products" / "cpk_server" / "src"
+ROOT_KEYS = {"schema", "workspace_id", "status", "atomic_snapshot", "provider_freshness",
+             "elapsed_seconds", "limits", "calls", "operations", "latest_overview"}
+OP_KEYS = {"operation_ref", "state", "requested", "session", "association", "plan", "approval", "runs", "issues"}
+
+
+class ReportTests(unittest.TestCase):
+    def setUp(self):
+        sys.path.insert(0, str(PRODUCT_SRC))
+        self.addCleanup(sys.path.remove, str(PRODUCT_SRC))
+        from control_plane_kit_servers_cpk_server import client
+        self.assertTrue(callable(getattr(client.TopologyClient, "report", None)), "missing bounded public report")
+        self.api = client
+        self.temporary = TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        from test_topology_client import ScriptedTransport, DeterministicIds
+        from test_topology_client_catalogue import overview
+
+        class Transport(ScriptedTransport):
+            corrupt = None
+            cursor = None
+            run_status = "succeeded"
+            unavailable = None
+
+            def call(inner, route_id, **kwargs):
+                if route_id == inner.unavailable:
+                    raise client.ClientTransportError()
+                special = {
+                    "read.session-detail": {"workspace_id": "workspace-a", "kind": "session-detail", "session": {
+                        "workspace_id": "workspace-a", "session_id": "session-a", "status": "closed", "title": "SECRET-TITLE",
+                        "metadata": {"deployment_prepare_source": "saved-revision.v1", "deployment_prepare_saved_draft_id": "draft-a",
+                                     "deployment_prepare_saved_revision": "1", "deployment_prepare_saved_graph_id": "graph-desired",
+                                     "deployment_prepare_intent_sha256": "DO-NOT-PRINT", "private": "http://10.0.0.1/SECRET"}}},
+                    "read.desired-topology-draft-revision": {"workspace_id": "workspace-a", "kind": "desired-topology-draft-revision",
+                        "draft_id": "draft-a", "revision": 1, "graph_id": "graph-desired", "created_at": "2026-09-07T00:00:00Z", "graph": "SECRET-GRAPH"},
+                    "read.plan-runs": {"workspace_id": "workspace-a", "kind": "plan-runs", "limit": 2,
+                        "items": [{"run_id": "run-a", "plan_id": "plan-a", "status": inner.run_status}], "next_cursor": inner.cursor},
+                    "read.run-events": {"workspace_id": "workspace-a", "kind": "run-events", "limit": 10,
+                        "items": [{"event_id": "event-a", "run_id": "run-a", "ordinal": 1, "event_type": "step_uncertain",
+                                   "activity_id": "activity-a", "payload": {"credential": "DO-NOT-PRINT"}, "failure": "SECRET"}], "next_cursor": None},
+                    "read.operator-overview": overview(),
+                }
+                if route_id in special:
+                    inner.calls.append({"route_id": route_id, **copy.deepcopy(kwargs)})
+                    result = special[route_id]
+                else:
+                    result = super().call(route_id, **kwargs)
+                if route_id == "read.workspace":
+                    result["workspace"].update(desired_graph_id="graph-desired", desired_realized_projection_id="projection-desired", desired_graph_revision=1)
+                if route_id == "read.plan-detail":
+                    result.update(workspace_id="workspace-a", kind="plan-detail")
+                    result["plan"]["status"] = "planned"
+                if route_id == "read.approval-detail":
+                    result.update(workspace_id="workspace-a", kind="approval-detail")
+                    result["approval"]["plan_id"] = "plan-a"
+                if inner.corrupt:
+                    result = inner.corrupt(route_id, result)
+                return result
+        self.transport = Transport()
+        self.client = client.TopologyClient(client.ClientProfile("https://cpk.example", "workspace-a",
+            {role: self.root / (role + ".token") for role in ("operator", "approver", "worker")}, self.root / "state"),
+            transport=self.transport, identity_factory=DeterministicIds())
+        self.operation = self.client.plan(client.SavedDesiredRevision("draft-a", 1))
+        self.assertEqual(self.operation.status, "planned")
+        self.transport.calls.clear()
+
+    def test_provenance_association_and_separate_latest_overview_without_writes(self):
+        before = {p: p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
+        value = self.client.report([self.operation.operation_ref]).descriptor()
+        self.assertEqual(set(value), ROOT_KEYS)
+        self.assertEqual(value["schema"], "cpk.client-report.v1")
+        self.assertFalse(value["atomic_snapshot"])
+        self.assertEqual(value["provider_freshness"], "unknown")
+        row = value["operations"][0]
+        self.assertEqual(set(row), OP_KEYS)
+        self.assertEqual(row["requested"]["data"]["provenance"], "transport-provenance")
+        self.assertEqual(row["requested"]["data"]["revision"], 1)
+        self.assertEqual(row["association"]["state"], "matched")
+        self.assertEqual(row["session"]["data"]["server_reported_saved_metadata"]["revision"], "1")
+        self.assertEqual(row["runs"]["data"][0]["events"]["data"][0]["event_type"], "step_uncertain")
+        self.assertEqual(value["latest_overview"]["data"]["graphs"]["desired"]["draft"]["head"]["revision"], 2)
+        self.assertNotIn("revision", value["latest_overview"]["data"]["graphs"]["current"])
+        self.assertEqual(self.transport.calls[-1]["route_id"], "read.operator-overview")
+        self.assertTrue(all(c["route_id"].startswith("read.") and c["credential_role"] == "operator" for c in self.transport.calls))
+        self.assertEqual(before, {p: p.read_bytes() for p in self.root.rglob("*") if p.is_file()})
+        text = json.dumps(value)
+        for forbidden in ("DO-NOT-PRINT", "SECRET", "http://10.0.0.1", "idempotency_key", "intent_sha256", "current_revision"):
+            self.assertNotIn(forbidden, text)
+
+    def test_mismatch_and_required_foreign_correlations_fail_closed(self):
+        cases = (("read.desired-topology-draft-revision", "graph_id", "wrong"),
+                 ("read.plan-detail", "workspace_id", "foreign"),
+                 ("read.approval-detail", "plan_id", "foreign"),
+                 ("read.session-detail", "session_id", None),
+                 ("read.plan-runs", "plan_id", "foreign"),
+                 ("read.run-events", "run_id", None))
+        for route, field, replacement in cases:
+            with self.subTest(route=route):
+                def corrupt(actual, value):
+                    if actual == route:
+                        target = value
+                        if route == "read.approval-detail": target = value["approval"]
+                        if route == "read.session-detail": target = value["session"]
+                        if route in {"read.plan-runs", "read.run-events"}: target = value["items"][0]
+                        if replacement is None: target.pop(field)
+                        else: target[field] = replacement
+                    return value
+                self.transport.corrupt = corrupt
+                value = self.client.report([self.operation.operation_ref]).descriptor()
+                self.assertEqual(value["status"], "attention-required")
+                self.assertTrue(value["operations"][0]["issues"])
+                if route == "read.desired-topology-draft-revision":
+                    self.assertEqual(value["operations"][0]["association"]["state"], "mismatch")
+
+    def test_missing_history_and_uncertain_runs_never_become_convergence(self):
+        missing = str(UUID(int=999, version=4))
+        self.transport.unavailable = "read.session-detail"
+        self.transport.run_status = "uncompensated_failure"
+        value = self.client.report([missing, self.operation.operation_ref]).descriptor()
+        self.assertEqual(value["operations"][0]["state"], "unavailable")
+        self.assertEqual(value["operations"][1]["session"]["state"], "unavailable")
+        self.assertEqual(value["operations"][1]["runs"]["data"][0]["status"], "uncompensated_failure")
+        self.assertNotIn("converged", json.dumps(value))
+
+    def test_single_pages_and_scheduling_budget_include_latest_overview(self):
+        self.transport.cursor = {"opaque": "not-followed"}
+        value = self.client.report([self.operation.operation_ref]).descriptor()
+        self.assertEqual(value["operations"][0]["runs"]["state"], "truncated")
+        self.assertEqual(sum(c["route_id"] == "read.plan-runs" for c in self.transport.calls), 1)
+        from control_plane_kit_servers_cpk_server.client import report as report_module
+        self.transport.calls.clear()
+        with patch.object(report_module, "monotonic", side_effect=[0, *([61] * 100)]):
+            exhausted = self.client.report([self.operation.operation_ref]).descriptor()
+        self.assertEqual(exhausted["latest_overview"]["state"], "truncated")
+        self.assertEqual(exhausted["calls"], 0)
+        self.assertEqual(self.transport.calls, [])
+        self.assertLessEqual(len(json.dumps(value).encode()), 262144)
+
+    def test_explicit_ref_bound_and_closed_limits_before_reads(self):
+        for refs in ([], [self.operation.operation_ref] * 2, [str(UUID(int=i, version=4)) for i in range(5)], ["bad"]):
+            with self.subTest(refs=refs), self.assertRaises((self.api.ClientInputError, self.api.JournalError)):
+                self.client.report(refs)
+        self.assertEqual(self.transport.calls, [])
+        value = self.client.report([self.operation.operation_ref]).descriptor()
+        self.assertEqual(value["limits"], {"operations": 4, "calls": 32, "pages_per_collection": 1,
+            "runs_per_plan": 2, "events_per_run": 10, "scheduling_seconds": 60, "output_bytes": 262144})
+        self.assertLessEqual(value["calls"], 32)
