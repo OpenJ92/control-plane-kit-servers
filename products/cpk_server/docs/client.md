@@ -217,7 +217,7 @@ cpk --profile PROFILE report INITIAL_OPERATION CHANGE_OPERATION --json
 Supply one to four distinct operation references, including deployment or
 catalogue references. `cpk.client-report.v1` is a separate envelope; existing
 plan/apply/status result-v1 is unchanged. Human output is the same projection in
-indented JSON. `observed` means the requested evidence was read, not that a run
+indented JSON when it fits the limit, with compact JSON as a bounded fallback. `observed` means the requested evidence was read, not that a run
 succeeded or the workspace is currently converged.
 
 The report separates:
@@ -240,7 +240,8 @@ not provider freshness; `provider_freshness` stays `unknown` and
 `atomic_snapshot` stays `false`.
 
 Limits are four operations, 32 GET calls, one page per collection, two runs per
-plan, ten events per run, and 256 KiB serialized output. The present composition
+plan, ten events per run, and 256 KiB serialized output. Both CLI modes check
+the actual UTF-8 stdout representation, including its trailing newline. The present composition
 uses at most 29 calls and 80 events; no cursor is followed. Valid Unicode
 identifiers can expand when JSON encoded, so output overflow returns an explicit
 truncated shell. Credentials, graph bodies, arbitrary metadata, request keys,
@@ -262,7 +263,7 @@ and report; its normal metadata pins Core/Operations to
 ```bash
 git clone https://github.com/OpenJ92/control-plane-kit-servers.git cpk-client-source
 cd cpk-client-source
-git checkout d8430cd0ad60fbe45935a60bc163d28944565494
+git checkout 19697a79b00666bc0969f244689ba6a15b47f9e4
 python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install .
