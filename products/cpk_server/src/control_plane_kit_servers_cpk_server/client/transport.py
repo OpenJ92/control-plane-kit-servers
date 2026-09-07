@@ -96,6 +96,7 @@ class PublicHttpTransport:
         headers = {
             "Accept": "application/json",
             "Authorization": "Bearer " + credential.decode("ascii"),
+            "User-Agent": "control-plane-kit-cpk-client/0.1.0",
         }
         if data is not None:
             headers["Content-Type"] = "application/json"

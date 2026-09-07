@@ -6,6 +6,9 @@ plan-bound authorization, and sequences only the accepted public commands.
 It does not plan graphs, access Docker or providers, bootstrap workspaces, or
 infer recovery.
 
+HTTP requests identify the client as `control-plane-kit-cpk-client/0.1.0`.
+This is a product identity, not a browser signature or an authorization grant.
+
 ## Profile
 
 Create `$XDG_CONFIG_HOME/cpk/profiles/PROFILE.json`, or use
