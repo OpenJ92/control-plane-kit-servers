@@ -212,3 +212,27 @@ class ReportTests(unittest.TestCase):
                 outputs.append(json.loads(output.getvalue()))
         self.assertEqual(outputs[0], outputs[1])
         self.assertEqual(set(outputs[0]), ROOT_KEYS)
+
+    def test_valid_unicode_identifiers_trigger_bounded_output_truncation(self):
+        refs = [self.operation.operation_ref]
+        for _ in range(3):
+            refs.append(self.client.plan(self.api.SavedDesiredRevision("draft-a", 1)).operation_ref)
+        def expand(route, value):
+            if route == "read.plan-runs":
+                value["items"] = [{"run_id": "run-" + str(i), "plan_id": "plan-a", "status": "running"} for i in range(2)]
+            if route == "read.run-events":
+                run_id = self.transport.calls[-1]["path_parameters"]["run_id"]
+                value["items"] = [{"event_id": "😀" * 500 + str(i), "run_id": run_id, "ordinal": i + 1,
+                                   "event_type": "step_started", "activity_id": "😀" * 500} for i in range(10)]
+            return value
+        self.transport.corrupt = expand
+        self.transport.calls.clear()
+        value = self.client.report(refs).descriptor()
+        self.assertEqual(value["calls"], 29)
+        self.assertEqual(value["status"], "attention-required")
+        self.assertEqual(value["latest_overview"], {"state": "truncated", "data": None})
+        self.assertTrue(all(row["state"] == "truncated" and row["issues"] == ["output-truncated"] for row in value["operations"]))
+        encoded = json.dumps(value).encode()
+        self.assertLessEqual(len(encoded), 262144)
+        self.assertNotIn(b"\\ud83d", encoded)
+        self.assertTrue(all(c["route_id"].startswith("read.") for c in self.transport.calls))
