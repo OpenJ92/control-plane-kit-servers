@@ -167,3 +167,43 @@ Catalogue receipts use `cpk.client-catalogue-result.v1` with status `recorded` o
 `cpk.client-catalogue-read.v1`. Existing deployment `cpk.client-result.v1` and
 file-based plan/apply/status behavior remain unchanged. Saved preparation and
 multi-operation reporting are separate subsequent slices.
+
+## Prepare an exact saved revision
+
+After explicitly selecting a saved revision, prepare it through the same plan
+command:
+
+```bash
+cpk --profile PROFILE plan --draft DRAFT_ID --revision 1
+```
+
+The file, saved revision, and `--resume` inputs are exclusive. `--draft` and
+`--revision` must be supplied together; a revision cannot accompany a file or
+resume reference. The Python facade accepts `SavedDesiredRevision(draft_id,
+revision)` as the existing `TopologyClient.plan` input.
+
+Each fresh invocation reads current workspace graph/projection and desired
+graph/projection/generation fences. It sends those fences and exact draft
+coordinates to the existing preparation command. Operations validates selection
+and admission. This client does not fetch or republish the saved graph, select
+it again, or grant execution permission.
+
+A saved invocation uses the separate private `cpk.client-saved-invocation.v1`
+journal. Its closed `prepare_request` retains `draft_id`, `revision`,
+`expected_current`, `expected_desired`, `expected_desired_graph_revision`, `title`
+and `idempotency_key`. Both graph/projection tuples are required. These bounded
+transport records remain private and are not proof of historical admission,
+approval or execution.
+
+If the preparation response is lost, `plan --resume OPERATION_REFERENCE` replays
+that exact retained request, including the original key and fences, without a
+workspace reread. Later selection/head drift does not rewrite the request. A
+completed preparation is inspected or applied through the existing commands;
+resume does not start another preparation.
+
+To ask whether the same selected revision is now converged, start a **new** plan
+invocation. It uses a fresh key and fresh workspace fences without reselecting.
+Only the server's plan and `no-changes` response establish that result. A new
+plan never automatically approves or applies effects. File-v1 journals,
+catalogue journals, existing approval requirements and result-v1 output remain
+unchanged.
