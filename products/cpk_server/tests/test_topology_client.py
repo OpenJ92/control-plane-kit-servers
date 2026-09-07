@@ -307,6 +307,34 @@ class TopologyClientTests(unittest.TestCase):
             identity_factory=DeterministicIds(),
         )
 
+    def test_public_http_request_identifies_product_without_changing_auth(self) -> None:
+        from control_plane_kit_servers_cpk_server.client.transport import PublicHttpTransport
+
+        profile = self.profile()
+        profile.credentials["operator"].write_bytes(b"operator-token")
+        profile.credentials["operator"].chmod(0o600)
+        with patch(
+            "control_plane_kit_servers_cpk_server.client.transport.build_opener"
+        ) as build_opener:
+            opener = build_opener.return_value
+            opener.open.return_value = io.BytesIO(b'{"kind":"operator-overview"}')
+            result = PublicHttpTransport(profile).call(
+                "read.operator-overview",
+                path_parameters={"workspace_id": "workspace-a"},
+                payload={},
+                credential_role="operator",
+            )
+        opener.open.assert_called_once()
+        request = opener.open.call_args.args[0]
+        self.assertEqual(request.full_url, "https://cpk.example/workspaces/workspace-a/overview")
+        self.assertEqual(request.get_method(), "GET")
+        self.assertEqual(request.get_header("Accept"), "application/json")
+        self.assertEqual(request.get_header("Authorization"), "Bearer operator-token")
+        self.assertEqual(result, {"kind": "operator-overview"})
+        self.assertEqual(
+            request.get_header("User-agent"), "control-plane-kit-cpk-client/0.1.0"
+        )
+
     def test_public_chain_uses_each_route_coordinate_and_own_replay_contract(self) -> None:
         transport = ScriptedTransport(progress_once=True)
         client = self.client(transport)
