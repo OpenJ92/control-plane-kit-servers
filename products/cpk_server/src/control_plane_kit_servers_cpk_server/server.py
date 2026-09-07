@@ -43,7 +43,6 @@ from control_plane_kit_operations import (
     CpkServerOperationsApplication,
     CurrentGraphAdvancementCommandService,
     DesiredGraphCommandService,
-    DesiredTopologyDraftCommandService,
     DelegationSigningKeyRegistrationService,
     ExecutionAdmissionCommandService,
     ExecutionCoordinator,
@@ -73,6 +72,8 @@ from control_plane_kit_operations import (
     cpk_server_services,
 )
 from control_plane_kit_operations.postgres import PostgresUnitOfWork, install_schema
+
+from control_plane_kit_operations.desired_topology_drafts import DesiredTopologyDraftCommandService
 
 from .boundary import (
     CpkServerApplicationBoundary,
