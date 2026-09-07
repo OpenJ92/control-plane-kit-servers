@@ -43,6 +43,7 @@ from control_plane_kit_operations import (
     CpkServerOperationsApplication,
     CurrentGraphAdvancementCommandService,
     DesiredGraphCommandService,
+    DesiredTopologyDraftCommandService,
     DelegationSigningKeyRegistrationService,
     ExecutionAdmissionCommandService,
     ExecutionCoordinator,
@@ -803,6 +804,11 @@ def _operations_application(
             secret_providers=SecretProviderRegistrationService(unit_of_work),
             delegation_signing_keys=DelegationSigningKeyRegistrationService(
                 unit_of_work
+            ),
+            desired_topology_drafts=DesiredTopologyDraftCommandService(
+                unit_of_work,
+                clock=_clock,
+                id_factory=_id,
             ),
             desired_graphs=DesiredGraphCommandService(
                 unit_of_work,
