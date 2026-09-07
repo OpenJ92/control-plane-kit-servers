@@ -13,6 +13,7 @@ from control_plane_kit_core.operations import (
     operator_read_http_routes,
 )
 from control_plane_kit_operations.cpk_server import cpk_server_services
+from control_plane_kit_operations.saved_deployment_preparation import SavedDeploymentPreparationService
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -20,8 +21,8 @@ PRODUCT_SRC = ROOT / "products" / "cpk_server" / "src"
 SERVER_SOURCE = (
     PRODUCT_SRC / "control_plane_kit_servers_cpk_server" / "server.py"
 )
-CPK_COMMIT = "8e56a82ec52eb6d08ba803c391df28338dcd9056"
-INTERPRETERS_COMMIT = "a28583e41ec75ed6fbe4ae8635e0ff7148afe254"
+CPK_COMMIT = "e3d773d022fd36e727ee1d94f4c4396b25c722c6"
+INTERPRETERS_COMMIT = "ed5dd9ed28193c60c76e96d3380f6e4812d4b3a1"
 PUBLIC_DEPLOYMENT_COMMAND_ROUTES = frozenset(
     {
         "command.deployment.prepare",
@@ -267,12 +268,13 @@ class CurrentCpkServerCompositionTests(unittest.TestCase):
         operations = object()
         desired_graphs = object()
         deployment_program = object()
+        unit_of_work_factory = lambda: None
         with patch(
             "control_plane_kit_operations.cpk_server.DeploymentProgram",
             return_value=deployment_program,
         ) as constructor:
             services = cpk_server_services(
-                unit_of_work_factory=lambda: None,
+                unit_of_work_factory=unit_of_work_factory,
                 planning=planning,
                 approval=approval,
                 admission=object(),
@@ -282,16 +284,63 @@ class CurrentCpkServerCompositionTests(unittest.TestCase):
                 desired_graphs=desired_graphs,
             )
 
+        saved_preparations = constructor.call_args.kwargs["saved_preparations"]
+        self.assertIsInstance(saved_preparations, SavedDeploymentPreparationService)
+        self.assertIs(saved_preparations._unit_of_work_factory, unit_of_work_factory)
+        self.assertIs(saved_preparations._operations, operations)
         constructor.assert_called_once_with(
             operations,
             desired_graphs,
             planning,
             approval,
+            saved_preparations=saved_preparations,
         )
         self.assertIs(
             services[ControlPlaneServiceRole.PLANNING]._deployment_program,
             deployment_program,
         )
+
+
+    def test_bootstrap_installs_real_catalogue_service_on_public_command_routes(self) -> None:
+        from control_plane_kit_core.identity import PrincipalKind, WorkspaceGrant
+        from control_plane_kit_core.policies import PolicyScope
+        from control_plane_kit_operations.cpk_server import CpkServerApplicationError
+        from control_plane_kit_operations.desired_topology_drafts import DesiredTopologyDraftCommandService
+
+        sys.path.insert(0, str(PRODUCT_SRC))
+        self.addCleanup(sys.path.remove, str(PRODUCT_SRC))
+        module = importlib.import_module("control_plane_kit_servers_cpk_server.server")
+        from control_plane_kit_servers_cpk_server.boundary import CpkServerServiceRequest
+        config = module.CpkServerBootstrapConfiguration.from_environment({
+            "CPK_SERVER_MODE": "execution-capable", "CPK_CONTROL_AUTH_CONFIGURED": "true",
+            "CPK_RUNTIME_INTERPRETERS": "none", "CPK_PORT": "8080",
+            **{name: "postgresql://cpk:cpk@db/cpk" for name in (
+                "CPK_WORKPLACE_DATABASE_URL", "CPK_ACTIVITY_HISTORY_DATABASE_URL",
+                "CPK_OBSERVER_STATE_DATABASE_URL", "CPK_GRAPH_TOPOLOGY_DATABASE_URL")}})
+        principal = module.static_development_principal(
+            subject_id="operator-a", kind=PrincipalKind.OPERATOR,
+            workspace_grants=(WorkspaceGrant("workspace-a", (PolicyScope.INSTANCE_WORKSPACE_EDIT,)),))
+        with patch.object(module, "_install_operations_schema", return_value=None), patch.object(
+            module.psycopg, "connect", side_effect=AssertionError("unexpected database use")
+        ) as connect:
+            application = module._operations_application(config)
+            for surface in ("http", "mcp"):
+                for command in ("create", "revise", "select"):
+                    with self.subTest(surface=surface, command=command):
+                        request = CpkServerServiceRequest(
+                            surface, "command.desired-topology-draft." + command,
+                            ControlPlaneServiceRole.PLANNING,
+                            {"workspace_id": "workspace-a", "draft_id": "draft-a"}, {}, principal)
+                        with self.assertRaises(CpkServerApplicationError) as caught:
+                            application.handle(request)
+                        self.assertEqual(caught.exception.status, 400)
+            connect.assert_not_called()
+        planning = application.services[ControlPlaneServiceRole.PLANNING]
+        drafts = planning._desired_topology_drafts
+        self.assertIsInstance(drafts, DesiredTopologyDraftCommandService)
+        self.assertIs(drafts._uow, planning._desired_graphs._unit_of_work_factory)
+        self.assertIs(drafts._clock, module._clock)
+        self.assertIs(drafts._id, module._id)
 
 
 if __name__ == "__main__":

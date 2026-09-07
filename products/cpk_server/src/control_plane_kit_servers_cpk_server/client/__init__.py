@@ -7,10 +7,14 @@ from .transport import (
     ClientTransportError,
     PublicHttpTransport,
 )
-from .workflow import ClientInputError, ClientResult, TopologyClient
+from .workflow import ClientInputError, ClientResult, SavedDesiredRevision, TopologyClient
+from .catalogue import CatalogueResult
+from .report import ReportResult
 
 
 __all__ = (
+    "CatalogueResult",
+    "ReportResult",
     "ClientAuthorizationError",
     "ClientConfigurationError",
     "ClientInputError",
@@ -21,6 +25,7 @@ __all__ = (
     "JournalStore",
     "PublicHttpTransport",
     "TopologyClient",
+    "SavedDesiredRevision",
     "canonical_operation_ref",
     "load_profile",
 )
