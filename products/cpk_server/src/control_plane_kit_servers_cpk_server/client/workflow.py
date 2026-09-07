@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from .journal import (
     JOURNAL_SCHEMA,
+    SAVED_JOURNAL_SCHEMA,
     MAXIMUM_REQUEST_RECORDS,
     JournalError,
     JournalStore,
@@ -51,6 +52,21 @@ class PublicTransport(Protocol):
 
 class ClientInputError(ValueError):
     """Fixed local input failure."""
+
+
+@dataclass(frozen=True, slots=True)
+class SavedDesiredRevision:
+    """Exact catalogue coordinates; Operations owns selection and admission."""
+
+    draft_id: str
+    revision: int
+
+    def __post_init__(self) -> None:
+        _text_coordinate(self.draft_id)
+        if any(ord(char) < 32 or ord(char) == 127 for char in self.draft_id):
+            raise ClientInputError("saved draft is invalid")
+        if type(self.revision) is not int or not 1 <= self.revision <= 2**63 - 1:
+            raise ClientInputError("saved revision is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,8 +166,13 @@ class TopologyClient:
         from .catalogue import resume
         return resume(self, operation_ref)
 
-    def plan(self, desired_path: Path, *, title: str = "Topology deployment") -> ClientResult:
-        source, desired = _read_desired(desired_path)
+    def plan(self, desired_path: Path | SavedDesiredRevision, *, title: str = "Topology deployment") -> ClientResult:
+        saved = isinstance(desired_path, SavedDesiredRevision)
+        if saved:
+            source = {"draft_id": desired_path.draft_id, "revision": desired_path.revision}
+            desired = None
+        else:
+            source, desired = _read_desired(desired_path)
         operation_ref = canonical_operation_ref(self._identity_factory())
         workspace = self._workspace()
         current = _pointer(workspace, "current")
@@ -168,6 +189,18 @@ class TopologyClient:
             "idempotency_key": self._new_key(),
         }
         journal = _new_journal(self.profile, operation_ref, source)
+        if saved:
+            generation = body["expected_desired_graph_revision"]
+            if (
+                workspace.get("workspace_id") != self.profile.workspace_id
+                or body["expected_desired"] is None
+                or not 1 <= generation <= 2**63 - 1
+            ):
+                raise ClientInputError("workspace saved preparation fences are unavailable")
+            body.pop("desired_graph")
+            body.update(source)
+            journal["schema"] = SAVED_JOURNAL_SCHEMA
+            journal["prepare_request"] = dict(body)
         with self.journal.mutation_lock(operation_ref):
             self.journal.create(operation_ref, journal)
             result = self._mutate(
@@ -596,7 +629,7 @@ class TopologyClient:
         if not isinstance(pending, dict):
             raise JournalError("operation has no pending request")
         body = dict(_mapping(pending, "body"))
-        if pending.get("route_id") == "command.deployment.prepare":
+        if pending.get("route_id") == "command.deployment.prepare" and journal["schema"] == JOURNAL_SCHEMA:
             source = _mapping(pending, "desired_source")
             verified_source, desired = _read_desired(Path(_text(source, "path")))
             if verified_source != source:
@@ -785,7 +818,7 @@ class TopologyClient:
 
     def _load(self, operation_ref: str) -> dict[str, object]:
         journal = self.journal.read(operation_ref)
-        if journal.get("schema") != JOURNAL_SCHEMA:
+        if journal.get("schema") not in {JOURNAL_SCHEMA, SAVED_JOURNAL_SCHEMA}:
             raise JournalError("operation is not a deployment invocation")
         target = _mapping(journal, "target")
         if (
@@ -1014,6 +1047,20 @@ class TopologyClient:
         raise ClientInputError("public history page budget is exhausted")
 
     def _validate_plan(self, journal: Mapping[str, object], plan: Mapping[str, object]) -> None:
+        if journal["schema"] == SAVED_JOURNAL_SCHEMA:
+            request = _mapping(journal, "prepare_request")
+            current = _mapping(request, "expected_current")
+            desired = _mapping(request, "expected_desired")
+            expected = {
+                "workspace_id": self.profile.workspace_id,
+                "base_graph_id": current["authored_graph_id"],
+                "base_realized_projection_id": current["realized_projection_id"],
+                "desired_graph_id": desired["authored_graph_id"],
+                "desired_realized_projection_id": desired["realized_projection_id"],
+                "desired_graph_revision": request["expected_desired_graph_revision"],
+            }
+            if any(plan.get(name) != value for name, value in expected.items()):
+                raise ClientInputError("prepared plan coordinates are stale")
         coordinates = _coordinates(journal)
         for name in (
             "plan_id",

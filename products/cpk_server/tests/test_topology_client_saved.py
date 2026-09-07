@@ -44,7 +44,8 @@ class SavedClientTests(unittest.TestCase):
                         desired_realized_projection_id="projection-desired",
                         desired_graph_revision=inner.generation)
                 if route_id == "command.deployment.prepare" and inner.no_changes:
-                    result.update(status="no-changes", approval_request_id=None)
+                    result.update(status="no-changes")
+                    result.pop("approval_request_id")
                 if route_id == "read.plan-detail":
                     result["plan"]["workspace_id"] = "workspace-a"
                     if inner.no_changes:
