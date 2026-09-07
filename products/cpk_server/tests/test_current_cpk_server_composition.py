@@ -301,5 +301,47 @@ class CurrentCpkServerCompositionTests(unittest.TestCase):
         )
 
 
+    def test_bootstrap_installs_real_catalogue_service_on_public_command_routes(self) -> None:
+        from control_plane_kit_core.identity import PrincipalKind, WorkspaceGrant
+        from control_plane_kit_core.policies import PolicyScope
+        from control_plane_kit_operations.cpk_server import CpkServerApplicationError
+        from control_plane_kit_operations.desired_topology_drafts import DesiredTopologyDraftCommandService
+
+        sys.path.insert(0, str(PRODUCT_SRC))
+        self.addCleanup(sys.path.remove, str(PRODUCT_SRC))
+        module = importlib.import_module("control_plane_kit_servers_cpk_server.server")
+        from control_plane_kit_servers_cpk_server.boundary import CpkServerServiceRequest
+        config = module.CpkServerBootstrapConfiguration.from_environment({
+            "CPK_SERVER_MODE": "execution-capable", "CPK_CONTROL_AUTH_CONFIGURED": "true",
+            "CPK_RUNTIME_INTERPRETERS": "none", "CPK_PORT": "8080",
+            **{name: "postgresql://cpk:cpk@db/cpk" for name in (
+                "CPK_WORKPLACE_DATABASE_URL", "CPK_ACTIVITY_HISTORY_DATABASE_URL",
+                "CPK_OBSERVER_STATE_DATABASE_URL", "CPK_GRAPH_TOPOLOGY_DATABASE_URL")}})
+        principal = module.static_development_principal(
+            subject_id="operator-a", kind=PrincipalKind.OPERATOR,
+            workspace_grants=(WorkspaceGrant("workspace-a", (PolicyScope.INSTANCE_WORKSPACE_EDIT,)),))
+        with patch.object(module, "_install_operations_schema", return_value=None), patch.object(
+            module.psycopg, "connect", side_effect=AssertionError("unexpected database use")
+        ) as connect:
+            application = module._operations_application(config)
+            for surface in ("http", "mcp"):
+                for command in ("create", "revise", "select"):
+                    with self.subTest(surface=surface, command=command):
+                        request = CpkServerServiceRequest(
+                            surface, "command.desired-topology-draft." + command,
+                            ControlPlaneServiceRole.PLANNING,
+                            {"workspace_id": "workspace-a", "draft_id": "draft-a"}, {}, principal)
+                        with self.assertRaises(CpkServerApplicationError) as caught:
+                            application.handle(request)
+                        self.assertEqual(caught.exception.status, 400)
+            connect.assert_not_called()
+        planning = application.services[ControlPlaneServiceRole.PLANNING]
+        drafts = planning._desired_topology_drafts
+        self.assertIsInstance(drafts, DesiredTopologyDraftCommandService)
+        self.assertIs(drafts._uow, planning._desired_graphs._unit_of_work_factory)
+        self.assertIs(drafts._clock, module._clock)
+        self.assertIs(drafts._id, module._id)
+
+
 if __name__ == "__main__":
     unittest.main()
