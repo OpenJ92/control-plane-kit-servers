@@ -64,6 +64,16 @@ def digest(value):
     return sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
 
 
+def _bounded_json(value, maximum):
+    try:
+        encoded = json.dumps(value, allow_nan=False).encode("utf-8")
+    except (TypeError, ValueError, RecursionError):
+        raise ClientInputError("catalogue JSON is invalid") from None
+    if len(encoded) > maximum:
+        raise ClientInputError("catalogue JSON exceeds its bound")
+    return encoded
+
+
 def hash_text(value):
     if not isinstance(value, str) or len(value) != 64 or any(c not in "0123456789abcdef" for c in value):
         fail()
@@ -81,7 +91,7 @@ class CatalogueResult:
     value: dict
 
     def descriptor(self):
-        return json.loads(json.dumps(self.value))
+        return json.loads(_bounded_json(self.value, 1048576))
 
     @property
     def status(self):
@@ -449,8 +459,7 @@ def read(client, kind, *, draft_id=None, revision_number=None, limit=50, cursor=
         payload = {"limit": limit}
         if cursor is not None:
             obj(cursor)
-            if len(json.dumps(cursor, allow_nan=False).encode()) > MAXIMUM_CURSOR_BYTES:
-                fail()
+            _bounded_json(cursor, MAXIMUM_CURSOR_BYTES)
             payload["after"] = cursor
     else:
         text(draft_id)
@@ -483,14 +492,12 @@ def read(client, kind, *, draft_id=None, revision_number=None, limit=50, cursor=
         next_cursor = value.get("next_cursor")
         if next_cursor is not None:
             obj(next_cursor)
-            if len(json.dumps(next_cursor, allow_nan=False).encode()) > MAXIMUM_CURSOR_BYTES:
-                fail()
+            _bounded_json(next_cursor, MAXIMUM_CURSOR_BYTES)
     else:
         if value.get("kind") != "desired-topology-draft-revision" or value.get("draft_id") != draft_id or type(value.get("revision")) is not int or value["revision"] != revision_number:
             fail()
         observation = {"draft_id": draft_id, "revision": revision_number, "graph_id": text(value.get("graph_id")), "created_at": text(value.get("created_at"), 128)}
     result = {"schema": "cpk.client-catalogue-read.v1", "kind": kind, "workspace_id": client.profile.workspace_id,
               "observation": observation, "next_cursor": next_cursor}
-    if len(json.dumps(result, allow_nan=False).encode()) > 1048576:
-        fail()
+    _bounded_json(result, 1048576)
     return CatalogueResult(result)

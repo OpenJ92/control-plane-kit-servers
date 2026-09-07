@@ -280,3 +280,27 @@ class CatalogueClientTests(unittest.TestCase):
         with self.assertRaises((ClientInputError, JournalError)):
             deployed_client.draft_resume(planned.operation_ref)
         self.assertEqual(len(deployment.calls), before)
+
+    def test_cursor_json_failures_are_bounded_at_cli_facade_and_public_response(self):
+        import argparse
+        from control_plane_kit_servers_cpk_server.client import CatalogueResult, ClientInputError
+        from control_plane_kit_servers_cpk_server.client.cli import _catalogue_cursor
+        for raw in ('{"position":NaN}', '{"position":Infinity}', '{"a":1,"a":2}'):
+            with self.subTest(raw=raw):
+                with self.assertRaises(argparse.ArgumentTypeError):
+                    _catalogue_cursor(raw)
+        cyclic = {}
+        cyclic["cycle"] = cyclic
+        for cursor in ({"position": float("nan")}, {"position": {1}}, cyclic):
+            with self.subTest(cursor_type=type(cursor)):
+                transport = CatalogueTransport()
+                with self.assertRaises(ClientInputError):
+                    self.client(transport).draft_list(cursor=cursor)
+                self.assertEqual(transport.calls, [])
+        for cursor in ({"position": float("inf")}, {"position": {1}}, cyclic):
+            transport = CatalogueTransport(corrupt=lambda route, value, cursor=cursor: {**value, "next_cursor": cursor})
+            with self.assertRaises(ClientInputError):
+                self.client(transport).draft_list()
+            self.assertEqual(len(transport.calls), 1)
+        with self.assertRaises(ClientInputError):
+            CatalogueResult({"invalid": {1}}).descriptor()

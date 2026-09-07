@@ -11,7 +11,7 @@ from typing import Sequence
 from .journal import JournalError
 from .profile import ClientConfigurationError, load_profile
 from .transport import ClientAuthorizationError, ClientTransportError
-from .workflow import ClientInputError, ClientResult, TopologyClient
+from .workflow import ClientInputError, ClientResult, TopologyClient, _unique_object
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -123,11 +123,15 @@ def _catalogue_integer(value):
     return number
 
 
+def _invalid_json_constant(value):
+    raise ValueError("nonstandard JSON constant")
+
+
 def _catalogue_cursor(value):
     try:
         if len(value.encode()) > 16384:
             raise ValueError
-        result = json.loads(value)
+        result = json.loads(value, object_pairs_hook=_unique_object, parse_constant=_invalid_json_constant)
         if not isinstance(result, dict):
             raise ValueError
         return result
