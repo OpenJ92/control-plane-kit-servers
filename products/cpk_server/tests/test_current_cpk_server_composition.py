@@ -13,6 +13,7 @@ from control_plane_kit_core.operations import (
     operator_read_http_routes,
 )
 from control_plane_kit_operations.cpk_server import cpk_server_services
+from control_plane_kit_operations.saved_deployment_preparation import SavedDeploymentPreparationService
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -20,8 +21,8 @@ PRODUCT_SRC = ROOT / "products" / "cpk_server" / "src"
 SERVER_SOURCE = (
     PRODUCT_SRC / "control_plane_kit_servers_cpk_server" / "server.py"
 )
-CPK_COMMIT = "8e56a82ec52eb6d08ba803c391df28338dcd9056"
-INTERPRETERS_COMMIT = "a28583e41ec75ed6fbe4ae8635e0ff7148afe254"
+CPK_COMMIT = "e3d773d022fd36e727ee1d94f4c4396b25c722c6"
+INTERPRETERS_COMMIT = "ed5dd9ed28193c60c76e96d3380f6e4812d4b3a1"
 PUBLIC_DEPLOYMENT_COMMAND_ROUTES = frozenset(
     {
         "command.deployment.prepare",
@@ -267,12 +268,13 @@ class CurrentCpkServerCompositionTests(unittest.TestCase):
         operations = object()
         desired_graphs = object()
         deployment_program = object()
+        unit_of_work_factory = lambda: None
         with patch(
             "control_plane_kit_operations.cpk_server.DeploymentProgram",
             return_value=deployment_program,
         ) as constructor:
             services = cpk_server_services(
-                unit_of_work_factory=lambda: None,
+                unit_of_work_factory=unit_of_work_factory,
                 planning=planning,
                 approval=approval,
                 admission=object(),
@@ -282,11 +284,16 @@ class CurrentCpkServerCompositionTests(unittest.TestCase):
                 desired_graphs=desired_graphs,
             )
 
+        saved_preparations = constructor.call_args.kwargs["saved_preparations"]
+        self.assertIsInstance(saved_preparations, SavedDeploymentPreparationService)
+        self.assertIs(saved_preparations._unit_of_work_factory, unit_of_work_factory)
+        self.assertIs(saved_preparations._operations, operations)
         constructor.assert_called_once_with(
             operations,
             desired_graphs,
             planning,
             approval,
+            saved_preparations=saved_preparations,
         )
         self.assertIs(
             services[ControlPlaneServiceRole.PLANNING]._deployment_program,
