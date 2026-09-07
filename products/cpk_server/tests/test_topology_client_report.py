@@ -236,3 +236,48 @@ class ReportTests(unittest.TestCase):
         self.assertLessEqual(len(encoded), 262144)
         self.assertNotIn(b"\\ud83d", encoded)
         self.assertTrue(all(c["route_id"].startswith("read.") for c in self.transport.calls))
+
+    def test_cli_actual_utf8_output_including_newline_is_bounded_near_ceiling(self):
+        refs = [self.operation.operation_ref]
+        for _ in range(3):
+            refs.append(self.client.plan(self.api.SavedDesiredRevision("draft-a", 1)).operation_ref)
+        width = 0
+        def expand(route, value):
+            if route == "read.plan-runs":
+                value["items"] = [{"run_id": "run-" + str(i), "plan_id": "plan-a", "status": "running"} for i in range(2)]
+            if route == "read.run-events":
+                run_id = self.transport.calls[-1]["path_parameters"]["run_id"]
+                value["items"] = [{"event_id": "event-" + str(i) + "😀" * width, "run_id": run_id, "ordinal": i + 1,
+                                   "event_type": "step_started", "activity_id": "activity" + "😀" * width} for i in range(10)]
+            return value
+        self.transport.corrupt = expand
+        from control_plane_kit_servers_cpk_server.client import report as report_module
+        from control_plane_kit_servers_cpk_server.client import cli
+        import contextlib
+        import io
+        with patch.object(report_module, "monotonic", return_value=0):
+            baseline = self.client.report(refs).descriptor()
+            # 80 events, two padded coordinates each, 12 ASCII-escaped bytes per
+            # non-BMP character: leave at least 1KiB within the checked envelope.
+            width = (262144 - len(json.dumps(baseline).encode("utf-8")) - 1024) // (80 * 2 * 12)
+            self.assertGreater(width, 0)
+            self.assertLess(width + len("activity"), 512)
+            result = self.client.report(refs)
+        value = result.descriptor()
+        self.assertEqual(value["status"], "observed")
+        self.assertLessEqual(len(json.dumps(value).encode("utf-8")), 262144)
+        self.assertGreater(len((json.dumps(value, sort_keys=True, indent=2) + "\n").encode("utf-8")), 262144)
+        outputs = []
+        with patch.object(cli, "load_profile", return_value=self.client.profile), patch.object(cli, "TopologyClient", return_value=self.client), patch.object(self.client, "report", return_value=result):
+            for suffix in ([], ["--json"]):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    code = cli.main(["--profile", "private", "report", *refs, *suffix])
+                self.assertEqual(code, 0)
+                outputs.append(output.getvalue())
+        self.assertEqual(json.loads(outputs[0]), value)
+        self.assertEqual(json.loads(outputs[1]), value)
+        for mode, output in zip(("human", "json"), outputs):
+            with self.subTest(mode=mode):
+                self.assertTrue(output.endswith("\n"))
+                self.assertLessEqual(len(output.encode("utf-8")), 262144)
