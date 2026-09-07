@@ -24,6 +24,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         client = TopologyClient(profile)
         if arguments.command == "report":
             result = client.report(arguments.operation_refs)
+            _render(result, json_output=arguments.json)
+            return result.exit_code
         elif arguments.command == "overview":
             result = client.overview()
         elif arguments.command == "draft":
@@ -152,10 +154,20 @@ def _catalogue_cursor(value):
 
 def _render(result: ClientResult, *, json_output: bool) -> None:
     value = result.descriptor()
+    if value.get("schema") == "cpk.client-report.v1":
+        from .report import LIMITS
+        compact = json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n"
+        rendered = compact if json_output else json.dumps(value, sort_keys=True, indent=2) + "\n"
+        if len(rendered.encode("utf-8")) > LIMITS["output_bytes"]:
+            rendered = compact
+        if len(rendered.encode("utf-8")) > LIMITS["output_bytes"]:
+            raise ClientInputError("report output exceeds its bound")
+        sys.stdout.write(rendered)
+        return
     if json_output:
         print(json.dumps(value, sort_keys=True, separators=(",", ":")))
         return
-    if value.get("schema") == "cpk.client-report.v1" or value.get("schema", "").startswith("cpk.client-catalogue-"):
+    if value.get("schema", "").startswith("cpk.client-catalogue-"):
         print(json.dumps(value, sort_keys=True, indent=2))
         return
     print(f"status: {result.status}")
