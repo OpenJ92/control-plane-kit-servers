@@ -254,7 +254,7 @@ class TopologyClient:
             if execute_plan != plan_id:
                 raise ClientInputError("execution confirmation does not match the prepared plan")
             try:
-                plan = self._plan_detail(plan_id)
+                plan = self._plan_detail(plan_id, saved=journal["schema"] == SAVED_JOURNAL_SCHEMA)
                 self._validate_plan(journal, plan)
             except ClientAuthorizationError:
                 raise
@@ -548,7 +548,7 @@ class TopologyClient:
         if "approval_request_id" in prepared:
             coordinates["approval_request_id"] = _text(prepared, "approval_request_id")
         try:
-            plan = self._plan_detail(plan_id)
+            plan = self._plan_detail(plan_id, saved=journal["schema"] == SAVED_JOURNAL_SCHEMA)
             self._validate_plan(journal, plan)
             changes = _plan_changes(plan)
         except ClientAuthorizationError:
@@ -842,7 +842,7 @@ class TopologyClient:
             workspace = self._workspace()
             current = _pointer(workspace, "current")
             if "plan_id" in coordinates:
-                plan = self._plan_detail(_coordinate(coordinates, "plan_id"))
+                plan = self._plan_detail(_coordinate(coordinates, "plan_id"), saved=journal["schema"] == SAVED_JOURNAL_SCHEMA)
                 self._validate_plan(journal, plan)
                 changes = _plan_changes(plan)
             if "approval_request_id" in coordinates:
@@ -971,11 +971,13 @@ class TopologyClient:
         )
         return _mapping(value, "workspace")
 
-    def _plan_detail(self, plan_id: str) -> Mapping[str, object]:
+    def _plan_detail(self, plan_id: str, *, saved: bool = False) -> Mapping[str, object]:
         value = self._read(
             "read.plan-detail",
             path_parameters={"workspace_id": self.profile.workspace_id, "plan_id": plan_id},
         )
+        if saved and value.get("workspace_id") != self.profile.workspace_id:
+            raise ClientInputError("prepared plan workspace is invalid")
         return _mapping(value, "plan")
 
     def _approval_detail(self, approval_id: str) -> Mapping[str, object]:
@@ -1052,7 +1054,6 @@ class TopologyClient:
             current = _mapping(request, "expected_current")
             desired = _mapping(request, "expected_desired")
             expected = {
-                "workspace_id": self.profile.workspace_id,
                 "base_graph_id": current["authored_graph_id"],
                 "base_realized_projection_id": current["realized_projection_id"],
                 "desired_graph_id": desired["authored_graph_id"],

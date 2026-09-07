@@ -47,14 +47,16 @@ class SavedClientTests(unittest.TestCase):
                     result.update(status="no-changes")
                     result.pop("approval_request_id")
                 if route_id == "read.plan-detail":
-                    result["plan"]["workspace_id"] = "workspace-a"
+                    result["workspace_id"] = "workspace-a"
                     if inner.no_changes:
                         result["plan"].update(base_graph_id="graph-desired",
                             base_realized_projection_id="projection-desired",
                             desired_graph_revision=inner.generation)
                         result["plan"]["payload"]["activities"] = []
                     if inner.corrupt_plan:
-                        result["plan"].update(inner.corrupt_plan)
+                        result["plan"].update({k: v for k, v in inner.corrupt_plan.items() if k != "workspace_id"})
+                        if "workspace_id" in inner.corrupt_plan:
+                            result["workspace_id"] = inner.corrupt_plan["workspace_id"]
                 return result
         self.Transport = Transport
 
@@ -165,7 +167,7 @@ class SavedClientTests(unittest.TestCase):
                 with self.assertRaises(JournalError):
                     client.journal.write(result.operation_ref, altered)
         before = len(transport.calls)
-        with self.assertRaises(JournalError):
+        with self.assertRaises(self.api.ClientInputError):
             client.draft_resume(result.operation_ref)
         self.assertEqual(len(transport.calls), before)
 
