@@ -8,9 +8,11 @@ from .transport import (
     PublicHttpTransport,
 )
 from .workflow import ClientInputError, ClientResult, TopologyClient
+from .catalogue import CatalogueResult
 
 
 __all__ = (
+    "CatalogueResult",
     "ClientAuthorizationError",
     "ClientConfigurationError",
     "ClientInputError",

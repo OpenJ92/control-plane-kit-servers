@@ -64,7 +64,7 @@ class CatalogueTransport:
         elif route_id == "read.operator-overview":
             result = copy.deepcopy(self.observation)
         elif route_id == "read.desired-topology-drafts":
-            result = {"workspace_id": "workspace-a", "collection": "desired-topology-drafts", "items": [
+            result = {"workspace_id": "workspace-a", "kind": "desired-topology-drafts", "limit": payload["limit"], "items": [
                 {"workspace_id": "workspace-a", "draft_id": "draft-a", "title": "DO-NOT-PRINT", "head_revision": 2,
                  "created_at": "2026-09-07T00:00:00Z", "deleted_at": None}], "next_cursor": None}
         elif route_id == "read.desired-topology-draft-revision":
@@ -195,6 +195,14 @@ class CatalogueClientTests(unittest.TestCase):
                 self.assertEqual(result.status, "attention-required")
                 self.assertFalse(any(c["route_id"].startswith("command.desired") for c in transport.calls))
 
+        from control_plane_kit_servers_cpk_server.client import ClientAuthorizationError
+        def denied(route, response):
+            raise ClientAuthorizationError()
+        transport = CatalogueTransport(corrupt=denied)
+        with self.assertRaises(ClientAuthorizationError):
+            self.client(transport, "auth-denial").draft_save(self.path)
+        self.assertEqual(len(transport.calls), 1)
+
     def test_stale_denial_and_overflow_never_rebase_or_replace_session(self):
         from control_plane_kit_servers_cpk_server.client import ClientTransportError, ClientInputError
         def deny(route, result):
@@ -250,3 +258,25 @@ class CatalogueClientTests(unittest.TestCase):
                 mutation(transport.observation)
                 with self.assertRaises(ClientInputError):
                     self.client(transport).overview()
+
+    def test_catalogue_and_deployment_references_cannot_cross_command_modes(self):
+        from control_plane_kit_servers_cpk_server.client import ClientInputError, JournalError
+        from test_topology_client import ScriptedTransport
+        transport = CatalogueTransport()
+        client = self.client(transport)
+        saved = client.draft_save(self.path)
+        before = len(transport.calls)
+        for method in (lambda: client.resume_prepare(saved.operation_ref),
+                       lambda: client.apply(saved.operation_ref, execute_plan="plan-a"),
+                       lambda: client.status(saved.operation_ref)):
+            with self.subTest(method=method):
+                with self.assertRaises((ClientInputError, JournalError)):
+                    method()
+        self.assertEqual(len(transport.calls), before)
+        deployment = ScriptedTransport()
+        deployed_client = self.client(deployment, "deployment")
+        planned = deployed_client.plan(self.path)
+        before = len(deployment.calls)
+        with self.assertRaises((ClientInputError, JournalError)):
+            deployed_client.draft_resume(planned.operation_ref)
+        self.assertEqual(len(deployment.calls), before)
