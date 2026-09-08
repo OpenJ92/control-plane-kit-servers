@@ -45,8 +45,9 @@ from control_plane_kit_core.verification import PostgresQueryCheck
 
 _INSTALLATION_ID = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*\Z")
 _WORKSPACE_ID = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}\Z")
-_STORES = ("workplace-store", "activity-history-store", "observer-state-store",
-           "graph-topology-store")
+# Match the graph codec's canonical environment order when appending connections.
+_STORES = ("activity-history-store", "graph-topology-store", "observer-state-store",
+           "workplace-store")
 _PROVIDER_CLIENT_FILE = "/run/secrets/cpk-installation/provider-client"
 
 
