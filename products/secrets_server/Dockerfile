@@ -17,7 +17,7 @@ RUN python -m pip install --no-cache-dir \
         /run/secrets/cpk-secrets \
         /var/lib/cpk-secrets
 
-USER secrets
+USER 10006
 EXPOSE 8081
 
 ENTRYPOINT ["cpk-secrets-entrypoint"]
