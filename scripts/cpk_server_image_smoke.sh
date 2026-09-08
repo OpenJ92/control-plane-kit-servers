@@ -366,6 +366,78 @@ if printf '%s' "$mcp_read_response" | grep -q '"service"'; then
   exit 1
 fi
 
+phase "verify packaged revision history HTTP and MCP composition"
+# This is a public empty-history composition proof, not a second owner history
+# fixture. All data enters through the already running authenticated server.
+docker exec -i "$CONTAINER" python -I - "$SESSION_ID" <<'PY'
+import json
+import sys
+from urllib.error import HTTPError
+from urllib.parse import quote, urlencode
+from urllib.request import Request, urlopen
+
+base = "http://127.0.0.1:8080"
+
+def request(path, payload=None, *, mcp=False, authenticated=True):
+    headers = {"Content-Type": "application/json"}
+    if authenticated:
+        headers["Authorization"] = "Bearer valid-token"
+    if mcp:
+        headers.update({"Accept": "application/json", "MCP-Protocol-Version": "2025-06-18",
+                        "Mcp-Method": "resources/read"})
+    call = Request(base + path, data=None if payload is None else json.dumps(payload).encode(), headers=headers)
+    try:
+        response = urlopen(call, timeout=10)
+    except HTTPError as error:
+        response = error
+    with response:
+        data = response.read(65537)
+        assert len(data) <= 65536, "empty-page smoke response exceeded its bounded expectation"
+        return response.status, json.loads(data)
+
+def mcp(name, arguments, **options):
+    return request("/mcp", {"jsonrpc": "2.0", "id": "revision-history", "method": "resources/read",
+        "params": {"name": name, "arguments": arguments}}, mcp=True, **options)
+
+status, draft = request("/workspaces/workspace-a/desired-topology-drafts", {
+    "session_id": sys.argv[1], "title": "Revision history smoke", "idempotency_key": "history-draft",
+    "graph": {"name": "history-smoke", "runtimes": {}, "nodes": {}, "edges": {}, "public_ingresses": []}})
+assert status == 200, (status, draft)
+identity = {"workspace_id": "workspace-a", "draft_id": draft["draft_id"], "revision": draft["revision"]}
+path = "/workspaces/workspace-a/desired-topology-drafts/" + quote(draft["draft_id"], safe="")
+revision_path = path + "/revisions/" + str(draft["revision"])
+for kind in ("preparations", "attempts"):
+    route = "read.desired-topology-draft-revision-" + kind
+    endpoint = revision_path + "/" + kind
+    status, page = request(endpoint)
+    assert status == 200, (status, page)
+    assert page == {"workspace_id": "workspace-a", "kind": "desired-topology-draft-revision-" + kind,
+                    "limit": 10, "items": [], "next_cursor": None}, page
+    for name in (route, "list_desired_topology_draft_revision_" + kind):
+        status, message = mcp(name, identity)
+        assert status == 200 and message["result"] == page, (status, message)
+    assert request(endpoint, authenticated=False)[0] == 401
+    assert mcp(route, identity, authenticated=False)[0] == 401
+    cursor = {"format_version": 1, "collection": "desired-topology-draft-revision-" + kind,
+        "scope": {**identity, "draft_id": "other-draft"},
+        "position": {"instant": "2026-09-07T00:00:00.000000Z", "item_id": "row-a"}}
+    for query, arguments in (("limit=11", {**identity, "limit": 11}),
+                            (urlencode({"after": json.dumps(cursor)}), {**identity, "after": cursor})):
+        for status, error in (request(endpoint + "?" + query), mcp(route, arguments)):
+            assert status == 400 and len(json.dumps(error).encode()) < 1024, (status, error)
+    missing = {**identity, "revision": draft["revision"] + 1}
+    missing_path = path + "/revisions/" + str(missing["revision"]) + "/" + kind
+    for status, error in (request(missing_path), mcp(route, missing)):
+        assert status == 404 and len(json.dumps(error).encode()) < 1024, (status, error)
+status, detail = request(revision_path)
+assert status == 200, (status, detail)
+assert detail["history"] == {"scope": "source-or-target-sessions-and-exact-target-attempts",
+    "preparations_present": False, "attempts_present": False, "completeness": "association-records-only"}
+status, message = mcp("read.desired-topology-draft-revision", identity)
+assert status == 200 and message["result"] == detail, (status, message)
+print("packaged empty revision history HTTP/MCP composition passed")
+PY
+
 phase "clean owned smoke resources"
 cleanup
 CONTAINER=""
