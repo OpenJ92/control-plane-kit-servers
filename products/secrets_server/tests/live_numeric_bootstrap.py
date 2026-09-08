@@ -24,6 +24,7 @@ from control_plane_kit_interpreters.secret_provider import (
     ControlPlaneKitSecretsClient, SecretProviderBootstrapRegistry,
     SecretProviderClientCode, SecretProviderClientError,
 )
+from products.cpk_server.tests.live_numeric_bootstrap import exercise_cpk_file
 
 
 def exercise_provider(token: str, application_value: str) -> None:
@@ -108,6 +109,9 @@ def main() -> None:
         assert engine.info().get("ID") == os.environ["CPK_SECRET_ENGINE_ID"], "engine mismatch"
         assert engine.networks.get(network_id).attrs["Labels"] == labels
         assert engine.images.get(image_id).labels.get("org.openj92.cpk.test-run") == run_id
+        exercise_cpk_file(engine=engine, sdk=sdk, resources=resources, labels=labels,
+                          image_id=os.environ["CPK_NUMERIC_PRODUCT_IMAGE"],
+                          network_id=network_id)
         inspected = sdk.inspect_image(image_id)
         assert inspected is not None and inspected.image_id == image_id
         uid = inspected.secret_file_owner_uid()
@@ -245,7 +249,8 @@ for path in {list(material)!r}:
             raise RuntimeError("numeric bootstrap fixture cleanup incomplete")
     print(json.dumps({"status": "passed", "source_product": True, "both_bootstrap_files": True,
                       "numeric_uid": 10006, "readonly": True, "other_uid_denied": True,
-                      "authenticated_provider": True, "redaction": True, "residue": "absent"}))
+                      "authenticated_provider": True, "cpk_numeric_uid": 10001,
+                      "cpk_protected_file": True, "redaction": True, "residue": "absent"}))
 
 
 if __name__ == "__main__":

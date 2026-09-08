@@ -39,12 +39,13 @@ docker run --rm "$IMAGE"
 docker run --rm "$IMAGE" \
   sh -c 'cd /tmp && python -c "import control_plane_kit_servers; print(\"control-plane-kit-servers import ok\")"'
 
-# Source-built Secrets product witness. Only this bounded controller receives
+# Source-built Secrets and CPK file witnesses. Only this bounded controller receives
 # local daemon authority; the ordinary package suite above remains socket-free.
 (
   RECORDS="$(mktemp -d)"
   RUN="cpk-numeric-$(basename "$RECORDS")"
   TAG="control-plane-kit-secrets-numeric:$RUN"
+  CPK_TAG="control-plane-kit-cpk-numeric:$RUN"
   cleanup_numeric_bootstrap() {
     failed=0
     if [ -s "$RECORDS/controller" ]; then
@@ -71,17 +72,20 @@ docker run --rm "$IMAGE" \
         [ -z "$observed" ] || failed=1
       fi
     fi
-    if [ -s "$RECORDS/image" ]; then
-      identity="$(cat "$RECORDS/image")" || return 1
-      observed="$(docker image inspect --format '{{.Id}}' "$TAG")" || return 1
-      owner="$(docker image inspect --format '{{index .Config.Labels "org.openj92.cpk.test-run"}}' "$identity")" || return 1
-      [ "$observed" = "$identity" ] && [ "$owner" = "$RUN" ] || return 1
-      docker image rm "$TAG" >/dev/null || failed=1
-      observed="$(docker image ls -q --no-trunc --filter "reference=$TAG")" || return 1
-      [ -z "$observed" ] || failed=1
-    fi
+    for record in image cpk-image; do
+      if [ -s "$RECORDS/$record" ]; then
+        case "$record" in image) image_tag="$TAG" ;; cpk-image) image_tag="$CPK_TAG" ;; esac
+        identity="$(cat "$RECORDS/$record")" || return 1
+        observed="$(docker image inspect --format '{{.Id}}' "$image_tag")" || return 1
+        owner="$(docker image inspect --format '{{index .Config.Labels "org.openj92.cpk.test-run"}}' "$identity")" || return 1
+        [ "$observed" = "$identity" ] && [ "$owner" = "$RUN" ] || return 1
+        docker image rm "$image_tag" >/dev/null || failed=1
+        observed="$(docker image ls -q --no-trunc --filter "reference=$image_tag")" || return 1
+        [ -z "$observed" ] || failed=1
+      fi
+    done
     [ "$failed" = 0 ] || return 1
-    rm -f "$RECORDS/controller" "$RECORDS/network" "$RECORDS/image"
+    rm -f "$RECORDS/controller" "$RECORDS/network" "$RECORDS/image" "$RECORDS/cpk-image"
     rmdir "$RECORDS"
   }
   trap 'result=$?; trap - 0; cleanup_numeric_bootstrap || { echo "numeric bootstrap cleanup incomplete; records=$RECORDS" >&2; result=1; }; exit "$result"' 0
@@ -102,10 +106,16 @@ docker run --rm "$IMAGE" \
   [ -z "$EXISTING" ] || { echo 'numeric bootstrap network already exists' >&2; exit 1; }
   EXISTING="$(docker image ls -q --no-trunc --filter "reference=$TAG")"
   [ -z "$EXISTING" ] || { echo 'numeric bootstrap image tag already exists' >&2; exit 1; }
+  EXISTING="$(docker image ls -q --no-trunc --filter "reference=$CPK_TAG")"
+  [ -z "$EXISTING" ] || { echo 'numeric CPK image tag already exists' >&2; exit 1; }
   docker build -f products/secrets_server/Dockerfile \
     --label "org.openj92.cpk.test-run=$RUN" \
     --iidfile "$RECORDS/image" -t "$TAG" .
   PRODUCT_IMAGE_ID="$(cat "$RECORDS/image")"
+  docker build -f products/cpk_server/Dockerfile \
+    --label "org.openj92.cpk.test-run=$RUN" \
+    --iidfile "$RECORDS/cpk-image" -t "$CPK_TAG" .
+  CPK_PRODUCT_IMAGE_ID="$(cat "$RECORDS/cpk-image")"
   HELPER_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
   docker network create --internal \
     --label "org.openj92.cpk.test-run=$RUN" \
@@ -117,8 +127,10 @@ docker run --rm "$IMAGE" \
     --network "$NETWORK_ID" \
     --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
     -e DOCKER_HOST=unix:///var/run/docker.sock \
+    -e PYTHONPATH=/app \
     -e "CPK_SECRET_TEST_RUN=$RUN" \
     -e "CPK_SECRET_PRODUCT_IMAGE=$PRODUCT_IMAGE_ID" \
+    -e "CPK_NUMERIC_PRODUCT_IMAGE=$CPK_PRODUCT_IMAGE_ID" \
     -e "CPK_SECRET_HELPER_IMAGE=$HELPER_IMAGE_ID" \
     -e "CPK_SECRET_ENGINE_ID=$ENGINE_ID" \
     -e "CPK_SECRET_NETWORK=$NETWORK_ID" \

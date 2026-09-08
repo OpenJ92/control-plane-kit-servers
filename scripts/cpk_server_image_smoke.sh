@@ -175,7 +175,7 @@ if docker run --rm "$IMAGE" >"$MISSING_CONFIG_OUTPUT" 2>&1; then
 fi
 
 phase "verify non-root image contract"
-docker inspect "$IMAGE" --format '{{.Config.User}}' | grep -q '^cpk$'
+docker inspect "$IMAGE" --format '{{.Config.User}}' | grep -q '^10001$'
 
 phase "create owned runtime network"
 docker network create --label "$LABEL" "$NETWORK" >/dev/null
