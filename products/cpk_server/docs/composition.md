@@ -6,3 +6,8 @@ it to a product-local configuration and process-state model.
 
 This is not the HTTP/MCP server implementation, Dockerfile, OCI image, or
 completed product descriptor. Those belong to later EXTRACT.F issues.
+
+## Installation topology
+
+See [Shared Docker installation value](installation.md) for the pure CPK +
+PostgreSQL + Secrets topology consumed by future bootstrap and public clients.

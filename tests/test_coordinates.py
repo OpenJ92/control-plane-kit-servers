@@ -158,7 +158,7 @@ class CoordinateGenerationTests(unittest.TestCase):
             ):
                 module.product_source_commit(path, "cpk-local-gateway")
 
-    def test_secrets_server_source_tracks_secrets_upstream(self) -> None:
+    def test_secrets_build_and_published_sources_remain_distinct_and_truthful(self) -> None:
         module = load_product_image_script_module()
         document = json.loads(module.COORDINATES.read_text(encoding="utf-8"))
         secrets_server = next(
@@ -169,7 +169,15 @@ class CoordinateGenerationTests(unittest.TestCase):
 
         self.assertEqual(
             secrets_server["source_commit"],
+            "96e86dc3248d578780d64d5d7fc5d6359631d1d6",
+        )
+        self.assertEqual(
             document["upstreams"]["control_plane_kit_secrets_commit"],
+            "68d0da6aed3a383d6bdc284cf4a6a6063a31487e",
+        )
+        self.assertEqual(
+            secrets_server["image"]["digest"],
+            "sha256:066d51110a04bbb4e5ce228b7779c8f022bf3b1d850e8e55950673a777e9cd19",
         )
 
 
