@@ -155,6 +155,9 @@ class DockerHarnessTests(unittest.TestCase):
         self.assertIn("products/cpk_local_gateway/Dockerfile", script)
         self.assertIn("products/secrets_server/Dockerfile", script)
         self.assertIn("unsupported product id", script)
+        self.assertIn('docker run --rm', script)
+        self.assertIn('-v "$ROOT:/source:ro"', script)
+        self.assertNotIn("\nPYTHONPATH=src python3 ", script)
         self.assertNotIn("docker system prune", script)
         self.assertNotIn("docker volume prune", script)
 
