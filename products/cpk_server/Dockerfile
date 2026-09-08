@@ -19,7 +19,7 @@ COPY products/cpk_server/src ./products/cpk_server/src
 RUN adduser --disabled-password --gecos "" --uid 10001 cpk \
     && chown -R cpk:cpk /app
 
-USER cpk
+USER 10001
 EXPOSE 8080
 
 CMD ["python", "-m", "control_plane_kit_servers_cpk_server.server"]

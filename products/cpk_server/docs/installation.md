@@ -122,6 +122,12 @@ Source pins consume accepted Core/Interpreters/Secrets changes. Old published
 image digests still identify their old source: this source change is not a
 publication, retained installation repin, or installed-cluster acceptance.
 
+Source-built CPK images declare numeric user `10001`, retaining the existing
+`cpk` account, group and home. Protected provider-client files use that inspected
+image UID with mode `0400` and a read-only mount. Older images declaring the named
+user `cpk` are unsupported by numeric protected-file delivery; unchanged published
+coordinates do not inherit this source-image capability.
+
 The owning `./test.sh` exercises three product-owned composition tests using real
 descriptors, graph compilation and the graph codec, followed by the repository's
 existing source/live validation phases. No new test runner or provider fixture is
