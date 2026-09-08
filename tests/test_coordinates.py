@@ -169,7 +169,7 @@ class CoordinateGenerationTests(unittest.TestCase):
 
         self.assertEqual(
             secrets_server["source_commit"],
-            "96e86dc3248d578780d64d5d7fc5d6359631d1d6",
+            "68d0da6aed3a383d6bdc284cf4a6a6063a31487e",
         )
         self.assertEqual(
             document["upstreams"]["control_plane_kit_secrets_commit"],
@@ -177,7 +177,7 @@ class CoordinateGenerationTests(unittest.TestCase):
         )
         self.assertEqual(
             secrets_server["image"]["digest"],
-            "sha256:066d51110a04bbb4e5ce228b7779c8f022bf3b1d850e8e55950673a777e9cd19",
+            "sha256:41aba38eb255779c8a0230724d9cc4fffd1dc5d5dfbfafdc133f1629139edfe7",
         )
 
 

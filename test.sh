@@ -144,4 +144,6 @@ CPK_SERVERS_TEST_IMAGE="$IMAGE" \
 CPK_SECRETS_IMAGE="$SECRETS_IMAGE" \
   sh scripts/secrets_server_image_smoke.sh
 CPK_SERVER_BUILD_IMAGE=1 sh scripts/cpk_server_image_smoke.sh
+CPK_IMAGE="$(docker run --rm "$IMAGE" python scripts/product_image_coordinate.py cpk-server)"
+CPK_SERVER_IMAGE="$CPK_IMAGE" sh scripts/cpk_server_published_image_smoke.sh
 sh scripts/docker_residue_audit.sh

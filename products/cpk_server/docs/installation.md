@@ -118,15 +118,17 @@ graph does not grant authority or create a child's internal workspace/runtime.
 The root `bootstrap.sh` driver, protected initial material, authenticated child
 setup through public APIs, approval/execution, automatic ingress runtime proof,
 and durable grandparent tracking after restart remain CPK #1778/#1779 follow-ons.
-Source pins consume accepted Core/Interpreters/Secrets changes. Old published
-image digests still identify their old source: this source change is not a
-publication, retained installation repin, or installed-cluster acceptance.
+Canonical CPK and Secrets image coordinates now consume the verified publications
+recorded in [Servers #158](https://github.com/OpenJ92/control-plane-kit-servers/issues/158).
+The CPK image was built from Servers `4468cd0`; the Secrets image uses that same
+packaging source and Secrets `68d0da6`. Selecting these descriptors does not repin
+a retained installation or establish installed-cluster acceptance.
 
 Source-built CPK images declare numeric user `10001`, retaining the existing
 `cpk` account, group and home. Protected provider-client files use that inspected
 image UID with mode `0400` and a read-only mount. Older images declaring the named
-user `cpk` are unsupported by numeric protected-file delivery; unchanged published
-coordinates do not inherit this source-image capability.
+user `cpk` are unsupported by numeric protected-file delivery. The newly selected
+published CPK image declares numeric `10001`; old image digests remain unchanged.
 
 The owning `./test.sh` exercises three product-owned composition tests using real
 descriptors, graph compilation and the graph codec, followed by the repository's
