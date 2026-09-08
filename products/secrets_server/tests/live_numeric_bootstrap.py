@@ -129,8 +129,8 @@ def main() -> None:
             image_id, name=f"cpk-secret-provider-{uuid4().hex}", labels=labels,
             mounts=[*mounts, docker.types.Mount("/var/lib/cpk-secrets", data.name, type="volume")],
             network=network_id,
-            networking_config=engine.api.create_networking_config({network_id:
-                engine.api.create_endpoint_config(aliases=["secrets-provider"])}),
+            networking_config={network_id:
+                engine.api.create_endpoint_config(aliases=["secrets-provider"])},
             cap_drop=["ALL"], security_opt=["no-new-privileges"],
             log_config=docker.types.LogConfig(type="json-file", config={"max-size": "1m", "max-file": "1"}))
         resources.append((engine.containers, source.id))
