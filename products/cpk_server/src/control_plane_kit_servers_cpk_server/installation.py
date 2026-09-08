@@ -248,11 +248,30 @@ def _variant(base: ProductDescriptorDocument, role: str, contract: ProductRuntim
 def _selected_product(document: ProductDescriptorDocument | None, name: str) -> ContainerServerProduct:
     if not isinstance(document, ProductDescriptorDocument):
         raise TypeError("installation requires selected product descriptor documents")
-    if document.product.identity.name != name:
+    if document.product.identity != ProductIdentity("control-plane-kit", name, 1):
         raise ValueError("installation selected an incompatible product contract")
     if ProductDescriptorCodec().encode_document(document.product).content != document.content:
         raise ValueError("installation product document must match its canonical contract")
     contract = document.product.runtime_contract
+    environment = {item.name: item.value for item in contract.public_environment}
+    if name == "cpk-server-docker-cloudflare":
+        required_settings = {
+            "CPK_SERVER_MODE": "execution-capable",
+            "CPK_CONTROL_AUTH_CONFIGURED": "true",
+            "CPK_RUNTIME_INTERPRETERS": "docker",
+            "CPK_INGRESS_INTERPRETERS": "cloudflare",
+            "CPK_PRODUCT_MATERIAL_RESOLVER": "provider",
+            "CPK_PORT": "8080",
+        }
+        if any(environment.get(key) != value for key, value in required_settings.items()):
+            raise ValueError("installation CPK product lacks required process settings")
+    if name == "postgres-server":
+        for key in ("POSTGRES_USER", "POSTGRES_DB"):
+            setting = environment.get(key)
+            if (not isinstance(setting, str) or not setting.strip()
+                    or len(setting.encode("utf-8")) > 63
+                    or any(ord(character) < 32 or ord(character) == 127 for character in setting)):
+                raise ValueError("installation PostgreSQL identity must be bounded nonempty text")
     expected_ports = {
         "cpk-server-docker-cloudflare": {"http-api": 8080, "mcp": 8080},
         "postgres-server": {"postgres": 5432},
