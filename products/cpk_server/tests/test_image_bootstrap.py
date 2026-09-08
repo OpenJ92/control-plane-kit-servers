@@ -63,7 +63,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         dockerfile = (PRODUCT / "Dockerfile").read_text(encoding="utf-8")
 
         self.assertIn("python:3.12-slim", dockerfile)
-        self.assertIn("USER cpk", dockerfile)
+        self.assertIn("USER 10001", dockerfile)
         self.assertIn("control_plane_kit_servers_cpk_server.server", dockerfile)
         self.assertIn(
             "control-plane-kit-core @ "
