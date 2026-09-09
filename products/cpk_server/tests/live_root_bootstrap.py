@@ -17,7 +17,11 @@ ROOT = Path("/witness")
 def prepare(run):
     os.umask(0o077)
     document = example_input(installation_id=run, workspace_id=run, port=18089)
-    ROOT.joinpath("input.json").write_text(json.dumps(document))
+    input_path = ROOT / "input.json"
+    input_path.write_text(json.dumps(document))
+    # The real launcher must plan from the documented invoking-user private input.
+    input_stat = input_path.stat()
+    assert input_stat.st_uid == os.getuid() and input_stat.st_mode & 0o777 == 0o600
     token = secrets.token_urlsafe(48)
     values = {
         "control_credential": secrets.token_urlsafe(48),
