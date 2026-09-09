@@ -10,7 +10,8 @@ does not claim that CPK deployed or tracks itself.
 Docker must already be running on the user-owned host. The Docker-enabled CPK
 server is a trusted host administrator. Its socket is not a tenant boundary.
 Only loopback port publication is supported here. Supply an existing HTTPS
-endpoint as intent; this bootstrap does not provision DNS, tunnels or ingress.
+endpoint as intent; this bootstrap does not provision DNS or tunnels. It can
+optionally connect a run-owned connector to an operator-retained tunnel.
 
 Build the external driver on the accepted CPK image, then retain its exact local
 image ID. This is driver packaging, not a replacement image for a graph product:
@@ -156,3 +157,38 @@ the invoking host user; receipt files written by apply are private driver-owned
 evidence, read through `bootstrap.sh inspect`. Rootless/user-remapped daemons,
 remote daemons and network filesystems that restrict root bind access are not
 established by this acceptance witness.
+
+## Connecting operator-retained ingress
+
+An optional top-level `external_ingress_connection` input connects an already
+reviewed tunnel to this disposable root. It contains `tunnel_id` (UUID),
+`dns_record_id`, `token_reference`, `token_sha256`, `configuration_sha256`, and
+`connector_product` (the complete canonical cloudflared connector descriptor).
+Add the token reference to the existing private material index; the original
+reusable token remains outside disposable root custody. No provider API token
+is an input to this connection.
+
+Before apply, the operator verifies the retained tunnel and proxied DNS record
+belong to the supplied external HTTPS hostname, there are no active tunnel
+connections, and only this operator can start the dedicated tunnel. Its exact
+configuration is `{"config":{"ingress":[{"hostname":"root.example.test",
+"service":"http://cpk-bootstrap-origin:8080","originRequest":{}},
+{"service":"http_status:404"}]}}`, replacing only the hostname with the
+supplied endpoint. `configuration_sha256` hashes its canonical sorted compact
+JSON; `token_sha256` binds the exact protected token bytes. These are approved
+input bindings, not a claim that bootstrap queried the provider.
+
+The approved root plan shows the stable origin alias and one auxiliary
+connector on the root's exact network, separately from its three-product
+installation graph. After local authenticated setup succeeds, bootstrap starts
+the connector with an owner-only token file and bounded logs. The supported
+connector uses [`TUNNEL_TOKEN_FILE`](https://developers.cloudflare.com/tunnel/advanced/run-parameters/).
+Its tunnel-derived container name atomically refuses another local connector;
+this is not a distributed lock or permission to adopt an existing connection.
+
+The receipt records the actual run-owned connector and staged file volume.
+Exact disposable-root cleanup removes those resources, while the provider
+tunnel, DNS configuration and original protected credential remain retained.
+An ambiguous stage holds without redispatch. Local-ready still reports the
+external endpoint as unverified: prove authenticated HTTPS access and exact
+root workspace identity separately before directing child mutations to it.

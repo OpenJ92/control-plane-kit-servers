@@ -9,6 +9,8 @@ import json
 from pathlib import Path
 import re
 from typing import Mapping
+from urllib.parse import urlsplit
+from uuid import UUID
 
 from control_plane_kit_core.identity import WorkspaceGrant
 from control_plane_kit_core.policies import PolicyScope
@@ -25,7 +27,7 @@ from control_plane_kit_core.topology import GraphDescriptorCodec, compile_topolo
 from control_plane_kit_core.verification import HttpCheck
 
 from .installation import (
-    DockerCpkInstallation, ExternalInstallationIngress, compose_docker_cpk_installation,
+    DockerCpkInstallation, ExternalInstallationIngress, compose_docker_cpk_installation, _selected_product,
 )
 
 
@@ -199,7 +201,8 @@ def protected_file_owner(secret_files: list, image) -> int | None:
 
 
 def _installation(document):
-    _closed(document, {"schema", "installation", "host_binding", "setup"}, {"image_pull_credentials"})
+    _closed(document, {"schema", "installation", "host_binding", "setup"},
+            {"image_pull_credentials", "external_ingress_connection"})
     if document["schema"] != "cpk.root-bootstrap.input.v1":
         raise RootBootstrapError("bootstrap input schema is invalid")
     item = document["installation"]
@@ -224,6 +227,41 @@ def _installation(document):
         ingress=ExternalInstallationIngress(item["external_endpoint"]), connector_product=None,
         **{name: SecretReference(value) for name, value in item["references"].items()},
     )
+
+
+def _external_connection(document, installation, network_name):
+    """Project a connection to operator-retained ingress, never provision it."""
+    value = document['external_ingress_connection']
+    _closed(value, {'tunnel_id', 'dns_record_id', 'token_reference', 'token_sha256',
+                    'configuration_sha256', 'connector_product'})
+    if str(UUID(value['tunnel_id'])) != value['tunnel_id']:
+        raise RootBootstrapError('bootstrap retained tunnel identity is invalid')
+    for field, size in (('dns_record_id', 32), ('token_sha256', 64), ('configuration_sha256', 64)):
+        if not isinstance(value[field], str) or not re.fullmatch('[0-9a-f]{' + str(size) + '}', value[field]):
+            raise RootBootstrapError('bootstrap retained ingress binding is invalid')
+    reference = SecretReference(value['token_reference'])
+    endpoint = urlsplit(installation.ingress.endpoint)
+    if endpoint.netloc != endpoint.hostname or endpoint.path:
+        raise RootBootstrapError('bootstrap retained ingress requires an exact HTTPS hostname')
+    configuration = {'config': {'ingress': [
+        {'hostname': endpoint.hostname, 'service': 'http://cpk-bootstrap-origin:8080', 'originRequest': {}},
+        {'service': 'http_status:404'}]}}
+    if hashlib.sha256(canonical(configuration)).hexdigest() != value['configuration_sha256']:
+        raise RootBootstrapError('bootstrap retained ingress configuration differs from its origin')
+    product = _selected_product(ProductDescriptorCodec().decode_document(value['connector_product']),
+                                'cloudflared-connector')
+    name = 'cpk-bootstrap-tunnel-' + value['tunnel_id']
+    node = {'node_id': name, 'name': name, 'aliases': [],
+        'image': product.image.execution_reference,
+        'environment': {'TUNNEL_TOKEN_FILE': '/run/secrets/cpk-ingress/token'},
+        'secret_files': [{'name': network_name + '-ingress-token', 'target': '/run/secrets/cpk-ingress/token',
+                          'reference': reference.reference_id}],
+        'data_volumes': [], 'http_checks': [], 'local_docker_access': None}
+    retained = {key: value[key] for key in ('tunnel_id', 'dns_record_id', 'token_reference',
+                                           'token_sha256', 'configuration_sha256')}
+    return node, {**retained, 'node_id': name, 'endpoint': installation.ingress.endpoint,
+                  'origin_service_url': 'http://cpk-bootstrap-origin:8080',
+                  'provider_disposition': 'operator-retained', 'connector_disposition': 'run-owned'}
 
 
 def plan_root_bootstrap(document: Mapping[str, object], *, driver_image_id: str) -> dict:
@@ -307,6 +345,14 @@ def plan_root_bootstrap(document: Mapping[str, object], *, driver_image_id: str)
                                         if node_id == installation.cpk_node_id else None),
                 "data_volumes": [{"name": f"{name}-{mount.resource_id}", "target": mount.target_path}
                                  for mount in product.runtime_contract.retained_data_mounts]})
+        connection = None
+        if 'external_ingress_connection' in document:
+            connector, connection = _external_connection(document, installation, topology.root.network_name)
+            if connector['node_id'] in products:
+                raise RootBootstrapError('bootstrap external connector identity conflicts with root')
+            nodes.append(connector)
+            next(node for node in nodes if node['node_id'] == installation.cpk_node_id)['aliases'].append('cpk-bootstrap-origin')
+            required.add(connection['token_reference'])
         plan = {"schema": "cpk.root-bootstrap.plan.v1", "input": document,
             "driver_image_id": driver_image_id, "graph": GraphDescriptorCodec().encode(graph),
             "resources": {"network": {"name": topology.root.network_name}, "labels": labels, "nodes": nodes},
@@ -320,6 +366,8 @@ def plan_root_bootstrap(document: Mapping[str, object], *, driver_image_id: str)
                 *(["command.product.import"] * len(document["installation"]["products"])),
                 *(["command.image-pull-authority.register"] * len(setup["image_pull_authorities"])),
                 *(["command.ingress-authority.register"] * len(setup["ingress_authorities"]))]}
+        if connection is not None:
+            plan['external_ingress_connection'] = connection
         plan["digest"] = hashlib.sha256(canonical(plan)).hexdigest()
         return plan
     except RootBootstrapError:

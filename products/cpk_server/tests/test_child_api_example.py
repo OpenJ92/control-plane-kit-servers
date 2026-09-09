@@ -53,7 +53,9 @@ class ChildApiExampleTests(unittest.TestCase):
                                 (root / 'state' / 'receipt.json', receipt)):
                 path.write_text(json.dumps(value))
             with patch.object(witness, 'ROOT', root), patch.object(witness, 'read', side_effect=read), \
-                    patch.object(witness, 'verify_denial', side_effect=denial):
+                    patch.object(witness, 'verify_denial', side_effect=denial), \
+                    patch.object(witness, 'PublicHttpTransport', return_value=SimpleNamespace(
+                        call=lambda route, **kwargs: read(parent, route))):
                 parent.profile.endpoint = 'https://another-root.example.test'
                 with self.assertRaises(AssertionError):
                     witness.verify_parent_fixture(parent, child, root)
@@ -76,10 +78,19 @@ class ChildApiExampleTests(unittest.TestCase):
             'child_installation_id': 'test-child', 'child_workspace_id': 'child-workspace',
             'loopback_port': 18089, 'hostname': 'test-child.example.test',
             'parent_endpoint': 'https://test-parent.example.test',
+            'parent_ingress_connection': {'tunnel_id': '11111111-1111-4111-8111-111111111111',
+                'dns_record_id': 'd' * 32, 'token_reference': 'secret://bootstrap/retained-ingress/token',
+                'token_sha256': sha256(b'private-parent-tunnel-token').hexdigest(),
+                'configuration_sha256': sha256(json.dumps({'config': {'ingress': [
+                    {'hostname': 'test-parent.example.test', 'service': 'http://cpk-bootstrap-origin:8080', 'originRequest': {}},
+                    {'service': 'http_status:404'}]}}, sort_keys=True, separators=(',', ':')).encode()).hexdigest()},
             'account_id': 'a' * 32, 'zone_id': 'b' * 32, 'zone_name': 'example.test'}
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = Path(__file__).resolve().parents[3]
+            (root / 'inputs').mkdir(mode=0o700)
+            (root / 'inputs' / 'parent-tunnel-token').write_bytes(b'private-parent-tunnel-token')
+            (root / 'inputs' / 'parent-tunnel-token').chmod(0o400)
             original_umask = os.umask(0o077)
             try:
                 with patch.object(fixture, 'ROOT', root), patch.object(fixture.live_root_bootstrap, 'ROOT', root):

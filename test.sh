@@ -13,7 +13,8 @@ if [ -n "$CHILD_RELEASE" ]; then
   : "${CPK_CHILD_ACCEPTANCE_DIGEST:?exact approved release digest required}"
   : "${CPK_CHILD_ACCEPTANCE_RUN:?exact approved parent installation required}"
   : "${CPK_CHILD_CLOUDFLARE_TOKEN_FILE:?approved private raw token input required}"
-  [ -f "$CHILD_RELEASE" ] && [ -f "$CPK_CHILD_CLOUDFLARE_TOKEN_FILE" ]
+  : "${CPK_PARENT_TUNNEL_TOKEN_FILE:?approved retained ingress token input required}"
+  [ -f "$CHILD_RELEASE" ] && [ -f "$CPK_CHILD_CLOUDFLARE_TOKEN_FILE" ] && [ -f "$CPK_PARENT_TUNNEL_TOKEN_FILE" ]
   CHILD_SOURCE_HEAD="$(git -C "$ROOT" rev-parse HEAD)"
   [ -z "$(git -C "$ROOT" status --porcelain)" ] || { echo 'child acceptance requires reviewed clean source' >&2; exit 1; }
 fi
@@ -169,7 +170,8 @@ CPK_SERVER_IMAGE="$CPK_IMAGE" sh scripts/cpk_server_published_image_smoke.sh
     mkdir -m 700 "$RECORDS/inputs"
     cp "$CHILD_RELEASE" "$RECORDS/release.json"
     cp "$CPK_CHILD_CLOUDFLARE_TOKEN_FILE" "$RECORDS/inputs/cloudflare-token"
-    chmod 400 "$RECORDS/release.json" "$RECORDS/inputs/cloudflare-token"
+    cp "$CPK_PARENT_TUNNEL_TOKEN_FILE" "$RECORDS/inputs/parent-tunnel-token"
+    chmod 400 "$RECORDS/release.json" "$RECORDS/inputs/cloudflare-token" "$RECORDS/inputs/parent-tunnel-token"
   fi
   DRIVER_TAG="control-plane-kit-bootstrap-test:$RUN"
   DRIVER=""

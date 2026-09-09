@@ -100,6 +100,25 @@ def verify_denial(child, state):
         raise AssertionError('wrong child credential accepted')
 
 
+def parent_workspace_ready(parent):
+    """Bounded read-only HTTPS readiness; authorization denial is terminal."""
+    transport = PublicHttpTransport(parent.profile, timeout_seconds=1)
+    deadline = monotonic() + 30
+    while True:
+        try:
+            ready = transport.call('read.workspace',
+                path_parameters={'workspace_id': parent.profile.workspace_id},
+                payload={}, credential_role='operator')
+            assert ready['workspace']['workspace_id'] == parent.profile.workspace_id
+            return ready
+        except ClientAuthorizationError:
+            raise
+        except ClientTransportError:
+            if monotonic() >= deadline:
+                raise
+            sleep(0.25)
+
+
 def verify_parent_fixture(parent, child, state):
     """Read-only proof of the supplied endpoint's exact disposable root."""
     release = json.loads((ROOT / 'release.json').read_bytes())
@@ -116,7 +135,7 @@ def verify_parent_fixture(parent, child, state):
     created = receipt['observations']['public_setup']['commands'][0]
     assert created['route'] == 'command.workspace.create'
     assert created['workspace_id'] == parent.profile.workspace_id
-    observed = read(parent, 'read.workspace')['workspace']
+    observed = parent_workspace_ready(parent)['workspace']
     assert observed['workspace_id'] == created['workspace_id']
     assert observed['current_graph_id'] == created['current_graph_id']
     assert observed['desired_graph_id'] is None and created.get('desired_graph_id') is None
@@ -189,21 +208,7 @@ def reconnect(installation, parent, child, state, record):
             assert before_container == after_container
     # Container Running precedes API readiness. Retry only this authenticated
     # read, within a fixed deadline; never retry a mutation or authorization denial.
-    transport = PublicHttpTransport(parent.profile, timeout_seconds=1)
-    deadline = monotonic() + 30
-    while True:
-        try:
-            ready = transport.call('read.workspace',
-                path_parameters={'workspace_id': parent.profile.workspace_id},
-                payload={}, credential_role='operator')
-            assert ready['workspace']['workspace_id'] == parent.profile.workspace_id
-            break
-        except ClientAuthorizationError:
-            raise
-        except ClientTransportError:
-            if monotonic() >= deadline:
-                raise
-            sleep(0.25)
+    parent_workspace_ready(parent)
     before = record['parent_before_restart']
     after = parent_tracking(parent, before['operation_ref'])
     for key in ('operation_ref', 'workspace_id', 'plan_id', 'run_id', 'current_graph_id', 'current_realized_projection_id'):

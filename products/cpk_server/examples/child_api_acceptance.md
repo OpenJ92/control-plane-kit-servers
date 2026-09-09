@@ -23,14 +23,19 @@ and its network name is `cpk-cpk163-child-proof`. Conflicts require a stop;
 existing installations and the retained 1752 root are not adopted or modified.
 
 The parent uses the operator-supplied special endpoint
-`https://bootstrap-cpk.openj92.dev`. Accepted root bootstrap stays unchanged:
-it accepts an external endpoint but does not provision ingress. The operator's
-separate setup must route this endpoint to the exact disposable test root.
+`https://cpk-bootstrap-grandparent.openj92.dev`. Root bootstrap accepts an
+external endpoint and an optional connection to its operator-retained tunnel;
+it does not provision tunnel/DNS resources. The separately established origin
+configuration routes through `cpk-bootstrap-origin:8080` on the exact root
+network. Bootstrap starts the canonical connector after local public setup,
+using protected file delivery of the approved reusable tunnel credential.
 Do not overwrite or adopt an existing tunnel/DNS record. Before any child API
 mutation, the witness authenticates through this URL, correlates its workspace
 and initial current graph with actual root setup IDs, requires an empty initial
 graph and proves wrong-credential denial. A different root cannot substitute.
-No parent ingress creation or removal is performed by the child fixture.
+The stable tunnel/DNS/original credential remain outside disposable root
+custody; the run connector and its staged credential volume are root-owned.
+No parent provider ingress creation or removal is performed by the child fixture.
 
 The fixture mounts one private invocation directory at `/witness`:
 
@@ -98,7 +103,14 @@ The one-run release is a private JSON document with these public fields:
   "child_installation_id": "cpk163-child",
   "child_workspace_id": "cpk163-child-workspace",
   "loopback_port": 18089,
-  "parent_endpoint": "https://bootstrap-cpk.openj92.dev",
+  "parent_endpoint": "https://cpk-bootstrap-grandparent.openj92.dev",
+  "parent_ingress_connection": {
+    "tunnel_id": "ACTUAL_RETAINED_TUNNEL_UUID",
+    "dns_record_id": "ACTUAL_RETAINED_DNS_ID",
+    "token_reference": "secret://bootstrap/retained-ingress/token",
+    "token_sha256": "APPROVED_PROTECTED_TOKEN_SHA256",
+    "configuration_sha256": "APPROVED_EXACT_CONFIGURATION_SHA256"
+  },
   "account_id": "REQUIRED",
   "zone_id": "REQUIRED",
   "zone_name": "openj92.dev",
@@ -123,7 +135,13 @@ After source/plan review and explicit effect authorization, the existing
 `./test.sh` consumes `CPK_CHILD_ACCEPTANCE_RELEASE` (absolute release JSON path),
 `CPK_CHILD_ACCEPTANCE_DIGEST` (approved SHA256 of its exact bytes),
 `CPK_CHILD_ACCEPTANCE_RUN` (matching parent installation ID), and
-`CPK_CHILD_CLOUDFLARE_TOKEN_FILE` (approved private raw-token input). The source
+`CPK_CHILD_CLOUDFLARE_TOKEN_FILE` (approved private raw API-token input), and
+`CPK_PARENT_TUNNEL_TOKEN_FILE` (approved protected retained tunnel-token input).
+Before each run, the operator verifies the exact retained tunnel, DNS and
+two-rule origin configuration, no active connections, and exclusive operator
+use of this dedicated tunnel. A stable tunnel-derived Docker container name
+atomically refuses an existing local connector; this is not global locking.
+The source
 must be clean and match `source_head`. Ordinary runs and hosted CI do not set
 these inputs. A matching hash proves input identity, not user authorization.
 
@@ -131,8 +149,9 @@ these inputs. A matching hash proves input identity, not user authorization.
 
 1. Acquire the ephemeral root through the actual `bootstrap.sh`. Complete
    initial custody provisioning and public admission before child deployment.
-   The supplied parent HTTPS ingress must already be ready for the exact root;
-   the fixture has no ingress setup hook or automatic provider retry.
+   Bootstrap attaches the run-owned connector to the retained endpoint; the
+   witness then proves actual public authentication and exact root identity.
+   Provider setup remains external and there is no automatic provider retry.
 2. The `deploy` phase imports exact composed variants, prepares the shared child
    graph through the parent client, records the returned plan, then applies it
    only within the explicitly released effect envelope. Initial preparation

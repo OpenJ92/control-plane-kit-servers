@@ -20,6 +20,7 @@ from products.cpk_server.examples.root_bootstrap_input import example_input
 from products.cpk_server.tests import live_root_bootstrap
 from products.cpk_server.tests.live_child_api import installation_from_input, save
 from control_plane_kit_servers_cpk_server.client.installation import child_installation_document
+from control_plane_kit_servers_cpk_server.bootstrap_runtime import private_read
 
 
 ROOT = Path('/witness')
@@ -62,6 +63,8 @@ def prepare(release, *, source=Path('/source')):
     # Operator-supplied ingress is initial infrastructure. The accepted root
     # bootstrap consumes this endpoint without provisioning its ingress.
     root['installation']['external_endpoint'] = release['parent_endpoint']
+    root['external_ingress_connection'] = {**release['parent_ingress_connection'],
+        'connector_product': json.loads((source / 'products/cloudflared_connector/product.cpk.json').read_bytes())}
     prefix = f'secret://control-plane-kit/{workspace}'
     child_prefix = f'{prefix}/child'
     intents = sorted(set(MATERIAL_INTENTS.values()) | {'cloudflare.api-token', 'cloudflare.tunnel-token'})
@@ -109,6 +112,20 @@ def prepare(release, *, source=Path('/source')):
         'generated_secret_reference_prefix': f'{prefix}/generated'}}]
     live_root_bootstrap.prepare(run, document=root)
     material = ROOT / 'material'
+    # Original reusable credential remains operator-owned outside this fixture.
+    # Only its approved copy and protected connector volume belong to this run.
+    from hashlib import sha256
+    ingress_token = private_read(ROOT / 'inputs' / 'parent-tunnel-token')
+    assert sha256(ingress_token).hexdigest() == release['parent_ingress_connection']['token_sha256']
+    _private(material / 'parent-tunnel-token', ingress_token)
+    index_path = material / 'index.json'
+    index = json.loads(index_path.read_bytes())
+    token_reference = release['parent_ingress_connection']['token_reference']
+    assert token_reference not in index['files']
+    index['files'][token_reference] = 'parent-tunnel-token'
+    index_path.chmod(0o600)
+    index_path.write_text(json.dumps(index))
+    index_path.chmod(0o400)
     token = (material / 'provider_client_credential').read_text()
     grants = [{'action': action, 'workspace_id': workspace, 'intents': intents}
               for action in ('secret.write', 'secret.resolve')]
@@ -220,7 +237,7 @@ def released_input(run, digest):
     value = json.loads(raw)
     assert set(value) == {'schema', 'source_head', 'parent_installation_id', 'parent_workspace_id',
         'child_installation_id', 'child_workspace_id', 'loopback_port', 'account_id', 'zone_id',
-        'zone_name', 'hostname', 'parent_endpoint', 'retained_disposition'}
+        'zone_name', 'hostname', 'parent_endpoint', 'parent_ingress_connection', 'retained_disposition'}
     assert value['schema'] == 'cpk.child-acceptance-release.v1'
     assert value['source_head'] == os.environ['CPK_CHILD_SOURCE_HEAD']
     assert value['parent_installation_id'] == run
