@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import patch
 
 import docker
+from control_plane_kit_interpreters.docker.sdk import DockerSdkImageInspection
 
 from control_plane_kit_servers_cpk_server import bootstrap, bootstrap_runtime
 from test_root_bootstrap import installation_input, DRIVER, ROOT
@@ -29,6 +30,8 @@ class RootConnectionRuntimeTests(unittest.TestCase):
             'connector_product': json.loads((ROOT / 'products/cloudflared_connector/product.cpk.json').read_bytes())}
         plan = bootstrap.plan_root_bootstrap(document, driver_image_id=DRIVER)
         connection = plan['external_ingress_connection']
+        connector_image = next(node['image'] for node in plan['resources']['nodes']
+                               if node['node_id'] == connection['node_id'])
         material = {reference: 'private-fixture-value' for reference in plan['required_material']}
         material[connection['token_reference']] = token
         for fail_start in (False, True):
@@ -36,8 +39,10 @@ class RootConnectionRuntimeTests(unittest.TestCase):
                 state = Path(directory)
                 events, containers, volumes, files = [], {}, {}, {}
                 def image(reference):
-                    return SimpleNamespace(image_id=reference if reference == DRIVER else reference.split('@')[1],
-                        repo_digests=(reference,), secret_file_owner_uid=lambda: 0 if reference == DRIVER else 10001)
+                    user = '0' if reference == DRIVER else '65532:65532' if reference == connector_image else '10001'
+                    return DockerSdkImageInspection(
+                        image_id=reference if reference == DRIVER else reference.split('@')[1],
+                        repo_digests=(reference,), configured_user=user)
                 def get_volume(identity):
                     if identity not in volumes:
                         raise docker.errors.NotFound('fixture volume absent')
@@ -76,6 +81,7 @@ class RootConnectionRuntimeTests(unittest.TestCase):
                         self.assertTrue(mount['ReadOnly'])
                         self.assertEqual(mount['Target'], '/run/secrets/cpk-ingress/token')
                         self.assertEqual(files[mount['Source']].mode, 0o400)
+                        self.assertEqual(files[mount['Source']].uid, 65532)
                         self.assertNotIn(token, json.dumps(options))
                     return container
                 def inspect_container(identity):
