@@ -99,8 +99,8 @@ class ChildInstallationClientTests(unittest.TestCase):
             'provider_id': 'control-plane-kit',
             'allowed_reference_prefixes': ['secret://child/application'],
             'allowed_intents': ['application.control-token']},
-            'secret_references': [{'reference_id': 'secret://child/application/token',
-                                   'intent': 'application.control-token'}]}
+            'secret_references': [{'reference': 'secret://child/application/token',
+                                   'allowed_intents': ['application.control-token']}]}
 
     def test_document_is_exact_shared_graph_and_composed_variant_imports(self):
         api = self.api()
