@@ -16,7 +16,7 @@ case "$ACTION" in
   plan)
     [ "$#" = 1 ] || usage
     INPUT="$(CDPATH= cd -- "$(dirname -- "$1")" && pwd)/$(basename -- "$1")"
-    exec docker run --rm --network none --read-only --cap-drop ALL \
+    exec docker run --rm --network none --read-only --cap-drop ALL --user "$(id -u):$(id -g)" \
       --security-opt no-new-privileges --mount "type=bind,source=$INPUT,target=/bootstrap/input.json,readonly" \
       "$DRIVER" python -m control_plane_kit_servers_cpk_server.bootstrap_cli plan \
       --input /bootstrap/input.json --driver "$DRIVER"

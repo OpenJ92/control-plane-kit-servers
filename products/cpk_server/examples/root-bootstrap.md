@@ -138,3 +138,21 @@ persistent root or earn external endpoint/parent-child tracking acceptance.
 The current test refactor remains deferred. Existing #1752 and older resources
 are only candidates for a later inventory and explicit retirement plan: this
 slice does not delete, migrate, adopt or repoint them.
+
+### Local file ownership
+
+Planning runs as the invoking host's numeric UID/GID, with all capabilities
+dropped, a read-only filesystem and no network. This supports the private
+user-owned input created above on native Linux as well as Docker Desktop.
+Input files and their parent directories must be readable/traversable by that
+user; no permission broadening is required.
+
+Apply and inspect use the driver's explicit USER0 against the supported local
+Unix Docker daemon. Apply retains the ordinary root Docker file capabilities
+needed to read private bind-mounted plan/material and populate protected volumes;
+inspect mounts state read-only. These trusted-administrator modes are distinct
+from pure planning. The state directory must remain private and traversable by
+the invoking host user; receipt files written by apply are private driver-owned
+evidence, read through `bootstrap.sh inspect`. Rootless/user-remapped daemons,
+remote daemons and network filesystems that restrict root bind access are not
+established by this acceptance witness.
