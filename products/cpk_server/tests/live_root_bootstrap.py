@@ -8,6 +8,7 @@ import secrets
 import sys
 
 from products.cpk_server.examples.root_bootstrap_input import example_input
+from control_plane_kit_servers_cpk_server.bootstrap import matches_image_reference
 
 
 ROOT = Path("/witness")
@@ -61,7 +62,7 @@ def check(run):
         for node in plan["resources"]["nodes"]:
             container = engine.containers.get(receipt["resources"]["containers"][node["node_id"]]["id"])
             image = sdk.inspect_image(node["image"])
-            assert image is not None and node["image"] in image.repo_digests
+            assert image is not None and matches_image_reference(node["image"], image.repo_digests)
             assert container.attrs["Image"] == image.image_id and container.attrs["State"]["Running"]
             inspection = sdk.inspect_container(container.id)
             assert {(entry.target_path, entry.volume_name) for entry in inspection.readonly_secret_mounts} == {

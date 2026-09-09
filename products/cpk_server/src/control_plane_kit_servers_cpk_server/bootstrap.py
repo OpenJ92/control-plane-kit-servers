@@ -85,6 +85,18 @@ def _image_id(value):
     return value
 
 
+def matches_image_reference(expected: str, repo_digests: tuple[str, ...]) -> bool:
+    """Match the exact pin, allowing only Docker Hub official-library spelling."""
+    if not re.fullmatch(r"[^@\s]+@sha256:[0-9a-f]{64}", expected):
+        return False
+    permitted = {expected}
+    official = re.fullmatch(r"docker\.io/library/([a-z0-9]+(?:[._-][a-z0-9]+)*)@(sha256:[0-9a-f]{64})", expected)
+    if official is not None:
+        repository, digest = official.groups()
+        permitted.update(f"{prefix}{repository}@{digest}" for prefix in ("", "library/", "docker.io/"))
+    return any(reference in permitted for reference in repo_digests)
+
+
 def _installation(document):
     _closed(document, {"schema", "installation", "host_binding", "setup"}, {"image_pull_credentials"})
     if document["schema"] != "cpk.root-bootstrap.input.v1":

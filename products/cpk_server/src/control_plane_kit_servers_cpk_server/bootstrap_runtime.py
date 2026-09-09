@@ -16,7 +16,7 @@ import stat
 import tarfile
 import time
 
-from .bootstrap import MAX_BYTES, RootBootstrapError, RootBootstrapHold, canonical, decode_document
+from .bootstrap import MAX_BYTES, RootBootstrapError, RootBootstrapHold, canonical, decode_document, matches_image_reference
 
 
 def private_read(path: Path) -> bytes:
@@ -294,7 +294,7 @@ def _acquire(plan, material, state):
                 registry = node["image"].split("/", 1)[0]
                 effect("pull-image:" + node["node_id"], lambda: sdk.pull_image(node["image"], auth_config=auth.get(registry)))
                 image = sdk.inspect_image(node["image"])
-            if image is None or node["image"] not in image.repo_digests:
+            if image is None or not matches_image_reference(node["image"], image.repo_digests):
                 raise RootBootstrapHold("bootstrap canonical image could not be verified")
             images[node["node_id"]] = image
             image.secret_file_owner_uid()
