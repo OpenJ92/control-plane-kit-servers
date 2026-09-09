@@ -10,7 +10,7 @@ actual HTTP witness. Both use the maintained `TopologyClient` and shared
 provider client. It must run inside the owning Docker-backed test invocation
 under a separately reviewed one-run effect plan. Source integration now lives
 in `test.sh` and the owning `live_child_fixture.py` / `live_child_resources.py`
-helpers. It is unvalidated and unreleased. No live child acceptance is currently
+helpers. Component validation is green; the live journey is unreleased. No live child acceptance is currently
 claimed; do not run an alternate harness.
 
 ## Input and authority
@@ -21,6 +21,16 @@ child workspace `cpk163-child-workspace`, hostname
 `cpk163-child.openj92.dev`. The child proof runtime ID is `cpk163-child-proof`
 and its network name is `cpk-cpk163-child-proof`. Conflicts require a stop;
 existing installations and the retained 1752 root are not adopted or modified.
+
+The parent uses the operator-supplied special endpoint
+`https://bootstrap-cpk.openj92.dev`. Accepted root bootstrap stays unchanged:
+it accepts an external endpoint but does not provision ingress. The operator's
+separate setup must route this endpoint to the exact disposable test root.
+Do not overwrite or adopt an existing tunnel/DNS record. Before any child API
+mutation, the witness authenticates through this URL, correlates its workspace
+and initial current graph with actual root setup IDs, requires an empty initial
+graph and proves wrong-credential denial. A different root cannot substitute.
+No parent ingress creation or removal is performed by the child fixture.
 
 The fixture mounts one private invocation directory at `/witness`:
 
@@ -34,7 +44,7 @@ The fixture mounts one private invocation directory at `/witness`:
 - `config/cpk/profiles/parent.json` and `child.json`: existing
   `cpk.client-profile.v1` documents, exact endpoint/workspace and private
   credential-file references for operator/approver/worker. The child endpoint
-  is its real named HTTPS endpoint. Profiles and credentials must meet the
+  and parent endpoints are their distinct real HTTPS endpoints. Profiles and credentials must meet the
   existing client's ownership and private-mode checks.
 - `child-api/`: exclusive API witness progress and existing per-client journals.
   Existing or uncertain deployment/setup progress blocks a repeated phase.
@@ -88,6 +98,7 @@ The one-run release is a private JSON document with these public fields:
   "child_installation_id": "cpk163-child",
   "child_workspace_id": "cpk163-child-workspace",
   "loopback_port": 18089,
+  "parent_endpoint": "https://bootstrap-cpk.openj92.dev",
   "account_id": "REQUIRED",
   "zone_id": "REQUIRED",
   "zone_name": "openj92.dev",
@@ -102,6 +113,11 @@ teardown and verified compute/ingress absence. The former records their
 continued presence; it does not claim no retained resources remain. Root
 receipt cleanup is separately included in the release. A failed/uncertain
 child phase holds root cleanup so its custody and evidence remain available.
+The original disposable-root lifecycle remains in scope under that explicit
+release; it never selects a retained/operator root instead. Operator-supplied
+parent ingress is outside saved-empty child cleanup and root Docker cleanup.
+Its origin binding, retention or separately approved removal must be stated in
+the concrete execution plan; naming consent alone does not authorize effects.
 
 After source/plan review and explicit effect authorization, the existing
 `./test.sh` consumes `CPK_CHILD_ACCEPTANCE_RELEASE` (absolute release JSON path),
@@ -115,6 +131,8 @@ these inputs. A matching hash proves input identity, not user authorization.
 
 1. Acquire the ephemeral root through the actual `bootstrap.sh`. Complete
    initial custody provisioning and public admission before child deployment.
+   The supplied parent HTTPS ingress must already be ready for the exact root;
+   the fixture has no ingress setup hook or automatic provider retry.
 2. The `deploy` phase imports exact composed variants, prepares the shared child
    graph through the parent client, records the returned plan, then applies it
    only within the explicitly released effect envelope. Initial preparation

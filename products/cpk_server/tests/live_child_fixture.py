@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import secrets
 from urllib.parse import quote
+from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from control_plane_kit_core.secrets import SecretUseIntent
@@ -53,7 +54,14 @@ def prepare(release, *, source=Path('/source')):
     child_id = release['child_installation_id']
     child_workspace = release['child_workspace_id']
     assert run != child_id and workspace != child_workspace
+    endpoint = urlsplit(release['parent_endpoint'])
+    assert (endpoint.scheme == 'https' and endpoint.hostname and endpoint.netloc == endpoint.hostname
+            and not endpoint.path and not endpoint.query and not endpoint.fragment
+            and endpoint.hostname != release['hostname']), 'distinct exact parent HTTPS endpoint required'
     root = example_input(source, installation_id=run, workspace_id=workspace, port=release['loopback_port'])
+    # Operator-supplied ingress is initial infrastructure. The accepted root
+    # bootstrap consumes this endpoint without provisioning its ingress.
+    root['installation']['external_endpoint'] = release['parent_endpoint']
     prefix = f'secret://control-plane-kit/{workspace}'
     child_prefix = f'{prefix}/child'
     intents = sorted(set(MATERIAL_INTENTS.values()) | {'cloudflare.api-token', 'cloudflare.tunnel-token'})
@@ -192,7 +200,7 @@ def seed(release):
     credentials = ROOT / 'client-credentials'
     credentials.mkdir(mode=0o700, exist_ok=False)
     for name, endpoint, workspace_id, source in (
-        ('parent', 'http://127.0.0.1:8080', workspace, ROOT / 'material' / 'control_credential'),
+        ('parent', release['parent_endpoint'], workspace, ROOT / 'material' / 'control_credential'),
         ('child', f'https://{release["hostname"]}', release['child_workspace_id'], ROOT / 'child-material' / 'control_credential'),
     ):
         path = credentials / name
@@ -212,7 +220,7 @@ def released_input(run, digest):
     value = json.loads(raw)
     assert set(value) == {'schema', 'source_head', 'parent_installation_id', 'parent_workspace_id',
         'child_installation_id', 'child_workspace_id', 'loopback_port', 'account_id', 'zone_id',
-        'zone_name', 'hostname', 'retained_disposition'}
+        'zone_name', 'hostname', 'parent_endpoint', 'retained_disposition'}
     assert value['schema'] == 'cpk.child-acceptance-release.v1'
     assert value['source_head'] == os.environ['CPK_CHILD_SOURCE_HEAD']
     assert value['parent_installation_id'] == run

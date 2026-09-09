@@ -18,11 +18,64 @@ import test_child_installation_client as composition
 
 
 class ChildApiExampleTests(unittest.TestCase):
+    def test_supplied_parent_endpoint_must_match_actual_root_before_child_mutation(self):
+        from products.cpk_server.tests import live_child_api as witness
+        endpoint = 'https://test-parent.example.test'
+        parent = SimpleNamespace(profile=SimpleNamespace(endpoint=endpoint, workspace_id='parent-workspace'))
+        child = SimpleNamespace(profile=SimpleNamespace(endpoint='https://test-child.example.test'))
+        workspace = {'workspace_id': 'parent-workspace', 'current_graph_id': 'actual-initial-graph',
+                     'desired_graph_id': None}
+        release = {'parent_endpoint': endpoint, 'parent_installation_id': 'test-parent',
+                   'parent_workspace_id': 'parent-workspace'}
+        installation = {'installation_id': 'test-parent', 'workspace_id': 'parent-workspace',
+                        'external_endpoint': endpoint}
+        plan = {'digest': 'root-plan-digest', 'input': {'installation': installation}}
+        receipt = {'phase': 'complete', 'pending': None, 'plan_digest': 'root-plan-digest',
+            'labels': {'org.openj92.cpk.installation': 'test-parent'},
+            'observations': {'public_setup': {'commands': [{
+                'route': 'command.workspace.create', 'workspace_id': 'parent-workspace',
+                'current_graph_id': 'actual-initial-graph'}]}}}
+        graph = GraphDescriptorCodec().encode(DeploymentGraph('parent-workspace'))
+        current = {'graph_id': 'actual-initial-graph', 'assigned': True, 'graph_descriptor': graph}
+        events = []
+        def read(client, route):
+            self.assertIs(client, parent)
+            events.append(route)
+            return {'workspace': workspace} if route == 'read.workspace' else current
+        def denial(client, state):
+            self.assertIs(client, parent)
+            events.append('wrong-credential-denial')
+            return {'denied': True, 'endpoint': endpoint}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'state').mkdir()
+            for path, value in ((root / 'release.json', release), (root / 'plan.json', plan),
+                                (root / 'state' / 'receipt.json', receipt)):
+                path.write_text(json.dumps(value))
+            with patch.object(witness, 'ROOT', root), patch.object(witness, 'read', side_effect=read), \
+                    patch.object(witness, 'verify_denial', side_effect=denial):
+                parent.profile.endpoint = 'https://another-root.example.test'
+                with self.assertRaises(AssertionError):
+                    witness.verify_parent_fixture(parent, child, root)
+                self.assertEqual(events, [])
+                parent.profile.endpoint = endpoint
+                workspace['current_graph_id'] = 'another-root-graph'
+                with self.assertRaises(AssertionError):
+                    witness.verify_parent_fixture(parent, child, root)
+                self.assertEqual(events, ['read.workspace'])
+                workspace['current_graph_id'] = 'actual-initial-graph'
+                events.clear()
+                result = witness.verify_parent_fixture(parent, child, root)
+                self.assertTrue(result['authenticated'])
+                self.assertTrue(result['wrong_credential']['denied'])
+                self.assertEqual(events, ['read.workspace', 'read.current-graph', 'wrong-credential-denial'])
+
     def test_fixture_prepares_valid_shared_child_and_separate_workspace_material(self):
         from products.cpk_server.tests import live_child_fixture as fixture
         release = {'parent_installation_id': 'test-parent', 'parent_workspace_id': 'parent-workspace',
             'child_installation_id': 'test-child', 'child_workspace_id': 'child-workspace',
             'loopback_port': 18089, 'hostname': 'test-child.example.test',
+            'parent_endpoint': 'https://test-parent.example.test',
             'account_id': 'a' * 32, 'zone_id': 'b' * 32, 'zone_name': 'example.test'}
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -38,6 +91,7 @@ class ChildApiExampleTests(unittest.TestCase):
                                                     child_workspace_id='child-workspace')
             self.assertEqual(document['parent_workspace_id'], 'parent-workspace')
             self.assertEqual(document['child_endpoint'], 'https://test-child.example.test')
+            self.assertEqual(prepared['installation']['external_endpoint'], release['parent_endpoint'])
             self.assertEqual(set(document['graph']['nodes']), {
                 'test-child-cpk', 'test-child-postgres', 'test-child-secrets', 'test-child-connector'})
             root_grant = prepared['installation']['workspace_grants'][0]

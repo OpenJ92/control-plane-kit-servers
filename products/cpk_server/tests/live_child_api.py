@@ -100,10 +100,42 @@ def verify_denial(child, state):
         raise AssertionError('wrong child credential accepted')
 
 
+def verify_parent_fixture(parent, child, state):
+    """Read-only proof of the supplied endpoint's exact disposable root."""
+    release = json.loads((ROOT / 'release.json').read_bytes())
+    plan = json.loads((ROOT / 'plan.json').read_bytes())
+    receipt = json.loads((ROOT / 'state' / 'receipt.json').read_bytes())
+    installation = plan['input']['installation']
+    assert receipt['phase'] == 'complete' and receipt['pending'] is None
+    assert receipt['plan_digest'] == plan['digest']
+    assert installation['installation_id'] == release['parent_installation_id']
+    assert receipt['labels']['org.openj92.cpk.installation'] == release['parent_installation_id']
+    assert parent.profile.workspace_id == installation['workspace_id'] == release['parent_workspace_id']
+    assert parent.profile.endpoint == installation['external_endpoint'] == release['parent_endpoint']
+    assert parent.profile.endpoint.startswith('https://') and parent.profile.endpoint != child.profile.endpoint
+    created = receipt['observations']['public_setup']['commands'][0]
+    assert created['route'] == 'command.workspace.create'
+    assert created['workspace_id'] == parent.profile.workspace_id
+    observed = read(parent, 'read.workspace')['workspace']
+    assert observed['workspace_id'] == created['workspace_id']
+    assert observed['current_graph_id'] == created['current_graph_id']
+    assert observed['desired_graph_id'] is None and created.get('desired_graph_id') is None
+    current = read(parent, 'read.current-graph')
+    assert current['graph_id'] == created['current_graph_id'] and current['assigned'] is True
+    graph = GraphDescriptorCodec().decode(current['graph_descriptor'])
+    assert not graph.nodes and not graph.runtimes and not graph.public_ingresses
+    denied = verify_denial(parent, state)
+    return {'endpoint': parent.profile.endpoint, 'workspace_id': parent.profile.workspace_id,
+            'current_graph_id': current['graph_id'], 'root_plan_digest': plan['digest'],
+            'authenticated': True, 'wrong_credential': denied}
+
+
 def deploy(installation, parent, child, setup, state):
     state.mkdir(mode=0o700, exist_ok=False)
     record = {'phase': 'deploying', 'parent_workspace': parent.profile.workspace_id,
               'child_workspace': child.profile.workspace_id}
+    save(state, record)
+    record['parent_public_fixture'] = verify_parent_fixture(parent, child, state)
     save(state, record)
     prepared = prepare_child_installation(installation, parent=parent,
         child_workspace_id=child.profile.workspace_id, state_directory=state / 'prepare-parent')
