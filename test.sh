@@ -146,4 +146,56 @@ CPK_SECRETS_IMAGE="$SECRETS_IMAGE" \
 CPK_SERVER_BUILD_IMAGE=1 sh scripts/cpk_server_image_smoke.sh
 CPK_IMAGE="$(docker run --rm "$IMAGE" python scripts/product_image_coordinate.py cpk-server)"
 CPK_SERVER_IMAGE="$CPK_IMAGE" sh scripts/cpk_server_published_image_smoke.sh
+# Real external-root launcher: canonical products, isolated test workspace, no
+# provider/DNS exposure or retained acceptance installation.
+(
+  RECORDS="$(mktemp -d)"
+  RUN="root-$(date +%s)-$$"
+  DRIVER_TAG="control-plane-kit-bootstrap-test:$RUN"
+  DRIVER=""
+  cleanup_root_bootstrap() {
+    [ -n "$DRIVER" ] || return 0
+    docker run --rm --network none \
+      --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
+      --mount "type=bind,source=$ROOT,target=/source,readonly" \
+      --mount "type=bind,source=$RECORDS,target=/witness" \
+      -e PYTHONPATH=/source:/app/products/cpk_server/src "$DRIVER" \
+      python /source/products/cpk_server/tests/live_root_bootstrap.py cleanup "$RUN" || return 1
+    [ "$(docker image inspect --format '{{.Id}}' "$DRIVER_TAG")" = "$DRIVER" ] || return 1
+    [ "$(docker image inspect --format '{{index .Config.Labels "org.openj92.cpk.test-run"}}' "$DRIVER")" = "$RUN" ] || return 1
+    docker image rm "$DRIVER_TAG" >/dev/null
+  }
+  trap 'result=$?; trap - 0; cleanup_root_bootstrap || { echo "root bootstrap cleanup HOLD; records=$RECORDS" >&2; result=1; }; exit "$result"' 0
+  [ -z "$(docker image ls -q --filter "reference=$DRIVER_TAG")" ]
+  docker build -f products/cpk_server/Dockerfile.bootstrap --build-arg "CPK_IMAGE=$CPK_IMAGE" \
+    --label "org.openj92.cpk.test-run=$RUN" --iidfile "$RECORDS/driver" -t "$DRIVER_TAG" .
+  DRIVER="$(cat "$RECORDS/driver")"
+  docker run --rm --network none --user "$(id -u):$(id -g)" \
+    --mount "type=bind,source=$ROOT,target=/source,readonly" \
+    --mount "type=bind,source=$RECORDS,target=/witness" \
+    -e PYTHONPATH=/source:/app/products/cpk_server/src "$DRIVER" \
+    python /source/products/cpk_server/tests/live_root_bootstrap.py prepare "$RUN"
+  sh bootstrap.sh plan "$DRIVER" "$RECORDS/input.json" > "$RECORDS/plan.json"
+  DIGEST="$(docker run --rm --network none \
+    --mount "type=bind,source=$ROOT,target=/source,readonly" \
+    --mount "type=bind,source=$RECORDS,target=/witness,readonly" \
+    -e PYTHONPATH=/source:/app/products/cpk_server/src "$DRIVER" \
+    python /source/products/cpk_server/tests/live_root_bootstrap.py digest "$RUN")"
+  sh bootstrap.sh apply "$DRIVER" "$RECORDS/plan.json" "$DIGEST" "$RECORDS/material/index.json" "$RECORDS/state" > "$RECORDS/result.json"
+  docker run --rm --network none \
+    --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
+    --mount "type=bind,source=$ROOT,target=/source,readonly" \
+    --mount "type=bind,source=$RECORDS,target=/witness" \
+    -e PYTHONPATH=/source:/app/products/cpk_server/src "$DRIVER" \
+    python /source/products/cpk_server/tests/live_root_bootstrap.py check "$RUN"
+  if sh bootstrap.sh apply "$DRIVER" "$RECORDS/plan.json" "$DIGEST" "$RECORDS/material/index.json" "$RECORDS/state" > "$RECORDS/reapply.json"; then
+    echo 'root bootstrap unexpectedly redispatched completed acquisition' >&2
+    exit 1
+  fi
+  docker run --rm --network none \
+    --mount "type=bind,source=$ROOT,target=/source,readonly" \
+    --mount "type=bind,source=$RECORDS,target=/witness,readonly" \
+    -e PYTHONPATH=/source:/app/products/cpk_server/src "$DRIVER" \
+    python /source/products/cpk_server/tests/live_root_bootstrap.py unchanged "$RUN"
+)
 sh scripts/docker_residue_audit.sh
