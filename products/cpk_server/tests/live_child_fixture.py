@@ -48,6 +48,24 @@ def _private(path, value):
         os.fsync(stream.fileno())
 
 
+def _principal_material(directory, workspace, scopes):
+    """Separate fixture actors; the server owns their authentication policy."""
+    operator = (directory / 'control_credential').read_text()
+    approvals = ['plan:approve', 'plan:approve-destructive']
+    principals = []
+    for role, kind, grants in (
+        ('operator', 'operator', [scope for scope in scopes if scope not in approvals + ['execution:operate']]),
+        ('approver', 'operator', approvals),
+        ('worker', 'worker', ['execution:operate']),
+    ):
+        credential = operator if role == 'operator' else secrets.token_urlsafe(48)
+        if role != 'operator':
+            _private(directory / f'{role}_credential', credential)
+        principals.append({'credential': credential, 'subject_id': f'{workspace}-{role}',
+                           'kind': kind, 'workspace_grants': {workspace: grants}})
+    _private(directory / 'principals', json.dumps(principals))
+
+
 def prepare(release, *, source=Path('/source')):
     """Create only new private fixture input, before root/provider effects."""
     run = release['parent_installation_id']
@@ -72,6 +90,8 @@ def prepare(release, *, source=Path('/source')):
         SecretUseIntent(intent)
     root['installation']['workspace_grants'][0]['scopes'] = SCOPES + [
         'ingress-authority:register', 'ingress-authority:read', 'ingress-authority:use']
+    root['installation']['control_auth'] = {
+        'kind': 'multi-principal', 'principals_document': f'{prefix}/principals'}
     root['setup']['provider'].update(allowed_reference_prefixes=[prefix], allowed_intents=intents)
     ingress_authority = f'{run}-cloudflare'
     child = {
@@ -85,6 +105,7 @@ def prepare(release, *, source=Path('/source')):
             (source / 'products/cloudflared_connector/product.cpk.json').read_bytes())},
         'references': {name: f'{child_prefix}/{name}' for name in MATERIAL_INTENTS},
         'workspace_grants': [{'workspace_id': child_workspace, 'scopes': SCOPES}],
+        'control_auth': {'kind': 'multi-principal', 'principals_document': f'{child_prefix}/principals'},
         'provider_endpoint_ref': f'{child_id}-provider',
         'ingress': NamedPublicIngress(f'{child_id}-public', IngressAuthorityReference(ingress_authority),
             PublicIngressTarget(f'{child_id}-cpk', 'http-api'), f'{child_id}-connector',
@@ -100,6 +121,9 @@ def prepare(release, *, source=Path('/source')):
     root['setup']['secret_references'] = [
         {'reference': child['references'][name], 'allowed_intents': [intent]}
         for name, intent in MATERIAL_INTENTS.items()]
+    root['setup']['secret_references'].append({
+        'reference': child['control_auth']['principals_document'],
+        'allowed_intents': ['application.control-token']})
     root['setup']['secret_references'].append({'reference': f'{prefix}/cloudflare-api',
                                               'allowed_intents': ['cloudflare.api-token']})
     root['setup']['ingress_authorities'] = [{'authority_ref': ingress_authority, 'authority': {
@@ -112,6 +136,7 @@ def prepare(release, *, source=Path('/source')):
         'generated_secret_reference_prefix': f'{prefix}/generated'}}]
     live_root_bootstrap.prepare(run, document=root)
     material = ROOT / 'material'
+    _principal_material(material, workspace, root['installation']['workspace_grants'][0]['scopes'])
     # Original reusable credential remains operator-owned outside this fixture.
     # Only its approved copy and protected connector volume belong to this run.
     from hashlib import sha256
@@ -123,6 +148,7 @@ def prepare(release, *, source=Path('/source')):
     token_reference = release['parent_ingress_connection']['token_reference']
     assert token_reference not in index['files']
     index['files'][token_reference] = 'parent-tunnel-token'
+    index['files'][root['installation']['control_auth']['principals_document']] = 'principals'
     index_path.chmod(0o600)
     index_path.write_text(json.dumps(index))
     index_path.chmod(0o400)
@@ -147,6 +173,7 @@ def prepare(release, *, source=Path('/source')):
                         'intents': ['application.control-token']}]}])}
     for name, value in values.items():
         _private(child_material / name, value)
+    _principal_material(child_material, child_workspace, SCOPES)
     _private(ROOT / 'child-input.json', json.dumps(child_input))
     # Profile files are deliberately made later by the actual controller UID.
     # Do not bypass the maintained client's private-file ownership checks.
@@ -174,6 +201,8 @@ def seed(release):
     save(state, record)
     items = [(child['references'][name], intent, ROOT / 'child-material' / name)
              for name, intent in MATERIAL_INTENTS.items()]
+    items.append((child['control_auth']['principals_document'],
+                  'application.control-token', ROOT / 'child-material' / 'principals'))
     items.append((f'secret://control-plane-kit/{workspace}/cloudflare-api',
                   'cloudflare.api-token', ROOT / 'inputs' / 'cloudflare-token'))
     opener = build_opener(_NoRedirect())
@@ -216,15 +245,19 @@ def seed(release):
     config.mkdir(mode=0o700, parents=True, exist_ok=False)
     credentials = ROOT / 'client-credentials'
     credentials.mkdir(mode=0o700, exist_ok=False)
-    for name, endpoint, workspace_id, source in (
-        ('parent', release['parent_endpoint'], workspace, ROOT / 'material' / 'control_credential'),
-        ('child', f'https://{release["hostname"]}', release['child_workspace_id'], ROOT / 'child-material' / 'control_credential'),
+    for name, endpoint, workspace_id, material_directory in (
+        ('parent', release['parent_endpoint'], workspace, ROOT / 'material'),
+        ('child', f'https://{release["hostname"]}', release['child_workspace_id'], ROOT / 'child-material'),
     ):
-        path = credentials / name
-        _private(path, source.read_bytes())
+        paths = {}
+        for role in ('operator', 'approver', 'worker'):
+            path = credentials / f'{name}-{role}'
+            source = material_directory / ('control_credential' if role == 'operator' else f'{role}_credential')
+            _private(path, source.read_bytes())
+            paths[role] = str(path)
         _private(config / f'{name}.json', json.dumps({'schema': 'cpk.client-profile.v1',
             'endpoint': endpoint, 'workspace_id': workspace_id,
-            'credentials': {role: str(path) for role in ('operator', 'approver', 'worker')},
+            'credentials': paths,
             'state_directory': str(ROOT / f'{name}-client')}))
     print('child fixture: once-only initial custody and private client profiles prepared')
 

@@ -24,7 +24,7 @@ from control_plane_kit_core.public_ingress import NamedPublicIngressCodec
 from control_plane_kit_core.runtime_authority import RuntimeAuthorityAccessDeliveryCodec, RuntimeAuthorityReference
 from control_plane_kit_core.secrets import SecretProviderEndpointReference, SecretReference
 from control_plane_kit_core.topology import DeploymentGraph, GraphDescriptorCodec, diff_graphs, validate_graph
-from control_plane_kit_servers_cpk_server.installation import DockerCpkInstallation
+from control_plane_kit_servers_cpk_server.installation import ControlAuthCodec, DockerCpkInstallation
 from control_plane_kit_servers_cpk_server.client import (
     ClientAuthorizationError, ClientProfile, ClientTransportError,
     PublicHttpTransport, TopologyClient, load_profile,
@@ -43,6 +43,7 @@ def installation_from_input(value):
     products = {name: ProductDescriptorCodec().decode_document(document)
                 for name, document in value['products'].items()}
     return DockerCpkInstallation(
+        control_auth=ControlAuthCodec().decode(value.get('control_auth', {'kind': 'single-operator'})),
         installation_id=value['installation_id'], workspace_id=value['workspace_id'],
         runtime_authority=RuntimeAuthorityReference(value['runtime_authority']),
         runtime_access=RuntimeAuthorityAccessDeliveryCodec().decode(value['runtime_access']),

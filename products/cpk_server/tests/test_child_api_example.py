@@ -167,6 +167,50 @@ class ChildApiExampleTests(unittest.TestCase):
                              ('parent-workspace', 'child-workspace'))
             self.assertIn('ingress-authority:use', root_grant['scopes'])
             self.assertNotIn('ingress-authority:use', child_grant['scopes'])
+            # Each independently deployed process gets its own principal document,
+            # with separate role credentials and only its exact workspace grants.
+            seen_credentials = set()
+            from control_plane_kit_servers_cpk_server import server
+            from control_plane_kit_core.identity import IdentityContractError
+            from control_plane_kit_operations.cpk_server import CpkServerApplicationError, _ROUTE_AUTHORIZATION_POLICIES
+            for input_value, material, workspace in (
+                (prepared['installation'], root / 'material', 'parent-workspace'),
+                (child['installation'], root / 'child-material', 'child-workspace'),
+            ):
+                self.assertEqual(input_value['control_auth']['kind'], 'multi-principal')
+                self.assertNotEqual(input_value['control_auth']['principals_document'],
+                                    input_value['references']['control_credential'])
+                principals = json.loads((material / 'principals').read_bytes())
+                verifier = server.StaticDevelopmentMultiCredentialVerifier(
+                    server._static_principals((material / 'principals').read_text()))
+                actors = {}
+                for role in ('operator', 'approver', 'worker'):
+                    filename = 'control_credential' if role == 'operator' else f'{role}_credential'
+                    actors[role] = verifier.authenticate((material / filename).read_bytes())
+                    with self.assertRaises(IdentityContractError):
+                        actors[role].command_context('unrelated-workspace')
+                _ROUTE_AUTHORIZATION_POLICIES['command.run.claim'].authorize(actors['worker'].command_context(workspace))
+                _ROUTE_AUTHORIZATION_POLICIES['command.approval.decide'].authorize(actors['approver'].command_context(workspace))
+                _ROUTE_AUTHORIZATION_POLICIES['command.deployment.admit'].authorize(actors['operator'].command_context(workspace))
+                with self.assertRaises(CpkServerApplicationError):
+                    _ROUTE_AUTHORIZATION_POLICIES['command.run.claim'].authorize(actors['operator'].command_context(workspace))
+                with self.assertRaises(CpkServerApplicationError):
+                    _ROUTE_AUTHORIZATION_POLICIES['command.approval.decide'].authorize(actors['worker'].command_context(workspace))
+                self.assertEqual(len(principals), 3)
+                credentials = {entry['credential'] for entry in principals}
+                self.assertEqual(len(credentials), 3)
+                self.assertTrue(seen_credentials.isdisjoint(credentials))
+                seen_credentials.update(credentials)
+                self.assertEqual(principals[0]['credential'], (material / 'control_credential').read_text())
+                self.assertEqual([entry['kind'] for entry in principals], ['operator', 'operator', 'worker'])
+                for entry in principals:
+                    self.assertEqual(set(entry['workspace_grants']), {workspace})
+                    self.assertNotIn(entry['credential'], json.dumps(document['graph']))
+                self.assertEqual((material / 'principals').stat().st_mode & 0o777, 0o400)
+                self.assertEqual(principals[2]['workspace_grants'][workspace], ['execution:operate'])
+                self.assertNotIn('plan:approve', principals[0]['workspace_grants'][workspace])
+            self.assertIn({'reference': child['installation']['control_auth']['principals_document'],
+                           'allowed_intents': ['application.control-token']}, prepared['setup']['secret_references'])
             for name, intent in fixture.MATERIAL_INTENTS.items():
                 self.assertIn({'reference': child['installation']['references'][name], 'allowed_intents': [intent]},
                               prepared['setup']['secret_references'])
@@ -178,6 +222,11 @@ class ChildApiExampleTests(unittest.TestCase):
             root_plan = plan_root_bootstrap(json.loads((root / 'input.json').read_bytes()),
                                             driver_image_id='sha256:' + '1' * 64)
             self.assertEqual(root_plan['input'], prepared)
+            for reference in (prepared['installation']['control_auth']['principals_document'],
+                              prepared['installation']['references']['control_credential']):
+                self.assertIn(reference, root_plan['required_material'])
+                material_index = json.loads((root / 'material' / 'index.json').read_bytes())
+                self.assertIn(reference, material_index['files'])
             self.assertEqual(root_plan['input']['setup']['ingress_authorities'][0]
                              ['authority']['allowed_hostname_pattern'], release['hostname'])
             self.assertEqual(root_plan['external_ingress_connection']['endpoint'], release['parent_endpoint'])

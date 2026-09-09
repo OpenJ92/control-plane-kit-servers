@@ -238,7 +238,7 @@ def _validate_setup(installation, child, setup):
         _json(setup, maximum=65_536)
         return document
     except (ValueError, TypeError, KeyError, AttributeError, StopIteration):
-        raise ChildInstallationError("child setup target or admitted scope is invalid") from None
+        raise ChildInstallationError("child setup target or declared setup scope is invalid") from None
 
 
 def initialize_child_workspace(installation: DockerCpkInstallation, *, child: TopologyClient,
