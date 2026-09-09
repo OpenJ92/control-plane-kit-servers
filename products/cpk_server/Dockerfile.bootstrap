@@ -1,0 +1,8 @@
+# External acquisition driver, not a graph product or a replacement server image.
+ARG CPK_IMAGE
+FROM ${CPK_IMAGE}
+COPY products/cpk_server/src /app/products/cpk_server/src
+# Existing SDK archive helpers need root on a new volume. Public setup explicitly
+# drops to the inspected CPK image UID and receives no Docker socket.
+USER 0
+CMD ["python", "-m", "control_plane_kit_servers_cpk_server.bootstrap_cli"]
