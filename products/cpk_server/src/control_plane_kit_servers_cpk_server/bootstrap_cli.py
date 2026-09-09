@@ -3,7 +3,9 @@
 import argparse
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
+import re
 import socket
 import sys
 import time
@@ -27,6 +29,28 @@ def public_setup(plan, credential):
     profile = ClientProfile("http://127.0.0.1:8080", workspace,
         {role: credential for role in ("operator", "approver", "worker")}, Path("/tmp/bootstrap-client"))
     transport = PublicHttpTransport(profile, timeout_seconds=15)
+    progress = {"schema": "cpk.root-bootstrap.setup-progress.v1", "plan_digest": plan["digest"],
+                "workspace_id": workspace, "status": "in-progress", "pending": None, "commands": [], "reads": []}
+    progress_directory = Path("/tmp/cpk-bootstrap-progress")
+    progress_directory.mkdir(mode=0o700, exist_ok=False)
+
+    def checkpoint():
+        raw = canonical(progress)
+        if len(raw) > 65_536:
+            raise RootBootstrapError("bootstrap public progress exceeds its bound")
+        temporary = progress_directory / "progress.new"
+        with os.fdopen(os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), "wb") as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, progress_directory / "progress.json")
+        descriptor = os.open(progress_directory, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+    checkpoint()
     # Only read-only socket readiness is polled. Every public mutation is sent once.
     for attempt in range(90):
         try:
@@ -37,8 +61,8 @@ def public_setup(plan, credential):
                 raise RootBootstrapError("bootstrap public server did not become reachable") from None
             time.sleep(1)
     stamp = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-    commands = []
-    reads = []
+    commands = progress["commands"]
+    reads = progress["reads"]
 
     def call(route, payload, *, coordinates=None):
         return transport.call(route, path_parameters={"workspace_id": workspace, **(coordinates or {})},
@@ -47,21 +71,36 @@ def public_setup(plan, credential):
     def command(route, payload):
         if len(commands) >= len(plan["setup_routes"]) or plan["setup_routes"][len(commands)] != route:
             raise RootBootstrapError("bootstrap setup sequence differs from reviewed plan")
+        progress["pending"] = route
+        checkpoint()
         result = call(route, {"workspace_id": workspace,
             "idempotency_key": "root-" + plan["digest"][:32] + "-" + str(len(commands)), **payload})
-        commands.append({"route": route})
+        # Save only bounded returned coordinates, before later validation or the
+        # next command can fail. Never persist a raw response or error body.
+        entry = {"route": route}
+        source = result.get("workspace", {}) if route == "command.workspace.create" else result
+        if isinstance(source, dict):
+            for key in ("workspace_id", "current_graph_id", "desired_graph_id", "registration_id", "delivery_id", "authority_id"):
+                value = source.get(key)
+                if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", value):
+                    entry[key] = value
+        commands.append(entry)
+        progress["pending"] = None
+        checkpoint()
         return result
 
     def read(route, **coordinates):
         result = call(route, {}, coordinates=coordinates)
         reads.append(route)
+        checkpoint()
         return result
 
     def identity(value, key):
         result = value.get(key)
-        if not isinstance(result, str) or not result or len(result) > 256:
+        if not isinstance(result, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", result):
             raise RootBootstrapError("bootstrap command identity could not be verified")
         commands[-1][key] = result
+        checkpoint()
         return result
 
     def detail(route, field, key, expected, **coordinates):
@@ -101,6 +140,7 @@ def public_setup(plan, credential):
         if result.get("reference") != expected or result.get("workspace_id") != workspace or result.get("status") != "active":
             raise RootBootstrapError("bootstrap imported product identity differs from selected descriptor")
         commands[-1]["reference"] = expected
+        checkpoint()
     for authority in setup["image_pull_authorities"]:
         result = command("command.image-pull-authority.register", {**authority, "admitted_at": stamp})
         identity(result, "authority_id")
@@ -108,8 +148,27 @@ def public_setup(plan, credential):
         if result.get("authority") != expected or result.get("workspace_id") != workspace:
             raise RootBootstrapError("bootstrap pull authority differs from selected scope")
     for authority in setup["ingress_authorities"]:
-        command("command.ingress-authority.register", {**authority, "admitted_at": stamp})
-        read("read.ingress-authority-detail", authority_ref=authority["authority_ref"])
+        from control_plane_kit_operations.ingress_authorities import CloudflareZoneIngressAuthorityCodec
+        effective = {**authority["authority"], "generated_secret_provider_registration_id": provider_id}
+        expected = CloudflareZoneIngressAuthorityCodec().decode(effective).descriptor()
+        registered = command("command.ingress-authority.register", {
+            "authority_ref": authority["authority_ref"], "authority": effective, "admitted_at": stamp})
+        registration = identity(registered, "registration_id")
+        observed_authority = read("read.ingress-authority-detail", authority_ref=authority["authority_ref"])
+        detail_value = observed_authority.get("ingress_authority", {})
+        # The existing public read projection redacts these three reference
+        # fields. The command proves their exact values; its registration ID
+        # ties the readback's public projection to that confirmed result.
+        public_expected = {**expected, "api_token_ref": "<redacted>",
+            "generated_secret_provider_registration_id": "<redacted>",
+            "generated_secret_reference_prefix": "<redacted>"}
+        for value, expected_authority in ((registered, expected), (detail_value, public_expected)):
+            if (value.get("registration_id") != registration or value.get("workspace_id") != workspace
+                    or value.get("authority_ref") != authority["authority_ref"]
+                    or value.get("status") != "active" or value.get("authority") != expected_authority):
+                raise RootBootstrapError("bootstrap ingress authority differs from approved effective scope")
+        if observed_authority.get("workspace_id") != workspace:
+            raise RootBootstrapError("bootstrap ingress readback workspace differs")
     observed = read("read.workspace")
     if observed.get("workspace", {}).get("workspace_id") != workspace:
         raise RootBootstrapError("bootstrap workspace readback could not be verified")
@@ -119,6 +178,8 @@ def public_setup(plan, credential):
             or current.get("assigned") is not True
             or desired.get("graph_id") != created["workspace"]["desired_graph_id"]):
         raise RootBootstrapError("bootstrap initial graph readback differs from workspace creation")
+    progress["status"] = "complete"
+    checkpoint()
     return {"status": "authenticated-local-setup", "workspace_id": workspace,
             "commands": commands, "reads": reads, "external_endpoint": "unverified"}
 

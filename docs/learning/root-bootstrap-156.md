@@ -102,3 +102,31 @@ cleanup. The broader test refactor is deferred. Existing1752/old resources remai
 untouched; inventory and any retirement proposal belong to later explicitly
 authorized work. Parent/child/grandparent deployment, external reachability and
 restart tracking remain separate acceptance boundaries.
+
+## Source review correction (green still stopped)
+
+Meridian's review of b004996 identified four concrete defects: public command
+progress was only collected at final helper success; optional ingress did not
+bind/read back the returned root provider registration; returned Docker IDs could
+be lost if validation failed before receipt persistence; and successful setup
+left two one-time staging volumes behind. The fifth reported cleanup-order finding
+was withdrawn after re-reading the existing explicit containers/volumes/networks
+loop. The owning witness and frozen tests remain unchanged.
+
+The amendment keeps the same root-only boundary. The socket-free helper now
+atomically/fsyncs bounded safe progress before commands and after responses, with
+returned coordinates saved before later validation. Its exact retained container
+provides read-only archive recovery on failure; inspect does not replay it or
+rewrite the receipt. The parent copies recovered progress while keeping pending
+intent. Success requires complete progress before helper removal. It then removes
+only the two exact owned plan/credential staging volumes with intent and absence
+evidence; HOLD keeps them intact. Product file and retained data volumes survive.
+
+Optional ingress's generated-secret provider is explicitly bound in the plan to
+the actual root provider registration result. Setup substitutes that identity,
+preserves the approved remaining authority fields, and checks both command and
+public detail against the effective authority. Creation responses now have their
+IDs durably saved with pending still set before subsequent verification.
+
+No green execution accompanies this amendment. Independent static re-review is
+still required, and no retained-root/provider/DNS/1752 action is authorized here.

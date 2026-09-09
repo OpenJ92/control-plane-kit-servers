@@ -7,10 +7,13 @@ receipt preserves intent and exact observations for operator investigation.
 from contextlib import contextmanager
 import fcntl
 import hashlib
+import io
 import os
 from pathlib import Path
+import re
 import secrets
 import stat
+import tarfile
 import time
 
 from .bootstrap import MAX_BYTES, RootBootstrapError, RootBootstrapHold, canonical, decode_document
@@ -91,10 +94,74 @@ def _receipt(state):
     return value
 
 
+def _setup_progress(client, receipt):
+    """Read safe progress from the exact owned helper, without executing it."""
+    if client.info()["ID"] != receipt["engine_id"]:
+        raise RootBootstrapHold("bootstrap progress engine differs")
+    helper = client.containers.get(receipt["setup_helper_id"])
+    if (helper.id != receipt["setup_helper_id"] or helper.attrs["Image"] != receipt["driver_image_id"]
+            or any(helper.labels.get(key) != value for key, value in receipt["labels"].items())):
+        raise RootBootstrapHold("bootstrap progress helper ownership differs")
+    chunks, _ = helper.get_archive("/tmp/cpk-bootstrap-progress/progress.json")
+    archive = bytearray()
+    try:
+        for chunk in chunks:
+            if len(archive) + len(chunk) > 131_072:
+                raise RootBootstrapHold("bootstrap progress archive exceeds its bound")
+            archive.extend(chunk)
+    finally:
+        if hasattr(chunks, "close"):
+            chunks.close()
+    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as tar:
+        entries = tar.getmembers()
+        if (len(entries) != 1 or not entries[0].isfile() or entries[0].name != "progress.json"
+                or entries[0].size > 65_536 or entries[0].mode != 0o600 or entries[0].uid != receipt["setup_uid"]):
+            raise RootBootstrapHold("bootstrap progress file could not be verified")
+        progress = decode_document(tar.extractfile(entries[0]).read(65_537))
+    if (set(progress) != {"schema", "plan_digest", "workspace_id", "status", "pending", "commands", "reads"}
+            or progress["schema"] != "cpk.root-bootstrap.setup-progress.v1"
+            or progress["plan_digest"] != receipt["plan_digest"]
+            or progress["workspace_id"] != receipt["setup_workspace_id"]
+            or progress["status"] not in {"in-progress", "complete"}
+            or not isinstance(progress["commands"], list)
+            or len(progress["commands"]) > len(receipt["setup_routes"])):
+        raise RootBootstrapHold("bootstrap progress coordinates differ")
+    from control_plane_kit_core.products import ProductReferenceCodec
+    for position, command in enumerate(progress["commands"]):
+        if not isinstance(command, dict) or command.get("route") != receipt["setup_routes"][position]:
+            raise RootBootstrapHold("bootstrap progress command differs")
+        for key, value in command.items():
+            if key == "route":
+                continue
+            if key == "reference":
+                ProductReferenceCodec().decode(value)
+            elif (key not in {"workspace_id", "current_graph_id", "desired_graph_id", "registration_id", "delivery_id", "authority_id"}
+                    or not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", value)):
+                raise RootBootstrapHold("bootstrap progress contains unsupported coordinates")
+    pending = progress["pending"]
+    if pending is not None and (len(progress["commands"]) == len(receipt["setup_routes"])
+                               or pending != receipt["setup_routes"][len(progress["commands"])]):
+        raise RootBootstrapHold("bootstrap progress pending command differs")
+    if (not isinstance(progress["reads"], list) or len(progress["reads"]) > 128
+            or any(not isinstance(route, str) or not re.fullmatch(r"read\.[a-z.-]{1,80}", route) for route in progress["reads"])):
+        raise RootBootstrapHold("bootstrap progress read evidence is invalid")
+    return progress
+
+
 def inspect_root(state: Path) -> dict:
     receipt = _receipt(state)
-    # A pending receipt needs no daemon, credentials, helper or history rewrite.
+    # Ordinary pending acquisition needs no daemon. Public setup can recover its
+    # confirmed coordinates by reading the exact helper; never rewrite history.
     if receipt.get("phase") != "complete" or receipt.get("pending") is not None:
+        if receipt.get("setup_helper_id") and not receipt.get("setup_helper_removed"):
+            import docker
+            client = docker.DockerClient(base_url="unix:///var/run/docker.sock", timeout=30)
+            try:
+                receipt["observations"]["public_setup_progress"] = _setup_progress(client, receipt)
+            except Exception:
+                receipt["observations"]["setup_progress_recovery"] = "unavailable; prior confirmed evidence retained"
+            finally:
+                client.close()
         return {"status": "hold", "pending": receipt.get("pending"), "receipt": receipt}
     import docker
     client = docker.DockerClient(base_url="unix:///var/run/docker.sock", timeout=30)
@@ -183,9 +250,10 @@ def _acquire(plan, material, state):
 
     def volume(name):
         resource = effect("create-volume:" + name, lambda: client.volumes.create(name=name, labels=receipt["labels"]))
+        receipt["resources"]["volumes"][name] = {"id": resource.id}
+        _save(state, receipt)
         if resource.attrs.get("Labels") != receipt["labels"]:
             raise RootBootstrapHold("bootstrap volume ownership conflict")
-        receipt["resources"]["volumes"][name] = {"id": resource.id}
         observed()
         return resource
 
@@ -239,6 +307,7 @@ def _acquire(plan, material, state):
             observed()
         network = effect("create-network", lambda: client.networks.create(network_name, driver="bridge", labels=receipt["labels"]))
         receipt["resources"]["networks"][network_name] = {"id": network.id}
+        _save(state, receipt)
         observed()
         for node in resources["nodes"]:
             image = images[node["node_id"]]
@@ -264,6 +333,7 @@ def _acquire(plan, material, state):
                 networking_config={network.id: client.api.create_endpoint_config(aliases=node["aliases"])},
                 log_config=docker.types.LogConfig(type="json-file", config={"max-size": "1m", "max-file": "2"}), **options))
             receipt["resources"]["containers"][node["node_id"]] = {"id": container.id}
+            _save(state, receipt)
             inspection = sdk.inspect_container(container.id)
             if (inspection is None or inspection.image_id != image.image_id
                     or {(item.target_path, item.volume_name) for item in inspection.readonly_secret_mounts}
@@ -299,6 +369,8 @@ def _acquire(plan, material, state):
         file_volume(setup_name + "-plan", SecretValue(canonical(plan).decode()), setup_uid)
         file_volume(setup_name + "-credential", SecretValue(material[plan["input"]["installation"]["references"]["control_credential"]]), setup_uid)
         cpk_id = receipt["resources"]["containers"][plan["cpk_node_id"]]["id"]
+        receipt.update(setup_uid=setup_uid, setup_workspace_id=plan["input"]["installation"]["workspace_id"],
+                       setup_routes=plan["setup_routes"])
         helper = effect("create-public-setup-helper", lambda: client.containers.create(
             plan["driver_image_id"], name=setup_name, user=str(setup_uid), labels=receipt["labels"], network_mode="container:" + cpk_id,
             command=["python", "-m", "control_plane_kit_servers_cpk_server.bootstrap_cli", "setup"],
@@ -307,17 +379,43 @@ def _acquire(plan, material, state):
             cap_drop=["ALL"], security_opt=["no-new-privileges:true"],
             log_config=docker.types.LogConfig(type="json-file", config={"max-size": "1m", "max-file": "1"})))
         receipt["setup_helper_id"] = helper.id
+        _save(state, receipt)
         observed()
         effect("public-setup", helper.start)
-        result = helper.wait(timeout=240)
-        if result.get("StatusCode") != 0:
+        try:
+            result = helper.wait(timeout=240)
+        finally:
+            try:
+                receipt["observations"]["public_setup_progress"] = _setup_progress(client, receipt)
+            except Exception:
+                receipt["observations"]["setup_progress_recovery"] = "unavailable; inspect exact helper"
+            _save(state, receipt)
+        progress = receipt["observations"].get("public_setup_progress", {})
+        if (result.get("StatusCode") != 0 or progress.get("status") != "complete"
+                or progress.get("pending") is not None or len(progress.get("commands", [])) != len(plan["setup_routes"])):
             raise RootBootstrapHold("bootstrap public setup outcome requires investigation")
-        output = helper.logs(stdout=True, stderr=False, tail=1)
-        receipt["observations"]["public_setup"] = decode_document(output)
+        receipt["observations"]["public_setup"] = {"status": "authenticated-local-setup",
+            "workspace_id": progress["workspace_id"], "commands": progress["commands"],
+            "reads": progress["reads"], "external_endpoint": "unverified"}
         observed()
         effect("remove-completed-setup-helper", helper.remove)
         receipt["setup_helper_removed"] = True
         observed()
+        for name in (setup_name + "-plan", setup_name + "-credential"):
+            identity = receipt["resources"]["volumes"][name]["id"]
+            staging = client.volumes.get(identity)
+            if staging.id != identity or staging.attrs.get("Labels") != receipt["labels"]:
+                raise RootBootstrapHold("bootstrap staging volume ownership differs")
+            effect("remove-completed-setup-volume:" + name, staging.remove)
+            receipt["observations"].setdefault("removed_setup_volumes", {})[name] = {"id": identity, "removed": True}
+            _save(state, receipt)
+            try:
+                client.volumes.get(identity)
+            except docker.errors.NotFound:
+                del receipt["resources"]["volumes"][name]
+                observed()
+            else:
+                raise RootBootstrapHold("bootstrap staging volume removal was not verified")
         receipt["phase"] = "complete"
         receipt["observations"]["external_endpoint"] = "unverified"
         _save(state, receipt)

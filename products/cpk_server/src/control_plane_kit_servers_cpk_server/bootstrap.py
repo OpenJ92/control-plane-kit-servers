@@ -200,6 +200,7 @@ def plan_root_bootstrap(document: Mapping[str, object], *, driver_image_id: str)
             "required_material": sorted(required), "external_endpoint": installation.ingress.endpoint,
             "cpk_node_id": installation.cpk_node_id, "postgres_node_id": installation.postgres_node_id,
             "secrets_node_id": installation.secrets_node_id,
+            "setup_bindings": {"ingress.generated_secret_provider_registration_id": "result-of-command.secret-provider.register"},
             "setup_routes": ["command.workspace.create", "command.secret-provider.register",
                 *(["command.secret-reference.register"] * len(setup["secret_references"])),
                 "command.runtime-authority.register", "command.runtime-authority-delivery.register",

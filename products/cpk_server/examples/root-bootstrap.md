@@ -90,6 +90,16 @@ the receipt and original reviewed plan; do not remove them to force redispatch.
 Inspect checks recorded IDs/ownership/running state on completed acquisition;
 its prior authenticated readiness observation is explicitly historical.
 
+During public setup the exact helper writes a bounded private progress file after
+each response, preserving only returned identities/digests and route evidence.
+A later command failure retains that helper and the staging volumes. Inspect can
+read its progress without executing or replaying it; an unavailable helper leaves
+the last confirmed receipt evidence and HOLD intact. Successful setup copies the
+confirmed progress into the receipt before removing the helper and its two exact
+one-time plan/credential staging volumes. Product delivery and retained data
+volumes remain intact. Returned Docker IDs are persisted while the stage remains
+pending, before ownership or mount checks can fail.
+
 Public initialization creates the workspace, registers its provider and selected
 secret references, admits the local Docker runtime and delivery, imports the
 three descriptors, and admits any explicitly supplied pull/ingress authorities.
@@ -97,6 +107,12 @@ It uses authenticated context, never payload `actor_scopes`. Returned provider
 registration IDs feed reference admissions. Registration is not proof that every
 future secret exists or that external provider credentials work. Local public
 setup success is reported separately from the unverified external HTTPS endpoint.
+
+The plan explicitly binds optional ingress authority's generated-secret provider
+registration to the result of the root provider registration command. The input
+field cannot select an unrelated provider: setup substitutes the actual returned
+root registration ID, retains the other approved authority fields, and compares
+both the registration response and public detail with that effective authority.
 
 ## Persistent acceptance root handoff
 
