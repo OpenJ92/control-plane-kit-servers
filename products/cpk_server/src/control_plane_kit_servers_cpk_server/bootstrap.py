@@ -25,6 +25,7 @@ from control_plane_kit_core.topology import GraphDescriptorCodec, compile_topolo
 from control_plane_kit_core.verification import HttpCheck
 
 from .installation import (
+    ControlAuthCodec,
     DockerCpkInstallation, ExternalInstallationIngress, compose_docker_cpk_installation,
 )
 
@@ -204,7 +205,7 @@ def _installation(document):
         raise RootBootstrapError("bootstrap input schema is invalid")
     item = document["installation"]
     _closed(item, {"installation_id", "workspace_id", "runtime_authority", "runtime_access",
-        "products", "references", "workspace_grants", "provider_endpoint_ref", "external_endpoint"})
+        "products", "references", "workspace_grants", "provider_endpoint_ref", "external_endpoint"}, {"control_auth"})
     _closed(item["products"], {"cpk", "postgres", "secrets"})
     _closed(item["references"], {"control_credential", "postgres_password", "custody_root_key",
         "provider_credentials_document", "provider_client_credential", "provider_bootstrap_credential_ref"})
@@ -220,6 +221,7 @@ def _installation(document):
         runtime_access=RuntimeAuthorityAccessDeliveryCodec().decode(item["runtime_access"]),
         cpk_product=products["cpk"], postgres_product=products["postgres"], secrets_product=products["secrets"],
         workspace_grants=tuple(grants),
+        control_auth=ControlAuthCodec().decode(item.get("control_auth", {"kind": "single-operator"})),
         provider_endpoint_ref=SecretProviderEndpointReference(item["provider_endpoint_ref"]),
         ingress=ExternalInstallationIngress(item["external_endpoint"]), connector_product=None,
         **{name: SecretReference(value) for name, value in item["references"].items()},
@@ -286,7 +288,7 @@ def plan_root_bootstrap(document: Mapping[str, object], *, driver_image_id: str)
         products = {child.block_id: child.implementation.document.product
                     for child in topology.root.children if hasattr(child, "block_id")}
         nodes = []
-        required = set()
+        required = {installation.control_credential.reference_id}
         for node_id, product in products.items():
             node = graph.node(node_id)
             name = f"{topology.root.network_name}-{node_id}"

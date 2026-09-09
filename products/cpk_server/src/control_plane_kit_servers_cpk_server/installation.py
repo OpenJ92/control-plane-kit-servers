@@ -52,6 +52,42 @@ _PROVIDER_CLIENT_FILE = "/run/secrets/cpk-installation/provider-client"
 
 
 @dataclass(frozen=True)
+class SingleOperatorControlAuth:
+    """Use the installation's operator credential and declared grants."""
+
+
+@dataclass(frozen=True)
+class MultiPrincipalControlAuth:
+    """Use the server's existing private principal document format."""
+
+    principals_document: SecretReference
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.principals_document, SecretReference):
+            raise TypeError("principal document requires a SecretReference")
+
+
+class ControlAuthCodec:
+    """Closed authentication values shared by installation input adapters."""
+
+    def encode(self, value: SingleOperatorControlAuth | MultiPrincipalControlAuth) -> dict:
+        if isinstance(value, SingleOperatorControlAuth):
+            return {"kind": "single-operator"}
+        if isinstance(value, MultiPrincipalControlAuth):
+            return {"kind": "multi-principal", "principals_document": value.principals_document.reference_id}
+        raise TypeError("unsupported installation control authentication")
+
+    def decode(self, value: dict) -> SingleOperatorControlAuth | MultiPrincipalControlAuth:
+        if not isinstance(value, dict):
+            raise TypeError("control authentication must be an object")
+        if value == {"kind": "single-operator"}:
+            return SingleOperatorControlAuth()
+        if set(value) == {"kind", "principals_document"} and value["kind"] == "multi-principal":
+            return MultiPrincipalControlAuth(SecretReference(value["principals_document"]))
+        raise ValueError("invalid installation control authentication")
+
+
+@dataclass(frozen=True)
 class ExternalInstallationIngress:
     """An externally supplied endpoint, without graph ownership of its ingress."""
 
@@ -76,6 +112,11 @@ class DockerCpkInstallation:
     ``runtime_authority`` selects the enclosing deployment runtime. Separately,
     ``runtime_access`` must be admitted for ``cpk_node_id`` by the driver/client;
     composing this value does not deliver or grant that authority.
+
+    ``workspace_grants`` declares setup requirements. In single-operator mode it
+    also configures the verifier; in multi-principal mode only the private
+    principal document determines effective authority. ``control_credential``
+    remains the separate setup bearer in either mode.
     """
 
     installation_id: str
@@ -95,8 +136,14 @@ class DockerCpkInstallation:
     provider_bootstrap_credential_ref: SecretReference
     ingress: ExternalInstallationIngress | NamedPublicIngress
     connector_product: ProductDescriptorDocument | None
+    control_auth: SingleOperatorControlAuth | MultiPrincipalControlAuth = SingleOperatorControlAuth()
 
     def __post_init__(self) -> None:
+        if not isinstance(self.control_auth, (SingleOperatorControlAuth, MultiPrincipalControlAuth)):
+            raise TypeError("installation requires a typed control authentication value")
+        if (isinstance(self.control_auth, MultiPrincipalControlAuth)
+                and self.control_auth.principals_document == self.control_credential):
+            raise ValueError("principal document and setup bearer references must differ")
         if (not isinstance(self.installation_id, str) or len(self.installation_id) > 48
                 or not _INSTALLATION_ID.fullmatch(self.installation_id)):
             raise ValueError("installation identity must be a bounded Docker alias prefix")
@@ -192,10 +239,20 @@ def _cpk_variant(value: DockerCpkInstallation, postgres: ContainerServerProduct)
         "PGDATABASE": postgres_environment["POSTGRES_DB"],
     }
     environment.update({name: PublicStaticEnvironmentBinding(name, item) for name, item in additions.items()})
+    auth_delivery = SecretEnvironmentDelivery("CPK_CONTROL_AUTH_STATIC_CREDENTIAL", value.control_credential,
+                                             SecretUseIntent.APPLICATION_CONTROL_TOKEN)
+    if isinstance(value.control_auth, MultiPrincipalControlAuth):
+        auth_names = {"CPK_CONTROL_AUTH_STATIC_CREDENTIAL", "CPK_CONTROL_AUTH_STATIC_WORKSPACE_GRANTS_JSON",
+                      "CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON"}
+        if any(getattr(item, "environment_name", None) in auth_names for item in contract.secret_deliveries):
+            raise ValueError("selected product contains incompatible authentication secret delivery")
+        for name in auth_names:
+            environment.pop(name, None)
+        auth_delivery = SecretEnvironmentDelivery("CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON",
+            value.control_auth.principals_document, SecretUseIntent.APPLICATION_CONTROL_TOKEN)
     contract = replace(contract, public_environment=tuple(environment.values()), secret_deliveries=(
         SecretEnvironmentDelivery("PGPASSWORD", value.postgres_password, SecretUseIntent.POSTGRES_PASSWORD),
-        SecretEnvironmentDelivery("CPK_CONTROL_AUTH_STATIC_CREDENTIAL", value.control_credential,
-                                  SecretUseIntent.APPLICATION_CONTROL_TOKEN),
+        auth_delivery,
         SecretFileDelivery(_PROVIDER_CLIENT_FILE, value.provider_client_credential,
                            SecretUseIntent.APPLICATION_CONTROL_TOKEN),
     ))

@@ -16,7 +16,10 @@ ROOT = Path("/witness")
 
 def prepare(run):
     os.umask(0o077)
-    document = example_input(installation_id=run, workspace_id=run, port=18089)
+    port_text = os.environ.get("CPK_ROOT_TEST_PORT", "18089")
+    if not port_text.isascii() or not port_text.isdecimal() or not 1 <= int(port_text) <= 65535:
+        raise ValueError("CPK_ROOT_TEST_PORT must be an integer from 1 to 65535")
+    document = example_input(installation_id=run, workspace_id=run, port=int(port_text))
     input_path = ROOT / "input.json"
     input_path.write_text(json.dumps(document))
     # The real launcher must plan from the documented invoking-user private input.
