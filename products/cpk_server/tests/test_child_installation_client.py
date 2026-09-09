@@ -27,7 +27,7 @@ class RecordingClient:
         self.corrupt_product = False
         self.provider_registration = 'provider-returned-17'
         self.current = 'current-child-3'
-        self.desired = 'desired-child-5'
+        self.desired = None
 
     def plan(self, path, *, title):
         self.plan_graph = json.loads(path.read_text())
@@ -54,7 +54,7 @@ class RecordingClient:
         if route_id == 'read.current-graph':
             return {'workspace_id': workspace, 'graph_id': self.current, 'assigned': True}
         if route_id == 'read.desired-graph':
-            return {'workspace_id': workspace, 'graph_id': self.desired, 'assigned': True}
+            return {'workspace_id': workspace, 'graph_id': self.desired, 'assigned': False}
         if route_id == 'command.secret-provider.register':
             return {'registration_id': self.provider_registration, 'workspace_id': workspace}
         if route_id == 'read.secret-provider-detail':
