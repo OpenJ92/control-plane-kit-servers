@@ -127,7 +127,7 @@ def observe(release):
 
 def preflight(release):
     """Exact cached products and unused named ingress; no acquisition or pull."""
-    from control_plane_kit_servers_cpk_server.bootstrap import matches_image_reference
+    from control_plane_kit_interpreters.docker.sdk import matches_image_reference
     state = ROOT / 'child-preflight'
     state.mkdir(mode=0o700, exist_ok=False)
     child = installation_from_input(json.loads((ROOT / 'child-input.json').read_bytes())['installation'])

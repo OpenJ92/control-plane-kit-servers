@@ -16,9 +16,11 @@ import stat
 import tarfile
 import time
 
+from control_plane_kit_interpreters.docker.sdk import matches_image_reference
+
 from .bootstrap import (
     MAX_BYTES, RootBootstrapError, RootBootstrapHold, canonical, decode_document,
-    matches_image_reference, protected_file_owner, BootstrapStage, bootstrap_stage,
+    protected_file_owner, BootstrapStage, bootstrap_stage,
 )
 
 

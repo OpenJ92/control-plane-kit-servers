@@ -9,7 +9,7 @@ import secrets
 import sys
 
 from products.cpk_server.examples.root_bootstrap_input import example_input
-from control_plane_kit_servers_cpk_server.bootstrap import matches_image_reference
+from control_plane_kit_interpreters.docker.sdk import matches_image_reference
 
 
 ROOT = Path("/witness")
