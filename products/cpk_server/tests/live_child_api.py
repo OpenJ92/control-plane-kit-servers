@@ -7,6 +7,7 @@ The test controller approves only the exact plans returned for these declared
 operations. Invoking this witness requires the concrete one-run effect release.
 """
 
+from collections import Counter
 import json
 from hashlib import sha256
 import os
@@ -17,17 +18,18 @@ from time import monotonic, sleep
 
 from control_plane_kit_core.identity import WorkspaceGrant
 from control_plane_kit_core.policies import PolicyScope
+from control_plane_kit_core.planning import activity_operation_descriptor, compile_activity_plan
 from control_plane_kit_core.products import ProductDescriptorCodec
 from control_plane_kit_core.public_ingress import NamedPublicIngressCodec
 from control_plane_kit_core.runtime_authority import RuntimeAuthorityAccessDeliveryCodec, RuntimeAuthorityReference
 from control_plane_kit_core.secrets import SecretProviderEndpointReference, SecretReference
-from control_plane_kit_core.topology import GraphDescriptorCodec
+from control_plane_kit_core.topology import DeploymentGraph, GraphDescriptorCodec, diff_graphs, validate_graph
 from control_plane_kit_servers_cpk_server.installation import DockerCpkInstallation
 from control_plane_kit_servers_cpk_server.client import (
     ClientAuthorizationError, ClientProfile, ClientTransportError,
     PublicHttpTransport, TopologyClient, load_profile,
 )
-from control_plane_kit_servers_cpk_server.client.installation import prepare_child_installation
+from control_plane_kit_servers_cpk_server.client.installation import child_installation_document, prepare_child_installation
 from products.cpk_server.examples.public_child_api import (
     child_runtime_graph, initialize_after_parent, parent_tracking,
     prepare_saved_empty, verify_empty_convergence,
@@ -73,9 +75,23 @@ def read(client, route, **coordinates):
         'workspace_id': client.profile.workspace_id, **coordinates}, payload={}, credential_role='operator')
 
 
-def apply_reviewed(client, planned, *, destructive):
+def apply_reviewed(client, planned, *, destructive, fixture_graph):
     assert planned.status == 'planned' and planned.plan_id and planned.changes, 'expected non-noop public plan'
     assert planned.destructive is destructive, 'plan destructive classification differs from released action'
+    # The existing Core owner derives the exact operations for this fixture's
+    # empty <-> graph transition. Do not invent another planner or approve only
+    # the lossy ClientResult target projection (which omits ingress_id).
+    empty = DeploymentGraph(fixture_graph.name)
+    before, after = (fixture_graph, empty) if destructive else (empty, fixture_graph)
+    expected = compile_activity_plan(diff_graphs(validate_graph(before), validate_graph(after)))
+    detail = read(client, 'read.plan-detail', plan_id=planned.plan_id)['plan']
+    assert detail['plan_id'] == planned.plan_id, 'released plan identity differs'
+    def operation_key(operation):
+        return json.dumps(operation, sort_keys=True, separators=(',', ':'), allow_nan=False)
+    permitted = Counter(operation_key(activity_operation_descriptor(activity.operation))
+                        for activity in expected.activities)
+    observed = Counter(operation_key(activity['operation']) for activity in detail['payload']['activities'])
+    assert permitted and observed == permitted, 'generated actions or targets differ from released fixture transition'
     arguments = {'execute_plan': planned.plan_id,
                  'approve_destructive_plan' if destructive else 'approve_plan': planned.plan_id}
     completed = client.apply(planned.operation_ref, **arguments)
@@ -160,7 +176,9 @@ def deploy(installation, parent, child, setup, state):
         child_workspace_id=child.profile.workspace_id, state_directory=state / 'prepare-parent')
     record['parent_prepared'] = prepared.descriptor()
     save(state, record)
-    completed = apply_reviewed(parent, prepared, destructive=False)
+    fixture_graph = GraphDescriptorCodec().decode(child_installation_document(
+        installation, child_workspace_id=child.profile.workspace_id)['graph'])
+    completed = apply_reviewed(parent, prepared, destructive=False, fixture_graph=fixture_graph)
     record['parent_deployed'] = completed.descriptor()
     save(state, record)
     initialized = initialize_after_parent(installation, parent=parent, prepared=prepared, child=child,
@@ -173,11 +191,9 @@ def deploy(installation, parent, child, setup, state):
     with path.open('x', encoding='utf-8') as stream:
         json.dump(GraphDescriptorCodec().encode(graph), stream, separators=(',', ':'))
     runtime = child.plan(path, title='Prove explicitly granted child Docker runtime')
-    assert any(change['operation'] == 'start-runtime' and change['target'].get('runtime_id') ==
-               f'{installation.installation_id}-proof' for change in runtime.changes), 'runtime creation absent from plan'
     record['child_runtime_prepared'] = runtime.descriptor()
     save(state, record)
-    runtime_completed = apply_reviewed(child, runtime, destructive=False)
+    runtime_completed = apply_reviewed(child, runtime, destructive=False, fixture_graph=graph)
     record['child_runtime_deployed'] = runtime_completed.descriptor()
     runtime_current = read(child, 'read.current-graph')
     assert f'{installation.installation_id}-proof' in runtime_current['graph_descriptor']['runtimes']
@@ -235,7 +251,8 @@ def teardown(installation, parent, child, state, record):
     record['child_empty_revision'] = empty_child['revision']
     record['child_empty_prepared'] = empty_child['prepared'].descriptor()
     save(state, record)
-    removed_child_runtime = apply_reviewed(child, empty_child['prepared'], destructive=True)
+    removed_child_runtime = apply_reviewed(child, empty_child['prepared'], destructive=True,
+        fixture_graph=child_runtime_graph(installation, child.profile.workspace_id))
     record['child_empty'] = verify_empty_convergence(child, removed_child_runtime.operation_ref,
                                                      revision=empty_child['revision'])
     save(state, record)
@@ -244,7 +261,9 @@ def teardown(installation, parent, child, state, record):
     record['parent_empty_revision'] = empty_parent['revision']
     record['parent_empty_prepared'] = empty_parent['prepared'].descriptor()
     save(state, record)
-    removed = apply_reviewed(parent, empty_parent['prepared'], destructive=True)
+    removed = apply_reviewed(parent, empty_parent['prepared'], destructive=True,
+        fixture_graph=GraphDescriptorCodec().decode(child_installation_document(
+            installation, child_workspace_id=child.profile.workspace_id)['graph']))
     record['parent_empty'] = verify_empty_convergence(parent, removed.operation_ref, revision=empty_parent['revision'])
     record['phase'] = 'complete'
     save(state, record)

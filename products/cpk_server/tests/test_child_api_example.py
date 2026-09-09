@@ -18,6 +18,61 @@ import test_child_installation_client as composition
 
 
 class ChildApiExampleTests(unittest.TestCase):
+    def test_generated_fixture_operations_match_before_any_approval(self):
+        from copy import deepcopy
+        from control_plane_kit_core.planning import ActivityPlanDescriptorCodec, compile_activity_plan
+        from control_plane_kit_core.topology import diff_graphs, validate_graph
+        from products.cpk_server.tests import live_child_api as witness
+
+        installation = composition.ChildInstallationClientTests().installation()
+        installation_graph = GraphDescriptorCodec().decode(child_installation_document(
+            installation, child_workspace_id='child-workspace')['graph'])
+        proof_graph = recipe.child_runtime_graph(installation, 'child-workspace')
+        for graph in (installation_graph, proof_graph):
+            for destructive in (False, True):
+                with self.subTest(graph=graph.name, destructive=destructive):
+                    empty = DeploymentGraph(graph.name)
+                    before, after = (graph, empty) if destructive else (empty, graph)
+                    payload = ActivityPlanDescriptorCodec().encode(compile_activity_plan(
+                        diff_graphs(validate_graph(before), validate_graph(after))))
+                    detail = {'plan_id': 'plan-1', 'payload': payload}
+                    calls = []
+                    def call(route, **arguments):
+                        self.assertEqual(route, 'read.plan-detail')
+                        self.assertEqual(arguments['path_parameters']['plan_id'], 'plan-1')
+                        return {'plan': detail}
+                    def apply(operation_ref, **arguments):
+                        calls.append((operation_ref, arguments))
+                        return SimpleNamespace(status='converged', execution='succeeded', advancement='advanced')
+                    client = SimpleNamespace(profile=SimpleNamespace(workspace_id='workspace'),
+                                             transport=SimpleNamespace(call=call), apply=apply)
+                    prepared = ClientResult('planned', 'operation-1', 'workspace', plan_id='plan-1',
+                                            destructive=destructive, changes=({'operation': 'present'},))
+                    witness.apply_reviewed(client, prepared, destructive=destructive, fixture_graph=graph)
+                    self.assertEqual(len(calls), 1)
+                    self.assertEqual(calls[0][1], {'execute_plan': 'plan-1',
+                        'approve_destructive_plan' if destructive else 'approve_plan': 'plan-1'})
+                    calls.clear()
+                    # Extra foreign target/action and missing/duplicate effects
+                    # must all stop before the approval/execution client call.
+                    for corruption in ('target', 'action', 'missing', 'duplicate'):
+                        altered = deepcopy(payload)
+                        if corruption == 'missing':
+                            altered['activities'].pop()
+                        else:
+                            extra = deepcopy(altered['activities'][0])
+                            if corruption == 'target':
+                                target = extra['operation']['target']
+                                coordinate = next(key for key in target if key != 'kind')
+                                target[coordinate] = 'unrelated-resource'
+                            elif corruption == 'action':
+                                extra['operation']['kind'] = 'unexpected-action'
+                            altered['activities'].append(extra)
+                        detail['payload'] = altered
+                        with self.assertRaisesRegex(AssertionError, 'released fixture transition'):
+                            witness.apply_reviewed(client, prepared, destructive=destructive, fixture_graph=graph)
+                        self.assertEqual(calls, [])
+
     def test_supplied_parent_endpoint_must_match_actual_root_before_child_mutation(self):
         from products.cpk_server.tests import live_child_api as witness
         endpoint = 'https://test-parent.example.test'
