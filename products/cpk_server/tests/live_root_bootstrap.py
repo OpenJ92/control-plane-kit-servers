@@ -124,12 +124,12 @@ def cleanup(run):
                     resource.remove(force=True)
                 else:
                     resource.remove()
+                absent = False
                 try:
                     collection.get(item["id"])
                 except docker.errors.NotFound:
-                    pass
-                else:
-                    raise AssertionError("owned resource remains")
+                    absent = True
+                assert absent, "owned resource remains"
         print("root bootstrap: exact owned resource cleanup PASS")
     finally:
         engine.close()
