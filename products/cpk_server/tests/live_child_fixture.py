@@ -48,7 +48,7 @@ def _private(path, value):
         os.fsync(stream.fileno())
 
 
-def _principal_material(directory, workspace, scopes):
+def _principal_material(directory, workspace, scopes, *, worker_secret_use=False):
     """Separate fixture actors; the server owns their authentication policy."""
     operator = (directory / 'control_credential').read_text()
     approvals = ['plan:approve', 'plan:approve-destructive']
@@ -56,7 +56,7 @@ def _principal_material(directory, workspace, scopes):
     for role, kind, grants in (
         ('operator', 'operator', [scope for scope in scopes if scope not in approvals + ['execution:operate']]),
         ('approver', 'operator', approvals),
-        ('worker', 'worker', ['execution:operate']),
+        ('worker', 'worker', ['execution:operate'] + (['secret-provider:use'] if worker_secret_use else [])),
     ):
         credential = operator if role == 'operator' else secrets.token_urlsafe(48)
         if role != 'operator':
@@ -136,7 +136,8 @@ def prepare(release, *, source=Path('/source')):
         'generated_secret_reference_prefix': f'{prefix}/generated'}}]
     live_root_bootstrap.prepare(run, document=root)
     material = ROOT / 'material'
-    _principal_material(material, workspace, root['installation']['workspace_grants'][0]['scopes'])
+    _principal_material(material, workspace, root['installation']['workspace_grants'][0]['scopes'],
+                        worker_secret_use=True)
     # Original reusable credential remains operator-owned outside this fixture.
     # Only its approved copy and protected connector volume belong to this run.
     from hashlib import sha256

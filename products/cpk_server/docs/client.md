@@ -402,7 +402,10 @@ The child acceptance fixture uses the shared `ControlAuthCodec` to select
 multi-principal authentication. Each cluster has its own CPK, PostgreSQL,
 Secrets service, private principal document, and three distinct role credential
 files. The setup bearer belongs to the operator; approver and worker credentials
-are separate. Declared setup scopes are input requirements, while the server's
+are separate. The parent worker has `execution:operate` and `secret-provider:use`
+in its own workspace: effect dispatch and nested material authorization require
+both. The child worker retains only `execution:operate` for its network-only proof.
+Declared setup scopes are input requirements, while the server's
 principal verifier determines effective authority. Principal documents enter
 through protected material delivery and are never embedded in the public graph.
 The bootstrap driver copies the current composer and client modules; the selected

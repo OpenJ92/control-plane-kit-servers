@@ -2,6 +2,7 @@
 
 from hashlib import sha256
 from contextlib import nullcontext
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -173,6 +174,11 @@ class ChildApiExampleTests(unittest.TestCase):
             from control_plane_kit_servers_cpk_server import server
             from control_plane_kit_core.identity import IdentityContractError
             from control_plane_kit_operations.cpk_server import CpkServerApplicationError, _ROUTE_AUTHORIZATION_POLICIES
+            from control_plane_kit_operations.secret_providers import (
+                AuthorizeSecretUse, SecretProviderAuthorizationDenied, SecretUseAuthorizationService,
+            )
+            from control_plane_kit_core.policies import PolicyScope
+            from control_plane_kit_core.secrets import SecretReference, SecretUseIntent
             for input_value, material, workspace in (
                 (prepared['installation'], root / 'material', 'parent-workspace'),
                 (child['installation'], root / 'child-material', 'child-workspace'),
@@ -196,6 +202,28 @@ class ChildApiExampleTests(unittest.TestCase):
                     _ROUTE_AUTHORIZATION_POLICIES['command.run.claim'].authorize(actors['operator'].command_context(workspace))
                 with self.assertRaises(CpkServerApplicationError):
                     _ROUTE_AUTHORIZATION_POLICIES['command.approval.decide'].authorize(actors['worker'].command_context(workspace))
+                if workspace == 'parent-workspace':
+                    # Scope admission only: later durable reference/provider
+                    # authorization and secret resolution are not exercised.
+                    class StoreBoundaryReached(Exception):
+                        pass
+                    store_entries = []
+                    def store_boundary():
+                        store_entries.append(workspace)
+                        raise StoreBoundaryReached()
+                    secret_use = AuthorizeSecretUse(workspace_id=workspace,
+                        reference=SecretReference(child['installation']['references']['postgres_password']),
+                        intent=SecretUseIntent.POSTGRES_PASSWORD, actor_subject=f'{workspace}-worker',
+                        correlation_id=f'{workspace}-scope-proof', requested_at='2026-09-09T12:00:00Z',
+                        actor_scopes=actors['worker'].command_context(workspace).granted_scopes)
+                    authorizer = SecretUseAuthorizationService(store_boundary)
+                    with self.assertRaises(SecretProviderAuthorizationDenied):
+                        authorizer.authorize_resolution(replace(secret_use,
+                            actor_scopes=(PolicyScope.EXECUTION_OPERATE,)))
+                    self.assertEqual(store_entries, [])
+                    with self.assertRaises(StoreBoundaryReached):
+                        authorizer.authorize_resolution(secret_use)
+                    self.assertEqual(store_entries, [workspace])
                 self.assertEqual(len(principals), 3)
                 credentials = {entry['credential'] for entry in principals}
                 self.assertEqual(len(credentials), 3)
@@ -207,7 +235,9 @@ class ChildApiExampleTests(unittest.TestCase):
                     self.assertEqual(set(entry['workspace_grants']), {workspace})
                     self.assertNotIn(entry['credential'], json.dumps(document['graph']))
                 self.assertEqual((material / 'principals').stat().st_mode & 0o777, 0o400)
-                self.assertEqual(principals[2]['workspace_grants'][workspace], ['execution:operate'])
+                self.assertEqual(principals[2]['workspace_grants'][workspace],
+                                 ['execution:operate', 'secret-provider:use'] if workspace == 'parent-workspace'
+                                 else ['execution:operate'])
                 self.assertNotIn('plan:approve', principals[0]['workspace_grants'][workspace])
             self.assertIn({'reference': child['installation']['control_auth']['principals_document'],
                            'allowed_intents': ['application.control-token']}, prepared['setup']['secret_references'])
