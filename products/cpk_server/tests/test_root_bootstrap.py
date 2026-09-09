@@ -7,7 +7,17 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from control_plane_kit_core.topology import GraphDescriptorCodec
+from control_plane_kit_core.identity import WorkspaceGrant
+from control_plane_kit_core.policies import PolicyScope
+from control_plane_kit_core.products import ProductDescriptorCodec
+from control_plane_kit_core.runtime_authority import (
+    RuntimeAuthorityAccessDeliveryCodec, RuntimeAuthorityReference,
+)
+from control_plane_kit_core.secrets import (
+    SecretEnvironmentDelivery, SecretFileDelivery,
+    SecretProviderEndpointReference, SecretReference,
+)
+from control_plane_kit_core.topology import GraphDescriptorCodec, compile_topology
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -80,14 +90,34 @@ class RootBootstrapTests(unittest.TestCase):
         document = installation_input()
         plan = api.plan_root_bootstrap(document, driver_image_id=DRIVER)
         self.assertEqual(plan, api.plan_root_bootstrap(document, driver_image_id=DRIVER))
-        graph = GraphDescriptorCodec().decode(plan["graph"])
-        self.assertEqual(set(graph.nodes), {"root-a-cpk", "root-a-postgres", "root-a-secrets"})
-        self.assertEqual(len(graph.edges), 4)
+        from control_plane_kit_servers_cpk_server.installation import (
+            DockerCpkInstallation, ExternalInstallationIngress, compose_docker_cpk_installation,
+        )
+        value = document["installation"]
+        products = {name: ProductDescriptorCodec().decode_document(content)
+                    for name, content in value["products"].items()}
+        expected = DockerCpkInstallation(
+            installation_id=value["installation_id"], workspace_id=value["workspace_id"],
+            runtime_authority=RuntimeAuthorityReference(value["runtime_authority"]),
+            runtime_access=RuntimeAuthorityAccessDeliveryCodec().decode(value["runtime_access"]),
+            cpk_product=products["cpk"], postgres_product=products["postgres"],
+            secrets_product=products["secrets"],
+            workspace_grants=tuple(WorkspaceGrant(grant["workspace_id"],
+                tuple(PolicyScope(scope) for scope in grant["scopes"]))
+                for grant in value["workspace_grants"]),
+            provider_endpoint_ref=SecretProviderEndpointReference(value["provider_endpoint_ref"]),
+            ingress=ExternalInstallationIngress(value["external_endpoint"]), connector_product=None,
+            **{name: SecretReference(reference) for name, reference in value["references"].items()},
+        )
+        topology = compose_docker_cpk_installation(expected)
+        graph = compile_topology(topology)
+        self.assertEqual(plan["graph"], GraphDescriptorCodec().encode(graph))
         self.assertEqual(plan["driver_image_id"], DRIVER)
-        self.assertEqual(plan["resources"]["network"]["name"], "cpk-root-workspace-root-a")
+        self.assertEqual(plan["resources"]["network"]["name"], topology.root.network_name)
         self.assertEqual(set(plan["required_material"]), {
-            value for key, value in document["installation"]["references"].items()
-            if key != "provider_bootstrap_credential_ref"
+            delivery.reference.reference_id for node in graph.nodes.values()
+            for delivery in node.secret_deliveries
+            if isinstance(delivery, (SecretEnvironmentDelivery, SecretFileDelivery))
         })
         self.assertEqual(plan["external_endpoint"], "https://root.example.test")
         self.assertNotIn("credential_value", json.dumps(plan))
