@@ -21,8 +21,8 @@ PRODUCT_SRC = ROOT / "products" / "cpk_server" / "src"
 SERVER_SOURCE = (
     PRODUCT_SRC / "control_plane_kit_servers_cpk_server" / "server.py"
 )
-CPK_COMMIT = "199724cb73d67073fabf1d7014c6c9d3c8347d54"
-INTERPRETERS_COMMIT = "0a4fee37cdf02c99bde51da7404a3bf93bc7f22d"
+CPK_COMMIT = "0c53845d88402a3b7afb595d97fb1063b50b0d61"
+INTERPRETERS_COMMIT = "96784e607a4df2d97a84931a4b66134ce834dc09"
 PUBLIC_DEPLOYMENT_COMMAND_ROUTES = frozenset(
     {
         "command.deployment.prepare",
