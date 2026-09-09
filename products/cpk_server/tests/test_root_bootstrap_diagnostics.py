@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 from control_plane_kit_servers_cpk_server import bootstrap as api
 from control_plane_kit_servers_cpk_server import bootstrap_cli as cli
+from control_plane_kit_servers_cpk_server import bootstrap_runtime
 
 
 class RootBootstrapDiagnosticTests(unittest.TestCase):
@@ -62,7 +63,6 @@ class RootBootstrapDiagnosticTests(unittest.TestCase):
             api.RootBootstrapDiagnostic(sentinel, api.BootstrapReason.UNEXPECTED_ERROR)
 
     def test_persistence_failure_is_classified_without_fabricating_a_receipt(self):
-        from control_plane_kit_servers_cpk_server import bootstrap_runtime
         with tempfile.TemporaryDirectory() as directory:
             with patch.object(bootstrap_runtime.os, "open", side_effect=OSError("secret provider body")):
                 with self.assertRaises(api.RootBootstrapDiagnostic) as caught:
