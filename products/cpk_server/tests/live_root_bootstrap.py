@@ -15,9 +15,10 @@ from control_plane_kit_servers_cpk_server.bootstrap import matches_image_referen
 ROOT = Path("/witness")
 
 
-def prepare(run):
+def prepare(run, *, document=None):
     os.umask(0o077)
-    document = example_input(installation_id=run, workspace_id=run, port=18089)
+    if document is None:
+        document = example_input(installation_id=run, workspace_id=run, port=18089)
     input_path = ROOT / "input.json"
     input_path.write_text(json.dumps(document))
     # The real launcher must plan from the documented invoking-user private input.
@@ -51,17 +52,18 @@ def check(run):
     from control_plane_kit_interpreters.docker import DockerSdkClient
 
     result = json.loads((ROOT / "result.json").read_text())
+    plan = json.loads((ROOT / "plan.json").read_text())
+    workspace_id = plan['input']['installation']['workspace_id']
     assert result["status"] == "local-ready" and result["external_endpoint"] == "unverified"
     receipt = result["receipt"]
     assert receipt["phase"] == "complete" and receipt["pending"] is None
     assert receipt["labels"]["org.openj92.cpk.installation"] == run
     setup = receipt["observations"]["public_setup"]
-    assert setup["status"] == "authenticated-local-setup" and setup["workspace_id"] == run
+    assert setup["status"] == "authenticated-local-setup" and setup["workspace_id"] == workspace_id
     assert len([item for item in setup["commands"] if item["route"] == "command.product.import"]) == 3
     assert {"read.workspace", "read.current-graph", "read.desired-graph"} <= set(setup["reads"])
     engine = docker.from_env()
     sdk = DockerSdkClient(client=engine)
-    plan = json.loads((ROOT / "plan.json").read_text())
     try:
         assert engine.info()["ID"] == receipt["engine_id"]
         for node in plan["resources"]["nodes"]:
@@ -99,7 +101,7 @@ with tempfile.TemporaryDirectory() as directory:
     else:
         raise AssertionError('wrong credential accepted')
 '''
-        outcome = cpk.exec_run(["python", "-c", "WORKSPACE=" + repr(run) + "\n" + probe])
+        outcome = cpk.exec_run(["python", "-c", "WORKSPACE=" + repr(workspace_id) + "\n" + probe])
         assert outcome.exit_code == 0, "wrong-credential witness failed"
         before = (ROOT / "state" / "receipt.json").read_bytes()
         (ROOT / "receipt-before").write_bytes(before)

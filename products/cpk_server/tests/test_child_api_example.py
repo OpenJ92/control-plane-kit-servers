@@ -16,6 +16,37 @@ import test_child_installation_client as composition
 
 
 class ChildApiExampleTests(unittest.TestCase):
+    def test_fixture_prepares_valid_shared_child_and_separate_workspace_material(self):
+        from products.cpk_server.tests import live_child_fixture as fixture
+        release = {'parent_installation_id': 'test-parent', 'parent_workspace_id': 'parent-workspace',
+            'child_installation_id': 'test-child', 'child_workspace_id': 'child-workspace',
+            'loopback_port': 18089, 'hostname': 'test-child.example.test',
+            'account_id': 'a' * 32, 'zone_id': 'b' * 32, 'zone_name': 'example.test'}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = Path(__file__).resolve().parents[3]
+            with patch.object(fixture, 'ROOT', root), patch.object(fixture.live_root_bootstrap, 'ROOT', root):
+                prepared = fixture.prepare(release, source=source)
+            child = json.loads((root / 'child-input.json').read_bytes())
+            document = child_installation_document(fixture.installation_from_input(child['installation']),
+                                                    child_workspace_id='child-workspace')
+            self.assertEqual(document['parent_workspace_id'], 'parent-workspace')
+            self.assertEqual(document['child_endpoint'], 'https://test-child.example.test')
+            self.assertEqual(set(document['graph']['nodes']), {
+                'test-child-cpk', 'test-child-postgres', 'test-child-secrets', 'test-child-connector'})
+            root_grant = prepared['installation']['workspace_grants'][0]
+            child_grant = child['installation']['workspace_grants'][0]
+            self.assertEqual((root_grant['workspace_id'], child_grant['workspace_id']),
+                             ('parent-workspace', 'child-workspace'))
+            self.assertIn('ingress-authority:use', root_grant['scopes'])
+            self.assertNotIn('ingress-authority:use', child_grant['scopes'])
+            for name, intent in fixture.MATERIAL_INTENTS.items():
+                self.assertIn({'reference': child['installation']['references'][name], 'allowed_intents': [intent]},
+                              prepared['setup']['secret_references'])
+                self.assertEqual((root / 'child-material' / name).stat().st_mode & 0o777, 0o400)
+            self.assertFalse((root / 'initial-custody').exists())
+            self.assertFalse((root / 'child-api').exists())
+
     def test_initialization_requires_exact_prepared_graph_not_matching_node_names(self):
         law = composition.ChildInstallationClientTests()
         installation = law.installation()
