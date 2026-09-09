@@ -157,3 +157,35 @@ before implementation, with no executable red or green run. Stage guards leave
 Docker configuration, image matching, pulls, receipt contents, setup, cleanup and
 retry behavior unchanged. This checkpoint requires static review before any
 separately authorized owning run; no runtime diagnosis or acceptance is claimed.
+
+## Terminal local acceptance
+
+The entries above are chronological checkpoints, superseded for local acceptance
+by the ordinary owning `./test.sh` exit-zero run at
+`6271bcf3e6312509740903479f6f9c9d42629609`, tree
+`cc7a4f3fd8f2660c9cf674ac3bec6fe351afd4c9`. Support26, package325 (CPK216),
+prior canonical image smokes, and the real launcher witness passed. The full log
+SHA256 is `bb7a571e9f69de77f4960eb14e1ccc4694cafed542a94a1d812dfad6cfc41db9`.
+[Durable evidence](https://github.com/OpenJ92/control-plane-kit-servers/issues/156#issuecomment-5594724961)
+records the source seal, plan/receipt hashes and acceptance limits. Meridian
+independently reviewed the evidence as PASS. This documentation update does not
+change the production or test bytes proven by that run.
+
+The diagnostic run localized the pre-receipt failure to product-image checking.
+The final correction requires a numeric image UID only for actual protected-file
+recipients; all product image identity checks remain. Environment-only PostgreSQL
+does not acquire an unrelated file-owner requirement. Exact Docker Hub official
+library aliases remain accepted only at the same repository and digest. Neither
+correction changes canonical coordinates or introduces a fallback UID.
+
+The ephemeral root completed seven authenticated public commands and expected
+readbacks. Wrong credentials were refused; completed reapply returned the intended
+HOLD without changing receipt bytes. The setup helper and two one-time staging
+volumes were removed. Exact receipt-owned fixture cleanup and the final residue
+audit passed. Prior failed runs remain non-green evidence; apparatus failures
+received no acceptance credit. No additional local run accompanies this note.
+
+This proves local ephemeral root acquisition and initialization. External endpoint
+verification, the named persistent root, descendant deployment and grandparent
+tracking remain open under CPK1778/1779. No retained root or old-resource change
+was performed. The persistent deployment still needs its concrete reviewed plan.
