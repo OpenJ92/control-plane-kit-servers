@@ -170,7 +170,7 @@ CPK_SERVER_IMAGE="$CPK_IMAGE" sh scripts/cpk_server_published_image_smoke.sh
   docker build -f products/cpk_server/Dockerfile.bootstrap --build-arg "CPK_IMAGE=$CPK_IMAGE" \
     --label "org.openj92.cpk.test-run=$RUN" --iidfile "$RECORDS/driver" -t "$DRIVER_TAG" .
   DRIVER="$(cat "$RECORDS/driver")"
-  docker run --rm --network none \
+  docker run --rm --network none --user "$(id -u):$(id -g)" \
     --mount "type=bind,source=$ROOT,target=/source,readonly" \
     --mount "type=bind,source=$RECORDS,target=/witness" \
     -e PYTHONPATH=/source:/app/products/cpk_server/src "$DRIVER" \
