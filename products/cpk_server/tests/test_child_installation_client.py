@@ -49,8 +49,8 @@ class RecordingClient:
             return {'replayed': False, 'workspace': {'workspace_id': workspace,
                     'current_graph_id': self.current, 'desired_graph_id': self.desired}}
         if route_id == 'read.workspace':
-            return {'workspace_id': workspace, 'current_graph_id': self.current,
-                    'desired_graph_id': self.desired}
+            return {'workspace': {'workspace_id': workspace, 'current_graph_id': self.current,
+                                  'desired_graph_id': self.desired}}
         if route_id == 'read.current-graph':
             return {'workspace_id': workspace, 'graph_id': self.current, 'assigned': True}
         if route_id == 'read.desired-graph':
