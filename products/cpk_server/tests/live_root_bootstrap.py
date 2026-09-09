@@ -1,6 +1,7 @@
 """Owning gate fixture and exact-ID cleanup for the real bootstrap.sh witness."""
 
 import base64
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
@@ -140,6 +141,70 @@ def cleanup(run):
         engine.close()
 
 
+def restart_for_child(run):
+    """Released fault injection: restart only the receipt-owned parent CPK.
+
+    This is not part of the ordinary root regression. The complete-child effect
+    plan must separately authorize this phase. An existing record holds rather
+    than retrying an uncertain restart.
+    """
+    import docker
+    receipt_path = ROOT / 'state' / 'receipt.json'
+    receipt_raw = receipt_path.read_bytes()
+    receipt = json.loads(receipt_raw)
+    plan = json.loads((ROOT / 'plan.json').read_bytes())
+    child_record = json.loads((ROOT / 'child-api' / 'record.json').read_bytes())
+    assert child_record['phase'] == 'deployed'
+    assert receipt['phase'] == 'complete' and receipt['pending'] is None
+    assert receipt['labels']['org.openj92.cpk.installation'] == run
+    restart = ROOT / 'parent-restart'
+    restart.mkdir(mode=0o700, exist_ok=False)
+    engine = docker.from_env()
+    try:
+        assert engine.info()['ID'] == receipt['engine_id']
+        containers = {}
+        before = {}
+        for node_id, item in receipt['resources']['containers'].items():
+            container = engine.containers.get(item['id'])
+            assert all(container.labels.get(key) == value for key, value in receipt['labels'].items())
+            assert container.attrs['State']['Running']
+            containers[node_id] = container
+            before[node_id] = {'id': container.id, 'started_at': container.attrs['State']['StartedAt']}
+        parent_id = plan['cpk_node_id']
+        evidence = {'phase': 'pending', 'receipt_sha256': sha256(receipt_raw).hexdigest(),
+                    'engine_id': receipt['engine_id'], 'parent_node_id': parent_id, 'before': before}
+        def record():
+            path = restart / 'record.new'
+            with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), 'w') as stream:
+                json.dump(evidence, stream, sort_keys=True, separators=(',', ':'))
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(path, restart / 'record.json')
+            directory = os.open(restart, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        record()
+        containers[parent_id].restart(timeout=30)
+        after = {}
+        for node_id, container in containers.items():
+            container.reload()
+            assert container.attrs['State']['Running']
+            after[node_id] = {'id': container.id, 'started_at': container.attrs['State']['StartedAt']}
+            assert after[node_id]['id'] == before[node_id]['id']
+            if node_id == parent_id:
+                assert after[node_id]['started_at'] != before[node_id]['started_at']
+            else:
+                assert after[node_id] == before[node_id], 'root database/provider restarted unexpectedly'
+        assert receipt_path.read_bytes() == receipt_raw, 'root receipt changed across restart'
+        evidence.update(phase='complete', after=after)
+        record()
+        print('child fixture: exact receipt-owned parent restart observed; database/provider unchanged')
+    finally:
+        engine.close()
+
+
 if __name__ == "__main__":
     action, run = sys.argv[1:]
     if action == "prepare":
@@ -148,6 +213,8 @@ if __name__ == "__main__":
         check(run)
     elif action == "cleanup":
         cleanup(run)
+    elif action == "restart-for-child":
+        restart_for_child(run)
     elif action == "digest":
         print(json.loads((ROOT / "plan.json").read_text())["digest"])
     elif action == "unchanged":
