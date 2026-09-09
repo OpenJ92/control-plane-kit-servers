@@ -10,36 +10,36 @@
       "product_id": "cpk-server",
       "owner_directory": "products/cpk_server",
       "descriptor_path": "products/cpk_server/product.cpk.json",
-      "source_commit": "d8a10d0829cc976a036eec228b2b5f765bf5d855",
+      "source_commit": "ed70127293dcc533e5671e0b2ae3e71589d6b6c1",
       "image": {
         "registry": "ghcr.io",
         "repository": "openj92/control-plane-kit-servers/cpk-server",
-        "tag": "exact-host-163-d8a10d0",
-        "digest": "sha256:18c2d09f07d45ef6114938ddf26dc0a2e757a7df439d6a2ac783eb4f0346930f"
+        "tag": "numeric-user-163-ed70127",
+        "digest": "sha256:f05d4528a8a74cadd16b5a9036e45f293674ac81afd29e3e6c1d6249776f70dd"
       }
     },
     {
       "product_id": "cpk-server-docker",
       "owner_directory": "products/cpk_server",
       "descriptor_path": "products/cpk_server/product.docker.cpk.json",
-      "source_commit": "d8a10d0829cc976a036eec228b2b5f765bf5d855",
+      "source_commit": "ed70127293dcc533e5671e0b2ae3e71589d6b6c1",
       "image": {
         "registry": "ghcr.io",
         "repository": "openj92/control-plane-kit-servers/cpk-server",
-        "tag": "exact-host-163-d8a10d0",
-        "digest": "sha256:18c2d09f07d45ef6114938ddf26dc0a2e757a7df439d6a2ac783eb4f0346930f"
+        "tag": "numeric-user-163-ed70127",
+        "digest": "sha256:f05d4528a8a74cadd16b5a9036e45f293674ac81afd29e3e6c1d6249776f70dd"
       }
     },
     {
       "product_id": "cpk-server-docker-cloudflare",
       "owner_directory": "products/cpk_server",
       "descriptor_path": "products/cpk_server/product.docker-cloudflare.cpk.json",
-      "source_commit": "d8a10d0829cc976a036eec228b2b5f765bf5d855",
+      "source_commit": "ed70127293dcc533e5671e0b2ae3e71589d6b6c1",
       "image": {
         "registry": "ghcr.io",
         "repository": "openj92/control-plane-kit-servers/cpk-server",
-        "tag": "exact-host-163-d8a10d0",
-        "digest": "sha256:18c2d09f07d45ef6114938ddf26dc0a2e757a7df439d6a2ac783eb4f0346930f"
+        "tag": "numeric-user-163-ed70127",
+        "digest": "sha256:f05d4528a8a74cadd16b5a9036e45f293674ac81afd29e3e6c1d6249776f70dd"
       }
     },
     {
