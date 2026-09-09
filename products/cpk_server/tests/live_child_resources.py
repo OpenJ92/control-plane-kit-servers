@@ -169,19 +169,21 @@ def finish(release):
                 raise AssertionError('API teardown left a recorded compute resource')
         client = provider(release)
         ingress = evidence['ingress']
+        dns_absent = False
         try:
             client.get_dns_record(ingress['dns_record_id'])
         except CloudflareApiNotFound:
-            pass
-        else:
-            raise AssertionError('owned DNS record remains after API teardown')
+            dns_absent = True
+        assert dns_absent, 'owned DNS record remains after API teardown'
         assert client.list_dns_records_for_hostname(ingress['hostname']) == []
+        tunnel_absent = False
         try:
             tunnel = client.get_tunnel(ingress['tunnel_id'])
         except CloudflareApiNotFound:
-            pass
+            tunnel_absent = True
         else:
-            assert tunnel['id'] == ingress['tunnel_id'] and tunnel.get('deleted_at'), 'owned tunnel remains active'
+            tunnel_absent = tunnel['id'] == ingress['tunnel_id'] and bool(tunnel.get('deleted_at'))
+        assert tunnel_absent, 'owned tunnel remains active'
         for item in evidence['volumes']:
             volume = engine.volumes.get(item['id'])
             labels = _labels(volume)
@@ -191,12 +193,12 @@ def finish(release):
                 evidence['pending'] = {'remove_volume': item['id']}
                 save(state, evidence)
                 volume.remove()  # No force: a still-used volume must stop cleanup.
+                volume_absent = False
                 try:
                     engine.volumes.get(item['id'])
                 except docker.errors.NotFound:
-                    pass
-                else:
-                    raise AssertionError('owned fixture volume remains')
+                    volume_absent = True
+                assert volume_absent, 'owned fixture volume remains'
                 item['disposition'] = 'deleted'
                 evidence['pending'] = None
             else:
