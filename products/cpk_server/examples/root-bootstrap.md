@@ -90,6 +90,12 @@ the receipt and original reviewed plan; do not remove them to force redispatch.
 Inspect checks recorded IDs/ownership/running state on completed acquisition;
 its prior authenticated readiness observation is explicitly historical.
 
+Ordinary launcher failures report exactly `status`, `message`, `stage` and
+`reason` on stderr. Stage/reason are closed tokens, never raw exception text,
+provider bodies or material. `persist-receipt` means the persistence operation
+failed; it does not assert that no receipt or effect exists. No diagnostic
+sidecar or replacement receipt is created. Cancellation propagates unchanged.
+
 During public setup the exact helper writes a bounded private progress file after
 each response, preserving only returned identities/digests and route evidence.
 A later command failure retains that helper and the staging volumes. Inspect can

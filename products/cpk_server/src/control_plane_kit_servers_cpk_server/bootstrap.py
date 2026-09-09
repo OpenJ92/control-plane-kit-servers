@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from enum import Enum
 import hashlib
 import json
 from pathlib import Path
@@ -36,6 +38,100 @@ class RootBootstrapError(ValueError):
 
 class RootBootstrapHold(RootBootstrapError):
     """Prior effects cannot safely be redispatched."""
+
+
+class BootstrapStage(Enum):
+    LAUNCHER = "launcher"
+    VERIFY_PLAN = "verify-plan"
+    READ_MATERIAL = "read-material"
+    LOCK_STATE = "lock-state"
+    LOAD_RUNTIME_DEPENDENCIES = "load-runtime-dependencies"
+    DECODE_GRAPH = "decode-graph"
+    RESOLVE_DELIVERIES = "resolve-deliveries"
+    DECODE_PULL_CREDENTIALS = "decode-pull-credentials"
+    CONSTRUCT_DOCKER_CLIENT = "construct-docker-client"
+    PREPARE_RECEIPT_ENVELOPE = "prepare-receipt-envelope"
+    VERIFY_DAEMON_CONTEXT = "verify-daemon-context"
+    INSPECT_DRIVER_IMAGE = "inspect-driver-image"
+    VERIFY_DRIVER_USER = "verify-driver-user"
+    CHECK_RESOURCE_CONFLICTS = "check-resource-conflicts"
+    INSPECT_PRODUCT_IMAGE = "inspect-product-image"
+    VERIFY_PRODUCT_IMAGE = "verify-product-image"
+    VERIFY_PROVIDER_IMAGE = "verify-provider-image"
+    PERSIST_RECEIPT = "persist-receipt"
+
+
+class BootstrapReason(Enum):
+    UNEXPECTED_ERROR = "unexpected-error"
+    PLAN_REFUSED = "plan-refused"
+    DRIVER_REFUSED = "driver-refused"
+    MATERIAL_REFUSED = "material-refused"
+    PRIOR_ACQUISITION = "prior-acquisition"
+    STATE_REFUSED = "state-refused"
+    DAEMON_CONTEXT_MISMATCH = "daemon-context-mismatch"
+    DRIVER_IMAGE_UNAVAILABLE = "driver-image-unavailable"
+    DRIVER_USER_UNSUPPORTED = "driver-user-unsupported"
+    RESOURCE_CONFLICT = "resource-conflict"
+    PRODUCT_IMAGE_UNVERIFIED = "product-image-unverified"
+    PROVIDER_IDENTITY_MISMATCH = "provider-identity-mismatch"
+
+
+_FIXED_REASONS = {
+    "bootstrap plan does not match reviewed intent": BootstrapReason.PLAN_REFUSED,
+    "bootstrap plan could not be verified": BootstrapReason.PLAN_REFUSED,
+    "bootstrap driver image identity is invalid": BootstrapReason.DRIVER_REFUSED,
+    "bootstrap driver image does not match the plan": BootstrapReason.DRIVER_REFUSED,
+    "bootstrap material could not be verified": BootstrapReason.MATERIAL_REFUSED,
+    "bootstrap receipt exists; inspect without redispatch": BootstrapReason.PRIOR_ACQUISITION,
+    "bootstrap prior acquisition requires investigation": BootstrapReason.PRIOR_ACQUISITION,
+    "bootstrap acquisition is already locked": BootstrapReason.PRIOR_ACQUISITION,
+    "bootstrap state directory must be private": BootstrapReason.STATE_REFUSED,
+    "bootstrap Docker context does not match mounted daemon": BootstrapReason.DAEMON_CONTEXT_MISMATCH,
+    "bootstrap driver image is unavailable": BootstrapReason.DRIVER_IMAGE_UNAVAILABLE,
+    "bootstrap driver requires its explicit root helper image": BootstrapReason.DRIVER_USER_UNSUPPORTED,
+    "bootstrap resource already exists; adoption is not supported": BootstrapReason.RESOURCE_CONFLICT,
+    "bootstrap canonical image could not be verified": BootstrapReason.PRODUCT_IMAGE_UNVERIFIED,
+    "bootstrap provider identity differs from selected image configuration": BootstrapReason.PROVIDER_IDENTITY_MISMATCH,
+}
+
+
+class RootBootstrapDiagnostic(RootBootstrapHold):
+    """An ephemeral closed failure classification, never execution evidence."""
+
+    def __init__(self, stage: BootstrapStage, reason: BootstrapReason):
+        if type(stage) is not BootstrapStage or type(reason) is not BootstrapReason:
+            raise TypeError("bootstrap diagnostic requires closed tokens")
+        self.stage, self.reason = stage, reason
+        super().__init__(f"bootstrap {stage.value}: {reason.value}")
+
+
+def _fixed_reason(error):
+    if type(error) in (RootBootstrapError, RootBootstrapHold) and len(error.args) == 1 and type(error.args[0]) is str:
+        return _FIXED_REASONS.get(error.args[0], BootstrapReason.UNEXPECTED_ERROR)
+    return BootstrapReason.UNEXPECTED_ERROR
+
+
+@contextmanager
+def bootstrap_stage(stage: BootstrapStage):
+    if type(stage) is not BootstrapStage:
+        raise TypeError("bootstrap diagnostic stage must be closed")
+    try:
+        yield
+    except RootBootstrapDiagnostic:
+        raise
+    except Exception as error:
+        raise RootBootstrapDiagnostic(stage, _fixed_reason(error)) from None
+
+
+def bootstrap_failure(error: Exception) -> dict:
+    stage, reason = BootstrapStage.LAUNCHER, _fixed_reason(error)
+    # A forged subclass or mutated arbitrary attribute is never serialized.
+    if type(error) is RootBootstrapDiagnostic:
+        candidate_stage, candidate_reason = error.__dict__.get("stage"), error.__dict__.get("reason")
+        if type(candidate_stage) is BootstrapStage and type(candidate_reason) is BootstrapReason:
+            stage, reason = candidate_stage, candidate_reason
+    return {"status": "hold", "message": "bootstrap result could not be verified; inspect the private receipt",
+            "stage": stage.value, "reason": reason.value}
 
 
 def canonical(value: object) -> bytes:
@@ -242,8 +338,10 @@ def verified_plan(plan, expected_digest, driver_image_id):
 
 def apply_root_bootstrap(plan, *, expected_digest: str, driver_image_id: str,
                          index_path: Path, state_directory: Path) -> dict:
-    plan = verified_plan(plan, expected_digest, driver_image_id)
-    from .bootstrap_runtime import acquire_root
+    with bootstrap_stage(BootstrapStage.VERIFY_PLAN):
+        plan = verified_plan(plan, expected_digest, driver_image_id)
+    with bootstrap_stage(BootstrapStage.LOAD_RUNTIME_DEPENDENCIES):
+        from .bootstrap_runtime import acquire_root
     return acquire_root(plan, Path(index_path), Path(state_directory))
 
 

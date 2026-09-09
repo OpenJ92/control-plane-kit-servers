@@ -12,7 +12,7 @@ import time
 
 from .bootstrap import (
     RootBootstrapError, apply_root_bootstrap, canonical, decode_document,
-    inspect_root_bootstrap, plan_root_bootstrap, verified_plan,
+    inspect_root_bootstrap, plan_root_bootstrap, verified_plan, bootstrap_failure,
 )
 
 
@@ -217,9 +217,9 @@ def main():
             result = public_setup(decode_document(private_read(Path("/bootstrap/plan.json"))), Path("/bootstrap/credential"))
         print(canonical(result).decode())
         return 0
-    except Exception:
+    except Exception as error:
         # Never print SDK exceptions, request payloads, provider bodies or traces.
-        print(json.dumps({"status": "hold", "message": "bootstrap result could not be verified; inspect the private receipt"}), file=sys.stderr)
+        print(json.dumps(bootstrap_failure(error)), file=sys.stderr)
         return 1
 
 

@@ -130,3 +130,30 @@ IDs durably saved with pending still set before subsequent verification.
 
 No green execution accompanies this amendment. Independent static re-review is
 still required, and no retained-root/provider/DNS/1752 action is authorized here.
+
+## Bounded diagnostic implementation checkpoint
+
+The latest57e898e owning run remains NON-GREEN: package319 and completed lower
+phases passed, but first bootstrap apply left lock-only evidence and no receipt.
+The official-library matcher is independently correct and remains; the live
+failure did not establish it as causal. Meridian approved diagnosis-only design
+at issue156 comment5594462754, SHA256
+`4c0af655e57b2724d69d64d1d70e149ad4fce2a7ace692fddff9ac8652aa17a4`.
+
+The diagnostic uses typed closed stage/reason tokens and exactly four stderr
+keys: status, fixed message, stage, reason. A bootstrap-local Exception guard
+preserves an already-classified inner failure and never catches BaseException.
+Only literal known RootBootstrapError/Hold messages map to fixed reasons;
+arbitrary text, attributes, exception types and chaining never reach output.
+The guard adds no file/provider IO or effect/ownership claim. Existing receipt
+persistence receives its own stage without assuming a failed save left no file.
+The general provider-image stage is reached only after an earlier node save and
+is not a candidate for the observed lock-only failure.
+
+Four focused tests cover fixed projection/inner failure identity and unchanged
+history, hostile text/attributes, persistence classification without a fabricated
+receipt, and BaseException identity through guard/CLI. Tests were committed
+before implementation, with no executable red or green run. Stage guards leave
+Docker configuration, image matching, pulls, receipt contents, setup, cleanup and
+retry behavior unchanged. This checkpoint requires static review before any
+separately authorized owning run; no runtime diagnosis or acceptance is claimed.

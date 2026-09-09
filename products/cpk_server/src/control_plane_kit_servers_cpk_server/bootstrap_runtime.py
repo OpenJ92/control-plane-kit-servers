@@ -16,7 +16,10 @@ import stat
 import tarfile
 import time
 
-from .bootstrap import MAX_BYTES, RootBootstrapError, RootBootstrapHold, canonical, decode_document, matches_image_reference
+from .bootstrap import (
+    MAX_BYTES, RootBootstrapError, RootBootstrapHold, canonical, decode_document,
+    matches_image_reference, BootstrapStage, bootstrap_stage,
+)
 
 
 def private_read(path: Path) -> bytes:
@@ -35,6 +38,7 @@ def private_read(path: Path) -> bytes:
         raise RootBootstrapError("bootstrap private material could not be verified") from None
 
 
+@bootstrap_stage(BootstrapStage.READ_MATERIAL)
 def _material(plan, index_path):
     try:
         index = decode_document(private_read(index_path))
@@ -56,6 +60,7 @@ def _material(plan, index_path):
         raise RootBootstrapError("bootstrap material could not be verified") from None
 
 
+@bootstrap_stage(BootstrapStage.PERSIST_RECEIPT)
 def _save(state, receipt):
     temporary = state / "receipt.new"
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
@@ -73,15 +78,17 @@ def _save(state, receipt):
 
 @contextmanager
 def _locked(state):
-    state.mkdir(mode=0o700, parents=False, exist_ok=True)
-    if state.is_symlink() or not state.is_dir() or state.stat().st_mode & 0o077:
-        raise RootBootstrapError("bootstrap state directory must be private")
-    descriptor = os.open(state / "lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    with bootstrap_stage(BootstrapStage.LOCK_STATE):
+        state.mkdir(mode=0o700, parents=False, exist_ok=True)
+        if state.is_symlink() or not state.is_dir() or state.stat().st_mode & 0o077:
+            raise RootBootstrapError("bootstrap state directory must be private")
+        descriptor = os.open(state / "lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     try:
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise RootBootstrapHold("bootstrap acquisition is already locked") from None
+        with bootstrap_stage(BootstrapStage.LOCK_STATE):
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise RootBootstrapHold("bootstrap acquisition is already locked") from None
         yield
     finally:
         os.close(descriptor)
@@ -189,12 +196,14 @@ def inspect_root(state: Path) -> dict:
 
 def acquire_root(plan, index_path, state):
     # The prior receipt wins even if material is now absent or changed.
-    if (state / "receipt.json").exists() or (state / "receipt.json").is_symlink():
-        raise RootBootstrapHold("bootstrap receipt exists; inspect without redispatch")
+    with bootstrap_stage(BootstrapStage.LOCK_STATE):
+        if (state / "receipt.json").exists() or (state / "receipt.json").is_symlink():
+            raise RootBootstrapHold("bootstrap receipt exists; inspect without redispatch")
     material = _material(plan, index_path)
     with _locked(state):
-        if (state / "receipt.json").exists() or (state / "receipt.new").exists():
-            raise RootBootstrapHold("bootstrap prior acquisition requires investigation")
+        with bootstrap_stage(BootstrapStage.LOCK_STATE):
+            if (state / "receipt.json").exists() or (state / "receipt.new").exists():
+                raise RootBootstrapHold("bootstrap prior acquisition requires investigation")
         try:
             return _acquire(plan, material, state)
         except (RootBootstrapError, RootBootstrapHold):
@@ -204,38 +213,44 @@ def acquire_root(plan, index_path, state):
 
 
 def _acquire(plan, material, state):
-    import docker
-    from control_plane_kit_core.secrets import (
-        LocalDevelopmentSecretResolver, SecretFileMode, SecretProviderAuthority, SecretReference, SecretValue,
-    )
-    from control_plane_kit_core.topology import GraphDescriptorCodec
-    from control_plane_kit_interpreters.docker import DockerSdkClient, DockerSdkSecretMount, DockerRegistryAuthConfig
-    from control_plane_kit_interpreters.secrets import parse_image_pull_credential, resolve_secret_deliveries
+    with bootstrap_stage(BootstrapStage.LOAD_RUNTIME_DEPENDENCIES):
+        import docker
+        from control_plane_kit_core.secrets import (
+            LocalDevelopmentSecretResolver, SecretFileMode, SecretProviderAuthority, SecretReference, SecretValue,
+        )
+        from control_plane_kit_core.topology import GraphDescriptorCodec
+        from control_plane_kit_interpreters.docker import DockerSdkClient, DockerSdkSecretMount, DockerRegistryAuthConfig
+        from control_plane_kit_interpreters.secrets import parse_image_pull_credential, resolve_secret_deliveries
 
-    graph = GraphDescriptorCodec().decode(plan["graph"])
-    resolved = {}
-    for node in graph.nodes.values():
-        environment, files = {}, []
-        for delivery in node.secret_deliveries:
-            reference = delivery.reference
-            resolver = LocalDevelopmentSecretResolver(
-                SecretProviderAuthority(reference.provider_id, (reference.path,)),
-                {reference.reference_id: material[reference.reference_id]})
-            result = resolve_secret_deliveries((delivery,), resolver=resolver)
-            environment.update(result.environment)
-            files.extend(result.files)
-        resolved[node.node_id] = (environment, files)
-    auth = {}
-    for registry, reference in plan["input"].get("image_pull_credentials", {}).items():
-        credential = parse_image_pull_credential(SecretValue(material[reference]))
-        auth[registry] = DockerRegistryAuthConfig(credential.username, credential.password, credential.identitytoken)
+    with bootstrap_stage(BootstrapStage.DECODE_GRAPH):
+        graph = GraphDescriptorCodec().decode(plan["graph"])
+    with bootstrap_stage(BootstrapStage.RESOLVE_DELIVERIES):
+        resolved = {}
+        for node in graph.nodes.values():
+            environment, files = {}, []
+            for delivery in node.secret_deliveries:
+                reference = delivery.reference
+                resolver = LocalDevelopmentSecretResolver(
+                    SecretProviderAuthority(reference.provider_id, (reference.path,)),
+                    {reference.reference_id: material[reference.reference_id]})
+                result = resolve_secret_deliveries((delivery,), resolver=resolver)
+                environment.update(result.environment)
+                files.extend(result.files)
+            resolved[node.node_id] = (environment, files)
+    with bootstrap_stage(BootstrapStage.DECODE_PULL_CREDENTIALS):
+        auth = {}
+        for registry, reference in plan["input"].get("image_pull_credentials", {}).items():
+            credential = parse_image_pull_credential(SecretValue(material[reference]))
+            auth[registry] = DockerRegistryAuthConfig(credential.username, credential.password, credential.identitytoken)
 
-    client = docker.DockerClient(base_url="unix:///var/run/docker.sock", timeout=30)
-    sdk = DockerSdkClient(client=client, docker_module=docker, configuration_helper_image=plan["driver_image_id"])
-    receipt = {"schema": "cpk.root-bootstrap.receipt.v1", "plan_digest": plan["digest"],
-        "driver_image_id": plan["driver_image_id"], "phase": "acquiring", "pending": None,
-        "labels": dict(plan["resources"]["labels"], **{"org.openj92.cpk.acquisition": secrets.token_hex(16)}),
-        "resources": {"networks": {}, "volumes": {}, "containers": {}}, "observations": {}}
+    with bootstrap_stage(BootstrapStage.CONSTRUCT_DOCKER_CLIENT):
+        client = docker.DockerClient(base_url="unix:///var/run/docker.sock", timeout=30)
+        sdk = DockerSdkClient(client=client, docker_module=docker, configuration_helper_image=plan["driver_image_id"])
+    with bootstrap_stage(BootstrapStage.PREPARE_RECEIPT_ENVELOPE):
+        receipt = {"schema": "cpk.root-bootstrap.receipt.v1", "plan_digest": plan["digest"],
+            "driver_image_id": plan["driver_image_id"], "phase": "acquiring", "pending": None,
+            "labels": dict(plan["resources"]["labels"], **{"org.openj92.cpk.acquisition": secrets.token_hex(16)}),
+            "resources": {"networks": {}, "volumes": {}, "containers": {}}, "observations": {}}
 
     def effect(stage, operation):
         receipt["pending"] = stage
@@ -268,41 +283,49 @@ def _acquire(plan, material, state):
         observed()
 
     try:
-        receipt["engine_id"] = client.info()["ID"]
-        expected_engine = os.environ.get("CPK_BOOTSTRAP_ENGINE_ID")
-        if expected_engine is not None and receipt["engine_id"] != expected_engine:
-            raise RootBootstrapError("bootstrap Docker context does not match mounted daemon")
-        driver = sdk.inspect_image(plan["driver_image_id"])
-        if driver is None or driver.image_id != plan["driver_image_id"]:
-            raise RootBootstrapError("bootstrap driver image is unavailable")
-        if driver.secret_file_owner_uid() != 0:
-            raise RootBootstrapError("bootstrap driver requires its explicit root helper image")
-        resources = plan["resources"]
-        network_name = resources["network"]["name"]
-        setup_name = network_name + "-setup"
-        volume_names = [entry["name"] for node in resources["nodes"]
-                        for entry in (*node["data_volumes"], *node["secret_files"])] + [setup_name + "-plan", setup_name + "-credential"]
-        if (client.networks.list(names=[network_name])
-                or any(client.containers.list(all=True, filters={"name": "^/" + name + "$"})
-                       for name in [n["name"] for n in resources["nodes"]] + [setup_name])
-                or any(sdk.inspect_volume(name) is not None for name in volume_names)):
-            raise RootBootstrapHold("bootstrap resource already exists; adoption is not supported")
+        with bootstrap_stage(BootstrapStage.VERIFY_DAEMON_CONTEXT):
+            receipt["engine_id"] = client.info()["ID"]
+            expected_engine = os.environ.get("CPK_BOOTSTRAP_ENGINE_ID")
+            if expected_engine is not None and receipt["engine_id"] != expected_engine:
+                raise RootBootstrapError("bootstrap Docker context does not match mounted daemon")
+        with bootstrap_stage(BootstrapStage.INSPECT_DRIVER_IMAGE):
+            driver = sdk.inspect_image(plan["driver_image_id"])
+            if driver is None or driver.image_id != plan["driver_image_id"]:
+                raise RootBootstrapError("bootstrap driver image is unavailable")
+        with bootstrap_stage(BootstrapStage.VERIFY_DRIVER_USER):
+            if driver.secret_file_owner_uid() != 0:
+                raise RootBootstrapError("bootstrap driver requires its explicit root helper image")
+        with bootstrap_stage(BootstrapStage.CHECK_RESOURCE_CONFLICTS):
+            resources = plan["resources"]
+            network_name = resources["network"]["name"]
+            setup_name = network_name + "-setup"
+            volume_names = [entry["name"] for node in resources["nodes"]
+                            for entry in (*node["data_volumes"], *node["secret_files"])] + [setup_name + "-plan", setup_name + "-credential"]
+            if (client.networks.list(names=[network_name])
+                    or any(client.containers.list(all=True, filters={"name": "^/" + name + "$"})
+                           for name in [n["name"] for n in resources["nodes"]] + [setup_name])
+                    or any(sdk.inspect_volume(name) is not None for name in volume_names)):
+                raise RootBootstrapHold("bootstrap resource already exists; adoption is not supported")
         images = {}
         for node in resources["nodes"]:
-            image = sdk.inspect_image(node["image"])
+            with bootstrap_stage(BootstrapStage.INSPECT_PRODUCT_IMAGE):
+                image = sdk.inspect_image(node["image"])
             if image is None:
                 registry = node["image"].split("/", 1)[0]
                 effect("pull-image:" + node["node_id"], lambda: sdk.pull_image(node["image"], auth_config=auth.get(registry)))
-                image = sdk.inspect_image(node["image"])
-            if image is None or not matches_image_reference(node["image"], image.repo_digests):
-                raise RootBootstrapHold("bootstrap canonical image could not be verified")
-            images[node["node_id"]] = image
-            image.secret_file_owner_uid()
+                with bootstrap_stage(BootstrapStage.INSPECT_PRODUCT_IMAGE):
+                    image = sdk.inspect_image(node["image"])
+            with bootstrap_stage(BootstrapStage.VERIFY_PRODUCT_IMAGE):
+                if image is None or not matches_image_reference(node["image"], image.repo_digests):
+                    raise RootBootstrapHold("bootstrap canonical image could not be verified")
+                images[node["node_id"]] = image
+                image.secret_file_owner_uid()
             if node["node_id"] == plan["secrets_node_id"]:
-                configured = dict(entry.split("=", 1) for entry in client.images.get(image.image_id).attrs["Config"].get("Env", []) if "=" in entry)
-                configured.update(node["environment"])
-                if configured.get("CPK_SECRETS_PROVIDER_ID") != plan["input"]["setup"]["provider"]["provider_id"]:
-                    raise RootBootstrapHold("bootstrap provider identity differs from selected image configuration")
+                with bootstrap_stage(BootstrapStage.VERIFY_PROVIDER_IMAGE):
+                    configured = dict(entry.split("=", 1) for entry in client.images.get(image.image_id).attrs["Config"].get("Env", []) if "=" in entry)
+                    configured.update(node["environment"])
+                    if configured.get("CPK_SECRETS_PROVIDER_ID") != plan["input"]["setup"]["provider"]["provider_id"]:
+                        raise RootBootstrapHold("bootstrap provider identity differs from selected image configuration")
             receipt["observations"].setdefault("images", {})[node["node_id"]] = image.image_id
             observed()
         network = effect("create-network", lambda: client.networks.create(network_name, driver="bridge", labels=receipt["labels"]))
