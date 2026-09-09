@@ -232,6 +232,7 @@ CPK_SERVER_IMAGE="$CPK_IMAGE" sh scripts/cpk_server_published_image_smoke.sh
       python /source/products/cpk_server/tests/live_child_fixture.py prepare "$RUN" "$CPK_CHILD_ACCEPTANCE_DIGEST"
   else
     docker run --rm --network none --user "$(id -u):$(id -g)" \
+      -e "CPK_ROOT_TEST_PORT=${CPK_ROOT_TEST_PORT:-18089}" \
       --mount "type=bind,source=$ROOT,target=/source,readonly" \
       --mount "type=bind,source=$RECORDS,target=/witness" \
       -e PYTHONPATH=/source:/app/products/cpk_server/src "$DRIVER" \
