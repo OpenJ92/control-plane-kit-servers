@@ -1,7 +1,9 @@
 """Composition laws only; actual joined acceptance belongs to live_child_api."""
 
 from hashlib import sha256
+from contextlib import nullcontext
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
@@ -25,8 +27,12 @@ class ChildApiExampleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = Path(__file__).resolve().parents[3]
-            with patch.object(fixture, 'ROOT', root), patch.object(fixture.live_root_bootstrap, 'ROOT', root):
-                prepared = fixture.prepare(release, source=source)
+            original_umask = os.umask(0o077)
+            try:
+                with patch.object(fixture, 'ROOT', root), patch.object(fixture.live_root_bootstrap, 'ROOT', root):
+                    prepared = fixture.prepare(release, source=source)
+            finally:
+                os.umask(original_umask)
             child = json.loads((root / 'child-input.json').read_bytes())
             document = child_installation_document(fixture.installation_from_input(child['installation']),
                                                     child_workspace_id='child-workspace')
@@ -46,6 +52,25 @@ class ChildApiExampleTests(unittest.TestCase):
                 self.assertEqual((root / 'child-material' / name).stat().st_mode & 0o777, 0o400)
             self.assertFalse((root / 'initial-custody').exists())
             self.assertFalse((root / 'child-api').exists())
+            # The accepted Secrets API returns workspace/secret identity inside
+            # metadata. Wrong-target success retains pending/returned version,
+            # never earns seed-complete or a second request.
+            (root / 'plan.json').write_text(json.dumps({'input': prepared}))
+            (root / 'state' / 'receipt.json').write_text(json.dumps({'phase': 'complete',
+                'pending': None, 'labels': {'org.openj92.cpk.installation': 'test-parent'}}))
+            response = {'outcome': 'stored', 'metadata': {'workspace_id': 'wrong-workspace',
+                'secret_id': 'wrong-secret', 'version_id': 'returned-version', 'version_number': 1,
+                'status': 'active', 'labels': {'intent': 'application.control-token'}}}
+            opener = SimpleNamespace(open=lambda *args, **kwargs: nullcontext(SimpleNamespace(
+                status=200, read=lambda size: json.dumps(response).encode())))
+            with patch.object(fixture, 'ROOT', root), patch.object(fixture, 'build_opener', return_value=opener):
+                with self.assertRaises(AssertionError):
+                    fixture.seed(release)
+            progress = json.loads((root / 'initial-custody' / 'record.json').read_bytes())
+            self.assertEqual(progress['phase'], 'seeding')
+            self.assertIsNotNone(progress['pending'])
+            self.assertEqual([item['version_id'] for item in progress['versions']], ['returned-version'])
+            self.assertFalse((root / 'config').exists())
 
     def test_initialization_requires_exact_prepared_graph_not_matching_node_names(self):
         law = composition.ChildInstallationClientTests()

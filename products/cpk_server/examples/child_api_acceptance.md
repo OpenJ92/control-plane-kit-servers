@@ -8,9 +8,10 @@ The source recipe is `public_child_api.py`; `tests/live_child_api.py` is its
 actual HTTP witness. Both use the maintained `TopologyClient` and shared
 `DockerCpkInstallation`. The witness has no Docker socket, SQL connection, or
 provider client. It must run inside the owning Docker-backed test invocation
-under a separately reviewed one-run effect plan. The external fixture is not yet
-integrated; the files below are its concrete input contract, not instructions
-to run an alternate harness. No live child acceptance is currently claimed.
+under a separately reviewed one-run effect plan. Source integration now lives
+in `test.sh` and the owning `live_child_fixture.py` / `live_child_resources.py`
+helpers. It is unvalidated and unreleased. No live child acceptance is currently
+claimed; do not run an alternate harness.
 
 ## Input and authority
 
@@ -41,6 +42,11 @@ The fixture mounts one private invocation directory at `/witness`:
   `live_root_bootstrap.py restart-for-child` fixture phase after observing the
   receipt-owned parent CPK process restart. It binds the root receipt digest,
   daemon, exact container IDs and before/after process start timestamps.
+- `initial-custody/record.json`: pending request and actual returned versions,
+  bound to the requested workspace/secret/intent before confirmation.
+- `child-preflight/record.json` and `child-resources/record.json`: exact cached
+  images, initial hostname absence, actual effect-owned container/network/volume
+  coordinates, named ingress observations and final resource dispositions.
 
 Root/child credentials grant their own workspace scopes. Setup needs workspace
 create/read/edit, provider register/read, and runtime authority plus delivery
@@ -68,6 +74,42 @@ before release. Provider-registration IDs come from root setup responses.
 Private image pull authority is needed if the approved execution requires it;
 Docker credential-helper configuration is not treated as raw credentials.
 No credential locations or values belong in a public plan or issue comment.
+The minimum fixture requires all four exact canonical product digests already
+present and carries no fresh-pull claim, so it needs no GHCR credential input.
+
+The one-run release is a private JSON document with these public fields:
+
+```json
+{
+  "schema": "cpk.child-acceptance-release.v1",
+  "source_head": "REVIEWED_COMMIT_REQUIRED",
+  "parent_installation_id": "cpk163-parent",
+  "parent_workspace_id": "cpk163-parent-workspace",
+  "child_installation_id": "cpk163-child",
+  "child_workspace_id": "cpk163-child-workspace",
+  "loopback_port": 18089,
+  "account_id": "REQUIRED",
+  "zone_id": "REQUIRED",
+  "zone_name": "openj92.dev",
+  "hostname": "cpk163-child.openj92.dev",
+  "retained_disposition": "REQUIRES_EXPLICIT_CHOICE"
+}
+```
+
+Choose `retain` or `delete-owned-fixture-volumes` explicitly. The latter permits
+only the exact recorded child volume IDs, after successful public empty-graph
+teardown and verified compute/ingress absence. The former records their
+continued presence; it does not claim no retained resources remain. Root
+receipt cleanup is separately included in the release. A failed/uncertain
+child phase holds root cleanup so its custody and evidence remain available.
+
+After source/plan review and explicit effect authorization, the existing
+`./test.sh` consumes `CPK_CHILD_ACCEPTANCE_RELEASE` (absolute release JSON path),
+`CPK_CHILD_ACCEPTANCE_DIGEST` (approved SHA256 of its exact bytes),
+`CPK_CHILD_ACCEPTANCE_RUN` (matching parent installation ID), and
+`CPK_CHILD_CLOUDFLARE_TOKEN_FILE` (approved private raw-token input). The source
+must be clean and match `source_head`. Ordinary runs and hosted CI do not set
+these inputs. A matching hash proves input identity, not user authorization.
 
 ## Ordered witness
 
@@ -103,8 +145,8 @@ No credential locations or values belong in a public plan or issue comment.
    effect ownership evidence. Empty graph convergence does not mean retained
    PostgreSQL data, Secrets custody or protected file volumes were deleted.
    Exact approved retained-resource cleanup, provider absence checks and root
-   receipt cleanup follow successful API teardown; they remain fixture work
-   to complete before live release.
+   receipt cleanup follow successful API teardown. Their source must be reviewed
+   and validated before live release.
 
 ## Stops and evidence
 

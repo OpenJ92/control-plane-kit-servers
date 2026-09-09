@@ -159,7 +159,8 @@ def seed(release):
     for reference, intent, path in items:
         record['pending'] = {'reference': reference, 'intent': intent}
         save(state, record)
-        raw = path.read_bytes()
+        with path.open('rb') as stream:
+            raw = stream.read(65_537)
         assert 0 < len(raw) <= 65_536
         secret_id = 'cpk1_' + base64.urlsafe_b64encode(reference.encode()).rstrip(b'=').decode()
         request = Request(f'{base_url}/v1/workspaces/{quote(workspace, safe="")}/secrets/{secret_id}',
@@ -177,6 +178,11 @@ def seed(release):
         assert isinstance(identity, str) and 0 < len(identity) <= 256 and type(version) is int and version > 0
         record['versions'].append({'reference': reference, 'intent': intent,
                                    'version_id': identity, 'version_number': version})
+        # Preserve the returned version while pending remains visible; never
+        # credit a well-shaped response from a different workspace/secret.
+        save(state, record)
+        assert metadata['workspace_id'] == workspace and metadata['secret_id'] == secret_id
+        assert metadata['status'] == 'active' and metadata['labels']['intent'] == intent
         record['pending'] = None
         save(state, record)
     record['phase'] = 'complete'
@@ -196,3 +202,57 @@ def seed(release):
             'credentials': {role: str(path) for role in ('operator', 'approver', 'worker')},
             'state_directory': str(ROOT / f'{name}-client')}))
     print('child fixture: once-only initial custody and private client profiles prepared')
+
+
+def released_input(run, digest):
+    """Exact private release file; an environment variable alone grants nothing."""
+    from hashlib import sha256
+    raw = (ROOT / 'release.json').read_bytes()
+    assert len(raw) <= 65_536 and sha256(raw).hexdigest() == digest
+    value = json.loads(raw)
+    assert set(value) == {'schema', 'source_head', 'parent_installation_id', 'parent_workspace_id',
+        'child_installation_id', 'child_workspace_id', 'loopback_port', 'account_id', 'zone_id',
+        'zone_name', 'hostname', 'retained_disposition'}
+    assert value['schema'] == 'cpk.child-acceptance-release.v1'
+    assert value['source_head'] == os.environ['CPK_CHILD_SOURCE_HEAD']
+    assert value['parent_installation_id'] == run
+    assert value['retained_disposition'] in {'retain', 'delete-owned-fixture-volumes'}
+    return value
+
+
+def main():
+    import sys
+    try:
+        action, run, digest = sys.argv[1:]
+        release = released_input(run, digest)
+        if action == 'prepare':
+            prepare(release)
+        elif action == 'seed':
+            seed(release)
+        elif action in {'preflight', 'observe', 'finish'}:
+            from products.cpk_server.tests import live_child_resources
+            getattr(live_child_resources, action)(release)
+        elif action == 'parent-id':
+            receipt = json.loads((ROOT / 'state' / 'receipt.json').read_bytes())
+            plan = json.loads((ROOT / 'plan.json').read_bytes())
+            assert receipt['phase'] == 'complete' and receipt['pending'] is None
+            assert receipt['labels']['org.openj92.cpk.installation'] == run
+            identity = receipt['resources']['containers'][plan['cpk_node_id']]['id']
+            assert len(identity) == 64 and all(character in '0123456789abcdef' for character in identity)
+            print(identity)
+        elif action == 'require-complete':
+            for name in ('initial-custody', 'child-api', 'child-resources'):
+                record = json.loads((ROOT / name / 'record.json').read_bytes())
+                assert record['phase'] == 'complete' and record.get('pending') is None
+        else:
+            raise AssertionError('unknown fixture phase')
+        return 0
+    except Exception:
+        # Never emit an HTTPError/traceback, raw response or credential-bearing
+        # request. The private phase record and existing API journals own detail.
+        print('child fixture HOLD; inspect private phase and public API evidence', file=sys.stderr)
+        return 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

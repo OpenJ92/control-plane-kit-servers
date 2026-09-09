@@ -216,7 +216,11 @@ if __name__ == "__main__":
     elif action == "cleanup":
         cleanup(run)
     elif action == "restart-for-child":
-        restart_for_child(run)
+        try:
+            restart_for_child(run)
+        except Exception:
+            print('child parent-restart HOLD; inspect private restart evidence', file=sys.stderr)
+            raise SystemExit(1) from None
     elif action == "digest":
         print(json.loads((ROOT / "plan.json").read_text())["digest"])
     elif action == "unchanged":
