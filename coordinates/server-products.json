@@ -10,36 +10,36 @@
       "product_id": "cpk-server",
       "owner_directory": "products/cpk_server",
       "descriptor_path": "products/cpk_server/product.cpk.json",
-      "source_commit": "7980f00cc5e4b94e81aa327656bcb839f6528c82",
+      "source_commit": "58c6f3b0d34318df9e7e6ab2a1316a4554ab01da",
       "image": {
         "registry": "ghcr.io",
         "repository": "openj92/control-plane-kit-servers/cpk-server",
-        "tag": "secrets-intents-163-7980f00",
-        "digest": "sha256:5acc288bd3145e5f865a6c72da43c1778d2ec1f1b25e7479d7ef756d663a9e8e"
+        "tag": "reference-163-58c6f3b",
+        "digest": "sha256:2cacd600dc5ef831892071c4ca88b6b7232657feac815069221be7bc182a976e"
       }
     },
     {
       "product_id": "cpk-server-docker",
       "owner_directory": "products/cpk_server",
       "descriptor_path": "products/cpk_server/product.docker.cpk.json",
-      "source_commit": "7980f00cc5e4b94e81aa327656bcb839f6528c82",
+      "source_commit": "58c6f3b0d34318df9e7e6ab2a1316a4554ab01da",
       "image": {
         "registry": "ghcr.io",
         "repository": "openj92/control-plane-kit-servers/cpk-server",
-        "tag": "secrets-intents-163-7980f00",
-        "digest": "sha256:5acc288bd3145e5f865a6c72da43c1778d2ec1f1b25e7479d7ef756d663a9e8e"
+        "tag": "reference-163-58c6f3b",
+        "digest": "sha256:2cacd600dc5ef831892071c4ca88b6b7232657feac815069221be7bc182a976e"
       }
     },
     {
       "product_id": "cpk-server-docker-cloudflare",
       "owner_directory": "products/cpk_server",
       "descriptor_path": "products/cpk_server/product.docker-cloudflare.cpk.json",
-      "source_commit": "7980f00cc5e4b94e81aa327656bcb839f6528c82",
+      "source_commit": "58c6f3b0d34318df9e7e6ab2a1316a4554ab01da",
       "image": {
         "registry": "ghcr.io",
         "repository": "openj92/control-plane-kit-servers/cpk-server",
-        "tag": "secrets-intents-163-7980f00",
-        "digest": "sha256:5acc288bd3145e5f865a6c72da43c1778d2ec1f1b25e7479d7ef756d663a9e8e"
+        "tag": "reference-163-58c6f3b",
+        "digest": "sha256:2cacd600dc5ef831892071c4ca88b6b7232657feac815069221be7bc182a976e"
       }
     },
     {
