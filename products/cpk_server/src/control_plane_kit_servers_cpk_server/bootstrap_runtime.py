@@ -18,7 +18,7 @@ import time
 
 from .bootstrap import (
     MAX_BYTES, RootBootstrapError, RootBootstrapHold, canonical, decode_document,
-    matches_image_reference, BootstrapStage, bootstrap_stage,
+    matches_image_reference, protected_file_owner, BootstrapStage, bootstrap_stage,
 )
 
 
@@ -307,6 +307,7 @@ def _acquire(plan, material, state):
                     or any(sdk.inspect_volume(name) is not None for name in volume_names)):
                 raise RootBootstrapHold("bootstrap resource already exists; adoption is not supported")
         images = {}
+        file_owners = {}
         for node in resources["nodes"]:
             with bootstrap_stage(BootstrapStage.INSPECT_PRODUCT_IMAGE):
                 image = sdk.inspect_image(node["image"])
@@ -319,7 +320,9 @@ def _acquire(plan, material, state):
                 if image is None or not matches_image_reference(node["image"], image.repo_digests):
                     raise RootBootstrapHold("bootstrap canonical image could not be verified")
                 images[node["node_id"]] = image
-                image.secret_file_owner_uid()
+                owner = protected_file_owner(node["secret_files"], image)
+                if owner is not None:
+                    file_owners[node["node_id"]] = owner
             if node["node_id"] == plan["secrets_node_id"]:
                 with bootstrap_stage(BootstrapStage.VERIFY_PROVIDER_IMAGE):
                     configured = dict(entry.split("=", 1) for entry in client.images.get(image.image_id).attrs["Config"].get("Env", []) if "=" in entry)
@@ -341,7 +344,7 @@ def _acquire(plan, material, state):
                 mounts.append(docker.types.Mount(entry["target"], entry["name"], type="volume"))
             for entry in node["secret_files"]:
                 value = next(item.value for item in files if item.target_path == entry["target"])
-                file_volume(entry["name"], value, image.secret_file_owner_uid())
+                file_volume(entry["name"], value, file_owners[node["node_id"]])
                 mounts.append(dict(DockerSdkSecretMount(entry["target"], entry["name"]).docker_mount()))
             options = {}
             if node["node_id"] == plan["cpk_node_id"]:
@@ -388,7 +391,7 @@ def _acquire(plan, material, state):
                     time.sleep(policy["interval_seconds"])
                 else:
                     raise RootBootstrapHold("bootstrap declared HTTP readiness was not observed")
-        setup_uid = images[plan["cpk_node_id"]].secret_file_owner_uid()
+        setup_uid = file_owners[plan["cpk_node_id"]]
         file_volume(setup_name + "-plan", SecretValue(canonical(plan).decode()), setup_uid)
         file_volume(setup_name + "-credential", SecretValue(material[plan["input"]["installation"]["references"]["control_credential"]]), setup_uid)
         cpk_id = receipt["resources"]["containers"][plan["cpk_node_id"]]["id"]

@@ -193,6 +193,11 @@ def matches_image_reference(expected: str, repo_digests: tuple[str, ...]) -> boo
     return any(reference in permitted for reference in repo_digests)
 
 
+def protected_file_owner(secret_files: list, image) -> int | None:
+    """Validate image USER only when a protected file needs an owning UID."""
+    return image.secret_file_owner_uid() if secret_files else None
+
+
 def _installation(document):
     _closed(document, {"schema", "installation", "host_binding", "setup"}, {"image_pull_credentials"})
     if document["schema"] != "cpk.root-bootstrap.input.v1":
