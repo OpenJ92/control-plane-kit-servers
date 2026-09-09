@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+from time import monotonic, sleep
 
 from control_plane_kit_core.identity import WorkspaceGrant
 from control_plane_kit_core.policies import PolicyScope
@@ -23,7 +24,8 @@ from control_plane_kit_core.secrets import SecretProviderEndpointReference, Secr
 from control_plane_kit_core.topology import GraphDescriptorCodec
 from control_plane_kit_servers_cpk_server.installation import DockerCpkInstallation
 from control_plane_kit_servers_cpk_server.client import (
-    ClientAuthorizationError, ClientProfile, PublicHttpTransport, TopologyClient, load_profile,
+    ClientAuthorizationError, ClientProfile, ClientTransportError,
+    PublicHttpTransport, TopologyClient, load_profile,
 )
 from control_plane_kit_servers_cpk_server.client.installation import prepare_child_installation
 from products.cpk_server.examples.public_child_api import (
@@ -153,6 +155,23 @@ def reconnect(installation, parent, child, state, record):
             assert before_container['started_at'] != after_container['started_at']
         else:
             assert before_container == after_container
+    # Container Running precedes API readiness. Retry only this authenticated
+    # read, within a fixed deadline; never retry a mutation or authorization denial.
+    transport = PublicHttpTransport(parent.profile, timeout_seconds=1)
+    deadline = monotonic() + 30
+    while True:
+        try:
+            ready = transport.call('read.workspace',
+                path_parameters={'workspace_id': parent.profile.workspace_id},
+                payload={}, credential_role='operator')
+            assert ready['workspace']['workspace_id'] == parent.profile.workspace_id
+            break
+        except ClientAuthorizationError:
+            raise
+        except ClientTransportError:
+            if monotonic() >= deadline:
+                raise
+            sleep(0.25)
     before = record['parent_before_restart']
     after = parent_tracking(parent, before['operation_ref'])
     for key in ('operation_ref', 'workspace_id', 'plan_id', 'run_id', 'current_graph_id', 'current_realized_projection_id'):
