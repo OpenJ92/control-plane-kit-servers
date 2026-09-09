@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 
 from control_plane_kit_core.identity import IdentityContractError
+from control_plane_kit_core.products import ProductDescriptorCodec
 from control_plane_kit_core.secrets import SecretEnvironmentDelivery, SecretReference, SecretUseIntent
 from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
 from control_plane_kit_core.topology import GraphDescriptorCodec, compile_topology
@@ -122,17 +123,19 @@ class InstallationControlAuthTests(unittest.TestCase):
             SecretReference("secret://parent/principals")))
         product = value.cpk_product.product
         legacy = ("CPK_CONTROL_AUTH_STATIC_CREDENTIAL", "CPK_CONTROL_AUTH_STATIC_WORKSPACE_GRANTS_JSON")
+        with self.assertRaisesRegex(ValueError, "secret-shaped"):
+            PublicStaticEnvironmentBinding(legacy[0], "legacy")
         contract = replace(product.runtime_contract, public_environment=(
             *product.runtime_contract.public_environment,
-            *(PublicStaticEnvironmentBinding(name, "legacy") for name in legacy)))
-        selected = replace(value.cpk_product, product=replace(product, runtime_contract=contract))
+            PublicStaticEnvironmentBinding(legacy[1], "legacy")))
+        selected = ProductDescriptorCodec().encode_document(replace(product, runtime_contract=contract))
         node = self.graph(api, replace(value, cpk_product=selected)).node(value.cpk_node_id)
         for name in legacy:
             self.assertNotIn(name, node.non_secret_environment())
         dirty = replace(contract, secret_deliveries=(SecretEnvironmentDelivery(
             legacy[0], SecretReference("secret://parent/unexpected"), SecretUseIntent.APPLICATION_CONTROL_TOKEN),))
-        selected = replace(value.cpk_product, product=replace(product, runtime_contract=dirty))
-        with self.assertRaises(ValueError):
+        selected = ProductDescriptorCodec().encode_document(replace(product, runtime_contract=dirty))
+        with self.assertRaisesRegex(ValueError, "installation requires the base product secret delivery contract"):
             self.graph(api, replace(value, cpk_product=selected))
 
     def test_missing_setup_bearer_fails_material_admission(self):

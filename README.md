@@ -26,6 +26,12 @@ The authoritative clean-checkout package gate is:
 ./test.sh
 ```
 
+The isolated root smoke binds only `127.0.0.1`, on port `18089` by default.
+When that port is occupied by a retained installation, select a known available
+test port with `CPK_ROOT_TEST_PORT=18090 ./test.sh`. The fixture validates the
+integer port (1–65535) and records it in its input before planning; subsequent
+phases use that same input and plan. This does not change live release bindings.
+
 It checks generated coordinates, applies the shared package-integrity contract,
 discovers every product test package, compiles current source and tests, runs
 all unittests in Docker, verifies a clean installed import, exercises a real

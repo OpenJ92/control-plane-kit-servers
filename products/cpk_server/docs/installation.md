@@ -134,3 +134,26 @@ The owning `./test.sh` exercises three product-owned composition tests using rea
 descriptors, graph compilation and the graph codec, followed by the repository's
 existing source/live validation phases. No new test runner or provider fixture is
 introduced.
+
+## Explicit control authentication
+
+Existing installations default to `SingleOperatorControlAuth()`. Select
+`MultiPrincipalControlAuth(SecretReference("secret://example/cluster/principals"))`
+through the installation's `control_auth` field to use the server's existing
+private principal document format.
+
+The document reference must differ from `control_credential`, the separate
+operator bearer for bootstrap/setup. Root material admission requires both.
+Multi mode uses existing secret environment delivery and omits both legacy
+single-credential and single-workspace-grants environment inputs.
+
+In multi mode `workspace_grants` declares setup requirements, not effective
+authority. The private document and existing server verifier determine each
+principal's kinds and scopes. A client role label cannot elevate a credential.
+
+The shared closed codec accepts
+`{"kind":"multi-principal","principals_document":"secret://example/cluster/principals"}`
+or `{"kind":"single-operator"}`; omitted root input preserves the default.
+Graphs contain references, never resolved credential documents. Resolved secret
+environment remains visible to trusted Docker/host administrators. Each cluster
+retains its own CPK, PostgreSQL, Secrets instance and credential documents.
