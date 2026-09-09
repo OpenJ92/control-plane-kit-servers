@@ -129,6 +129,7 @@ class ChildApiExampleTests(unittest.TestCase):
 
     def test_fixture_prepares_valid_shared_child_and_separate_workspace_material(self):
         from products.cpk_server.tests import live_child_fixture as fixture
+        from control_plane_kit_servers_cpk_server.bootstrap import plan_root_bootstrap
         release = {'parent_installation_id': 'test-parent', 'parent_workspace_id': 'parent-workspace',
             'child_installation_id': 'test-child', 'child_workspace_id': 'child-workspace',
             'loopback_port': 18089, 'hostname': 'test-child.example.test',
@@ -172,10 +173,18 @@ class ChildApiExampleTests(unittest.TestCase):
                 self.assertEqual((root / 'child-material' / name).stat().st_mode & 0o777, 0o400)
             self.assertFalse((root / 'initial-custody').exists())
             self.assertFalse((root / 'child-api').exists())
+            # Validate the emitted root input at its next real owner boundary,
+            # including the exact-host authority and retained connection.
+            root_plan = plan_root_bootstrap(json.loads((root / 'input.json').read_bytes()),
+                                            driver_image_id='sha256:' + '1' * 64)
+            self.assertEqual(root_plan['input'], prepared)
+            self.assertEqual(root_plan['input']['setup']['ingress_authorities'][0]
+                             ['authority']['allowed_hostname_pattern'], release['hostname'])
+            self.assertEqual(root_plan['external_ingress_connection']['endpoint'], release['parent_endpoint'])
             # The accepted Secrets API returns workspace/secret identity inside
             # metadata. Wrong-target success retains pending/returned version,
             # never earns seed-complete or a second request.
-            (root / 'plan.json').write_text(json.dumps({'input': prepared}))
+            (root / 'plan.json').write_text(json.dumps(root_plan))
             (root / 'state' / 'receipt.json').write_text(json.dumps({'phase': 'complete',
                 'pending': None, 'labels': {'org.openj92.cpk.installation': 'test-parent'}}))
             response = {'outcome': 'stored', 'metadata': {'workspace_id': 'wrong-workspace',
