@@ -164,6 +164,7 @@ CPK_SERVER_IMAGE="$CPK_IMAGE" sh scripts/cpk_server_published_image_smoke.sh
 # provider/DNS exposure or retained acceptance installation.
 (
   RECORDS="$(mktemp -d)"
+  [ "${GITHUB_ACTIONS:-}" = true ] || printf 'root bootstrap: private diagnostic records=%s\n' "$RECORDS"
   RUN="root-$(date +%s)-$$"
   if [ -n "$CHILD_RELEASE" ]; then
     RUN="$CPK_CHILD_ACCEPTANCE_RUN"

@@ -10,17 +10,37 @@ actual HTTP witness. Both use the maintained `TopologyClient` and shared
 provider client. It must run inside the owning Docker-backed test invocation
 under a separately reviewed one-run effect plan. Source integration now lives
 in `test.sh` and the owning `live_child_fixture.py` / `live_child_resources.py`
-helpers. Component validation is green; the live journey is unreleased. No live child acceptance is currently
-claimed; do not run an alternate harness.
+helpers. Earlier component validation belongs to its recorded source revision;
+integration with the qualified #168 roadmap requires fresh validation. No live
+child acceptance is currently claimed; do not run an alternate harness.
+
+The integrated source consumes Core/Operations `087a89253b14b3bb438af9042ea779976886a79e`
+and Interpreter `107f55e29e193d89e829bc350a039fc41b1adf81`. Its catalogue still
+identifies published S2 `875f30597c43dec82d1a326ade337c836031d40f` and D2
+`sha256:7aa0e781ad7ee2d9942ef28251c30962abd730219f4136915675d5b68d34db51`.
+All three CPK descriptor variants share that image; interpreter enablement does
+not grant runtime authority. The composed CPK node alone declares the explicit
+runtime access, independently admitted in each workspace.
+
+The integrated package adds child-client and retained-ingress bootstrap source
+absent from S2. The external bootstrap driver copies that source over its pinned
+base; this does not change the graph product image's provenance. D2 is not an
+image of the integrated source. Publishing an integrated image requires its own
+reviewed build/publication plan and a newly sealed complete account baseline;
+the current numeric witness accepts D2 only. Component checks and the ordinary
+root gate cannot establish public child acceptance or close this provenance gap.
 
 ## Input and authority
 
-Proposed identities, pending confirmation: parent installation `cpk163-parent`,
+Historical proposed identities, requiring fresh ownership review: parent installation `cpk163-parent`,
 parent workspace `cpk163-parent-workspace`, child installation `cpk163-child`,
 child workspace `cpk163-child-workspace`, hostname
 `cpk163-child.openj92.dev`. The child proof runtime ID is `cpk163-child-proof`
 and its network name is `cpk-cpk163-child-proof`. Conflicts require a stop;
 existing installations and the retained 1752 root are not adopted or modified.
+Earlier containers were deleted externally. Their old receipts and these names
+do not establish current readiness; retained volumes, tunnel, DNS and protected
+token remain outside fresh test ownership unless an exact plan says otherwise.
 
 The parent uses the operator-supplied special endpoint
 `https://cpk-bootstrap-grandparent.openj92.dev`. Root bootstrap accepts an

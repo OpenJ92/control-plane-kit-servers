@@ -162,6 +162,11 @@ class ChildApiExampleTests(unittest.TestCase):
             self.assertEqual(prepared['installation']['external_endpoint'], release['parent_endpoint'])
             self.assertEqual(set(document['graph']['nodes']), {
                 'test-child-cpk', 'test-child-postgres', 'test-child-secrets', 'test-child-connector'})
+            graph = GraphDescriptorCodec().decode(document['graph'])
+            access = fixture.installation_from_input(child['installation']).runtime_access
+            for node_id, node in graph.nodes.items():
+                self.assertEqual(node.runtime_authority_deliveries,
+                                 (access,) if node_id == 'test-child-cpk' else ())
             root_grant = prepared['installation']['workspace_grants'][0]
             child_grant = child['installation']['workspace_grants'][0]
             self.assertEqual((root_grant['workspace_id'], child_grant['workspace_id']),

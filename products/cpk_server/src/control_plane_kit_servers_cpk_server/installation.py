@@ -110,7 +110,8 @@ class DockerCpkInstallation:
     """Immutable desired values; all credential inputs are unresolved references.
 
     ``runtime_authority`` selects the enclosing deployment runtime. Separately,
-    ``runtime_access`` must be admitted for ``cpk_node_id`` by the driver/client;
+    ``runtime_access`` declares the CPK instance's desired process access to that
+    same authority. It must be independently admitted before execution;
     composing this value does not deliver or grant that authority.
 
     ``workspace_grants`` declares setup requirements. In single-operator mode it
@@ -155,6 +156,8 @@ class DockerCpkInstallation:
             raise TypeError("installation requires explicit runtime access delivery")
         if self.runtime_access.delivery_kind is not RuntimeAuthorityAccessDeliveryKind.LOCAL_DOCKER_SOCKET_MOUNT:
             raise ValueError("installation currently supports local Docker socket delivery")
+        if self.runtime_access.authority_ref != self.runtime_authority:
+            raise ValueError("installation runtime access must match enclosing runtime authority")
         for reference in (self.control_credential, self.postgres_password,
                           self.custody_root_key, self.provider_credentials_document,
                           self.provider_client_credential, self.provider_bootstrap_credential_ref):
@@ -201,9 +204,11 @@ def compose_docker_cpk_installation(installation: DockerCpkInstallation) -> Depl
     children = [
         instantiate_product(product, node_id, ProductInstanceConfiguration.from_contract(product.runtime_contract))
         for product, node_id in ((postgres, installation.postgres_node_id),
-                                 (secrets, installation.secrets_node_id),
-                                 (cpk, installation.cpk_node_id))
+                                 (secrets, installation.secrets_node_id))
     ]
+    children.append(instantiate_product(cpk, installation.cpk_node_id, replace(
+        ProductInstanceConfiguration.from_contract(cpk.runtime_contract),
+        runtime_authority_deliveries=(installation.runtime_access,))))
     public_ingresses = ()
     if isinstance(installation.ingress, NamedPublicIngress):
         connector = _selected_product(installation.connector_product, "cloudflared-connector")

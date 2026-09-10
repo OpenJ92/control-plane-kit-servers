@@ -1,18 +1,157 @@
 """Owning gate fixture and exact-ID cleanup for the real bootstrap.sh witness."""
 
 import base64
-from hashlib import sha256
+import hashlib
+import inspect
 import json
 import os
 from pathlib import Path
 import secrets
+import signal
+import stat
 import sys
+from typing import NamedTuple
 
 from products.cpk_server.examples.root_bootstrap_input import example_input
 from control_plane_kit_interpreters.docker.sdk import matches_image_reference
 
 
 ROOT = Path("/witness")
+
+
+class ImageAccountBaseline(NamedTuple):
+    image_reference: str
+    config_digest: str
+    passwd_sha256: str
+    group_sha256: str
+    uid: int
+    primary_gid: int
+    supplementary_gids: tuple[int, ...]
+
+    def expected_groups(self, image_reference, socket_gid):
+        assert image_reference == self.image_reference, "image account baseline does not match candidate"
+        return frozenset((self.primary_gid, *self.supplementary_gids, socket_gid))
+
+
+# Offline final-filesystem evidence, reviewed in Servers #168. This value is
+# independent of process observations and must be resealed for another image.
+CPK_IMAGE_ACCOUNT = ImageAccountBaseline(
+    image_reference="ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:7aa0e781ad7ee2d9942ef28251c30962abd730219f4136915675d5b68d34db51",
+    config_digest="sha256:9e65c0cb9782c5b55a4b978a75939ae5c07d5b2c3938e53dc838d442f810a805",
+    passwd_sha256="2b154879fd6e9899bbe9f9c04eb2535f3388ad5a090f90a78c0dca81a13b9921",
+    group_sha256="1ffcc10cbb13f710c78598bdccecd91b43251fef7e443ca860dfe84c656c0653",
+    uid=10001, primary_gid=10001, supplementary_gids=(100,),
+)
+
+
+def numeric_group_check(primary_gid, supplementary_gids, expected_groups, socket_gid):
+    observed = {primary_gid, *supplementary_gids}
+    expected = set(expected_groups)
+    return observed == expected, {
+        "declared_socket_group_present": socket_gid in observed,
+        "unexpected_groups_present": bool(observed - expected),
+    }
+
+
+def retain_authority_evidence(run, container, inspection, node, receipt, engine_matches):
+    """Keep bounded mount evidence private; diagnostics cannot replace the law."""
+    class EvidenceUnavailable(Exception):
+        pass
+
+    status = {"written": False, "complete": False}
+    directory_fd = None
+    try:
+        def binds(values, target_key, readonly_key):
+            if type(values) is not list:
+                raise EvidenceUnavailable("unknown mounts")
+            result = []
+            for value in values:
+                if type(value) is not dict:
+                    raise EvidenceUnavailable("unknown mount")
+                if value.get("Type") != "bind":
+                    continue
+                entry = {key: value.get(key) for key in ("Type", "Source", target_key, readonly_key)}
+                omitted = readonly_key == "ReadOnly" and readonly_key not in value
+                if omitted:
+                    entry[readonly_key] = "omitted"
+                if (any(type(entry[key]) is not str or not entry[key].startswith("/")
+                        or len(entry[key]) > 1024 for key in ("Source", target_key))
+                        or (not omitted and type(entry[readonly_key]) is not bool)):
+                    raise EvidenceUnavailable("unknown or oversized bind")
+                result.append(entry)
+                if len(result) > 4:
+                    raise EvidenceUnavailable("too many binds")
+            return result
+
+        def groups():
+            values = inspection.supplementary_groups
+            if (type(values) is not tuple or len(values) > 16
+                    or any(type(group) is not str or not group.isascii()
+                           or not group.isdecimal() or len(group) > 20 for group in values)):
+                raise EvidenceUnavailable("unknown or oversized groups")
+            return values
+
+        def section(read):
+            try:
+                return {"known": True, "values": read()}
+            except EvidenceUnavailable as error:
+                return {"known": False, "reason": str(error)}
+            except Exception:
+                return {"known": False, "reason": "unavailable shape"}
+
+        attrs = container.attrs
+        if type(run) is not str or len(run) > 128:
+            raise EvidenceUnavailable("oversized run")
+        matches = {
+            "engine": engine_matches,
+            "container": container.id == receipt["resources"]["containers"][node["node_id"]]["id"],
+            "image": attrs["Image"] == receipt["observations"]["images"][node["node_id"]],
+            "labels": all(attrs["Config"]["Labels"].get(key) == value
+                          for key, value in receipt["labels"].items()),
+        }
+        if not all(matches.values()):
+            raise EvidenceUnavailable("custody mismatch")
+        socket = node["local_docker_access"]["socket"]
+        if socket != "/var/run/docker.sock":
+            raise EvidenceUnavailable("unexpected requested socket")
+        record = {
+            "schema": "cpk.test.authority-mount-evidence.v1", "run": run,
+            "receipt_matches": matches,
+            "requested": {"Type": "bind", "Source": socket, "Target": socket, "ReadOnly": False},
+            "observed": section(lambda: binds(attrs.get("Mounts"), "Destination", "RW")),
+            "configured": section(lambda: binds(attrs.get("HostConfig", {}).get("Mounts"), "Target", "ReadOnly")),
+            "supplementary_groups": section(groups),
+        }
+        payload = json.dumps(record, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        if len(payload) > 4096:
+            raise EvidenceUnavailable("oversized record")
+        directory_fd = os.open(ROOT, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        if stat.S_IMODE(os.fstat(directory_fd).st_mode) != 0o700:
+            raise EvidenceUnavailable("nonprivate directory")
+        fd = os.open("authority-mount-evidence.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                     0o600, dir_fd=directory_fd)
+        with os.fdopen(fd, "wb") as evidence:
+            if stat.S_IMODE(os.fstat(evidence.fileno()).st_mode) != 0o600:
+                raise EvidenceUnavailable("nonprivate file")
+            evidence.write(payload)
+            evidence.flush()
+            os.fsync(evidence.fileno())
+        status = {"written": True,
+                  "complete": all(record[key]["known"] for key in ("observed", "configured", "supplementary_groups")),
+                  "actual_captured": record["observed"]["known"], "bytes": len(payload),
+                  "sha256": hashlib.sha256(payload).hexdigest()}
+    except EvidenceUnavailable as error:
+        status.update(unavailable_or_incomplete=True, reason=str(error))
+    except Exception:
+        # Never print exception text: paths or provider values may be sensitive.
+        status["unavailable_or_incomplete"] = True
+    finally:
+        if directory_fd is not None:
+            try:
+                os.close(directory_fd)
+            except OSError:
+                status.update(complete=False, unavailable_or_incomplete=True, reason="directory close failed")
+    print(json.dumps({"cpk_private_authority_evidence": status}), flush=True)
 
 
 def prepare(run, *, document=None):
@@ -68,13 +207,44 @@ def check(run):
     engine = docker.from_env()
     sdk = DockerSdkClient(client=engine)
     try:
-        assert engine.info()["ID"] == receipt["engine_id"]
+        engine_matches = engine.info()["ID"] == receipt["engine_id"]
+        assert engine_matches
         for node in plan["resources"]["nodes"]:
             container = engine.containers.get(receipt["resources"]["containers"][node["node_id"]]["id"])
             image = sdk.inspect_image(node["image"])
             assert image is not None and matches_image_reference(node["image"], image.repo_digests)
             assert container.attrs["Image"] == image.image_id and container.attrs["State"]["Running"]
             inspection = sdk.inspect_container(container.id)
+            assert inspection is not None
+            if node["node_id"] == plan["cpk_node_id"]:
+                from control_plane_kit_interpreters.docker.authority import (
+                    DockerAuthorityConformance, docker_authority_conformance,
+                )
+                from control_plane_kit_interpreters.docker.sdk import DockerSdkBindMount
+                retain_authority_evidence(run, container, inspection, node, receipt, engine_matches)
+                binds = inspection.bind_mounts
+                known = isinstance(binds, tuple)
+                print(json.dumps({"cpk_authority_mount_diagnostic": {
+                    "expected": {"count": 1, "source_is_canonical": True,
+                                 "target_is_canonical": True, "read_only": False},
+                    "observed": {"known": known, "count": len(binds) if known else None,
+                        "truncated": known and len(binds) > 4,
+                        "mounts": [{"source_is_canonical": mount.source_path == "/var/run/docker.sock",
+                                    "target_is_canonical": mount.target_path == "/var/run/docker.sock",
+                                    "read_only": mount.read_only if type(mount.read_only) is bool else "unknown"}
+                                   for mount in (binds[:4] if known else ())]}}}), flush=True)
+                socket_group = str(os.stat("/var/run/docker.sock").st_gid)
+                assert docker_authority_conformance(
+                    inspection, expected_mounts=(DockerSdkBindMount(
+                        source_path="/var/run/docker.sock", target_path="/var/run/docker.sock"),),
+                    expected_groups=(socket_group,), client=sdk,
+                ) is DockerAuthorityConformance.CONFORMANT
+                assert inspection.supplementary_groups == (socket_group,)
+                assert image.configured_user == "10001"
+                verify_numeric_socket_read(container, socket_group, receipt["engine_id"], node["image"])
+            else:
+                assert inspection.bind_mounts == ()
+                assert inspection.supplementary_groups == ()
             assert {(entry.target_path, entry.volume_name) for entry in inspection.readonly_secret_mounts} == {
                 (entry["target"], entry["name"]) for entry in node["secret_files"]}
             for entry in node["secret_files"]:
@@ -111,6 +281,139 @@ with tempfile.TemporaryDirectory() as directory:
         print("root bootstrap: real launcher, canonical images, numeric delivery, public setup, denial PASS; external unverified")
     finally:
         engine.close()
+
+
+def verify_numeric_socket_read(container, socket_group, engine_id, image_reference):
+    """One read as the image's configured user; no user or group override.
+
+    Candidate review seals the complete image account baseline before release.
+    Image account data supplies expected identity, never process observations.
+    """
+    expected_groups = CPK_IMAGE_ACCOUNT.expected_groups(image_reference, int(socket_group))
+    probe = '''
+import hashlib, http.client, io, json, os, pwd, signal, socket, stat, time
+
+def timed_out(*args):
+    raise TimeoutError()
+
+class CapturedResponse:
+    def __init__(self, data):
+        self.data = data
+
+    def makefile(self, *args):
+        return io.BytesIO(self.data)
+
+phase = "account-uid"
+membership = None
+try:
+    signal.signal(signal.SIGALRM, timed_out)
+    deadline = time.monotonic() + 10
+    signal.setitimer(signal.ITIMER_REAL, 10)
+    account = pwd.getpwnam("cpk")
+    assert account.pw_uid == EXPECTED_UID and os.geteuid() == EXPECTED_UID
+    phase = "primary-gid"
+    assert account.pw_gid == EXPECTED_PRIMARY_GID and os.getegid() == EXPECTED_PRIMARY_GID
+    phase = "groups"
+    groups_match, membership = numeric_group_check(
+        os.getegid(), os.getgroups(), EXPECTED_GROUPS, EXPECTED_SOCKET_GID)
+    assert groups_match
+    phase = "socket-type"
+    assert stat.S_ISSOCK(os.stat("/var/run/docker.sock").st_mode)
+    phase = "connect"
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+        connection.settimeout(5)
+        remaining = min(5, deadline - time.monotonic())
+        assert remaining > 0
+        signal.setitimer(signal.ITIMER_REAL, remaining)
+        connection.connect("/var/run/docker.sock")
+        connection.sendall(b"GET /info HTTP/1.1\\r\\nHost: docker\\r\\nConnection: close\\r\\n\\r\\n")
+        phase = "receive"
+        captured = bytearray()
+        while True:
+            chunk = connection.recv(min(4096, 65537 - len(captured)))
+            if not chunk:
+                break
+            captured.extend(chunk)
+            assert len(captured) <= 65536
+        # Cap the complete wire response, including headers, before parsing.
+        phase = "http-parse"
+        response = http.client.HTTPResponse(CapturedResponse(captured))
+        response.begin()
+        body = response.read(65537)
+        phase = "http-status"
+        assert response.status == 200 and len(body) <= 65536
+        phase = "schema"
+        observed = json.loads(body)
+        assert type(observed) is dict and type(observed.get("ID")) is str
+        phase = "correlation"
+        assert hashlib.sha256(observed["ID"].encode()).hexdigest() == EXPECTED_ENGINE_DIGEST
+    signal.setitimer(signal.ITIMER_REAL, 0)
+    print(json.dumps({"numeric_identity": True, "effective_groups": True,
+                      "socket_type": True, "bounded_read": True, "provider_correlated": True}))
+except Exception as error:
+    # Never print provider exceptions, raw responses, identities or paths.
+    signal.setitimer(signal.ITIMER_REAL, 0)
+    reason = ("timeout" if isinstance(error, TimeoutError) else
+              "assertion" if isinstance(error, AssertionError) else "operation-error")
+    print(json.dumps({"schema": "cpk.numeric-probe.failure.v2", "phase": phase,
+                      "reason": reason, "membership": membership
+                      if phase == "groups" and reason == "assertion" else None}))
+    raise SystemExit(1)
+'''
+    source = (inspect.getsource(numeric_group_check)
+              + "EXPECTED_UID=" + repr(CPK_IMAGE_ACCOUNT.uid) + "\n"
+              + "EXPECTED_PRIMARY_GID=" + repr(CPK_IMAGE_ACCOUNT.primary_gid) + "\n"
+              + "EXPECTED_GROUPS=" + repr(tuple(sorted(expected_groups))) + "\n"
+              + "EXPECTED_SOCKET_GID=" + repr(int(socket_group)) + "\n"
+              + "EXPECTED_ENGINE_DIGEST=" + repr(hashlib.sha256(engine_id.encode()).hexdigest()) + "\n" + probe)
+    class ProbeDeadline(BaseException):
+        """Escape SDK exception/retry handling when the controller deadline fires."""
+
+    def deadline_expired(*args):
+        raise ProbeDeadline()
+
+    # This owning Linux witness runs on the main thread. Bound the complete SDK
+    # call, including exec creation/start/inspection, not only the child socket.
+    previous_handler = signal.signal(signal.SIGALRM, deadline_expired)
+    try:
+        signal.setitimer(signal.ITIMER_REAL, 10)
+        outcome = container.exec_run(["python", "-I", "-c", source])
+    except (ProbeDeadline, Exception):
+        raise AssertionError("numeric CPK probe unavailable or timed out") from None
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+    if type(outcome.output) is not bytes or len(outcome.output) > 512:
+        raise AssertionError("numeric CPK probe output unavailable or exceeded bound")
+    if outcome.exit_code != 0:
+        try:
+            failure = json.loads(outcome.output)
+        except (ValueError, UnicodeError):
+            raise AssertionError("numeric CPK probe failure classification unavailable") from None
+        phases = {"account-uid", "primary-gid", "groups", "socket-type", "connect",
+                  "receive", "http-parse", "http-status", "schema", "correlation"}
+        reasons = {"assertion", "timeout", "operation-error"}
+        if (type(failure) is not dict or set(failure) != {"schema", "phase", "reason", "membership"}
+                or failure["schema"] != "cpk.numeric-probe.failure.v2"
+                or type(failure["phase"]) is not str or failure["phase"] not in phases
+                or type(failure["reason"]) is not str or failure["reason"] not in reasons):
+            raise AssertionError("numeric CPK probe failure classification unavailable")
+        detail = ""
+        membership = failure["membership"]
+        if failure["phase"] == "groups" and failure["reason"] == "assertion":
+            keys = ("declared_socket_group_present", "unexpected_groups_present")
+            if (type(membership) is not dict or set(membership) != set(keys)
+                    or any(type(membership[key]) is not bool for key in keys)):
+                raise AssertionError("numeric CPK probe failure classification unavailable")
+            detail = "; " + ", ".join(key + "=" + str(membership[key]).lower() for key in keys)
+        elif membership is not None:
+            raise AssertionError("numeric CPK probe failure classification unavailable")
+        raise AssertionError("numeric CPK probe failed: " + failure["phase"] + "/" + failure["reason"] + detail)
+    assert json.loads(outcome.output) == {
+        "numeric_identity": True, "effective_groups": True, "socket_type": True,
+        "bounded_read": True, "provider_correlated": True,
+    }
+    print("root bootstrap: numeric CPK identity, socket read and provider correlation PASS; mutation permission unverified")
 
 
 def cleanup(run):
@@ -176,7 +479,7 @@ def restart_for_child(run):
             containers[node_id] = container
             before[node_id] = {'id': container.id, 'started_at': container.attrs['State']['StartedAt']}
         parent_id = plan['cpk_node_id']
-        evidence = {'phase': 'pending', 'receipt_sha256': sha256(receipt_raw).hexdigest(),
+        evidence = {'phase': 'pending', 'receipt_sha256': hashlib.sha256(receipt_raw).hexdigest(),
                     'engine_id': receipt['engine_id'], 'parent_node_id': parent_id, 'before': before}
         def record():
             path = restart / 'record.new'

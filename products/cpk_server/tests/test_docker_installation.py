@@ -51,7 +51,7 @@ class DockerInstallationTests(unittest.TestCase):
             workspace_id="parent-workspace",
             runtime_authority=RuntimeAuthorityReference("parent-docker"),
             runtime_access=RuntimeAuthorityAccessDelivery(
-                RuntimeAuthorityReference("child-docker-access"),
+                RuntimeAuthorityReference("parent-docker"),
                 RuntimeAuthorityAccessDeliveryKind.LOCAL_DOCKER_SOCKET_MOUNT,
             ),
             cpk_product=document("cpk_server", "product.docker-cloudflare.cpk.json"),
@@ -145,6 +145,56 @@ class DockerInstallationTests(unittest.TestCase):
         self.assertEqual(postgres.secret_deliveries[0].reference, desired.postgres_password)
         self.assertEqual(postgres.block_spec.verification.checks[0].authentication.password_reference,
                          desired.postgres_password)
+
+    def test_only_cpk_instance_declares_runtime_access(self):
+        api = self.api()
+        for identity in ("child-a", "second-controller"):
+            with self.subTest(installation=identity):
+                desired = self.installation(api, identity)
+                topology = api.compose_docker_cpk_installation(desired)
+                graph = compile_topology(topology)
+                blocks = {child.block_id: child for child in topology.root.children
+                          if hasattr(child, "block_id")}
+                self.assertEqual(len(blocks), 4)
+                for node_id, block in blocks.items():
+                    expected = (desired.runtime_access,) if node_id == desired.cpk_node_id else ()
+                    self.assertEqual(block.implementation.configuration.runtime_authority_deliveries,
+                                     expected, node_id)
+                    self.assertEqual(graph.node(node_id).runtime_authority_deliveries, expected, node_id)
+                self.assertEqual(graph.node(desired.cpk_node_id).runtime_authority_deliveries[0].authority_ref,
+                                 topology.root.authority_ref)
+
+    def test_permission_roundtrip_and_removal_preserve_product_identity(self):
+        api = self.api()
+        desired = self.installation(api)
+        topology = api.compose_docker_cpk_installation(desired)
+        graph = compile_topology(topology)
+        codec = GraphDescriptorCodec()
+        decoded = codec.decode(codec.encode(graph))
+        self.assertEqual(decoded.node(desired.cpk_node_id).runtime_authority_deliveries,
+                         (desired.runtime_access,))
+        blocks = tuple(child for child in topology.root.children if hasattr(child, "block_id"))
+        cpk = next(child for child in blocks if child.block_id == desired.cpk_node_id)
+        empty = replace(cpk, implementation=replace(cpk.implementation,
+            configuration=replace(cpk.implementation.configuration, runtime_authority_deliveries=())))
+        without = replace(topology, root=replace(topology.root,
+            children=tuple(empty if child is cpk else child for child in topology.root.children)))
+        empty_graph = compile_topology(without)
+        self.assertNotEqual(codec.encode(empty_graph), codec.encode(graph))
+        self.assertEqual(empty.implementation.document, cpk.implementation.document)
+        self.assertEqual(empty_graph.node(desired.cpk_node_id).metadata,
+                         graph.node(desired.cpk_node_id).metadata)
+        self.assertTrue(all(node.runtime_authority_deliveries == ()
+                            for node in codec.decode(codec.encode(empty_graph)).nodes.values()))
+        self.assertNotIn("runtime_authority_deliveries", json.dumps(codec.encode(empty_graph)))
+
+    def test_runtime_access_must_match_enclosing_authority(self):
+        api = self.api()
+        desired = self.installation(api)
+        with self.assertRaises(ValueError):
+            api.compose_docker_cpk_installation(replace(desired,
+                runtime_access=replace(desired.runtime_access,
+                    authority_ref=RuntimeAuthorityReference("other-docker"))))
 
     def test_stable_identity_codec_roundtrip_and_external_ingress_boundary(self):
         api = self.api()

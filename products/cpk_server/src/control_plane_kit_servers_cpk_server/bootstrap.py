@@ -332,7 +332,7 @@ def plan_root_bootstrap(document: Mapping[str, object], *, driver_image_id: str)
                 "http_checks": [{"check": check.descriptor(), "url": f"http://{node_id}:{next(port.container_port for port in product.runtime_contract.provider_ports if port.provider_socket == check.provider_socket)}{check.path}"}
                                 for check in product.runtime_contract.verification.checks if isinstance(check, HttpCheck)],
                 "local_docker_access": ({"socket": "/var/run/docker.sock", "supplementary_group": "inspected-socket-gid"}
-                                        if node_id == installation.cpk_node_id else None),
+                                        if node.runtime_authority_deliveries else None),
                 "data_volumes": [{"name": f"{name}-{mount.resource_id}", "target": mount.target_path}
                                  for mount in product.runtime_contract.retained_data_mounts]})
         connection = None
