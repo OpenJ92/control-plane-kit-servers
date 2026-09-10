@@ -641,6 +641,51 @@ class CpkServerHttpMcpBoundaryTests(unittest.TestCase):
         self.assertEqual(verifier.credentials, [b"valid-token"])
         self.assertEqual(len(services[ControlPlaneServiceRole.PLANNING].requests), 1)
 
+    def test_http_and_mcp_preserve_node_permission_without_admitting_it(self) -> None:
+        from dataclasses import replace
+        from control_plane_kit_core.topology import GraphDescriptorCodec, compile_topology
+        from control_plane_kit_servers_cpk_server import (
+            CpkServerHttpProcessBoundary, CpkServerMcpProcessBoundary, installation,
+        )
+        from test_docker_installation import DockerInstallationTests
+
+        desired = replace(DockerInstallationTests().installation(installation), workspace_id="workspace-a")
+        graph = compile_topology(installation.compose_docker_cpk_installation(desired))
+        for declared in (True, False):
+            with self.subTest(declared=declared):
+                selected = graph if declared else replace(graph, nodes={
+                    key: replace(node, runtime_authority_deliveries=())
+                    for key, node in graph.nodes.items()})
+                encoded = GraphDescriptorCodec().encode(selected)
+                payload = {"desired_graph": encoded, "title": "Declared installation"}
+                composition, services, application, verifier = self._application()
+                http = CpkServerHttpProcessBoundary(composition, application)
+                mcp = CpkServerMcpProcessBoundary(composition, application)
+                response = http.handle(method="POST",
+                    path="/workspaces/workspace-a/deployments/prepare",
+                    headers={"Authorization": "Bearer valid-token"},
+                    body=json.dumps(payload).encode())
+                result = mcp.handle(headers={
+                    "Accept": "application/json, text/event-stream",
+                    "MCP-Protocol-Version": "2025-06-18", "Mcp-Method": "tools/call",
+                    "Authorization": "Bearer valid-token"}, message={
+                        "jsonrpc": "2.0", "id": "permission", "method": "tools/call",
+                        "params": {"name": "command.deployment.prepare", "arguments": {
+                            "workspace_id": "workspace-a", **payload}}})
+                self.assertEqual(response.status, 200)
+                self.assertEqual(result.status, 200)
+                requests = services[ControlPlaneServiceRole.PLANNING].requests
+                self.assertEqual(len(requests), 2)
+                for request in requests:
+                    self.assertEqual(request.payload, payload)
+                    received = GraphDescriptorCodec().decode(request.payload["desired_graph"])
+                    for node_id, node in received.nodes.items():
+                        expected = (desired.runtime_access,) if declared and node_id == desired.cpk_node_id else ()
+                        self.assertEqual(node.runtime_authority_deliveries, expected, node_id)
+                self.assertEqual(verifier.credentials, [b"valid-token", b"valid-token"])
+                self.assertTrue(all(not service.requests for role, service in services.items()
+                                    if role != ControlPlaneServiceRole.PLANNING))
+
     def test_mcp_resources_read_uses_read_service_and_auth_failures_are_bounded(self) -> None:
         from control_plane_kit_servers_cpk_server import CpkServerMcpProcessBoundary
 

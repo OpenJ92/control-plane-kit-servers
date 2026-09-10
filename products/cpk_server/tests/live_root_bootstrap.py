@@ -72,6 +72,15 @@ def check(run):
             assert image is not None and matches_image_reference(node["image"], image.repo_digests)
             assert container.attrs["Image"] == image.image_id and container.attrs["State"]["Running"]
             inspection = sdk.inspect_container(container.id)
+            assert inspection is not None
+            if node["node_id"] == plan["cpk_node_id"]:
+                from control_plane_kit_interpreters.docker.sdk import DockerSdkBindMount
+                assert inspection.bind_mounts == (DockerSdkBindMount(
+                    source_path="/var/run/docker.sock", target_path="/var/run/docker.sock"),)
+                assert inspection.supplementary_groups == (str(os.stat("/var/run/docker.sock").st_gid),)
+            else:
+                assert inspection.bind_mounts == ()
+                assert inspection.supplementary_groups == ()
             assert {(entry.target_path, entry.volume_name) for entry in inspection.readonly_secret_mounts} == {
                 (entry["target"], entry["name"]) for entry in node["secret_files"]}
             for entry in node["secret_files"]:
