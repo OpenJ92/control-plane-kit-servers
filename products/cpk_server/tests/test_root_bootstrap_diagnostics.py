@@ -12,9 +12,30 @@ from unittest.mock import patch
 from control_plane_kit_servers_cpk_server import bootstrap as api
 from control_plane_kit_servers_cpk_server import bootstrap_cli as cli
 from control_plane_kit_servers_cpk_server import bootstrap_runtime
+from products.cpk_server.tests import live_root_bootstrap as witness
 
 
 class RootBootstrapDiagnosticTests(unittest.TestCase):
+    def test_numeric_groups_include_sealed_image_membership_and_declared_socket(self):
+        baseline = witness.CPK_IMAGE_ACCOUNT
+        expected = baseline.expected_groups(baseline.image_reference, 43210)
+        self.assertEqual(expected, frozenset({10001, 100, 43210}))
+        matches, _ = witness.numeric_group_check(10001, (100, 43210, 10001), expected, 43210)
+        self.assertTrue(matches)
+
+    def test_numeric_groups_reject_missing_baseline_or_declared_and_unexpected_membership(self):
+        baseline = witness.CPK_IMAGE_ACCOUNT
+        expected = baseline.expected_groups(baseline.image_reference, 43210)
+        for groups in ((43210,), (100,), (100, 43210, 54321)):
+            with self.subTest(groups=groups):
+                matches, _ = witness.numeric_group_check(10001, groups, expected, 43210)
+                self.assertFalse(matches)
+
+    def test_numeric_group_baseline_requires_exact_reviewed_image(self):
+        baseline = witness.CPK_IMAGE_ACCOUNT
+        with self.assertRaisesRegex(AssertionError, "baseline does not match"):
+            baseline.expected_groups("ghcr.io/example/cpk@sha256:" + "0" * 64, 43210)
+
     def project_through_cli(self, error):
         output, errors = io.StringIO(), io.StringIO()
         with patch.object(sys, "argv", ["bootstrap", "inspect", "--state", "/unused"]), \

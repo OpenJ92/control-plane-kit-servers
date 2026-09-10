@@ -2,6 +2,7 @@
 
 import base64
 import hashlib
+import inspect
 import json
 import os
 from pathlib import Path
@@ -9,12 +10,47 @@ import secrets
 import signal
 import stat
 import sys
+from typing import NamedTuple
 
 from products.cpk_server.examples.root_bootstrap_input import example_input
 from control_plane_kit_servers_cpk_server.bootstrap import matches_image_reference
 
 
 ROOT = Path("/witness")
+
+
+class ImageAccountBaseline(NamedTuple):
+    image_reference: str
+    config_digest: str
+    passwd_sha256: str
+    group_sha256: str
+    uid: int
+    primary_gid: int
+    supplementary_gids: tuple[int, ...]
+
+    def expected_groups(self, image_reference, socket_gid):
+        assert image_reference == self.image_reference, "image account baseline does not match candidate"
+        return frozenset((self.primary_gid, *self.supplementary_gids, socket_gid))
+
+
+# Offline final-filesystem evidence, reviewed in Servers #168. This value is
+# independent of process observations and must be resealed for another image.
+CPK_IMAGE_ACCOUNT = ImageAccountBaseline(
+    image_reference="ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:7aa0e781ad7ee2d9942ef28251c30962abd730219f4136915675d5b68d34db51",
+    config_digest="sha256:9e65c0cb9782c5b55a4b978a75939ae5c07d5b2c3938e53dc838d442f810a805",
+    passwd_sha256="2b154879fd6e9899bbe9f9c04eb2535f3388ad5a090f90a78c0dca81a13b9921",
+    group_sha256="1ffcc10cbb13f710c78598bdccecd91b43251fef7e443ca860dfe84c656c0653",
+    uid=10001, primary_gid=10001, supplementary_gids=(100,),
+)
+
+
+def numeric_group_check(primary_gid, supplementary_gids, expected_groups, socket_gid):
+    observed = {primary_gid, *supplementary_gids}
+    expected = set(expected_groups)
+    return observed == expected, {
+        "declared_socket_group_present": socket_gid in observed,
+        "unexpected_groups_present": bool(observed - expected),
+    }
 
 
 def retain_authority_evidence(run, container, inspection, node, receipt, engine_matches):
@@ -203,7 +239,7 @@ def check(run):
                 ) is DockerAuthorityConformance.CONFORMANT
                 assert inspection.supplementary_groups == (socket_group,)
                 assert image.configured_user == "10001"
-                verify_numeric_socket_read(container, socket_group, receipt["engine_id"])
+                verify_numeric_socket_read(container, socket_group, receipt["engine_id"], node["image"])
             else:
                 assert inspection.bind_mounts == ()
                 assert inspection.supplementary_groups == ()
@@ -245,12 +281,13 @@ with tempfile.TemporaryDirectory() as directory:
         engine.close()
 
 
-def verify_numeric_socket_read(container, socket_group, engine_id):
+def verify_numeric_socket_read(container, socket_group, engine_id, image_reference):
     """One read as the image's configured user; no user or group override.
 
-    Candidate image review must seal the cpk account's UID/GID before releasing
-    this witness. Account data supplies expected identity, never probe output.
+    Candidate review seals the complete image account baseline before release.
+    Image account data supplies expected identity, never process observations.
     """
+    expected_groups = CPK_IMAGE_ACCOUNT.expected_groups(image_reference, int(socket_group))
     probe = '''
 import hashlib, http.client, io, json, os, pwd, signal, socket, stat, time
 
@@ -271,17 +308,13 @@ try:
     deadline = time.monotonic() + 10
     signal.setitimer(signal.ITIMER_REAL, 10)
     account = pwd.getpwnam("cpk")
-    assert account.pw_uid == 10001 and os.geteuid() == account.pw_uid
+    assert account.pw_uid == EXPECTED_UID and os.geteuid() == EXPECTED_UID
     phase = "primary-gid"
-    assert os.getegid() == account.pw_gid
+    assert account.pw_gid == EXPECTED_PRIMARY_GID and os.getegid() == EXPECTED_PRIMARY_GID
     phase = "groups"
-    observed_groups = {os.getegid(), *os.getgroups()}
-    expected_groups = {account.pw_gid, EXPECTED_SOCKET_GID}
-    membership = {
-        "declared_socket_group_present": EXPECTED_SOCKET_GID in observed_groups,
-        "unexpected_groups_present": bool(observed_groups - expected_groups),
-    }
-    assert observed_groups == expected_groups
+    groups_match, membership = numeric_group_check(
+        os.getegid(), os.getgroups(), EXPECTED_GROUPS, EXPECTED_SOCKET_GID)
+    assert groups_match
     phase = "socket-type"
     assert stat.S_ISSOCK(os.stat("/var/run/docker.sock").st_mode)
     phase = "connect"
@@ -325,7 +358,11 @@ except Exception as error:
                       if phase == "groups" and reason == "assertion" else None}))
     raise SystemExit(1)
 '''
-    source = ("EXPECTED_SOCKET_GID=" + repr(int(socket_group)) + "\n"
+    source = (inspect.getsource(numeric_group_check)
+              + "EXPECTED_UID=" + repr(CPK_IMAGE_ACCOUNT.uid) + "\n"
+              + "EXPECTED_PRIMARY_GID=" + repr(CPK_IMAGE_ACCOUNT.primary_gid) + "\n"
+              + "EXPECTED_GROUPS=" + repr(tuple(sorted(expected_groups))) + "\n"
+              + "EXPECTED_SOCKET_GID=" + repr(int(socket_group)) + "\n"
               + "EXPECTED_ENGINE_DIGEST=" + repr(hashlib.sha256(engine_id.encode()).hexdigest()) + "\n" + probe)
     class ProbeDeadline(BaseException):
         """Escape SDK exception/retry handling when the controller deadline fires."""
