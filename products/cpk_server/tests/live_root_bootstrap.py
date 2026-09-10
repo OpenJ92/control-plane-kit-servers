@@ -75,6 +75,17 @@ def check(run):
             assert inspection is not None
             if node["node_id"] == plan["cpk_node_id"]:
                 from control_plane_kit_interpreters.docker.sdk import DockerSdkBindMount
+                binds = inspection.bind_mounts
+                known = isinstance(binds, tuple)
+                print(json.dumps({"cpk_authority_mount_diagnostic": {
+                    "expected": {"count": 1, "source_is_canonical": True,
+                                 "target_is_canonical": True, "read_only": False},
+                    "observed": {"known": known, "count": len(binds) if known else None,
+                        "truncated": known and len(binds) > 4,
+                        "mounts": [{"source_is_canonical": mount.source_path == "/var/run/docker.sock",
+                                    "target_is_canonical": mount.target_path == "/var/run/docker.sock",
+                                    "read_only": mount.read_only if type(mount.read_only) is bool else "unknown"}
+                                   for mount in (binds[:4] if known else ())]}}}), flush=True)
                 assert inspection.bind_mounts == (DockerSdkBindMount(
                     source_path="/var/run/docker.sock", target_path="/var/run/docker.sock"),)
                 assert inspection.supplementary_groups == (str(os.stat("/var/run/docker.sock").st_gid),)
