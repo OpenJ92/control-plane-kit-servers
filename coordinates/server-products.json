@@ -10,36 +10,36 @@
       "product_id": "cpk-server",
       "owner_directory": "products/cpk_server",
       "descriptor_path": "products/cpk_server/product.cpk.json",
-      "source_commit": "83d325f3df944f8c8ccaf14c9860d0e3d2c2ffaf",
+      "source_commit": "ea9f2f2ecfece153b1298366f45674aaba11364e",
       "image": {
         "registry": "ghcr.io",
         "repository": "openj92/control-plane-kit-servers/cpk-server",
-        "tag": "authority-168-83d325f",
-        "digest": "sha256:fc393ac65d2a4c2c4967d2f848a6e18db2180fd025e065ff522e25d0f23620f2"
+        "tag": "authority-168-desktop-ea9f2f2",
+        "digest": "sha256:d0823029d6bef8edfaf9c1f3b4a16f0dc826b7a4f9c4dbd0531856e365473909"
       }
     },
     {
       "product_id": "cpk-server-docker",
       "owner_directory": "products/cpk_server",
       "descriptor_path": "products/cpk_server/product.docker.cpk.json",
-      "source_commit": "83d325f3df944f8c8ccaf14c9860d0e3d2c2ffaf",
+      "source_commit": "ea9f2f2ecfece153b1298366f45674aaba11364e",
       "image": {
         "registry": "ghcr.io",
         "repository": "openj92/control-plane-kit-servers/cpk-server",
-        "tag": "authority-168-83d325f",
-        "digest": "sha256:fc393ac65d2a4c2c4967d2f848a6e18db2180fd025e065ff522e25d0f23620f2"
+        "tag": "authority-168-desktop-ea9f2f2",
+        "digest": "sha256:d0823029d6bef8edfaf9c1f3b4a16f0dc826b7a4f9c4dbd0531856e365473909"
       }
     },
     {
       "product_id": "cpk-server-docker-cloudflare",
       "owner_directory": "products/cpk_server",
       "descriptor_path": "products/cpk_server/product.docker-cloudflare.cpk.json",
-      "source_commit": "83d325f3df944f8c8ccaf14c9860d0e3d2c2ffaf",
+      "source_commit": "ea9f2f2ecfece153b1298366f45674aaba11364e",
       "image": {
         "registry": "ghcr.io",
         "repository": "openj92/control-plane-kit-servers/cpk-server",
-        "tag": "authority-168-83d325f",
-        "digest": "sha256:fc393ac65d2a4c2c4967d2f848a6e18db2180fd025e065ff522e25d0f23620f2"
+        "tag": "authority-168-desktop-ea9f2f2",
+        "digest": "sha256:d0823029d6bef8edfaf9c1f3b4a16f0dc826b7a4f9c4dbd0531856e365473909"
       }
     },
     {
