@@ -1,10 +1,12 @@
 """Owning gate fixture and exact-ID cleanup for the real bootstrap.sh witness."""
 
 import base64
+import hashlib
 import json
 import os
 from pathlib import Path
 import secrets
+import stat
 import sys
 
 from products.cpk_server.examples.root_bootstrap_input import example_input
@@ -12,6 +14,104 @@ from control_plane_kit_servers_cpk_server.bootstrap import matches_image_referen
 
 
 ROOT = Path("/witness")
+
+
+def retain_authority_evidence(run, container, inspection, node, receipt, engine_matches):
+    """Keep bounded mount evidence private; diagnostics cannot replace the law."""
+    class EvidenceUnavailable(Exception):
+        pass
+
+    status = {"written": False, "complete": False}
+    directory_fd = None
+    try:
+        def binds(values, target_key, readonly_key):
+            if type(values) is not list:
+                raise EvidenceUnavailable("unknown mounts")
+            result = []
+            for value in values:
+                if type(value) is not dict:
+                    raise EvidenceUnavailable("unknown mount")
+                if value.get("Type") != "bind":
+                    continue
+                entry = {key: value.get(key) for key in ("Type", "Source", target_key, readonly_key)}
+                if (any(type(entry[key]) is not str or not entry[key].startswith("/")
+                        or len(entry[key]) > 1024 for key in ("Source", target_key))
+                        or type(entry[readonly_key]) is not bool):
+                    raise EvidenceUnavailable("unknown or oversized bind")
+                result.append(entry)
+                if len(result) > 4:
+                    raise EvidenceUnavailable("too many binds")
+            return result
+
+        def groups():
+            values = inspection.supplementary_groups
+            if (type(values) is not tuple or len(values) > 16
+                    or any(type(group) is not str or not group.isascii()
+                           or not group.isdecimal() or len(group) > 20 for group in values)):
+                raise EvidenceUnavailable("unknown or oversized groups")
+            return values
+
+        def section(read):
+            try:
+                return {"known": True, "values": read()}
+            except EvidenceUnavailable as error:
+                return {"known": False, "reason": str(error)}
+            except Exception:
+                return {"known": False, "reason": "unavailable shape"}
+
+        attrs = container.attrs
+        if type(run) is not str or len(run) > 128:
+            raise EvidenceUnavailable("oversized run")
+        matches = {
+            "engine": engine_matches,
+            "container": container.id == receipt["resources"]["containers"][node["node_id"]]["id"],
+            "image": attrs["Image"] == receipt["observations"]["images"][node["node_id"]],
+            "labels": all(attrs["Config"]["Labels"].get(key) == value
+                          for key, value in receipt["labels"].items()),
+        }
+        if not all(matches.values()):
+            raise EvidenceUnavailable("custody mismatch")
+        socket = node["local_docker_access"]["socket"]
+        if socket != "/var/run/docker.sock":
+            raise EvidenceUnavailable("unexpected requested socket")
+        record = {
+            "schema": "cpk.test.authority-mount-evidence.v1", "run": run,
+            "receipt_matches": matches,
+            "requested": {"Type": "bind", "Source": socket, "Target": socket, "ReadOnly": False},
+            "observed": section(lambda: binds(attrs.get("Mounts"), "Destination", "RW")),
+            "configured": section(lambda: binds(attrs.get("HostConfig", {}).get("Mounts"), "Target", "ReadOnly")),
+            "supplementary_groups": section(groups),
+        }
+        payload = json.dumps(record, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        if len(payload) > 4096:
+            raise EvidenceUnavailable("oversized record")
+        directory_fd = os.open(ROOT, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        if stat.S_IMODE(os.fstat(directory_fd).st_mode) != 0o700:
+            raise EvidenceUnavailable("nonprivate directory")
+        fd = os.open("authority-mount-evidence.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                     0o600, dir_fd=directory_fd)
+        with os.fdopen(fd, "wb") as evidence:
+            if stat.S_IMODE(os.fstat(evidence.fileno()).st_mode) != 0o600:
+                raise EvidenceUnavailable("nonprivate file")
+            evidence.write(payload)
+            evidence.flush()
+            os.fsync(evidence.fileno())
+        status = {"written": True,
+                  "complete": all(record[key]["known"] for key in ("observed", "configured", "supplementary_groups")),
+                  "actual_captured": record["observed"]["known"], "bytes": len(payload),
+                  "sha256": hashlib.sha256(payload).hexdigest()}
+    except EvidenceUnavailable as error:
+        status.update(unavailable_or_incomplete=True, reason=str(error))
+    except Exception:
+        # Never print exception text: paths or provider values may be sensitive.
+        status["unavailable_or_incomplete"] = True
+    finally:
+        if directory_fd is not None:
+            try:
+                os.close(directory_fd)
+            except OSError:
+                status.update(complete=False, unavailable_or_incomplete=True, reason="directory close failed")
+    print(json.dumps({"cpk_private_authority_evidence": status}), flush=True)
 
 
 def prepare(run):
@@ -65,7 +165,8 @@ def check(run):
     sdk = DockerSdkClient(client=engine)
     plan = json.loads((ROOT / "plan.json").read_text())
     try:
-        assert engine.info()["ID"] == receipt["engine_id"]
+        engine_matches = engine.info()["ID"] == receipt["engine_id"]
+        assert engine_matches
         for node in plan["resources"]["nodes"]:
             container = engine.containers.get(receipt["resources"]["containers"][node["node_id"]]["id"])
             image = sdk.inspect_image(node["image"])
@@ -75,6 +176,7 @@ def check(run):
             assert inspection is not None
             if node["node_id"] == plan["cpk_node_id"]:
                 from control_plane_kit_interpreters.docker.sdk import DockerSdkBindMount
+                retain_authority_evidence(run, container, inspection, node, receipt, engine_matches)
                 binds = inspection.bind_mounts
                 known = isinstance(binds, tuple)
                 print(json.dumps({"cpk_authority_mount_diagnostic": {
