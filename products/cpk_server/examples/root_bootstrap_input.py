@@ -17,7 +17,7 @@ def example_input(source=Path("/source"), *, installation_id="root-a", workspace
         "schema": "cpk.root-bootstrap.input.v1",
         "installation": {
             "installation_id": installation_id, "workspace_id": workspace_id,
-            "runtime_authority": "external-root-docker",
+            "runtime_authority": "root-docker-access",
             "runtime_access": {"authority_ref": {"reference_id": "root-docker-access"},
                 "delivery_kind": "local-docker-socket-mount", "secret_references": []},
             "products": {"cpk": product("cpk_server", "product.docker-cloudflare.cpk.json"),

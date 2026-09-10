@@ -47,7 +47,7 @@ desired = DockerCpkInstallation(
     workspace_id="parent-workspace",
     runtime_authority=RuntimeAuthorityReference("parent-docker"),
     runtime_access=RuntimeAuthorityAccessDelivery(
-        RuntimeAuthorityReference("child-docker-access"),
+        RuntimeAuthorityReference("parent-docker"),
         RuntimeAuthorityAccessDeliveryKind.LOCAL_DOCKER_SOCKET_MOUNT,
     ),
     cpk_product=selected("cpk_server", "product.docker-cloudflare.cpk.json"),
@@ -109,11 +109,23 @@ the custody key and credential document have distinct accepted purposes. The
 parent-delivered client credential reference and child-local bootstrap lookup
 reference are deliberately separate.
 
-`runtime_authority` selects the enclosing runtime. `runtime_access` is a separate
-input for the eventual driver/client to admit for `desired.cpk_node_id` before
-execution. Only the currently implemented local Docker socket delivery is
-supported here. Merely installing Docker/Cloudflare software or composing the
-graph does not grant authority or create a child's internal workspace/runtime.
+`runtime_authority` selects the enclosing runtime. `runtime_access` declares the
+CPK instance's desired process access and must reference that same authority.
+The composer carries it through `ProductInstanceConfiguration` into the compiled
+CPK node. PostgreSQL, Secrets, and connector instances keep empty declarations;
+reusable product contracts do not acquire permission. Graph encoding, saved
+plans, and public client requests preserve the declaration.
+
+Workspace registration independently admits the exact delivery before execution.
+Registration without a node declaration supplies no process access. Only local
+Docker socket delivery is supported by this composer. Bootstrap projects socket
+and group delivery from the declared graph into its validated acquisition plan.
+Matching reference names in different workspaces do not share admission.
+
+This changes the desired graph and plan identity. Review a fresh plan for a fresh
+installation; old saved plans, uncertain runs, and retained resources are not
+rewritten or adopted. Package tests and source adoption do not prove a published
+image or live installation has adopted this boundary.
 
 The root `bootstrap.sh` driver, protected initial material, authenticated child
 setup through public APIs, approval/execution, automatic ingress runtime proof,

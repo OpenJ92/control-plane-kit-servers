@@ -1,8 +1,8 @@
 {
   "schema": "cpk-servers.coordinates",
   "upstreams": {
-    "control_plane_kit_commit": "f12f735ed8e349117775f7e6839b0b312c86c30e",
-    "control_plane_kit_interpreters_commit": "d31637404c3c3a03fec9fe8bff0c3c0d25143085",
+    "control_plane_kit_commit": "087a89253b14b3bb438af9042ea779976886a79e",
+    "control_plane_kit_interpreters_commit": "107f55e29e193d89e829bc350a039fc41b1adf81",
     "control_plane_kit_secrets_commit": "68d0da6aed3a383d6bdc284cf4a6a6063a31487e"
   },
   "products": [
@@ -10,36 +10,36 @@
       "product_id": "cpk-server",
       "owner_directory": "products/cpk_server",
       "descriptor_path": "products/cpk_server/product.cpk.json",
-      "source_commit": "4468cd06e9754304fb1e02bba752eb1fd11d7c9f",
+      "source_commit": "875f30597c43dec82d1a326ade337c836031d40f",
       "image": {
         "registry": "ghcr.io",
         "repository": "openj92/control-plane-kit-servers/cpk-server",
-        "tag": "bootstrap-158-4468cd0",
-        "digest": "sha256:336f536d72e2bff7e1c9d19e86c795f935176f6a6f5de878504fb2d948f978ab"
+        "tag": "authority-168-desktop-875f305",
+        "digest": "sha256:7aa0e781ad7ee2d9942ef28251c30962abd730219f4136915675d5b68d34db51"
       }
     },
     {
       "product_id": "cpk-server-docker",
       "owner_directory": "products/cpk_server",
       "descriptor_path": "products/cpk_server/product.docker.cpk.json",
-      "source_commit": "4468cd06e9754304fb1e02bba752eb1fd11d7c9f",
+      "source_commit": "875f30597c43dec82d1a326ade337c836031d40f",
       "image": {
         "registry": "ghcr.io",
         "repository": "openj92/control-plane-kit-servers/cpk-server",
-        "tag": "bootstrap-158-4468cd0",
-        "digest": "sha256:336f536d72e2bff7e1c9d19e86c795f935176f6a6f5de878504fb2d948f978ab"
+        "tag": "authority-168-desktop-875f305",
+        "digest": "sha256:7aa0e781ad7ee2d9942ef28251c30962abd730219f4136915675d5b68d34db51"
       }
     },
     {
       "product_id": "cpk-server-docker-cloudflare",
       "owner_directory": "products/cpk_server",
       "descriptor_path": "products/cpk_server/product.docker-cloudflare.cpk.json",
-      "source_commit": "4468cd06e9754304fb1e02bba752eb1fd11d7c9f",
+      "source_commit": "875f30597c43dec82d1a326ade337c836031d40f",
       "image": {
         "registry": "ghcr.io",
         "repository": "openj92/control-plane-kit-servers/cpk-server",
-        "tag": "bootstrap-158-4468cd0",
-        "digest": "sha256:336f536d72e2bff7e1c9d19e86c795f935176f6a6f5de878504fb2d948f978ab"
+        "tag": "authority-168-desktop-875f305",
+        "digest": "sha256:7aa0e781ad7ee2d9942ef28251c30962abd730219f4136915675d5b68d34db51"
       }
     },
     {

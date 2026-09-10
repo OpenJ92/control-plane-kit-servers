@@ -32,7 +32,7 @@ def installation_input():
         "schema": "cpk.root-bootstrap.input.v1",
         "installation": {
             "installation_id": "root-a", "workspace_id": "root-workspace",
-            "runtime_authority": "external-root-docker",
+            "runtime_authority": "root-docker-access",
             "runtime_access": {
                 "authority_ref": {"reference_id": "root-docker-access"},
                 "delivery_kind": "local-docker-socket-mount",
@@ -112,6 +112,14 @@ class RootBootstrapTests(unittest.TestCase):
         topology = compose_docker_cpk_installation(expected)
         graph = compile_topology(topology)
         self.assertEqual(plan["graph"], GraphDescriptorCodec().encode(graph))
+        saved_graph = GraphDescriptorCodec().decode(plan["graph"])
+        for node in plan["resources"]["nodes"]:
+            is_cpk = node["node_id"] == expected.cpk_node_id
+            self.assertEqual(saved_graph.node(node["node_id"]).runtime_authority_deliveries,
+                             (expected.runtime_access,) if is_cpk else ())
+            self.assertEqual(node["local_docker_access"],
+                {"socket": "/var/run/docker.sock", "supplementary_group": "inspected-socket-gid"}
+                if is_cpk else None)
         self.assertEqual(plan["driver_image_id"], DRIVER)
         self.assertEqual(plan["resources"]["network"]["name"], topology.root.network_name)
         self.assertEqual(set(plan["required_material"]), {
@@ -123,10 +131,15 @@ class RootBootstrapTests(unittest.TestCase):
         self.assertNotIn("credential_value", json.dumps(plan))
         altered = copy.deepcopy(plan)
         altered["resources"]["network"]["name"] = "unrelated-network"
+        sibling_access = copy.deepcopy(plan)
+        next(node for node in sibling_access["resources"]["nodes"]
+             if node["node_id"] == expected.postgres_node_id)["local_docker_access"] = {
+                 "socket": "/var/run/docker.sock", "supplementary_group": "inspected-socket-gid"}
         with tempfile.TemporaryDirectory() as directory:
             state = Path(directory)
             for candidate, driver, reason in (
                 (altered, DRIVER, "plan"), (plan, "sha256:" + "b" * 64, "driver"),
+                (sibling_access, DRIVER, "plan"),
             ):
                 with self.subTest(driver=driver, changed=candidate is altered):
                     with self.assertRaises(api.RootBootstrapError) as caught:
