@@ -676,8 +676,10 @@ class CpkServerHttpMcpBoundaryTests(unittest.TestCase):
                 self.assertEqual(result.status, 200)
                 requests = services[ControlPlaneServiceRole.PLANNING].requests
                 self.assertEqual(len(requests), 2)
-                for request in requests:
-                    self.assertEqual(request.payload, payload)
+                self.assertEqual([request.surface for request in requests], ["http", "mcp"])
+                for request, expected_payload in zip(requests,
+                        (payload, {"workspace_id": "workspace-a", **payload}), strict=True):
+                    self.assertEqual(request.payload, expected_payload)
                     received = GraphDescriptorCodec().decode(request.payload["desired_graph"])
                     for node_id, node in received.nodes.items():
                         expected = (desired.runtime_access,) if declared and node_id == desired.cpk_node_id else ()
