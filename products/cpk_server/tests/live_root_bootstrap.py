@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import signal
 import stat
 import sys
 
@@ -34,9 +35,12 @@ def retain_authority_evidence(run, container, inspection, node, receipt, engine_
                 if value.get("Type") != "bind":
                     continue
                 entry = {key: value.get(key) for key in ("Type", "Source", target_key, readonly_key)}
+                omitted = readonly_key == "ReadOnly" and readonly_key not in value
+                if omitted:
+                    entry[readonly_key] = "omitted"
                 if (any(type(entry[key]) is not str or not entry[key].startswith("/")
                         or len(entry[key]) > 1024 for key in ("Source", target_key))
-                        or type(entry[readonly_key]) is not bool):
+                        or (not omitted and type(entry[readonly_key]) is not bool)):
                     raise EvidenceUnavailable("unknown or oversized bind")
                 result.append(entry)
                 if len(result) > 4:
@@ -175,6 +179,9 @@ def check(run):
             inspection = sdk.inspect_container(container.id)
             assert inspection is not None
             if node["node_id"] == plan["cpk_node_id"]:
+                from control_plane_kit_interpreters.docker.authority import (
+                    DockerAuthorityConformance, docker_authority_conformance,
+                )
                 from control_plane_kit_interpreters.docker.sdk import DockerSdkBindMount
                 retain_authority_evidence(run, container, inspection, node, receipt, engine_matches)
                 binds = inspection.bind_mounts
@@ -188,9 +195,15 @@ def check(run):
                                     "target_is_canonical": mount.target_path == "/var/run/docker.sock",
                                     "read_only": mount.read_only if type(mount.read_only) is bool else "unknown"}
                                    for mount in (binds[:4] if known else ())]}}}), flush=True)
-                assert inspection.bind_mounts == (DockerSdkBindMount(
-                    source_path="/var/run/docker.sock", target_path="/var/run/docker.sock"),)
-                assert inspection.supplementary_groups == (str(os.stat("/var/run/docker.sock").st_gid),)
+                socket_group = str(os.stat("/var/run/docker.sock").st_gid)
+                assert docker_authority_conformance(
+                    inspection, expected_mounts=(DockerSdkBindMount(
+                        source_path="/var/run/docker.sock", target_path="/var/run/docker.sock"),),
+                    expected_groups=(socket_group,), client=sdk,
+                ) is DockerAuthorityConformance.CONFORMANT
+                assert inspection.supplementary_groups == (socket_group,)
+                assert image.configured_user == "10001"
+                verify_numeric_socket_read(container, socket_group, receipt["engine_id"])
             else:
                 assert inspection.bind_mounts == ()
                 assert inspection.supplementary_groups == ()
@@ -230,6 +243,91 @@ with tempfile.TemporaryDirectory() as directory:
         print("root bootstrap: real launcher, canonical images, numeric delivery, public setup, denial PASS; external unverified")
     finally:
         engine.close()
+
+
+def verify_numeric_socket_read(container, socket_group, engine_id):
+    """One read as the image's configured user; no user or group override.
+
+    Candidate image review must seal the cpk account's UID/GID before releasing
+    this witness. Account data supplies expected identity, never probe output.
+    """
+    probe = '''
+import hashlib, http.client, io, json, os, pwd, signal, socket, stat, time
+
+def timed_out(*args):
+    raise TimeoutError()
+
+class CapturedResponse:
+    def __init__(self, data):
+        self.data = data
+
+    def makefile(self, *args):
+        return io.BytesIO(self.data)
+
+try:
+    signal.signal(signal.SIGALRM, timed_out)
+    deadline = time.monotonic() + 10
+    signal.setitimer(signal.ITIMER_REAL, 10)
+    account = pwd.getpwnam("cpk")
+    assert account.pw_uid == 10001 and os.geteuid() == account.pw_uid
+    assert os.getegid() == account.pw_gid
+    assert {os.getegid(), *os.getgroups()} == {account.pw_gid, EXPECTED_SOCKET_GID}
+    assert stat.S_ISSOCK(os.stat("/var/run/docker.sock").st_mode)
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+        connection.settimeout(5)
+        remaining = min(5, deadline - time.monotonic())
+        assert remaining > 0
+        signal.setitimer(signal.ITIMER_REAL, remaining)
+        connection.connect("/var/run/docker.sock")
+        connection.sendall(b"GET /info HTTP/1.1\\r\\nHost: docker\\r\\nConnection: close\\r\\n\\r\\n")
+        captured = bytearray()
+        while True:
+            chunk = connection.recv(min(4096, 65537 - len(captured)))
+            if not chunk:
+                break
+            captured.extend(chunk)
+            assert len(captured) <= 65536
+        # Cap the complete wire response, including headers, before parsing.
+        response = http.client.HTTPResponse(CapturedResponse(captured))
+        response.begin()
+        body = response.read(65537)
+        assert response.status == 200 and len(body) <= 65536
+        observed = json.loads(body)
+        assert type(observed) is dict and type(observed.get("ID")) is str
+        assert hashlib.sha256(observed["ID"].encode()).hexdigest() == EXPECTED_ENGINE_DIGEST
+    signal.setitimer(signal.ITIMER_REAL, 0)
+    print(json.dumps({"numeric_identity": True, "effective_groups": True,
+                      "socket_type": True, "bounded_read": True, "provider_correlated": True}))
+except Exception:
+    # Never print provider exceptions, raw responses, identities or paths.
+    raise SystemExit(1)
+'''
+    source = ("EXPECTED_SOCKET_GID=" + repr(int(socket_group)) + "\n"
+              + "EXPECTED_ENGINE_DIGEST=" + repr(hashlib.sha256(engine_id.encode()).hexdigest()) + "\n" + probe)
+    class ProbeDeadline(BaseException):
+        """Escape SDK exception/retry handling when the controller deadline fires."""
+
+    def deadline_expired(*args):
+        raise ProbeDeadline()
+
+    # This owning Linux witness runs on the main thread. Bound the complete SDK
+    # call, including exec creation/start/inspection, not only the child socket.
+    previous_handler = signal.signal(signal.SIGALRM, deadline_expired)
+    try:
+        signal.setitimer(signal.ITIMER_REAL, 10)
+        outcome = container.exec_run(["python", "-I", "-c", source])
+    except (ProbeDeadline, Exception):
+        raise AssertionError("numeric CPK probe unavailable or timed out") from None
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+    assert outcome.exit_code == 0, "numeric CPK socket read failed"
+    assert len(outcome.output) <= 512, "numeric CPK probe output exceeded bound"
+    assert json.loads(outcome.output) == {
+        "numeric_identity": True, "effective_groups": True, "socket_type": True,
+        "bounded_read": True, "provider_correlated": True,
+    }
+    print("root bootstrap: numeric CPK identity, socket read and provider correlation PASS; mutation permission unverified")
 
 
 def cleanup(run):
