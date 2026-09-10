@@ -264,15 +264,20 @@ class CapturedResponse:
     def makefile(self, *args):
         return io.BytesIO(self.data)
 
+phase = "account-uid"
 try:
     signal.signal(signal.SIGALRM, timed_out)
     deadline = time.monotonic() + 10
     signal.setitimer(signal.ITIMER_REAL, 10)
     account = pwd.getpwnam("cpk")
     assert account.pw_uid == 10001 and os.geteuid() == account.pw_uid
+    phase = "primary-gid"
     assert os.getegid() == account.pw_gid
+    phase = "groups"
     assert {os.getegid(), *os.getgroups()} == {account.pw_gid, EXPECTED_SOCKET_GID}
+    phase = "socket-type"
     assert stat.S_ISSOCK(os.stat("/var/run/docker.sock").st_mode)
+    phase = "connect"
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
         connection.settimeout(5)
         remaining = min(5, deadline - time.monotonic())
@@ -280,6 +285,7 @@ try:
         signal.setitimer(signal.ITIMER_REAL, remaining)
         connection.connect("/var/run/docker.sock")
         connection.sendall(b"GET /info HTTP/1.1\\r\\nHost: docker\\r\\nConnection: close\\r\\n\\r\\n")
+        phase = "receive"
         captured = bytearray()
         while True:
             chunk = connection.recv(min(4096, 65537 - len(captured)))
@@ -288,18 +294,27 @@ try:
             captured.extend(chunk)
             assert len(captured) <= 65536
         # Cap the complete wire response, including headers, before parsing.
+        phase = "http-parse"
         response = http.client.HTTPResponse(CapturedResponse(captured))
         response.begin()
         body = response.read(65537)
+        phase = "http-status"
         assert response.status == 200 and len(body) <= 65536
+        phase = "schema"
         observed = json.loads(body)
         assert type(observed) is dict and type(observed.get("ID")) is str
+        phase = "correlation"
         assert hashlib.sha256(observed["ID"].encode()).hexdigest() == EXPECTED_ENGINE_DIGEST
     signal.setitimer(signal.ITIMER_REAL, 0)
     print(json.dumps({"numeric_identity": True, "effective_groups": True,
                       "socket_type": True, "bounded_read": True, "provider_correlated": True}))
-except Exception:
+except Exception as error:
     # Never print provider exceptions, raw responses, identities or paths.
+    signal.setitimer(signal.ITIMER_REAL, 0)
+    reason = ("timeout" if isinstance(error, TimeoutError) else
+              "assertion" if isinstance(error, AssertionError) else "operation-error")
+    print(json.dumps({"schema": "cpk.numeric-probe.failure.v1", "phase": phase,
+                      "reason": reason}))
     raise SystemExit(1)
 '''
     source = ("EXPECTED_SOCKET_GID=" + repr(int(socket_group)) + "\n"
@@ -321,8 +336,22 @@ except Exception:
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous_handler)
-    assert outcome.exit_code == 0, "numeric CPK socket read failed"
-    assert len(outcome.output) <= 512, "numeric CPK probe output exceeded bound"
+    if type(outcome.output) is not bytes or len(outcome.output) > 512:
+        raise AssertionError("numeric CPK probe output unavailable or exceeded bound")
+    if outcome.exit_code != 0:
+        try:
+            failure = json.loads(outcome.output)
+        except (ValueError, UnicodeError):
+            raise AssertionError("numeric CPK probe failure classification unavailable") from None
+        phases = {"account-uid", "primary-gid", "groups", "socket-type", "connect",
+                  "receive", "http-parse", "http-status", "schema", "correlation"}
+        reasons = {"assertion", "timeout", "operation-error"}
+        if (type(failure) is not dict or set(failure) != {"schema", "phase", "reason"}
+                or failure["schema"] != "cpk.numeric-probe.failure.v1"
+                or type(failure["phase"]) is not str or failure["phase"] not in phases
+                or type(failure["reason"]) is not str or failure["reason"] not in reasons):
+            raise AssertionError("numeric CPK probe failure classification unavailable")
+        raise AssertionError("numeric CPK probe failed: " + failure["phase"] + "/" + failure["reason"])
     assert json.loads(outcome.output) == {
         "numeric_identity": True, "effective_groups": True, "socket_type": True,
         "bounded_read": True, "provider_correlated": True,
