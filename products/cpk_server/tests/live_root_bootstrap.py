@@ -265,6 +265,7 @@ class CapturedResponse:
         return io.BytesIO(self.data)
 
 phase = "account-uid"
+membership = None
 try:
     signal.signal(signal.SIGALRM, timed_out)
     deadline = time.monotonic() + 10
@@ -274,7 +275,13 @@ try:
     phase = "primary-gid"
     assert os.getegid() == account.pw_gid
     phase = "groups"
-    assert {os.getegid(), *os.getgroups()} == {account.pw_gid, EXPECTED_SOCKET_GID}
+    observed_groups = {os.getegid(), *os.getgroups()}
+    expected_groups = {account.pw_gid, EXPECTED_SOCKET_GID}
+    membership = {
+        "declared_socket_group_present": EXPECTED_SOCKET_GID in observed_groups,
+        "unexpected_groups_present": bool(observed_groups - expected_groups),
+    }
+    assert observed_groups == expected_groups
     phase = "socket-type"
     assert stat.S_ISSOCK(os.stat("/var/run/docker.sock").st_mode)
     phase = "connect"
@@ -313,8 +320,9 @@ except Exception as error:
     signal.setitimer(signal.ITIMER_REAL, 0)
     reason = ("timeout" if isinstance(error, TimeoutError) else
               "assertion" if isinstance(error, AssertionError) else "operation-error")
-    print(json.dumps({"schema": "cpk.numeric-probe.failure.v1", "phase": phase,
-                      "reason": reason}))
+    print(json.dumps({"schema": "cpk.numeric-probe.failure.v2", "phase": phase,
+                      "reason": reason, "membership": membership
+                      if phase == "groups" and reason == "assertion" else None}))
     raise SystemExit(1)
 '''
     source = ("EXPECTED_SOCKET_GID=" + repr(int(socket_group)) + "\n"
@@ -346,12 +354,22 @@ except Exception as error:
         phases = {"account-uid", "primary-gid", "groups", "socket-type", "connect",
                   "receive", "http-parse", "http-status", "schema", "correlation"}
         reasons = {"assertion", "timeout", "operation-error"}
-        if (type(failure) is not dict or set(failure) != {"schema", "phase", "reason"}
-                or failure["schema"] != "cpk.numeric-probe.failure.v1"
+        if (type(failure) is not dict or set(failure) != {"schema", "phase", "reason", "membership"}
+                or failure["schema"] != "cpk.numeric-probe.failure.v2"
                 or type(failure["phase"]) is not str or failure["phase"] not in phases
                 or type(failure["reason"]) is not str or failure["reason"] not in reasons):
             raise AssertionError("numeric CPK probe failure classification unavailable")
-        raise AssertionError("numeric CPK probe failed: " + failure["phase"] + "/" + failure["reason"])
+        detail = ""
+        membership = failure["membership"]
+        if failure["phase"] == "groups" and failure["reason"] == "assertion":
+            keys = ("declared_socket_group_present", "unexpected_groups_present")
+            if (type(membership) is not dict or set(membership) != set(keys)
+                    or any(type(membership[key]) is not bool for key in keys)):
+                raise AssertionError("numeric CPK probe failure classification unavailable")
+            detail = "; " + ", ".join(key + "=" + str(membership[key]).lower() for key in keys)
+        elif membership is not None:
+            raise AssertionError("numeric CPK probe failure classification unavailable")
+        raise AssertionError("numeric CPK probe failed: " + failure["phase"] + "/" + failure["reason"] + detail)
     assert json.loads(outcome.output) == {
         "numeric_identity": True, "effective_groups": True, "socket_type": True,
         "bounded_read": True, "provider_correlated": True,
