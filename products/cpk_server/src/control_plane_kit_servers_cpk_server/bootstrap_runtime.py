@@ -347,10 +347,11 @@ def _acquire(plan, material, state):
                 file_volume(entry["name"], value, file_owners[node["node_id"]])
                 mounts.append(dict(DockerSdkSecretMount(entry["target"], entry["name"]).docker_mount()))
             options = {}
-            if node["node_id"] == plan["cpk_node_id"]:
+            if node["local_docker_access"] is not None:
                 socket_path = node["local_docker_access"]["socket"]
                 mounts.append(docker.types.Mount(socket_path, socket_path, type="bind"))
                 options["group_add"] = [str(os.stat(socket_path).st_gid)]
+            if node["node_id"] == plan["cpk_node_id"]:
                 binding = plan["input"]["host_binding"]
                 options["ports"] = {"8080/tcp": (binding["address"], binding["port"])}
             container = effect("create-container:" + node["node_id"], lambda: client.containers.create(
