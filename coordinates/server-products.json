@@ -10,36 +10,36 @@
       "product_id": "cpk-server",
       "owner_directory": "products/cpk_server",
       "descriptor_path": "products/cpk_server/product.cpk.json",
-      "source_commit": "4468cd06e9754304fb1e02bba752eb1fd11d7c9f",
+      "source_commit": "83d325f3df944f8c8ccaf14c9860d0e3d2c2ffaf",
       "image": {
         "registry": "ghcr.io",
         "repository": "openj92/control-plane-kit-servers/cpk-server",
-        "tag": "bootstrap-158-4468cd0",
-        "digest": "sha256:336f536d72e2bff7e1c9d19e86c795f935176f6a6f5de878504fb2d948f978ab"
+        "tag": "authority-168-83d325f",
+        "digest": "sha256:fc393ac65d2a4c2c4967d2f848a6e18db2180fd025e065ff522e25d0f23620f2"
       }
     },
     {
       "product_id": "cpk-server-docker",
       "owner_directory": "products/cpk_server",
       "descriptor_path": "products/cpk_server/product.docker.cpk.json",
-      "source_commit": "4468cd06e9754304fb1e02bba752eb1fd11d7c9f",
+      "source_commit": "83d325f3df944f8c8ccaf14c9860d0e3d2c2ffaf",
       "image": {
         "registry": "ghcr.io",
         "repository": "openj92/control-plane-kit-servers/cpk-server",
-        "tag": "bootstrap-158-4468cd0",
-        "digest": "sha256:336f536d72e2bff7e1c9d19e86c795f935176f6a6f5de878504fb2d948f978ab"
+        "tag": "authority-168-83d325f",
+        "digest": "sha256:fc393ac65d2a4c2c4967d2f848a6e18db2180fd025e065ff522e25d0f23620f2"
       }
     },
     {
       "product_id": "cpk-server-docker-cloudflare",
       "owner_directory": "products/cpk_server",
       "descriptor_path": "products/cpk_server/product.docker-cloudflare.cpk.json",
-      "source_commit": "4468cd06e9754304fb1e02bba752eb1fd11d7c9f",
+      "source_commit": "83d325f3df944f8c8ccaf14c9860d0e3d2c2ffaf",
       "image": {
         "registry": "ghcr.io",
         "repository": "openj92/control-plane-kit-servers/cpk-server",
-        "tag": "bootstrap-158-4468cd0",
-        "digest": "sha256:336f536d72e2bff7e1c9d19e86c795f935176f6a6f5de878504fb2d948f978ab"
+        "tag": "authority-168-83d325f",
+        "digest": "sha256:fc393ac65d2a4c2c4967d2f848a6e18db2180fd025e065ff522e25d0f23620f2"
       }
     },
     {
