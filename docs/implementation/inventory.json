@@ -785,7 +785,7 @@
     {
       "source": "scripts/cpk_server_cloudflare_secret_custody_source_live_smoke.sh",
       "companion": "docs/implementation/scripts/cpk_server_cloudflare_secret_custody_source_live_smoke.sh.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -881,7 +881,7 @@
     {
       "source": "scripts/cpk_server_secret_provider_source_live_smoke.sh",
       "companion": "docs/implementation/scripts/cpk_server_secret_provider_source_live_smoke.sh.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
