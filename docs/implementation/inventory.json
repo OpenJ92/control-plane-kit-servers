@@ -875,7 +875,7 @@
     {
       "source": "scripts/cpk_server_secret_provider_source_live.py",
       "companion": "docs/implementation/scripts/cpk_server_secret_provider_source_live.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
