@@ -461,19 +461,19 @@
     {
       "source": "products/cpk_server/tests/test_ephemeral_source_live_lifecycle.py",
       "companion": "docs/implementation/products/cpk_server/tests/test_ephemeral_source_live_lifecycle.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_server/tests/test_gateway_rotation_access_paths.py",
       "companion": "docs/implementation/products/cpk_server/tests/test_gateway_rotation_access_paths.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_server/tests/test_gateway_source_live_retirement.py",
       "companion": "docs/implementation/products/cpk_server/tests/test_gateway_source_live_retirement.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -569,19 +569,19 @@
     {
       "source": "products/cpk_server/tests/test_source_live_gateway_denials.py",
       "companion": "docs/implementation/products/cpk_server/tests/test_source_live_gateway_denials.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_server/tests/test_source_live_phase_reporting.py",
       "companion": "docs/implementation/products/cpk_server/tests/test_source_live_phase_reporting.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_server/tests/test_source_live_restart_diagnostics.py",
       "companion": "docs/implementation/products/cpk_server/tests/test_source_live_restart_diagnostics.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -809,7 +809,7 @@
     {
       "source": "scripts/cpk_server_image_smoke.sh",
       "companion": "docs/implementation/scripts/cpk_server_image_smoke.sh.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -893,13 +893,13 @@
     {
       "source": "scripts/cpk_server_source_live_abort.py",
       "companion": "docs/implementation/scripts/cpk_server_source_live_abort.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "scripts/cpk_server_source_live_report.py",
       "companion": "docs/implementation/scripts/cpk_server_source_live_report.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
