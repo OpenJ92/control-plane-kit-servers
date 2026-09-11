@@ -479,7 +479,7 @@
     {
       "source": "products/cpk_server/tests/test_hosted_gateway_delegation_bootstrap.py",
       "companion": "docs/implementation/products/cpk_server/tests/test_hosted_gateway_delegation_bootstrap.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -515,19 +515,19 @@
     {
       "source": "products/cpk_server/tests/test_public_ingress_readiness_composition.py",
       "companion": "docs/implementation/products/cpk_server/tests/test_public_ingress_readiness_composition.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_server/tests/test_retained_ingress_composition.py",
       "companion": "docs/implementation/products/cpk_server/tests/test_retained_ingress_composition.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_server/tests/test_revision_history_composition.py",
       "companion": "docs/implementation/products/cpk_server/tests/test_revision_history_composition.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -557,7 +557,7 @@
     {
       "source": "products/cpk_server/tests/test_secret_provider_bootstrap.py",
       "companion": "docs/implementation/products/cpk_server/tests/test_secret_provider_bootstrap.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -791,7 +791,7 @@
     {
       "source": "scripts/cpk_server_gateway_published_live_smoke.sh",
       "companion": "docs/implementation/scripts/cpk_server_gateway_published_live_smoke.sh.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -803,7 +803,7 @@
     {
       "source": "scripts/cpk_server_hosted_activity_smoke.sh",
       "companion": "docs/implementation/scripts/cpk_server_hosted_activity_smoke.sh.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -827,7 +827,7 @@
     {
       "source": "scripts/cpk_server_published_image_smoke.sh",
       "companion": "docs/implementation/scripts/cpk_server_published_image_smoke.sh.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -869,7 +869,7 @@
     {
       "source": "scripts/cpk_server_secret_consumers_published_live_smoke.sh",
       "companion": "docs/implementation/scripts/cpk_server_secret_consumers_published_live_smoke.sh.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -887,7 +887,7 @@
     {
       "source": "scripts/cpk_server_seeded_stress_public_ingress_smoke.sh",
       "companion": "docs/implementation/scripts/cpk_server_seeded_stress_public_ingress_smoke.sh.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -905,19 +905,19 @@
     {
       "source": "scripts/cpk_server_workspace_a_router_transition_smoke.sh",
       "companion": "docs/implementation/scripts/cpk_server_workspace_a_router_transition_smoke.sh.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "scripts/cpk_server_workspace_b_multiplexer_observer_smoke.sh",
       "companion": "docs/implementation/scripts/cpk_server_workspace_b_multiplexer_observer_smoke.sh.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "scripts/cpk_server_workspace_c_postgres_retained_data_smoke.sh",
       "companion": "docs/implementation/scripts/cpk_server_workspace_c_postgres_retained_data_smoke.sh.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
