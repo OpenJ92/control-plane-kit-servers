@@ -47,7 +47,7 @@
     {
       "source": "bootstrap.sh",
       "companion": "docs/implementation/bootstrap.sh.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -347,19 +347,19 @@
     {
       "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/bootstrap.py",
       "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/bootstrap.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/bootstrap_cli.py",
       "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/bootstrap_cli.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/bootstrap_runtime.py",
       "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/bootstrap_runtime.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -533,25 +533,25 @@
     {
       "source": "products/cpk_server/tests/test_root_bootstrap.py",
       "companion": "docs/implementation/products/cpk_server/tests/test_root_bootstrap.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_server/tests/test_root_bootstrap_diagnostics.py",
       "companion": "docs/implementation/products/cpk_server/tests/test_root_bootstrap_diagnostics.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_server/tests/test_root_file_recipient.py",
       "companion": "docs/implementation/products/cpk_server/tests/test_root_file_recipient.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_server/tests/test_root_image_reference.py",
       "companion": "docs/implementation/products/cpk_server/tests/test_root_image_reference.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
