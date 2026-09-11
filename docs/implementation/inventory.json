@@ -833,25 +833,25 @@
     {
       "source": "scripts/cpk_server_recursive_activity.py",
       "companion": "docs/implementation/scripts/cpk_server_recursive_activity.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "scripts/cpk_server_recursive_activity_smoke.sh",
       "companion": "docs/implementation/scripts/cpk_server_recursive_activity_smoke.sh.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "scripts/cpk_server_recursive_tls_activity.py",
       "companion": "docs/implementation/scripts/cpk_server_recursive_tls_activity.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "scripts/cpk_server_recursive_tls_activity_smoke.sh",
       "companion": "docs/implementation/scripts/cpk_server_recursive_tls_activity_smoke.sh.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
