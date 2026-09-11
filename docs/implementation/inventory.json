@@ -341,7 +341,7 @@
     {
       "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/authentication.py",
       "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/authentication.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -365,49 +365,49 @@
     {
       "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/boundary.py",
       "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/boundary.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/client/__init__.py",
       "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/client/__init__.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/client/catalogue.py",
       "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/client/catalogue.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/client/cli.py",
       "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/client/cli.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/client/journal.py",
       "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/client/journal.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/client/profile.py",
       "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/client/profile.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/client/report.py",
       "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/client/report.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/client/transport.py",
       "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/client/transport.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -419,7 +419,7 @@
     {
       "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/composition.py",
       "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/composition.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -485,7 +485,7 @@
     {
       "source": "products/cpk_server/tests/test_http_mcp_boundaries.py",
       "companion": "docs/implementation/products/cpk_server/tests/test_http_mcp_boundaries.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -503,7 +503,7 @@
     {
       "source": "products/cpk_server/tests/test_process_composition.py",
       "companion": "docs/implementation/products/cpk_server/tests/test_process_composition.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -593,13 +593,13 @@
     {
       "source": "products/cpk_server/tests/test_topology_client_catalogue.py",
       "companion": "docs/implementation/products/cpk_server/tests/test_topology_client_catalogue.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_server/tests/test_topology_client_report.py",
       "companion": "docs/implementation/products/cpk_server/tests/test_topology_client_report.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
