@@ -857,13 +857,13 @@
     {
       "source": "scripts/cpk_server_remote_tls_secret_custody_source_live.py",
       "companion": "docs/implementation/scripts/cpk_server_remote_tls_secret_custody_source_live.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "scripts/cpk_server_remote_tls_secret_custody_source_live_smoke.sh",
       "companion": "docs/implementation/scripts/cpk_server_remote_tls_secret_custody_source_live_smoke.sh.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
