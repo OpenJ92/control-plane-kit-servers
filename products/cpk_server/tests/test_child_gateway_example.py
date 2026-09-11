@@ -6,6 +6,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
+import sys
 import unittest
 
 from control_plane_kit_core.delegation_authority import DelegationAuthorityBinding
@@ -17,7 +18,6 @@ from control_plane_kit_core.runtime_effects import GatewayTargetId
 from control_plane_kit_core.topology import compile_topology, validate_graph
 from control_plane_kit_servers_cpk_server.installation import compose_docker_cpk_installation
 from control_plane_kit_servers_cpk_server.client.installation import ChildInstallationHold
-from control_plane_kit_servers_hello_server.server import render_hello
 from products.cpk_server.examples import public_child_api as recipe
 from products.cpk_server.tests import live_child_fixture as fixture
 import test_child_installation_client as composition
@@ -27,6 +27,20 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 class ChildGatewayExampleTests(unittest.TestCase):
+    def setUp(self):
+        # This suite uses the Hello renderer as a product contract oracle.
+        # Restore only its own imports so the later catalogue isolation law
+        # still measures imports performed by catalogue loading itself.
+        self.hello_modules = {name for name in sys.modules
+                             if name == 'control_plane_kit_servers_hello_server'
+                             or name.startswith('control_plane_kit_servers_hello_server.')}
+
+    def tearDown(self):
+        for name in tuple(sys.modules):
+            if name not in self.hello_modules and (name == 'control_plane_kit_servers_hello_server'
+                    or name.startswith('control_plane_kit_servers_hello_server.')):
+                sys.modules.pop(name)
+
     def api(self, owner, name):
         value = getattr(owner, name, None)
         self.assertTrue(callable(value), f"missing gateway acceptance behavior: {name}")
@@ -59,6 +73,7 @@ class ChildGatewayExampleTests(unittest.TestCase):
 
     def test_application_graph_declares_gateway_target_delegation_and_owned_ingress(self):
         build = self.api(recipe, 'child_application_graph')
+        from control_plane_kit_servers_hello_server.server import render_hello
         installation = composition.ChildInstallationClientTests().installation()
         prefix = installation.installation_id
         products = self.products()
