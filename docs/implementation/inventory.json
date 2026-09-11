@@ -815,13 +815,13 @@
     {
       "source": "scripts/cpk_server_public_graph_convergence.py",
       "companion": "docs/implementation/scripts/cpk_server_public_graph_convergence.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "scripts/cpk_server_public_graph_convergence_smoke.sh",
       "companion": "docs/implementation/scripts/cpk_server_public_graph_convergence_smoke.sh.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
