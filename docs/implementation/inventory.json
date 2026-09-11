@@ -431,25 +431,25 @@
     {
       "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/server.py",
       "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/server.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_server/tests/live_numeric_bootstrap.py",
       "companion": "docs/implementation/products/cpk_server/tests/live_numeric_bootstrap.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_server/tests/live_root_bootstrap.py",
       "companion": "docs/implementation/products/cpk_server/tests/live_root_bootstrap.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_server/tests/test_current_cpk_server_composition.py",
       "companion": "docs/implementation/products/cpk_server/tests/test_current_cpk_server_composition.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
