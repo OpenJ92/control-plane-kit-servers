@@ -8,6 +8,32 @@ without another checkout. Repository-local rules below may tighten the shared
 contract; they may not weaken authorization, Docker-only validation, truthful
 uncertainty, test ownership, or GitHub-memory requirements.
 
+## Agent Implementation Companions
+
+Read [the companion guide](docs/implementation/README.md) and the relevant
+`docs/implementation/<repository-relative-source-path>.md` notes before design
+or implementation. Verify the owner source and contract-bearing imports or
+dynamic dependencies at the version selected by the actual consumer. A companion
+is navigation, not a substitute for source, tests, decisions or authorization.
+
+UPDATE companions in the same change when behavior, contracts, responsibilities,
+failure/effect boundaries or dependency assumptions change. Create, move and
+remove them alongside relevant source files. Every companion starts with its
+source path/link and a same-change maintenance reminder. Contract or pin changes
+require source search for affected consumers; known links are not exhaustive.
+Coordinate cross-repository updates at actual adoption. Do not describe held
+child source or an unadopted upstream version as the maintained baseline.
+
+Before handoff, compare the actual source diff with companion changes. Use one
+sentence in the existing PR decision log for updated notes or "companion
+reviewed; no semantic update needed." Do not manufacture prose/hash-only churn
+or a second report. Bring newly touched pending files current without blocking
+unrelated work on all rollout gaps. Coverage status does not certify behavior;
+state unknown rationale and discrepancies honestly. Different-author review
+checks consequential claims against source, with routine navigation reviewed
+proportionately. Follow [CPK #1799](https://github.com/OpenJ92/control-plane-kit/issues/1799)
+using existing Git/path review, without a new test or CI programme.
+
 ## Shared Product Boundary
 
 CPK is a human-authorized, AI-assisted infrastructure control plane. Providers

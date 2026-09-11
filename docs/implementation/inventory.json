@@ -1,0 +1,1098 @@
+{
+  "issue": "OpenJ92/control-plane-kit-servers#172",
+  "scope": "Stable readiness tracked files; child173 is a separate adoption slice",
+  "entries": [
+    {
+      "source": ".github/workflows/publish-product-image.yml",
+      "companion": "docs/implementation/.github/workflows/publish-product-image.yml.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": ".github/workflows/tests.yml",
+      "companion": "docs/implementation/.github/workflows/tests.yml.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": ".gitignore",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Version-control exclusion metadata"
+    },
+    {
+      "source": "AGENTS.md",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Governing agent instructions; maintained directly"
+    },
+    {
+      "source": "Dockerfile.test",
+      "companion": "docs/implementation/Dockerfile.test.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "GIT-FLOW.md",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Existing prose/history owner; link directly, no recursive mirror"
+    },
+    {
+      "source": "README.md",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Existing prose/history owner; link directly, no recursive mirror"
+    },
+    {
+      "source": "bootstrap.sh",
+      "companion": "docs/implementation/bootstrap.sh.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "catalogue/products.json",
+      "companion": "docs/implementation/catalogue/products.json.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "coordinates/server-products.json",
+      "companion": "docs/implementation/coordinates/server-products.json.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "coordination/core-release-candidate.json",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Historical coordination evidence; not current implementation authority"
+    },
+    {
+      "source": "coordination/extract-f-804-cpk-server-handoff.json",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Historical coordination evidence; not current implementation authority"
+    },
+    {
+      "source": "coordination/product-inventory.json",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Historical coordination evidence; not current implementation authority"
+    },
+    {
+      "source": "docs/decisions/0001-repository-foundation.md",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Existing prose/history owner; link directly, no recursive mirror"
+    },
+    {
+      "source": "docs/decisions/0002-server-repository-policy.md",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Existing prose/history owner; link directly, no recursive mirror"
+    },
+    {
+      "source": "docs/decisions/0003-package-metadata-and-catalogue-entrance.md",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Existing prose/history owner; link directly, no recursive mirror"
+    },
+    {
+      "source": "docs/decisions/0004-docker-first-test-and-image-harness.md",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Existing prose/history owner; link directly, no recursive mirror"
+    },
+    {
+      "source": "docs/decisions/0005-descriptor-catalogue-publication.md",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Existing prose/history owner; link directly, no recursive mirror"
+    },
+    {
+      "source": "docs/decisions/0006-cpk-server-process-composition.md",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Existing prose/history owner; link directly, no recursive mirror"
+    },
+    {
+      "source": "docs/decisions/0007-cpk-server-http-mcp-boundaries.md",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Existing prose/history owner; link directly, no recursive mirror"
+    },
+    {
+      "source": "docs/decisions/0008-cpk-server-oci-image.md",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Existing prose/history owner; link directly, no recursive mirror"
+    },
+    {
+      "source": "docs/decisions/0009-cpk-server-product-descriptor.md",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Existing prose/history owner; link directly, no recursive mirror"
+    },
+    {
+      "source": "docs/issue-transfer-strategy.md",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Existing prose/history owner; link directly, no recursive mirror"
+    },
+    {
+      "source": "docs/learning/1752/run-0001.md",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Existing prose/history owner; link directly, no recursive mirror"
+    },
+    {
+      "source": "docs/learning/1754/run-0001.md",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Existing prose/history owner; link directly, no recursive mirror"
+    },
+    {
+      "source": "docs/learning/1754/servers-148.md",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Existing prose/history owner; link directly, no recursive mirror"
+    },
+    {
+      "source": "docs/learning/bootstrap-images-158.md",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Existing prose/history owner; link directly, no recursive mirror"
+    },
+    {
+      "source": "docs/learning/extract-f-run-0001.md",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Existing prose/history owner; link directly, no recursive mirror"
+    },
+    {
+      "source": "docs/learning/root-bootstrap-156.md",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Existing prose/history owner; link directly, no recursive mirror"
+    },
+    {
+      "source": "docs/persistent-hello-demo.md",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Existing prose/history owner; link directly, no recursive mirror"
+    },
+    {
+      "source": "docs/product-layouts.md",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Existing prose/history owner; link directly, no recursive mirror"
+    },
+    {
+      "source": "docs/security/0001-foundation-review.md",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Existing prose/history owner; link directly, no recursive mirror"
+    },
+    {
+      "source": "products/README.md",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Existing prose/history owner; link directly, no recursive mirror"
+    },
+    {
+      "source": "products/cloudflared_connector/Dockerfile",
+      "companion": "docs/implementation/products/cloudflared_connector/Dockerfile.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cloudflared_connector/product.cpk.json",
+      "companion": "docs/implementation/products/cloudflared_connector/product.cpk.json.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cloudflared_connector/tests/test_cloudflared_connector_product.py",
+      "companion": "docs/implementation/products/cloudflared_connector/tests/test_cloudflared_connector_product.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_local_gateway/Dockerfile",
+      "companion": "docs/implementation/products/cpk_local_gateway/Dockerfile.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_local_gateway/product.cpk.json",
+      "companion": "docs/implementation/products/cpk_local_gateway/product.cpk.json.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_local_gateway/src/control_plane_kit_servers_cpk_local_gateway/__init__.py",
+      "companion": "docs/implementation/products/cpk_local_gateway/src/control_plane_kit_servers_cpk_local_gateway/__init__.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_local_gateway/src/control_plane_kit_servers_cpk_local_gateway/server.py",
+      "companion": "docs/implementation/products/cpk_local_gateway/src/control_plane_kit_servers_cpk_local_gateway/server.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_local_gateway/src/control_plane_kit_servers_cpk_local_gateway/verification.py",
+      "companion": "docs/implementation/products/cpk_local_gateway/src/control_plane_kit_servers_cpk_local_gateway/verification.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_local_gateway/tests/test_cpk_local_gateway_product.py",
+      "companion": "docs/implementation/products/cpk_local_gateway/tests/test_cpk_local_gateway_product.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/Dockerfile",
+      "companion": "docs/implementation/products/cpk_server/Dockerfile.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/Dockerfile.bootstrap",
+      "companion": "docs/implementation/products/cpk_server/Dockerfile.bootstrap.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/bootstrap.contract.json",
+      "companion": "docs/implementation/products/cpk_server/bootstrap.contract.json.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/docs/client.md",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Existing prose/history owner; link directly, no recursive mirror"
+    },
+    {
+      "source": "products/cpk_server/docs/composition.md",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Existing prose/history owner; link directly, no recursive mirror"
+    },
+    {
+      "source": "products/cpk_server/docs/installation.md",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Existing prose/history owner; link directly, no recursive mirror"
+    },
+    {
+      "source": "products/cpk_server/examples/root-bootstrap.md",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Existing prose/history owner; link directly, no recursive mirror"
+    },
+    {
+      "source": "products/cpk_server/examples/root_bootstrap_input.py",
+      "companion": "docs/implementation/products/cpk_server/examples/root_bootstrap_input.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/law-cards/extract-f-813.json",
+      "companion": "docs/implementation/products/cpk_server/law-cards/extract-f-813.json.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/law-cards/extract-f-814.json",
+      "companion": "docs/implementation/products/cpk_server/law-cards/extract-f-814.json.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/product.cpk.json",
+      "companion": "docs/implementation/products/cpk_server/product.cpk.json.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/product.docker-cloudflare.cpk.json",
+      "companion": "docs/implementation/products/cpk_server/product.docker-cloudflare.cpk.json.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/product.docker.cpk.json",
+      "companion": "docs/implementation/products/cpk_server/product.docker.cpk.json.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/__init__.py",
+      "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/__init__.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/authentication.py",
+      "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/authentication.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/bootstrap.py",
+      "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/bootstrap.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/bootstrap_cli.py",
+      "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/bootstrap_cli.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/bootstrap_runtime.py",
+      "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/bootstrap_runtime.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/boundary.py",
+      "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/boundary.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/client/__init__.py",
+      "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/client/__init__.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/client/catalogue.py",
+      "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/client/catalogue.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/client/cli.py",
+      "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/client/cli.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/client/journal.py",
+      "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/client/journal.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/client/profile.py",
+      "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/client/profile.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/client/report.py",
+      "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/client/report.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/client/transport.py",
+      "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/client/transport.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/client/workflow.py",
+      "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/client/workflow.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/composition.py",
+      "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/composition.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/installation.py",
+      "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/installation.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/server.py",
+      "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/server.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/tests/live_numeric_bootstrap.py",
+      "companion": "docs/implementation/products/cpk_server/tests/live_numeric_bootstrap.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/tests/live_root_bootstrap.py",
+      "companion": "docs/implementation/products/cpk_server/tests/live_root_bootstrap.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/tests/test_current_cpk_server_composition.py",
+      "companion": "docs/implementation/products/cpk_server/tests/test_current_cpk_server_composition.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/tests/test_docker_installation.py",
+      "companion": "docs/implementation/products/cpk_server/tests/test_docker_installation.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/tests/test_ephemeral_source_live_lifecycle.py",
+      "companion": "docs/implementation/products/cpk_server/tests/test_ephemeral_source_live_lifecycle.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/tests/test_gateway_rotation_access_paths.py",
+      "companion": "docs/implementation/products/cpk_server/tests/test_gateway_rotation_access_paths.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/tests/test_gateway_source_live_retirement.py",
+      "companion": "docs/implementation/products/cpk_server/tests/test_gateway_source_live_retirement.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/tests/test_hosted_gateway_delegation_bootstrap.py",
+      "companion": "docs/implementation/products/cpk_server/tests/test_hosted_gateway_delegation_bootstrap.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/tests/test_http_mcp_boundaries.py",
+      "companion": "docs/implementation/products/cpk_server/tests/test_http_mcp_boundaries.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/tests/test_image_bootstrap.py",
+      "companion": "docs/implementation/products/cpk_server/tests/test_image_bootstrap.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/tests/test_installation_control_auth.py",
+      "companion": "docs/implementation/products/cpk_server/tests/test_installation_control_auth.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/tests/test_process_composition.py",
+      "companion": "docs/implementation/products/cpk_server/tests/test_process_composition.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/tests/test_product_descriptor.py",
+      "companion": "docs/implementation/products/cpk_server/tests/test_product_descriptor.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/tests/test_public_ingress_readiness_composition.py",
+      "companion": "docs/implementation/products/cpk_server/tests/test_public_ingress_readiness_composition.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/tests/test_retained_ingress_composition.py",
+      "companion": "docs/implementation/products/cpk_server/tests/test_retained_ingress_composition.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/tests/test_revision_history_composition.py",
+      "companion": "docs/implementation/products/cpk_server/tests/test_revision_history_composition.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/tests/test_root_bootstrap.py",
+      "companion": "docs/implementation/products/cpk_server/tests/test_root_bootstrap.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/tests/test_root_bootstrap_diagnostics.py",
+      "companion": "docs/implementation/products/cpk_server/tests/test_root_bootstrap_diagnostics.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/tests/test_root_file_recipient.py",
+      "companion": "docs/implementation/products/cpk_server/tests/test_root_file_recipient.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/tests/test_root_image_reference.py",
+      "companion": "docs/implementation/products/cpk_server/tests/test_root_image_reference.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/tests/test_secret_provider_bootstrap.py",
+      "companion": "docs/implementation/products/cpk_server/tests/test_secret_provider_bootstrap.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/tests/test_source_live_abort_compensation.py",
+      "companion": "docs/implementation/products/cpk_server/tests/test_source_live_abort_compensation.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/tests/test_source_live_gateway_denials.py",
+      "companion": "docs/implementation/products/cpk_server/tests/test_source_live_gateway_denials.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/tests/test_source_live_phase_reporting.py",
+      "companion": "docs/implementation/products/cpk_server/tests/test_source_live_phase_reporting.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/tests/test_source_live_restart_diagnostics.py",
+      "companion": "docs/implementation/products/cpk_server/tests/test_source_live_restart_diagnostics.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/tests/test_topology_client.py",
+      "companion": "docs/implementation/products/cpk_server/tests/test_topology_client.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/tests/test_topology_client_catalogue.py",
+      "companion": "docs/implementation/products/cpk_server/tests/test_topology_client_catalogue.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/tests/test_topology_client_report.py",
+      "companion": "docs/implementation/products/cpk_server/tests/test_topology_client_report.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/cpk_server/tests/test_topology_client_saved.py",
+      "companion": "docs/implementation/products/cpk_server/tests/test_topology_client_saved.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/hello_server/Dockerfile",
+      "companion": "docs/implementation/products/hello_server/Dockerfile.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/hello_server/README.md",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Existing prose/history owner; link directly, no recursive mirror"
+    },
+    {
+      "source": "products/hello_server/product.cpk.json",
+      "companion": "docs/implementation/products/hello_server/product.cpk.json.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/hello_server/src/control_plane_kit_servers_hello_server/__init__.py",
+      "companion": "docs/implementation/products/hello_server/src/control_plane_kit_servers_hello_server/__init__.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/hello_server/src/control_plane_kit_servers_hello_server/server.py",
+      "companion": "docs/implementation/products/hello_server/src/control_plane_kit_servers_hello_server/server.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/hello_server/tests/test_hello_server_product.py",
+      "companion": "docs/implementation/products/hello_server/tests/test_hello_server_product.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/http_active_router/Dockerfile",
+      "companion": "docs/implementation/products/http_active_router/Dockerfile.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/http_active_router/product.cpk.json",
+      "companion": "docs/implementation/products/http_active_router/product.cpk.json.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/http_active_router/src/control_plane_kit_servers_http_active_router/__init__.py",
+      "companion": "docs/implementation/products/http_active_router/src/control_plane_kit_servers_http_active_router/__init__.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/http_active_router/src/control_plane_kit_servers_http_active_router/server.py",
+      "companion": "docs/implementation/products/http_active_router/src/control_plane_kit_servers_http_active_router/server.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/http_active_router/tests/test_http_active_router_product.py",
+      "companion": "docs/implementation/products/http_active_router/tests/test_http_active_router_product.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/http_multiplexer/Dockerfile",
+      "companion": "docs/implementation/products/http_multiplexer/Dockerfile.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/http_multiplexer/product.cpk.json",
+      "companion": "docs/implementation/products/http_multiplexer/product.cpk.json.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/http_multiplexer/src/control_plane_kit_servers_http_multiplexer/__init__.py",
+      "companion": "docs/implementation/products/http_multiplexer/src/control_plane_kit_servers_http_multiplexer/__init__.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/http_multiplexer/src/control_plane_kit_servers_http_multiplexer/server.py",
+      "companion": "docs/implementation/products/http_multiplexer/src/control_plane_kit_servers_http_multiplexer/server.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/http_multiplexer/tests/test_http_multiplexer_product.py",
+      "companion": "docs/implementation/products/http_multiplexer/tests/test_http_multiplexer_product.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/postgres_server/product.cpk.json",
+      "companion": "docs/implementation/products/postgres_server/product.cpk.json.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/postgres_server/tests/test_postgres_server_product.py",
+      "companion": "docs/implementation/products/postgres_server/tests/test_postgres_server_product.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/secrets_server/Dockerfile",
+      "companion": "docs/implementation/products/secrets_server/Dockerfile.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/secrets_server/bootstrap.contract.json",
+      "companion": "docs/implementation/products/secrets_server/bootstrap.contract.json.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/secrets_server/entrypoint.sh",
+      "companion": "docs/implementation/products/secrets_server/entrypoint.sh.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/secrets_server/product.cpk.json",
+      "companion": "docs/implementation/products/secrets_server/product.cpk.json.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/secrets_server/tests/live_numeric_bootstrap.py",
+      "companion": "docs/implementation/products/secrets_server/tests/live_numeric_bootstrap.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "products/secrets_server/tests/test_secrets_server_product.py",
+      "companion": "docs/implementation/products/secrets_server/tests/test_secrets_server_product.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "pyproject.toml",
+      "companion": "docs/implementation/pyproject.toml.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/apply_coordinates.py",
+      "companion": "docs/implementation/scripts/apply_coordinates.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/cpk_local_gateway_private_probe_smoke.sh",
+      "companion": "docs/implementation/scripts/cpk_local_gateway_private_probe_smoke.sh.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/cpk_local_gateway_structural_grant_check.py",
+      "companion": "docs/implementation/scripts/cpk_local_gateway_structural_grant_check.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/cpk_local_gateway_structural_grant_image_smoke.sh",
+      "companion": "docs/implementation/scripts/cpk_local_gateway_structural_grant_image_smoke.sh.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/cpk_server_cloudflare_secret_custody_source_live_smoke.sh",
+      "companion": "docs/implementation/scripts/cpk_server_cloudflare_secret_custody_source_live_smoke.sh.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/cpk_server_gateway_published_live_smoke.sh",
+      "companion": "docs/implementation/scripts/cpk_server_gateway_published_live_smoke.sh.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/cpk_server_hosted_activity.py",
+      "companion": "docs/implementation/scripts/cpk_server_hosted_activity.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/cpk_server_hosted_activity_smoke.sh",
+      "companion": "docs/implementation/scripts/cpk_server_hosted_activity_smoke.sh.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/cpk_server_image_smoke.sh",
+      "companion": "docs/implementation/scripts/cpk_server_image_smoke.sh.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/cpk_server_public_graph_convergence.py",
+      "companion": "docs/implementation/scripts/cpk_server_public_graph_convergence.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/cpk_server_public_graph_convergence_smoke.sh",
+      "companion": "docs/implementation/scripts/cpk_server_public_graph_convergence_smoke.sh.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/cpk_server_published_image_smoke.sh",
+      "companion": "docs/implementation/scripts/cpk_server_published_image_smoke.sh.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/cpk_server_recursive_activity.py",
+      "companion": "docs/implementation/scripts/cpk_server_recursive_activity.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/cpk_server_recursive_activity_smoke.sh",
+      "companion": "docs/implementation/scripts/cpk_server_recursive_activity_smoke.sh.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/cpk_server_recursive_tls_activity.py",
+      "companion": "docs/implementation/scripts/cpk_server_recursive_tls_activity.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/cpk_server_recursive_tls_activity_smoke.sh",
+      "companion": "docs/implementation/scripts/cpk_server_recursive_tls_activity_smoke.sh.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/cpk_server_remote_tls_secret_custody_source_live.py",
+      "companion": "docs/implementation/scripts/cpk_server_remote_tls_secret_custody_source_live.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/cpk_server_remote_tls_secret_custody_source_live_smoke.sh",
+      "companion": "docs/implementation/scripts/cpk_server_remote_tls_secret_custody_source_live_smoke.sh.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/cpk_server_secret_consumers_published_live_smoke.sh",
+      "companion": "docs/implementation/scripts/cpk_server_secret_consumers_published_live_smoke.sh.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/cpk_server_secret_provider_source_live.py",
+      "companion": "docs/implementation/scripts/cpk_server_secret_provider_source_live.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/cpk_server_secret_provider_source_live_smoke.sh",
+      "companion": "docs/implementation/scripts/cpk_server_secret_provider_source_live_smoke.sh.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/cpk_server_seeded_stress_public_ingress_smoke.sh",
+      "companion": "docs/implementation/scripts/cpk_server_seeded_stress_public_ingress_smoke.sh.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/cpk_server_source_live_abort.py",
+      "companion": "docs/implementation/scripts/cpk_server_source_live_abort.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/cpk_server_source_live_report.py",
+      "companion": "docs/implementation/scripts/cpk_server_source_live_report.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/cpk_server_workspace_a_router_transition_smoke.sh",
+      "companion": "docs/implementation/scripts/cpk_server_workspace_a_router_transition_smoke.sh.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/cpk_server_workspace_b_multiplexer_observer_smoke.sh",
+      "companion": "docs/implementation/scripts/cpk_server_workspace_b_multiplexer_observer_smoke.sh.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/cpk_server_workspace_c_postgres_retained_data_smoke.sh",
+      "companion": "docs/implementation/scripts/cpk_server_workspace_c_postgres_retained_data_smoke.sh.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/docker_residue_audit.sh",
+      "companion": "docs/implementation/scripts/docker_residue_audit.sh.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/hello_server_image_smoke.sh",
+      "companion": "docs/implementation/scripts/hello_server_image_smoke.sh.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/hello_server_published_image_smoke.sh",
+      "companion": "docs/implementation/scripts/hello_server_published_image_smoke.sh.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/http_active_router_image_smoke.sh",
+      "companion": "docs/implementation/scripts/http_active_router_image_smoke.sh.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/http_active_router_published_image_smoke.sh",
+      "companion": "docs/implementation/scripts/http_active_router_published_image_smoke.sh.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/http_multiplexer_image_smoke.sh",
+      "companion": "docs/implementation/scripts/http_multiplexer_image_smoke.sh.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/http_multiplexer_published_image_smoke.sh",
+      "companion": "docs/implementation/scripts/http_multiplexer_published_image_smoke.sh.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/postgres_server_image_smoke.sh",
+      "companion": "docs/implementation/scripts/postgres_server_image_smoke.sh.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/product_image_coordinate.py",
+      "companion": "docs/implementation/scripts/product_image_coordinate.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/product_image_lane.py",
+      "companion": "docs/implementation/scripts/product_image_lane.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/publish_catalogue.py",
+      "companion": "docs/implementation/scripts/publish_catalogue.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/publish_product_image.sh",
+      "companion": "docs/implementation/scripts/publish_product_image.sh.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/run_all_tests.py",
+      "companion": "docs/implementation/scripts/run_all_tests.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "scripts/secrets_server_image_smoke.sh",
+      "companion": "docs/implementation/scripts/secrets_server_image_smoke.sh.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "src/control_plane_kit_servers/__init__.py",
+      "companion": "docs/implementation/src/control_plane_kit_servers/__init__.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "src/control_plane_kit_servers/catalogue.json",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Generated publication outputs owned by scripts/publish_catalogue.py and src/control_plane_kit_servers/catalogue.py"
+    },
+    {
+      "source": "src/control_plane_kit_servers/catalogue.json.sha256",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Generated publication outputs owned by scripts/publish_catalogue.py and src/control_plane_kit_servers/catalogue.py"
+    },
+    {
+      "source": "src/control_plane_kit_servers/catalogue.py",
+      "companion": "docs/implementation/src/control_plane_kit_servers/catalogue.py.md",
+      "status": "reviewed",
+      "exclusion_reason": null
+    },
+    {
+      "source": "test.sh",
+      "companion": "docs/implementation/test.sh.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "test_support/package_integrity.py",
+      "companion": "docs/implementation/test_support/package_integrity.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "test_support/tests/test_gate_contract.py",
+      "companion": "docs/implementation/test_support/tests/test_gate_contract.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "test_support/tests/test_package_integrity.py",
+      "companion": "docs/implementation/test_support/tests/test_package_integrity.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "tests/approved_skips.json",
+      "companion": "docs/implementation/tests/approved_skips.json.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "tests/test_coordinates.py",
+      "companion": "docs/implementation/tests/test_coordinates.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "tests/test_descriptor_catalogue.py",
+      "companion": "docs/implementation/tests/test_descriptor_catalogue.py.md",
+      "status": "reviewed",
+      "exclusion_reason": null
+    },
+    {
+      "source": "tests/test_docker_harness.py",
+      "companion": "docs/implementation/tests/test_docker_harness.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "tests/test_hosted_activity_readiness.py",
+      "companion": "docs/implementation/tests/test_hosted_activity_readiness.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "tests/test_package_metadata.py",
+      "companion": "docs/implementation/tests/test_package_metadata.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    },
+    {
+      "source": "tests/test_repository_policy.py",
+      "companion": "docs/implementation/tests/test_repository_policy.py.md",
+      "status": "pending",
+      "exclusion_reason": null
+    }
+  ]
+}

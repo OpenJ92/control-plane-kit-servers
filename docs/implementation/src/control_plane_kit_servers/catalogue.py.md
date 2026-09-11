@@ -1,0 +1,10 @@
+Source: `src/control_plane_kit_servers/catalogue.py`.
+Maintain this document alongside its source file. When the source or relevant imported contracts change, verify and update this companion in the same change.
+
+[Source](../../../../src/control_plane_kit_servers/catalogue.py) owns declaration-only publication records and deterministic catalogue output. It does not import product applications, register products with a running CPK, or define another topology/descriptor language. Keep the lazy Core import inside the explicit product-catalogue admission path.
+
+`load_catalogue` validates completed publication metadata and unique product identities. `load_product_catalog` separately reads descriptor bytes, checks their recorded checksum and image digest, decodes them with the selected Core `ProductDescriptorCodec`, and returns Core's `ProductCatalog`. Those are local value-admission checks, not public workspace registration or a current registry/image-health observation. Consumers must satisfy their public registration prerequisites separately.
+
+`publish_catalogue` writes deterministic JSON and its checksum sidecar. The generated package catalogue and sidecar are outputs of this owner, not independent editable product definitions. Product directories own descriptors; [pyproject.toml](../../../../pyproject.toml) selects the Core contract used to decode them. Do not silently adopt the newest upstream codec when the consumer is pinned.
+
+[test_descriptor_catalogue.py](../../../../tests/test_descriptor_catalogue.py) covers metadata rejection, reproducible output and import isolation. These tests do not establish deployed product readiness, runtime authority or public plan acceptance. Repository decisions [0003](../../../decisions/0003-package-metadata-and-catalogue-entrance.md) and [0005](../../../decisions/0005-descriptor-catalogue-publication.md) record this publication boundary; reconcile later source changes rather than treating historical prose as an automatic current-state claim.
