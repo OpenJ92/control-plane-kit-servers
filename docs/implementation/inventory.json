@@ -647,61 +647,61 @@
     {
       "source": "products/http_active_router/Dockerfile",
       "companion": "docs/implementation/products/http_active_router/Dockerfile.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/http_active_router/product.cpk.json",
       "companion": "docs/implementation/products/http_active_router/product.cpk.json.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/http_active_router/src/control_plane_kit_servers_http_active_router/__init__.py",
       "companion": "docs/implementation/products/http_active_router/src/control_plane_kit_servers_http_active_router/__init__.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/http_active_router/src/control_plane_kit_servers_http_active_router/server.py",
       "companion": "docs/implementation/products/http_active_router/src/control_plane_kit_servers_http_active_router/server.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/http_active_router/tests/test_http_active_router_product.py",
       "companion": "docs/implementation/products/http_active_router/tests/test_http_active_router_product.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/http_multiplexer/Dockerfile",
       "companion": "docs/implementation/products/http_multiplexer/Dockerfile.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/http_multiplexer/product.cpk.json",
       "companion": "docs/implementation/products/http_multiplexer/product.cpk.json.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/http_multiplexer/src/control_plane_kit_servers_http_multiplexer/__init__.py",
       "companion": "docs/implementation/products/http_multiplexer/src/control_plane_kit_servers_http_multiplexer/__init__.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/http_multiplexer/src/control_plane_kit_servers_http_multiplexer/server.py",
       "companion": "docs/implementation/products/http_multiplexer/src/control_plane_kit_servers_http_multiplexer/server.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/http_multiplexer/tests/test_http_multiplexer_product.py",
       "companion": "docs/implementation/products/http_multiplexer/tests/test_http_multiplexer_product.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -941,25 +941,25 @@
     {
       "source": "scripts/http_active_router_image_smoke.sh",
       "companion": "docs/implementation/scripts/http_active_router_image_smoke.sh.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "scripts/http_active_router_published_image_smoke.sh",
       "companion": "docs/implementation/scripts/http_active_router_published_image_smoke.sh.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "scripts/http_multiplexer_image_smoke.sh",
       "companion": "docs/implementation/scripts/http_multiplexer_image_smoke.sh.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "scripts/http_multiplexer_published_image_smoke.sh",
       "companion": "docs/implementation/scripts/http_multiplexer_published_image_smoke.sh.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
