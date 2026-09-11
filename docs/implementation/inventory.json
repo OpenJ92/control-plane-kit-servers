@@ -797,7 +797,7 @@
     {
       "source": "scripts/cpk_server_hosted_activity.py",
       "companion": "docs/implementation/scripts/cpk_server_hosted_activity.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
