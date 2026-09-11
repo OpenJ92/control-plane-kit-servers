@@ -413,7 +413,7 @@
     {
       "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/client/workflow.py",
       "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/client/workflow.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -587,7 +587,7 @@
     {
       "source": "products/cpk_server/tests/test_topology_client.py",
       "companion": "docs/implementation/products/cpk_server/tests/test_topology_client.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -605,7 +605,7 @@
     {
       "source": "products/cpk_server/tests/test_topology_client_saved.py",
       "companion": "docs/implementation/products/cpk_server/tests/test_topology_client_saved.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
