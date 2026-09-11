@@ -7,11 +7,18 @@ restart under its separately reviewed action plan.
 """
 
 import json
+from dataclasses import replace
+from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
 
-from control_plane_kit_core.algebra import DeploymentTopology, DockerRuntime
+from control_plane_kit_core.algebra import DeploymentTopology, DockerRuntime, SocketConnection
+from control_plane_kit_core.delegation_keys import DelegationKeyPurpose
+from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
+from control_plane_kit_core.products import ProductDescriptorCodec, ProductInstanceConfiguration, instantiate_product
+from control_plane_kit_core.public_ingress import PublicIngressTarget
 from control_plane_kit_core.topology import DeploymentGraph, GraphDescriptorCodec, compile_topology
+from control_plane_kit_core.verification import HttpCheck, VerificationContract
 from control_plane_kit_servers_cpk_server.client import SavedDesiredRevision
 from control_plane_kit_servers_cpk_server.client.installation import (
     ChildInstallationHold, child_installation_document, initialize_child_workspace,
@@ -92,12 +99,108 @@ def initialize_after_parent(installation, *, parent, prepared, child, setup, sta
     return {"parent": tracking, "child": initialized}
 
 
-def child_runtime_graph(installation, child_workspace_id):
-    """One explicit child Docker runtime; its plan must be non-noop to earn proof."""
-    return compile_topology(DeploymentTopology(child_workspace_id,
-        DockerRuntime(runtime_id=f"{installation.installation_id}-proof",
-                      network_name=f"cpk-{installation.installation_id}-proof",
-                      authority_ref=installation.runtime_access.authority_ref, children=())))
+def gateway_signer_product(selected_cpk_document):
+    """Select an existing process option without changing its image/defaults."""
+    product = selected_cpk_document.product
+    environment = {value.name: value for value in product.runtime_contract.public_environment}
+    if environment.get('CPK_PRODUCT_MATERIAL_RESOLVER') != PublicStaticEnvironmentBinding(
+            'CPK_PRODUCT_MATERIAL_RESOLVER', 'provider'):
+        raise ChildInstallationHold('gateway signer requires the provider-backed CPK product')
+    environment['CPK_GATEWAY_PROBE_SIGNER'] = PublicStaticEnvironmentBinding('CPK_GATEWAY_PROBE_SIGNER', 'ed25519')
+    return ProductDescriptorCodec().encode_document(replace(product, runtime_contract=replace(
+        product.runtime_contract, public_environment=tuple(environment.values()))))
+
+
+def child_application_graph(installation, child_workspace_id, *, hello_product, router_product,
+                            gateway_product, connector_product, ingress, delegation_authority):
+    """Declared products, target/delegation and ingress; no provider calls."""
+    from control_plane_kit_servers_hello_server.server import render_hello
+
+    prefix = installation.installation_id
+    hello_id, router_id, gateway_id = (prefix + suffix for suffix in ('-hello', '-router', '-gateway'))
+    if (ingress.target != PublicIngressTarget(gateway_id, 'control')
+            or ingress.connector_node_id != prefix + '-gateway-connector'
+            or delegation_authority.delegate_node_id != gateway_id
+            or delegation_authority.purpose is not DelegationKeyPurpose.GATEWAY_PROBE):
+        raise ChildInstallationHold('application gateway bindings differ from the intended composition')
+    message, color = 'Hello from the child control plane', 'blue'
+    hello_config = ProductInstanceConfiguration.from_contract(hello_product.runtime_contract)
+    hello_config = replace(hello_config, public_environment=tuple(
+        PublicStaticEnvironmentBinding(value.name, message if value.name == 'HELLO_MESSAGE' else color)
+        if value.name in {'HELLO_MESSAGE', 'HELLO_COLOR'} else value
+        for value in hello_config.public_environment))
+    children = (
+        instantiate_product(hello_product, hello_id, hello_config),
+        instantiate_product(router_product, router_id, ProductInstanceConfiguration.from_contract(router_product.runtime_contract)),
+        instantiate_product(gateway_product, gateway_id, ProductInstanceConfiguration.from_contract(gateway_product.runtime_contract)),
+        instantiate_product(connector_product, ingress.connector_node_id,
+                            ProductInstanceConfiguration.from_contract(connector_product.runtime_contract)),
+        SocketConnection(hello_id, 'internal', router_id, 'active'),
+        SocketConnection(router_id, 'internal', gateway_id, 'target-http'),
+    )
+    graph = compile_topology(DeploymentTopology(child_workspace_id,
+        DockerRuntime(runtime_id=prefix + '-proof', network_name='cpk-' + prefix + '-proof',
+                      authority_ref=installation.runtime_access.authority_ref, children=children),
+        public_ingresses=(ingress,), delegation_authorities=(delegation_authority,)))
+    router = graph.node(router_id)
+    check = HttpCheck(check_id='root-response', provider_socket='internal', path='/',
+                      expected_body_sha256=sha256(render_hello(message, color)).hexdigest())
+    return graph.update_node(replace(router, block_spec=replace(router.block_spec,
+        verification=VerificationContract((*router.block_spec.verification.checks, check)))))
+
+
+def verify_gateway_probe_response(response, *, expected, request, not_before, not_after):
+    """Fresh status/size evidence, separate from deployment body-hash proof."""
+    def require(condition):
+        if not condition:
+            raise ChildInstallationHold('fresh gateway probe evidence does not match the requested application')
+
+    def coordinate(value):
+        require(isinstance(value, str) and 0 < len(value.encode()) <= 256)
+        return value
+
+    def timestamp(value):
+        require(isinstance(value, str) and len(value) <= 64)
+        parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        require(parsed.tzinfo is not None)
+        return parsed
+
+    try:
+        require(response.get('replayed') is False)
+        attempt = response['gateway_probe']
+        fields = ('workspace_id', 'current_graph_id', 'gateway_node_id', 'gateway_runtime_id', 'request_id', 'actor_id')
+        for field in fields:
+            require(attempt.get(field) == coordinate(expected[field]))
+        require(attempt.get('access_path') == 'named-public-ingress'
+                and attempt.get('probe_kind') == request.kind.value == 'http-status'
+                and attempt.get('target_id') == request.target_id.value
+                and attempt.get('request_digest') == request.canonical_digest().value
+                and attempt.get('status') == 'succeeded' and attempt.get('result_code') == 'probe-succeeded')
+        requested, completed = timestamp(attempt['requested_at']), timestamp(attempt['completed_at'])
+        require(not_before.tzinfo is not None and not_after.tzinfo is not None
+                and not_before <= requested <= completed <= not_after)
+        grant = attempt['grant']
+        require(grant.get('issuer') == expected['issuer'] and grant.get('key_id') == expected['key_id']
+                and grant.get('audience') == f"gateway:{expected['workspace_id']}:{expected['gateway_node_id']}")
+        issued, expires = grant['issued_at'], grant['expires_at']
+        require(type(issued) is int and type(expires) is int
+                and int(not_before.timestamp()) <= issued <= int(not_after.timestamp())
+                and 0 < expires - issued <= 300 and issued <= completed.timestamp() < expires)
+        coordinate(grant['jti'])
+        evidence = attempt['evidence']
+        require(set(evidence) == {'outcome', 'target_id', 'probe', 'http_status', 'body_size'}
+                and evidence['outcome'] == 'passed' and evidence['target_id'] == request.target_id.value
+                and evidence['probe'] == 'http-status' and type(evidence['http_status']) is int
+                and evidence['http_status'] == 200 and type(evidence['body_size']) is int
+                and 0 < evidence['body_size'] <= 16_384)
+        return {**{field: attempt[field] for field in fields}, 'probe_id': coordinate(attempt['probe_id']),
+            'access_path': attempt['access_path'], 'probe_kind': attempt['probe_kind'],
+            'target_id': attempt['target_id'], 'request_digest': attempt['request_digest'],
+            'requested_at': attempt['requested_at'], 'completed_at': attempt['completed_at'],
+            'grant': {field: grant[field] for field in ('issuer', 'key_id', 'audience', 'jti', 'issued_at', 'expires_at')},
+            'status': 'succeeded', 'result_code': 'probe-succeeded', 'evidence': dict(evidence)}
+    except (KeyError, TypeError, ValueError, AttributeError):
+        raise ChildInstallationHold('fresh gateway probe evidence could not be verified') from None
 
 
 def prepare_saved_empty(client, *, graph_path: Path):

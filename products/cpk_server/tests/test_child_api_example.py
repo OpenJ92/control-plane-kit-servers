@@ -6,6 +6,7 @@ from dataclasses import replace
 import json
 import os
 from pathlib import Path
+import sys
 from types import SimpleNamespace
 import tempfile
 import unittest
@@ -19,8 +20,23 @@ import test_child_installation_client as composition
 
 
 class ChildApiExampleTests(unittest.TestCase):
+    def setUp(self):
+        self.hello_modules = {name for name in sys.modules
+                             if name == 'control_plane_kit_servers_hello_server'
+                             or name.startswith('control_plane_kit_servers_hello_server.')}
+
+    def tearDown(self):
+        for name in tuple(sys.modules):
+            if name not in self.hello_modules and (name == 'control_plane_kit_servers_hello_server'
+                    or name.startswith('control_plane_kit_servers_hello_server.')):
+                sys.modules.pop(name)
+
     def test_generated_fixture_operations_match_before_any_approval(self):
         from copy import deepcopy
+        from control_plane_kit_core.delegation_authority import DelegationAuthorityBinding
+        from control_plane_kit_core.delegation_keys import DelegationKeyPurpose
+        from control_plane_kit_core.products import ProductDescriptorCodec
+        from control_plane_kit_core.public_ingress import IngressAuthorityReference, NamedPublicIngress, PublicIngressTarget
         from control_plane_kit_core.planning import ActivityPlanDescriptorCodec, compile_activity_plan
         from control_plane_kit_core.topology import diff_graphs, validate_graph
         from products.cpk_server.tests import live_child_api as witness
@@ -28,7 +44,19 @@ class ChildApiExampleTests(unittest.TestCase):
         installation = composition.ChildInstallationClientTests().installation()
         installation_graph = GraphDescriptorCodec().decode(child_installation_document(
             installation, child_workspace_id='child-workspace')['graph'])
-        proof_graph = recipe.child_runtime_graph(installation, 'child-workspace')
+        source = Path(__file__).resolve().parents[3]
+        products = {name: ProductDescriptorCodec().decode_document(
+            (source / 'products' / name / 'product.cpk.json').read_bytes()).product
+            for name in ('hello_server', 'http_active_router', 'cpk_local_gateway', 'cloudflared_connector')}
+        prefix = installation.installation_id
+        proof_graph = recipe.child_application_graph(installation, 'child-workspace',
+            hello_product=products['hello_server'], router_product=products['http_active_router'],
+            gateway_product=products['cpk_local_gateway'], connector_product=products['cloudflared_connector'],
+            ingress=NamedPublicIngress(prefix + '-gateway-public', IngressAuthorityReference('application-cloudflare'),
+                PublicIngressTarget(prefix + '-gateway', 'control'), prefix + '-gateway-connector',
+                'fresh-run-gateway.example.test'),
+            delegation_authority=DelegationAuthorityBinding(prefix + '-gateway',
+                DelegationKeyPurpose.GATEWAY_PROBE, 'acceptance-issuer'))
         for graph in (installation_graph, proof_graph):
             for destructive in (False, True):
                 with self.subTest(graph=graph.name, destructive=destructive):
@@ -134,6 +162,7 @@ class ChildApiExampleTests(unittest.TestCase):
         release = {'parent_installation_id': 'test-parent', 'parent_workspace_id': 'parent-workspace',
             'child_installation_id': 'test-child', 'child_workspace_id': 'child-workspace',
             'loopback_port': 18089, 'hostname': 'test-child.example.test',
+            'gateway_hostname': 'test-run-gateway.example.test',
             'parent_endpoint': 'https://test-parent.example.test',
             'parent_ingress_connection': {'tunnel_id': '11111111-1111-4111-8111-111111111111',
                 'dns_record_id': 'd' * 32, 'token_reference': 'secret://bootstrap/retained-ingress/token',
@@ -172,7 +201,7 @@ class ChildApiExampleTests(unittest.TestCase):
             self.assertEqual((root_grant['workspace_id'], child_grant['workspace_id']),
                              ('parent-workspace', 'child-workspace'))
             self.assertIn('ingress-authority:use', root_grant['scopes'])
-            self.assertNotIn('ingress-authority:use', child_grant['scopes'])
+            self.assertEqual(child_grant['scopes'], fixture.APPLICATION_SETUP_SCOPES)
             # Each independently deployed process gets its own principal document,
             # with separate role credentials and only its exact workspace grants.
             seen_credentials = set()
@@ -207,7 +236,7 @@ class ChildApiExampleTests(unittest.TestCase):
                     _ROUTE_AUTHORIZATION_POLICIES['command.run.claim'].authorize(actors['operator'].command_context(workspace))
                 with self.assertRaises(CpkServerApplicationError):
                     _ROUTE_AUTHORIZATION_POLICIES['command.approval.decide'].authorize(actors['worker'].command_context(workspace))
-                if workspace == 'parent-workspace':
+                if workspace in {'parent-workspace', 'child-workspace'}:
                     # Scope admission only: later durable reference/provider
                     # authorization and secret resolution are not exercised.
                     class StoreBoundaryReached(Exception):
@@ -229,21 +258,42 @@ class ChildApiExampleTests(unittest.TestCase):
                     with self.assertRaises(StoreBoundaryReached):
                         authorizer.authorize_resolution(secret_use)
                     self.assertEqual(store_entries, [workspace])
-                self.assertEqual(len(principals), 3)
+                count = 4 if workspace == 'child-workspace' else 3
+                self.assertEqual(len(principals), count)
                 credentials = {entry['credential'] for entry in principals}
-                self.assertEqual(len(credentials), 3)
+                self.assertEqual(len(credentials), count)
                 self.assertTrue(seen_credentials.isdisjoint(credentials))
                 seen_credentials.update(credentials)
                 self.assertEqual(principals[0]['credential'], (material / 'control_credential').read_text())
-                self.assertEqual([entry['kind'] for entry in principals], ['operator', 'operator', 'worker'])
+                self.assertEqual([entry['kind'] for entry in principals],
+                                 ['operator', 'operator', 'worker'] + (['operator'] if count == 4 else []))
                 for entry in principals:
                     self.assertEqual(set(entry['workspace_grants']), {workspace})
                     self.assertNotIn(entry['credential'], json.dumps(document['graph']))
                 self.assertEqual((material / 'principals').stat().st_mode & 0o777, 0o400)
                 self.assertEqual(principals[2]['workspace_grants'][workspace],
-                                 ['execution:operate', 'secret-provider:use'] if workspace == 'parent-workspace'
-                                 else ['execution:operate'])
+                                 ['execution:operate', 'secret-provider:use'])
                 self.assertNotIn('plan:approve', principals[0]['workspace_grants'][workspace])
+                if count == 4:
+                    probe = verifier.authenticate((material / 'probe_credential').read_bytes())
+                    self.assertEqual(principals[3]['workspace_grants'][workspace], fixture.PROBE_SCOPES)
+                    policy = _ROUTE_AUTHORIZATION_POLICIES['command.gateway-probe.request']
+                    policy.authorize(probe.command_context(workspace))
+                    with self.assertRaises(CpkServerApplicationError):
+                        policy.authorize(actors['operator'].command_context(workspace))
+                    for route in ('command.deployment.admit', 'command.approval.decide', 'command.run.claim'):
+                        with self.assertRaises(CpkServerApplicationError):
+                            _ROUTE_AUTHORIZATION_POLICIES[route].authorize(probe.command_context(workspace))
+                    initializer = (material / 'initial_custody_credential').read_text()
+                    self.assertNotIn(initializer, credentials)
+                    self.assertNotEqual(initializer, (material / 'provider_client_credential').read_text())
+                    provider_roles = json.loads((material / 'provider_credentials_document').read_bytes())
+                    self.assertEqual(provider_roles[1]['grants'], [{'action': 'secret.write',
+                        'workspace_id': workspace, 'intents': ['gateway.probe-signing-key', 'cloudflare.api-token']}])
+                    self.assertEqual([grant for grant in provider_roles[0]['grants'] if grant['action'] == 'secret.write'],
+                        [{'action': 'secret.write', 'workspace_id': workspace, 'intents': ['cloudflare.tunnel-token']}])
+                    self.assertNotIn(initializer, json.dumps(child))
+                    self.assertNotIn((material / 'gateway_signing_key').read_text(), json.dumps(child))
             self.assertIn({'reference': child['installation']['control_auth']['principals_document'],
                            'allowed_intents': ['application.control-token']}, prepared['setup']['secret_references'])
             for name, intent in fixture.MATERIAL_INTENTS.items():

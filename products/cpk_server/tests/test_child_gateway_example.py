@@ -1,18 +1,24 @@
 """Gateway acceptance composition/evidence laws, not backend state machines."""
 
 import base64
+from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timezone
 from hashlib import sha256
+import json
+import os
 from pathlib import Path
 import sys
+import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from control_plane_kit_core.delegation_authority import DelegationAuthorityBinding
 from control_plane_kit_core.delegation_keys import DelegationKeyPurpose
 from control_plane_kit_core.gateway_delegation import GatewayProbeCommandKind, GatewayProbeRequest
-from control_plane_kit_core.products import ProductDescriptorCodec
+from control_plane_kit_core.products import ProductDescriptorCodec, ProductReference
 from control_plane_kit_core.public_ingress import IngressAuthorityReference, NamedPublicIngress, PublicIngressTarget
 from control_plane_kit_core.runtime_effects import GatewayTargetId
 from control_plane_kit_core.topology import compile_topology, validate_graph
@@ -175,3 +181,164 @@ class ChildGatewayExampleTests(unittest.TestCase):
                 changed['metadata'][field] = value
                 with self.assertRaises(AssertionError):
                     verify(changed, workspace='child-workspace', reference=reference, intent=intent)
+
+    def test_initial_application_custody_requires_exact_namespace_and_preserves_uncertain_write(self):
+        api = {'phase': 'parent-initialized', 'pending': None, 'parent_deployed': {'plan_id': 'installation-plan'}}
+        resources = {'phase': 'installation-observed', 'pending': None, 'installation_plan_id': 'installation-plan',
+                     'child_workspace_id': 'child-workspace', 'child_cpk_container_id': 'a' * 64}
+        release = {'child_workspace_id': 'child-workspace', 'child_installation_id': 'test-child'}
+        application = {'signing_key_reference': 'secret://control-plane-kit/child-workspace/gateway/signing-key',
+                       'api_token_reference': 'secret://control-plane-kit/child-workspace/gateway/cloudflare-api'}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ('child-api', 'child-resources', 'child-material', 'inputs'):
+                (root / name).mkdir(mode=0o700)
+            for name, value in (('child-api/record.json', api), ('child-resources/record.json', resources),
+                                ('child-input.json', {'application': application})):
+                (root / name).write_text(json.dumps(value))
+            for name in ('child-material/initial_custody_credential', 'child-material/gateway_signing_key',
+                         'inputs/cloudflare-token'):
+                (root / name).write_text('synthetic-private-test-material')
+                (root / name).chmod(0o400)
+            calls = []
+            def send(request, **kwargs):
+                persisted = json.loads((root / 'application-custody/record.json').read_bytes())
+                self.assertEqual(persisted['pending']['reference'], application['signing_key_reference'])
+                self.assertEqual(persisted['namespace_container_id'], 'a' * 64)
+                self.assertTrue(request.full_url.startswith('http://test-child-secrets:8081/v1/workspaces/child-workspace/'))
+                calls.append(request.full_url)
+                response = {'outcome': 'stored', 'metadata': {'workspace_id': 'wrong-workspace',
+                    'secret_id': 'wrong-secret', 'version_id': 'returned-version', 'version_number': 1,
+                    'status': 'active', 'labels': {'intent': 'gateway.probe-signing-key'}}}
+                return nullcontext(SimpleNamespace(status=200, read=lambda size: json.dumps(response).encode()))
+            with patch.object(fixture, 'ROOT', root), patch.object(fixture, 'build_opener',
+                    return_value=SimpleNamespace(open=send)), patch.dict(os.environ, {'CPK_CHILD_NAMESPACE_ID': 'b' * 64}):
+                with self.assertRaises(AssertionError):
+                    fixture.seed_application_custody(release)
+                self.assertEqual(calls, [])
+                self.assertFalse((root / 'application-custody').exists())
+                os.environ['CPK_CHILD_NAMESPACE_ID'] = 'a' * 64
+                with self.assertRaises(AssertionError):
+                    fixture.seed_application_custody(release)
+                record = json.loads((root / 'application-custody/record.json').read_bytes())
+                self.assertEqual(record['phase'], 'seeding')
+                self.assertIsNotNone(record['pending'])
+                self.assertEqual(record['versions'][0]['version_id'], 'returned-version')
+                with self.assertRaises(FileExistsError):
+                    fixture.seed_application_custody(release)
+                self.assertEqual(len(calls), 1)
+
+    def test_application_custody_and_removal_gate_dependent_public_mutation(self):
+        from products.cpk_server.tests import live_child_api as witness
+        child = SimpleNamespace(profile=SimpleNamespace(workspace_id='child-workspace'))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'application-custody').mkdir()
+            (root / 'child-resources').mkdir()
+            (root / 'child-input.json').write_text(json.dumps({'application': {}}))
+            (root / 'application-custody/record.json').write_text(json.dumps({'phase': 'seeding', 'pending': {}}))
+            (root / 'child-resources/record.json').write_text(json.dumps({'phase': 'observed', 'pending': None}))
+            with patch.object(witness, 'ROOT', root), patch.object(witness, 'admit_application') as admit, \
+                    patch.object(witness, 'prepare_saved_empty') as prepare:
+                with self.assertRaises(AssertionError):
+                    witness.deploy_application(None, None, child, root, {'phase': 'parent-initialized', 'pending': None})
+                admit.assert_not_called()
+                with self.assertRaises(AssertionError):
+                    witness.teardown_parent(None, None, child, root, {'phase': 'application-empty', 'pending': None})
+                prepare.assert_not_called()
+
+    def test_deployment_body_evidence_requires_current_run_target_hash_and_freshness(self):
+        from products.cpk_server.tests import live_child_api as witness
+        from control_plane_kit_core.verification import HttpCheck
+        check = HttpCheck(check_id='root-response', provider_socket='internal', path='/', expected_body_sha256='a' * 64)
+        router = SimpleNamespace(node_id='fixture-router', block_spec=SimpleNamespace(
+            verification=SimpleNamespace(checks=(check,))))
+        graph = SimpleNamespace(nodes={'fixture-router': router})
+        child = SimpleNamespace(profile=SimpleNamespace(workspace_id='child-workspace'))
+        item = {'observation_id': 'observation', 'workspace_id': 'child-workspace', 'graph_id': 'current',
+            'status': 'verified', 'freshness': 'fresh', 'payload': {'http_verification': {
+                'node_id': 'fixture-router', 'run_id': 'new-run', 'check_id': 'root-response',
+                'provider_socket': 'internal', 'path': '/', 'http_status': 200,
+                'expected_body_sha256': 'a' * 64, 'body_sha256_matches': True, 'response_bytes': 123}}}
+        with patch.object(witness, 'read_items', return_value=[item]):
+            result = witness.verify_application_response(child, graph, {'graph_id': 'current'}, 'new-run')
+            self.assertEqual(result['expected_body_sha256'], 'a' * 64)
+        for path, value in [(('workspace_id',), 'foreign'), (('graph_id',), 'old'), (('freshness',), 'stale'),
+                (('payload', 'http_verification', 'run_id'), 'old-run'),
+                (('payload', 'http_verification', 'provider_socket'), 'other'),
+                (('payload', 'http_verification', 'expected_body_sha256'), 'b' * 64),
+                (('payload', 'http_verification', 'body_sha256_matches'), False)]:
+            changed = deepcopy(item)
+            target = changed
+            for key in path[:-1]:
+                target = target[key]
+            target[path[-1]] = value
+            with self.subTest(path=path), patch.object(witness, 'read_items', return_value=[changed]):
+                with self.assertRaises(AssertionError):
+                    witness.verify_application_response(child, graph, {'graph_id': 'current'}, 'new-run')
+        with patch.object(witness, 'read_items', return_value=[item, item]):
+            with self.assertRaises(AssertionError):
+                witness.verify_application_response(child, graph, {'graph_id': 'current'}, 'new-run')
+
+    def test_public_admission_imports_exact_app_products_and_uses_redacted_key_readback(self):
+        from products.cpk_server.tests import live_child_api as witness
+        workspace, issuer, key_id = 'child-workspace', 'acceptance-issuer', 'key-1'
+        application = {'products': {name: json.loads((ROOT / 'products' / directory / 'product.cpk.json').read_bytes())
+            for name, directory in (('hello', 'hello_server'), ('router', 'http_active_router'),
+                                    ('gateway', 'cpk_local_gateway'), ('connector', 'cloudflared_connector'))},
+            'ingress': NamedPublicIngress('gateway-public', IngressAuthorityReference('application-cloudflare'),
+                PublicIngressTarget('gateway', 'control'), 'gateway-connector', 'fresh-gateway.example.test').descriptor(),
+            'delegation': {'issuer': issuer}, 'key_id': key_id, 'public_key_pem': 'fixture-public-key\n',
+            'signing_key_reference': 'secret://control-plane-kit/child-workspace/gateway/signing-key',
+            'api_token_reference': 'secret://control-plane-kit/child-workspace/gateway/cloudflare-api',
+            'generated_prefix': 'secret://control-plane-kit/child-workspace/gateway/generated'}
+        public_key = {'workspace_id': workspace, 'purpose': 'gateway-probe', 'issuer': issuer, 'key_id': key_id,
+            'registration_id': 'key-registration', 'algorithm': 'ed25519', 'status': 'active',
+            'fingerprint_sha256': sha256(application['public_key_pem'].encode()).hexdigest()}
+        self.assertNotIn('private_key_reference', public_key)  # Real public projection omits it.
+        for corrupt in (False, True):
+            with self.subTest(corrupt_product=corrupt), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                release = {'account_id': 'a' * 32, 'zone_id': 'b' * 32,
+                           'zone_name': 'example.test', 'gateway_hostname': 'fresh-gateway.example.test'}
+                (root / 'release.json').write_text(json.dumps(release))
+                record = {'pending': None, 'initialized': {'child': {'provider_registration_id': 'child-provider'}}}
+                commands = []
+                def call(route, **arguments):
+                    self.assertEqual(arguments['path_parameters']['workspace_id'], workspace)
+                    if route == 'read.secret-provider-detail':
+                        return {'workspace_id': workspace, 'secret_provider': {'registration_id': 'child-provider'}}
+                    if route == 'read.ingress-authority-detail':
+                        return {'workspace_id': workspace, 'ingress_authority': {'registration_id': 'ingress-registration'}}
+                    if route == 'read.delegation-keys':
+                        return {'workspace_id': workspace, 'items': [public_key], 'next_cursor': None}
+                    pending = json.loads((root / 'record.json').read_bytes())['pending']
+                    self.assertEqual(pending['route'], route)
+                    self.assertEqual(pending['idempotency_key'], arguments['payload']['idempotency_key'])
+                    commands.append(route)
+                    payload = arguments['payload']
+                    if route == 'command.product.import':
+                        document = ProductDescriptorCodec().decode_document(payload['descriptor_document'])
+                        reference = ProductReference.from_document(document).descriptor()
+                        self.assertEqual(pending['product_reference'], reference)
+                        return {'workspace_id': workspace, 'registration_id': 'product-registration', 'status': 'active',
+                                'reference': {} if corrupt else reference}
+                    if route == 'command.ingress-authority.register':
+                        self.assertEqual(payload['authority']['generated_secret_provider_registration_id'], 'child-provider')
+                        self.assertEqual(payload['authority']['allowed_hostname_pattern'], release['gateway_hostname'])
+                        return {'workspace_id': workspace, 'registration_id': 'ingress-registration'}
+                    self.assertIn(route, ('command.delegation-key.register', 'command.delegation-key.activate'))
+                    return {**public_key, 'private_key_reference': application['signing_key_reference']}
+                client = SimpleNamespace(profile=SimpleNamespace(workspace_id=workspace), transport=SimpleNamespace(call=call))
+                with patch.object(witness, 'ROOT', root):
+                    if corrupt:
+                        with self.assertRaises(AssertionError):
+                            witness.admit_application(client, None, root, record, application)
+                        self.assertEqual(commands, ['command.product.import'])
+                        self.assertIsNotNone(record['pending'])
+                    else:
+                        witness.admit_application(client, None, root, record, application)
+                        self.assertEqual(commands, ['command.product.import'] * 4 + ['command.ingress-authority.register',
+                            'command.delegation-key.register', 'command.delegation-key.activate'])
+                        self.assertIsNone(record['pending'])
+                        self.assertEqual(record['active_application_key']['key_id'], key_id)

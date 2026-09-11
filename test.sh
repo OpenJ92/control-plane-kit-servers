@@ -180,7 +180,9 @@ CPK_SERVER_IMAGE="$CPK_IMAGE" sh scripts/cpk_server_published_image_smoke.sh
     phase="$1"
     case "$phase" in
       seed) set -- --network "container:$PARENT_CONTAINER_ID" ;;
-      preflight|observe|finish) set -- --network "container:$PARENT_CONTAINER_ID" \
+      seed-application-custody) set -- --network "container:$CHILD_CONTAINER_ID" \
+        -e "CPK_CHILD_NAMESPACE_ID=$CHILD_CONTAINER_ID" ;;
+      preflight|observe-installation|observe|verify-application-empty|finish) set -- --network "container:$PARENT_CONTAINER_ID" \
         --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock ;;
       *) set -- --network none ;;
     esac
@@ -189,7 +191,7 @@ CPK_SERVER_IMAGE="$CPK_IMAGE" sh scripts/cpk_server_published_image_smoke.sh
       --mount "type=bind,source=$ROOT,target=/source,readonly" \
       --mount "type=bind,source=$RECORDS,target=/witness" \
       -e "CPK_CHILD_SOURCE_HEAD=$CHILD_SOURCE_HEAD" \
-      -e PYTHONPATH=/source:/app/products/cpk_server/src "$DRIVER" \
+      -e PYTHONPATH=/source:/source/products/hello_server/src:/app/products/cpk_server/src "$DRIVER" \
       python /source/products/cpk_server/tests/live_child_fixture.py "$phase" "$RUN" "$CPK_CHILD_ACCEPTANCE_DIGEST"
   }
   child_api() {
@@ -197,7 +199,7 @@ CPK_SERVER_IMAGE="$CPK_IMAGE" sh scripts/cpk_server_published_image_smoke.sh
       --label "org.openj92.cpk.test-run=$RUN" \
       --mount "type=bind,source=$ROOT,target=/source,readonly" \
       --mount "type=bind,source=$RECORDS,target=/witness" \
-      -e PYTHONPATH=/source:/app/products/cpk_server/src "$DRIVER" \
+      -e PYTHONPATH=/source:/source/products/hello_server/src:/app/products/cpk_server/src "$DRIVER" \
       python /source/products/cpk_server/tests/live_child_api.py "$1"
   }
   cleanup_root_bootstrap() {
@@ -266,6 +268,10 @@ CPK_SERVER_IMAGE="$CPK_IMAGE" sh scripts/cpk_server_published_image_smoke.sh
     child_fixture preflight
     child_fixture seed
     child_api deploy
+    child_fixture observe-installation
+    CHILD_CONTAINER_ID="$(child_fixture child-id)"
+    child_fixture seed-application-custody
+    child_api deploy-application
     child_fixture observe
     docker run --rm --network none \
       --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
@@ -274,7 +280,9 @@ CPK_SERVER_IMAGE="$CPK_IMAGE" sh scripts/cpk_server_published_image_smoke.sh
       -e PYTHONPATH=/source:/app/products/cpk_server/src "$DRIVER" \
       python /source/products/cpk_server/tests/live_root_bootstrap.py restart-for-child "$RUN"
     child_api reconnect
-    child_api teardown
+    child_api teardown-application
+    child_fixture verify-application-empty
+    child_api teardown-parent
     child_fixture finish
   fi
 )

@@ -1,13 +1,15 @@
 """Explicitly released complete-child API witness; no Docker/SQL/provider client.
 
-A separately approved owning fixture supplies initial root custody, profiles,
-canonical input, parent restart and final retained/root cleanup. Invoke deploy,
-reconnect, then teardown; failed/incomplete phases cannot be blindly restarted.
+A separately approved owning fixture supplies initial custody, profiles,
+canonical input, restart and final retained/root cleanup. The maintained harness
+orders installation, custody, application, probe and the two teardown phases;
+failed/incomplete phases cannot be blindly restarted.
 The test controller approves only the exact plans returned for these declared
 operations. Invoking this witness requires the concrete one-run effect release.
 """
 
 from collections import Counter
+from datetime import datetime, timezone
 import json
 from hashlib import sha256
 import os
@@ -15,11 +17,15 @@ from pathlib import Path
 import sys
 import tempfile
 from time import monotonic, sleep
+from uuid import uuid4
 
+from control_plane_kit_core.delegation_authority import DelegationAuthorityBinding
+from control_plane_kit_core.gateway_delegation import GatewayProbeCommandKind, GatewayProbeRequest
+from control_plane_kit_core.runtime_effects import GatewayTargetId
 from control_plane_kit_core.identity import WorkspaceGrant
 from control_plane_kit_core.policies import PolicyScope
 from control_plane_kit_core.planning import activity_operation_descriptor, compile_activity_plan
-from control_plane_kit_core.products import ProductDescriptorCodec
+from control_plane_kit_core.products import ProductDescriptorCodec, ProductReference
 from control_plane_kit_core.public_ingress import NamedPublicIngressCodec
 from control_plane_kit_core.runtime_authority import RuntimeAuthorityAccessDeliveryCodec, RuntimeAuthorityReference
 from control_plane_kit_core.secrets import SecretProviderEndpointReference, SecretReference
@@ -31,8 +37,9 @@ from control_plane_kit_servers_cpk_server.client import (
 )
 from control_plane_kit_servers_cpk_server.client.installation import child_installation_document, prepare_child_installation
 from products.cpk_server.examples.public_child_api import (
-    child_runtime_graph, initialize_after_parent, parent_tracking,
+    child_application_graph, initialize_after_parent, parent_tracking,
     prepare_saved_empty, verify_empty_convergence,
+    verify_gateway_probe_response,
 )
 
 
@@ -74,6 +81,112 @@ def save(state, value):
 def read(client, route, **coordinates):
     return client.transport.call(route, path_parameters={
         'workspace_id': client.profile.workspace_id, **coordinates}, payload={}, credential_role='operator')
+
+
+def read_items(client, route):
+    value = client.transport.call(route, path_parameters={'workspace_id': client.profile.workspace_id},
+        payload={'limit': 100}, credential_role='operator')
+    assert value['workspace_id'] == client.profile.workspace_id
+    assert isinstance(value['items'], list) and len(value['items']) <= 100 and value['next_cursor'] is None
+    return value['items']
+
+
+def application_graph(installation, workspace):
+    application = json.loads((ROOT / 'child-input.json').read_bytes())['application']
+    products = {name: ProductDescriptorCodec().decode_document(value).product
+                for name, value in application['products'].items()}
+    return child_application_graph(installation, workspace,
+        hello_product=products['hello'], router_product=products['router'], gateway_product=products['gateway'],
+        connector_product=products['connector'], ingress=NamedPublicIngressCodec().decode(application['ingress']),
+        delegation_authority=DelegationAuthorityBinding.from_descriptor(application['delegation']))
+
+
+def admit_application(client, installation, state, record, application):
+    """Existing public admissions; finite phase, never automatic replay."""
+    stamp = datetime.now(timezone.utc).isoformat()
+    release = json.loads((ROOT / 'release.json').read_bytes())
+    workspace = client.profile.workspace_id
+    ingress = NamedPublicIngressCodec().decode(application['ingress'])
+    registration = record['initialized']['child']['provider_registration_id']
+    provider = read(client, 'read.secret-provider-detail', provider_id='control-plane-kit')
+    assert provider['workspace_id'] == workspace and provider['secret_provider']['registration_id'] == registration
+    authority = {'provider_kind': 'cloudflare', 'account_id': release['account_id'], 'zone_id': release['zone_id'],
+        'zone_name': release['zone_name'], 'api_token_ref': application['api_token_reference'],
+        'allowed_hostname_pattern': release['gateway_hostname'],
+        'generated_secret_provider_registration_id': registration,
+        'generated_secret_reference_prefix': application['generated_prefix']}
+    issuer, key_id = application['delegation']['issuer'], application['key_id']
+    products = tuple(application['products'][name] for name in ('hello', 'router', 'gateway', 'connector'))
+    calls = tuple(('command.product.import', {}, {'descriptor_document': document, 'imported_at': stamp})
+                  for document in products) + (
+        ('command.ingress-authority.register', {}, {'authority_ref': ingress.authority_ref.reference_id,
+            'authority': authority, 'admitted_at': stamp}),
+        ('command.delegation-key.register', {}, {'purpose': 'gateway-probe', 'issuer': issuer,
+            'key_id': key_id, 'algorithm': 'ed25519', 'public_key_pem': application['public_key_pem'],
+            'private_key_reference': application['signing_key_reference'], 'admitted_at': stamp}),
+        ('command.delegation-key.activate', {'issuer': issuer, 'key_id': key_id},
+            {'purpose': 'gateway-probe', 'issuer': issuer, 'key_id': key_id, 'activated_at': stamp}),
+    )
+    record['application_admissions'] = []
+    for route, path, payload in calls:
+        record['pending'] = {'route': route, 'idempotency_key': str(uuid4())}
+        if route == 'command.product.import':
+            expected_product = ProductReference.from_document(
+                ProductDescriptorCodec().decode_document(payload['descriptor_document'])).descriptor()
+            record['pending']['product_reference'] = expected_product
+        save(state, record)
+        response = client.transport.call(route, path_parameters={'workspace_id': workspace, **path},
+            payload={**payload, 'idempotency_key': record['pending']['idempotency_key']}, credential_role='operator')
+        coordinates = {key: response[key] for key in ('workspace_id', 'registration_id', 'key_id', 'status')
+                       if isinstance(response.get(key), str) and 0 < len(response[key]) <= 256}
+        record['application_admissions'].append({'route': route, 'coordinates': coordinates})
+        save(state, record)
+        assert response.get('workspace_id') == workspace
+        if route == 'command.product.import':
+            assert response.get('status') == 'active' and coordinates.get('registration_id')
+            assert response.get('reference') == expected_product
+            record['application_admissions'][-1]['product_reference'] = expected_product
+        elif route == 'command.ingress-authority.register':
+            detail = read(client, 'read.ingress-authority-detail', authority_ref=ingress.authority_ref.reference_id)
+            assert detail['workspace_id'] == workspace
+            assert detail['ingress_authority']['registration_id'] == response['registration_id']
+        else:
+            assert response.get('key_id') == key_id and response.get('issuer') == issuer
+            assert response.get('private_key_reference') == application['signing_key_reference']
+        record['pending'] = None
+        save(state, record)
+    keys = [value for value in read_items(client, 'read.delegation-keys')
+            if value.get('purpose') == 'gateway-probe' and value.get('issuer') == issuer and value.get('key_id') == key_id]
+    assert len(keys) == 1
+    expected = {'workspace_id': workspace, 'status': 'active', 'algorithm': 'ed25519',
+                'registration_id': record['application_admissions'][-1]['coordinates']['registration_id'],
+                'fingerprint_sha256': sha256((application['public_key_pem'].strip() + '\n').encode('ascii')).hexdigest()}
+    assert all(keys[0].get(key) == value for key, value in expected.items())
+    record['active_application_key'] = {'issuer': issuer, 'key_id': key_id,
+                                       'fingerprint_sha256': expected['fingerprint_sha256']}
+    save(state, record)
+
+
+def verify_application_response(child, graph, current, run_id):
+    router = next(node for node in graph.nodes.values() if node.node_id.endswith('-router'))
+    check = next(value for value in router.block_spec.verification.checks if value.check_id == 'root-response')
+    matches = []
+    for item in read_items(child, 'read.observed-state'):
+        evidence = item.get('payload', {}).get('http_verification', {})
+        if (item.get('workspace_id') == child.profile.workspace_id
+                and item.get('graph_id') == current['graph_id'] and item.get('status') == 'verified'
+                and item.get('freshness') == 'fresh' and evidence.get('node_id') == router.node_id
+                and evidence.get('run_id') == run_id and evidence.get('check_id') == check.check_id
+                and evidence.get('provider_socket') == check.provider_socket
+                and evidence.get('path') == '/' and evidence.get('http_status') in check.expected_statuses
+                and evidence.get('expected_body_sha256') == check.expected_body_sha256
+                and evidence.get('body_sha256_matches') is True
+                and type(evidence.get('response_bytes')) is int
+                and 0 < evidence['response_bytes'] <= check.policy.maximum_evidence_bytes):
+            matches.append({'observation_id': item['observation_id'], 'graph_id': item['graph_id'], 'run_id': run_id,
+                            'node_id': router.node_id, 'check_id': check.check_id, 'expected_body_sha256': check.expected_body_sha256})
+    assert len(matches) == 1, 'current application response evidence unavailable or ambiguous'
+    return matches[0]
 
 
 def apply_reviewed(client, planned, *, destructive, fixture_graph):
@@ -169,7 +282,7 @@ def verify_parent_fixture(parent, child, state):
 def deploy(installation, parent, child, setup, state):
     state.mkdir(mode=0o700, exist_ok=False)
     record = {'phase': 'deploying', 'parent_workspace': parent.profile.workspace_id,
-              'child_workspace': child.profile.workspace_id}
+              'child_workspace': child.profile.workspace_id, 'pending': None}
     save(state, record)
     record['parent_public_fixture'] = verify_parent_fixture(parent, child, state)
     save(state, record)
@@ -186,26 +299,50 @@ def deploy(installation, parent, child, setup, state):
                                           setup=setup, state_directory=state / 'initialize-child')
     record['initialized'] = initialized
     record['denial'] = verify_denial(child, state)
+    record['phase'] = 'parent-initialized'
     save(state, record)
-    graph = child_runtime_graph(installation, child.profile.workspace_id)
+    print('child API: parent deployment, authenticated child initialization and denial PASS')
+
+
+def deploy_application(installation, parent, child, state, record):
+    assert record['phase'] == 'parent-initialized' and record['pending'] is None
+    custody = json.loads((ROOT / 'application-custody' / 'record.json').read_bytes())
+    application = json.loads((ROOT / 'child-input.json').read_bytes())['application']
+    assert custody['phase'] == 'complete' and custody['pending'] is None
+    assert custody['workspace_id'] == child.profile.workspace_id
+    assert custody['installation_plan_id'] == record['parent_deployed']['plan_id']
+    assert {(value['reference'], value['intent']) for value in custody['versions']} == {
+        (application['signing_key_reference'], 'gateway.probe-signing-key'),
+        (application['api_token_reference'], 'cloudflare.api-token')}
+    assert len(custody['versions']) == 2
+    record['phase'] = 'application-deploying'
+    save(state, record)
+    admit_application(child, installation, state, record, application)
+    graph = application_graph(installation, child.profile.workspace_id)
     path = state / 'child-runtime.json'
     with path.open('x', encoding='utf-8') as stream:
         json.dump(GraphDescriptorCodec().encode(graph), stream, separators=(',', ':'))
-    runtime = child.plan(path, title='Prove explicitly granted child Docker runtime')
+    runtime = child.plan(path, title='Deploy Hello/router with delegated public gateway')
     record['child_runtime_prepared'] = runtime.descriptor()
     save(state, record)
     runtime_completed = apply_reviewed(child, runtime, destructive=False, fixture_graph=graph)
     record['child_runtime_deployed'] = runtime_completed.descriptor()
     runtime_current = read(child, 'read.current-graph')
-    assert f'{installation.installation_id}-proof' in runtime_current['graph_descriptor']['runtimes']
-    record['parent_before_restart'] = parent_tracking(parent, prepared.operation_ref)
+    plan = read(child, 'read.plan-detail', plan_id=runtime_completed.plan_id)['plan']
+    assert runtime_current['graph_id'] == plan['desired_graph_id']
+    assert runtime_current['realized_projection_id'] == plan['desired_realized_projection_id']
+    record['application_current'] = {key: runtime_current[key] for key in ('graph_id', 'realized_projection_id')}
+    record['application_response'] = verify_application_response(child, graph, runtime_current, runtime_completed.run_id)
+    record['parent_before_restart'] = parent_tracking(parent, record['parent_prepared']['operation_ref'])
     record['phase'] = 'deployed'
     save(state, record)
-    print('child API: parent deployment, authenticated child setup and approved non-noop child runtime PASS')
+    print('child API: approved Hello/router/gateway deployment and exact body response PASS')
 
 
 def reconnect(installation, parent, child, state, record):
     assert record['phase'] == 'deployed', 'reconnect requires completed deployment and explicit parent restart'
+    record['phase'] = 'reconnecting'
+    save(state, record)
     # Corroborating fixture evidence is required; API history alone cannot prove
     # that a process actually restarted. No provider access enters this witness.
     restart = json.loads((ROOT / 'parent-restart' / 'record.json').read_bytes())
@@ -236,26 +373,64 @@ def reconnect(installation, parent, child, state, record):
     child_run = record['child_runtime_deployed']
     child_status = child.status(child_run['operation_ref'])
     assert child_status.status == 'converged' and child_status.run_id == child_run['run_id']
+    current = read(child, 'read.current-graph')
+    assert all(current[key] == value for key, value in record['application_current'].items())
+    application = json.loads((ROOT / 'child-input.json').read_bytes())['application']
+    probe = TopologyClient(load_profile('child-probe', config_home=ROOT / 'config'))
+    assert probe.profile.workspace_id == child.profile.workspace_id and probe.profile.endpoint == child.profile.endpoint
+    request = GatewayProbeRequest(GatewayProbeCommandKind.HTTP_STATUS,
+                                  GatewayTargetId(installation.installation_id + '-router.internal'), '/')
+    expected = {'workspace_id': child.profile.workspace_id, 'current_graph_id': current['graph_id'],
+        'gateway_node_id': installation.installation_id + '-gateway',
+        'gateway_runtime_id': installation.installation_id + '-proof', 'request_id': str(uuid4()),
+        'actor_id': application['probe_subject'], 'issuer': application['delegation']['issuer'], 'key_id': application['key_id']}
+    record['pending'] = {'route': 'command.gateway-probe.request', 'expected': expected, 'request': request.descriptor()}
+    save(state, record)
+    response = probe.transport.call('command.gateway-probe.request',
+        path_parameters={'workspace_id': child.profile.workspace_id, 'gateway_node_id': expected['gateway_node_id']},
+        payload={'request_id': expected['request_id'], 'expected_current_graph_id': current['graph_id'],
+                 **request.descriptor(), 'access_path': 'named-public-ingress'}, credential_role='operator')
+    candidate = response.get('gateway_probe', {}).get('probe_id')
+    if isinstance(candidate, str) and 0 < len(candidate) <= 256:
+        record['gateway_probe_returned_id'] = candidate
+        save(state, record)
+    verified = verify_gateway_probe_response(response, expected=expected, request=request,
+        not_before=datetime.fromisoformat(restart['after'][parent_node]['started_at'].replace('Z', '+00:00')),
+        not_after=datetime.now(timezone.utc))
+    detail = read(probe, 'read.gateway-probe-detail', probe_id=verified['probe_id'])
+    assert detail['workspace_id'] == child.profile.workspace_id and detail['gateway_probe'] == response['gateway_probe']
+    record['gateway_probe'] = verified
+    record['pending'] = None
     record['parent_after_restart'] = after
     record['parent_restart'] = restart
     record['phase'] = 'reconnected'
     save(state, record)
-    print('child API: parent restart/reconnect durable history and child usability PASS')
+    print('child API: grandparent restart/history and fresh authorized gateway HTTP status/size PASS; no fresh body-hash claim')
 
 
-def teardown(installation, parent, child, state, record):
+def teardown_application(installation, parent, child, state, record):
     assert record['phase'] == 'reconnected', 'teardown requires parent restart/history proof'
     record['phase'] = 'tearing-down'
     save(state, record)
-    # Child proof runtime is removed through its own saved empty API revision.
+    # Application, delegated gateway and ingress leave through the child's API.
     empty_child = prepare_saved_empty(child, graph_path=state / 'child-empty.json')
     record['child_empty_revision'] = empty_child['revision']
     record['child_empty_prepared'] = empty_child['prepared'].descriptor()
     save(state, record)
     removed_child_runtime = apply_reviewed(child, empty_child['prepared'], destructive=True,
-        fixture_graph=child_runtime_graph(installation, child.profile.workspace_id))
+        fixture_graph=application_graph(installation, child.profile.workspace_id))
     record['child_empty'] = verify_empty_convergence(child, removed_child_runtime.operation_ref,
                                                      revision=empty_child['revision'])
+    record['phase'] = 'application-empty'
+    save(state, record)
+
+
+def teardown_parent(installation, parent, child, state, record):
+    assert record['phase'] == 'application-empty' and record['pending'] is None
+    resources = json.loads((ROOT / 'child-resources' / 'record.json').read_bytes())
+    assert resources['phase'] == 'application-removed' and resources['pending'] is None
+    assert resources['application_empty_plan_id'] == record['child_empty']['tracking']['plan_id']
+    record['phase'] = 'parent-tearing-down'
     save(state, record)
     # Parent desired EMPTY is saved/selected/read before preparing this revision.
     empty_parent = prepare_saved_empty(parent, graph_path=state / 'parent-empty.json')
@@ -275,7 +450,7 @@ def main():
     # No raw input, credential, response body or traceback is emitted on failure.
     try:
         phase = sys.argv[1]
-        assert phase in {'deploy', 'reconnect', 'teardown'}
+        assert phase in {'deploy', 'deploy-application', 'reconnect', 'teardown-application', 'teardown-parent'}
         value = json.loads((ROOT / 'child-input.json').read_bytes())
         installation = installation_from_input(value['installation'])
         parent = TopologyClient(load_profile('parent', config_home=ROOT / 'config'))
@@ -287,7 +462,9 @@ def main():
             record = json.loads((state / 'record.json').read_bytes())
             assert record['parent_workspace'] == parent.profile.workspace_id
             assert record['child_workspace'] == child.profile.workspace_id
-            (reconnect if phase == 'reconnect' else teardown)(installation, parent, child, state, record)
+            {'deploy-application': deploy_application, 'reconnect': reconnect,
+             'teardown-application': teardown_application, 'teardown-parent': teardown_parent}[phase](
+                 installation, parent, child, state, record)
         return 0
     except Exception:
         print('child API witness HOLD; inspect private phase and public client records', file=sys.stderr)
