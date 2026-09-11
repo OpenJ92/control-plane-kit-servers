@@ -491,7 +491,7 @@
     {
       "source": "products/cpk_server/tests/test_image_bootstrap.py",
       "companion": "docs/implementation/products/cpk_server/tests/test_image_bootstrap.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -1079,7 +1079,7 @@
     {
       "source": "tests/test_hosted_activity_readiness.py",
       "companion": "docs/implementation/tests/test_hosted_activity_readiness.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
