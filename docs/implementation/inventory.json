@@ -221,37 +221,37 @@
     {
       "source": "products/cpk_local_gateway/Dockerfile",
       "companion": "docs/implementation/products/cpk_local_gateway/Dockerfile.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_local_gateway/product.cpk.json",
       "companion": "docs/implementation/products/cpk_local_gateway/product.cpk.json.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_local_gateway/src/control_plane_kit_servers_cpk_local_gateway/__init__.py",
       "companion": "docs/implementation/products/cpk_local_gateway/src/control_plane_kit_servers_cpk_local_gateway/__init__.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_local_gateway/src/control_plane_kit_servers_cpk_local_gateway/server.py",
       "companion": "docs/implementation/products/cpk_local_gateway/src/control_plane_kit_servers_cpk_local_gateway/server.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_local_gateway/src/control_plane_kit_servers_cpk_local_gateway/verification.py",
       "companion": "docs/implementation/products/cpk_local_gateway/src/control_plane_kit_servers_cpk_local_gateway/verification.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_local_gateway/tests/test_cpk_local_gateway_product.py",
       "companion": "docs/implementation/products/cpk_local_gateway/tests/test_cpk_local_gateway_product.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -767,19 +767,19 @@
     {
       "source": "scripts/cpk_local_gateway_private_probe_smoke.sh",
       "companion": "docs/implementation/scripts/cpk_local_gateway_private_probe_smoke.sh.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "scripts/cpk_local_gateway_structural_grant_check.py",
       "companion": "docs/implementation/scripts/cpk_local_gateway_structural_grant_check.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "scripts/cpk_local_gateway_structural_grant_image_smoke.sh",
       "companion": "docs/implementation/scripts/cpk_local_gateway_structural_grant_image_smoke.sh.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
