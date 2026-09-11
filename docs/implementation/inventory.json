@@ -719,37 +719,37 @@
     {
       "source": "products/secrets_server/Dockerfile",
       "companion": "docs/implementation/products/secrets_server/Dockerfile.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/secrets_server/bootstrap.contract.json",
       "companion": "docs/implementation/products/secrets_server/bootstrap.contract.json.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/secrets_server/entrypoint.sh",
       "companion": "docs/implementation/products/secrets_server/entrypoint.sh.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/secrets_server/product.cpk.json",
       "companion": "docs/implementation/products/secrets_server/product.cpk.json.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/secrets_server/tests/live_numeric_bootstrap.py",
       "companion": "docs/implementation/products/secrets_server/tests/live_numeric_bootstrap.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/secrets_server/tests/test_secrets_server_product.py",
       "companion": "docs/implementation/products/secrets_server/tests/test_secrets_server_product.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -1001,7 +1001,7 @@
     {
       "source": "scripts/secrets_server_image_smoke.sh",
       "companion": "docs/implementation/scripts/secrets_server_image_smoke.sh.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
