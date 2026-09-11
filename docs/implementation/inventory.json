@@ -563,7 +563,7 @@
     {
       "source": "products/cpk_server/tests/test_source_live_abort_compensation.py",
       "companion": "docs/implementation/products/cpk_server/tests/test_source_live_abort_compensation.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
