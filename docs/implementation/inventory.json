@@ -1,0 +1,150 @@
+{
+  "issue": "OpenJ92/control-plane-kit-servers#173",
+  "scope": "Child-only adoption delta; merge with stable172 inventory only after source adoption",
+  "entries": [
+    {
+      "source": "products/cpk_server/docs/client.md",
+      "source_change": "M",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Existing prose updated by child; preserve its source-specific history directly",
+      "stable_overlap_requires_refresh": true
+    },
+    {
+      "source": "products/cpk_server/examples/child_api_acceptance.md",
+      "source_change": "A",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Existing prose updated by child; preserve its source-specific history directly",
+      "stable_overlap_requires_refresh": false
+    },
+    {
+      "source": "products/cpk_server/examples/public_child_api.py",
+      "source_change": "A",
+      "companion": "docs/implementation/products/cpk_server/examples/public_child_api.py.md",
+      "status": "pending",
+      "exclusion_reason": null,
+      "stable_overlap_requires_refresh": false
+    },
+    {
+      "source": "products/cpk_server/examples/root-bootstrap.md",
+      "source_change": "M",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Existing prose updated by child; preserve its source-specific history directly",
+      "stable_overlap_requires_refresh": true
+    },
+    {
+      "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/bootstrap.py",
+      "source_change": "M",
+      "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/bootstrap.py.md",
+      "status": "pending",
+      "exclusion_reason": null,
+      "stable_overlap_requires_refresh": true
+    },
+    {
+      "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/bootstrap_runtime.py",
+      "source_change": "M",
+      "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/bootstrap_runtime.py.md",
+      "status": "pending",
+      "exclusion_reason": null,
+      "stable_overlap_requires_refresh": true
+    },
+    {
+      "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/client/installation.py",
+      "source_change": "A",
+      "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/client/installation.py.md",
+      "status": "reviewed",
+      "exclusion_reason": null,
+      "stable_overlap_requires_refresh": false
+    },
+    {
+      "source": "products/cpk_server/tests/live_child_api.py",
+      "source_change": "A",
+      "companion": "docs/implementation/products/cpk_server/tests/live_child_api.py.md",
+      "status": "reviewed",
+      "exclusion_reason": null,
+      "stable_overlap_requires_refresh": false
+    },
+    {
+      "source": "products/cpk_server/tests/live_child_fixture.py",
+      "source_change": "A",
+      "companion": "docs/implementation/products/cpk_server/tests/live_child_fixture.py.md",
+      "status": "pending",
+      "exclusion_reason": null,
+      "stable_overlap_requires_refresh": false
+    },
+    {
+      "source": "products/cpk_server/tests/live_child_resources.py",
+      "source_change": "A",
+      "companion": "docs/implementation/products/cpk_server/tests/live_child_resources.py.md",
+      "status": "pending",
+      "exclusion_reason": null,
+      "stable_overlap_requires_refresh": false
+    },
+    {
+      "source": "products/cpk_server/tests/live_root_bootstrap.py",
+      "source_change": "M",
+      "companion": "docs/implementation/products/cpk_server/tests/live_root_bootstrap.py.md",
+      "status": "pending",
+      "exclusion_reason": null,
+      "stable_overlap_requires_refresh": true
+    },
+    {
+      "source": "products/cpk_server/tests/test_child_api_example.py",
+      "source_change": "A",
+      "companion": "docs/implementation/products/cpk_server/tests/test_child_api_example.py.md",
+      "status": "pending",
+      "exclusion_reason": null,
+      "stable_overlap_requires_refresh": false
+    },
+    {
+      "source": "products/cpk_server/tests/test_child_gateway_example.py",
+      "source_change": "A",
+      "companion": "docs/implementation/products/cpk_server/tests/test_child_gateway_example.py.md",
+      "status": "reviewed",
+      "exclusion_reason": null,
+      "stable_overlap_requires_refresh": false
+    },
+    {
+      "source": "products/cpk_server/tests/test_child_installation_client.py",
+      "source_change": "A",
+      "companion": "docs/implementation/products/cpk_server/tests/test_child_installation_client.py.md",
+      "status": "pending",
+      "exclusion_reason": null,
+      "stable_overlap_requires_refresh": false
+    },
+    {
+      "source": "products/cpk_server/tests/test_root_bootstrap.py",
+      "source_change": "M",
+      "companion": "docs/implementation/products/cpk_server/tests/test_root_bootstrap.py.md",
+      "status": "pending",
+      "exclusion_reason": null,
+      "stable_overlap_requires_refresh": true
+    },
+    {
+      "source": "products/cpk_server/tests/test_root_bootstrap_connection_runtime.py",
+      "source_change": "A",
+      "companion": "docs/implementation/products/cpk_server/tests/test_root_bootstrap_connection_runtime.py.md",
+      "status": "pending",
+      "exclusion_reason": null,
+      "stable_overlap_requires_refresh": false
+    },
+    {
+      "source": "products/cpk_server/tests/test_root_image_reference.py",
+      "source_change": "D",
+      "companion": null,
+      "status": "excluded",
+      "exclusion_reason": "Source removed in child; remove stable companion on adoption if present",
+      "stable_overlap_requires_refresh": false
+    },
+    {
+      "source": "test.sh",
+      "source_change": "M",
+      "companion": "docs/implementation/test.sh.md",
+      "status": "pending",
+      "exclusion_reason": null,
+      "stable_overlap_requires_refresh": true
+    }
+  ]
+}
