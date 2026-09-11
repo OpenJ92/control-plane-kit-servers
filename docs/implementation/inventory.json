@@ -425,7 +425,7 @@
     {
       "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/installation.py",
       "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/installation.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -455,7 +455,7 @@
     {
       "source": "products/cpk_server/tests/test_docker_installation.py",
       "companion": "docs/implementation/products/cpk_server/tests/test_docker_installation.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -497,7 +497,7 @@
     {
       "source": "products/cpk_server/tests/test_installation_control_auth.py",
       "companion": "docs/implementation/products/cpk_server/tests/test_installation_control_auth.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
