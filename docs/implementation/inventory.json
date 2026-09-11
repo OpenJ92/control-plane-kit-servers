@@ -257,19 +257,19 @@
     {
       "source": "products/cpk_server/Dockerfile",
       "companion": "docs/implementation/products/cpk_server/Dockerfile.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_server/Dockerfile.bootstrap",
       "companion": "docs/implementation/products/cpk_server/Dockerfile.bootstrap.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_server/bootstrap.contract.json",
       "companion": "docs/implementation/products/cpk_server/bootstrap.contract.json.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -299,43 +299,43 @@
     {
       "source": "products/cpk_server/examples/root_bootstrap_input.py",
       "companion": "docs/implementation/products/cpk_server/examples/root_bootstrap_input.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_server/law-cards/extract-f-813.json",
       "companion": "docs/implementation/products/cpk_server/law-cards/extract-f-813.json.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_server/law-cards/extract-f-814.json",
       "companion": "docs/implementation/products/cpk_server/law-cards/extract-f-814.json.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_server/product.cpk.json",
       "companion": "docs/implementation/products/cpk_server/product.cpk.json.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_server/product.docker-cloudflare.cpk.json",
       "companion": "docs/implementation/products/cpk_server/product.docker-cloudflare.cpk.json.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_server/product.docker.cpk.json",
       "companion": "docs/implementation/products/cpk_server/product.docker.cpk.json.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
       "source": "products/cpk_server/src/control_plane_kit_servers_cpk_server/__init__.py",
       "companion": "docs/implementation/products/cpk_server/src/control_plane_kit_servers_cpk_server/__init__.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
@@ -509,7 +509,7 @@
     {
       "source": "products/cpk_server/tests/test_product_descriptor.py",
       "companion": "docs/implementation/products/cpk_server/tests/test_product_descriptor.py.md",
-      "status": "pending",
+      "status": "reviewed",
       "exclusion_reason": null
     },
     {
