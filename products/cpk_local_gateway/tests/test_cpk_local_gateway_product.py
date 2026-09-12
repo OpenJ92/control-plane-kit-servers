@@ -285,7 +285,6 @@ class CpkLocalGatewayProductTests(unittest.TestCase):
             gateway_node_id=GATEWAY_NODE_ID,
             public_keys={KEY_ID: public_key},
             replay_cache=GatewayProbeReplayCache(clock=lambda: now),
-            clock=lambda: now,
         )
         gateway = GatewayConfiguration.from_target_map(
             {
@@ -359,7 +358,6 @@ class CpkLocalGatewayProductTests(unittest.TestCase):
                 gateway_node_id=GATEWAY_NODE_ID,
                 public_keys={KEY_ID: public_key},
                 replay_cache=GatewayProbeReplayCache(clock=lambda: now),
-                clock=lambda: now,
             )
 
         accepted = verifier().verify(
@@ -459,7 +457,6 @@ class CpkLocalGatewayProductTests(unittest.TestCase):
                 gateway_node_id=GATEWAY_NODE_ID,
                 public_keys={KEY_ID: public_key},
                 replay_cache=GatewayProbeReplayCache(clock=lambda: now),
-                clock=lambda: now,
             )
 
         for probe in requests:
@@ -607,7 +604,6 @@ class CpkLocalGatewayProductTests(unittest.TestCase):
             gateway_node_id=GATEWAY_NODE_ID,
             public_keys={KEY_ID: public_key},
             replay_cache=GatewayProbeReplayCache(clock=lambda: now),
-            clock=lambda: now,
         )
 
         def verify_once() -> str:
@@ -635,7 +631,6 @@ class CpkLocalGatewayProductTests(unittest.TestCase):
             gateway_node_id=GATEWAY_NODE_ID,
             public_keys={KEY_ID: public_key},
             replay_cache=GatewayProbeReplayCache(clock=lambda: now),
-            clock=lambda: now,
         )
         self.assertEqual(
             restarted.verify(f"CPK-Gateway {token}", _request_body(request)),
@@ -817,7 +812,6 @@ class CpkLocalGatewayProductTests(unittest.TestCase):
             gateway_node_id=GATEWAY_NODE_ID,
             public_keys={KEY_ID: public_key},
             replay_cache=GatewayProbeReplayCache(clock=lambda: now),
-            clock=lambda: now,
         )
         client = TestClient(
             create_app(
@@ -861,7 +855,6 @@ class CpkLocalGatewayProductTests(unittest.TestCase):
             gateway_node_id=GATEWAY_NODE_ID,
             public_keys={KEY_ID: public_key},
             replay_cache=GatewayProbeReplayCache(clock=lambda: now),
-            clock=lambda: now,
         )
         client = TestClient(
             create_app(
@@ -1016,9 +1009,9 @@ def _replay_verifier(public_key, clock, *, skew=5, max_entries=4096):
         audience=AUDIENCE,
         gateway_node_id=GATEWAY_NODE_ID,
         public_keys={KEY_ID: public_key},
-        replay_cache=GatewayProbeReplayCache(clock=clock, max_entries=max_entries),
-        clock=clock,
-        clock_skew_seconds=skew,
+        replay_cache=GatewayProbeReplayCache(
+            clock=clock, max_entries=max_entries, clock_skew_seconds=skew
+        ),
     )
 
 
