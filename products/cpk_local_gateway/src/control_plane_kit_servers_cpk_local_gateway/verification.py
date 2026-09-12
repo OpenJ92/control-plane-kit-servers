@@ -61,12 +61,14 @@ class GatewayProbeVerificationError(RuntimeError):
 
 @dataclass(repr=False)
 class GatewayProbeReplayCache:
-    """Small in-memory replay cache for delegated gateway probe JTIs."""
+    """Atomic temporal and replay admission for one gateway process."""
 
     clock: Callable[[], float] = time.time
     max_entries: int = _MAX_REPLAY_ENTRIES
+    clock_skew_seconds: int = _CLOCK_SKEW_SECONDS
     _entries: dict[str, int] = field(default_factory=dict, init=False, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    _last_observed_second: int | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if (
@@ -75,10 +77,22 @@ class GatewayProbeReplayCache:
             or self.max_entries > _MAX_REPLAY_ENTRIES
         ):
             raise ValueError("gateway replay cache size is outside supported bounds")
+        if (
+            type(self.clock_skew_seconds) is not int
+            or self.clock_skew_seconds < 0
+            or self.clock_skew_seconds > 30
+        ):
+            raise ValueError("gateway replay cache clock skew is outside supported bounds")
 
-    def remember_once(self, jti: str, expires_at: int) -> None:
-        now = int(self.clock())
+    def remember_once(self, jti: str, *, issued_at: int, expires_at: int) -> None:
         with self._lock:
+            now = int(self.clock())
+            if self._last_observed_second is not None and now < self._last_observed_second:
+                raise _rejected(DelegatedGatewayProbeVerificationCode.TEMPORALLY_INVALID)
+            self._last_observed_second = now
+            deadline = expires_at + self.clock_skew_seconds
+            if issued_at > now + self.clock_skew_seconds or now >= deadline:
+                raise _rejected(DelegatedGatewayProbeVerificationCode.TEMPORALLY_INVALID)
             expired = [key for key, value in self._entries.items() if value <= now]
             for key in expired:
                 self._entries.pop(key, None)
@@ -92,7 +106,7 @@ class GatewayProbeReplayCache:
                     DelegatedGatewayProbeVerificationCode.REPLAYED,
                     status_code=409,
                 )
-            self._entries[jti] = expires_at
+            self._entries[jti] = deadline
 
     def __repr__(self) -> str:
         return "GatewayProbeReplayCache(<redacted>)"
@@ -107,19 +121,11 @@ class Ed25519GatewayProbeVerifier:
     gateway_node_id: str
     public_keys: Mapping[str, str]
     replay_cache: GatewayProbeReplayCache
-    clock: Callable[[], float] = time.time
-    clock_skew_seconds: int = _CLOCK_SKEW_SECONDS
 
     def __post_init__(self) -> None:
         keys = _validated_public_keys(self.public_keys)
         if not isinstance(self.replay_cache, GatewayProbeReplayCache):
             raise TypeError("gateway verifier requires replay cache")
-        if (
-            type(self.clock_skew_seconds) is not int
-            or self.clock_skew_seconds < 0
-            or self.clock_skew_seconds > 30
-        ):
-            raise ValueError("gateway verifier clock skew is outside supported bounds")
         object.__setattr__(self, "public_keys", MappingProxyType(keys))
 
     def verify(
@@ -134,9 +140,10 @@ class Ed25519GatewayProbeVerifier:
         grant = self._decode_grant(claims)
         self._require_exact_claim_binding(claims, grant)
         self._require_exact_authority(grant)
-        self._require_temporal_validity(grant)
         self._require_exact_request(grant, request)
-        self.replay_cache.remember_once(grant.jti, grant.expires_at)
+        self.replay_cache.remember_once(
+            grant.jti, issued_at=grant.issued_at, expires_at=grant.expires_at
+        )
         return request
 
     def _select_key(self, token: str) -> str:
@@ -213,14 +220,6 @@ class Ed25519GatewayProbeVerifier:
             != f"gateway:{grant.workspace_id}:{grant.gateway_node_id}"
         ):
             raise _rejected(DelegatedGatewayProbeVerificationCode.AUDIENCE_MISMATCH)
-
-    def _require_temporal_validity(self, grant: DelegatedGatewayProbeGrant) -> None:
-        now = int(self.clock())
-        if (
-            grant.issued_at > now + self.clock_skew_seconds
-            or grant.expires_at <= now - self.clock_skew_seconds
-        ):
-            raise _rejected(DelegatedGatewayProbeVerificationCode.TEMPORALLY_INVALID)
 
     def _require_exact_request(
         self,
