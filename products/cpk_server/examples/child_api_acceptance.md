@@ -15,13 +15,23 @@ restart and retained-resource disposition. Do not run an alternate harness.
 ## Source and image coordinates
 
 The controller source consumes Core/Operations
-`087a89253b14b3bb438af9042ea779976886a79e` and Interpreter
-`ba9f7a2e4cdb8b32e54e81cd7e37658562776221` (I3). The three CPK catalogue
+`e3e29995a4ffc6e6645c2b35d41f394438464d2d` and Interpreters
+`e19da40f948d324fbb37cd53075bcbf66a4ee77f`. These reviewed dependencies
+preserve configured secret deliveries exactly once and validate required slots.
+The integrated gateway source also contains the reviewed #176 replay-window
+and atomic clock/admission correction. The three CPK catalogue
 variants share the published D3 image
 `sha256:1ba7174ee22461566750a516dac173fdd718ed9b059660f30c3ad3f9db79d0f4`,
 produced from Servers S3 `3ffc4952015b7eb2c379978c52cab56eaee5853a`.
 The publication tag is `diagnostics-170-3ffc495`; digest identity governs execution.
-This example changes controller composition, not those image bytes.
+Source integration does not change those image bytes. D3 remains the historical
+coordinate; it is not evidence that a deployed CPK contains the new Operations
+correction. The gateway catalogue likewise still records source
+`37cabc3243269e63750cc23b298706e8297b1ee3` and digest
+`sha256:b7cca6d0556eb5b68ef92386bc9b8e198ee62ccf10a7304b076a07283f821792`;
+that unchanged image is not evidence of the #176 fix. New reviewed CPK and
+gateway image qualification and explicit coordinate adoption remain prerequisites
+for the affected live journey. No new image publication is authorized here.
 The child controller's read-only source mount supplies the Hello renderer used
 to calculate the expected body hash. The harness adds that source package to
 the controller's import path; it does not install Hello in the CPK graph image.
@@ -38,6 +48,39 @@ exact canonical product documents in the reviewed source. Preflight requires
 all installation and application image digests already cached. There is no
 implicit image pull, new image build/publication or fresh-pull proof in the
 child acceptance branch.
+
+## Remaining acceptance review
+
+The accepted #177/#176 roadmap changes are integrated without replacing the
+existing child workflow. Source tests and image/live evidence remain separate:
+
+1. Review the exact integrated source, constructor adoption, canonical dependency
+   closure and the preserved child workflow. Obtain the ordinary owning gate at
+   that integrated head with all five live inputs unset; previous-head green is
+   supporting evidence only.
+2. Select reviewed CPK and gateway producer commits, qualify the resulting exact
+   image identities and obtain separate publication/adoption authority. The
+   published D3 and old gateway coordinates above remain unchanged until then.
+   The normal source tests exercise current Python; their existing published-image
+   and root smokes still use the recorded older products. Neither proves these
+   fixes are deployed. The synthetic structural gateway helper now supplies its
+   fixed clock through the new cache API and needs a compatible gateway image.
+3. Review a new concrete source/image/identity/credential-bound release and the
+   original uncertain installation's disposition. Preserve its history, pending
+   intent and resources; no previous receipt authorizes retry or adoption. Verify
+   exclusive retained-ingress use before any future run. Existing ordinary-root
+   evidence leaves runtime mutation permission and external acceptance unverified;
+   a Docker mount observation is not canonical host-source equivalence proof.
+4. Execute the ordered public journey below only after its separate live release:
+   deploy and initialize the parent, deploy the application, preserve history
+   across the grandparent restart, obtain one fresh signed gateway-probe result,
+   then perform reviewed application-before-parent teardown with exact absence
+   evidence and the explicit volume disposition. The retained original tunnel,
+   DNS and protected token remain outside fixture ownership.
+
+The unrelated private-probe smoke's missing signed-auth configuration is not
+repaired by this integration and is not a substitute acceptance path. No broad
+cleanup, provider retry, new diagnostics or publication follows from this plan.
 
 ## Endpoints and consumers
 
