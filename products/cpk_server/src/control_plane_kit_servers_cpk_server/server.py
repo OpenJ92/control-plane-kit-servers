@@ -73,6 +73,8 @@ from control_plane_kit_operations import (
 )
 from control_plane_kit_operations.postgres import PostgresUnitOfWork, install_schema
 
+from control_plane_kit_operations.desired_topology_drafts import DesiredTopologyDraftCommandService
+
 from .boundary import (
     CpkServerApplicationBoundary,
     CpkServerHttpProcessBoundary,
@@ -803,6 +805,11 @@ def _operations_application(
             secret_providers=SecretProviderRegistrationService(unit_of_work),
             delegation_signing_keys=DelegationSigningKeyRegistrationService(
                 unit_of_work
+            ),
+            desired_topology_drafts=DesiredTopologyDraftCommandService(
+                unit_of_work,
+                clock=_clock,
+                id_factory=_id,
             ),
             desired_graphs=DesiredGraphCommandService(
                 unit_of_work,

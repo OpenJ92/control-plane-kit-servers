@@ -285,7 +285,6 @@ class CpkLocalGatewayProductTests(unittest.TestCase):
             gateway_node_id=GATEWAY_NODE_ID,
             public_keys={KEY_ID: public_key},
             replay_cache=GatewayProbeReplayCache(clock=lambda: now),
-            clock=lambda: now,
         )
         gateway = GatewayConfiguration.from_target_map(
             {
@@ -359,7 +358,6 @@ class CpkLocalGatewayProductTests(unittest.TestCase):
                 gateway_node_id=GATEWAY_NODE_ID,
                 public_keys={KEY_ID: public_key},
                 replay_cache=GatewayProbeReplayCache(clock=lambda: now),
-                clock=lambda: now,
             )
 
         accepted = verifier().verify(
@@ -459,7 +457,6 @@ class CpkLocalGatewayProductTests(unittest.TestCase):
                 gateway_node_id=GATEWAY_NODE_ID,
                 public_keys={KEY_ID: public_key},
                 replay_cache=GatewayProbeReplayCache(clock=lambda: now),
-                clock=lambda: now,
             )
 
         for probe in requests:
@@ -607,7 +604,6 @@ class CpkLocalGatewayProductTests(unittest.TestCase):
             gateway_node_id=GATEWAY_NODE_ID,
             public_keys={KEY_ID: public_key},
             replay_cache=GatewayProbeReplayCache(clock=lambda: now),
-            clock=lambda: now,
         )
 
         def verify_once() -> str:
@@ -635,12 +631,165 @@ class CpkLocalGatewayProductTests(unittest.TestCase):
             gateway_node_id=GATEWAY_NODE_ID,
             public_keys={KEY_ID: public_key},
             replay_cache=GatewayProbeReplayCache(clock=lambda: now),
-            clock=lambda: now,
         )
         self.assertEqual(
             restarted.verify(f"CPK-Gateway {token}", _request_body(request)),
             request,
         )
+
+    def test_gateway_replay_protection_covers_the_full_accepted_window(self) -> None:
+        from control_plane_kit_servers_cpk_local_gateway import GatewayProbeVerificationError
+
+        private_key, public_key = _ed25519_keys()
+        start = 1_750_000_000
+        request = GatewayProbeRequest(
+            GatewayProbeCommandKind.HTTP_STATUS, GatewayTargetId("hello.internal"), "/"
+        )
+        grant = _grant(request, now=start)
+        for skew in (0, 5, 30):
+            deadline = grant.expires_at + skew
+            for instant in sorted({grant.expires_at - 1, grant.expires_at, deadline - 1, deadline}):
+                with self.subTest(skew=skew, instant=instant):
+                    now = [start]
+                    verifier = _replay_verifier(public_key, lambda: now[0], skew=skew)
+                    token = f"CPK-Gateway {_signed_capability(private_key, grant)}"
+                    self.assertEqual(verifier.verify(token, _request_body(request)), request)
+                    now[0] = instant
+                    expected = (
+                        DelegatedGatewayProbeVerificationCode.REPLAYED
+                        if instant < deadline
+                        else DelegatedGatewayProbeVerificationCode.TEMPORALLY_INVALID
+                    )
+                    with self.assertRaises(GatewayProbeVerificationError) as raised:
+                        verifier.verify(token, _request_body(request))
+                    self.assertIs(raised.exception.code, expected)
+                    self.assertEqual(raised.exception.status_code, 409 if instant < deadline else 401)
+                    fresh = replace_grant(grant, jti="fresh-jti")
+                    fresh_token = f"CPK-Gateway {_signed_capability(private_key, fresh)}"
+                    if instant < deadline:
+                        self.assertEqual(verifier.verify(fresh_token, _request_body(request)), request)
+                    else:
+                        with self.assertRaises(GatewayProbeVerificationError) as rejected:
+                            verifier.verify(fresh_token, _request_body(request))
+                        self.assertIs(rejected.exception.code, expected)
+                        self.assertEqual(rejected.exception.status_code, 401)
+
+            for instant in (grant.issued_at - skew - 1, grant.issued_at - skew):
+                with self.subTest(skew=skew, early=instant):
+                    verifier = _replay_verifier(public_key, lambda: instant, skew=skew)
+                    token = f"CPK-Gateway {_signed_capability(private_key, grant)}"
+                    if instant < grant.issued_at - skew:
+                        with self.assertRaises(GatewayProbeVerificationError) as raised:
+                            verifier.verify(token, _request_body(request))
+                        self.assertIs(raised.exception.code, DelegatedGatewayProbeVerificationCode.TEMPORALLY_INVALID)
+                    else:
+                        self.assertEqual(verifier.verify(token, _request_body(request)), request)
+
+    def test_gateway_full_cache_preserves_protection_until_the_acceptance_deadline(self) -> None:
+        from control_plane_kit_servers_cpk_local_gateway import GatewayProbeVerificationError
+
+        private_key, public_key = _ed25519_keys()
+        now = [1_750_000_000]
+        request = GatewayProbeRequest(
+            GatewayProbeCommandKind.HTTP_STATUS, GatewayTargetId("hello.internal"), "/"
+        )
+        grant = _grant(request, now=now[0])
+        verifier = _replay_verifier(public_key, lambda: now[0], max_entries=1)
+        token = f"CPK-Gateway {_signed_capability(private_key, grant)}"
+        self.assertEqual(verifier.verify(token, _request_body(request)), request)
+        now[0] = grant.expires_at
+        contender = replace_grant(grant, jti="capacity-contender")
+        for protected in (contender, grant):
+            with self.assertRaises(GatewayProbeVerificationError) as raised:
+                verifier.verify(
+                    f"CPK-Gateway {_signed_capability(private_key, protected)}",
+                    _request_body(request),
+                )
+            self.assertIs(raised.exception.code, DelegatedGatewayProbeVerificationCode.REPLAYED)
+            self.assertEqual(raised.exception.status_code, 409)
+        now[0] = grant.expires_at + 5
+        later = replace_grant(_grant(request, now=now[0]), jti=contender.jti)
+        self.assertEqual(
+            verifier.verify(f"CPK-Gateway {_signed_capability(private_key, later)}", _request_body(request)),
+            request,
+        )
+
+    def test_gateway_clock_rollback_denies_until_the_observed_time_catches_up(self) -> None:
+        from control_plane_kit_servers_cpk_local_gateway import GatewayProbeVerificationError
+
+        private_key, public_key = _ed25519_keys()
+        request = GatewayProbeRequest(
+            GatewayProbeCommandKind.HTTP_STATUS, GatewayTargetId("hello.internal"), "/"
+        )
+        for forward_accepted in (True, False):
+            with self.subTest(forward_accepted=forward_accepted):
+                now = [1_750_000_000]
+                verifier = _replay_verifier(public_key, lambda: now[0], max_entries=2)
+                original = _grant(request, now=now[0])
+
+                def verify(grant):
+                    return verifier.verify(
+                        f"CPK-Gateway {_signed_capability(private_key, grant)}", _request_body(request)
+                    )
+
+                self.assertEqual(verify(original), request)
+                high_water = original.expires_at + 5
+                now[0] = high_water
+                forward = replace_grant(_grant(request, now=high_water), jti="forward-jti")
+                if forward_accepted:
+                    self.assertEqual(verify(forward), request)
+                else:
+                    with self.assertRaises(GatewayProbeVerificationError) as raised:
+                        verify(original)
+                    self.assertIs(raised.exception.code, DelegatedGatewayProbeVerificationCode.TEMPORALLY_INVALID)
+                candidate = replace_grant(forward, jti="rollback-candidate")
+                for instant in (high_water - 2, high_water - 1):
+                    now[0] = instant
+                    for grant in (original, candidate):
+                        with self.assertRaises(GatewayProbeVerificationError) as raised:
+                            verify(grant)
+                        self.assertIs(raised.exception.code, DelegatedGatewayProbeVerificationCode.TEMPORALLY_INVALID)
+                        self.assertEqual(raised.exception.status_code, 401)
+                now[0] = high_water
+                if forward_accepted:
+                    with self.assertRaises(GatewayProbeVerificationError) as raised:
+                        verify(forward)
+                    self.assertIs(raised.exception.code, DelegatedGatewayProbeVerificationCode.REPLAYED)
+                self.assertEqual(verify(candidate), request)
+
+    def test_gateway_request_mismatch_precedes_time_and_does_not_consume_grant(self) -> None:
+        from control_plane_kit_servers_cpk_local_gateway import GatewayProbeVerificationError
+
+        private_key, public_key = _ed25519_keys()
+        now = 1_750_000_000
+        samples = []
+
+        def clock():
+            samples.append(now)
+            return now
+
+        verifier = _replay_verifier(public_key, clock)
+        request = GatewayProbeRequest(
+            GatewayProbeCommandKind.HTTP_STATUS, GatewayTargetId("hello.internal"), "/"
+        )
+        wrong_request = GatewayProbeRequest(
+            GatewayProbeCommandKind.HTTP_STATUS, GatewayTargetId("hello.internal"), "/wrong"
+        )
+        expired = _grant(request, now=now - 100)
+        with self.assertRaises(GatewayProbeVerificationError) as raised:
+            verifier.verify(
+                f"CPK-Gateway {_signed_capability(private_key, expired)}", _request_body(wrong_request)
+            )
+        self.assertIs(raised.exception.code, DelegatedGatewayProbeVerificationCode.REQUEST_MISMATCH)
+        self.assertEqual(samples, [])
+        grant = _grant(request, now=now)
+        token = f"CPK-Gateway {_signed_capability(private_key, grant)}"
+        with self.assertRaises(GatewayProbeVerificationError) as raised:
+            verifier.verify(token, _request_body(wrong_request))
+        self.assertIs(raised.exception.code, DelegatedGatewayProbeVerificationCode.REQUEST_MISMATCH)
+        self.assertEqual(samples, [])
+        self.assertEqual(verifier.verify(token, _request_body(request)), request)
+        self.assertEqual(samples, [now])
 
     def test_valid_capability_still_cannot_reach_an_undeclared_target(self) -> None:
         from control_plane_kit_servers_cpk_local_gateway import (
@@ -663,7 +812,6 @@ class CpkLocalGatewayProductTests(unittest.TestCase):
             gateway_node_id=GATEWAY_NODE_ID,
             public_keys={KEY_ID: public_key},
             replay_cache=GatewayProbeReplayCache(clock=lambda: now),
-            clock=lambda: now,
         )
         client = TestClient(
             create_app(
@@ -707,7 +855,6 @@ class CpkLocalGatewayProductTests(unittest.TestCase):
             gateway_node_id=GATEWAY_NODE_ID,
             public_keys={KEY_ID: public_key},
             replay_cache=GatewayProbeReplayCache(clock=lambda: now),
-            clock=lambda: now,
         )
         client = TestClient(
             create_app(
@@ -850,6 +997,23 @@ class CpkLocalGatewayProductTests(unittest.TestCase):
             module.AUDIENCE,
             f"gateway:{module.WORKSPACE_ID}:gateway",
         )
+
+def _replay_verifier(public_key, clock, *, skew=5, max_entries=4096):
+    from control_plane_kit_servers_cpk_local_gateway import (
+        Ed25519GatewayProbeVerifier,
+        GatewayProbeReplayCache,
+    )
+
+    return Ed25519GatewayProbeVerifier(
+        issuer=ISSUER,
+        audience=AUDIENCE,
+        gateway_node_id=GATEWAY_NODE_ID,
+        public_keys={KEY_ID: public_key},
+        replay_cache=GatewayProbeReplayCache(
+            clock=clock, max_entries=max_entries, clock_skew_seconds=skew
+        ),
+    )
+
 
 def _ed25519_keys() -> tuple[Ed25519PrivateKey, str]:
     private_key = Ed25519PrivateKey.generate()

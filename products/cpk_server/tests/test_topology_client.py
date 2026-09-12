@@ -307,6 +307,63 @@ class TopologyClientTests(unittest.TestCase):
             identity_factory=DeterministicIds(),
         )
 
+    def test_prepare_preserves_declared_and_removed_node_permission(self) -> None:
+        from dataclasses import replace
+        from control_plane_kit_core.topology import GraphDescriptorCodec, compile_topology
+        from control_plane_kit_servers_cpk_server import installation
+        from test_docker_installation import DockerInstallationTests
+
+        desired = replace(DockerInstallationTests().installation(installation), workspace_id="workspace-a")
+        graph = compile_topology(installation.compose_docker_cpk_installation(desired))
+        for declared in (True, False):
+            with self.subTest(declared=declared):
+                selected = graph if declared else replace(graph, nodes={
+                    key: replace(node, runtime_authority_deliveries=())
+                    for key, node in graph.nodes.items()})
+                encoded = GraphDescriptorCodec().encode(selected)
+                self.desired_path.write_text(json.dumps(encoded))
+                transport = ScriptedTransport()
+                result = self.client(transport, state=f"permission-{declared}").plan(self.desired_path)
+                self.assertEqual(result.status, "planned")
+                call = next(value for value in transport.calls
+                            if value["route_id"] == "command.deployment.prepare")
+                self.assertEqual(call["payload"]["desired_graph"], encoded)
+                received = GraphDescriptorCodec().decode(call["payload"]["desired_graph"])
+                for node_id, node in received.nodes.items():
+                    expected = (desired.runtime_access,) if declared and node_id == desired.cpk_node_id else ()
+                    self.assertEqual(node.runtime_authority_deliveries, expected, node_id)
+                self.assertEqual(call["credential_role"], "operator")
+                self.assertFalse(any(value["route_id"].startswith("command.runtime-authority")
+                                     for value in transport.calls))
+
+    def test_public_http_request_identifies_product_without_changing_auth(self) -> None:
+        from control_plane_kit_servers_cpk_server.client.transport import PublicHttpTransport
+
+        profile = self.profile()
+        profile.credentials["operator"].write_bytes(b"operator-token")
+        profile.credentials["operator"].chmod(0o600)
+        with patch(
+            "control_plane_kit_servers_cpk_server.client.transport.build_opener"
+        ) as build_opener:
+            opener = build_opener.return_value
+            opener.open.return_value = io.BytesIO(b'{"kind":"operator-overview"}')
+            result = PublicHttpTransport(profile).call(
+                "read.operator-overview",
+                path_parameters={"workspace_id": "workspace-a"},
+                payload={},
+                credential_role="operator",
+            )
+        opener.open.assert_called_once()
+        request = opener.open.call_args.args[0]
+        self.assertEqual(request.full_url, "https://cpk.example/workspaces/workspace-a/overview")
+        self.assertEqual(request.get_method(), "GET")
+        self.assertEqual(request.get_header("Accept"), "application/json")
+        self.assertEqual(request.get_header("Authorization"), "Bearer operator-token")
+        self.assertEqual(result, {"kind": "operator-overview"})
+        self.assertEqual(
+            request.get_header("User-agent"), "control-plane-kit-cpk-client/0.1.0"
+        )
+
     def test_public_chain_uses_each_route_coordinate_and_own_replay_contract(self) -> None:
         transport = ScriptedTransport(progress_once=True)
         client = self.client(transport)

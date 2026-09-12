@@ -8,11 +8,15 @@ import json
 import os
 from pathlib import Path
 import stat
-from typing import Callable, Mapping, Protocol
+from typing import TYPE_CHECKING, Callable, Mapping, Protocol
+
+if TYPE_CHECKING:
+    from .catalogue import CatalogueResult
 from uuid import uuid4
 
 from .journal import (
     JOURNAL_SCHEMA,
+    SAVED_JOURNAL_SCHEMA,
     MAXIMUM_REQUEST_RECORDS,
     JournalError,
     JournalStore,
@@ -48,6 +52,21 @@ class PublicTransport(Protocol):
 
 class ClientInputError(ValueError):
     """Fixed local input failure."""
+
+
+@dataclass(frozen=True, slots=True)
+class SavedDesiredRevision:
+    """Exact catalogue coordinates; Operations owns selection and admission."""
+
+    draft_id: str
+    revision: int
+
+    def __post_init__(self) -> None:
+        _text_coordinate(self.draft_id)
+        if any(ord(char) < 32 or ord(char) == 127 for char in self.draft_id):
+            raise ClientInputError("saved draft is invalid")
+        if type(self.revision) is not int or not 1 <= self.revision <= 2**63 - 1:
+            raise ClientInputError("saved revision is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,8 +138,45 @@ class TopologyClient:
         self.journal = journal or JournalStore(profile.state_directory)
         self._identity_factory = identity_factory or (lambda: str(uuid4()))
 
-    def plan(self, desired_path: Path, *, title: str = "Topology deployment") -> ClientResult:
-        source, desired = _read_desired(desired_path)
+    def report(self, operation_refs):
+        from .report import collect
+        return collect(self, operation_refs)
+
+    def overview(self) -> CatalogueResult:
+        from .catalogue import read
+        return read(self, "overview")
+
+    def draft_list(self, *, limit: int = 50, cursor: dict | None = None) -> CatalogueResult:
+        from .catalogue import read
+        return read(self, "draft-list", limit=limit, cursor=cursor)
+
+    def draft_show(self, draft_id: str, revision: int) -> CatalogueResult:
+        from .catalogue import read
+        return read(self, "draft-revision", draft_id=draft_id, revision_number=revision)
+
+    def draft_save(self, path: Path, *, title: str | None = None) -> CatalogueResult:
+        from .catalogue import mutate
+        return mutate(self, "create", path=path, title=title)
+
+    def draft_revise(self, draft_id: str, path: Path, expected_head_revision: int) -> CatalogueResult:
+        from .catalogue import mutate
+        return mutate(self, "revise", path=path, draft_id=draft_id, expected_head_revision=expected_head_revision)
+
+    def draft_select(self, draft_id: str, revision: int) -> CatalogueResult:
+        from .catalogue import mutate
+        return mutate(self, "select", draft_id=draft_id, revision_number=revision)
+
+    def draft_resume(self, operation_ref: str) -> CatalogueResult:
+        from .catalogue import resume
+        return resume(self, operation_ref)
+
+    def plan(self, desired_path: Path | SavedDesiredRevision, *, title: str = "Topology deployment") -> ClientResult:
+        saved = isinstance(desired_path, SavedDesiredRevision)
+        if saved:
+            source = {"draft_id": desired_path.draft_id, "revision": desired_path.revision}
+            desired = None
+        else:
+            source, desired = _read_desired(desired_path)
         operation_ref = canonical_operation_ref(self._identity_factory())
         workspace = self._workspace()
         current = _pointer(workspace, "current")
@@ -137,6 +193,18 @@ class TopologyClient:
             "idempotency_key": self._new_key(),
         }
         journal = _new_journal(self.profile, operation_ref, source)
+        if saved:
+            generation = body["expected_desired_graph_revision"]
+            if (
+                workspace.get("workspace_id") != self.profile.workspace_id
+                or body["expected_desired"] is None
+                or not 1 <= generation <= 2**63 - 1
+            ):
+                raise ClientInputError("workspace saved preparation fences are unavailable")
+            body.pop("desired_graph")
+            body.update(source)
+            journal["schema"] = SAVED_JOURNAL_SCHEMA
+            journal["prepare_request"] = dict(body)
         with self.journal.mutation_lock(operation_ref):
             self.journal.create(operation_ref, journal)
             result = self._mutate(
@@ -190,7 +258,7 @@ class TopologyClient:
             if execute_plan != plan_id:
                 raise ClientInputError("execution confirmation does not match the prepared plan")
             try:
-                plan = self._plan_detail(plan_id)
+                plan = self._plan_detail(plan_id, saved=journal["schema"] == SAVED_JOURNAL_SCHEMA)
                 self._validate_plan(journal, plan)
             except ClientAuthorizationError:
                 raise
@@ -484,7 +552,7 @@ class TopologyClient:
         if "approval_request_id" in prepared:
             coordinates["approval_request_id"] = _text(prepared, "approval_request_id")
         try:
-            plan = self._plan_detail(plan_id)
+            plan = self._plan_detail(plan_id, saved=journal["schema"] == SAVED_JOURNAL_SCHEMA)
             self._validate_plan(journal, plan)
             changes = _plan_changes(plan)
         except ClientAuthorizationError:
@@ -565,7 +633,7 @@ class TopologyClient:
         if not isinstance(pending, dict):
             raise JournalError("operation has no pending request")
         body = dict(_mapping(pending, "body"))
-        if pending.get("route_id") == "command.deployment.prepare":
+        if pending.get("route_id") == "command.deployment.prepare" and journal["schema"] == JOURNAL_SCHEMA:
             source = _mapping(pending, "desired_source")
             verified_source, desired = _read_desired(Path(_text(source, "path")))
             if verified_source != source:
@@ -754,6 +822,8 @@ class TopologyClient:
 
     def _load(self, operation_ref: str) -> dict[str, object]:
         journal = self.journal.read(operation_ref)
+        if journal.get("schema") not in {JOURNAL_SCHEMA, SAVED_JOURNAL_SCHEMA}:
+            raise JournalError("operation is not a deployment invocation")
         target = _mapping(journal, "target")
         if (
             target.get("endpoint_sha256") != self.profile.target_digest
@@ -776,7 +846,7 @@ class TopologyClient:
             workspace = self._workspace()
             current = _pointer(workspace, "current")
             if "plan_id" in coordinates:
-                plan = self._plan_detail(_coordinate(coordinates, "plan_id"))
+                plan = self._plan_detail(_coordinate(coordinates, "plan_id"), saved=journal["schema"] == SAVED_JOURNAL_SCHEMA)
                 self._validate_plan(journal, plan)
                 changes = _plan_changes(plan)
             if "approval_request_id" in coordinates:
@@ -905,11 +975,13 @@ class TopologyClient:
         )
         return _mapping(value, "workspace")
 
-    def _plan_detail(self, plan_id: str) -> Mapping[str, object]:
+    def _plan_detail(self, plan_id: str, *, saved: bool = False) -> Mapping[str, object]:
         value = self._read(
             "read.plan-detail",
             path_parameters={"workspace_id": self.profile.workspace_id, "plan_id": plan_id},
         )
+        if saved and value.get("workspace_id") != self.profile.workspace_id:
+            raise ClientInputError("prepared plan workspace is invalid")
         return _mapping(value, "plan")
 
     def _approval_detail(self, approval_id: str) -> Mapping[str, object]:
@@ -981,6 +1053,19 @@ class TopologyClient:
         raise ClientInputError("public history page budget is exhausted")
 
     def _validate_plan(self, journal: Mapping[str, object], plan: Mapping[str, object]) -> None:
+        if journal["schema"] == SAVED_JOURNAL_SCHEMA:
+            request = _mapping(journal, "prepare_request")
+            current = _mapping(request, "expected_current")
+            desired = _mapping(request, "expected_desired")
+            expected = {
+                "base_graph_id": current["authored_graph_id"],
+                "base_realized_projection_id": current["realized_projection_id"],
+                "desired_graph_id": desired["authored_graph_id"],
+                "desired_realized_projection_id": desired["realized_projection_id"],
+                "desired_graph_revision": request["expected_desired_graph_revision"],
+            }
+            if any(plan.get(name) != value for name, value in expected.items()):
+                raise ClientInputError("prepared plan coordinates are stale")
         coordinates = _coordinates(journal)
         for name in (
             "plan_id",

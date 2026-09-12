@@ -10,16 +10,16 @@ WORKDIR /app
 RUN python -m pip install --no-cache-dir \
     "fastapi>=0.115" \
     "uvicorn>=0.30" \
-    "control-plane-kit-core @ https://github.com/OpenJ92/control-plane-kit/archive/8e56a82ec52eb6d08ba803c391df28338dcd9056.zip#subdirectory=control-plane-kit-core" \
-    "control-plane-kit-operations @ https://github.com/OpenJ92/control-plane-kit/archive/8e56a82ec52eb6d08ba803c391df28338dcd9056.zip#subdirectory=control-plane-kit-operations" \
-    "control-plane-kit-interpreters[cloudflare,docker,gateway,public-dns] @ https://github.com/OpenJ92/control-plane-kit-interpreters/archive/a28583e41ec75ed6fbe4ae8635e0ff7148afe254.zip"
+    "control-plane-kit-core @ https://github.com/OpenJ92/control-plane-kit/archive/e3e29995a4ffc6e6645c2b35d41f394438464d2d.zip#subdirectory=control-plane-kit-core" \
+    "control-plane-kit-operations @ https://github.com/OpenJ92/control-plane-kit/archive/e3e29995a4ffc6e6645c2b35d41f394438464d2d.zip#subdirectory=control-plane-kit-operations" \
+    "control-plane-kit-interpreters[cloudflare,docker,gateway,public-dns] @ https://github.com/OpenJ92/control-plane-kit-interpreters/archive/e19da40f948d324fbb37cd53075bcbf66a4ee77f.zip"
 
 COPY products/cpk_server/src ./products/cpk_server/src
 
 RUN adduser --disabled-password --gecos "" --uid 10001 cpk \
     && chown -R cpk:cpk /app
 
-USER cpk
+USER 10001
 EXPOSE 8080
 
 CMD ["python", "-m", "control_plane_kit_servers_cpk_server.server"]

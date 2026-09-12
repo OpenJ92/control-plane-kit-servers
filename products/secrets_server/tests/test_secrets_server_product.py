@@ -98,7 +98,8 @@ class SecretsServerProductTests(unittest.TestCase):
     def test_image_is_non_root_and_pins_provider_source(self) -> None:
         dockerfile = DOCKERFILE.read_text(encoding="utf-8")
 
-        self.assertIn("USER secrets", dockerfile)
+        self.assertIn("\nUSER 10006\n", dockerfile)
+        self.assertIn('--uid 10006 secrets', dockerfile)
         self.assertIn(
             "control-plane-kit-secrets/archive/"
             f"{SECRETS_PIN}.zip",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from hashlib import sha256
 import fcntl
 import json
 import os
@@ -13,6 +14,7 @@ from uuid import UUID
 
 
 JOURNAL_SCHEMA = "cpk.client-invocation.v1"
+SAVED_JOURNAL_SCHEMA = "cpk.client-saved-invocation.v1"
 MAXIMUM_JOURNAL_BYTES = 1_048_576
 MAXIMUM_REQUEST_RECORDS = 128
 _JOURNAL_KEYS = {
@@ -261,9 +263,15 @@ class JournalStore:
 
 
 def _validate_journal(value: object, operation_ref: str) -> None:
-    if not isinstance(value, dict) or set(value) != _JOURNAL_KEYS:
+    if isinstance(value, dict) and value.get("schema") == "cpk.client-catalogue-invocation.v1":
+        from .catalogue import validate_journal
+        validate_journal(value, operation_ref)
+        return
+    saved = isinstance(value, dict) and value.get("schema") == SAVED_JOURNAL_SCHEMA
+    keys = _JOURNAL_KEYS | {"prepare_request"} if saved else _JOURNAL_KEYS
+    if not isinstance(value, dict) or set(value) != keys:
         raise JournalError("operation journal is invalid")
-    if value["schema"] != JOURNAL_SCHEMA or value["operation_ref"] != operation_ref:
+    if value["schema"] not in {JOURNAL_SCHEMA, SAVED_JOURNAL_SCHEMA} or value["operation_ref"] != operation_ref:
         raise JournalError("operation journal identity is invalid")
     target = value["target"]
     if not isinstance(target, dict) or set(target) != {"endpoint_sha256", "workspace_id"}:
@@ -274,7 +282,9 @@ def _validate_journal(value: object, operation_ref: str) -> None:
     ):
         raise JournalError("operation journal target is invalid")
     desired = value["desired"]
-    if (
+    if saved:
+        _validate_saved_request(value["prepare_request"], desired)
+    elif (
         not isinstance(desired, dict)
         or set(desired) != {"path", "size", "sha256"}
         or not isinstance(desired["path"], str)
@@ -385,7 +395,7 @@ def _validate_journal(value: object, operation_ref: str) -> None:
         raise JournalError("operation journal advancement coordinates are invalid")
     pending = value["pending_request"]
     if pending is not None:
-        _validate_pending(pending, phase, target, desired, coordinates)
+        _validate_pending(pending, phase, target, desired, coordinates, value.get("prepare_request"))
     history = value["request_history"]
     if not isinstance(history, list) or len(history) > MAXIMUM_REQUEST_RECORDS:
         raise JournalError("operation journal request budget is exhausted")
@@ -404,12 +414,43 @@ def _validate_journal(value: object, operation_ref: str) -> None:
         _validate_result(value["last_result"], operation_ref, target, coordinates)
 
 
+
+def _validate_saved_request(request: object, desired: object) -> None:
+    def text(value: object) -> bool:
+        return _is_text(value) and not any(ord(char) < 32 or ord(char) == 127 for char in value)
+
+    def positive(value: object) -> bool:
+        return type(value) is int and 1 <= value <= 2**63 - 1
+
+    if (
+        not isinstance(desired, dict)
+        or set(desired) != {"draft_id", "revision"}
+        or not text(desired["draft_id"])
+        or not positive(desired["revision"])
+        or not isinstance(request, dict)
+        or set(request) != {"draft_id", "revision", "expected_current", "expected_desired",
+                            "expected_desired_graph_revision", "title", "idempotency_key"}
+        or request["draft_id"] != desired["draft_id"]
+        or type(request["revision"]) is not int
+        or request["revision"] != desired["revision"]
+        or not positive(request["expected_desired_graph_revision"])
+        or not text(request["title"])
+        or not _is_uuid4(request["idempotency_key"])
+    ):
+        raise JournalError("operation journal saved preparation is invalid")
+    for name in ("expected_current", "expected_desired"):
+        pointer = request[name]
+        if not _valid_pointer(pointer) or not all(text(item) for item in pointer.values()):
+            raise JournalError("operation journal saved preparation is invalid")
+
+
 def _validate_pending(
     pending: object,
     phase: str,
     target: Mapping[str, object],
     desired: Mapping[str, object],
     coordinates: Mapping[str, object],
+    saved_request: Mapping[str, object] | None = None,
 ) -> None:
     keys = {
         "route_id",
@@ -483,12 +524,20 @@ def _validate_pending(
         "command.deployment.execute": {"workspace_id", "run_id"},
         "command.graph.advance-current": {"workspace_id", "run_id"},
     }
+    if saved_request is not None:
+        body_keys["command.deployment.prepare"] |= {"draft_id", "revision"}
     if set(body) != body_keys[route_id] or set(path) != path_keys[route_id]:
         raise JournalError("operation journal pending request is invalid")
     if path.get("workspace_id") != target["workspace_id"]:
         raise JournalError("operation journal pending target is invalid")
     source = pending["desired_source"]
     if route_id == "command.deployment.prepare":
+        if saved_request is not None and (
+            body != saved_request
+            or sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            != pending["body_sha256"]
+        ):
+            raise JournalError("operation journal prepare request is invalid")
         if (
             source != desired
             or not _valid_pointer(body.get("expected_current"))
