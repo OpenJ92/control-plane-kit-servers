@@ -136,7 +136,7 @@ class CoordinateGenerationTests(unittest.TestCase):
                 module.COORDINATES,
                 "cpk-local-gateway",
             ),
-            "37cabc3243269e63750cc23b298706e8297b1ee3",
+            "1ae09241bac25d48ca5ebb621bce3239d3035e10",
         )
 
     def test_published_product_source_commit_must_be_canonical(self) -> None:

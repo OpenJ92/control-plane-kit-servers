@@ -13,7 +13,7 @@ import sys
 from typing import NamedTuple
 
 from products.cpk_server.examples.root_bootstrap_input import example_input
-from control_plane_kit_servers_cpk_server.bootstrap import matches_image_reference
+from control_plane_kit_interpreters.docker.sdk import matches_image_reference
 
 
 ROOT = Path("/witness")
@@ -33,11 +33,11 @@ class ImageAccountBaseline(NamedTuple):
         return frozenset((self.primary_gid, *self.supplementary_gids, socket_gid))
 
 
-# Offline final-filesystem evidence, reviewed in Servers #170. This value is
+# Offline final-filesystem evidence, resealed for Servers #163. This value is
 # independent of process observations and must be resealed for another image.
 CPK_IMAGE_ACCOUNT = ImageAccountBaseline(
-    image_reference="ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:1ba7174ee22461566750a516dac173fdd718ed9b059660f30c3ad3f9db79d0f4",
-    config_digest="sha256:d0e3f163519060efba0fcded2c0e588a3fa26781efc43692e8ef4a9646bbd2cc",
+    image_reference="ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:932e1da54dcb2112e9d223b25bad11282f7eb7a8bf51a018a87843b81993c835",
+    config_digest="sha256:3b58142cb12869a2e10147e242a755a69db04945559b600a212fc8d4ee657acd",
     passwd_sha256="2b154879fd6e9899bbe9f9c04eb2535f3388ad5a090f90a78c0dca81a13b9921",
     group_sha256="1ffcc10cbb13f710c78598bdccecd91b43251fef7e443ca860dfe84c656c0653",
     uid=10001, primary_gid=10001, supplementary_gids=(100,),
@@ -154,12 +154,13 @@ def retain_authority_evidence(run, container, inspection, node, receipt, engine_
     print(json.dumps({"cpk_private_authority_evidence": status}), flush=True)
 
 
-def prepare(run):
+def prepare(run, *, document=None):
     os.umask(0o077)
-    port_text = os.environ.get("CPK_ROOT_TEST_PORT", "18089")
-    if not port_text.isascii() or not port_text.isdecimal() or not 1 <= int(port_text) <= 65535:
-        raise ValueError("CPK_ROOT_TEST_PORT must be an integer from 1 to 65535")
-    document = example_input(installation_id=run, workspace_id=run, port=int(port_text))
+    if document is None:
+        port_text = os.environ.get("CPK_ROOT_TEST_PORT", "18089")
+        if not port_text.isascii() or not port_text.isdecimal() or not 1 <= int(port_text) <= 65535:
+            raise ValueError("CPK_ROOT_TEST_PORT must be an integer from 1 to 65535")
+        document = example_input(installation_id=run, workspace_id=run, port=int(port_text))
     input_path = ROOT / "input.json"
     input_path.write_text(json.dumps(document))
     # The real launcher must plan from the documented invoking-user private input.
@@ -193,17 +194,18 @@ def check(run):
     from control_plane_kit_interpreters.docker import DockerSdkClient
 
     result = json.loads((ROOT / "result.json").read_text())
+    plan = json.loads((ROOT / "plan.json").read_text())
+    workspace_id = plan['input']['installation']['workspace_id']
     assert result["status"] == "local-ready" and result["external_endpoint"] == "unverified"
     receipt = result["receipt"]
     assert receipt["phase"] == "complete" and receipt["pending"] is None
     assert receipt["labels"]["org.openj92.cpk.installation"] == run
     setup = receipt["observations"]["public_setup"]
-    assert setup["status"] == "authenticated-local-setup" and setup["workspace_id"] == run
+    assert setup["status"] == "authenticated-local-setup" and setup["workspace_id"] == workspace_id
     assert len([item for item in setup["commands"] if item["route"] == "command.product.import"]) == 3
     assert {"read.workspace", "read.current-graph", "read.desired-graph"} <= set(setup["reads"])
     engine = docker.from_env()
     sdk = DockerSdkClient(client=engine)
-    plan = json.loads((ROOT / "plan.json").read_text())
     try:
         engine_matches = engine.info()["ID"] == receipt["engine_id"]
         assert engine_matches
@@ -272,7 +274,7 @@ with tempfile.TemporaryDirectory() as directory:
     else:
         raise AssertionError('wrong credential accepted')
 '''
-        outcome = cpk.exec_run(["python", "-c", "WORKSPACE=" + repr(run) + "\n" + probe])
+        outcome = cpk.exec_run(["python", "-c", "WORKSPACE=" + repr(workspace_id) + "\n" + probe])
         assert outcome.exit_code == 0, "wrong-credential witness failed"
         before = (ROOT / "state" / "receipt.json").read_bytes()
         (ROOT / "receipt-before").write_bytes(before)
@@ -447,6 +449,70 @@ def cleanup(run):
         engine.close()
 
 
+def restart_for_child(run):
+    """Released fault injection: restart only the receipt-owned parent CPK.
+
+    This is not part of the ordinary root regression. The complete-child effect
+    plan must separately authorize this phase. An existing record holds rather
+    than retrying an uncertain restart.
+    """
+    import docker
+    receipt_path = ROOT / 'state' / 'receipt.json'
+    receipt_raw = receipt_path.read_bytes()
+    receipt = json.loads(receipt_raw)
+    plan = json.loads((ROOT / 'plan.json').read_bytes())
+    child_record = json.loads((ROOT / 'child-api' / 'record.json').read_bytes())
+    assert child_record['phase'] == 'deployed'
+    assert receipt['phase'] == 'complete' and receipt['pending'] is None
+    assert receipt['labels']['org.openj92.cpk.installation'] == run
+    restart = ROOT / 'parent-restart'
+    restart.mkdir(mode=0o700, exist_ok=False)
+    engine = docker.from_env()
+    try:
+        assert engine.info()['ID'] == receipt['engine_id']
+        containers = {}
+        before = {}
+        for node_id, item in receipt['resources']['containers'].items():
+            container = engine.containers.get(item['id'])
+            assert all(container.labels.get(key) == value for key, value in receipt['labels'].items())
+            assert container.attrs['State']['Running']
+            containers[node_id] = container
+            before[node_id] = {'id': container.id, 'started_at': container.attrs['State']['StartedAt']}
+        parent_id = plan['cpk_node_id']
+        evidence = {'phase': 'pending', 'receipt_sha256': hashlib.sha256(receipt_raw).hexdigest(),
+                    'engine_id': receipt['engine_id'], 'parent_node_id': parent_id, 'before': before}
+        def record():
+            path = restart / 'record.new'
+            with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), 'w') as stream:
+                json.dump(evidence, stream, sort_keys=True, separators=(',', ':'))
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(path, restart / 'record.json')
+            directory = os.open(restart, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        record()
+        containers[parent_id].restart(timeout=30)
+        after = {}
+        for node_id, container in containers.items():
+            container.reload()
+            assert container.attrs['State']['Running']
+            after[node_id] = {'id': container.id, 'started_at': container.attrs['State']['StartedAt']}
+            assert after[node_id]['id'] == before[node_id]['id']
+            if node_id == parent_id:
+                assert after[node_id]['started_at'] != before[node_id]['started_at']
+            else:
+                assert after[node_id] == before[node_id], 'root database/provider restarted unexpectedly'
+        assert receipt_path.read_bytes() == receipt_raw, 'root receipt changed across restart'
+        evidence.update(phase='complete', after=after)
+        record()
+        print('child fixture: exact receipt-owned parent restart observed; database/provider unchanged')
+    finally:
+        engine.close()
+
+
 if __name__ == "__main__":
     action, run = sys.argv[1:]
     if action == "prepare":
@@ -455,6 +521,12 @@ if __name__ == "__main__":
         check(run)
     elif action == "cleanup":
         cleanup(run)
+    elif action == "restart-for-child":
+        try:
+            restart_for_child(run)
+        except Exception:
+            print('child parent-restart HOLD; inspect private restart evidence', file=sys.stderr)
+            raise SystemExit(1) from None
     elif action == "digest":
         print(json.loads((ROOT / "plan.json").read_text())["digest"])
     elif action == "unchanged":

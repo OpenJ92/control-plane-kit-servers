@@ -5,6 +5,20 @@ IMAGE="${CPK_SERVERS_TEST_IMAGE:-control-plane-kit-servers-test:local}"
 POLICY_IMAGE="${CPK_SERVERS_POLICY_IMAGE:-python:3.14-slim}"
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 
+# Explicit local #163 release only; ordinary/hosted runs do not enter this mode.
+# These inputs must be authorized as one concrete source/effect envelope before
+# invocation. Supplying variables is not itself permission for external effects.
+CHILD_RELEASE="${CPK_CHILD_ACCEPTANCE_RELEASE:-}"
+if [ -n "$CHILD_RELEASE" ]; then
+  : "${CPK_CHILD_ACCEPTANCE_DIGEST:?exact approved release digest required}"
+  : "${CPK_CHILD_ACCEPTANCE_RUN:?exact approved parent installation required}"
+  : "${CPK_CHILD_CLOUDFLARE_TOKEN_FILE:?approved private raw token input required}"
+  : "${CPK_PARENT_TUNNEL_TOKEN_FILE:?approved retained ingress token input required}"
+  [ -f "$CHILD_RELEASE" ] && [ -f "$CPK_CHILD_CLOUDFLARE_TOKEN_FILE" ] && [ -f "$CPK_PARENT_TUNNEL_TOKEN_FILE" ]
+  CHILD_SOURCE_HEAD="$(git -C "$ROOT" rev-parse HEAD)"
+  [ -z "$(git -C "$ROOT" status --porcelain)" ] || { echo 'child acceptance requires reviewed clean source' >&2; exit 1; }
+fi
+
 cd "$ROOT"
 
 docker run --rm \
@@ -152,10 +166,49 @@ CPK_SERVER_IMAGE="$CPK_IMAGE" sh scripts/cpk_server_published_image_smoke.sh
   RECORDS="$(mktemp -d)"
   [ "${GITHUB_ACTIONS:-}" = true ] || printf 'root bootstrap: private diagnostic records=%s\n' "$RECORDS"
   RUN="root-$(date +%s)-$$"
+  if [ -n "$CHILD_RELEASE" ]; then
+    RUN="$CPK_CHILD_ACCEPTANCE_RUN"
+    mkdir -m 700 "$RECORDS/inputs"
+    cp "$CHILD_RELEASE" "$RECORDS/release.json"
+    cp "$CPK_CHILD_CLOUDFLARE_TOKEN_FILE" "$RECORDS/inputs/cloudflare-token"
+    cp "$CPK_PARENT_TUNNEL_TOKEN_FILE" "$RECORDS/inputs/parent-tunnel-token"
+    chmod 400 "$RECORDS/release.json" "$RECORDS/inputs/cloudflare-token" "$RECORDS/inputs/parent-tunnel-token"
+  fi
   DRIVER_TAG="control-plane-kit-bootstrap-test:$RUN"
   DRIVER=""
+  child_fixture() {
+    phase="$1"
+    case "$phase" in
+      seed) set -- --network "container:$PARENT_CONTAINER_ID" ;;
+      seed-application-custody) set -- --network "container:$CHILD_CONTAINER_ID" \
+        -e "CPK_CHILD_NAMESPACE_ID=$CHILD_CONTAINER_ID" ;;
+      preflight|observe-installation|observe|verify-application-empty|finish) set -- --network "container:$PARENT_CONTAINER_ID" \
+        --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock ;;
+      *) set -- --network none ;;
+    esac
+    docker run --rm "$@" \
+      --label "org.openj92.cpk.test-run=$RUN" \
+      --mount "type=bind,source=$ROOT,target=/source,readonly" \
+      --mount "type=bind,source=$RECORDS,target=/witness" \
+      -e "CPK_CHILD_SOURCE_HEAD=$CHILD_SOURCE_HEAD" \
+      -e PYTHONPATH=/source:/source/products/hello_server/src:/app/products/cpk_server/src "$DRIVER" \
+      python /source/products/cpk_server/tests/live_child_fixture.py "$phase" "$RUN" "$CPK_CHILD_ACCEPTANCE_DIGEST"
+  }
+  child_api() {
+    docker run --rm --network "container:$PARENT_CONTAINER_ID" \
+      --label "org.openj92.cpk.test-run=$RUN" \
+      --mount "type=bind,source=$ROOT,target=/source,readonly" \
+      --mount "type=bind,source=$RECORDS,target=/witness" \
+      -e PYTHONPATH=/source:/source/products/hello_server/src:/app/products/cpk_server/src "$DRIVER" \
+      python /source/products/cpk_server/tests/live_child_api.py "$1"
+  }
   cleanup_root_bootstrap() {
     [ -n "$DRIVER" ] || return 0
+    if [ -n "$CHILD_RELEASE" ]; then
+      # Failed/uncertain child work preserves its root custody and process state.
+      # Never substitute root teardown for successful public child convergence.
+      child_fixture require-complete || return 1
+    fi
     docker run --rm --network none \
       --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
       --mount "type=bind,source=$ROOT,target=/source,readonly" \
@@ -171,12 +224,23 @@ CPK_SERVER_IMAGE="$CPK_IMAGE" sh scripts/cpk_server_published_image_smoke.sh
   docker build -f products/cpk_server/Dockerfile.bootstrap --build-arg "CPK_IMAGE=$CPK_IMAGE" \
     --label "org.openj92.cpk.test-run=$RUN" --iidfile "$RECORDS/driver" -t "$DRIVER_TAG" .
   DRIVER="$(cat "$RECORDS/driver")"
-  docker run --rm --network none --user "$(id -u):$(id -g)" \
-    -e "CPK_ROOT_TEST_PORT=${CPK_ROOT_TEST_PORT:-18089}" \
-    --mount "type=bind,source=$ROOT,target=/source,readonly" \
-    --mount "type=bind,source=$RECORDS,target=/witness" \
-    -e PYTHONPATH=/source:/app/products/cpk_server/src "$DRIVER" \
-    python /source/products/cpk_server/tests/live_root_bootstrap.py prepare "$RUN"
+  if [ -n "$CHILD_RELEASE" ]; then
+    # Plan input remains private and owned by the invoking host user, as required
+    # by the existing bootstrap launcher. Later profiles use controller ownership.
+    docker run --rm --network none --user "$(id -u):$(id -g)" \
+      --mount "type=bind,source=$ROOT,target=/source,readonly" \
+      --mount "type=bind,source=$RECORDS,target=/witness" \
+      -e "CPK_CHILD_SOURCE_HEAD=$CHILD_SOURCE_HEAD" \
+      -e PYTHONPATH=/source:/app/products/cpk_server/src "$DRIVER" \
+      python /source/products/cpk_server/tests/live_child_fixture.py prepare "$RUN" "$CPK_CHILD_ACCEPTANCE_DIGEST"
+  else
+    docker run --rm --network none --user "$(id -u):$(id -g)" \
+      -e "CPK_ROOT_TEST_PORT=${CPK_ROOT_TEST_PORT:-18089}" \
+      --mount "type=bind,source=$ROOT,target=/source,readonly" \
+      --mount "type=bind,source=$RECORDS,target=/witness" \
+      -e PYTHONPATH=/source:/app/products/cpk_server/src "$DRIVER" \
+      python /source/products/cpk_server/tests/live_root_bootstrap.py prepare "$RUN"
+  fi
   sh bootstrap.sh plan "$DRIVER" "$RECORDS/input.json" > "$RECORDS/plan.json"
   DIGEST="$(docker run --rm --network none \
     --mount "type=bind,source=$ROOT,target=/source,readonly" \
@@ -199,5 +263,27 @@ CPK_SERVER_IMAGE="$CPK_IMAGE" sh scripts/cpk_server_published_image_smoke.sh
     --mount "type=bind,source=$RECORDS,target=/witness,readonly" \
     -e PYTHONPATH=/source:/app/products/cpk_server/src "$DRIVER" \
     python /source/products/cpk_server/tests/live_root_bootstrap.py unchanged "$RUN"
+  if [ -n "$CHILD_RELEASE" ]; then
+    PARENT_CONTAINER_ID="$(child_fixture parent-id)"
+    child_fixture preflight
+    child_fixture seed
+    child_api deploy
+    child_fixture observe-installation
+    CHILD_CONTAINER_ID="$(child_fixture child-id)"
+    child_fixture seed-application-custody
+    child_api deploy-application
+    child_fixture observe
+    docker run --rm --network none \
+      --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
+      --mount "type=bind,source=$ROOT,target=/source,readonly" \
+      --mount "type=bind,source=$RECORDS,target=/witness" \
+      -e PYTHONPATH=/source:/app/products/cpk_server/src "$DRIVER" \
+      python /source/products/cpk_server/tests/live_root_bootstrap.py restart-for-child "$RUN"
+    child_api reconnect
+    child_api teardown-application
+    child_fixture verify-application-empty
+    child_api teardown-parent
+    child_fixture finish
+  fi
 )
 sh scripts/docker_residue_audit.sh

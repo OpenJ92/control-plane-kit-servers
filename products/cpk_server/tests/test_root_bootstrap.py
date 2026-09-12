@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import importlib
 import json
+from hashlib import sha256
 from pathlib import Path
 import tempfile
 import unittest
@@ -76,6 +77,59 @@ def installation_input():
 
 
 class RootBootstrapTests(unittest.TestCase):
+    def test_retained_ingress_connection_is_bound_and_separate_from_root_topology(self):
+        api = self.api()
+        document = installation_input()
+        baseline = api.plan_root_bootstrap(document, driver_image_id=DRIVER)
+        configuration = {'config': {'ingress': [
+            {'hostname': 'root.example.test', 'service': 'http://cpk-bootstrap-origin:8080', 'originRequest': {}},
+            {'service': 'http_status:404'}]}}
+        token = 'private-test-tunnel-token'
+        reference = 'secret://bootstrap/retained-ingress/token'
+        document['external_ingress_connection'] = {
+            'tunnel_id': '11111111-1111-4111-8111-111111111111', 'dns_record_id': 'd' * 32,
+            'token_reference': reference, 'token_sha256': sha256(token.encode()).hexdigest(),
+            'configuration_sha256': sha256(api.canonical(configuration)).hexdigest(),
+            'connector_product': json.loads((ROOT / 'products/cloudflared_connector/product.cpk.json').read_text())}
+        plan = api.plan_root_bootstrap(document, driver_image_id=DRIVER)
+        self.assertNotEqual(plan['digest'], baseline['digest'])
+        self.assertEqual(plan['graph'], baseline['graph'])
+        self.assertEqual(plan['setup_routes'], baseline['setup_routes'])
+        connection = plan['external_ingress_connection']
+        self.assertEqual(connection['provider_disposition'], 'operator-retained')
+        self.assertEqual(connection['connector_disposition'], 'run-owned')
+        connector = next(node for node in plan['resources']['nodes'] if node['node_id'] == connection['node_id'])
+        self.assertEqual(connector['name'], 'cpk-bootstrap-tunnel-' + connection['tunnel_id'])
+        self.assertEqual(connector['environment'], {'TUNNEL_TOKEN_FILE': '/run/secrets/cpk-ingress/token'})
+        self.assertEqual(connector['secret_files'][0]['reference'], reference)
+        self.assertIsNone(connector['local_docker_access'])
+        self.assertIn('cpk-bootstrap-origin', next(node for node in plan['resources']['nodes']
+                                               if node['node_id'] == plan['cpk_node_id'])['aliases'])
+        self.assertNotIn(token, api.canonical(plan).decode())
+        from control_plane_kit_servers_cpk_server.bootstrap_runtime import _material
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            files = {}
+            for index, item in enumerate(plan['required_material']):
+                path = root / str(index)
+                path.write_text(token if item == reference else 'private-fixture-material')
+                path.chmod(0o400)
+                files[item] = path.name
+            index_path = root / 'index.json'
+            index_path.write_text(json.dumps({'schema': 'cpk.root-bootstrap.material.v1', 'files': files}))
+            index_path.chmod(0o400)
+            self.assertEqual(_material(plan, index_path)[reference], token)
+            token_path = root / files[reference]
+            token_path.chmod(0o600)
+            token_path.write_text('different-tunnel-token')
+            token_path.chmod(0o400)
+            with self.assertRaises(api.RootBootstrapError):
+                _material(plan, index_path)
+            self.assertFalse((root / 'receipt.json').exists())
+        document['installation']['external_endpoint'] = 'https://another-root.example.test'
+        with self.assertRaises(api.RootBootstrapError):
+            api.plan_root_bootstrap(document, driver_image_id=DRIVER)
+
     def api(self):
         name = "control_plane_kit_servers_cpk_server.bootstrap"
         try:

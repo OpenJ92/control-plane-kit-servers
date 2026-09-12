@@ -16,9 +16,11 @@ import stat
 import tarfile
 import time
 
+from control_plane_kit_interpreters.docker.sdk import matches_image_reference
+
 from .bootstrap import (
     MAX_BYTES, RootBootstrapError, RootBootstrapHold, canonical, decode_document,
-    matches_image_reference, protected_file_owner, BootstrapStage, bootstrap_stage,
+    protected_file_owner, BootstrapStage, bootstrap_stage,
 )
 
 
@@ -55,6 +57,9 @@ def _material(plan, index_path):
             if "\x00" in value:
                 raise ValueError("encoding")
             values[reference] = value
+        connection = plan.get('external_ingress_connection')
+        if connection is not None and hashlib.sha256(values[connection['token_reference']].encode()).hexdigest() != connection['token_sha256']:
+            raise ValueError('retained ingress credential differs')
         return values
     except (RootBootstrapError, ValueError, TypeError, KeyError, OSError):
         raise RootBootstrapError("bootstrap material could not be verified") from None
@@ -336,6 +341,8 @@ def _acquire(plan, material, state):
         _save(state, receipt)
         observed()
         for node in resources["nodes"]:
+            if node['node_id'] == plan.get('external_ingress_connection', {}).get('node_id'):
+                continue  # Connect only after actual root public setup succeeds.
             image = images[node["node_id"]]
             environment, files = resolved[node["node_id"]]
             mounts = []
@@ -443,6 +450,33 @@ def _acquire(plan, material, state):
                 observed()
             else:
                 raise RootBootstrapHold("bootstrap staging volume removal was not verified")
+        if 'external_ingress_connection' in plan:
+            connection = plan['external_ingress_connection']
+            node = next(item for item in resources['nodes'] if item['node_id'] == connection['node_id'])
+            image = images[node['node_id']]
+            delivery = node['secret_files'][0]
+            file_volume(delivery['name'], SecretValue(material[connection['token_reference']]),
+                        file_owners[node['node_id']])
+            receipt['observations']['external_ingress_connection'] = connection
+            _save(state, receipt)
+            connector = effect('create-external-ingress-connector', lambda: client.containers.create(
+                image.image_id, name=node['name'], environment=node['environment'], network=network.id,
+                mounts=[dict(DockerSdkSecretMount(delivery['target'], delivery['name']).docker_mount())],
+                labels=receipt['labels'], cap_drop=['ALL'], security_opt=['no-new-privileges:true'],
+                log_config=docker.types.LogConfig(type='json-file', config={'max-size': '1m', 'max-file': '2'})))
+            receipt['resources']['containers'][node['node_id']] = {'id': connector.id}
+            _save(state, receipt)
+            inspection = sdk.inspect_container(connector.id)
+            if (inspection is None or inspection.image_id != image.image_id
+                    or {(item.target_path, item.volume_name) for item in inspection.readonly_secret_mounts}
+                    != {(delivery['target'], delivery['name'])}):
+                raise RootBootstrapHold('bootstrap external connector protected delivery differs')
+            observed()
+            effect('start-external-ingress-connector', connector.start)
+            connector.reload()
+            if not connector.attrs['State']['Running']:
+                raise RootBootstrapHold('bootstrap external connector is not running')
+            observed()
         receipt["phase"] = "complete"
         receipt["observations"]["external_endpoint"] = "unverified"
         _save(state, receipt)
