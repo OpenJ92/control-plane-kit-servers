@@ -7,8 +7,16 @@ from pathlib import Path
 import unittest
 
 from control_plane_kit_core.identity import WorkspaceGrant
+from control_plane_kit_core.operations.lifecycle import (
+    ActivityEventKind, ActivityRunStatus, ExecutionRequestStatus,
+)
+from control_plane_kit_core.planning import (
+    ActivityId, ActivityPlan, NodeTarget, PlannedActivity, StartNode,
+)
 from control_plane_kit_core.policies import PolicyScope
-from control_plane_kit_core.products import ProductDescriptorCodec
+from control_plane_kit_core.products import (
+    ProductDescriptorCodec, ProductInstanceConfiguration, instantiate_product,
+)
 from control_plane_kit_core.public_ingress import (
     IngressAuthorityReference,
     NamedPublicIngress,
@@ -24,7 +32,18 @@ from control_plane_kit_core.secrets import (
     SecretProviderEndpointReference,
     SecretReference,
 )
-from control_plane_kit_core.topology import GraphDescriptorCodec, compile_topology
+from control_plane_kit_core.topology import DeploymentGraph, GraphDescriptorCodec, compile_topology
+from control_plane_kit_operations.coordinator import ActivityRealizationContext
+from control_plane_kit_operations.execution_leases import ExecutionLeaseFence
+from control_plane_kit_operations.lifecycle import ExecutionWorkerAuthority
+from control_plane_kit_operations.products import InlineDescriptorSource, RegisteredProduct
+from control_plane_kit_operations.records import (
+    ActivityEventRecord, ActivityPlanRecord, ActivityPlanStatus, ActivityRunRecord,
+    AdmittedRun, ClaimIdentity, ExecutionIdempotency, ExecutionRequestIdentity,
+    ExecutionRequestRecord, GraphVersionRecord, RealizedGraphProjectionRecord,
+    RetryIdentity,
+)
+from control_plane_kit_operations.runtime_effects import runtime_effect_request_for_context
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -146,6 +165,52 @@ class DockerInstallationTests(unittest.TestCase):
         self.assertEqual(postgres.block_spec.verification.checks[0].authentication.password_reference,
                          desired.postgres_password)
 
+    def test_composed_secrets_files_reach_runtime_material_once(self):
+        api = self.api()
+        desired = self.installation(api)
+        composed = api.compose_docker_cpk_installation(desired)
+        blocks = tuple(child for child in composed.root.children
+                       if hasattr(child, "block_id"))
+        secrets = next(child for child in blocks
+                       if child.block_id == desired.secrets_node_id)
+        documents = tuple(child.implementation.document for child in blocks)
+        product = secrets.implementation.document.product
+        defaults = ProductInstanceConfiguration.from_contract(product.runtime_contract)
+
+        for substituted in (False, True):
+            with self.subTest(substituted=substituted):
+                configuration = defaults
+                topology = composed
+                if substituted:
+                    configuration = replace(defaults, secret_deliveries=tuple(
+                        replace(value, reference=SecretReference(
+                            "secret://configured/child-a/" + value.target_path.rsplit("/", 1)[1],
+                        )) for value in reversed(defaults.secret_deliveries)
+                    ))
+                    selected = instantiate_product(
+                        product, desired.secrets_node_id, configuration,
+                    )
+                    self.assertEqual(selected.implementation.document.content,
+                                     secrets.implementation.document.content)
+                    topology = replace(composed, root=replace(
+                        composed.root, children=tuple(
+                            selected if child is secrets else child
+                            for child in composed.root.children
+                        ),
+                    ))
+                graph = compile_topology(topology)
+                context = _runtime_context(
+                    graph, documents, desired.workspace_id, desired.secrets_node_id,
+                )
+
+                request = runtime_effect_request_for_context(context)
+
+                self.assertEqual(len(request.products), 1)
+                material = request.products[0]
+                self.assertEqual(material.node_id, desired.secrets_node_id)
+                self.assertEqual(material.product.runtime_contract.secret_deliveries,
+                                 configuration.secret_deliveries)
+
     def test_only_cpk_instance_declares_runtime_access(self):
         api = self.api()
         for identity in ("child-a", "second-controller"):
@@ -238,6 +303,52 @@ class DockerInstallationTests(unittest.TestCase):
         ):
             with self.subTest(fields=tuple(changes)), self.assertRaises((TypeError, ValueError)):
                 api.compose_docker_cpk_installation(replace(desired, **changes))
+
+
+def _runtime_context(graph, documents, workspace_id, node_id):
+    """Supply public pinned inputs to translation without executing an effect."""
+    activity = PlannedActivity(ActivityId("start-secrets"), StartNode(NodeTarget(node_id)))
+    plan = ActivityPlan((activity,))
+    timestamp = "2026-09-12T08:00:00Z"
+
+    def projection(identity, value, version):
+        return RealizedGraphProjectionRecord.identity_for_authored(
+            authored_record=GraphVersionRecord.from_graph(
+                graph_id=identity, workspace_id=workspace_id, version=version,
+                graph=value, created_by="operator", created_at=timestamp,
+            ),
+        )
+
+    return ActivityRealizationContext(
+        activity=activity,
+        request=ExecutionRequestRecord(
+            ExecutionRequestIdentity("request", workspace_id, "session", "plan"),
+            ExecutionRequestStatus.CLAIMED, "operator", timestamp,
+            "approval-request", "approval-decision",
+            ExecutionIdempotency("execute", "fingerprint"),
+            ClaimIdentity("worker", 1, timestamp, "2026-09-12T09:00:00Z"),
+        ),
+        run=ActivityRunRecord(
+            "run", "plan", AdmittedRun("request"), RetryIdentity(1),
+            ActivityRunStatus.RUNNING, timestamp, started_at=timestamp,
+        ),
+        plan_record=ActivityPlanRecord(
+            "plan", "session", "base", "desired", ActivityPlanStatus.PLANNED,
+            timestamp, plan,
+        ),
+        base_graph=projection("base", DeploymentGraph(graph.name), 1),
+        desired_graph=projection("desired", graph, 2),
+        registered_products=tuple(RegisteredProduct.from_document(
+            workspace_id=workspace_id, descriptor_document=document,
+            source=InlineDescriptorSource(), imported_by="operator", imported_at=timestamp,
+        ) for document in documents),
+        authority=ExecutionWorkerAuthority("worker", (PolicyScope.EXECUTION_OPERATE,)),
+        fence=ExecutionLeaseFence("worker", 1),
+        intent_event=ActivityEventRecord(
+            "intent", "run", 1, ActivityEventKind.STEP_STARTED, timestamp,
+            activity_id=activity.activity_id.value,
+        ),
+    )
 
 
 if __name__ == "__main__":
