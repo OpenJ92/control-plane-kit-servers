@@ -33,11 +33,11 @@ class ImageAccountBaseline(NamedTuple):
         return frozenset((self.primary_gid, *self.supplementary_gids, socket_gid))
 
 
-# Offline final-filesystem evidence, reviewed in Servers #170. This value is
+# Offline final-filesystem evidence, resealed for Servers #163. This value is
 # independent of process observations and must be resealed for another image.
 CPK_IMAGE_ACCOUNT = ImageAccountBaseline(
-    image_reference="ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:1ba7174ee22461566750a516dac173fdd718ed9b059660f30c3ad3f9db79d0f4",
-    config_digest="sha256:d0e3f163519060efba0fcded2c0e588a3fa26781efc43692e8ef4a9646bbd2cc",
+    image_reference="ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:932e1da54dcb2112e9d223b25bad11282f7eb7a8bf51a018a87843b81993c835",
+    config_digest="sha256:3b58142cb12869a2e10147e242a755a69db04945559b600a212fc8d4ee657acd",
     passwd_sha256="2b154879fd6e9899bbe9f9c04eb2535f3388ad5a090f90a78c0dca81a13b9921",
     group_sha256="1ffcc10cbb13f710c78598bdccecd91b43251fef7e443ca860dfe84c656c0653",
     uid=10001, primary_gid=10001, supplementary_gids=(100,),

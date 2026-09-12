@@ -19,19 +19,28 @@ The controller source consumes Core/Operations
 `e19da40f948d324fbb37cd53075bcbf66a4ee77f`. These reviewed dependencies
 preserve configured secret deliveries exactly once and validate required slots.
 The integrated gateway source also contains the reviewed #176 replay-window
-and atomic clock/admission correction. The three CPK catalogue
-variants share the published D3 image
-`sha256:1ba7174ee22461566750a516dac173fdd718ed9b059660f30c3ad3f9db79d0f4`,
-produced from Servers S3 `3ffc4952015b7eb2c379978c52cab56eaee5853a`.
-The publication tag is `diagnostics-170-3ffc495`; digest identity governs execution.
-Source integration does not change those image bytes. D3 remains the historical
-coordinate; it is not evidence that a deployed CPK contains the new Operations
-correction. The gateway catalogue likewise still records source
-`37cabc3243269e63750cc23b298706e8297b1ee3` and digest
-`sha256:b7cca6d0556eb5b68ef92386bc9b8e198ee62ccf10a7304b076a07283f821792`;
-that unchanged image is not evidence of the #176 fix. New reviewed CPK and
-gateway image qualification and explicit coordinate adoption remain prerequisites
-for the affected live journey. No new image publication is authorized here.
+and atomic clock/admission correction. Both images were published from reviewed
+Servers producer `1ae09241bac25d48ca5ebb621bce3239d3035e10` to the existing
+private packages. The three CPK catalogue variants share
+`sha256:932e1da54dcb2112e9d223b25bad11282f7eb7a8bf51a018a87843b81993c835`
+(tag `acceptance-163-1ae09241-cpk`); the gateway selects
+`sha256:6131135d8bf37c259fb1e8ac314896889a87e15b402e9d49e50c9ed86023c430`
+(tag `replay-176-1ae09241-gateway`). Digest identity governs execution.
+Publication runs [34685803462](https://github.com/OpenJ92/control-plane-kit-servers/actions/runs/34685803462)
+and [34685985457](https://github.com/OpenJ92/control-plane-kit-servers/actions/runs/34685985457)
+bind the builds to that exact producer. The CPK published-image HTTP/MCP/history
+smoke and gateway structural-grant image witness passed against these digests;
+both are linux/amd64. The gateway witness proves installed structural compatibility,
+not image-level replay-negative or live signed-probe acceptance.
+
+The new CPK image's independent offline account capture binds its published
+manifest to config `sha256:3b58142cb12869a2e10147e242a755a69db04945559b600a212fc8d4ee657acd`
+and final account files. UID/primary GID10001 and supplementary GID100 were
+freshly derived; runtime HOME/socket/group assertions remain unchanged.
+[Capture and review evidence](https://github.com/OpenJ92/control-plane-kit-servers/issues/163#issuecomment-5645118992)
+records the seal. Historical images and retained resources remain preserved.
+The adoption checkpoint still needs its exact ordinary owning gate and separate
+live release; these publication and qualification results do not complete #163.
 The child controller's read-only source mount supplies the Hello renderer used
 to calculate the expected body hash. The harness adds that source package to
 the controller's import path; it does not install Hello in the CPK graph image.
@@ -54,17 +63,14 @@ child acceptance branch.
 The accepted #177/#176 roadmap changes are integrated without replacing the
 existing child workflow. Source tests and image/live evidence remain separate:
 
-1. Review the exact integrated source, constructor adoption, canonical dependency
-   closure and the preserved child workflow. Obtain the ordinary owning gate at
-   that integrated head with all five live inputs unset; previous-head green is
-   supporting evidence only.
-2. Select reviewed CPK and gateway producer commits, qualify the resulting exact
-   image identities and obtain separate publication/adoption authority. The
-   published D3 and old gateway coordinates above remain unchanged until then.
-   The normal source tests exercise current Python; their existing published-image
-   and root smokes still use the recorded older products. Neither proves these
-   fixes are deployed. The synthetic structural gateway helper now supplies its
-   fixed clock through the new cache API and needs a compatible gateway image.
+1. Integrated producer `1ae09241bac25d48ca5ebb621bce3239d3035e10` passed its
+   ordinary owning gate with all five live inputs unset. That earlier gate used
+   historical image coordinates and is supporting source evidence only.
+2. Review this explicit adoption of the separately qualified CPK/gateway digests
+   and the independently resealed image-account baseline. Obtain the ordinary
+   owning gate at the adoption head with all five live inputs unset. This gate
+   must exercise the newly selected published images and root bootstrap; prior
+   producer-head green does not replace it. No test law or gate is relaxed.
 3. Review a new concrete source/image/identity/credential-bound release and the
    original uncertain installation's disposition. Preserve its history, pending
    intent and resources; no previous receipt authorizes retry or adoption. Verify
