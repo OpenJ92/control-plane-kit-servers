@@ -133,3 +133,33 @@ residue afterward; detailed environment and log evidence remain local.
 
 The correction is pending exact review and a separately released full gate.
 There is no green, hosted or merge-readiness claim, and no automatic retry.
+
+## Corrected full owner gate
+
+North and Kepler reviewed correction fa2c84b and carried the unchanged source,
+fixture and full-command plan. After fresh preflight and a candid branch-only
+checkpoint, one separately authorized full owner run passed: 26 policy tests
+and all 396 package methods, with 50 inventoried mock sites and zero approved
+skips. The six original product target laws and temporary source-hold law were
+actually reached and passed. Coordinate, dependency, compile, image-definition
+and installed-import checks passed as well.
+
+The numeric source witness verified inherited image ENV, public artifact
+delivery and read-only content, real signed static/health responses and denial
+cases alongside the existing private bootstrap, UID, data, provider and cleanup
+checks. Historical Secrets initial/restart smoke, configured CPK source smoke,
+historical CPK image smoke, isolated root bootstrap and final residue audit
+passed. The owner separately observed absence of its test runtime resources.
+
+Root evidence remains bounded: mutation permission and external access are
+explicitly unverified. Repeated acquisition was rejected as intended; that
+expected HOLD is nonredispatch evidence. This does not establish public
+grandparent acceptance, new immutable-image qualification or production
+delivery. The earlier failed attempt is retained as failed evidence.
+
+North accepted the local result, and Kepler independently reviewed the retained
+output and reached laws. This evidence-only update changes no code, fixture,
+dependency or gate, so the local green carries from fa2c84b. Matching final-head
+hosted validation and Meridian's independent source/PR review remain required
+before merge. The standalone source hold remains for #204; parent #189 stays
+open until that restoration is accepted.
