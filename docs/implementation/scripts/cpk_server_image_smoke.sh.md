@@ -32,3 +32,6 @@ At most15 one-second state inspections require exited/nonzero, then at most4096
 bytes from the last10 log lines prove the fixed receiving error. If missing-file
 enforcement regresses into a running server, the gate fails boundedly and cleans
 the exact ID; it does not block in a foreground docker run or use a generic runner.
+
+The15-poll bound assumes responsive Docker CLI calls; it is not a hard wall-clock
+deadline against a hung daemon. Apparatus failure remains a stop condition.
