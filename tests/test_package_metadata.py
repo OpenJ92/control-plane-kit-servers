@@ -17,6 +17,8 @@ CPK_PIN = COORDINATES["upstreams"]["control_plane_kit_commit"]
 INTERPRETERS_PIN = COORDINATES["upstreams"][
     "control_plane_kit_interpreters_commit"
 ]
+SDK_PIN = COORDINATES["upstreams"]["control_plane_kit_server_sdk_commit"]
+SECRETS_PIN = COORDINATES["upstreams"]["control_plane_kit_secrets_commit"]
 
 
 class PackageMetadataTests(unittest.TestCase):
@@ -44,9 +46,70 @@ class PackageMetadataTests(unittest.TestCase):
             f"{INTERPRETERS_PIN}.zip",
             project["dependencies"],
         )
-        self.assertIn("fastapi>=0.115", project["dependencies"])
+        self.assertIn(
+            "control-plane-kit-secrets @ https://github.com/OpenJ92/control-plane-kit-secrets/archive/"
+            f"{SECRETS_PIN}.zip", project["dependencies"],
+        )
+        self.assertFalse(any(item.startswith("fastapi") for item in project["dependencies"]))
+        self.assertIn(
+            "control-plane-kit-server-sdk[fastapi] @ "
+            "https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/"
+            f"{SDK_PIN}.zip",
+            project["dependencies"],
+        )
         self.assertIn("uvicorn>=0.30", project["dependencies"])
         self.assertEqual(project["requires-python"], ">=3.12")
+
+    def test_installed_dependency_coordinates_and_sdk_verification_imports(self) -> None:
+        expected = {
+            "control-plane-kit-core": {
+                "url": f"https://github.com/OpenJ92/control-plane-kit/archive/{CPK_PIN}.zip",
+                "subdirectory": "control-plane-kit-core",
+            },
+            "control-plane-kit-operations": {
+                "url": f"https://github.com/OpenJ92/control-plane-kit/archive/{CPK_PIN}.zip",
+                "subdirectory": "control-plane-kit-operations",
+            },
+            "control-plane-kit-interpreters": {
+                "url": "https://github.com/OpenJ92/control-plane-kit-interpreters/archive/"
+                f"{INTERPRETERS_PIN}.zip",
+            },
+            "control-plane-kit-secrets": {
+                "url": "https://github.com/OpenJ92/control-plane-kit-secrets/archive/"
+                f"{SECRETS_PIN}.zip",
+            },
+            "control-plane-kit-server-sdk": {
+                "url": "https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/"
+                f"{SDK_PIN}.zip",
+            },
+        }
+        checks = textwrap.dedent("""
+            import importlib.metadata
+            import json
+            import sys
+            import unittest
+
+            self = unittest.TestCase()
+            for name, expected in json.loads(sys.argv[1]).items():
+                direct = json.loads(importlib.metadata.distribution(name).read_text("direct_url.json"))
+                self.assertEqual(direct["url"], expected["url"])
+                self.assertEqual(direct.get("subdirectory"), expected.get("subdirectory"))
+            from control_plane_kit_server_sdk.stdlib import install_cpk_control_routes
+            from control_plane_kit_server_sdk.health import WorkloadNodeHealthReadDispatcher
+            from control_plane_kit_server_sdk.verification import Ed25519WorkloadNodeHealthReadVerifier
+            from control_plane_kit_server_sdk.fastapi import install_cpk_control_routes as install_fastapi
+            self.assertEqual(importlib.metadata.version("fastapi"), "0.141.1")
+            self.assertEqual(importlib.metadata.version("starlette"), "1.6.0")
+            self.assertTrue(callable(install_fastapi))
+            self.assertTrue(callable(install_cpk_control_routes))
+            self.assertTrue(callable(WorkloadNodeHealthReadDispatcher))
+            self.assertTrue(callable(Ed25519WorkloadNodeHealthReadVerifier))
+        """)
+        result = subprocess.run(
+            [sys.executable, "-I", "-B", "-c", checks, json.dumps(expected)],
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_root_import_is_lightweight_and_exposes_catalogue_entrance(self) -> None:
         # Other owners may legitimately import HTTP clients in the suite process.
@@ -76,6 +139,8 @@ class PackageMetadataTests(unittest.TestCase):
                 ],
             )
             self.assertNotIn("fastapi", sys.modules)
+            self.assertNotIn("control_plane_kit_secrets", sys.modules)
+            self.assertNotIn("control_plane_kit_servers_secrets_server", sys.modules)
             self.assertNotIn("httpx", sys.modules)
             self.assertNotIn("control_plane_kit_servers_cpk_server.server", sys.modules)
             self.assertNotIn("control_plane_kit_servers_hello_server.server", sys.modules)
@@ -135,6 +200,8 @@ class PackageMetadataTests(unittest.TestCase):
             "httpx",
             "docker",
             "subprocess",
+            "control_plane_kit_secrets",
+            "control_plane_kit_servers_secrets_server",
             "control_plane_kit_servers.products.cpk_server",
             "control_plane_kit_servers.products.hello_server",
             "control_plane_kit_servers.products.http_active_router",

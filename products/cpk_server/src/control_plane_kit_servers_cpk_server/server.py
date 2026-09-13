@@ -8,12 +8,13 @@ import json
 import os
 from pathlib import Path
 import time
-from typing import Mapping
+from typing import Callable, Mapping
 from urllib.parse import urlsplit
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+
 import psycopg
 import uvicorn
 from control_plane_kit_core.identity import (
@@ -75,6 +76,20 @@ from control_plane_kit_operations.postgres import PostgresUnitOfWork, install_sc
 
 from control_plane_kit_operations.desired_topology_drafts import DesiredTopologyDraftCommandService
 
+from .control_configuration import (
+    CpkControlConfiguration, CpkControlConfigurationError,
+    cpk_control_configuration_artifact, read_cpk_control_configuration,
+)
+from .http_host import install_operator_http_routes
+import control_plane_kit_core as core
+from control_plane_kit_server_sdk.fastapi import install_cpk_control_routes
+from control_plane_kit_server_sdk.health import WorkloadNodeHealthReadDispatcher
+from control_plane_kit_server_sdk.verification import (
+    Ed25519WorkloadNodeControlSurfaceReadVerifier, Ed25519WorkloadNodeHealthReadVerifier,
+)
+from control_plane_kit_server_sdk.verifier_keys import (
+    AtomicWorkloadNodeControlSurfaceReadVerifierKeySet, AtomicWorkloadNodeHealthReadVerifierKeySet,
+)
 from .boundary import (
     CpkServerApplicationBoundary,
     CpkServerHttpProcessBoundary,
@@ -459,24 +474,19 @@ class CpkServerBootstrapConfiguration:
 def create_app(
     config: CpkServerBootstrapConfiguration,
     credential_verifier: CredentialVerifier,
+    *, control: CpkControlConfiguration,
+    clock: Callable[[], int] = lambda: int(time.time()),
 ) -> FastAPI:
     """Create the hosted cpk-server FastAPI application."""
 
+    cpk_control_configuration_artifact(control)
     composition = create_cpk_server_composition(config.process_configuration())
-    application = CpkServerApplicationBoundary(
-        _operations_application(config).services,
-        credential_verifier,
-    )
-    http_boundary = CpkServerHttpProcessBoundary(composition, application)
-    mcp_boundary = CpkServerMcpProcessBoundary(composition, application)
     app = FastAPI(
         title="cpk-server",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
     )
-    app.state.http_boundary = http_boundary
-    app.state.mcp_boundary = mcp_boundary
 
     @app.get("/health/live")
     async def live() -> JSONResponse:
@@ -516,8 +526,7 @@ def create_app(
         )
         return _json_response(response.status, response.body)
 
-    @app.api_route("/{path:path}", methods=["GET", "POST"])
-    async def http(path: str, request: Request) -> JSONResponse:
+    async def http(request: Request) -> JSONResponse:
         response = http_boundary.handle(
             method=request.method,
             path=request.url.path,
@@ -527,6 +536,32 @@ def create_app(
         )
         return _json_response(response.status, response.body)
 
+    install_operator_http_routes(app, composition.http_api, http)
+    audience = core.workload_node_control_audience(control.target)
+    static = Ed25519WorkloadNodeControlSurfaceReadVerifier(
+        AtomicWorkloadNodeControlSurfaceReadVerifierKeySet(control.surface_keys),
+        expected_issuer=control.surface_issuer, expected_audience=audience, clock=clock,
+    )
+    health = Ed25519WorkloadNodeHealthReadVerifier(
+        AtomicWorkloadNodeHealthReadVerifierKeySet(control.health_keys),
+        expected_issuer=control.health_issuer, expected_audience=audience, clock=clock,
+    )
+    install_cpk_control_routes(
+        app, target=control.target, declaration=control.declaration,
+        surface_read_verifier=static,
+        health_dispatcher=WorkloadNodeHealthReadDispatcher(
+            target=control.target, runtime_id=control.runtime_id,
+            declaration=control.declaration, verifier=health,
+            liveness=lambda: core.NodeHealthReadOutcome.HEALTHY, readiness=None,
+        ),
+    )
+    # No application/listener escapes before both admitted routes and existing
+    # Operations schema/services are ready. Callbacks never perform schema work.
+    application = CpkServerApplicationBoundary(_operations_application(config).services, credential_verifier)
+    http_boundary = CpkServerHttpProcessBoundary(composition, application)
+    mcp_boundary = CpkServerMcpProcessBoundary(composition, application)
+    app.state.http_boundary = http_boundary
+    app.state.mcp_boundary = mcp_boundary
     return app
 
 
@@ -534,12 +569,16 @@ def main() -> int:
     try:
         config = CpkServerBootstrapConfiguration.from_environment()
         credential_verifier = _credential_verifier(config)
-    except (BootstrapConfigurationError, CpkServerCompositionError) as error:
+        control = read_cpk_control_configuration()
+        if config.port != 8080:
+            raise BootstrapConfigurationError("CPK_PORT must be 8080")
+        app = create_app(config, credential_verifier, control=control)
+    except (BootstrapConfigurationError, CpkServerCompositionError, CpkControlConfigurationError) as error:
         print(f"cpk-server bootstrap error: {error}", flush=True)
         return 2
     print(f"cpk-server listening on 0.0.0.0:{config.port}", flush=True)
     uvicorn.run(
-        create_app(config, credential_verifier),
+        app,
         host="0.0.0.0",
         port=config.port,
         access_log=False,
