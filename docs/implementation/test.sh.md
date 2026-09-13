@@ -12,3 +12,7 @@ A gate release must name the source fixture's generator image, files/mounts,
 240-second grants, bounded requests and exact cleanup as well as the existing
 policy/package/image/Secrets/restart/root/reapply/residue effects. Source smoke
 success cannot substitute for qualification, artifact delivery or public acceptance.
+
+The source-profile/test-image assignments precede the literal forced-build
+CPK_SERVER_BUILD_IMAGE=1 sh invocation, preserving the shared gate-policy law
+that ambient build-disabling inputs cannot skip the source image build.
