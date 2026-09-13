@@ -128,27 +128,40 @@ class SecretsServerProductTests(unittest.TestCase):
         self.assertNotIn("python3", smoke)
         self.assertIn("cpk.test-run", smoke)
         self.assertIn("docker volume create", smoke)
+        gate = (ROOT / "test.sh").read_text(encoding="utf-8")
+        self.assertIn("CPK_SECRETS_SMOKE_PROFILE=wrapped-source", gate)
+        self.assertIn("CPK_SECRETS_BUILD_IMAGE=1 sh scripts/secrets_server_image_smoke.sh", gate)
+        self.assertIn("CPK_SECRETS_SMOKE_PROFILE=published-baseline", gate)
+        self.assertIn('CPK_SECRETS_IMAGE="$SECRETS_IMAGE"', gate)
 
-    def test_intermediate_source_smoke_hold_precedes_all_docker_calls(self) -> None:
+    def test_invalid_smoke_profiles_fail_before_all_docker_calls(self) -> None:
         with TemporaryDirectory() as directory:
             base = Path(directory)
             docker = base / "docker"
             docker.write_text('#!/bin/sh\nprintf called >> "$CPK_TEST_DOCKER_MARKER"\nexit 86\n')
             docker.chmod(0o755)
             marker = base / "called"
-            for mode in (None, "1"):
+            cases = (
+                {"CPK_SECRETS_SMOKE_PROFILE": "unknown"},
+                {"CPK_SECRETS_BUILD_IMAGE": "unknown"},
+                {"CPK_SECRETS_BUILD_CONTROLLER": "unknown"},
+                {"CPK_SECRETS_SMOKE_PROFILE": "wrapped-source", "CPK_SECRETS_BUILD_IMAGE": "0"},
+                {"CPK_SECRETS_SMOKE_PROFILE": "published-baseline", "CPK_SECRETS_BUILD_IMAGE": "1"},
+                {"CPK_SECRETS_BUILD_IMAGE": "0", "CPK_SECRETS_IMAGE": "mutable:tag"},
+                {"CPK_SECRETS_BUILD_IMAGE": "0", "CPK_SECRETS_IMAGE": "repo@sha256:invalid"},
+            )
+            for index, overrides in enumerate(cases):
                 environment = {key: value for key, value in os.environ.items()
                                if not key.startswith("CPK_SECRETS_")}
                 environment.update(PATH=str(base) + ":/usr/bin:/bin",
                                    CPK_TEST_DOCKER_MARKER=str(marker))
-                if mode is not None:
-                    environment["CPK_SECRETS_BUILD_IMAGE"] = mode
-                with self.subTest(mode=mode):
+                environment.update(overrides)
+                with self.subTest(case=index):
                     result = subprocess.run(["/bin/sh", str(SMOKE)], cwd=ROOT, env=environment,
                                             capture_output=True, text=True, timeout=10, check=False)
-                    self.assertFalse(marker.exists(), "source hold invoked Docker")
+                    self.assertFalse(marker.exists(), "invalid profile invoked Docker")
                     self.assertEqual(result.returncode, 2)
-                    self.assertIn("Secrets source smoke is held until Servers #204", result.stderr)
+                    self.assertEqual(result.stderr, "secrets-server image smoke: invalid profile or build inputs\n")
 
     def test_descriptor_instantiates_without_provider_implementation(self) -> None:
         product = self.decode().product

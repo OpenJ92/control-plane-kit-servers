@@ -16,3 +16,13 @@ success cannot substitute for qualification, artifact delivery or public accepta
 The source-profile/test-image assignments precede the literal forced-build
 CPK_SERVER_BUILD_IMAGE=1 sh invocation, preserving the shared gate-policy law
 that ambient build-disabling inputs cannot skip the source image build.
+
+#204 adds a forced Secrets wrapped-source smoke before its existing canonical
+historical smoke; both profiles run through the maintained script. The source
+tag can be set with CPK_SECRETS_SOURCE_IMAGE. Both share the already-built owner
+controller image, without another controller build or daemon authority. The
+source stage adds initial/restart public configuration and private headers;
+both modes use bounded private log capture, independent producer-status checking
+and exact file cleanup. The full release must include both complete custody/
+restart runs and source build, not merely package tests. Existing numeric, CPK,
+root and final residue stages remain. No new publication or public acceptance.

@@ -152,8 +152,17 @@ UID10006, retained provider data and both original live/ready verification check
 remain; authenticated SDK health currently advertises process liveness only.
 
 Published descriptor/image coordinates remain historical until qualified image
-adoption. During #203, standalone Secrets source smoke exits before Docker with
-a #204 handoff; #204 restores that maintained mode before parent #189 closes.
-The ordinary suite continues its historical immutable smoke and its separate
-actual source-image numeric/private-file witness. Off-normal adjacent-checkout
+adoption. The maintained `scripts/secrets_server_image_smoke.sh` defaults to a
+wrapped source build. It supplies public configuration and fresh signed control
+reads for initial startup and restart, retaining the original private bootstrap,
+custody and retained-data checks. Explicit `CPK_SECRETS_BUILD_IMAGE=0` retains
+historical mode and requires an immutable `CPK_SECRETS_IMAGE` reference.
+`CPK_SECRETS_SMOKE_PROFILE` can explicitly select `wrapped-source` or
+`published-baseline`; contradictory profile/build inputs fail before effects.
+
+The ordinary `./test.sh` forces both profiles and retains the separate numeric
+source/private-file witness. `CPK_SECRETS_SOURCE_IMAGE` selects the source smoke
+image tag for that gate. Private temporary headers and bounded log capture are
+removed on exit; log retrieval, overflow and redaction failures are failures,
+with no matching secret output. Off-normal adjacent-checkout
 source-live scripts need their own future public-ABI review and remain uncredited.
