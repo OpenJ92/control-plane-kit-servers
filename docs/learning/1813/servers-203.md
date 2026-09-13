@@ -111,3 +111,25 @@ this source checkpoint. Later tests must exercise the previously guarded laws
 and full normal stages, with exact reviewed effect scope before execution.
 Source configuration does not establish production delivery, OCI qualification,
 public exposure or broader parent/held-runtime acceptance.
+
+## First implementation gate and narrow coordinate correction
+
+After North and Kepler source/fixture/plan review, implementation checkpoint
+2640406 was published to the feature branch without a PR or hosted trigger.
+The one authorized full owner gate stopped in root package discovery: 26 policy
+tests passed, integrity inventoried 396 methods with 50 mock sites and zero
+approved skips, and 45 of 46 root methods passed. One existing coordinate test
+still expected the old canonical Secrets upstream commit, although this issue
+intentionally adopts accepted source 0e0fa2c8. This was a missed fixture update,
+not a collection or dependency failure; runtime behavior was not reached.
+
+North and Kepler classified the failure. The correction changes only the
+canonical upstream expected commit in that method, preserving historical
+published source 68d0 and image digest 41aba assertions. No application source,
+runtime fixture, gate, or effect scope changes. Product suites, the six target
+laws, the temporary hold test, installed import and all runtime stages remain
+unexecuted by this attempt. The owner independently observed no test resource
+residue afterward; detailed environment and log evidence remain local.
+
+The correction is pending exact review and a separately released full gate.
+There is no green, hosted or merge-readiness claim, and no automatic retry.
