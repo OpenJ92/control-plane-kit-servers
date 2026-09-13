@@ -45,9 +45,9 @@ class PackageMetadataTests(unittest.TestCase):
             f"{INTERPRETERS_PIN}.zip",
             project["dependencies"],
         )
-        self.assertIn("fastapi>=0.115", project["dependencies"])
+        self.assertFalse(any(item.startswith("fastapi") for item in project["dependencies"]))
         self.assertIn(
-            "control-plane-kit-server-sdk[verification] @ "
+            "control-plane-kit-server-sdk[fastapi] @ "
             "https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/"
             f"{SDK_PIN}.zip",
             project["dependencies"],
@@ -88,6 +88,10 @@ class PackageMetadataTests(unittest.TestCase):
             from control_plane_kit_server_sdk.stdlib import install_cpk_control_routes
             from control_plane_kit_server_sdk.health import WorkloadNodeHealthReadDispatcher
             from control_plane_kit_server_sdk.verification import Ed25519WorkloadNodeHealthReadVerifier
+            from control_plane_kit_server_sdk.fastapi import install_cpk_control_routes as install_fastapi
+            self.assertEqual(importlib.metadata.version("fastapi"), "0.141.1")
+            self.assertEqual(importlib.metadata.version("starlette"), "1.6.0")
+            self.assertTrue(callable(install_fastapi))
             self.assertTrue(callable(install_cpk_control_routes))
             self.assertTrue(callable(WorkloadNodeHealthReadDispatcher))
             self.assertTrue(callable(Ed25519WorkloadNodeHealthReadVerifier))

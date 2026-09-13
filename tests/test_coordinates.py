@@ -74,6 +74,7 @@ class CoordinateGenerationTests(unittest.TestCase):
             ),
             module.CPK_SERVER_DOCKERFILE: (
                 "control_plane_kit_commit", "control_plane_kit_interpreters_commit",
+                "control_plane_kit_server_sdk_commit",
             ),
             module.CPK_LOCAL_GATEWAY_DOCKERFILE: ("control_plane_kit_commit",),
             module.SECRETS_SERVER_DOCKERFILE: ("control_plane_kit_secrets_commit",),
@@ -94,6 +95,16 @@ class CoordinateGenerationTests(unittest.TestCase):
                 with self.subTest(path=path.name, upstream=key):
                     self.assertIn(replacements[key].encode(), generated[path])
         self.assertEqual(coordinates["products"], changed["products"])
+
+    def test_actual_cpk_host_dependencies_select_sdk_fastapi_extra(self) -> None:
+        module = load_script_module()
+        coordinates = module.load_coordinates(module.COORDINATES)
+        sdk = coordinates["upstreams"]["control_plane_kit_server_sdk_commit"]
+        dependency = "control-plane-kit-server-sdk[fastapi] @ " + f"https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/{sdk}.zip"
+        for path in (module.PYPROJECT, module.CPK_SERVER_DOCKERFILE):
+            with self.subTest(path=path):
+                self.assertIn(dependency, path.read_text(encoding="utf-8"))
+                self.assertNotIn("fastapi>=", path.read_text(encoding="utf-8"))
 
     def test_coordinate_manifest_is_the_source_for_generated_files(self) -> None:
         module = load_script_module()
