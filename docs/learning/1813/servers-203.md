@@ -22,7 +22,7 @@ Existing product descriptor, socket/port, bootstrap/private-file, recipe and
 image-smoke tests govern this child. Preserve HTTP control8081, numericUID10006,
 retained provider-data and lifecycle, two private0400 nonrecursive inputs,
 HEALTH_CHECKABLE and both existing live/ready verification checks with complete
-policies. Add the separate public path environment/artifact and actual Secrets
+policies. Add the separate public artifact and actual Secrets
 V2 liveness declaration/NODE_CONTROLLABLE. Historical published descriptors,
 catalogue and image/source provenance remain unchanged until actual qualification.
 
@@ -60,3 +60,14 @@ inspect a cold import; real fixture authority/effects need separate review.
 Product artifact production here is a pure value transformation, not authorized
 production materialization or immutable OCI qualification. Those boundaries and
 held runtime acceptance remain in their existing issues.
+
+Source-aware target review found that Core's PublicStaticEnvironmentBinding
+rejects names containing secret, so the accepted service path variable cannot
+be a graph public binding. The corrected contract preserves public_environment
+exactly. Docker ENV fixes CPK_SECRETS_CONTROL_CONFIGURATION_FILE to the canonical
+public artifact path; bootstrap documentation and the numeric recipient witness
+protect that recipe/process ABI. No Core safety rule, service variable name or
+private delivery semantics changes. The full-contract target keeps this field
+inside its unmodified-field equality, and artifact framing also rejects valid
+changed content with stale digest metadata. No red run occurred before this
+review correction; prior target disposition is superseded pending reseal review.

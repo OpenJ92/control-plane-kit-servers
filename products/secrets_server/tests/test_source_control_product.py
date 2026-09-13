@@ -72,10 +72,9 @@ class SecretsSourceControlProductTests(unittest.TestCase):
         self.assertEqual(current.configuration_artifacts, (artifact,))
         self.assertEqual(current.control_surfaces, (value.declaration.surface,))
         self.assertEqual(set(current.capabilities), set(old.capabilities) | {CapabilityName.NODE_CONTROLLABLE})
-        self.assertEqual({binding.name: binding.value for binding in current.public_environment},
-                         {ENVIRONMENT: PATH})
+        self.assertEqual(current.public_environment, old.public_environment)
         self.assertEqual(replace(current, configuration_artifacts=old.configuration_artifacts,
-                                 public_environment=old.public_environment, capabilities=old.capabilities,
+                                 capabilities=old.capabilities,
                                  control_surfaces=old.control_surfaces), old)
         self.assertEqual(old.configuration_artifacts, ())
         self.assertEqual(old.control_surfaces, ())
@@ -111,6 +110,11 @@ class SecretsSourceControlProductTests(unittest.TestCase):
         forged = replace(artifact)
         object.__setattr__(forged, "content", "malformed-json-marker")
         self.rejected(owner, lambda: owner.secrets_source_runtime_contract(forged))
+        changed = json.loads(artifact.content)
+        changed["surface_read"]["issuer"] = "changed-public-issuer"
+        stale = replace(artifact)
+        object.__setattr__(stale, "content", json.dumps(changed, sort_keys=True, separators=(",", ":")))
+        self.rejected(owner, lambda: owner.secrets_source_runtime_contract(stale))
 
     def test_artifact_factory_rejects_non_service_and_forged_configuration(self):
         owner = self.owner()
