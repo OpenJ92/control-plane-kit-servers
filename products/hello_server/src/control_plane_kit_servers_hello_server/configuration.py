@@ -64,7 +64,7 @@ class HelloControlConfiguration:
                                       core.workload_node_control_audience(self.target)))
             )
         except Exception:
-            pass
+            valid = False
         if not valid:
             raise HelloConfigurationError("Hello control configuration is invalid")
 
@@ -124,8 +124,8 @@ def decode_hello_control_configuration(raw: bytes) -> HelloControlConfiguration:
             health_issuer=health_issuer, health_keys=health_keys,
         )
     except Exception:
-        pass
-    raise HelloConfigurationError("Hello control configuration is invalid")
+        failure = HelloConfigurationError("Hello control configuration is invalid")
+    raise failure
 
 
 def read_hello_control_configuration() -> HelloControlConfiguration:
@@ -137,8 +137,8 @@ def read_hello_control_configuration() -> HelloControlConfiguration:
             raw = stream.read(MAX_CONTROL_BYTES + 1)
         return decode_hello_control_configuration(raw)
     except Exception:
-        pass
-    raise HelloConfigurationError("Hello control configuration is invalid")
+        failure = HelloConfigurationError("Hello control configuration is invalid")
+    raise failure
 
 
 def hello_control_configuration_artifact(config: HelloControlConfiguration) -> ConfigurationArtifact:
@@ -160,8 +160,8 @@ def hello_control_configuration_artifact(config: HelloControlConfiguration) -> C
         return ConfigurationArtifact("hello-control", CONTROL_PATH, ConfigurationMediaType.JSON,
                                           content, ConfigurationFileMode.READ_ONLY)
     except Exception:
-        pass
-    raise HelloConfigurationError("Hello control configuration is invalid")
+        failure = HelloConfigurationError("Hello control configuration is invalid")
+    raise failure
 
 
 def hello_source_runtime_contract(artifact: ConfigurationArtifact) -> ProductRuntimeContract:
@@ -187,5 +187,5 @@ def hello_source_runtime_contract(artifact: ConfigurationArtifact) -> ProductRun
             )),
         )
     except Exception:
-        pass
-    raise HelloConfigurationError("Hello control configuration is invalid")
+        failure = HelloConfigurationError("Hello control configuration is invalid")
+    raise failure

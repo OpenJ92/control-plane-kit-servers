@@ -27,7 +27,7 @@ class HelloDependencyTests(unittest.TestCase):
         self.assertEqual(deps.load_dependencies(json.dumps([{"name":name}]))[0].name, name)
         for raw in (exact + " ", json.dumps([{"name":f"a-{i}"} for i in range(9)]),
                     json.dumps([{"name":name + "a"}]), '[{"name":"a","name":"b"}]',
-                    '[{"name":"a"},{"name":"a"}]'):
+                    '[{"name":"a"},{"name":"a"}]', "\ud800"):
             with self.subTest(raw_size=len(raw)), self.assertRaises(HelloConfigurationError):
                 deps.load_dependencies(raw)
         snapshot = self.snapshot()
@@ -38,6 +38,9 @@ class HelloDependencyTests(unittest.TestCase):
                 deps.DependencySnapshot(snapshot.dependencies, {key:value + "a"})
         with self.assertRaises(HelloConfigurationError):
             deps.DependencyCheck("a", "A" * 129, "DATABASE")
+        with self.assertRaises(HelloConfigurationError) as caught:
+            deps.DependencySnapshot(snapshot.dependencies, {key:"\ud800"})
+        self.assertIsNone(caught.exception.__context__)
         self.assertEqual(deps.DependencyCheck("a", "A" * 128, "DATABASE").http_environment, "A" * 128)
         self.assertNotIn("private", repr(snapshot))
 

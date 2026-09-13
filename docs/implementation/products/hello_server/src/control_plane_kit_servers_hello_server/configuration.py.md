@@ -11,6 +11,12 @@ these values comes from incoming credentials. At most 16 keys per family and
 with a fixed cause/context-free error. Key-shape validity does not prove issuer
 provenance or cryptographic attestation.
 
+Ordinary decode/render/read failures are translated to a fixed product error and
+raised after leaving the exception handler. Validation exceptions set the actual
+rejection flag. No empty exception handler, raw error attachment or BaseException
+capture is used; process interruption propagates. The owning tests check error
+chain absence across decoder/file/artifact/contract boundaries.
+
 The fixed-file reader opens with NOFOLLOW/NONBLOCK, checks regularity on that
 descriptor and reads at most 65,537 bytes before close. It does not check a path
 then reopen it. The parent directory and public file delivery are trusted local

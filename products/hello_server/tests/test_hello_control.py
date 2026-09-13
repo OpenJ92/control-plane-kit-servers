@@ -72,6 +72,13 @@ class HelloControlTests(unittest.TestCase):
         for raw in raw_cases:
             with self.subTest(size=len(raw)):
                 self.rejected(lambda: config.decode_hello_control_configuration(raw))
+        self.rejected(lambda: config.hello_control_configuration_artifact(None))
+        self.rejected(lambda: config.hello_source_runtime_contract(None))
+        interrupted = KeyboardInterrupt()
+        with patch.object(config.json, "loads", side_effect=interrupted):
+            with self.assertRaises(KeyboardInterrupt) as caught:
+                config.decode_hello_control_configuration(self.artifact.content.encode())
+            self.assertIs(caught.exception, interrupted)
         with patch.object(hello, "ThreadingHTTPServer") as listener:
             self.rejected(lambda: hello.create_hello_server(None, {}))
             listener.assert_not_called()

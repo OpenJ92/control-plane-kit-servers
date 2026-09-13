@@ -57,7 +57,7 @@ class DependencySnapshot:
                     try:
                         valid = type(value) is str and len(value.encode("utf-8")) <= MAX_URL_BYTES
                     except UnicodeError:
-                        pass
+                        valid = False
                     if not valid:
                         raise HelloConfigurationError("Hello dependency URL exceeds its bound")
                     selected[name] = value
@@ -144,7 +144,7 @@ def load_dependencies(raw: str | None) -> tuple[DependencyCheck, ...]:
     try:
         bounded = type(raw) is str and len(raw.encode("utf-8")) <= MAX_DEPENDENCY_BYTES
     except UnicodeError:
-        pass
+        bounded = False
     if not bounded:
         raise HelloConfigurationError("Hello dependency declaration exceeds its bound")
     try:
