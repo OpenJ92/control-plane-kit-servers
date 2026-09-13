@@ -1,5 +1,8 @@
 from dataclasses import replace
 import json
+import importlib
+from io import BytesIO
+from urllib.error import HTTPError
 import os
 from pathlib import Path
 import subprocess
@@ -18,6 +21,10 @@ from router_control_fixtures import fixture, running, request, token
 
 class RouterControlTests(unittest.TestCase):
     def setUp(self):
+        # Existing descriptor tests deliberately evict process modules between cases.
+        global config, router
+        config = importlib.import_module("control_plane_kit_servers_http_active_router.configuration")
+        router = importlib.import_module("control_plane_kit_servers_http_active_router.server")
         self.fixture = fixture()
         self.config = self.fixture.config
         self.artifact = config.router_control_configuration_artifact(self.config)
@@ -47,9 +54,12 @@ class RouterControlTests(unittest.TestCase):
         self.assertEqual(old.runtime_contract.control_surfaces, ())
         self.assertEqual(old.runtime_contract.configuration_artifacts, ())
         self.assertEqual(contract.verification, old.runtime_contract.verification)
+        for field in ("sockets", "provider_ports", "public_environment", "secret_deliveries",
+                      "retained_data_mounts", "lifecycle"):
+            self.assertEqual(getattr(contract, field), getattr(old.runtime_contract, field))
         self.assertNotIn("public_key", repr(self.config))
         result = subprocess.run([sys.executable, "-I", "-B", "-c",
-            "import sys; import control_plane_kit_servers_http_active_router.configuration; "
+            "import sys; import control_plane_kit_servers_http_active_router; import control_plane_kit_servers_http_active_router.configuration; "
             "assert 'control_plane_kit_servers_http_active_router.server' not in sys.modules"],
             capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -72,6 +82,9 @@ class RouterControlTests(unittest.TestCase):
         for raw in raw_cases:
             with self.subTest(size=len(raw)):
                 self.rejected(lambda: config.decode_router_control_configuration(raw))
+        self.rejected(lambda: replace(self.config, health_keys=self.config.surface_keys))
+        self.rejected(lambda: replace(self.config, runtime_id=core.NodeControlGraphReference(
+            core.NodeControlGraphReferenceRole.NODE, "wrong-role")))
         self.rejected(lambda: config.router_control_configuration_artifact(None))
         self.rejected(lambda: config.router_source_runtime_contract(None))
         interrupted = KeyboardInterrupt()
@@ -154,7 +167,9 @@ class RouterControlTests(unittest.TestCase):
             self.assertEqual(json.loads(static[1])["declaration"], self.config.declaration.descriptor())
             status, body, headers = request(host, live, token(self.fixture))
             self.assertEqual(status, 200)
-            result = core.NodeHealthReadResultCodec().decode(json.loads(body))
+            observed_request = core.NodeHealthReadRequest(self.config.target, self.config.runtime_id,
+                core.NodeHealthReadKind.LIVENESS, self.config.declaration.identity(), "health-request")
+            result = core.NodeHealthReadResultCodec(observed_request, self.config.declaration).decode(json.loads(body))
             self.assertIs(result.outcome, core.NodeHealthReadOutcome.HEALTHY)
             self.assertEqual(headers["Cache-Control"], "no-store")
             self.assertEqual(self.config.declaration.surface.health_reads, (core.NodeHealthReadKind.LIVENESS,))
@@ -209,3 +224,38 @@ class RouterControlTests(unittest.TestCase):
             self.assertEqual(request(second, "/__control/health/liveness", token(other))[0], 200)
             self.assertNotEqual(request(second, "/__control/health/liveness", token(self.fixture))[0], 200)
             self.assertEqual(forward.call_count, 2)
+
+    def test_forwarding_keeps_timeout_response_bound_and_redirect_policy(self):
+        settings = config.RouterSettings("http://upstream.invalid")
+        with patch.object(router.request, "build_opener") as build:
+            opened = build.return_value.open
+            response = opened.return_value.__enter__.return_value
+            response.status = 201
+            response.headers = {"content-type":"application/test"}
+            response.read.return_value = b"x" * router.MAX_RESPONSE_BYTES
+            result = router.forward(settings, "PATCH", "/path?q=1", {
+                "Authorization":"application-auth", "Host":"omit", "Connection":"omit",
+                "Content-Length":"100", "X-Test":"keep"}, b"payload")
+            self.assertEqual((result[0], len(result[1]), result[2]), (201, router.MAX_RESPONSE_BYTES, "application/test"))
+            response.read.assert_called_once_with(router.MAX_RESPONSE_BYTES + 1)
+            self.assertEqual(opened.call_args.kwargs, {"timeout":5.0})
+            outbound = opened.call_args.args[0]
+            self.assertEqual((outbound.full_url, outbound.method, outbound.data),
+                             ("http://upstream.invalid/path?q=1", "PATCH", b"payload"))
+            headers = {key.lower(): value for key, value in outbound.header_items()}
+            self.assertEqual(headers, {"authorization":"application-auth", "x-test":"keep"})
+            response.read.return_value = b"x" * (router.MAX_RESPONSE_BYTES + 1)
+            self.assertEqual(router.forward(settings, "GET", "/", {}, b"")[:2],
+                             (502, b"upstream response too large\n"))
+            error_stream = BytesIO(b"e" * (router.MAX_RESPONSE_BYTES + 1))
+            upstream_error = HTTPError("http://upstream.invalid", 409, "private", {"content-type":"text/plain"}, error_stream)
+            try:
+                opened.side_effect = upstream_error
+                result = router.forward(settings, "GET", "/", {}, b"")
+                self.assertEqual((result[0], len(result[1]), result[2]), (409, router.MAX_RESPONSE_BYTES, "text/plain"))
+            finally:
+                upstream_error.close()
+        with self.assertRaises(HTTPError) as caught:
+            router.NoRedirects().redirect_request(
+                router.request.Request("http://upstream.invalid"), None, 302, "moved", {}, "http://elsewhere.invalid")
+        self.assertEqual(caught.exception.code, 302)

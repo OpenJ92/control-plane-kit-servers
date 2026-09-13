@@ -193,10 +193,11 @@ class HttpActiveRouterProductTests(unittest.TestCase):
             PRODUCT_SRC / "control_plane_kit_servers_http_active_router" / "server.py"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("ACTIVE_TARGET_URL", source)
+        configuration_source = (PRODUCT_SRC / "control_plane_kit_servers_http_active_router" / "configuration.py").read_text(encoding="utf-8")
+        self.assertIn("ACTIVE_TARGET_URL", configuration_source)
         self.assertIn("MAX_RESPONSE_BYTES", source)
         self.assertIn("NoRedirects", source)
-        self.assertIn('parsed.scheme not in {"http", "https"}', source)
+        self.assertIn('parsed.scheme not in {"http", "https"}', configuration_source)
         self.assertNotIn("allow_redirects=True", source)
         self.assertNotIn("subprocess", source)
         self.assertNotIn('f"upstream request failed:', source)
