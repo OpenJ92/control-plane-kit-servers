@@ -25,3 +25,8 @@ Parity compares the entire neutral response after standard JSON serialization,
 preserving wire-list representation of tuple-valued principal grants. The first
 hosted run exposed two in-memory tuple versus JSON list assertion mismatches;
 this expectation correction changes no production behavior or asserted field.
+
+Servers200 supplies the actual required CpkControlConfiguration and fixed test
+clock to create_app. The product app now installs SDK itself; only the reference
+app uses the fixture installer. All199 compatibility assertions remain, including
+full JSON parity and zero operator work for protected routes.
