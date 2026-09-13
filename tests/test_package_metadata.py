@@ -18,6 +18,7 @@ INTERPRETERS_PIN = COORDINATES["upstreams"][
     "control_plane_kit_interpreters_commit"
 ]
 SDK_PIN = COORDINATES["upstreams"]["control_plane_kit_server_sdk_commit"]
+SECRETS_PIN = COORDINATES["upstreams"]["control_plane_kit_secrets_commit"]
 
 
 class PackageMetadataTests(unittest.TestCase):
@@ -45,6 +46,10 @@ class PackageMetadataTests(unittest.TestCase):
             f"{INTERPRETERS_PIN}.zip",
             project["dependencies"],
         )
+        self.assertIn(
+            "control-plane-kit-secrets @ https://github.com/OpenJ92/control-plane-kit-secrets/archive/"
+            f"{SECRETS_PIN}.zip", project["dependencies"],
+        )
         self.assertFalse(any(item.startswith("fastapi") for item in project["dependencies"]))
         self.assertIn(
             "control-plane-kit-server-sdk[fastapi] @ "
@@ -68,6 +73,10 @@ class PackageMetadataTests(unittest.TestCase):
             "control-plane-kit-interpreters": {
                 "url": "https://github.com/OpenJ92/control-plane-kit-interpreters/archive/"
                 f"{INTERPRETERS_PIN}.zip",
+            },
+            "control-plane-kit-secrets": {
+                "url": "https://github.com/OpenJ92/control-plane-kit-secrets/archive/"
+                f"{SECRETS_PIN}.zip",
             },
             "control-plane-kit-server-sdk": {
                 "url": "https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/"
@@ -130,6 +139,8 @@ class PackageMetadataTests(unittest.TestCase):
                 ],
             )
             self.assertNotIn("fastapi", sys.modules)
+            self.assertNotIn("control_plane_kit_secrets", sys.modules)
+            self.assertNotIn("control_plane_kit_servers_secrets_server", sys.modules)
             self.assertNotIn("httpx", sys.modules)
             self.assertNotIn("control_plane_kit_servers_cpk_server.server", sys.modules)
             self.assertNotIn("control_plane_kit_servers_hello_server.server", sys.modules)
@@ -189,6 +200,8 @@ class PackageMetadataTests(unittest.TestCase):
             "httpx",
             "docker",
             "subprocess",
+            "control_plane_kit_secrets",
+            "control_plane_kit_servers_secrets_server",
             "control_plane_kit_servers.products.cpk_server",
             "control_plane_kit_servers.products.hello_server",
             "control_plane_kit_servers.products.http_active_router",

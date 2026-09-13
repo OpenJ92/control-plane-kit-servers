@@ -9,6 +9,7 @@ description = "Reusable OCI server products and descriptors for control-plane-ki
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+  "control-plane-kit-secrets @ https://github.com/OpenJ92/control-plane-kit-secrets/archive/0e0fa2c8fc1464f8ea3ac4ad9a515a9b438820be.zip",
   "control-plane-kit-server-sdk[fastapi] @ https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/2b10d5a354ba4da9407d336703aacb96910100d4.zip",
   "control-plane-kit-core @ https://github.com/OpenJ92/control-plane-kit/archive/95452249d0340707a5cdffe737e34669e9d53165.zip#subdirectory=control-plane-kit-core",
   "control-plane-kit-operations @ https://github.com/OpenJ92/control-plane-kit/archive/95452249d0340707a5cdffe737e34669e9d53165.zip#subdirectory=control-plane-kit-operations",
@@ -20,7 +21,7 @@ dependencies = [
 cpk = "control_plane_kit_servers_cpk_server.client.cli:main"
 
 [tool.setuptools.packages.find]
-where = ["src", "products/cpk_server/src", "products/hello_server/src", "products/http_active_router/src", "products/http_multiplexer/src", "products/cpk_local_gateway/src"]
+where = ["src", "products/cpk_server/src", "products/hello_server/src", "products/http_active_router/src", "products/http_multiplexer/src", "products/cpk_local_gateway/src", "products/secrets_server/src"]
 
 [tool.setuptools.package-data]
 control_plane_kit_servers = ["catalogue.json", "catalogue.json.sha256"]

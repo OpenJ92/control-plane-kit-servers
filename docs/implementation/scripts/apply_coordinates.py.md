@@ -34,3 +34,5 @@ Servers199 adds SDK to the existing CPK Dockerfile destination. No generator
 algorithm change is needed: archive replacement already covers this destination.
 Synthetic drift now proves SDK reaches it, while root/CPK require the FastAPI
 extra and the three stdlib product recipes retain verification.
+
+Servers203 adds a root Secrets requirement, which the existing Secrets archive replacement already handles. Generator source is unchanged; synthetic drift now includes root plus Secrets recipe as actual destinations while published product output stays byte-identical.

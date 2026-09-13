@@ -48,8 +48,8 @@ product-interface guard; no test stub supplies a missing implementation.
 
 North specifically chooses one intended-red checkpoint for this new interface
 under the owning calibrated loop. Tests precede application implementation.
-This checkpoint is unexecuted: explicit missing-interface guards are expected
-to fail while downstream laws remain unreached. Only the existing full owning
+At the original target checkpoint the tests were unexecuted; explicit
+missing-interface guards were expected to fail with downstream laws unreached. Only the existing full owning
 Docker-backed runner may establish red after exact effect review/release; no
 custom selector or import/collection fault can substitute. Later source and
 fixture review, full green and matching hosted validation are required.
@@ -71,3 +71,43 @@ private delivery semantics changes. The full-contract target keeps this field
 inside its unmodified-field equality, and artifact framing also rejects valid
 changed content with stale digest metadata. No red run occurred before this
 review correction; prior target disposition is superseded pending reseal review.
+
+## Classified red and current source checkpoint
+
+The [bounded red result](https://github.com/OpenJ92/control-plane-kit-servers/issues/203#issuecomment-5652021440)
+records26 policy tests and all389 predecessor package methods green. All395
+package methods collected, with exactly six explicit missing-product-interface
+failures and no unittest errors/skips or integrity findings. The normal runner
+propagated that failure; new guarded behavior, product image-lane report,
+standalone import and later source/image/runtime stages were unreached.
+No red evidence is attributed to those downstream assertions.
+
+After classification and source release, the product module now frames actual
+Secrets bytes and reconstructs existing artifacts through Core's descriptor
+validation before admitting the full source contract. Canonical dependency/root
+packaging and recipe select accepted Secrets0e0fa2c8. The recipe supplies the fixed
+public path without a graph environment binding; historical descriptors and
+image coordinates remain unchanged. Private bootstrap entries and service
+entrypoint are unchanged; a separate public configuration entry documents source
+startup. Root dependency/provenance/drift and cold-import assertions are extended.
+
+The numeric source witness adds one tracked public artifact volume through
+existing materialization/helpers, observes actual image ENV without injecting an
+override, verifies regular0444/read-only content and preserves all existing
+private0400/UID/data/provider checks. Same-service signed static/health reads use
+separate in-memory keys, fresh120-second grants, bounded response accumulation
+and missing/wrong-purpose denials. Existing ownership and reverse cleanup cover
+the added volume/helper IDs; no new controller or process is introduced.
+
+Standalone source mode currently exits2 with a204 handoff before any Docker call
+or cleanup trap. One new package test protects that temporary admission using
+only a command observer and bounded shell subprocess; existing published smoke
+assertions remain. It and strengthened implementation-context assertions have no
+separate red claim. Parent189 stays open for204 to restore source functionality.
+
+Implementation and affected companions are prepared for full source/fixture
+review. No green local gate, hosted run or implementation push has occurred at
+this source checkpoint. Later tests must exercise the previously guarded laws
+and full normal stages, with exact reviewed effect scope before execution.
+Source configuration does not establish production delivery, OCI qualification,
+public exposure or broader parent/held-runtime acceptance.

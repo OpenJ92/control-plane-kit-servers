@@ -3,6 +3,14 @@ set -eu
 
 IMAGE="${CPK_SECRETS_IMAGE:-control-plane-kit-secrets-server:local}"
 BUILD_IMAGE="${CPK_SECRETS_BUILD_IMAGE:-1}"
+
+# The following source-smoke child restores this mode with the required public ABI.
+# Refuse before installing cleanup traps or invoking any Docker operation.
+if [ "$BUILD_IMAGE" = "1" ]; then
+  printf '%s\n' 'Secrets source smoke is held until Servers #204 supplies required control configuration.' >&2
+  exit 2
+fi
+
 CONTROLLER_IMAGE="${CPK_SERVERS_TEST_IMAGE:-control-plane-kit-servers-test:local}"
 BUILD_CONTROLLER="${CPK_SECRETS_BUILD_CONTROLLER:-1}"
 RUN_ID="cpk-secrets-image-smoke-$$"

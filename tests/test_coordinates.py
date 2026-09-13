@@ -70,7 +70,7 @@ class CoordinateGenerationTests(unittest.TestCase):
         destinations = {
             module.PYPROJECT: (
                 "control_plane_kit_commit", "control_plane_kit_interpreters_commit",
-                "control_plane_kit_server_sdk_commit",
+                "control_plane_kit_server_sdk_commit", "control_plane_kit_secrets_commit",
             ),
             module.CPK_SERVER_DOCKERFILE: (
                 "control_plane_kit_commit", "control_plane_kit_interpreters_commit",

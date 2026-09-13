@@ -21,3 +21,5 @@ assertions to the multiplexer Dockerfile, preserving historical descriptor bytes
 Servers199 adds SDK to the existing CPK synthetic drift destination and requires
 the actual root and CPK recipe to select SDK[fastapi], with no redundant broad
 FastAPI requirement. Existing stdlib extras and all published coordinates remain.
+
+Servers203 adds Secrets to the root dependency drift destination, alongside its existing recipe destination. Actual dependency adoption advances only the canonical upstream and dependency mirrors; all published descriptors/catalogue/product source and digest bytes remain unchanged.
