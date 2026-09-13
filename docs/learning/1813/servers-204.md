@@ -58,3 +58,31 @@ hosted workflow or registry action has run for #204. Full source/fixture/effect
 review and exact full-command release must precede runtime validation. Parent
 #189 remains open. Final review must verify actual shell status propagation,
 cleanup and forced two-profile execution; design approval is not runtime proof.
+
+## First full owner validation
+
+North and both independent reviewers passed sealed source aa45e2c and its full
+effect plan. Fresh preflight and a candid branch-only checkpoint preceded one
+released full owner run. It passed 26 policy tests and all 399 package methods,
+with 50 inventoried mock sites and zero approved skips. The original product
+laws, replacement admission law and three helper tests were actually reached.
+No additional target-red run, hidden retry or alternate harness was used.
+
+The maintained wrapped-source profile passed initial signed control reads,
+original custody assertions, fresh restart signed reads and retained-value
+verification. The historical published profile independently passed its initial
+and restart contracts. Both profiles completed their bounded log checks and
+fixed-file cleanup. Existing numeric source, CPK source/published smoke, isolated
+root/nonredispatch and final residue checks passed. The owner separately observed
+absence of its labelled runtime resources and temporary numeric/root image tags;
+normal test and source image tags were retained. File removal is evidenced by
+each script's successful explicit cleanup path, not an invented external file
+inventory. Detailed logs/environment identifiers remain local.
+
+Root evidence continues to mark mutation permission and external access
+unverified; expected prior-acquisition rejection is nonredispatch evidence.
+This run does not qualify a new immutable image or complete public grandparent
+acceptance. The final update is documentation only, so green carries from
+aa45e2c without another local run. Matching final-head hosted evidence and
+independent PR review remain required before merge. Parent #189 acceptance is
+still North's separate decision after this child is accepted.

@@ -31,5 +31,6 @@ Finish retains labelled Docker cleanup and namespace audit, then deletes exactly
 two root log files and three files per known phase. Partial generation/check
 failure follows the same path. Unknown files or failed removal prevent rmdir
 and retain the recorded path; no recursive prune or foreign-resource cleanup.
-Implementation remains unvalidated until its owning gate runs. Source success
-cannot substitute for published qualification or public grandparent acceptance.
+The first full owner run passed both profiles, including initial/restart signed
+source reads and original custody/retained-value checks. Source success cannot
+substitute for published qualification or public grandparent acceptance.
