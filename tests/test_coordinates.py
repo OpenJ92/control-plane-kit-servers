@@ -77,6 +77,7 @@ class CoordinateGenerationTests(unittest.TestCase):
             ),
             module.CPK_LOCAL_GATEWAY_DOCKERFILE: ("control_plane_kit_commit",),
             module.SECRETS_SERVER_DOCKERFILE: ("control_plane_kit_secrets_commit",),
+            module.HELLO_SERVER_DOCKERFILE: ("control_plane_kit_server_sdk_commit",),
         }
         for path, content in generated.items():
             with self.subTest(path=path.relative_to(ROOT).as_posix()):
@@ -115,6 +116,12 @@ class CoordinateGenerationTests(unittest.TestCase):
         secrets_commit = coordinates["upstreams"][
             "control_plane_kit_secrets_commit"
         ]
+        self.assertIn(
+            "control-plane-kit-server-sdk[verification] @ "
+            "https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/"
+            f"{coordinates['upstreams']['control_plane_kit_server_sdk_commit']}.zip",
+            module.HELLO_SERVER_DOCKERFILE.read_text(encoding="utf-8"),
+        )
 
         for path in (module.PYPROJECT, module.CPK_SERVER_DOCKERFILE):
             text = path.read_text(encoding="utf-8")

@@ -20,6 +20,7 @@ CPK_LOCAL_GATEWAY_DOCKERFILE = (
     ROOT / "products" / "cpk_local_gateway" / "Dockerfile"
 )
 SECRETS_SERVER_DOCKERFILE = ROOT / "products" / "secrets_server" / "Dockerfile"
+HELLO_SERVER_DOCKERFILE = ROOT / "products" / "hello_server" / "Dockerfile"
 CATALOGUE = ROOT / "catalogue" / "products.json"
 PACKAGED_CATALOGUE = ROOT / "src" / "control_plane_kit_servers" / "catalogue.json"
 
@@ -130,6 +131,12 @@ def generate_updates(coordinates: Mapping[str, Any]) -> dict[Path, bytes]:
         cpk_commit=cpk_commit,
         interpreters_commit=interpreters_commit,
         secrets_commit=secrets_commit,
+    ).encode("utf-8")
+
+    updates[HELLO_SERVER_DOCKERFILE] = _replace_dependency_pins(
+        HELLO_SERVER_DOCKERFILE.read_text(encoding="utf-8"),
+        sdk_commit=sdk_commit, cpk_commit=cpk_commit,
+        interpreters_commit=interpreters_commit, secrets_commit=secrets_commit,
     ).encode("utf-8")
 
     catalogue_products: list[dict[str, str]] = []

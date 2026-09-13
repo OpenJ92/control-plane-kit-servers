@@ -8,31 +8,33 @@ from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
-import re
-import socket
 import sys
+import time
 from threading import Lock
-from typing import Mapping
-from urllib.error import HTTPError, URLError
+from typing import Callable, Mapping
 from urllib.parse import urlsplit
-from urllib.request import Request, build_opener, HTTPRedirectHandler
+import control_plane_kit_core as core
+from control_plane_kit_server_sdk.health import WorkloadNodeHealthReadDispatcher
+from control_plane_kit_server_sdk.stdlib import install_cpk_control_routes
+from control_plane_kit_server_sdk.verification import (
+    Ed25519WorkloadNodeControlSurfaceReadVerifier, Ed25519WorkloadNodeHealthReadVerifier,
+)
+from control_plane_kit_server_sdk.verifier_keys import (
+    AtomicWorkloadNodeControlSurfaceReadVerifierKeySet, AtomicWorkloadNodeHealthReadVerifierKeySet,
+)
+from .configuration import (
+    HelloConfigurationError, HelloControlConfiguration, hello_control_configuration_artifact,
+    read_hello_control_configuration,
+)
+from .dependencies import DependencySnapshot, load_dependencies
 
-
-_DEPENDENCY_NAME = re.compile(r"[a-z][a-z0-9-]*\Z")
-_MAX_RESPONSE_BYTES = 16_384
 _OBSERVED_REQUEST_LIMIT = 20
-_OBSERVED_REQUESTS: deque[dict[str, str]] = deque(maxlen=_OBSERVED_REQUEST_LIMIT)
-_OBSERVED_REQUESTS_LOCK = Lock()
 _ACCENTS = {
     "blue": ("#2563eb", "#eff6ff"),
     "purple": ("#7e22ce", "#faf5ff"),
     "green": ("#15803d", "#f0fdf4"),
     "red": ("#b91c1c", "#fef2f2"),
 }
-
-
-class HelloConfigurationError(ValueError):
-    """Raised when runtime-supplied Hello configuration is malformed."""
 
 
 def render_hello(message: str, color: str = "blue") -> bytes:
@@ -74,95 +76,6 @@ h1 {{ margin: 0; max-width: 100%; font-size: 48px; line-height: 1.2;
 """.encode("utf-8")
 
 
-class NoRedirects(HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
-        return None
-
-
-@dataclass(frozen=True, slots=True)
-class DependencyCheck:
-    """One named pair of HTTP and Postgres dependency environment bindings."""
-
-    name: str
-    http_environment: str
-    database_environment: str
-
-    def __post_init__(self) -> None:
-        _validate_dependency_name(self.name)
-        _validate_environment_name(self.http_environment)
-        _validate_environment_name(self.database_environment)
-
-    def check(self, environ: Mapping[str, str]) -> list[str]:
-        failures: list[str] = []
-        http_url = environ.get(self.http_environment)
-        database_url = environ.get(self.database_environment)
-        if http_url is None:
-            failures.append(f"{self.name}: missing {self.http_environment}")
-        else:
-            failures.extend(_check_http(self.name, http_url))
-        if database_url is None:
-            failures.append(f"{self.name}: missing {self.database_environment}")
-        else:
-            failures.extend(_check_postgres(self.name, database_url))
-        return failures
-
-    def descriptor(self) -> dict[str, str]:
-        return {
-            "name": self.name,
-            "http_environment": self.http_environment,
-            "database_environment": self.database_environment,
-        }
-
-
-def dependency_environment_names(name: str) -> tuple[str, str]:
-    """Return the conventional HTTP/Postgres environment pair for a dependency."""
-
-    _validate_dependency_name(name)
-    suffix = name.upper().replace("-", "_")
-    return (
-        f"HELLO_HTTP_{suffix}_URL",
-        f"HELLO_DATABASE_{suffix}_URL",
-    )
-
-
-def load_dependencies(raw: str | None) -> tuple[DependencyCheck, ...]:
-    """Decode the bounded runtime dependency declaration language."""
-
-    if raw in (None, ""):
-        return ()
-    try:
-        decoded = json.loads(raw)
-    except json.JSONDecodeError as error:
-        raise HelloConfigurationError("HELLO_DEPENDENCIES_JSON is invalid JSON") from error
-    if not isinstance(decoded, list):
-        raise HelloConfigurationError("HELLO_DEPENDENCIES_JSON must be a list")
-    dependencies: list[DependencyCheck] = []
-    seen: set[str] = set()
-    for item in decoded:
-        if not isinstance(item, dict) or set(item) - {
-            "name",
-            "http_environment",
-            "database_environment",
-        }:
-            raise HelloConfigurationError("dependency declaration is malformed")
-        name = _required_text(item, "name")
-        if name in seen:
-            raise HelloConfigurationError("dependency names must be unique")
-        seen.add(name)
-        http_environment = item.get("http_environment")
-        database_environment = item.get("database_environment")
-        if http_environment is None or database_environment is None:
-            http_environment, database_environment = dependency_environment_names(name)
-        dependencies.append(
-            DependencyCheck(
-                name=name,
-                http_environment=_text(http_environment, "http_environment"),
-                database_environment=_text(database_environment, "database_environment"),
-            )
-        )
-    return tuple(dependencies)
-
-
 class HelloHandler(BaseHTTPRequestHandler):
     server_version = "control-plane-kit-hello/1"
 
@@ -171,15 +84,15 @@ class HelloHandler(BaseHTTPRequestHandler):
             self._send(200, b"live\n")
             return
         if self.path == "/health/ready":
-            failures = _dependency_failures(os.environ)
-            if failures:
-                self._send(503, ("\n".join(failures) + "\n").encode("utf-8"))
-            else:
-                self._send(200, b"ready\n")
+            try:
+                status, body = self.server.hello_settings.inspect().legacy_response()
+            except Exception:
+                status, body = 500, b"dependency observation failed\n"
+            self._send(status, body)
             return
         if self.path == "/dependencies":
             payload = json.dumps(
-                [dependency.descriptor() for dependency in _dependencies()],
+                [dependency.descriptor() for dependency in self.server.hello_settings.dependencies.dependencies],
                 sort_keys=True,
                 separators=(",", ":"),
             ).encode("utf-8")
@@ -189,7 +102,7 @@ class HelloHandler(BaseHTTPRequestHandler):
             self._send(
                 200,
                 json.dumps(
-                    _observed_requests_payload(),
+                    self.server.hello_observations.payload(),
                     sort_keys=True,
                     separators=(",", ":"),
                 ).encode("utf-8"),
@@ -197,11 +110,10 @@ class HelloHandler(BaseHTTPRequestHandler):
             )
             return
         if self.path == "/":
-            _record_observed_request("GET", self.path)
-            message = os.environ.get("HELLO_MESSAGE", "Hello, world!")
+            self.server.hello_observations.record("GET", self.path)
             self._send(
                 200,
-                render_hello(message, os.environ.get("HELLO_COLOR", "blue")),
+                self.server.hello_settings.html,
                 content_type="text/html; charset=utf-8",
             )
             return
@@ -226,78 +138,90 @@ class HelloHandler(BaseHTTPRequestHandler):
 
 def main() -> int:
     port = _port(os.environ.get("HELLO_PORT", "8000"))
+    if port != 8000:
+        raise HelloConfigurationError("wrapped Hello requires port 8000")
     render_hello(
         os.environ.get("HELLO_MESSAGE", "Hello, world!"),
         os.environ.get("HELLO_COLOR", "blue"),
     )
-    server = ThreadingHTTPServer(("0.0.0.0", port), HelloHandler)
-    server.serve_forever()
+    config = read_hello_control_configuration()
+    server = create_hello_server(config, os.environ, address=("0.0.0.0", port))
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()
     return 0
 
 
-def _dependency_failures(environ: Mapping[str, str]) -> list[str]:
-    failures: list[str] = []
-    for dependency in _dependencies():
-        failures.extend(dependency.check(environ))
-    return failures
+@dataclass(frozen=True, slots=True, repr=False)
+class HelloSettings:
+    html: bytes
+    dependencies: DependencySnapshot
+    clock: Callable[[], float]
+
+    def inspect(self):
+        return self.dependencies.inspect(clock=self.clock)
 
 
-def _dependencies() -> tuple[DependencyCheck, ...]:
-    return load_dependencies(os.environ.get("HELLO_DEPENDENCIES_JSON", "[]"))
+class RequestObservations:
+    def __init__(self):
+        self._requests = deque(maxlen=_OBSERVED_REQUEST_LIMIT)
+        self._lock = Lock()
+
+    def record(self, method: str, target: str) -> None:
+        observed = {"method": method, "path": urlsplit(target).path or "/"}
+        with self._lock:
+            self._requests.append(observed)
+
+    def payload(self) -> dict[str, object]:
+        with self._lock:
+            requests = tuple(dict(item) for item in self._requests)
+        return {"count": len(requests), "retained_limit": _OBSERVED_REQUEST_LIMIT, "requests": requests}
 
 
-def _record_observed_request(method: str, target: str) -> None:
-    parsed = urlsplit(target)
-    observed = {"method": method, "path": parsed.path or "/"}
-    with _OBSERVED_REQUESTS_LOCK:
-        _OBSERVED_REQUESTS.append(observed)
+def install_hello_control(server: ThreadingHTTPServer, config: HelloControlConfiguration,
+                          *, clock: Callable[[], int]) -> None:
+    audience = core.workload_node_control_audience(config.target)
+    static = Ed25519WorkloadNodeControlSurfaceReadVerifier(
+        AtomicWorkloadNodeControlSurfaceReadVerifierKeySet(config.surface_keys),
+        expected_issuer=config.surface_issuer, expected_audience=audience, clock=clock,
+    )
+    health = Ed25519WorkloadNodeHealthReadVerifier(
+        AtomicWorkloadNodeHealthReadVerifierKeySet(config.health_keys),
+        expected_issuer=config.health_issuer, expected_audience=audience, clock=clock,
+    )
+    settings = server.hello_settings
+    dispatcher = WorkloadNodeHealthReadDispatcher(
+        target=config.target, runtime_id=config.runtime_id, declaration=config.declaration, verifier=health,
+        liveness=lambda: core.NodeHealthReadOutcome.HEALTHY,
+        readiness=lambda: settings.inspect().outcome,
+    )
+    install_cpk_control_routes(
+        server, reserve_control_namespace=True, target=config.target, declaration=config.declaration,
+        variables=(), command_verifier=None, surface_read_verifier=static, health_dispatcher=dispatcher,
+    )
 
 
-def _observed_requests_payload() -> dict[str, object]:
-    with _OBSERVED_REQUESTS_LOCK:
-        requests = tuple(_OBSERVED_REQUESTS)
-    return {
-        "count": len(requests),
-        "retained_limit": _OBSERVED_REQUEST_LIMIT,
-        "requests": requests,
-    }
-
-
-def _clear_observed_requests() -> None:
-    with _OBSERVED_REQUESTS_LOCK:
-        _OBSERVED_REQUESTS.clear()
-
-
-def _check_http(name: str, url: str) -> list[str]:
-    parsed = urlsplit(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        return [f"{name}: HTTP dependency URL is malformed"]
-    request = Request(url, method="GET")
-    opener = build_opener(NoRedirects)
+def create_hello_server(config: HelloControlConfiguration, environ: Mapping[str, str], *,
+                        address: tuple[str, int] = ("0.0.0.0", 8000),
+                        clock: Callable[[], int] = lambda: int(time.time()),
+                        observation_clock: Callable[[], float] = time.monotonic) -> ThreadingHTTPServer:
+    """Product-owned composition; ephemeral addresses are for package test hosts."""
+    html = render_hello(environ.get("HELLO_MESSAGE", "Hello, world!"), environ.get("HELLO_COLOR", "blue"))
+    dependencies = DependencySnapshot(load_dependencies(environ.get("HELLO_DEPENDENCIES_JSON", "[]")), environ)
+    hello_control_configuration_artifact(config)  # Bound/revalidate local material before socket creation.
+    settings = HelloSettings(html, dependencies, observation_clock)
+    server = ThreadingHTTPServer(address, HelloHandler, bind_and_activate=False)
     try:
-        with opener.open(request, timeout=2) as response:
-            response.read(_MAX_RESPONSE_BYTES + 1)
-            if response.status >= 400:
-                return [f"{name}: HTTP dependency returned {response.status}"]
-    except HTTPError as error:
-        return [f"{name}: HTTP dependency returned {error.code}"]
-    except (OSError, URLError) as error:
-        return [f"{name}: HTTP dependency unavailable: {type(error).__name__}"]
-    return []
-
-
-def _check_postgres(name: str, url: str) -> list[str]:
-    parsed = urlsplit(url)
-    if parsed.scheme not in {"postgresql", "postgresql+psycopg"}:
-        return [f"{name}: Postgres dependency URL has unsupported scheme"]
-    if not parsed.hostname:
-        return [f"{name}: Postgres dependency URL is missing host"]
-    port = parsed.port or 5432
-    try:
-        with socket.create_connection((parsed.hostname, port), timeout=2):
-            return []
-    except OSError as error:
-        return [f"{name}: Postgres dependency unavailable: {type(error).__name__}"]
+        server.hello_settings = settings
+        server.hello_observations = RequestObservations()
+        install_hello_control(server, config, clock=clock)
+        server.server_bind()
+        server.server_activate()
+        return server
+    except BaseException:
+        server.server_close()
+        raise
 
 
 def _port(value: str) -> int:
@@ -308,29 +232,6 @@ def _port(value: str) -> int:
     if not 1 <= port <= 65_535:
         raise HelloConfigurationError("HELLO_PORT must be between 1 and 65535")
     return port
-
-
-def _required_text(value: Mapping[str, object], key: str) -> str:
-    return _text(value.get(key), key)
-
-
-def _text(value: object, key: str) -> str:
-    if not isinstance(value, str) or value == "":
-        raise HelloConfigurationError(f"{key} must be a nonempty string")
-    return value
-
-
-def _validate_dependency_name(value: str) -> None:
-    if not isinstance(value, str) or _DEPENDENCY_NAME.fullmatch(value) is None:
-        raise HelloConfigurationError(
-            "dependency name must start with a lowercase letter and contain only "
-            "lowercase letters, digits, and hyphens"
-        )
-
-
-def _validate_environment_name(value: str) -> None:
-    if not isinstance(value, str) or not re.fullmatch(r"[A-Z][A-Z0-9_]{0,127}", value):
-        raise HelloConfigurationError("dependency environment name is malformed")
 
 
 if __name__ == "__main__":
