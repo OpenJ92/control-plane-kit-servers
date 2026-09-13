@@ -81,7 +81,12 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             f"{INTERPRETERS_PIN}.zip",
             dockerfile,
         )
-        self.assertIn("fastapi>=0.115", dockerfile)
+        self.assertIn(
+            "control-plane-kit-server-sdk[fastapi] @ "
+            "https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/"
+            f"{COORDINATES['upstreams']['control_plane_kit_server_sdk_commit']}.zip",
+            dockerfile,
+        )
         self.assertIn("uvicorn>=0.30", dockerfile)
         self.assertIn("COPY products/cpk_server/src ./products/cpk_server/src", dockerfile)
         self.assertNotIn("COPY products/cpk_server ./products/cpk_server", dockerfile)
