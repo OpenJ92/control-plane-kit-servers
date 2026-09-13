@@ -256,6 +256,9 @@ class MultiplexerControlTests(unittest.TestCase):
             self.assertIsNone(caught.exception.__cause__)
             self.assertIsNone(caught.exception.__context__)
             self.assertNotIn("secret", str(caught.exception))
+        for invalid_observers in (["http://mutable.invalid"], ("ftp://invalid",)):
+            with self.assertRaises(config.MultiplexerConfigurationError):
+                config.MultiplexerSettings("http://primary.invalid", invalid_observers)
         standalone = config.MultiplexerSettings("http://primary.invalid", ("http://a.invalid", "http://b.invalid", "http://c.invalid"), 18082)
         self.assertEqual(len(standalone.observer_urls), 3)
         other = fixture("b")

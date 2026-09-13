@@ -25,3 +25,7 @@ Servers185 adds HTTP_ACTIVE_ROUTER_DOCKERFILE as another explicit SDK pin
 replacement destination. Product profile, forwarding and lifecycle stay in the
 router; only dependency-coordinate substitution is shared. Synthetic upstream
 drift and verification-extra assertions cover this actual recipe destination.
+
+Servers186 adds HTTP_MULTIPLEXER_DOCKERFILE as an explicit canonical SDK pin
+destination. Only dependency substitution is shared; multiplexer configuration,
+primary/observer behavior and lifecycle remain product-owned.
