@@ -20,3 +20,8 @@ static/health test authority entirely in memory. It is not a production receiver
 issuer service or deployable default. Existing18 neutral boundary laws remain.
 Only the normal Docker-backed ./test.sh executes these tests. No source-host or
 published-image result establishes a production CPK wrapper in this child.
+
+Parity compares the entire neutral response after standard JSON serialization,
+preserving wire-list representation of tuple-valued principal grants. The first
+hosted run exposed two in-memory tuple versus JSON list assertion mismatches;
+this expectation correction changes no production behavior or asserted field.

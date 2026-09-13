@@ -1,6 +1,7 @@
 """Actual CPK application routing, and representative SDK composition laws."""
 from dataclasses import replace
 import importlib
+import json
 from pathlib import Path
 import re
 import sys
@@ -74,7 +75,7 @@ class CpkHttpHostTests(unittest.TestCase):
                 expected = boundary.handle(method=method, path=path, query_string=query.encode(), body=body, headers=headers)
                 response = client.request(method, url, content=body, headers=headers)
                 self.assertEqual(response.status_code, 200)
-                self.assertEqual(response.json(), expected.body)
+                self.assertEqual(response.json(), json.loads(json.dumps(expected.body)))
         requests = [request for service in self.services.values() for request in service.requests]
         self.assertEqual(len(requests), 4)
 
@@ -117,7 +118,7 @@ class CpkHttpHostTests(unittest.TestCase):
             expected = self.app.state.mcp_boundary.handle(headers=headers, message=message)
             response = client.post("/mcp", json=message, headers=headers)
             self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.json(), expected.body)
+            self.assertEqual(response.json(), json.loads(json.dumps(expected.body)))
         self.assertEqual(self.verifier.credentials, [b"rejected", b"valid-token", b"valid-token"])
 
     def test_contract_prefix_derivation_and_rejection_before_registration(self):
