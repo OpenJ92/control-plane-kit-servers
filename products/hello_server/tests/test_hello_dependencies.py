@@ -87,7 +87,7 @@ class HelloDependencyTests(unittest.TestCase):
             response.read.assert_called_once_with(16385)
             self.assertEqual(opener.open.call_args.kwargs["timeout"], 0.25)
             self.assertEqual(opener.open.call_args.args[0].method, "GET")
-            self.assertIsNone(build.call_args.args[0].redirect_request(None,None,302,"",None,"http://redirect"))
+            self.assertIsNone(build.call_args.args[0]().redirect_request(None,None,302,"",None,"http://redirect"))
             response.status = 503
             self.assertEqual(deps._check_http("a", "http://example.invalid"), ["a: HTTP dependency returned 503"])
             opener.open.side_effect = HTTPError("http://secret",302,"private",{},None)

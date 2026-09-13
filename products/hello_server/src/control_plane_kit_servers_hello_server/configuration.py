@@ -14,7 +14,7 @@ from control_plane_kit_core.configuration import ConfigurationArtifact, Configur
 from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
 from control_plane_kit_core.products import ProductRuntimeContract, ProviderRuntimePort
 from control_plane_kit_core.types import Protocol
-from control_plane_kit_core.verification import VerificationContract, HttpCheck
+from control_plane_kit_core.verification import VerificationContract, VerificationPolicy, HttpCheck
 from control_plane_kit_server_sdk.verifier_keys import (
     WorkloadNodeControlSurfaceReadVerifierKeySet, WorkloadNodeHealthReadVerifierKeySet,
 )
@@ -182,8 +182,10 @@ def hello_source_runtime_contract(artifact: ConfigurationArtifact) -> ProductRun
             capabilities=(CapabilityName.HEALTH_CHECKABLE, CapabilityName.NODE_CONTROLLABLE),
             control_surfaces=(hello_control_declaration().surface,),
             verification=VerificationContract(checks=(
-                HttpCheck("live", "internal", "/health/live"),
-                HttpCheck("ready", "internal", "/health/ready"),
+                HttpCheck(check_id="live", provider_socket="internal", path="/health/live",
+                          policy=VerificationPolicy(maximum_attempts=5)),
+                HttpCheck(check_id="ready", provider_socket="internal", path="/health/ready",
+                          policy=VerificationPolicy(maximum_attempts=5)),
             )),
         )
     except Exception:

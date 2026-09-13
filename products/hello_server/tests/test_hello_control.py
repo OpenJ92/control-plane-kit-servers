@@ -47,6 +47,7 @@ class HelloControlTests(unittest.TestCase):
         self.assertEqual(old.identity.contract_revision, 2)
         self.assertEqual(old.runtime_contract.control_surfaces, ())
         self.assertEqual(old.runtime_contract.configuration_artifacts, ())
+        self.assertEqual(contract.verification, old.runtime_contract.verification)
         self.assertNotIn("public_key", repr(self.config))
         result = subprocess.run([sys.executable, "-I", "-B", "-c",
             "import sys; import control_plane_kit_servers_hello_server.configuration; "

@@ -27,6 +27,9 @@ The pure renderer emits Core ConfigurationArtifact with hello-control ID, fixed
 through Core and revalidates the receiving byte limit. The source runtime-contract
 factory adds a required actual artifact, internal HTTP8000, existing environment
 defaults/legacy verification, explicit NODE_CONTROLLABLE and HEALTH_CHECKABLE,
-and the fixed surface. It neither registers nor publishes a descriptor. Historical
+and the fixed surface. It neither registers nor publishes a descriptor. Legacy
+verification uses Core's keyword-only HttpCheck constructor and explicitly
+retains the published five-attempt policy; an owning assertion compares the source
+and historical verification contracts. Historical
 product.cpk.json and catalogue remain unchanged; #191 qualifies a future image.
 Operations selected-artifact delivery/identity production belongs to #1821/#149.
