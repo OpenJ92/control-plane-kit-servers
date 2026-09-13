@@ -137,7 +137,13 @@ docker run --rm "$IMAGE" \
     "$HELPER_IMAGE_ID" python products/secrets_server/tests/live_numeric_bootstrap.py
 )
 
+CPK_SECRETS_SMOKE_PROFILE=wrapped-source \
+CPK_SECRETS_BUILD_CONTROLLER=0 \
+CPK_SERVERS_TEST_IMAGE="$IMAGE" \
+CPK_SECRETS_IMAGE="${CPK_SECRETS_SOURCE_IMAGE:-localhost/control-plane-kit-servers/secrets-server:local}" \
+CPK_SECRETS_BUILD_IMAGE=1 sh scripts/secrets_server_image_smoke.sh
 SECRETS_IMAGE="$(docker run --rm "$IMAGE" python scripts/product_image_coordinate.py secrets-server)"
+CPK_SECRETS_SMOKE_PROFILE=published-baseline \
 CPK_SECRETS_BUILD_IMAGE=0 \
 CPK_SECRETS_BUILD_CONTROLLER=0 \
 CPK_SERVERS_TEST_IMAGE="$IMAGE" \
