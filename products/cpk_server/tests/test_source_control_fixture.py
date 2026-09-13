@@ -59,6 +59,13 @@ class SourceControlFixtureTests(unittest.TestCase):
         self.assertIn("--max-time 3 --max-filesize 65536",smoke)
         self.assertIn('chmod 700 "$CONTROL_RECORDS"',smoke)
         self.assertIn("umask 077",smoke)
+        missing=smoke.split('phase "reject missing required source control file"',1)[1].split('set -- "$@" --mount',1)[0]
+        self.assertIn('MISSING_CONTROL_CONTAINER="$(docker create --label "$LABEL"',missing)
+        self.assertIn('docker start "$MISSING_CONTROL_CONTAINER"',missing)
+        self.assertIn("for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do",missing)
+        self.assertIn("{{.State.Status}}|{{.State.ExitCode}}",missing)
+        self.assertIn('head -c 4096 >"$MISSING_CONFIG_OUTPUT"',missing)
+        self.assertIn('docker rm -f "$MISSING_CONTROL_CONTAINER"',smoke)
         cleanup=smoke.split("cleanup_control_fixture() {",1)[1].split("\ncleanup()",1)[0]
         for name in ("control.json","surface.headers","health.headers","surface.json","health.json","denied.json"):
             self.assertIn("$CONTROL_RECORDS/"+name,cleanup)

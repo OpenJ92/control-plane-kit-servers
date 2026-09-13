@@ -9,3 +9,6 @@ creation must reject reuse. Source/published profile wiring, actual generator an
 verification invocations, mount/HTTP bounds and every exact cleanup filename are
 asserted because they are the shell's new fixture ABI. These tests execute only
 inside the existing normal Docker-backed ./test.sh.
+
+The missing-control probe's tracked create/start ID, finite15-inspection loop,
+4096-byte output capture and exact-ID cleanup are part of its shell ABI tests.

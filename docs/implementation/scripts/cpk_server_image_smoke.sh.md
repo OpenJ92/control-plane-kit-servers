@@ -25,3 +25,10 @@ empty/absent. EXIT/INT/TERM failure handling repeats exact cleanup as needed and
 returns failure if new file cleanup fails. No broad prune, provider mutation,
 credential refresh or unrelated cleanup is added. Existing diagnostic limitations
 and ownership of the normal Docker effects remain unchanged.
+
+The missing-control rejection probe uses a separately created, run-labelled/named
+container whose exact ID is retained before start and included in existing cleanup.
+At most15 one-second state inspections require exited/nonzero, then at most4096
+bytes from the last10 log lines prove the fixed receiving error. If missing-file
+enforcement regresses into a running server, the gate fails boundedly and cleans
+the exact ID; it does not block in a foreground docker run or use a generic runner.

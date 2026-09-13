@@ -5,6 +5,7 @@ IMAGE="${CPK_SERVER_IMAGE:-localhost/control-plane-kit-servers/cpk-server:local}
 BUILD_IMAGE="${CPK_SERVER_BUILD_IMAGE:-1}"
 PROFILE="${CPK_SERVER_SMOKE_PROFILE:-wrapped-source}"
 CONTROL_RECORDS=""
+MISSING_CONTROL_CONTAINER=""
 case "$PROFILE" in
   wrapped-source)
     : "${CPK_SERVERS_TEST_IMAGE:?wrapped-source requires the owning test/controller image}"
@@ -45,6 +46,9 @@ cleanup_control_fixture() {
 }
 
 cleanup() {
+  if [ -n "$MISSING_CONTROL_CONTAINER" ]; then
+    docker rm -f "$MISSING_CONTROL_CONTAINER" >/dev/null 2>&1 || true
+  fi
   rm -f "$MISSING_CONFIG_OUTPUT" "$IMPORT_BODY" "$UNAUTHORIZED_BODY" \
     "$MCP_UNAUTHORIZED_BODY" "$HOST_CURL_ERROR"
   if [ -n "$CONTAINER" ]; then
@@ -253,8 +257,22 @@ set -- \
   -e CPK_GRAPH_TOPOLOGY_DATABASE_URL="$GRAPH_TOPOLOGY_DATABASE_URL"
 if [ "$PROFILE" = "wrapped-source" ]; then
   phase "reject missing required source control file"
-  if docker run --rm --network "$NETWORK" "$@" "$IMAGE" >"$MISSING_CONFIG_OUTPUT" 2>&1; then
-    echo "cpk-server accepted missing control file" >&2
+  MISSING_CONTROL_CONTAINER="$(docker create --label "$LABEL" \
+    --label "org.openj92.cpk.test-run=$NETWORK" --name "$NETWORK-missing-control" \
+    --network "$NETWORK" "$@" "$IMAGE")"
+  docker start "$MISSING_CONTROL_CONTAINER" >/dev/null
+  MISSING_CONTROL_EXITED=0
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    missing_state="$(docker inspect --format '{{.State.Status}}|{{.State.ExitCode}}' "$MISSING_CONTROL_CONTAINER")"
+    if [ "${missing_state%%|*}" = "exited" ]; then
+      MISSING_CONTROL_EXITED=1
+      break
+    fi
+    sleep 1
+  done
+  docker logs --tail 10 "$MISSING_CONTROL_CONTAINER" 2>&1 | head -c 4096 >"$MISSING_CONFIG_OUTPUT"
+  if [ "$MISSING_CONTROL_EXITED" != "1" ] || [ "${missing_state#*|}" -eq 0 ]; then
+    echo "cpk-server missing-control rejection did not exit with failure" >&2
     exit 1
   fi
   grep -q 'CPK control configuration is invalid' "$MISSING_CONFIG_OUTPUT"
