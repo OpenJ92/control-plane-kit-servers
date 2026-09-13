@@ -5,8 +5,10 @@ The canonical upstream fields are exact lowercase commits for Core/Operations,
 Interpreters, Secrets and SDK. The loader rejects missing or malformed SDK pins.
 Generation replaces owned archive URLs in the root pyproject, CPK, gateway and
 Secrets Dockerfiles; it does not add an SDK installation to product recipes.
-The root explicitly declares SDK[verification]. Product wrapper issues own their
-later recipe installation and generator destination additions.
+The root explicitly declares SDK[verification]. Hello #184 adds its product-owned
+SDK[verification] recipe and generated destination. Other product wrapper issues
+own their later installation/destination additions; dependency rendering does not
+claim that their current images contain SDK behavior.
 
 The same generator renders published descriptors/catalogue from their separate
 product source/image coordinates. A dependency adoption must not advance those

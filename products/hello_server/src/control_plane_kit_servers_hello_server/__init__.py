@@ -1,6 +1,6 @@
-"""hello-server product entrypoint package."""
+"""Hello dependency values; importing these does not load the HTTP process."""
 
-from .server import (
+from .dependencies import (
     DependencyCheck,
     HelloConfigurationError,
     dependency_environment_names,
