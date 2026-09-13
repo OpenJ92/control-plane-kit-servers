@@ -14,3 +14,6 @@ do not claim that an image was built, published or deployed.
 Servers185 extends the existing synthetic SDK drift destination set and explicit
 SDK[verification] recipe assertion to the active-router Dockerfile. Published
 product descriptors remain byte-preserved; no image coordinate is advanced.
+
+Servers186 extends synthetic SDK drift and actual SDK[verification] installation
+assertions to the multiplexer Dockerfile, preserving historical descriptor bytes.
