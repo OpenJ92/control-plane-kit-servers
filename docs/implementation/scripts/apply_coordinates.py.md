@@ -20,3 +20,8 @@ separately by the owning package metadata tests.
 Servers #193 adopts Core95452249, Interpreters77c9a7f and SDK2b10d5a without new
 runtime authority or publication. Generation is local source rendering, not a
 provider effect, image build, deployment or proof of product capability.
+
+Servers185 adds HTTP_ACTIVE_ROUTER_DOCKERFILE as another explicit SDK pin
+replacement destination. Product profile, forwarding and lifecycle stay in the
+router; only dependency-coordinate substitution is shared. Synthetic upstream
+drift and verification-extra assertions cover this actual recipe destination.
