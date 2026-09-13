@@ -28,6 +28,13 @@
       "allowed_values": [
         "bounded provider identity"
       ]
+    },
+    {
+      "name": "CPK_SECRETS_CONTROL_CONFIGURATION_FILE",
+      "required": true,
+      "allowed_values": [
+        "/etc/cpk/secrets-server/control.json (fixed source image ENV)"
+      ]
     }
   ],
   "bootstrap_files": [
@@ -52,5 +59,17 @@
     "bootstrap files are not recursively resolved through the provider being started",
     "a nested provider may later receive equivalent files from an already admitted parent provider",
     "provider responses, logs, errors, observations, and catalogue metadata never contain bootstrap values"
+  ],
+  "configuration_files": [
+    {
+      "path": "/etc/cpk/secrets-server/control.json",
+      "environment_name": "CPK_SECRETS_CONTROL_CONFIGURATION_FILE",
+      "required": true,
+      "profile": "secrets-control-configuration.v1",
+      "media_type": "application/json",
+      "maximum_bytes": 65536,
+      "mode": "0444",
+      "custody": "public receiving configuration, separate from private bootstrap inputs"
+    }
   ]
 }

@@ -21,3 +21,13 @@ assertions to the multiplexer Dockerfile, preserving historical descriptor bytes
 Servers199 adds SDK to the existing CPK synthetic drift destination and requires
 the actual root and CPK recipe to select SDK[fastapi], with no redundant broad
 FastAPI requirement. Existing stdlib extras and all published coordinates remain.
+
+Servers203 adds Secrets to the root dependency drift destination, alongside its existing recipe destination. Actual dependency adoption advances only the canonical upstream and dependency mirrors; all published descriptors/catalogue/product source and digest bytes remain unchanged.
+
+The first implementation gate reached the root suite with 45 of 46 methods
+passing. Its one failure exposed the old canonical Secrets upstream constant
+in the source-versus-publication test. That expectation now names the accepted
+source commit; neighboring historical published source and image assertions
+remain unchanged. Product and runtime stages were unreached in that attempt.
+The corrected full owner run passed all 396 package methods and its normal
+runtime stages; historical publication assertions remain green.

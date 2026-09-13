@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+from tempfile import TemporaryDirectory
 from pathlib import Path
 import unittest
 
@@ -125,6 +128,27 @@ class SecretsServerProductTests(unittest.TestCase):
         self.assertNotIn("python3", smoke)
         self.assertIn("cpk.test-run", smoke)
         self.assertIn("docker volume create", smoke)
+
+    def test_intermediate_source_smoke_hold_precedes_all_docker_calls(self) -> None:
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            docker = base / "docker"
+            docker.write_text('#!/bin/sh\nprintf called >> "$CPK_TEST_DOCKER_MARKER"\nexit 86\n')
+            docker.chmod(0o755)
+            marker = base / "called"
+            for mode in (None, "1"):
+                environment = {key: value for key, value in os.environ.items()
+                               if not key.startswith("CPK_SECRETS_")}
+                environment.update(PATH=str(base) + ":/usr/bin:/bin",
+                                   CPK_TEST_DOCKER_MARKER=str(marker))
+                if mode is not None:
+                    environment["CPK_SECRETS_BUILD_IMAGE"] = mode
+                with self.subTest(mode=mode):
+                    result = subprocess.run(["/bin/sh", str(SMOKE)], cwd=ROOT, env=environment,
+                                            capture_output=True, text=True, timeout=10, check=False)
+                    self.assertFalse(marker.exists(), "source hold invoked Docker")
+                    self.assertEqual(result.returncode, 2)
+                    self.assertIn("Secrets source smoke is held until Servers #204", result.stderr)
 
     def test_descriptor_instantiates_without_provider_implementation(self) -> None:
         product = self.decode().product

@@ -133,3 +133,27 @@ visibility: private
 
 Authenticated Docker Desktop and GitHub Actions can pull the digest. Public
 unauthenticated pulls require an explicit package visibility decision.
+
+## Secrets source product
+
+The source product consumes the accepted Secrets receiving codec and provides
+`secrets_control_configuration_artifact(configuration)` and
+`secrets_source_runtime_contract(artifact)` from
+`control_plane_kit_servers_secrets_server.configuration`.
+The supplied configuration is an actual Secrets `SecretsControlConfiguration`;
+the product factory creates a public JSON artifact at
+`/etc/cpk/secrets-server/control.json`, read-only mode0444.
+
+The source recipe fixes `CPK_SECRETS_CONTROL_CONFIGURATION_FILE` to that path.
+Topology supplies the artifact and preserves its existing public environment;
+the service variable is not represented as a Core public environment binding.
+Private master/credential files remain separate0400 bootstrap inputs. Control8081,
+UID10006, retained provider data and both original live/ready verification checks
+remain; authenticated SDK health currently advertises process liveness only.
+
+Published descriptor/image coordinates remain historical until qualified image
+adoption. During #203, standalone Secrets source smoke exits before Docker with
+a #204 handoff; #204 restores that maintained mode before parent #189 closes.
+The ordinary suite continues its historical immutable smoke and its separate
+actual source-image numeric/private-file witness. Off-normal adjacent-checkout
+source-live scripts need their own future public-ABI review and remain uncredited.

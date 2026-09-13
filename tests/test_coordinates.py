@@ -70,7 +70,7 @@ class CoordinateGenerationTests(unittest.TestCase):
         destinations = {
             module.PYPROJECT: (
                 "control_plane_kit_commit", "control_plane_kit_interpreters_commit",
-                "control_plane_kit_server_sdk_commit",
+                "control_plane_kit_server_sdk_commit", "control_plane_kit_secrets_commit",
             ),
             module.CPK_SERVER_DOCKERFILE: (
                 "control_plane_kit_commit", "control_plane_kit_interpreters_commit",
@@ -260,7 +260,7 @@ class CoordinateGenerationTests(unittest.TestCase):
         )
         self.assertEqual(
             document["upstreams"]["control_plane_kit_secrets_commit"],
-            "68d0da6aed3a383d6bdc284cf4a6a6063a31487e",
+            "0e0fa2c8fc1464f8ea3ac4ad9a515a9b438820be",
         )
         self.assertEqual(
             secrets_server["image"]["digest"],
