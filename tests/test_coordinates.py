@@ -79,6 +79,7 @@ class CoordinateGenerationTests(unittest.TestCase):
             module.SECRETS_SERVER_DOCKERFILE: ("control_plane_kit_secrets_commit",),
             module.HELLO_SERVER_DOCKERFILE: ("control_plane_kit_server_sdk_commit",),
             module.HTTP_ACTIVE_ROUTER_DOCKERFILE: ("control_plane_kit_server_sdk_commit",),
+            module.HTTP_MULTIPLEXER_DOCKERFILE: ("control_plane_kit_server_sdk_commit",),
         }
         for path, content in generated.items():
             with self.subTest(path=path.relative_to(ROOT).as_posix()):
@@ -122,6 +123,12 @@ class CoordinateGenerationTests(unittest.TestCase):
             "https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/"
             f"{coordinates['upstreams']['control_plane_kit_server_sdk_commit']}.zip",
             module.HELLO_SERVER_DOCKERFILE.read_text(encoding="utf-8"),
+        )
+        self.assertIn(
+            "control-plane-kit-server-sdk[verification] @ "
+            "https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/"
+            f"{coordinates['upstreams']['control_plane_kit_server_sdk_commit']}.zip",
+            module.HTTP_MULTIPLEXER_DOCKERFILE.read_text(encoding="utf-8"),
         )
         self.assertIn(
             "control-plane-kit-server-sdk[verification] @ "
