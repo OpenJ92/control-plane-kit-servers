@@ -12,7 +12,6 @@ from control_plane_kit_server_sdk.verifier_keys import (
 
 
 def fixture(suffix="a"):
-
     def key(family):
         private = Ed25519PrivateKey.generate()
         public = core.DelegationPublicKey(
@@ -32,7 +31,12 @@ def fixture(suffix="a"):
     )
     config = SimpleNamespace(
         target=target, runtime_id=core.NodeControlGraphReference(roles.RUNTIME, f"runtime-{suffix}"),
-        declaration=core.WorkloadNodeControlSurfaceDeclaration(core.WorkloadNodeControlSurfaceDescriptor(target.provider_socket_name, (), health_reads=(core.NodeHealthReadKind.LIVENESS,)), profile=core.WorkloadNodeControlSurfaceDeclarationProfile.V2), surface_issuer=f"surface-{suffix}", health_issuer=f"health-{suffix}",
+        declaration=core.WorkloadNodeControlSurfaceDeclaration(
+            core.WorkloadNodeControlSurfaceDescriptor(
+                target.provider_socket_name, (), health_reads=(core.NodeHealthReadKind.LIVENESS,),
+            ), profile=core.WorkloadNodeControlSurfaceDeclarationProfile.V2,
+        ),
+        surface_issuer=f"surface-{suffix}", health_issuer=f"health-{suffix}",
         surface_keys=WorkloadNodeControlSurfaceReadVerifierKeySet(
             core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ, (static_key,)),
         health_keys=WorkloadNodeHealthReadVerifierKeySet(core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ, (health_key,)),

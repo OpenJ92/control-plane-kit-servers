@@ -12,7 +12,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 from starlette.exceptions import HTTPException
-from control_plane_kit_core.operations import ControlPlaneServiceRole, HttpApiContract
+from control_plane_kit_core import NodeHealthReadKind
+from control_plane_kit_core.operations import ControlPlaneServiceRole, HttpApiContract, HttpMethod
 
 from test_http_mcp_boundaries import DeterministicVerifier, RecordingService
 from cpk_http_host_fixtures import fixture, install_control, token
@@ -129,12 +130,18 @@ class CpkHttpHostTests(unittest.TestCase):
         with TestClient(app) as client:
             self.assertEqual(client.get("/future").json(), {"path":"/future"})
             self.assertEqual(client.post("/future/item").json(), {"path":"/future/item"})
-        for path in ("/{dynamic}/item", "/__control/item"):
+        for path in ("/{dynamic}/item", "/__control/item", "//item"):
             app = FastAPI(docs_url=None,redoc_url=None,openapi_url=None)
             prior = tuple(app.routes)
             with self.subTest(path=path), self.assertRaises(ValueError):
                 install_operator_http_routes(app, HttpApiContract((route, replace(route, route_id="future", path_template=path))), endpoint)
             self.assertEqual(tuple(app.routes), prior)
+
+        command = next(item for item in self.app.state.http_boundary.composition.http_api.routes if item.method is HttpMethod.POST)
+        app = FastAPI(docs_url=None,redoc_url=None,openapi_url=None)
+        with self.assertRaises(ValueError):
+            install_operator_http_routes(app, HttpApiContract((replace(command, method=HttpMethod.PUT),)), endpoint)
+        self.assertEqual(app.routes, [])
 
     def test_real_sdk_responses_and_framework_namespace_behavior_match_sdk_only(self):
         authority = fixture()
@@ -146,7 +153,7 @@ class CpkHttpHostTests(unittest.TestCase):
             ("GET","/__control/health/liveness",token(authority),200),
             ("GET","/__control/health/liveness",None,None),
             ("GET","/__control/health/liveness",token(authority,static=True),None),
-            ("GET","/__control/health/readiness",token(authority),None),
+            ("GET","/__control/health/readiness",token(authority,kind=NodeHealthReadKind.READINESS),None),
             ("GET","/__control/unknown",None,404),
             ("POST","/__control/health/liveness",None,405),
             ("GET","/__control/health/liveness/",None,None),
@@ -165,9 +172,8 @@ class CpkHttpHostTests(unittest.TestCase):
                         self.assertEqual(actual.headers.get(header),expected.headers.get(header))
                     if status is not None:
                         self.assertEqual(actual.status_code,status)
-                    if credential is None or credential != cases[1][2]:
-                        if path == "/__control/health/liveness":
-                            self.assertNotEqual(actual.status_code,200)
+                    if status is None and path in ("/__control/health/liveness", "/__control/health/readiness"):
+                        self.assertNotEqual(actual.status_code,200)
         self.assertEqual(self.verifier.credentials, [])
         self.assert_no_service_work()
 

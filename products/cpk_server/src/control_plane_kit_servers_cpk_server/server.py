@@ -14,6 +14,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+
 import psycopg
 import uvicorn
 from control_plane_kit_core.identity import (
@@ -75,6 +76,7 @@ from control_plane_kit_operations.postgres import PostgresUnitOfWork, install_sc
 
 from control_plane_kit_operations.desired_topology_drafts import DesiredTopologyDraftCommandService
 
+from .http_host import install_operator_http_routes
 from .boundary import (
     CpkServerApplicationBoundary,
     CpkServerHttpProcessBoundary,
@@ -516,8 +518,7 @@ def create_app(
         )
         return _json_response(response.status, response.body)
 
-    @app.api_route("/{path:path}", methods=["GET", "POST"])
-    async def http(path: str, request: Request) -> JSONResponse:
+    async def http(request: Request) -> JSONResponse:
         response = http_boundary.handle(
             method=request.method,
             path=request.url.path,
@@ -527,6 +528,7 @@ def create_app(
         )
         return _json_response(response.status, response.body)
 
+    install_operator_http_routes(app, composition.http_api, http)
     return app
 
 

@@ -1,10 +1,10 @@
 Source: [tests/test_package_metadata.py](../../../tests/test_package_metadata.py).
 Maintain this companion with root packaging and dependency adoption.
 
-Metadata tests require exact Core, Operations, Interpreters and SDK[verification]
+Metadata tests require exact Core, Operations, Interpreters and SDK[fastapi]
 requirements from the canonical manifest. The isolated installed process reads
 each distribution's direct_url.json and compares archive URL/subdirectory to
-those coordinates, then imports SDK stdlib, health and verification interfaces.
+those coordinates, then imports SDK stdlib, FastAPI, health and verification interfaces. The actual installed\nFastAPI0.141.1/Starlette1.6.0 versions are checked.
 This runs inside the owning Python3.12 Dockerfile.test environment after normal
 pip resolution. Missing distributions, wrong pins or unavailable optional crypto
 imports fail the test; no fallback installation or local override is attempted.

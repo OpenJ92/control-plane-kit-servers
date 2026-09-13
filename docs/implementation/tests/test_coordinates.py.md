@@ -17,3 +17,7 @@ product descriptors remain byte-preserved; no image coordinate is advanced.
 
 Servers186 extends synthetic SDK drift and actual SDK[verification] installation
 assertions to the multiplexer Dockerfile, preserving historical descriptor bytes.
+
+Servers199 adds SDK to the existing CPK synthetic drift destination and requires
+the actual root and CPK recipe to select SDK[fastapi], with no redundant broad
+FastAPI requirement. Existing stdlib extras and all published coordinates remain.
