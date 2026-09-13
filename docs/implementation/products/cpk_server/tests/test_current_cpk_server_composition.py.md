@@ -5,8 +5,8 @@ This suite checks current package adoption and server composition through
 metadata/text/AST inspection, actual imports, Core route values and selected
 service construction. Its independent expected Core/Operations and Interpreters
 revisions must match the canonical manifest and generated package/Dockerfile
-pins. Servers #177 selects reviewed Core/Operations e3e29995 and Interpreters
-e19da40. The constants change with deliberate accepted dependency adoption;
+pins. Servers #193 selects reviewed Core/Operations95452249 and Interpreters
+77c9a7f. The constants change with deliberate accepted dependency adoption;
 every equality and pin-count assertion remains intact. Counting pins does not
 verify registry bytes or execute an image.
 
