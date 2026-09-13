@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import copy
 import json
 from pathlib import Path
 import sys
@@ -37,6 +38,74 @@ def load_product_image_script_module():
 
 
 class CoordinateGenerationTests(unittest.TestCase):
+    def test_sdk_coordinate_is_required_and_canonical(self) -> None:
+        module = load_script_module()
+        original = json.loads(module.COORDINATES.read_text(encoding="utf-8"))
+        key = "control_plane_kit_server_sdk_commit"
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "coordinates.json"
+            for value in (None, "", "main", "a" * 39, "a" * 41, "A" * 40, 123):
+                document = copy.deepcopy(original)
+                if value is None:
+                    document["upstreams"].pop(key)
+                else:
+                    document["upstreams"][key] = value
+                path.write_text(json.dumps(document), encoding="utf-8")
+                with self.subTest(value=value), self.assertRaises(module.CoordinateError):
+                    module.load_coordinates(path)
+
+    def test_changed_upstreams_regenerate_dependencies_without_rewriting_products(self) -> None:
+        module = load_script_module()
+        coordinates = module.load_coordinates(module.COORDINATES)
+        original = module.generate_updates(coordinates)
+        changed = copy.deepcopy(coordinates)
+        replacements = {
+            "control_plane_kit_commit": "a" * 40,
+            "control_plane_kit_interpreters_commit": "b" * 40,
+            "control_plane_kit_secrets_commit": "c" * 40,
+            "control_plane_kit_server_sdk_commit": "d" * 40,
+        }
+        changed["upstreams"].update(replacements)
+        generated = module.generate_updates(changed)
+        destinations = {
+            module.PYPROJECT: (
+                "control_plane_kit_commit", "control_plane_kit_interpreters_commit",
+                "control_plane_kit_server_sdk_commit",
+            ),
+            module.CPK_SERVER_DOCKERFILE: (
+                "control_plane_kit_commit", "control_plane_kit_interpreters_commit",
+                "control_plane_kit_server_sdk_commit",
+            ),
+            module.CPK_LOCAL_GATEWAY_DOCKERFILE: ("control_plane_kit_commit",),
+            module.SECRETS_SERVER_DOCKERFILE: ("control_plane_kit_secrets_commit",),
+            module.HELLO_SERVER_DOCKERFILE: ("control_plane_kit_server_sdk_commit",),
+            module.HTTP_ACTIVE_ROUTER_DOCKERFILE: ("control_plane_kit_server_sdk_commit",),
+            module.HTTP_MULTIPLEXER_DOCKERFILE: ("control_plane_kit_server_sdk_commit",),
+        }
+        for path, content in generated.items():
+            with self.subTest(path=path.relative_to(ROOT).as_posix()):
+                expected = original[path]
+                for key in destinations.get(path, ()):
+                    expected = expected.replace(
+                        coordinates["upstreams"][key].encode(), replacements[key].encode(),
+                    )
+                self.assertEqual(content, expected)
+        for path, keys in destinations.items():
+            for key in keys:
+                with self.subTest(path=path.name, upstream=key):
+                    self.assertIn(replacements[key].encode(), generated[path])
+        self.assertEqual(coordinates["products"], changed["products"])
+
+    def test_actual_cpk_host_dependencies_select_sdk_fastapi_extra(self) -> None:
+        module = load_script_module()
+        coordinates = module.load_coordinates(module.COORDINATES)
+        sdk = coordinates["upstreams"]["control_plane_kit_server_sdk_commit"]
+        dependency = "control-plane-kit-server-sdk[fastapi] @ " + f"https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/{sdk}.zip"
+        for path in (module.PYPROJECT, module.CPK_SERVER_DOCKERFILE):
+            with self.subTest(path=path):
+                self.assertIn(dependency, path.read_text(encoding="utf-8"))
+                self.assertNotIn("fastapi>=", path.read_text(encoding="utf-8"))
+
     def test_coordinate_manifest_is_the_source_for_generated_files(self) -> None:
         module = load_script_module()
         coordinates = module.load_coordinates(module.COORDINATES)
@@ -60,6 +129,24 @@ class CoordinateGenerationTests(unittest.TestCase):
         secrets_commit = coordinates["upstreams"][
             "control_plane_kit_secrets_commit"
         ]
+        self.assertIn(
+            "control-plane-kit-server-sdk[verification] @ "
+            "https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/"
+            f"{coordinates['upstreams']['control_plane_kit_server_sdk_commit']}.zip",
+            module.HELLO_SERVER_DOCKERFILE.read_text(encoding="utf-8"),
+        )
+        self.assertIn(
+            "control-plane-kit-server-sdk[verification] @ "
+            "https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/"
+            f"{coordinates['upstreams']['control_plane_kit_server_sdk_commit']}.zip",
+            module.HTTP_MULTIPLEXER_DOCKERFILE.read_text(encoding="utf-8"),
+        )
+        self.assertIn(
+            "control-plane-kit-server-sdk[verification] @ "
+            "https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/"
+            f"{coordinates['upstreams']['control_plane_kit_server_sdk_commit']}.zip",
+            module.HTTP_ACTIVE_ROUTER_DOCKERFILE.read_text(encoding="utf-8"),
+        )
 
         for path in (module.PYPROJECT, module.CPK_SERVER_DOCKERFILE):
             text = path.read_text(encoding="utf-8")
