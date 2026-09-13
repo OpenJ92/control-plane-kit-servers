@@ -3,6 +3,15 @@ set -eu
 
 IMAGE="${CPK_SERVER_IMAGE:-localhost/control-plane-kit-servers/cpk-server:local}"
 BUILD_IMAGE="${CPK_SERVER_BUILD_IMAGE:-1}"
+PROFILE="${CPK_SERVER_SMOKE_PROFILE:-wrapped-source}"
+CONTROL_RECORDS=""
+case "$PROFILE" in
+  wrapped-source)
+    : "${CPK_SERVERS_TEST_IMAGE:?wrapped-source requires the owning test/controller image}"
+    ;;
+  published-baseline) ;;
+  *) echo "cpk-server image smoke: invalid profile" >&2; exit 1 ;;
+esac
 CONTAINER=""
 POSTGRES_CONTAINER=""
 NETWORK="cpk-server-smoke-$$"
@@ -23,6 +32,17 @@ RUNTIME_INTERPRETERS="${CPK_RUNTIME_INTERPRETERS:-none}"
 STATIC_WORKSPACE_GRANTS_JSON="${CPK_CONTROL_AUTH_STATIC_WORKSPACE_GRANTS_JSON:-{\"workspace-a\":[\"hub:instance:create\",\"instance:workspace:read\",\"instance:workspace:edit\",\"plan:request\"]}}"
 HEALTH_ATTEMPTS="${CPK_SERVER_HEALTH_ATTEMPTS:-30}"
 REQUEST_HOST="${CPK_SERVER_SMOKE_HOST:-127.0.0.1}"
+
+cleanup_control_fixture() {
+  if [ -n "$CONTROL_RECORDS" ]; then
+    rm -f "$CONTROL_RECORDS/control.json" "$CONTROL_RECORDS/surface.headers" \
+      "$CONTROL_RECORDS/health.headers" "$CONTROL_RECORDS/surface.json" \
+      "$CONTROL_RECORDS/health.json" "$CONTROL_RECORDS/denied.json" || return 1
+    rmdir "$CONTROL_RECORDS" || return 1
+    [ ! -e "$CONTROL_RECORDS" ] || return 1
+    CONTROL_RECORDS=""
+  fi
+}
 
 cleanup() {
   rm -f "$MISSING_CONFIG_OUTPUT" "$IMPORT_BODY" "$UNAUTHORIZED_BODY" \
@@ -51,6 +71,7 @@ finish() {
     fi
   fi
   cleanup
+  cleanup_control_fixture || status=1
   exit "$status"
 }
 
@@ -205,11 +226,21 @@ if [ "$POSTGRES_READY" != "1" ]; then
   exit 1
 fi
 
+# Generate after image/Postgres preparation so the240-second grants cover only
+# startup and the immediate protected reads. No private key leaves the process.
+if [ "$PROFILE" = "wrapped-source" ]; then
+  phase "prepare synthetic source control authority"
+  CONTROL_RECORDS="$(mktemp -d)"
+  chmod 700 "$CONTROL_RECORDS"
+  docker run --rm --network none --user "$(id -u):$(id -g)" \
+    -e PYTHONDONTWRITEBYTECODE=1 \
+    --mount "type=bind,source=$CONTROL_RECORDS,target=/fixture" \
+    "$CPK_SERVERS_TEST_IMAGE" \
+    python products/cpk_server/tests/source_control_fixture.py generate /fixture
+fi
+
 phase "start configured cpk-server"
-CONTAINER="$(docker run -d \
-  --label "$LABEL" \
-  --network "$NETWORK" \
-  -p 127.0.0.1::8080 \
+set -- \
   -e CPK_SERVER_MODE=execution-capable \
   -e CPK_CONTROL_AUTH_VERIFIER=static-development \
   -e CPK_CONTROL_AUTH_STATIC_CREDENTIAL=valid-token \
@@ -219,8 +250,22 @@ CONTAINER="$(docker run -d \
   -e CPK_WORKPLACE_DATABASE_URL="$WORKPLACE_DATABASE_URL" \
   -e CPK_ACTIVITY_HISTORY_DATABASE_URL="$ACTIVITY_HISTORY_DATABASE_URL" \
   -e CPK_OBSERVER_STATE_DATABASE_URL="$OBSERVER_STATE_DATABASE_URL" \
-  -e CPK_GRAPH_TOPOLOGY_DATABASE_URL="$GRAPH_TOPOLOGY_DATABASE_URL" \
-  "$IMAGE")"
+  -e CPK_GRAPH_TOPOLOGY_DATABASE_URL="$GRAPH_TOPOLOGY_DATABASE_URL"
+if [ "$PROFILE" = "wrapped-source" ]; then
+  phase "reject missing required source control file"
+  if docker run --rm --network "$NETWORK" "$@" "$IMAGE" >"$MISSING_CONFIG_OUTPUT" 2>&1; then
+    echo "cpk-server accepted missing control file" >&2
+    exit 1
+  fi
+  grep -q 'CPK control configuration is invalid' "$MISSING_CONFIG_OUTPUT"
+  set -- "$@" --mount "type=bind,source=$CONTROL_RECORDS/control.json,target=/etc/cpk/cpk-server/control.json,readonly"
+fi
+CONTAINER="$(docker run -d \
+  --label "$LABEL" \
+  --network "$NETWORK" \
+  -p 127.0.0.1::8080 \
+  "$@" "$IMAGE")"
+
 
 PORT_BINDING="$(docker port "$CONTAINER" 8080/tcp)"
 PORT_BINDING_LINES="$(printf '%s\n' "$PORT_BINDING" | wc -l | tr -d ' ')"
@@ -244,6 +289,34 @@ phase "wait for cpk-server liveness"
 if ! live="$(liveness_with_diagnostics "$BASE/health/live")"; then
   echo "cpk-server did not become live" >&2
   exit 1
+fi
+
+if [ "$PROFILE" = "wrapped-source" ]; then
+  phase "verify authenticated source control health"
+  (
+    umask 077
+    curl --connect-timeout 1 --max-time 3 --max-filesize 65536 --fail --silent --show-error \
+      -H "@$CONTROL_RECORDS/surface.headers" \
+      -o "$CONTROL_RECORDS/surface.json" "$BASE/__control/capabilities"
+    curl --connect-timeout 1 --max-time 3 --max-filesize 65536 --fail --silent --show-error \
+      -H "@$CONTROL_RECORDS/health.headers" \
+      -o "$CONTROL_RECORDS/health.json" "$BASE/__control/health/liveness"
+    for path in capabilities health/liveness; do
+      denied="$(curl --connect-timeout 1 --max-time 3 --max-filesize 65536 --silent --show-error \
+        -o "$CONTROL_RECORDS/denied.json" -w '%{http_code}' "$BASE/__control/$path")"
+      [ "$denied" = "401" ]
+    done
+    denied="$(curl --connect-timeout 1 --max-time 3 --max-filesize 65536 --silent --show-error \
+      -H "@$CONTROL_RECORDS/surface.headers" -o "$CONTROL_RECORDS/denied.json" \
+      -w '%{http_code}' "$BASE/__control/health/liveness")"
+    [ "$denied" = "401" ]
+  )
+  docker run --rm --network none --user "$(id -u):$(id -g)" \
+    -e PYTHONDONTWRITEBYTECODE=1 \
+    --mount "type=bind,source=$CONTROL_RECORDS,target=/fixture,readonly" \
+    "$CPK_SERVERS_TEST_IMAGE" \
+    python products/cpk_server/tests/source_control_fixture.py verify /fixture
+  echo "cpk-server authenticated source control health passed"
 fi
 
 phase "verify cpk-server readiness"
@@ -440,6 +513,8 @@ PY
 
 phase "clean owned smoke resources"
 cleanup
+cleanup_control_fixture
+echo "cpk-server synthetic control fixture cleanup passed"
 CONTAINER=""
 POSTGRES_CONTAINER=""
 

@@ -36,9 +36,10 @@ class CpkHttpHostTests(unittest.TestCase):
                for store in ("WORKPLACE", "ACTIVITY_HISTORY", "OBSERVER_STATE", "GRAPH_TOPOLOGY")},
         }
         config = self.server.CpkServerBootstrapConfiguration.from_environment(environ)
+        self.authority = fixture()
         # Replace only effectful service construction; use the real app and boundaries.
         with patch.object(self.server, "_operations_application", return_value=SimpleNamespace(services=self.services)):
-            self.app = self.server.create_app(config, self.verifier)
+            self.app = self.server.create_app(config, self.verifier, control=self.authority.config, clock=lambda:150)
 
     def tearDown(self):
         sys.path.remove(str(PRODUCT_SRC))
@@ -145,10 +146,9 @@ class CpkHttpHostTests(unittest.TestCase):
         self.assertEqual(app.routes, [])
 
     def test_real_sdk_responses_and_framework_namespace_behavior_match_sdk_only(self):
-        authority = fixture()
+        authority = self.authority
         reference = FastAPI(docs_url=None,redoc_url=None,openapi_url=None)
         install_control(reference, authority)
-        install_control(self.app, authority)
         cases = (
             ("GET","/__control/capabilities",token(authority,static=True),200),
             ("GET","/__control/health/liveness",token(authority),200),

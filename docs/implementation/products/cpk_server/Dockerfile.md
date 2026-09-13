@@ -24,3 +24,9 @@ Related source and evidence: [coordinates/server-products.json](../../../../coor
 The Core/Operations mirror selects reviewed CPK merge `95452249d0340707a5cdffe737e34669e9d53165` through Servers #193's canonical coordinate generator. Existing secret-delivery corrections remain available and optional health contracts are added upstream; Operations source is unchanged in the adopted interval. The published image coordinate remains separate and unchanged.
 
 The Interpreters mirror selects reviewed merge `77c9a7f54e6d8ef886733c8ebd3476e796fad8ad`. Its direct Core dependency uses the same exact archive as this recipe and the root SDK dependency. Servers199 adds SDK[fastapi] at canonical2b10d5a; its extra installs exact FastAPI0.141.1/Starlette1.6.0 and verification dependencies. Coordinate generation owns this SDK URL as well. Ordinary source-image witnesses establish route/dependency composition, not production wrapper enablement or publication.
+
+Servers200 source main now requires the public control.json artifact documented
+in bootstrap.contract.json. The recipe still copies only product src: synthetic
+private test authority and grant/header files are never image inputs. UID10001
+reads the explicit0444 readonly file mount in the source smoke. Historical image
+coordinates and the recipe's SDK dependency selected by199 remain unchanged.

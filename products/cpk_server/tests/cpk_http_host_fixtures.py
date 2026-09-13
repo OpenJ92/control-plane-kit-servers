@@ -11,7 +11,8 @@ from control_plane_kit_server_sdk.verifier_keys import (
 )
 
 
-def fixture(suffix="a"):
+def fixture(suffix="a", *, issued_at=100, lifetime=100):
+    from control_plane_kit_servers_cpk_server.control_configuration import CpkControlConfiguration
     def key(family):
         private = Ed25519PrivateKey.generate()
         public = core.DelegationPublicKey(
@@ -29,7 +30,7 @@ def fixture(suffix="a"):
         core.NodeControlGraphReference(roles.NODE, f"cpk-{suffix}"),
         core.NodeControlGraphReference(roles.PROVIDER_SOCKET, "http-api"),
     )
-    config = SimpleNamespace(
+    config = CpkControlConfiguration(
         target=target, runtime_id=core.NodeControlGraphReference(roles.RUNTIME, f"runtime-{suffix}"),
         declaration=core.WorkloadNodeControlSurfaceDeclaration(
             core.WorkloadNodeControlSurfaceDescriptor(
@@ -41,7 +42,7 @@ def fixture(suffix="a"):
             core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ, (static_key,)),
         health_keys=WorkloadNodeHealthReadVerifierKeySet(core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ, (health_key,)),
     )
-    return SimpleNamespace(config=config, static_private=static_private, health_private=health_private)
+    return SimpleNamespace(config=config, static_private=static_private, health_private=health_private, issued_at=issued_at, expires_at=issued_at+lifetime)
 
 
 def token(f, *, static=False, kind=None, request_changes=None):
@@ -72,17 +73,17 @@ def token(f, *, static=False, kind=None, request_changes=None):
         purpose=family.purpose, issuer=issuer, key_id=family.public_keys[0].key_id,
         audience=core.workload_node_control_audience(config.target), target=request.target, kind=request.kind,
         declaration_identity=request.declaration_identity, request_id=request.request_id,
-        request_digest=request.canonical_digest(), issued_at=100, not_before=100, expires_at=200, jti="cpk-host-test",
+        request_digest=request.canonical_digest(), issued_at=f.issued_at, not_before=f.issued_at, expires_at=f.expires_at, jti="cpk-host-test",
         **({} if static else {"runtime_id": request.runtime_id}),
     )
-    return jwt.encode({"iss": issuer, "aud": grant.audience, "iat":100, "nbf":100, "exp":200,
+    return jwt.encode({"iss": issuer, "aud": grant.audience, "iat":f.issued_at, "nbf":f.issued_at, "exp":f.expires_at,
                        "jti":grant.jti, payload_key:grant.descriptor()}, private, algorithm="EdDSA",
                       headers={"kid":grant.key_id, "typ":typ})
 
 
 
 def install_control(app, f):
-    """Compose the real SDK on a test host; production adoption belongs to #200."""
+    """Compose the real SDK-only reference host beside the production CPK host."""
     from control_plane_kit_server_sdk.fastapi import install_cpk_control_routes
     from control_plane_kit_server_sdk.health import WorkloadNodeHealthReadDispatcher
     from control_plane_kit_server_sdk.verification import (

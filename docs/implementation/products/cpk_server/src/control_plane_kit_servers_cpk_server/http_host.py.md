@@ -20,3 +20,8 @@ services/schema, boundaries, exact health/MCP handlers, then literal routes.
 SDK is installed only in owned composition tests. Servers200 owns required
 receiving configuration, production SDK installation and ordering before schema
 effects. Source-image startup inputs and published descriptors remain unchanged.
+
+Servers200 now consumes this unchanged helper in production SDK composition.
+Required receiving admission precedes host construction; SDK installation follows
+these literal routes and precedes existing schema/service effects. The historical
+Servers199 checkpoint above describes the independent prerequisite evidence.

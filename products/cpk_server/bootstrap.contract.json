@@ -34,7 +34,7 @@
       "name": "CPK_PORT",
       "required": true,
       "allowed_values": [
-        "1..65535"
+        "8080"
       ]
     },
     {
@@ -139,5 +139,17 @@
     "provider bootstrap credentials are mounted files read only by the provider client and are never recursively resolved through operations",
     "product secret authority is admitted by operations and resolved only at interpreter dispatch",
     "local-development secret maps are explicit fixtures and are not selected by production descriptors"
+  ],
+  "configuration_files": [
+    {
+      "artifact_id": "cpk-control",
+      "path": "/etc/cpk/cpk-server/control.json",
+      "required": true,
+      "profile": "cpk-control-configuration.v1",
+      "media_type": "application/json",
+      "file_mode": "0444",
+      "maximum_bytes": 65536,
+      "trust": "Authorized parent supplies target/runtime and separate static/health public verification keys; no private keys or default trust."
+    }
   ]
 }

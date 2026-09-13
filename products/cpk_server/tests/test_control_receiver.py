@@ -12,6 +12,7 @@ import unittest
 from unittest.mock import patch
 
 import control_plane_kit_core as core
+from control_plane_kit_core.capabilities import CapabilityName
 from control_plane_kit_core.configuration import ConfigurationArtifact
 from control_plane_kit_core.products import ProductRuntimeContractCodec, ProductDescriptorCodec
 from fastapi.testclient import TestClient
@@ -61,6 +62,11 @@ class CpkControlReceiverTests(unittest.TestCase):
         self.assertEqual(ConfigurationArtifact.from_descriptor(self.artifact.descriptor()),self.artifact)
         self.assertEqual(self.artifact.target_path,"/etc/cpk/cpk-server/control.json")
         self.assertEqual(self.artifact.file_mode.value,"0444")
+        bootstrap_contract=json.loads((PRODUCT/"bootstrap.contract.json").read_text())
+        receiving=bootstrap_contract["configuration_files"][0]
+        self.assertTrue(receiving["required"])
+        self.assertEqual(receiving["path"],self.artifact.target_path)
+        self.assertEqual(receiving["maximum_bytes"],65536)
         variants = self.config.CpkSourceVariant
         for variant,filename in ((variants.CPK,"product.cpk.json"),(variants.DOCKER,"product.docker.cpk.json"),(variants.DOCKER_CLOUDFLARE,"product.docker-cloudflare.cpk.json")):
             with self.subTest(variant=variant):
@@ -71,7 +77,7 @@ class CpkControlReceiverTests(unittest.TestCase):
                     self.assertEqual(getattr(actual,field),getattr(old,field))
                 self.assertEqual(actual.configuration_artifacts,(self.artifact,))
                 self.assertEqual(actual.control_surfaces,(self.control.declaration.surface,))
-                self.assertEqual(set(actual.capabilities),set(old.capabilities)|{core.CapabilityName.NODE_CONTROLLABLE})
+                self.assertEqual(set(actual.capabilities),set(old.capabilities)|{CapabilityName.NODE_CONTROLLABLE})
                 self.assertEqual(old.control_surfaces,())
         self.rejected(lambda:self.config.cpk_source_runtime_contract("cpk-server",self.artifact))
         self.rejected(lambda:self.config.cpk_source_runtime_contract(variants.CPK,None))
@@ -92,6 +98,9 @@ class CpkControlReceiverTests(unittest.TestCase):
             with self.subTest(size=len(raw)):
                 self.rejected(lambda:self.config.decode_cpk_control_configuration(raw))
         self.rejected(lambda:replace(self.control,health_keys=self.control.surface_keys))
+        self.rejected(lambda:replace(self.control,declaration=replace(
+            self.control.declaration,surface=replace(self.control.declaration.surface,
+                health_reads=(core.NodeHealthReadKind.READINESS,)))))
         self.rejected(lambda:replace(self.control,runtime_id=core.NodeControlGraphReference(core.NodeControlGraphReferenceRole.NODE,"wrong")))
         self.rejected(lambda:self.config.cpk_control_configuration_artifact(None))
         with patch.object(self.config.json,"loads",side_effect=KeyboardInterrupt):
@@ -128,7 +137,7 @@ class CpkControlReceiverTests(unittest.TestCase):
                 original(app,contract,endpoint)
                 app.add_api_route("/{path:path}",endpoint,methods=["GET"])
             with patch.object(self.server,"install_operator_http_routes",side_effect=collision):
-                with self.assertRaisesRegex(ValueError,"collision"):
+                with self.assertRaisesRegex(ValueError,"collides"):
                     self.server.create_app(self.bootstrap,self.verifier,control=self.control,clock=lambda:150)
             operations.assert_not_called()
 
