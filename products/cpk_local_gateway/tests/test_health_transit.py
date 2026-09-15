@@ -149,6 +149,12 @@ class GatewayHealthTransitTests(unittest.TestCase):
 
     def test_configuration_requires_exact_family_roles_and_public_key_identity(self):
         api, _ = self.api()
+        distinct_keys = tuple(self.public(Ed25519PrivateKey.from_private_bytes(
+            hashlib.sha256(f"207 synthetic bounded key {index}".encode()).digest()),
+            f"bounded-{index:02}") for index in range(17))
+        maximum = self.config(api, public_keys=distinct_keys[:16])
+        self.assertEqual(len(maximum.public_keys), 16)
+        self.bad_config(api, lambda: self.config(api, public_keys=distinct_keys))
         duplicate_material = replace(self.key_a, key_id="other-id")
         malformed = core.DelegationPublicKey("malformed", core.DelegationKeyAlgorithm.ED25519,
             "-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----\n")
@@ -174,6 +180,12 @@ class GatewayHealthTransitTests(unittest.TestCase):
     def test_raw_configuration_is_closed_bounded_and_candidate_free(self):
         api, _ = self.api()
         document = json.loads(self.artifact(api).content)
+        canonical = wire(document)
+        maximum = canonical + b" " * (16384 - len(canonical))
+        self.assertEqual(len(maximum), 16384)
+        self.assertTrue(api.decode_gateway_health_transit_configuration(maximum) == self.config(api),
+            "valid whitespace-padded configuration at the size cap is accepted")
+        self.bad_config(api, lambda: api.decode_gateway_health_transit_configuration(maximum + b" "))
         cases = [b"", b"\xff", b" " * 16385, b"[" * 2000 + b"0" + b"]" * 2000,
             b'{"profile":NaN}', b'{"profile":Infinity}',
             b'{"profile":"duplicate",' + wire(document)[1:]]
@@ -318,6 +330,24 @@ class GatewayHealthTransitTests(unittest.TestCase):
     def test_compact_envelope_and_signature_bounds_reject_without_disclosing_candidates(self):
         config_api, verifier_api = self.api()
         verifier = self.verifier(config_api, verifier_api)
+        header = wire(dict(alg="EdDSA", typ=TOKEN_TYPE, kid=self.key_a.key_id))
+        payload = wire(self.payload(self.grant()))
+        # These remain valid JSON and are freshly signed over the padded bytes.
+        # Unpadded base64url cannot have length1mod4: first over-cap is +2.
+        maximum_header = header + b" " * (768 - len(header))
+        maximum_payload = payload + b" " * (6144 - len(payload))
+        at_cap = self.token(header_bytes=maximum_header, payload_bytes=maximum_payload)
+        self.assertEqual(tuple(map(len, at_cap.split(b"."))), (1024, 8192, 86))
+        self.assertTrue(self.verify(verifier, at_cap) == self.request,
+            "valid freshly signed envelope at both reachable segment caps is accepted")
+        for header_bytes, payload_bytes, lengths in (
+            (maximum_header + b" ", maximum_payload, (1026, 8192, 86)),
+            (maximum_header, maximum_payload + b" ", (1024, 8194, 86)),
+        ):
+            over_cap = self.token(header_bytes=header_bytes, payload_bytes=payload_bytes)
+            self.assertEqual(tuple(map(len, over_cap.split(b"."))), lengths)
+            self.assertLess(len(over_cap), 12288)
+            self.bad_token(verifier_api, lambda: self.verify(verifier, over_cap))
         credential = self.token()
         parts = credential.split(b".")
         alphabet = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"

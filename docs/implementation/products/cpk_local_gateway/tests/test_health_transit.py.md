@@ -21,6 +21,10 @@ noncanonical base64url and signature/segment bounds fail closed. The12288-byte
 aggregate is an early coarse cap; valid segment maxima already imply9304bytes,
 so no independent aggregate-boundary acceptance is claimed. Diagnostics use
 fixed messages/boolean assertions and indexed cases rather than token/key dumps.
+Independent limit witnesses use valid JSON padded to16384/16385 bytes,
+16/17 distinct valid keys, and freshly signed valid JSON at1024/8192 encoded
+segment caps versus first reachable over-cap lengths1026/8194. Malformed
+framing and duplicate cases are separate negative laws.
 
 Existing probe/cache/HTTP tests remain unchanged. These targets prove no replay
 storage, approval/current-attempt authority, HTTP relay, provider I/O, mounted
