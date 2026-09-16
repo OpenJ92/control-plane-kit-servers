@@ -31,6 +31,7 @@ storage, approval/current-attempt authority, HTTP relay, provider I/O, mounted
 artifact delivery or image adoption. Core owns semantic comparison; Operations
 and later composition/delivery issues retain their respective gates.
 
-Status: target-only, not executed; both static reviews and North's native-red
-release are required. Governing law/interface design and review are recorded on
-Servers207 comments5689740764 and5689760259.
+Status: native target-red reached all12 intended missing-configuration guards;
+deep assertions remain unexecuted until source green. Both static and causal
+reviews passed. Governing law/interface design and review are recorded on
+Servers207 comments5689740764 and5689760259; red evidence is PR209comment5689866072.
