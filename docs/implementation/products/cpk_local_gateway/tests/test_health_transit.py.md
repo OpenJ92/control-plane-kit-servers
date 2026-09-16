@@ -25,6 +25,9 @@ Independent limit witnesses use valid JSON padded to16384/16385 bytes,
 16/17 distinct valid keys, and freshly signed valid JSON at1024/8192 encoded
 segment caps versus first reachable over-cap lengths1026/8194. Malformed
 framing and duplicate cases are separate negative laws.
+Source review added direct-constructor and raw-decoder endpoint/credential
+issuer refusals and a valid256-character issuer positive. This strengthening
+was added after target-red and earns no retrospective red execution credit.
 
 Existing probe/cache/HTTP tests remain unchanged. These targets prove no replay
 storage, approval/current-attempt authority, HTTP relay, provider I/O, mounted

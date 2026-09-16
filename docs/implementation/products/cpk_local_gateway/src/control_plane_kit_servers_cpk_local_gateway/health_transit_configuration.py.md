@@ -7,6 +7,14 @@ issuer, exact gateway health-transit purpose and one to sixteen public keys.
 Audience is derived as `gateway:<workspace>:<gateway>`. Workload target,
 declaration, health kind, attempt and time are not startup trust.
 
+Issuer uses exactstr plus pinned Core95452249's
+`_node_control_public_wire.reference_violation`, including its endpoint and
+credential-envelope rejection. The direct private-helper dependency is an
+explicit compatibility risk: future Core pin upgrades must verify this
+contract. It avoids a copied validator, fake context or public facade; no new
+Core export is introduced. Syntax-only acceptance would admit issuers for
+which Core cannot construct a health grant.
+
 The sole decoder accepts at most16384 UTF8 bytes with closed field sets,
 duplicate-key/nonfinite/type refusal and structural depth8. Public keys use
 exact Core identities, parsed Ed25519 SubjectPublicKeyInfo PEM, a coarse512byte

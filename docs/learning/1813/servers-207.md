@@ -35,5 +35,12 @@ not prove that relationship.
 
 Source checkpoint: implementation committed for independent review; native
 green pending. No live/source-process wiring/image adoption is inferred.
+Meridian's source review helda6cbfde because a regex-only issuer check admitted
+endpoint/credential-shaped values forbidden by Core. North and Meridian
+accepted direct reuse of the pinned private Core public-reference helper,
+with explicit dependency-coupling disclosure and no new pin/facade/framework.
+Focused constructor/raw-decoder negatives and a valid bounded positive were
+added within existing methods; this is review strengthening without prior-red
+execution credit. Both amended source reviews remain required before green.
 Next owners1857/208 must bind exact pinned product/profile/slot/selected bytes;
 180 retains process wiring and HTTP relay. Runtime delivery remains separate.

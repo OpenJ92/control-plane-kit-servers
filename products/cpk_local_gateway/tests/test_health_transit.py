@@ -155,6 +155,8 @@ class GatewayHealthTransitTests(unittest.TestCase):
         maximum = self.config(api, public_keys=distinct_keys[:16])
         self.assertEqual(len(maximum.public_keys), 16)
         self.bad_config(api, lambda: self.config(api, public_keys=distinct_keys))
+        self.assertTrue(self.config(api, issuer="p" * 256).issuer == "p" * 256,
+            "valid bounded public issuer remains admitted")
         duplicate_material = replace(self.key_a, key_id="other-id")
         malformed = core.DelegationPublicKey("malformed", core.DelegationKeyAlgorithm.ED25519,
             "-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----\n")
@@ -171,6 +173,7 @@ class GatewayHealthTransitTests(unittest.TestCase):
             dict(public_keys=(derived,)), dict(issuer="bad\nissuer"), dict(issuer=""),
             dict(workspace_id=self.gateway), dict(gateway_node_id=self.runtime),
             dict(runtime_id=self.workspace), dict(purpose="gateway-node-health-read-transit")]
+        cases += [dict(issuer=value) for value in ("https://example.invalid", "sk-synthetic")]
         cases += [dict(purpose=purpose) for purpose in core.DelegationKeyPurpose
                   if purpose is not core.DelegationKeyPurpose.GATEWAY_NODE_HEALTH_READ_TRANSIT]
         for index, changes in enumerate(cases):
@@ -180,6 +183,9 @@ class GatewayHealthTransitTests(unittest.TestCase):
     def test_raw_configuration_is_closed_bounded_and_candidate_free(self):
         api, _ = self.api()
         document = json.loads(self.artifact(api).content)
+        self.assertTrue(api.decode_gateway_health_transit_configuration(
+            wire(document | {"issuer": "p" * 256})).issuer == "p" * 256,
+            "valid public issuer survives actual raw decoding")
         canonical = wire(document)
         maximum = canonical + b" " * (16384 - len(canonical))
         self.assertEqual(len(maximum), 16384)
@@ -194,6 +200,7 @@ class GatewayHealthTransitTests(unittest.TestCase):
         cases += [wire(document | changes) for changes in (
             {"extra": True}, {"profile": "unknown"}, {"public_keys": None},
             {"purpose": "workload-node-health-read"}, {"issuer": True},
+            {"issuer": "https://example.invalid"}, {"issuer": "sk-synthetic"},
             {"runtime_id": ["nested"]}, {"public_keys": [dict(document["public_keys"][0], algorithm="rsa")]},
             {"public_keys": [dict(document["public_keys"][0], fingerprint_sha256="a" * 64)]})]
         private_pem = self.private_a.private_bytes(serialization.Encoding.PEM,

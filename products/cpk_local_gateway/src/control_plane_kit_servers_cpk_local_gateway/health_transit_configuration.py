@@ -3,12 +3,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 import json
-import re
 
 from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 import control_plane_kit_core as core
+from control_plane_kit_core._node_control_public_wire import reference_violation
 from control_plane_kit_core.configuration import (
     ConfigurationArtifact, ConfigurationFileMode, ConfigurationMediaType,
 )
@@ -19,7 +19,6 @@ PROFILE = "cpk-gateway-health-transit-configuration.v1"
 ARTIFACT_ID = "gateway-health-transit"
 CONFIGURATION_PATH = "/etc/cpk/gateway/health-transit.json"
 MAX_CONFIGURATION_BYTES = 16_384
-_REFERENCE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}\Z")
 _FIELDS = frozenset({"profile", "workspace_id", "gateway_node_id", "runtime_id",
     "issuer", "purpose", "public_keys"})
 _KEY_FIELDS = frozenset({"key_id", "algorithm", "public_key_pem"})
@@ -49,7 +48,7 @@ class GatewayHealthTransitConfiguration:
                 if (type(value) is not core.NodeControlGraphReference or value.role is not role
                         or core.NodeControlGraphReference(role, value.value) != value):
                     raise ValueError
-            if (type(self.issuer) is not str or _REFERENCE.fullmatch(self.issuer) is None
+            if (type(self.issuer) is not str or reference_violation(self.issuer) is not None
                     or self.purpose is not core.DelegationKeyPurpose.GATEWAY_NODE_HEALTH_READ_TRANSIT
                     or len(self.audience.encode("ascii")) > MAX_GATEWAY_NODE_HEALTH_READ_TRANSIT_AUDIENCE_BYTES):
                 raise ValueError
