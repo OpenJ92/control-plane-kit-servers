@@ -62,8 +62,8 @@ class GatewayHealthTransitConfiguration:
             object.__setattr__(self, "public_keys", tuple(sorted(self.public_keys, key=lambda key: key.key_id)))
             return
         except _INPUT_ERRORS:
-            pass
-        raise GatewayHealthTransitConfigurationError(_ERROR)
+            failure = GatewayHealthTransitConfigurationError(_ERROR)
+        raise failure
 
     @property
     def audience(self) -> str:
@@ -155,8 +155,8 @@ def decode_gateway_health_transit_configuration(raw: bytes) -> GatewayHealthTran
             core.NodeControlGraphReference(roles.RUNTIME, value["runtime_id"]),
             value["issuer"], core.DelegationKeyPurpose.GATEWAY_NODE_HEALTH_READ_TRANSIT, tuple(keys))
     except _INPUT_ERRORS:
-        pass
-    raise GatewayHealthTransitConfigurationError(_ERROR)
+        failure = GatewayHealthTransitConfigurationError(_ERROR)
+    raise failure
 
 
 def gateway_health_transit_configuration_artifact(
@@ -176,8 +176,8 @@ def gateway_health_transit_configuration_artifact(
         return ConfigurationArtifact(ARTIFACT_ID, CONFIGURATION_PATH,
             ConfigurationMediaType.JSON, content, ConfigurationFileMode.READ_ONLY)
     except _INPUT_ERRORS:
-        pass
-    raise GatewayHealthTransitConfigurationError(_ERROR)
+        failure = GatewayHealthTransitConfigurationError(_ERROR)
+    raise failure
 
 
 def _configuration_from_artifact(artifact: ConfigurationArtifact) -> GatewayHealthTransitConfiguration:
@@ -192,5 +192,5 @@ def _configuration_from_artifact(artifact: ConfigurationArtifact) -> GatewayHeal
         checked = ConfigurationArtifact.from_descriptor(artifact.descriptor())
         return decode_gateway_health_transit_configuration(checked.content.encode("utf-8"))
     except _INPUT_ERRORS:
-        pass
-    raise GatewayHealthTransitConfigurationError(_ERROR)
+        failure = GatewayHealthTransitConfigurationError(_ERROR)
+    raise failure

@@ -31,7 +31,7 @@ The verifier factory consumes those actual selected bytes; no second supplied
 trust assertion or hash substitutes for decoding.
 
 Expected malformed-input/crypto failures become a fixed configuration error
-raised outside the catch context; exception attributes/text/repr carry no
+constructed in the handler and raised outside the catch context; exception attributes/text/repr carry no
 candidate. BaseException is not caught. Parsing is bounded trusted in-process
 code, not a sandbox. No file is opened, no secret is resolved and no state is
 written. The configuration profile's meaning must remain stable for pinned

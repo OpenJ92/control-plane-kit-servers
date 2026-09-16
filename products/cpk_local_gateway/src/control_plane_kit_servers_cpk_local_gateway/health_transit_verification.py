@@ -48,8 +48,8 @@ class Ed25519GatewayHealthTransitVerifier:
                 for key in self._configuration.public_keys})
             return
         except _INPUT_ERRORS:
-            pass
-        raise GatewayHealthTransitConfigurationError("gateway health transit configuration is invalid")
+            failure = GatewayHealthTransitConfigurationError("gateway health transit configuration is invalid")
+        raise failure
 
     def __repr__(self) -> str:
         return "Ed25519GatewayHealthTransitVerifier(<redacted>)"
@@ -95,8 +95,8 @@ class Ed25519GatewayHealthTransitVerifier:
                 raise ValueError
             return request
         except _VERIFICATION_ERRORS:
-            pass
-        raise GatewayHealthTransitVerificationError(_ERROR)
+            failure = GatewayHealthTransitVerificationError(_ERROR)
+        raise failure
 
 
 def _compact(credential: bytes) -> tuple[list[bytes], list[bytes]]:

@@ -39,7 +39,8 @@ execution, restart replay protection or future freshness. Workload signature
 verification remains independent. Existing gateway probe behavior is untouched.
 
 Expected malformed-input and InvalidSignature failures yield a fixed
-candidate-free error outside exception context; BaseException propagates.
+candidate-free error constructed in the handler and raised after exception
+context ends; BaseException propagates.
 Configuration construction failures use the separate configuration error.
 Tests use real local synthetic signatures, valid at/over-cap envelopes,
 independent expected context and actual decoded-config key substitution. Native

@@ -42,5 +42,14 @@ with explicit dependency-coupling disclosure and no new pin/facade/framework.
 Focused constructor/raw-decoder negatives and a valid bounded positive were
 added within existing methods; this is review strengthening without prior-red
 execution credit. Both amended source reviews remain required before green.
+Both amended reviews subsequently passeddfc7aa8. Native green attempt35040965069
+tested8e7d3b327a7fbe53de742d093d52f7c1cb1ed774 and stopped after26support tests
+at package-integrity: six empty exception handlers were flagged. No application
+or deep207 law ran. The failure was preserved in PR209comment5690284232 before
+correction or retry. North released only six explicit fixed-error conversions,
+following the existing product pattern of construction inside and raise after
+the handler. Expected catch types, error classes/text/redaction and tests remain
+unchanged; no gate suppression or extra framework. Both correction reviews and
+separate native-green publication release are required.
 Next owners1857/208 must bind exact pinned product/profile/slot/selected bytes;
 180 retains process wiring and HTTP relay. Runtime delivery remains separate.
