@@ -44,7 +44,8 @@ class HealthReceiverAdapterTests(unittest.TestCase):
         # Preserve the existing suite's lightweight-root import isolation even
         # when the deliberate missing-behavior assertion fails during setUp.
         for name in tuple(sys.modules):
-            if name == "control_plane_kit_servers_cpk_server" or name.startswith("control_plane_kit_servers_cpk_server."):
+            if any(name == package or name.startswith(package + ".") for package in (
+                    "control_plane_kit_servers_cpk_server", "control_plane_kit_servers_cpk_local_gateway")):
                 sys.modules.pop(name, None)
 
     def registry(self, value=None):
