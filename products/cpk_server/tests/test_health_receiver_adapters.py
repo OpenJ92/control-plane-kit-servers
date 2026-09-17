@@ -3,6 +3,7 @@ from dataclasses import replace
 import importlib
 import importlib.util
 import json
+import sys
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -28,6 +29,7 @@ class CoverageRefused(ValueError):
 
 class HealthReceiverAdapterTests(unittest.TestCase):
     def setUp(self):
+        self.addCleanup(self.clear_product_modules)
         # Build real dependencies first, so missing behavior is not a fixture/import red.
         self.world = world(self)
         self.assertIsNotNone(importlib.util.find_spec(MODULE), "#208 real receiver adapters are missing")
@@ -36,6 +38,14 @@ class HealthReceiverAdapterTests(unittest.TestCase):
         from control_plane_kit_servers_cpk_local_gateway import health_transit_configuration, health_transit_verification
         self.cpk, self.server = control_configuration, server
         self.gateway, self.verify = health_transit_configuration, health_transit_verification
+
+    @staticmethod
+    def clear_product_modules():
+        # Preserve the existing suite's lightweight-root import isolation even
+        # when the deliberate missing-behavior assertion fails during setUp.
+        for name in tuple(sys.modules):
+            if name == "control_plane_kit_servers_cpk_server" or name.startswith("control_plane_kit_servers_cpk_server."):
+                sys.modules.pop(name, None)
 
     def registry(self, value=None):
         value = self.world if value is None else value
