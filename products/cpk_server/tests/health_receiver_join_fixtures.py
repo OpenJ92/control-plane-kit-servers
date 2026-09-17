@@ -13,6 +13,7 @@ from control_plane_kit_core.products import (
 from control_plane_kit_core.topology import DeploymentGraph, Node, RuntimeRecord, validate_graph
 from control_plane_kit_core.topology.graph import Endpoint, LiteralAddress
 from control_plane_kit_core.types import BlockFamily, Protocol, RuntimeKind
+from control_plane_kit_core.secrets import SecretReference
 from control_plane_kit_core.planning import compile_graph_activity_plan, ObserveNodeHealth, PlanGraphSide
 from control_plane_kit_core.public_ingress import IngressAuthorityReference, NamedPublicIngress, PublicIngressTarget
 from control_plane_kit_operations.products import RegisteredProduct, InlineDescriptorSource
@@ -22,11 +23,15 @@ from cpk_http_host_fixtures import fixture
 
 
 def document(name, contract):
-    return ProductDescriptorCodec().encode_document(ContainerServerProduct(
+    codec = ProductDescriptorCodec()
+    encoded = codec.encode_document(ContainerServerProduct(
         ProductIdentity("receiver-test", name, 1),
         OciImageReference("example.invalid", "never-executed/" + name, "sha256:" + "b" * 64),
         contract,
     ))
+    # Use the actual canonical receiving value, including normalized numeric
+    # fields, rather than the pre-encoding constructor's Python representation.
+    return codec.decode_document(encoded.content)
 
 
 class Products:
@@ -140,7 +145,7 @@ def world(test, *, selected="b", side=PlanGraphSide.DESIRED_GRAPH, configuration
 def signers(value, letter):
     key = value.authorities[letter].config.health_keys.public_keys[0]
     return tuple(RegisteredDelegationSigningKey("fixture-" + family, "workspace-a", purpose, issuer,
-        key, core.SecretReference("secret://synthetic/never-resolved/" + family),
+        key, SecretReference("secret://synthetic/never-resolved/" + family),
         "fixture", "2026-09-16T00:00:00Z")
         for family, purpose, issuer in (
             ("gateway", value.gateway_config.purpose, value.gateway_config.issuer),
