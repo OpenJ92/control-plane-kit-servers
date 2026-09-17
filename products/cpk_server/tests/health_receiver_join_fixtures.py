@@ -121,6 +121,13 @@ def world(test, *, selected="b", side=PlanGraphSide.DESIRED_GRAPH, configuration
                                                for item in plan.activities))
         activity = plan.activity(activity.activity_id)
         current = desired
+        # The other snapshot trusts only default A. Selecting DESIRED by mistake
+        # now fails the graph pin and B coverage instead of accidentally passing.
+        alternate = dict(graph.nodes)
+        for family, node_id in (("workload", "cpk-a"), ("gateway", "gateway-a")):
+            alternate[node_id] = replace(alternate[node_id], configuration_artifacts=(defaults[family],))
+        desired = validate_graph(replace(graph, nodes=alternate))
+        desired.require_valid()
     projected = project_management_health_target(plan, activity.activity_id, activity.operation, current, desired)
     products = Products(documents)
     return SimpleNamespace(authorities=authorities, config=workload, gateway_config=gateway_config,

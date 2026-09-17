@@ -123,6 +123,9 @@ class HealthReceiverAdapterTests(unittest.TestCase):
         for side in (PlanGraphSide.BASE_GRAPH, PlanGraphSide.DESIRED_GRAPH):
             value = world(self, side=side)
             self.assertIs(value.projected.operation.target.graph_side, side)
+            if side is PlanGraphSide.BASE_GRAPH:
+                self.assertNotEqual(value.graphs[0].graph.node("cpk-a").configuration_artifacts,
+                                    value.graphs[1].graph.node("cpk-a").configuration_artifacts)
             self.coverage(value, "b")
             with self.assertRaises(CoverageRefused):
                 self.coverage(value, "a")
