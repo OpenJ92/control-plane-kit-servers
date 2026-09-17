@@ -1,0 +1,9 @@
+Source: [health_receiver_adapters.py](../../../../../../products/cpk_server/src/control_plane_kit_servers_cpk_server/health_receiver_adapters.py).
+
+This CPK composition module implements the public Operations receiver port using existing product-owned parsers. Explicit exact canonical documents produce immutable bindings for the fixed workload or gateway profile/slot. The caller still owns supported-product/input admission: accepting a supplied document is not catalogue discovery or an image support claim. Empty input retains Operations' fail-closed registry.
+
+Each decoder revalidates HealthReceiverSelection provenance and selected artifact, enforces its bound reference/slot and decodes only those bytes. Workload facts come from health issuer/keys, target/runtime/declaration; static surface authority is not substituted. Gateway facts come from configured workspace/gateway/runtime/issuer/purpose/keys. Operations compares these facts to its independently pinned expected context. Descriptor default bytes are never trust fallback.
+
+Only the explicit product parsing refusals become the fixed HealthReceiverTrustError outside caught exception context. Unexpected decoder failures propagate. There is no file/network/database access, clock, material resolution, signing, mutable key cache, authority decision or durable history. The public registry does not change first-start/reload invocation; actual production composition and usable lifecycle remain181/1860.
+
+Tests use the real product verifiers and pinned Operations coverage function. Private Operations imports are confined to tests; neither gateway receiver nor SDK acquires an Operations dependency. Full CPK contracts still contain legacy verification; synthetic receiver-only plans do not prove production readiness or deployment.
