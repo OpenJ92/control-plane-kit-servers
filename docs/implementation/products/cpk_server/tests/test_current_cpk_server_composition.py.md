@@ -1,4 +1,6 @@
 Source: [products/cpk_server/tests/test_current_cpk_server_composition.py](../../../../../products/cpk_server/tests/test_current_cpk_server_composition.py).
+
+Early #181 compatibility for #208 updates exact selected dependency assertions for independent Coreb79 and Operationsbc559, Interpreter6b1c75a9, SDK2c5b5882 and Secrets8273b7de. Existing behavior assertions remain; no published image capability is inferred.
 Maintain this document alongside its source file. When the source or relevant imported contracts change, verify and update this companion in the same change.
 
 This suite checks current package adoption and server composition through

@@ -21,8 +21,9 @@ PRODUCT_SRC = ROOT / "products" / "cpk_server" / "src"
 SERVER_SOURCE = (
     PRODUCT_SRC / "control_plane_kit_servers_cpk_server" / "server.py"
 )
-CPK_COMMIT = "95452249d0340707a5cdffe737e34669e9d53165"
-INTERPRETERS_COMMIT = "77c9a7f54e6d8ef886733c8ebd3476e796fad8ad"
+CORE_COMMIT = "b79a02d1ac8ef987dd34abeb2297a231b109f7a6"
+OPERATIONS_COMMIT = "bc559a0253028f1c0bc2cde1f94ce18cdf5536f7"
+INTERPRETERS_COMMIT = "6b1c75a9ec8e3a368903e78e73493e20eaeb6414"
 PUBLIC_DEPLOYMENT_COMMAND_ROUTES = frozenset(
     {
         "command.deployment.prepare",
@@ -94,7 +95,10 @@ class CurrentCpkServerCompositionTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            coordinates["upstreams"]["control_plane_kit_commit"], CPK_COMMIT
+            coordinates["upstreams"]["control_plane_kit_core_commit"], CORE_COMMIT
+        )
+        self.assertEqual(
+            coordinates["upstreams"]["control_plane_kit_operations_commit"], OPERATIONS_COMMIT
         )
         self.assertEqual(
             coordinates["upstreams"]["control_plane_kit_interpreters_commit"],
@@ -113,11 +117,14 @@ class CurrentCpkServerCompositionTests(unittest.TestCase):
             ROOT / "products" / "cpk_local_gateway" / "Dockerfile"
         ).read_text(encoding="utf-8")
 
-        self.assertEqual(dependencies.count(CPK_COMMIT), 2)
+        self.assertEqual(dependencies.count(CORE_COMMIT), 1)
+        self.assertEqual(dependencies.count(OPERATIONS_COMMIT), 1)
         self.assertEqual(dependencies.count(INTERPRETERS_COMMIT), 1)
-        self.assertEqual(cpk_dockerfile.count(CPK_COMMIT), 2)
+        self.assertEqual(cpk_dockerfile.count(CORE_COMMIT), 1)
+        self.assertEqual(cpk_dockerfile.count(OPERATIONS_COMMIT), 1)
         self.assertEqual(cpk_dockerfile.count(INTERPRETERS_COMMIT), 1)
-        self.assertEqual(gateway_dockerfile.count(CPK_COMMIT), 1)
+        self.assertEqual(gateway_dockerfile.count(CORE_COMMIT), 1)
+        self.assertNotIn(OPERATIONS_COMMIT, gateway_dockerfile)
 
     def test_complete_retired_operations_inventory_is_absent(self) -> None:
         tree = ast.parse(

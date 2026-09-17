@@ -8,7 +8,7 @@ ENV PORT=8000
 WORKDIR /app
 
 RUN python -m pip install --no-cache-dir \
-    "control-plane-kit-server-sdk[verification] @ https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/2b10d5a354ba4da9407d336703aacb96910100d4.zip"
+    "control-plane-kit-server-sdk[verification] @ https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/2c5b588237fbe289c965029b4bc2f072715c42f3.zip"
 
 RUN useradd --create-home --uid 10003 router
 

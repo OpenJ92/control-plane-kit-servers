@@ -13,7 +13,8 @@ SRC = ROOT / "src"
 COORDINATES = json.loads(
     (ROOT / "coordinates" / "server-products.json").read_text(encoding="utf-8")
 )
-CPK_PIN = COORDINATES["upstreams"]["control_plane_kit_commit"]
+CORE_PIN = COORDINATES["upstreams"]["control_plane_kit_core_commit"]
+OPERATIONS_PIN = COORDINATES["upstreams"]["control_plane_kit_operations_commit"]
 INTERPRETERS_PIN = COORDINATES["upstreams"][
     "control_plane_kit_interpreters_commit"
 ]
@@ -30,13 +31,13 @@ class PackageMetadataTests(unittest.TestCase):
         self.assertEqual(project["version"], "0.1.0")
         self.assertIn(
             "control-plane-kit-core @ "
-            f"https://github.com/OpenJ92/control-plane-kit/archive/{CPK_PIN}.zip"
+            f"https://github.com/OpenJ92/control-plane-kit/archive/{CORE_PIN}.zip"
             "#subdirectory=control-plane-kit-core",
             project["dependencies"],
         )
         self.assertIn(
             "control-plane-kit-operations @ "
-            f"https://github.com/OpenJ92/control-plane-kit/archive/{CPK_PIN}.zip"
+            f"https://github.com/OpenJ92/control-plane-kit/archive/{OPERATIONS_PIN}.zip"
             "#subdirectory=control-plane-kit-operations",
             project["dependencies"],
         )
@@ -63,11 +64,11 @@ class PackageMetadataTests(unittest.TestCase):
     def test_installed_dependency_coordinates_and_sdk_verification_imports(self) -> None:
         expected = {
             "control-plane-kit-core": {
-                "url": f"https://github.com/OpenJ92/control-plane-kit/archive/{CPK_PIN}.zip",
+                "url": f"https://github.com/OpenJ92/control-plane-kit/archive/{CORE_PIN}.zip",
                 "subdirectory": "control-plane-kit-core",
             },
             "control-plane-kit-operations": {
-                "url": f"https://github.com/OpenJ92/control-plane-kit/archive/{CPK_PIN}.zip",
+                "url": f"https://github.com/OpenJ92/control-plane-kit/archive/{OPERATIONS_PIN}.zip",
                 "subdirectory": "control-plane-kit-operations",
             },
             "control-plane-kit-interpreters": {
