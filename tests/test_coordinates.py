@@ -38,6 +38,36 @@ def load_product_image_script_module():
 
 
 class CoordinateGenerationTests(unittest.TestCase):
+    def test_shared_archive_pin_splits_by_package_subdirectory(self) -> None:
+        module = load_script_module()
+        archive = "https://github.com/OpenJ92/control-plane-kit/archive/" + "f" * 40 + ".zip"
+        source = "\n".join(archive + "#subdirectory=control-plane-kit-" + package
+                           for package in ("core", "operations", "core-other"))
+        rendered = module._replace_dependency_pins(source, core_commit="a" * 40,
+            operations_commit="b" * 40, interpreters_commit="c" * 40,
+            secrets_commit="d" * 40, sdk_commit="e" * 40)
+        self.assertEqual(rendered, "\n".join((
+            archive.replace("f" * 40, "a" * 40) + "#subdirectory=control-plane-kit-core",
+            archive.replace("f" * 40, "b" * 40) + "#subdirectory=control-plane-kit-operations",
+            archive + "#subdirectory=control-plane-kit-core-other",
+        )))
+
+    def test_independent_core_and_operations_coordinates_are_required_and_canonical(self) -> None:
+        module = load_script_module()
+        original = json.loads(module.COORDINATES.read_text(encoding="utf-8"))
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "coordinates.json"
+            for key in ("control_plane_kit_core_commit", "control_plane_kit_operations_commit"):
+                for value in (None, "", "main", "a" * 39, "a" * 41, "A" * 40, 123):
+                    document = copy.deepcopy(original)
+                    if value is None:
+                        document["upstreams"].pop(key)
+                    else:
+                        document["upstreams"][key] = value
+                    path.write_text(json.dumps(document), encoding="utf-8")
+                    with self.subTest(key=key, value=value), self.assertRaises(module.CoordinateError):
+                        module.load_coordinates(path)
+
     def test_sdk_coordinate_is_required_and_canonical(self) -> None:
         module = load_script_module()
         original = json.loads(module.COORDINATES.read_text(encoding="utf-8"))
@@ -60,7 +90,8 @@ class CoordinateGenerationTests(unittest.TestCase):
         original = module.generate_updates(coordinates)
         changed = copy.deepcopy(coordinates)
         replacements = {
-            "control_plane_kit_commit": "a" * 40,
+            "control_plane_kit_core_commit": "a" * 40,
+            "control_plane_kit_operations_commit": "e" * 40,
             "control_plane_kit_interpreters_commit": "b" * 40,
             "control_plane_kit_secrets_commit": "c" * 40,
             "control_plane_kit_server_sdk_commit": "d" * 40,
@@ -69,14 +100,16 @@ class CoordinateGenerationTests(unittest.TestCase):
         generated = module.generate_updates(changed)
         destinations = {
             module.PYPROJECT: (
-                "control_plane_kit_commit", "control_plane_kit_interpreters_commit",
+                "control_plane_kit_core_commit", "control_plane_kit_interpreters_commit",
+                "control_plane_kit_operations_commit",
                 "control_plane_kit_server_sdk_commit", "control_plane_kit_secrets_commit",
             ),
             module.CPK_SERVER_DOCKERFILE: (
-                "control_plane_kit_commit", "control_plane_kit_interpreters_commit",
+                "control_plane_kit_core_commit", "control_plane_kit_interpreters_commit",
+                "control_plane_kit_operations_commit",
                 "control_plane_kit_server_sdk_commit",
             ),
-            module.CPK_LOCAL_GATEWAY_DOCKERFILE: ("control_plane_kit_commit",),
+            module.CPK_LOCAL_GATEWAY_DOCKERFILE: ("control_plane_kit_core_commit",),
             module.SECRETS_SERVER_DOCKERFILE: ("control_plane_kit_secrets_commit",),
             module.HELLO_SERVER_DOCKERFILE: ("control_plane_kit_server_sdk_commit",),
             module.HTTP_ACTIVE_ROUTER_DOCKERFILE: ("control_plane_kit_server_sdk_commit",),
@@ -122,7 +155,7 @@ class CoordinateGenerationTests(unittest.TestCase):
     def test_coordinates_drive_every_generated_dependency_pin(self) -> None:
         module = load_script_module()
         coordinates = module.load_coordinates(module.COORDINATES)
-        cpk_commit = coordinates["upstreams"]["control_plane_kit_commit"]
+        core_commit = coordinates["upstreams"]["control_plane_kit_core_commit"]
         interpreters_commit = coordinates["upstreams"][
             "control_plane_kit_interpreters_commit"
         ]
@@ -153,7 +186,12 @@ class CoordinateGenerationTests(unittest.TestCase):
             with self.subTest(path=path.relative_to(ROOT).as_posix()):
                 self.assertIn(
                     "https://github.com/OpenJ92/control-plane-kit/archive/"
-                    f"{cpk_commit}.zip",
+                    f"{coordinates['upstreams']['control_plane_kit_operations_commit']}.zip"
+                    "#subdirectory=control-plane-kit-operations", text,
+                )
+                self.assertIn(
+                    "https://github.com/OpenJ92/control-plane-kit/archive/"
+                    f"{core_commit}.zip",
                     text,
                 )
                 self.assertIn(
@@ -166,7 +204,7 @@ class CoordinateGenerationTests(unittest.TestCase):
         )
         self.assertIn(
             "https://github.com/OpenJ92/control-plane-kit/archive/"
-            f"{cpk_commit}.zip",
+            f"{core_commit}.zip",
             gateway_dockerfile,
         )
         secrets_dockerfile = module.SECRETS_SERVER_DOCKERFILE.read_text(
