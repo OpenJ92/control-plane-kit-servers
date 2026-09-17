@@ -17,7 +17,7 @@ from control_plane_kit_core.secrets import SecretReference
 from control_plane_kit_core.planning import compile_graph_activity_plan, ObserveNodeHealth, PlanGraphSide
 from control_plane_kit_core.public_ingress import IngressAuthorityReference, NamedPublicIngress, PublicIngressTarget
 from control_plane_kit_operations.products import RegisteredProduct, InlineDescriptorSource
-from control_plane_kit_operations.delegation_signing_keys import RegisteredDelegationSigningKey
+from control_plane_kit_operations.delegation_signing_keys import RegisteredDelegationSigningKey, RegisteredDelegationSigningKeyStatus
 from control_plane_kit_operations.runtime_management_targets import project_management_health_target
 from cpk_http_host_fixtures import fixture
 
@@ -53,11 +53,14 @@ class Products:
 def world(test, *, selected="b", side=PlanGraphSide.DESIRED_GRAPH, configuration_changes=None):
     from control_plane_kit_servers_cpk_server import control_configuration as cpk
     from control_plane_kit_servers_cpk_local_gateway import health_transit_configuration as gateway
-    a, other = fixture(), fixture("b")
-    b = SimpleNamespace(**vars(a))
-    b.health_private = other.health_private
-    b.config = replace(a.config, health_keys=other.config.health_keys)
-    authorities = {"a": a, "b": b}
+    a = fixture()
+    authorities = {"a": a}
+    for letter in ("b", "c"):
+        other = fixture(letter)
+        authority = SimpleNamespace(**vars(a))
+        authority.health_private = other.health_private
+        authority.config = replace(a.config, health_keys=other.config.health_keys)
+        authorities[letter] = authority
     keys = tuple(authorities[letter].config.health_keys.public_keys[0] for letter in selected)
     workload = replace(a.config, health_keys=replace(a.config.health_keys, public_keys=keys))
     roles = core.NodeControlGraphReferenceRole
@@ -146,7 +149,8 @@ def signers(value, letter):
     key = value.authorities[letter].config.health_keys.public_keys[0]
     return tuple(RegisteredDelegationSigningKey("fixture-" + family, "workspace-a", purpose, issuer,
         key, SecretReference("secret://synthetic/never-resolved/" + family),
-        "fixture", "2026-09-16T00:00:00Z")
+        "fixture", "2026-09-16T00:00:00Z", status=RegisteredDelegationSigningKeyStatus.ACTIVE,
+        activated_by="fixture", activated_at="2026-09-16T00:00:00Z")
         for family, purpose, issuer in (
             ("gateway", value.gateway_config.purpose, value.gateway_config.issuer),
             ("workload", value.config.health_keys.purpose, value.config.health_issuer)))

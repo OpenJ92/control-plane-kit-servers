@@ -118,7 +118,7 @@ class HealthReceiverAdapterTests(unittest.TestCase):
                     {value.authorities[letter].config.health_keys.public_keys[0].key_id for letter in selected})
                 if selected != "a":
                     self.assertNotEqual(value.artifacts[family].content_digest, value.defaults[family].content_digest)
-            for letter in ("a", "b"):
+            for letter in ("a", "b", "c"):
                 with self.subTest(selected=selected, signer=letter):
                     expected = letter in selected
                     self.assertEqual(self.workload_accepts(value, letter), expected)
