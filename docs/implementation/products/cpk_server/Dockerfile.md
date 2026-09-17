@@ -4,7 +4,7 @@ Early #181 compatibility for #208 selects Coreb79a02d1, Operationsbc559a0, Inter
 Maintain this document alongside its source file. When the source or relevant imported contracts change, verify and update this companion in the same change.
 
 This is the shared process-image build lane for all three CPK descriptors.
-It installs the coordinate-selected Core and Operations source commit and the
+It installs the independently coordinate-selected Core and Operations commits and the
 Interpreters commit with Cloudflare, Docker, gateway and public-DNS extras.
 Available interpreter software is distinct from the selected process mode and
 from workspace authority. The recipe contains no provider credentials or
@@ -23,12 +23,10 @@ identity and numeric-recipient witnesses.
 
 Related source and evidence: [coordinates/server-products.json](../../../../coordinates/server-products.json), [products/cpk_server/bootstrap.contract.json](../../../../products/cpk_server/bootstrap.contract.json), [products/cpk_server/src/control_plane_kit_servers_cpk_server/server.py](../../../../products/cpk_server/src/control_plane_kit_servers_cpk_server/server.py), [products/cpk_server/tests/live_numeric_bootstrap.py](../../../../products/cpk_server/tests/live_numeric_bootstrap.py), [products/cpk_server/tests/test_image_bootstrap.py](../../../../products/cpk_server/tests/test_image_bootstrap.py).
 
-The Core/Operations mirror selects reviewed CPK merge `95452249d0340707a5cdffe737e34669e9d53165` through Servers #193's canonical coordinate generator. Existing secret-delivery corrections remain available and optional health contracts are added upstream; Operations source is unchanged in the adopted interval. The published image coordinate remains separate and unchanged.
-
-The Interpreters mirror selects reviewed merge `77c9a7f54e6d8ef886733c8ebd3476e796fad8ad`. Its direct Core dependency uses the same exact archive as this recipe and the root SDK dependency. Servers199 adds SDK[fastapi] at canonical2b10d5a; its extra installs exact FastAPI0.141.1/Starlette1.6.0 and verification dependencies. Coordinate generation owns this SDK URL as well. Ordinary source-image witnesses establish route/dependency composition, not production wrapper enablement or publication.
+The recipe selects Coreb79a02d1 and Operationsbc559a0 independently. Interpreters6b1c75a9 and SDK2c5b5882 share the exact Coreb79 archive. SDK[fastapi] retains FastAPI0.141.1 and Starlette1.6.0. The canonical generator owns these URLs. Ordinary source-image witnesses establish selected dependency composition, not published health qualification.
 
 Servers200 source main now requires the public control.json artifact documented
 in bootstrap.contract.json. The recipe still copies only product src: synthetic
 private test authority and grant/header files are never image inputs. UID10001
 reads the explicit0444 readonly file mount in the source smoke. Historical image
-coordinates and the recipe's SDK dependency selected by199 remain unchanged.
+coordinates remain unchanged; current source dependencies are selected independently above.

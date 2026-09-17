@@ -1,0 +1,7 @@
+Source: [test_health_receiver_adapters.py](../../../../../products/cpk_server/tests/test_health_receiver_adapters.py).
+
+The tests connect real selected product decoders and real CPK app/SDK and gateway signature verification to the actual pinned Operations coverage function. Its private import is test-only coupling; application adapters use public contracts. A/default and B/selected plus AB overlap must affect both signature acceptance and coverage. Wrong selected slot/profile/exact reference and configured runtime refuse without rewriting configuration into expected identity. Unexpected decoder/owner failures preserve identity, and decoding has no file/network effects.
+
+All three complete CPK source variant documents bind independently of the receiver-only ready-plan fixture. The actual CPK app only substitutes its unrelated effectful database service construction. This proves parser/verifier/selection/coverage agreement; approval, key lifecycle, transactions, original-pin reload and replay execution remain #1857-owned tests. No mounted delivery, gateway relay, production composition, supported image or live deployment claim follows.
+
+The initial checkpoint intentionally lacks the adapter module. Fixtures construct valid graphs/plans before the missing-module assertion, so its owning-gate failure should identify the missing behavior rather than import/dependency or fixture failure. An apparatus failure is not target-red evidence.
