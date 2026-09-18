@@ -14,5 +14,9 @@ fixed port8000, optional complete legacy authority, and partial legacy refusal.
 There is no container/process deployment or secret-provider call here. Production
 configuration generation from admitted Operations context remains #181.
 
-Status: target tests only, unexecuted. The new-interface guard distinguishes
-missing behavior from collection errors; full owning Docker CI remains required.
+The original target guard separated missing behavior from collection errors.
+All configuration/startup laws, including the reviewed fixture corrections, ran
+green at ba9bc249 in full owning CI35379205171.
+[Exact evidence and limits](https://github.com/OpenJ92/control-plane-kit-servers/pull/216#issuecomment-5734352881).
+The optional probe route is transitional: the user requires all legacy routes,
+wiring and documentation to retire before parent1813 completion, with no fallback.

@@ -12,6 +12,8 @@ proxy/redirect/header exclusion and context-free failures are covered. HTTPX
 transports are injected at its I/O boundary, not substituted for authentication.
 These are package connection laws, not deployed-network or published-image proof.
 
-Status: target tests only, not executed yet. Missing-module assertions occur after
-valid fixture construction. Guarded assertions are not credited until source runs
-them green. Owning validation is unchanged Docker ./test.sh via normal PR CI.
+Original target c0f1f94 produced reviewed missing-interface red after valid fixture
+construction. Subsequent fixture and source-policy corrections are historical;
+all guarded bodies executed green at ba9bc249 in normal CI35379205171. The unchanged
+owning Docker gate passed26 support and436 package tests, including all15 new laws.
+[Exact evidence and limits](https://github.com/OpenJ92/control-plane-kit-servers/pull/216#issuecomment-5734352881).

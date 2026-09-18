@@ -32,5 +32,8 @@ surface or dependency cycle is introduced here. The edge-free projection fixture
 supplies a separate synthetic gateway readiness surface to prove endpoint
 selection only; it does not prove this helper's bootstrap eligibility.
 
-Validation: reviewed target tests and causal missing-interface red on PR216;
-implementation is unvalidated pending the authorized ordinary Docker CI.
+Validation: reviewed causal red and subsequent corrections are historical.
+Exact source/test head ba9bc249 passed full owning CI35379205171:26 support and436
+package tests plus existing runtime witnesses and owned cleanup.
+[Evidence and limits](https://github.com/OpenJ92/control-plane-kit-servers/pull/216#issuecomment-5734352881).
+This does not establish managed bootstrap or a deployed relay.

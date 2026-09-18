@@ -29,8 +29,10 @@ Client/response contexts close on success, refusal or cancellation. No durable
 history or retry is created here; #147/#1860/#181 own downstream interpretation
 and history. Current package tests use actual SDK ASGI transport, not deployment.
 
-Validation pending first source CI; original causal-red evidence and corrected
-immutable target checkpoint are recorded on PR216.
+Validation: source/test head ba9bc249 passed full owning CI35379205171, including
+all15 new laws and49 gateway tests. Original causal red and the reviewed fixture
+and source-policy corrections remain historical evidence on PR216.
+[Exact result and limits](https://github.com/OpenJ92/control-plane-kit-servers/pull/216#issuecomment-5734352881).
 
 Source review strengthens malformed-route handling: closed kind validation
 precedes ASCII path encoding, so a non-ASCII unknown kind receives bounded400,
