@@ -15,6 +15,8 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 from control_plane_kit_core.configuration import ConfigurationFileMode, ConfigurationMediaType
 from control_plane_kit_core.products import ProductRuntimeContractCodec, ProductDescriptorCodec
+from control_plane_kit_core.gateway_delegation import GatewayProbeRequest, GatewayProbeCommandKind
+from control_plane_kit_core.runtime_effects import GatewayTargetId
 from health_relay_fixtures import World
 
 PACKAGE = "control_plane_kit_servers_cpk_local_gateway"
@@ -184,8 +186,9 @@ class HealthRelayConfigurationTests(unittest.TestCase):
         serve, _, _, _ = self.run_main(files, environment)
         serve.assert_called_once()
         with TestClient(serve.call_args.args[0]) as client:
-            self.assertEqual(client.post("/cpk/probes", json={"kind":"http-status",
-                "target_id":"database-management", "path":"/"}).status_code, 401)
+            legacy_request = GatewayProbeRequest(GatewayProbeCommandKind.HTTP_STATUS,
+                GatewayTargetId("wrapped-db.management"), "/")
+            self.assertEqual(client.post("/cpk/probes", json=legacy_request.descriptor()).status_code, 401)
             self.assertEqual(client.post("/cpk/health/readiness", json=self.world.envelope()).status_code, 401)
         for environment in ({"PORT":"8088"}, {"PORT":"invalid"}, {"CPK_GATEWAY_PROBE_ISSUER":"partial"}):
             serve, _, output, _ = self.run_main(files, environment)
