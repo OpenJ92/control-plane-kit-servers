@@ -189,7 +189,11 @@ def gateway_health_relay_configuration_artifact(configuration):
 
 
 def gateway_health_source_runtime_contract(trust_artifact, targets_artifact):
-    """Describe implemented source only; no historical image association is made."""
+    """Relay source-contract fragment, not yet a managed-bootstrap-ready product.
+
+    Gateway own protected readiness belongs to #182; without that surface Core
+    management planning correctly refuses this fragment. No image is associated.
+    """
     try:
         trust = _configuration_from_artifact(trust_artifact)
         if type(targets_artifact) is not ConfigurationArtifact:

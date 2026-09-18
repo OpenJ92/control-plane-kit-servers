@@ -31,3 +31,10 @@ and history. Current package tests use actual SDK ASGI transport, not deployment
 
 Validation pending first source CI; original causal-red evidence and corrected
 immutable target checkpoint are recorded on PR216.
+
+Source review strengthens malformed-route handling: closed kind validation
+precedes ASCII path encoding, so a non-ASCII unknown kind receives bounded400,
+with zero outbound requests, rather than an internal500. The existing framing
+test carries this single regression case. Explicit bounded failure objects are
+constructed in catch handlers and raised outside their exception context, as
+required by the owning integrity policy.

@@ -115,13 +115,13 @@ class GatewayHealthRelay:
 
     async def handle(self, inbound: Request, health_kind: str):
         try:
-            if (inbound.scope.get("raw_path") != b"/cpk/health/" + health_kind.encode("ascii")
-                    or len(inbound.scope["raw_path"]) > 1024 or inbound.scope.get("query_string") != b""):
-                raise _Refusal(400)
             try:
                 kind = core.NodeHealthReadKind(health_kind)
             except ValueError:
                 raise _Refusal(400) from None
+            if (inbound.scope.get("raw_path") != b"/cpk/health/" + kind.value.encode("ascii")
+                    or len(inbound.scope["raw_path"]) > 1024 or inbound.scope.get("query_string") != b""):
+                raise _Refusal(400)
             credential = _authorization(inbound.scope.get("headers"))
             body = bytearray()
             async with asyncio.timeout(self.timeout_seconds):

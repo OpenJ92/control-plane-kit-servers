@@ -165,6 +165,7 @@ class HealthRelayTests(unittest.TestCase):
                 self.assert_bounded_failure(self.call(client, envelope=w.envelope() | change), status)
             response = self.call(client, path="/cpk/health/readiness?url=http://arbitrary.invalid")
             self.assert_bounded_failure(response, 400)
+            self.assert_bounded_failure(self.call(client, path="/cpk/health/\u00e9"), 400)
             duplicate = wire(w.envelope())[:-1] + b',"attempt_id":"attempt-a"}'
             self.assert_bounded_failure(client.post("/cpk/health/readiness", content=duplicate,
                 headers={"Authorization":"Bearer " + signed}), 400)

@@ -22,5 +22,15 @@ requires matching workspace/gateway/runtime, and advertises health transit on
 control8000. It creates no published image association and changes no historical
 catalogue. Fixed configuration failures exclude candidate exception chains.
 
+This helper is a relay source-contract fragment, not sufficient for managed
+bootstrap planning. It has no gateway own protected readiness surface. Selected
+Core `management_compiler._selected_surface(gateway=True)` / `_pin_path` requires
+that surface and correctly refuses this fragment. Existing Servers #182 (which
+depends on #180) owns truthful SDK gateway self-health. #181 composition and
+Interpreters #148 bootstrap transport must wait for that owner; no invented
+surface or dependency cycle is introduced here. The edge-free projection fixture
+supplies a separate synthetic gateway readiness surface to prove endpoint
+selection only; it does not prove this helper's bootstrap eligibility.
+
 Validation: reviewed target tests and causal missing-interface red on PR216;
 implementation is unvalidated pending the authorized ordinary Docker CI.
