@@ -213,7 +213,7 @@ class HealthRelayTests(unittest.TestCase):
             (200, wire(valid | {"request_id":"stale-request"}), {}),
             (200, wire(valid | {"request_digest":"f"*64}), {}),
             (200, wire(valid | {"outcome":"transport-error"}), {}),
-            (200, b"x"*447, {}), (200, wire(valid), {"Content-Encoding":"gzip"})]
+            (200, b"x"*447, {})]
         for status, body, headers in candidates:
             calls = []
             async def handler(request):
@@ -223,6 +223,19 @@ class HealthRelayTests(unittest.TestCase):
             with self.subTest(status=status, body_size=len(body)), TestClient(app) as client:
                 self.assert_bounded_failure(self.call(client), 502)
             self.assertEqual(len(calls), 1)
+        encoded_events = []
+        class EncodedStream(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                encoded_events.append("read")
+                yield b"private-marker"
+            async def aclose(self):
+                encoded_events.append("closed")
+        async def encoded_response(request):
+            return httpx.Response(200, headers={"Content-Encoding":"gzip"}, stream=EncodedStream())
+        app, _, _ = self.composition(transport=httpx.MockTransport(encoded_response))
+        with TestClient(app) as client:
+            self.assert_bounded_failure(self.call(client), 502)
+        self.assertEqual(encoded_events, ["closed"], "encoding must be rejected before reading or decoding body")
         self.assertEqual(w.callbacks, [])
 
     def test_overall_deadline_cancels_slow_response_and_closes_stream(self):

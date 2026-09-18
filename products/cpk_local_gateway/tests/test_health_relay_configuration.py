@@ -163,8 +163,9 @@ class HealthRelayConfigurationTests(unittest.TestCase):
             self.assertEqual(client.post("/cpk/probes", content=b"private-marker").status_code, 404)
             self.assertEqual(client.get("/health/live").json(), {"status":"live"})
             request = self.world.request
-            wrong, _ = self.world.pair(request)
             now = int(time.time())
+            wrong = self.world.transit.token(self.world.transit.grant(request,
+                issued_at=now, not_before=now, expires_at=now+100)).decode()
             correct = self.world.transit.token(self.world.transit.grant(request, key_id=self.world.transit.key_b.key_id,
                 issued_at=now, not_before=now, expires_at=now+100),
                 private=self.world.transit.private_b).decode()
