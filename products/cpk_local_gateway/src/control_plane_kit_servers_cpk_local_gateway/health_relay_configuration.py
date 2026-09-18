@@ -84,8 +84,8 @@ class GatewayHealthTargetBinding:
                 raise ValueError
             return
         except _INPUT_ERRORS:
-            pass
-        raise GatewayHealthRelayConfigurationError(_ERROR)
+            failure = GatewayHealthRelayConfigurationError(_ERROR)
+        raise failure
 
     def descriptor(self):
         return dict(target_id=self.target_id, target=self.target.descriptor(), runtime_id=self.runtime_id.value,
@@ -108,8 +108,8 @@ def gateway_health_target_binding(*, target_id, target, runtime_id, runtime_cont
         return GatewayHealthTargetBinding(target_id, target, runtime_id, declaration,
             f"http://{_hostname(hostname)}:{ports[0].container_port}")
     except _INPUT_ERRORS:
-        pass
-    raise GatewayHealthRelayConfigurationError(_ERROR)
+        failure = GatewayHealthRelayConfigurationError(_ERROR)
+    raise failure
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -143,8 +143,8 @@ class GatewayHealthRelayConfiguration:
                 raise ValueError
             return
         except _INPUT_ERRORS:
-            pass
-        raise GatewayHealthRelayConfigurationError(_ERROR)
+            failure = GatewayHealthRelayConfigurationError(_ERROR)
+        raise failure
 
     def descriptor(self):
         return dict(profile=PROFILE, workspace_id=self.workspace_id.value, gateway_node_id=self.gateway_node_id.value,
@@ -171,8 +171,8 @@ def decode_gateway_health_relay_configuration(raw):
             core.NodeControlGraphReference(roles.NODE, value["gateway_node_id"]),
             core.NodeControlGraphReference(roles.RUNTIME, value["runtime_id"]), tuple(bindings))
     except _INPUT_ERRORS:
-        pass
-    raise GatewayHealthRelayConfigurationError(_ERROR)
+        failure = GatewayHealthRelayConfigurationError(_ERROR)
+    raise failure
 
 
 def gateway_health_relay_configuration_artifact(configuration):
@@ -184,8 +184,8 @@ def gateway_health_relay_configuration_artifact(configuration):
         return ConfigurationArtifact(ARTIFACT_ID, CONFIGURATION_PATH, ConfigurationMediaType.JSON,
             content.decode(), ConfigurationFileMode.READ_ONLY)
     except _INPUT_ERRORS:
-        pass
-    raise GatewayHealthRelayConfigurationError(_ERROR)
+        failure = GatewayHealthRelayConfigurationError(_ERROR)
+    raise failure
 
 
 def gateway_health_source_runtime_contract(trust_artifact, targets_artifact):
@@ -209,8 +209,8 @@ def gateway_health_source_runtime_contract(trust_artifact, targets_artifact):
                     expected_statuses=(200,), policy=VerificationPolicy(timeout_seconds=5, interval_seconds=1,
                         maximum_attempts=5, maximum_evidence_bytes=16384)) for kind in ("live", "ready"))))
     except _INPUT_ERRORS:
-        pass
-    raise GatewayHealthRelayConfigurationError(_ERROR)
+        failure = GatewayHealthRelayConfigurationError(_ERROR)
+    raise failure
 
 
 def require_matching_receiver(trust, targets):

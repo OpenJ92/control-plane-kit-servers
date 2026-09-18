@@ -85,8 +85,8 @@ def _paired_workload(credential, request):
             raise ValueError
         return raw
     except _INPUT_ERRORS:
-        pass
-    raise _Refusal(403)
+        failure = _Refusal(403)
+    raise failure
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -110,8 +110,8 @@ class GatewayHealthRelay:
             require_matching_receiver(self.verifier._configuration, self.configuration)
             return
         except _INPUT_ERRORS:
-            pass
-        raise ValueError("gateway health relay composition is invalid")
+            failure = ValueError("gateway health relay composition is invalid")
+        raise failure
 
     async def handle(self, inbound: Request, health_kind: str):
         try:
@@ -184,5 +184,5 @@ class GatewayHealthRelay:
             raise _Refusal(504) from None
         except Exception:
             # Even unexpected transport failures cannot expose peer exception text.
-            pass
-        raise _Refusal(502)
+            failure = _Refusal(502)
+        raise failure
