@@ -13,6 +13,7 @@ RUN python -m pip install --no-cache-dir \
     "fastapi>=0.115" \
     "PyJWT[crypto]>=2.10" \
     "uvicorn>=0.30" \
+    "httpx>=0.27,<1" \
     "psycopg[binary]>=3.2"
 
 COPY products/cpk_local_gateway/src ./products/cpk_local_gateway/src

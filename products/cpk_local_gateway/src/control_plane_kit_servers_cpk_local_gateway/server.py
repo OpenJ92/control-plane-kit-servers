@@ -141,10 +141,18 @@ def create_app(
     configuration: GatewayConfiguration | None = None,
     *,
     verifier: GatewayProbeVerifier | None = None,
+    health_relay=None,
 ) -> FastAPI:
     gateway = configuration or GatewayConfiguration.from_environment()
-    probe_verifier = verifier or _verifier_from_environment()
-    app = FastAPI(title="cpk-local-gateway")
+    probe_verifier = verifier
+    app = FastAPI(title="cpk-local-gateway", redirect_slashes=False)
+
+    if health_relay is not None:
+        from .health_relay import GatewayHealthRelay
+        if type(health_relay) is not GatewayHealthRelay:
+            raise ValueError("gateway health relay composition is invalid")
+        app.add_api_route("/cpk/health/{health_kind}", health_relay.handle, methods=["POST"],
+                          include_in_schema=False)
 
     @app.get("/health/live")
     def live() -> dict[str, str]:
@@ -154,7 +162,6 @@ def create_app(
     def ready() -> dict[str, str]:
         return {"status": "ready"}
 
-    @app.post("/cpk/probes")
     async def probe(inbound: Request) -> JSONResponse:
         try:
             body = await inbound.body()
@@ -185,6 +192,8 @@ def create_app(
             )
         return JSONResponse(status_code=200, content=result)
 
+    if probe_verifier is not None:
+        app.add_api_route("/cpk/probes", probe, methods=["POST"])
     return app
 
 
@@ -208,18 +217,23 @@ def execute_probe(
 
 def main() -> int:
     try:
+        from .health_relay_startup import load_health_relay
         configuration = GatewayConfiguration.from_environment()
-        verifier = _verifier_from_environment()
-    except GatewayConfigurationError as exc:
-        print(str(exc), file=sys.stderr)
-        return 2
-    except ValueError as exc:
-        print(str(exc), file=sys.stderr)
+        if configuration.port != 8000:
+            raise ValueError
+        health_relay = load_health_relay()
+        fields = ("CPK_GATEWAY_PROBE_VERIFIER", "CPK_GATEWAY_PROBE_VERIFICATION_KEYS_JSON",
+                  "CPK_GATEWAY_PROBE_ISSUER", "CPK_GATEWAY_PROBE_AUDIENCE", "CPK_GATEWAY_PROBE_NODE_ID")
+        verifier = _verifier_from_environment() if any(name in os.environ for name in fields) else None
+        app = create_app(configuration, verifier=verifier, health_relay=health_relay)
+    except (ValueError, OSError):
+        print("gateway startup configuration is invalid", file=sys.stderr)
         return 2
     uvicorn.run(
-        create_app(configuration, verifier=verifier),
+        app,
         host="0.0.0.0",
-        port=configuration.port,
+        port=8000,
+        access_log=False,
     )
     return 0
 

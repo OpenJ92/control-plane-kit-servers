@@ -14,3 +14,8 @@ Related source and evidence: [coordinates/server-products.json](../../coordinate
 Servers #177 consumes the reviewed CPK secret-delivery selection/admission correction through this generated pin. The installation composition test exercises the real composer and public Operations translator with default and substituted references. This packages future material behavior; it neither authorizes runtime effects nor changes persisted intents.
 
 Servers203 introduced the explicit Secrets dependency and packaging of products/secrets_server/src. This product owner imports only the actual public receiving codec and frames its value for topology. The lightweight catalogue/root remains independent of the service/process. Secrets selects the same Core/SDK pins already adopted here; its custody implementation is not copied into Servers.
+
+#180 declares HTTPX directly (`>=0.27,<1`) for the gateway's bounded async health
+relay, rather than relying on a transitive client dependency. Immutable CPK
+package coordinates remain unchanged. This does not lock the entire transitive
+resolution or publish an image.
