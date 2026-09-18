@@ -7,7 +7,7 @@ issuer, exact gateway health-transit purpose and one to sixteen public keys.
 Audience is derived as `gateway:<workspace>:<gateway>`. Workload target,
 declaration, health kind, attempt and time are not startup trust.
 
-Issuer uses exactstr plus pinned Core95452249's
+Issuer uses exactstr plus selected Coreb79a02d1's
 `_node_control_public_wire.reference_violation`, including its endpoint and
 credential-envelope rejection. The direct private-helper dependency is an
 explicit compatibility risk: future Core pin upgrades must verify this
@@ -37,12 +37,12 @@ code, not a sandbox. No file is opened, no secret is resolved and no state is
 written. The configuration profile's meaning must remain stable for pinned
 product descriptors and later Operations recomputation.
 
-This source contract is not a mounted-file or gateway-process adoption claim.
-Servers208 owns real composition adapters;180 owns later receiver wiring and
-relay;1857 owns exact selected product/graph admission. Existing probe products,
-catalogue/image descriptors and their configuration stay unchanged.
+This pure decoder alone is not a mounted-file or gateway-process adoption claim.
+Accepted Servers208 owns composition adapters; #180 now wires this decoder into
+the process loader and relay;1857 owns exact selected product/graph admission.
+Historical catalogue/image descriptors stay unchanged.
 
 Governing targets: product `test_health_transit.py`, especially actualA/B fresh
 artifact digest, overlapA+B, distinct16/17keys and valid16384/16385bytes. Native
-red at8b05ff4 reached only missing-module guards; source green remains pending
-at this implementation checkpoint.
+red at8b05ff4 reached only missing-module guards; #207/#208 are accepted foundations.
+The new #180 process/relay connection has separate target and source evidence on PR216.

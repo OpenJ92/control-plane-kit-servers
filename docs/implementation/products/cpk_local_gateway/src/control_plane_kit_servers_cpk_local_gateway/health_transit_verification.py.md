@@ -25,12 +25,15 @@ Outer time scalars require exactint, so bool cannot satisfy equality. All outer
 claims and headerkid must match the decoded Core grant exactly.
 
 Configuration provides expected issuer/gateway and derived audience. Per-call
-context independently provides attempt, target/runtime, declaration, requested
+context provides envelope attempt correlation, configured target/runtime, declaration, requested
 kind and one trusted integer time observation. Configured workspace/runtime
 must match that context. Core's existing comparator owns request digest,
 declaration/kind/purpose/identity and exact half-open interval semantics. The
 returned object is the same supplied request. Core comparison is not current
-Operations approval; callers must supply independently admitted context.
+Operations approval. The #180 HTTP caller obtains target context from configuration
+and matches envelope attempt correlation to the signed original attempt. Issuer
+authentication delegates that scoped power; it does not establish current durable
+eligibility, which remains Operations' responsibility before signing.
 
 No hidden clock/skew, replay cache, signature producer, private key, provider
 I/O, HTTP route, target lookup or dispatch exists here. Repeated pure admission
@@ -44,5 +47,6 @@ context ends; BaseException propagates.
 Configuration construction failures use the separate configuration error.
 Tests use real local synthetic signatures, valid at/over-cap envelopes,
 independent expected context and actual decoded-config key substitution. Native
-implementation green remains pending; no route or mounted-file evidence is
-claimed by this pure consumption witness.
+implementation was accepted in #207/#208; no route or mounted-file evidence is
+claimed by this pure consumption witness. #180 separately connects its actual
+process loader and relay, with source validation tracked on PR216.

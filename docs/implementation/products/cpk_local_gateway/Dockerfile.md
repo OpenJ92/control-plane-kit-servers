@@ -19,3 +19,10 @@ of the runtime's filesystem/network restrictions.
 Related source and evidence: [products/cpk_local_gateway/src/control_plane_kit_servers_cpk_local_gateway/server.py](../../../../products/cpk_local_gateway/src/control_plane_kit_servers_cpk_local_gateway/server.py), [products/cpk_local_gateway/src/control_plane_kit_servers_cpk_local_gateway/verification.py](../../../../products/cpk_local_gateway/src/control_plane_kit_servers_cpk_local_gateway/verification.py), [products/cpk_local_gateway/product.cpk.json](../../../../products/cpk_local_gateway/product.cpk.json).
 
 Servers #193 synchronizes this Core-only mirror to canonical CPK merge `95452249d0340707a5cdffe737e34669e9d53165`. Gateway process source, including accepted #176 replay protection, and the published image coordinate are unchanged. SDK installation and new health transport are separate wrapper work; this dependency mirror does not grant or advertise them.
+
+#180 source supersedes the older startup description above: the process now
+requires selected health-transit and health-targets files, and optional legacy
+probe credentials enable that route only when complete. HTTPX is a direct image
+dependency for bounded async transport. The declared/listening control port is
+fixed8000. No historical product or image coordinate is changed by this source
+recipe; image association remains #191.
