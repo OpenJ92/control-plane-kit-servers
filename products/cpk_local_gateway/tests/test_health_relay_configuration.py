@@ -184,7 +184,8 @@ class HealthRelayConfigurationTests(unittest.TestCase):
         serve, _, _, _ = self.run_main(files, environment)
         serve.assert_called_once()
         with TestClient(serve.call_args.args[0]) as client:
-            self.assertEqual(client.post("/cpk/probes", content=b"{}").status_code, 401)
+            self.assertEqual(client.post("/cpk/probes", json={"kind":"http-status",
+                "target_id":"database-management", "path":"/"}).status_code, 401)
             self.assertEqual(client.post("/cpk/health/readiness", json=self.world.envelope()).status_code, 401)
         for environment in ({"PORT":"8088"}, {"PORT":"invalid"}, {"CPK_GATEWAY_PROBE_ISSUER":"partial"}):
             serve, _, output, _ = self.run_main(files, environment)
