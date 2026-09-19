@@ -33,3 +33,11 @@ later products/runtime witnesses did not execute after the intended stop.
 Corrected target `3eb6082` separately fixes exceptional-lifespan causality and
 its companion, reviewed before source. Its deeper assertion first executes in
 implementation CI; no duplicate red was run behind the unchanged missing guard.
+
+Source plus coordinate-expectation correction `40a3531` passed ordinary pinned
+CI35456792284/job105933403088 (composition `0092290`): 26 support and all 443
+package tests, including gateway 56/all 7 new laws. The corrected exceptional
+lifespan assertion executed green. Existing source/published baseline and numeric
+runtime witnesses completed with exact owned cleanup and final residue audit.
+[PR218 evidence](https://github.com/OpenJ92/control-plane-kit-servers/pull/218#issuecomment-5743768008)
+records the exact head, log digest, review and source/image/live limits.

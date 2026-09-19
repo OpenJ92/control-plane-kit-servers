@@ -1,7 +1,7 @@
 # Gateway application and process composition
 
-The application constructor receives explicit optional probe verifier and health
-relay dependencies. No implicit probe credential lookup occurs there. Health-only
+The application constructor receives explicit optional probe verifier, health
+relay and own-control configuration dependencies. No implicit probe credential lookup occurs there. Health-only
 composition has no `/cpk/probes` route; complete explicitly configured probe
 credentials retain the old authenticated closed probe route independently.
 

@@ -47,3 +47,9 @@ The owning gate is the existing Docker-backed `./test.sh` through ordinary PR
 CI. Source/in-memory receiver tests and the SDK image recipe do not establish
 qualified images, live TLS/DNS or cluster deployment. Historical published
 product descriptors and catalogue coordinates remain unchanged.
+
+#182 source validation: [PR218](https://github.com/OpenJ92/control-plane-kit-servers/pull/218)
+records 26 support and 443 package tests green, including the seven new own-health
+laws, plus the unchanged owning runtime witnesses and exact cleanup. Gateway is
+one implementation family and one catalogue identity; its two roles do not
+increase coverage counts.
