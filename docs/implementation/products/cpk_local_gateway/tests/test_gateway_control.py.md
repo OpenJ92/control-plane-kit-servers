@@ -7,6 +7,10 @@ Target stage follows reviewed plan5743544407 and source-contract correction
 installation, authorization before callbacks, local serving lifecycle including
 exceptional shutdown, downstream-failure independence, complete real contract
 compilation/ordering, strict public configuration and actual selected-file startup.
+Exceptional shutdown enters `app.router.lifespan_context(app)` directly and
+raises a sentinel through its async exit before checking UNHEALTHY. Normal
+TestClient HTTP checks remain separate; an exception in their body alone would
+not prove the application lifespan's exceptional-exit path.
 
 New laws join SDK/gateway/Core owners rather than duplicate them. Existing #180
 relay, source-slot, startup-selection/fixed-port and historical-image tests remain

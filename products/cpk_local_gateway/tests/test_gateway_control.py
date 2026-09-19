@@ -1,4 +1,5 @@
 """#182 product laws: real SDK local truth, selected files and complete contract."""
+import asyncio
 import builtins
 from contextlib import redirect_stderr
 from dataclasses import replace
@@ -81,11 +82,18 @@ class GatewayControlTests(unittest.TestCase):
     def test_readiness_tracks_serving_lifespan_and_exceptional_shutdown(self):
         app = self.app()
         self.assertIs(app.state.gateway_local_health.readiness(), core.NodeHealthReadOutcome.UNHEALTHY)
-        with self.assertRaisesRegex(RuntimeError, "synthetic shutdown"):
-            with TestClient(app) as client:
-                self.assertEqual(client.get("/health/ready").status_code, 200)
-                self.assertIs(self.health(client).outcome, core.NodeHealthReadOutcome.HEALTHY)
+        with TestClient(app) as client:
+            self.assertEqual(client.get("/health/ready").status_code, 200)
+            self.assertIs(self.health(client).outcome, core.NodeHealthReadOutcome.HEALTHY)
+        self.assertIs(app.state.gateway_local_health.readiness(), core.NodeHealthReadOutcome.UNHEALTHY)
+        async def exceptional_lifespan():
+            # Deliver the exception into the actual async lifespan context;
+            # an exception in a TestClient body does not establish that path.
+            async with app.router.lifespan_context(app):
+                self.assertIs(app.state.gateway_local_health.readiness(), core.NodeHealthReadOutcome.HEALTHY)
                 raise RuntimeError("synthetic shutdown")
+        with self.assertRaisesRegex(RuntimeError, "synthetic shutdown"):
+            asyncio.run(exceptional_lifespan())
         self.assertIs(app.state.gateway_local_health.readiness(), core.NodeHealthReadOutcome.UNHEALTHY)
         with TestClient(self.server.create_app(health_relay=self.value.relay)) as client:
             response = client.get("/health/ready")
