@@ -7,6 +7,9 @@ ENV PORT=8000
 
 WORKDIR /app
 
+RUN python -m pip install --no-cache-dir \
+    "control-plane-kit-server-sdk[verification] @ https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/2c5b588237fbe289c965029b4bc2f072715c42f3.zip"
+
 RUN useradd --create-home --uid 10004 multiplexer
 
 COPY products/http_multiplexer/src /app/products/http_multiplexer/src

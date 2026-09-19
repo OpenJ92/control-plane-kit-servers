@@ -1,13 +1,11 @@
-"""HTTP multiplexer server product."""
+"""HTTP multiplexer values; process composition is loaded only when invoked."""
 
-from .server import (
-    MultiplexerConfigurationError,
-    MultiplexerSettings,
-    main,
-)
+from .configuration import MultiplexerConfigurationError, MultiplexerSettings
 
-__all__ = [
-    "MultiplexerConfigurationError",
-    "MultiplexerSettings",
-    "main",
-]
+
+def main() -> int:
+    from .server import main as run
+    return run()
+
+
+__all__ = ["MultiplexerConfigurationError", "MultiplexerSettings", "main"]

@@ -14,12 +14,17 @@ from uuid import uuid4
 
 import docker
 import httpx
+import control_plane_kit_core as core
 
 from control_plane_kit_core.secrets import (
     SecretFileMode, SecretProviderEndpointReference, SecretReference,
     SecretUseIntent, SecretValue,
 )
-from control_plane_kit_interpreters.docker import DockerSdkClient, DockerSdkSecretMount
+from control_plane_kit_interpreters.docker import (
+    DockerSdkClient, DockerSdkSecretMount, DockerSdkConfigurationMount,
+)
+from control_plane_kit_servers_secrets_server.configuration import secrets_control_configuration_artifact
+from secrets_control_fixtures import SourceControlAuthority
 from control_plane_kit_interpreters.secret_provider import (
     ControlPlaneKitSecretsClient, SecretProviderBootstrapRegistry,
     SecretProviderClientCode, SecretProviderClientError,
@@ -65,6 +70,35 @@ def exercise_provider(token: str, application_value: str) -> None:
             assert token not in repr(error) and application_value not in repr(error)
         else:
             raise AssertionError("provider accepted wrong credentials")
+
+
+def exercise_control(authority, sensitive):
+    """Bounded real SDK reads on the existing provider; no extra service."""
+    def read(path, token=None):
+        headers = {} if token is None else {"Authorization": "Bearer " + token}
+        with httpx.stream("GET", "http://secrets-provider:8081" + path,
+                          headers=headers, timeout=5, trust_env=False) as response:
+            body = bytearray()
+            for chunk in response.iter_bytes(chunk_size=4096):
+                assert len(body) + len(chunk) <= 65536, "unbounded control response"
+                body.extend(chunk)
+            return response.status_code, bytes(body)
+
+    static_token = None
+    for static, path in ((True, "/__control/capabilities"), (False, "/__control/health/liveness")):
+        request, token = authority.signed_read(static=static, issued_at=int(time.time()) - 1)
+        sensitive.append(token)
+        status, body = read(path, token)
+        assert status == 200, "source control read failed"
+        if static:
+            static_token = token
+            expected = core.NodeControlSurfaceReadResultCodec(request, authority.declaration).capabilities_result()
+            assert body == expected.canonical_bytes(), "source static contract mismatch"
+        else:
+            result = core.NodeHealthReadResultCodec(request, authority.declaration).decode(json.loads(body))
+            assert result.outcome is core.NodeHealthReadOutcome.HEALTHY, "source liveness mismatch"
+        assert read(path)[0] == 401, "source control accepted missing authority"
+    assert read("/__control/health/liveness", static_token)[0] == 401, "source control accepted wrong purpose"
 
 
 def main() -> None:
@@ -127,11 +161,18 @@ def main() -> None:
             assert evidence.uid == uid and evidence.mode == 0o400 and evidence.regular_file
             assert evidence.content_digest == digest, "delivered content mismatch"
             mounts.append(dict(DockerSdkSecretMount(target, volume.name).docker_mount()))
+        authority = SourceControlAuthority(run_id)
+        control = secrets_control_configuration_artifact(authority.configuration())
+        public_volume = engine.volumes.create(name=f"cpk-secret-public-{uuid4().hex}", labels=labels)
+        resources.append((engine.volumes, public_volume.name))
+        sdk.materialize_configuration_artifact(public_volume.name, control)
+        assert sdk.configuration_artifact_digest(public_volume.name) == control.content_digest
+        public_mount = dict(DockerSdkConfigurationMount(control, public_volume.name).docker_mount())
         data = engine.volumes.create(name=f"cpk-secret-data-{uuid4().hex}", labels=labels)
         resources.append((engine.volumes, data.name))
         source = engine.containers.create(
             image_id, name=f"cpk-secret-provider-{uuid4().hex}", labels=labels,
-            mounts=[*mounts, docker.types.Mount("/var/lib/cpk-secrets", data.name, type="volume")],
+            mounts=[*mounts, public_mount, docker.types.Mount("/var/lib/cpk-secrets", data.name, type="volume")],
             network=network_id,
             networking_config={network_id:
                 engine.api.create_endpoint_config(aliases=["secrets-provider"])},
@@ -157,7 +198,11 @@ def main() -> None:
         assert source.attrs["Image"] == image_id
         assert source.attrs["Config"]["User"] == "10006"
         assert not source.attrs["HostConfig"]["PortBindings"]
+        actual_environment = dict(item.split("=", 1) for item in source.attrs["Config"]["Env"])
+        assert actual_environment.get("CPK_SECRETS_CONTROL_CONFIGURATION_FILE") == control.target_path, "recipe control path missing"
         actual_mounts = {mount["Destination"]: mount for mount in source.attrs["Mounts"]}
+        public_observed = actual_mounts[control.target_path]
+        assert public_observed["Name"] == public_volume.name and public_observed["RW"] is False
         for mount in mounts:
             observed = actual_mounts[mount["Target"]]
             assert observed["Name"] == mount["Source"] and observed["RW"] is False
@@ -173,6 +218,16 @@ assert os.access(account.pw_dir, os.R_OK | os.X_OK)
 status = pathlib.Path("/proc/1/status").read_text()
 assert next(line.split()[1:] for line in status.splitlines() if line.startswith("Uid:")) == ["10006"] * 4
 assert os.access("/var/lib/cpk-secrets", os.R_OK | os.W_OK | os.X_OK)
+public = pathlib.Path({control.target_path!r})
+public_info = public.stat()
+assert stat.S_ISREG(public_info.st_mode) and stat.S_IMODE(public_info.st_mode) == 0o444
+assert hashlib.sha256(public.read_bytes()).hexdigest() == {control.content_digest!r}
+try:
+    public.write_bytes(b"forbidden")
+except OSError:
+    denied = True
+else:
+    raise AssertionError("public control configuration writable")
 for path, digest in {expected!r}.items():
     file = pathlib.Path(path)
     info = file.stat()
@@ -209,6 +264,7 @@ for path in {list(material)!r}:
         assert other.wait(timeout=30).get("StatusCode") == 0, "other UID access law failed"
         assert not any(value.encode() in other.logs(tail=30) for value in sensitive)
         exercise_provider(token, application_value)
+        exercise_control(authority, sensitive)
         logs = source.logs(stdout=True, stderr=True, tail=200)
         assert len(logs) <= 1024 * 1024, "unbounded product logs"
         assert not any(value.encode() in logs for value in sensitive), "provider material leak"
@@ -249,7 +305,7 @@ for path in {list(material)!r}:
             raise RuntimeError("numeric bootstrap fixture cleanup incomplete")
     print(json.dumps({"status": "passed", "source_product": True, "both_bootstrap_files": True,
                       "numeric_uid": 10006, "readonly": True, "other_uid_denied": True,
-                      "authenticated_provider": True, "cpk_numeric_uid": 10001,
+                      "authenticated_provider": True, "public_control": True, "signed_control_reads": True, "cpk_numeric_uid": 10001,
                       "cpk_protected_file": True, "redaction": True, "residue": "absent"}))
 
 

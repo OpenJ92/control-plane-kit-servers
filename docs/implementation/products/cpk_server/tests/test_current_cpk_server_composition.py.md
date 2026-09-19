@@ -1,12 +1,14 @@
 Source: [products/cpk_server/tests/test_current_cpk_server_composition.py](../../../../../products/cpk_server/tests/test_current_cpk_server_composition.py).
+
+Early #181 compatibility for #208 updates exact selected dependency assertions for independent Coreb79 and Operationsbc559, Interpreter6b1c75a9, SDK2c5b5882 and Secrets8273b7de. Existing behavior assertions remain; no published image capability is inferred.
 Maintain this document alongside its source file. When the source or relevant imported contracts change, verify and update this companion in the same change.
 
 This suite checks current package adoption and server composition through
 metadata/text/AST inspection, actual imports, Core route values and selected
 service construction. Its independent expected Core/Operations and Interpreters
 revisions must match the canonical manifest and generated package/Dockerfile
-pins. Servers #177 selects reviewed Core/Operations e3e29995 and Interpreters
-e19da40. The constants change with deliberate accepted dependency adoption;
+pins. Servers #193 selects reviewed Core/Operations95452249 and Interpreters
+77c9a7f. The constants change with deliberate accepted dependency adoption;
 every equality and pin-count assertion remains intact. Counting pins does not
 verify registry bytes or execute an image.
 

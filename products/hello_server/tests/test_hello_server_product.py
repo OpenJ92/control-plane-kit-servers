@@ -45,10 +45,10 @@ class HelloServerProductTests(unittest.TestCase):
 
     def test_root_serves_escaped_html_and_preserves_health_and_dependencies(self) -> None:
         from control_plane_kit_servers_hello_server.server import (
-            HelloHandler,
-            ThreadingHTTPServer,
+            create_hello_server,
             render_hello,
         )
+        from hello_control_fixtures import fixture
 
         for message, color, escaped in (
             ("Hello Jacob", "blue", "Hello Jacob"),
@@ -59,7 +59,7 @@ class HelloServerProductTests(unittest.TestCase):
                 "HELLO_COLOR": color,
                 "HELLO_DEPENDENCIES_JSON": "[]",
             }):
-                with ThreadingHTTPServer(("127.0.0.1", 0), HelloHandler) as server:
+                with create_hello_server(fixture().config, os.environ, address=("127.0.0.1", 0)) as server:
                     thread = Thread(target=server.serve_forever, daemon=True)
                     thread.start()
                     try:
@@ -209,7 +209,7 @@ class HelloServerProductTests(unittest.TestCase):
         self.assertNotIn("postgresql://orders", json.dumps(descriptor))
 
     def test_entrypoint_source_preserves_bounded_dependency_checks(self) -> None:
-        source = (PRODUCT_SRC / "control_plane_kit_servers_hello_server" / "server.py").read_text(
+        source = (PRODUCT_SRC / "control_plane_kit_servers_hello_server" / "dependencies.py").read_text(
             encoding="utf-8"
         )
 
@@ -222,16 +222,14 @@ class HelloServerProductTests(unittest.TestCase):
     def test_process_observer_receipt_evidence_is_bounded_and_redacted(self) -> None:
         from control_plane_kit_servers_hello_server.server import (
             _OBSERVED_REQUEST_LIMIT,
-            _clear_observed_requests,
-            _observed_requests_payload,
-            _record_observed_request,
+            RequestObservations,
         )
 
-        _clear_observed_requests()
+        observations = RequestObservations()
         for index in range(_OBSERVED_REQUEST_LIMIT + 3):
-            _record_observed_request("GET", f"/?token=secret-{index}")
+            observations.record("GET", f"/?token=secret-{index}")
 
-        payload = _observed_requests_payload()
+        payload = observations.payload()
 
         self.assertEqual(payload["count"], _OBSERVED_REQUEST_LIMIT)
         self.assertEqual(payload["retained_limit"], _OBSERVED_REQUEST_LIMIT)

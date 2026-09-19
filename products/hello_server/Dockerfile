@@ -8,6 +8,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+RUN python -m pip install --no-cache-dir \
+    "control-plane-kit-server-sdk[verification] @ https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/2c5b588237fbe289c965029b4bc2f072715c42f3.zip"
+
 COPY products/hello_server/src ./products/hello_server/src
 
 RUN adduser --disabled-password --gecos "" --uid 10002 hello \

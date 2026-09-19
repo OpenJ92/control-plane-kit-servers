@@ -14,6 +14,7 @@ PY
 CPK_SERVER_IMAGE="${CPK_SERVER_IMAGE:-$(default_image)}"
 export CPK_SERVER_IMAGE
 export CPK_SERVER_BUILD_IMAGE=0
+export CPK_SERVER_SMOKE_PROFILE=published-baseline
 
 docker pull "$CPK_SERVER_IMAGE" >/dev/null
 sh scripts/cpk_server_image_smoke.sh
