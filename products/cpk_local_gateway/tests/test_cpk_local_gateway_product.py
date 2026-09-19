@@ -871,7 +871,9 @@ class CpkLocalGatewayProductTests(unittest.TestCase):
         )
 
         self.assertEqual(client.get("/health/live").json(), {"status": "live"})
-        self.assertEqual(client.get("/health/ready").json(), {"status": "ready"})
+        # An isolated legacy app lacks the complete relay/SDK composition.
+        self.assertEqual(client.get("/health/ready").status_code, 503)
+        self.assertEqual(client.get("/health/ready").json(), {"status": "not-ready"})
         self.assertNotIn("targets", client.get("/health/ready").json())
 
     def test_http_probe_uses_declared_target_without_forwarding_arbitrary_url(self) -> None:

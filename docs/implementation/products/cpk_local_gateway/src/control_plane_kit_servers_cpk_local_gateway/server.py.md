@@ -5,12 +5,21 @@ relay dependencies. No implicit probe credential lookup occurs there. Health-onl
 composition has no `/cpk/probes` route; complete explicitly configured probe
 credentials retain the old authenticated closed probe route independently.
 
-Production main always loads both required health files, requires port8000, and
+Production main always loads all three required public health/control files, requires port8000, and
 then considers the legacy probe-auth environment. All legacy fields absent means
 health-only serving; any present field requires the complete valid old set.
 Startup failures are bounded and omit candidate context. Access logging is
 disabled so query-bearing rejected requests are not copied into process logs.
-Minimal own-health endpoints remain liveness/readiness status only.
+Minimal own-health endpoints remain liveness/readiness status only. Readiness
+returns503 until the actual relay and SDK control receiver are configured and
+FastAPI's serving lifespan is active. The lifespan resets readiness in `finally`.
+An isolated relay/legacy test app without control configuration is never ready.
+SDK `/__control/capabilities`, `/__control/variables` and protected health reads
+are installed from explicit own-control configuration; they contain no commands.
+`main` requires selected `/etc/cpk/gateway/control.json` as well as transit and
+target files before serving, and cross-checks workspace/gateway/runtime identity.
+Local health performs no downstream or ingress checks. Current authenticated
+`/cpk/health/{kind}` relay behavior is preserved.
 
 Historical image descriptors are unchanged. This source process requires the new
 health configuration contract; #191 must associate a verified image before any

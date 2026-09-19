@@ -20,3 +20,9 @@ green at ba9bc249 in full owning CI35379205171.
 [Exact evidence and limits](https://github.com/OpenJ92/control-plane-kit-servers/pull/216#issuecomment-5734352881).
 The optional probe route is transitional: the user requires all legacy routes,
 wiring and documentation to retire before parent1813 completion, with no fallback.
+
+#182 supplies the required third gateway-control artifact to the existing source
+factory and actual-main fixture. Selected B transit-key, exact slot/path/mode,
+fixed port, absent/malformed relay files, legacy-auth independence and historical
+descriptor assertions remain. Missing-file cases retain the other two valid
+files so startup failure cannot be credited to an unrelated absent control file.

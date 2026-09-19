@@ -17,23 +17,25 @@ with an explicit port and no path/userinfo/query/fragment are supported. This
 private-network transport assumes runtime DNS/network integrity; bearers remain
 independently verified at receivers. Addresses are configuration, not HTTP errors.
 
-The source runtime contract frames the exact selected trust and target artifacts,
+The complete source runtime contract frames the exact selected trust, target and own-control artifacts,
 requires matching workspace/gateway/runtime, and advertises health transit on
 control8000. It creates no published image association and changes no historical
 catalogue. Fixed configuration failures exclude candidate exception chains.
 
-This helper is a relay source-contract fragment, not sufficient for managed
-bootstrap planning. It has no gateway own protected readiness surface. Selected
-Core `management_compiler._selected_surface(gateway=True)` / `_pin_path` requires
-that surface and correctly refuses this fragment. Existing Servers #182 (which
-depends on #180) owns truthful SDK gateway self-health. #181 composition and
-Interpreters #148 bootstrap transport must wait for that owner; no invented
-surface or dependency cycle is introduced here. The edge-free projection fixture
-supplies a separate synthetic gateway readiness surface to prove endpoint
-selection only; it does not prove this helper's bootstrap eligibility.
+#182 completes the former #180 fragment. The factory now requires all three
+artifacts, the actual gateway SDK liveness/readiness surface and NODE_CONTROLLABLE.
+It replaces the two old independent HttpChecks with `VerificationContract()`;
+the real SDK surface now supplies the managed observation obligation. Historical
+image descriptors remain unchanged. No optional incomplete two-argument form is
+retained. The complete returned contract enters actual Core compilation unchanged,
+including verification and artifacts; its local-readiness obligation must gate
+connector and subsequent authenticated-path/workload progress. The older #180
+edge-free projection fixture remains only an endpoint-selection witness.
 
 Validation: reviewed causal red and subsequent corrections are historical.
 Exact source/test head ba9bc249 passed full owning CI35379205171:26 support and436
 package tests plus existing runtime witnesses and owned cleanup.
 [Evidence and limits](https://github.com/OpenJ92/control-plane-kit-servers/pull/216#issuecomment-5734352881).
-This does not establish managed bootstrap or a deployed relay.
+That older evidence does not establish #182 or a deployed relay. PR218 records
+the own-health source validation; #148 retains concrete bootstrap observation
+transport and #181 retains production composition.

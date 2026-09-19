@@ -22,6 +22,14 @@ does not strip anything. Actual compiler ordering must retain local readiness
 before connector, management path and workload progress.
 
 Ordinary pinned Docker PR CI supplies missing-interface red and later owner green;
-source is not implemented at this target stage. Public minimal status is not a
+the reviewed target stage precedes implementation. Public minimal status is not a
 protected correlated observation or proof of authority. These package witnesses
 do not establish live DNS/TLS, image qualification or downstream execution.
+
+Original target `a9a96dc` ran ordinary CI35455965847/job105931156091:26 support,
+48 root and6 prior product tests passed; gateway56 had49 existing green and
+exactly7 missing-interface failures,0 errors. Integrity inventoried443 tests;
+later products/runtime witnesses did not execute after the intended stop.
+Corrected target `3eb6082` separately fixes exceptional-lifespan causality and
+its companion, reviewed before source. Its deeper assertion first executes in
+implementation CI; no duplicate red was run behind the unchanged missing guard.
