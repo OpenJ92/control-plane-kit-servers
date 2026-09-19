@@ -26,3 +26,9 @@ probe credentials enable that route only when complete. HTTPX is a direct image
 dependency for bounded async transport. The declared/listening control port is
 fixed8000. No historical product or image coordinate is changed by this source
 recipe; image association remains #191.
+
+#182 adds the already-selected immutable SDK[fastapi] coordinate to this recipe;
+startup now also requires the gateway-control public file for actual SDK own
+health. Numeric UID10005, control8000 and existing relay dependencies remain.
+The coordinate generator already mirrors SDK URLs in this file. This is a source
+recipe change, not a qualified image or alteration of historical descriptors.

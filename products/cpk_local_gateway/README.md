@@ -1,37 +1,55 @@
-# Gateway health-transit trust
+# Gateway source health contract
 
-The source package provides a strict public trust configuration and a pure
-Ed25519 verifier for health-transit credentials. This is separate from the
-existing gateway probe endpoint; it does not add HTTP relay or change published
-image descriptors.
+The gateway owns two separate responsibilities on control port8000: its
+own SDK health surface and the authenticated `/cpk/health/{kind}` relay.
+Own readiness reports validated relay/control composition during the active
+server lifespan. It requires no healthy downstream, connector or public ingress.
+A relay failure remains a separate result and does not recursively break local
+readiness. Liveness means the process can answer.
 
-The parent supplies workspace, gateway node, runtime, issuer and the exact
-gateway health-transit public-key family. Configuration derives the audience
-and permits overlapping public keys. Encode it with
-`gateway_health_transit_configuration_artifact`, then construct the receiver
-with `gateway_health_transit_verifier_from_artifact` from the selected artifact.
-Both functions live in the product's `health_transit_configuration` and
-`health_transit_verification` modules respectively.
+Production startup requires three selected public configuration artifacts:
+
+- `gateway-health-transit` at `/etc/cpk/gateway/health-transit.json`;
+- `gateway-health-targets` at `/etc/cpk/gateway/health-targets.json`;
+- `gateway-control` at `/etc/cpk/gateway/control.json`.
+
+The last contains the exact gateway target/runtime/declaration and separate SDK
+surface-read/health-read public verifier families. Startup and source contract
+composition cross-check workspace/gateway/runtime. No private signing material
+is stored here. Missing, malformed or mismatched configuration prevents serving.
 
 ```python
-verifier = gateway_health_transit_verifier_from_artifact(selected_artifact)
-accepted_request = verifier.verify(
-    credential, request,
-    expected_attempt_id=admitted_attempt,
-    expected_target=admitted_target,
-    expected_runtime_id=admitted_runtime,
-    expected_declaration=admitted_declaration,
-    expected_kind=requested_kind,
-    now=trusted_observation,
+contract = gateway_health_source_runtime_contract(
+    selected_transit_artifact, selected_targets_artifact, selected_control_artifact
 )
 ```
 
-The expected context must come from independently admitted execution/routing
-state. Do not derive it from the incoming token. Verification does not establish
-current approval, dispatch freshness, replay storage or workload authorization.
-It reads no files and performs no network call.
+The complete source contract declares actual SDK liveness/readiness on control,
+health transit, and all three exact configuration slots. It replaces its earlier
+independent HttpChecks with the SDK management observation obligation; actual
+Core compilation still requires gateway-local readiness before connector/path/
+workload progression. This factory creates no published image association.
 
-Servers180 owns receiver process/HTTP relay adoption;208 owns composition
-adapters; CPK1857 owns pinned receiver-trust coverage. The existing `./test.sh`
-is the owning Docker gate. Source tests do not establish published-image or
-live deployment acceptance.
+Existing public `/health/live` and `/health/ready` return only minimal process
+status. Unready returns503. Protected SDK health routes require exact signed
+workload-health credentials and return request-correlated Core outcomes;
+public status is not equivalent to authenticated management-path evidence.
+The relay separately verifies gateway transit and structural credential pairing,
+then forwards only workload authority to a configured management endpoint.
+
+Interpreters148 owns concrete local bootstrap observation,188 owns connector
+truth, and181/1860 own production provenance, current authority and history.
+No helper container, generic exec, extra socket recipient or private workload
+fallback is introduced. Transitional probe wiring elsewhere in this product is
+not a health fallback and must retire before parent1813 completes.
+
+The owning gate is the existing Docker-backed `./test.sh` through ordinary PR
+CI. Source/in-memory receiver tests and the SDK image recipe do not establish
+qualified images, live TLS/DNS or cluster deployment. Historical published
+product descriptors and catalogue coordinates remain unchanged.
+
+#182 source validation: [PR218](https://github.com/OpenJ92/control-plane-kit-servers/pull/218)
+records 26 support and 443 package tests green, including the seven new own-health
+laws, plus the unchanged owning runtime witnesses and exact cleanup. Gateway is
+one implementation family and one catalogue identity; its two roles do not
+increase coverage counts.

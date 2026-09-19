@@ -14,7 +14,7 @@ from control_plane_kit_core.capabilities import CapabilityName
 from control_plane_kit_core.configuration import ConfigurationArtifact, ConfigurationFileMode, ConfigurationMediaType
 from control_plane_kit_core.products import ProductRuntimeContract, ProductRuntimeContractCodec, ProviderRuntimePort
 from control_plane_kit_core.types import Protocol
-from control_plane_kit_core.verification import HttpCheck, VerificationContract, VerificationPolicy
+from control_plane_kit_core.verification import VerificationContract
 from .health_transit_configuration import _decode_json, _object, _configuration_from_artifact, _INPUT_ERRORS
 
 PROFILE = "cpk-gateway-health-relay-configuration.v1"
@@ -188,13 +188,10 @@ def gateway_health_relay_configuration_artifact(configuration):
     raise failure
 
 
-def gateway_health_source_runtime_contract(trust_artifact, targets_artifact):
-    """Relay source-contract fragment, not yet a managed-bootstrap-ready product.
-
-    Gateway own protected readiness belongs to #182; without that surface Core
-    management planning correctly refuses this fragment. No image is associated.
-    """
+def gateway_health_source_runtime_contract(trust_artifact, targets_artifact, control_artifact):
+    """Complete source contract with real own health; no image association."""
     try:
+        from .control_configuration import gateway_control_configuration_from_artifact, require_matching_gateway_control
         trust = _configuration_from_artifact(trust_artifact)
         if type(targets_artifact) is not ConfigurationArtifact:
             raise ValueError
@@ -205,13 +202,13 @@ def gateway_health_source_runtime_contract(trust_artifact, targets_artifact):
             raise ValueError
         targets = decode_gateway_health_relay_configuration(artifact.content.encode())
         require_matching_receiver(trust, targets)
+        control = gateway_control_configuration_from_artifact(control_artifact)
+        require_matching_gateway_control(control, targets)
         return ProductRuntimeContract(sockets=BlockSockets(providers=(ProviderSocket("control", Protocol.HTTP),)),
-            provider_ports=(ProviderRuntimePort("control", 8000),), configuration_artifacts=(trust_artifact, artifact),
+            provider_ports=(ProviderRuntimePort("control", 8000),), configuration_artifacts=(trust_artifact, artifact, control_artifact),
             gateway_transit=core.GatewayTransitDeclaration("control", core.GatewayTransitProtocol.NODE_HEALTH_READ_V1),
-            capabilities=(CapabilityName.HEALTH_CHECKABLE,), verification=VerificationContract(checks=tuple(
-                HttpCheck(check_id=kind, provider_socket="control", path="/health/"+kind,
-                    expected_statuses=(200,), policy=VerificationPolicy(timeout_seconds=5, interval_seconds=1,
-                        maximum_attempts=5, maximum_evidence_bytes=16384)) for kind in ("live", "ready"))))
+            capabilities=(CapabilityName.HEALTH_CHECKABLE, CapabilityName.NODE_CONTROLLABLE),
+            control_surfaces=(control.declaration.surface,), verification=VerificationContract())
     except _INPUT_ERRORS:
         failure = GatewayHealthRelayConfigurationError(_ERROR)
     raise failure

@@ -109,7 +109,9 @@ class CoordinateGenerationTests(unittest.TestCase):
                 "control_plane_kit_operations_commit",
                 "control_plane_kit_server_sdk_commit",
             ),
-            module.CPK_LOCAL_GATEWAY_DOCKERFILE: ("control_plane_kit_core_commit",),
+            module.CPK_LOCAL_GATEWAY_DOCKERFILE: (
+                "control_plane_kit_core_commit", "control_plane_kit_server_sdk_commit",
+            ),
             module.SECRETS_SERVER_DOCKERFILE: ("control_plane_kit_secrets_commit",),
             module.HELLO_SERVER_DOCKERFILE: ("control_plane_kit_server_sdk_commit",),
             module.HTTP_ACTIVE_ROUTER_DOCKERFILE: ("control_plane_kit_server_sdk_commit",),

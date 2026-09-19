@@ -18,6 +18,7 @@ from control_plane_kit_core.products import ProductRuntimeContractCodec, Product
 from control_plane_kit_core.gateway_delegation import GatewayProbeRequest, GatewayProbeCommandKind
 from control_plane_kit_core.runtime_effects import GatewayTargetId
 from health_relay_fixtures import World
+from gateway_control_fixtures import configuration as own_configuration, CONTROL_PATH
 
 PACKAGE = "control_plane_kit_servers_cpk_local_gateway"
 TRUST_PATH = "/etc/cpk/gateway/health-transit.json"
@@ -44,6 +45,10 @@ class HealthRelayConfigurationTests(unittest.TestCase):
         trust_api, _ = self.world.transit.api()
         return (self.world.transit.artifact(trust_api),
                 api.gateway_health_relay_configuration_artifact(self.configuration(api)))
+
+    def control_artifact(self):
+        api = importlib.import_module(PACKAGE + ".control_configuration")
+        return api.gateway_control_configuration_artifact(own_configuration(api, self.world))
 
     def refused(self, api, action):
         with self.assertRaises(api.GatewayHealthRelayConfigurationError) as caught:
@@ -98,10 +103,11 @@ class HealthRelayConfigurationTests(unittest.TestCase):
     def test_source_contract_exact_slots_port_and_transit_without_rewriting_historical_descriptor(self):
         api = self.api()
         trust, targets = self.artifacts(api)
-        contract = api.gateway_health_source_runtime_contract(trust, targets)
+        control = self.control_artifact()
+        contract = api.gateway_health_source_runtime_contract(trust, targets, control)
         self.assertEqual(ProductRuntimeContractCodec().decode(contract.descriptor()), contract)
         self.assertEqual({item.artifact_id:item for item in contract.configuration_artifacts},
-                         {trust.artifact_id:trust, targets.artifact_id:targets})
+                         {trust.artifact_id:trust, targets.artifact_id:targets, control.artifact_id:control})
         self.assertEqual(contract.gateway_transit.provider_socket_name, "control")
         self.assertEqual(contract.gateway_transit.protocol.value, "gateway-node-health-read-transit.v1")
         self.assertEqual({port.provider_socket:port.container_port for port in contract.provider_ports}, {"control":8000})
@@ -113,10 +119,10 @@ class HealthRelayConfigurationTests(unittest.TestCase):
             "sha256:b7cca6d0556eb5b68ef92386bc9b8e198ee62ccf10a7304b076a07283f821792")
         bad_config = replace(self.configuration(api), gateway_node_id=replace(self.world.transit.gateway, value="other-gateway"))
         other = api.gateway_health_relay_configuration_artifact(bad_config)
-        self.refused(api, lambda:api.gateway_health_source_runtime_contract(trust, other))
+        self.refused(api, lambda:api.gateway_health_source_runtime_contract(trust, other, control))
         for bad in (replace(targets, target_path="/tmp/private-marker.json"),
                     replace(targets, file_mode=ConfigurationFileMode.OWNER_READ_ONLY)):
-            self.refused(api, lambda:api.gateway_health_source_runtime_contract(trust, bad))
+            self.refused(api, lambda:api.gateway_health_source_runtime_contract(trust, bad, control))
 
     def run_main(self, files, environment):
         server = importlib.import_module(PACKAGE + ".server")
@@ -131,7 +137,7 @@ class HealthRelayConfigurationTests(unittest.TestCase):
                 paths[name] = path
             def selected_open(path, *args, **kwargs):
                 name = str(path)
-                if name in (TRUST_PATH, TARGET_PATH):
+                if name in (TRUST_PATH, TARGET_PATH, CONTROL_PATH):
                     opened.append(name)
                     if name not in paths:
                         raise FileNotFoundError("private-marker")
@@ -155,10 +161,11 @@ class HealthRelayConfigurationTests(unittest.TestCase):
         # Selected B is deliberately different from existing fixture default A.
         trust = self.world.transit.artifact(trust_api, public_keys=(self.world.transit.key_b,))
         _, targets = self.artifacts(api)
-        files = {TRUST_PATH:trust.content.encode(), TARGET_PATH:targets.content.encode()}
+        files = {TRUST_PATH:trust.content.encode(), TARGET_PATH:targets.content.encode(),
+                 CONTROL_PATH:self.control_artifact().content.encode()}
         serve, opened, output, _ = self.run_main(files, {})
         serve.assert_called_once()
-        self.assertEqual(set(opened), {TRUST_PATH, TARGET_PATH})
+        self.assertEqual(set(opened), {TRUST_PATH, TARGET_PATH, CONTROL_PATH})
         self.assertEqual(serve.call_args.kwargs["port"], 8000)
         app = serve.call_args.args[0]
         with TestClient(app) as client:
@@ -194,7 +201,8 @@ class HealthRelayConfigurationTests(unittest.TestCase):
             serve, _, output, _ = self.run_main(files, environment)
             serve.assert_not_called()
             self.assertNotIn("private-marker", output)
-        for bad_files in ({TRUST_PATH:files[TRUST_PATH]}, {TARGET_PATH:files[TARGET_PATH]},
+        for bad_files in ({path:raw for path,raw in files.items() if path != TARGET_PATH},
+                          {path:raw for path,raw in files.items() if path != TRUST_PATH},
                           files | {TRUST_PATH:b"private-marker"}, files | {TARGET_PATH:b"x"*131073}):
             serve, _, output, _ = self.run_main(bad_files, {})
             serve.assert_not_called()
