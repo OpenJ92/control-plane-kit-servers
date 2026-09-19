@@ -33,3 +33,7 @@ source commit; neighboring historical published source and image assertions
 remain unchanged. Product and runtime stages were unreached in that attempt.
 The corrected full owner run passed all 396 package methods and its normal
 runtime stages; historical publication assertions remain green.
+
+#182 adds the selected SDK to the gateway source recipe. Its dependency-change
+expectation therefore includes both canonical Core and SDK replacements; exact
+whole-file output comparison and unchanged product/image assertions remain.
