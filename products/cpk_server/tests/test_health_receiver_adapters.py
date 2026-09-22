@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import patch
 
 import control_plane_kit_core as core
+from control_plane_kit_core.capabilities import CapabilityName
 from control_plane_kit_core.products import ProductReference
 from control_plane_kit_core.configuration import ConfigurationMediaType, ConfigurationFileMode
 from control_plane_kit_core.planning import PlanGraphSide
@@ -299,7 +300,7 @@ class GatewaySelfHealthAdapterTests(unittest.TestCase):
         contract = self.value.contract
         for surfaces in ((), (replace(contract.control_surfaces[0], health_reads=(core.NodeHealthReadKind.LIVENESS,)),)):
             capabilities = contract.capabilities if surfaces else tuple(
-                value for value in contract.capabilities if value is not core.CapabilityName.NODE_CONTROLLABLE)
+                value for value in contract.capabilities if value is not CapabilityName.NODE_CONTROLLABLE)
             doc = document("different-own-surface", replace(contract, control_surfaces=surfaces, capabilities=capabilities))
             self.refusal(lambda:self.decoder(doc).decode(self.selection("control", doc=doc)))
         # Valid selected configuration with a foreign full target must not be
