@@ -298,7 +298,9 @@ class GatewaySelfHealthAdapterTests(unittest.TestCase):
                 self.refusal(lambda:decoder.decode(self.selection("control", **{name:"foreign"})))
         contract = self.value.contract
         for surfaces in ((), (replace(contract.control_surfaces[0], health_reads=(core.NodeHealthReadKind.LIVENESS,)),)):
-            doc = document("different-own-surface", replace(contract, control_surfaces=surfaces))
+            capabilities = contract.capabilities if surfaces else tuple(
+                value for value in contract.capabilities if value is not core.CapabilityName.NODE_CONTROLLABLE)
+            doc = document("different-own-surface", replace(contract, control_surfaces=surfaces, capabilities=capabilities))
             self.refusal(lambda:self.decoder(doc).decode(self.selection("control", doc=doc)))
         # Valid selected configuration with a foreign full target must not be
         # treated as the registered default or rewritten to selection truth.
@@ -370,3 +372,17 @@ class GatewaySelfHealthAdapterTests(unittest.TestCase):
         selected["control"] = self.selection("control", artifact=self.changed("control",
             lambda raw:raw["surface_read"].update(public_keys=[])))
         self.refusal(lambda:self.decoder().decode(selected["control"]))
+
+    def test_unexpected_new_decoder_and_selector_errors_keep_owner_identity(self):
+        selected = self.selections()
+        marker = RuntimeError("synthetic owner failure")
+        # Patch the selected product-codec boundary, not a parallel decoder.
+        with patch.object(self.api, "decode_gateway_control_configuration", side_effect=marker):
+            for action in (lambda:self.decoder().decode(selected["control"]), lambda:self.select(**selected)):
+                with self.assertRaises(RuntimeError) as caught:
+                    action()
+                self.assertIs(caught.exception, marker)
+        with patch.object(self.api, "decode_gateway_health_relay_configuration", side_effect=marker):
+            with self.assertRaises(RuntimeError) as caught:
+                self.select(**selected)
+            self.assertIs(caught.exception, marker)
