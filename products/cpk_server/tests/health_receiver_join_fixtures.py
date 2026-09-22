@@ -174,3 +174,39 @@ def gateway_token(value, letter):
         jti=grant.jti, gateway_node_health_read_transit=grant.descriptor()), authority.health_private,
         algorithm="EdDSA", headers={"kid":key.key_id, "typ":"CPK-GATEWAY-NODE-HEALTH-READ-TRANSIT+JWT"})
     return encoded.encode("ascii"), request
+
+
+def gateway_self_world():
+    """Actual #182 three-artifact source contract; no admission or running claim."""
+    from control_plane_kit_servers_cpk_local_gateway import control_configuration as control
+    from control_plane_kit_servers_cpk_local_gateway import health_relay_configuration as relay
+    from control_plane_kit_servers_cpk_local_gateway import health_transit_configuration as transit
+    a, b = fixture(), fixture("b")
+    target = replace(a.config.target, node_id=replace(a.config.target.node_id, value="gateway-a"),
+                     provider_socket_name=replace(a.config.target.provider_socket_name, value="control"))
+    configured = control.GatewayControlConfiguration(target=target, runtime_id=a.config.runtime_id,
+        declaration=control.gateway_control_declaration(), surface_issuer=a.config.surface_issuer,
+        surface_keys=a.config.surface_keys, health_issuer=a.config.health_issuer, health_keys=a.config.health_keys)
+    trusted = transit.GatewayHealthTransitConfiguration(target.workspace_id, target.node_id,
+        configured.runtime_id, "transit-issuer", core.DelegationKeyPurpose.GATEWAY_NODE_HEALTH_READ_TRANSIT,
+        configured.health_keys.public_keys)
+    targets = relay.GatewayHealthRelayConfiguration(target.workspace_id, target.node_id, configured.runtime_id, ())
+    trust_artifact = transit.gateway_health_transit_configuration_artifact(trusted)
+    control_artifact = control.gateway_control_configuration_artifact(configured)
+    contract = relay.gateway_health_source_runtime_contract(trust_artifact,
+        relay.gateway_health_relay_configuration_artifact(targets), control_artifact)
+    binding = relay.gateway_health_target_binding(target_id="unrelated-alias-73", target=target,
+        runtime_id=configured.runtime_id, runtime_contract=contract, hostname="private-origin-canary")
+    targets = replace(targets, targets=(binding,))
+    defaults = dict(transit=trust_artifact, targets=relay.gateway_health_relay_configuration_artifact(targets),
+                    control=control_artifact)
+    contract = relay.gateway_health_source_runtime_contract(defaults["transit"], defaults["targets"], defaults["control"])
+    doc = document("gateway-self-source", contract)
+    # Selected B differs from registered default A in BOTH independently selected purposes.
+    configured = replace(configured, health_keys=b.config.health_keys)
+    trusted = replace(trusted, public_keys=b.config.health_keys.public_keys)
+    artifacts = dict(defaults, transit=transit.gateway_health_transit_configuration_artifact(trusted),
+                     control=control.gateway_control_configuration_artifact(configured))
+    return SimpleNamespace(config=configured, trust=trusted, targets=targets, binding=binding,
+        artifacts=artifacts, defaults=defaults, document=doc, contract=contract,
+        registered=Products({"gateway":doc}), control=control, relay=relay, transit=transit)

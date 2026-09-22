@@ -17,7 +17,7 @@ from control_plane_kit_operations.health_receiver_trust import HealthReceiverSel
 from control_plane_kit_operations._health_receiver_trust import require_health_receiver_coverage
 from fastapi.testclient import TestClient
 from cpk_http_host_fixtures import token
-from health_receiver_join_fixtures import document, gateway_token, signers, world
+from health_receiver_join_fixtures import document, gateway_token, gateway_self_world, signers, world
 from test_http_mcp_boundaries import DeterministicVerifier, RecordingService
 
 MODULE = "control_plane_kit_servers_cpk_server.health_receiver_adapters"
@@ -222,3 +222,151 @@ class HealthReceiverAdapterTests(unittest.TestCase):
             for value in (facts, binding.decoder):
                 for sensitive in ("BEGIN PUBLIC KEY", "workspace-a", "health-b"):
                     self.assertNotIn(sensitive, repr(value))
+
+
+class GatewaySelfHealthAdapterTests(unittest.TestCase):
+    def setUp(self):
+        self.addCleanup(HealthReceiverAdapterTests.clear_product_modules)
+        self.value = gateway_self_world()
+        self.api = importlib.import_module(MODULE)
+        self.decoder_type = getattr(self.api, "GatewaySelfHealthReceiverDecoder", None)
+        self.assertIsNotNone(self.decoder_type, "#219 gateway self receiver decoder is missing")
+        self.select = getattr(self.api, "select_gateway_self_health_binding", None)
+        self.assertIsNotNone(self.select, "#219 selected self binding projection is missing")
+
+    refusal = HealthReceiverAdapterTests.refusal
+
+    def selection(self, family, *, artifact=None, doc=None, **changes):
+        value = self.value
+        doc = value.document if doc is None else doc
+        selected = HealthReceiverSelection("workspace-a", "revision-a", "projection-desired",
+            PlanGraphSide.DESIRED_GRAPH, "gateway-a", "runtime-a", "control",
+            ProductReference.from_document(doc), doc, value.artifacts[family] if artifact is None else artifact)
+        return replace(selected, **changes)
+
+    def selections(self):
+        return {family:self.selection(family) for family in ("transit", "targets", "control")}
+
+    def decoder(self, doc=None):
+        return self.decoder_type(ProductReference.from_document(self.value.document if doc is None else doc))
+
+    def changed(self, family, change):
+        artifact = self.value.artifacts[family]
+        raw = json.loads(artifact.content)
+        change(raw)
+        return replace(artifact, content=json.dumps(raw))
+
+    def test_actual_source_contract_dual_purpose_and_selected_keys(self):
+        value = self.value
+        reference = ProductReference.from_document(value.document)
+        self.assertEqual(value.registered.get("workspace-a", reference).descriptor_document, value.document)
+        registry = self.api.health_receiver_decoders(gateway_documents=(value.document,),
+            gateway_self_documents=(value.document,))
+        for family, purpose in (("transit", core.DelegationKeyPurpose.GATEWAY_NODE_HEALTH_READ_TRANSIT),
+                                ("control", core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ)):
+            with self.subTest(family=family):
+                binding = registry.binding_for(reference, purpose)
+                decoded = binding.decoder.decode(self.selection(family))
+                self.assertIs(decoded.purpose, purpose)
+                self.assertEqual(decoded.public_keys, value.config.health_keys.public_keys)
+                self.assertEqual([key.key_id for key in decoded.public_keys], ["health-b"])
+                self.assertNotEqual(value.artifacts[family].content_digest, value.defaults[family].content_digest)
+        self.assertEqual(self.decoder().decode(self.selection("control")).declaration, value.config.declaration)
+        self.refusal(lambda:registry.binding_for(reference, core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ))
+        transit_only = self.api.health_receiver_decoders(gateway_documents=(value.document,))
+        self.refusal(lambda:transit_only.binding_for(reference, core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ))
+        self.refusal(lambda:self.api.health_receiver_decoders().binding_for(reference, core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ))
+
+    def test_actual_self_alias_and_selected_target_bytes_are_preserved(self):
+        selected = self.selections()
+        actual = self.select(**selected)
+        self.assertEqual(actual, self.value.binding)
+        self.assertEqual(actual.target_id, "unrelated-alias-73")
+        self.assertEqual(actual.origin, "http://private-origin-canary:8000")
+        changed = self.changed("targets", lambda raw:raw["targets"][0].update(target_id="other-installed-alias"))
+        self.assertNotEqual(changed.content_digest, self.value.defaults["targets"].content_digest)
+        selected["targets"] = self.selection("targets", artifact=changed)
+        self.assertEqual(self.select(**selected).target_id, "other-installed-alias")
+        for side in PlanGraphSide:
+            self.assertEqual(self.select(**{name:replace(value, graph_side=side) for name,value in selected.items()}).target_id,
+                             "other-installed-alias")
+
+    def test_self_decoder_refuses_selected_context_and_declared_surface_mismatch(self):
+        decoder = self.decoder()
+        for name in ("workspace_id", "authored_graph_id", "receiver_node_id", "runtime_id", "provider_socket_name"):
+            with self.subTest(name=name):
+                self.refusal(lambda:decoder.decode(self.selection("control", **{name:"foreign"})))
+        contract = self.value.contract
+        for surfaces in ((), (replace(contract.control_surfaces[0], health_reads=(core.NodeHealthReadKind.LIVENESS,)),)):
+            doc = document("different-own-surface", replace(contract, control_surfaces=surfaces))
+            self.refusal(lambda:self.decoder(doc).decode(self.selection("control", doc=doc)))
+        # Valid selected configuration with a foreign full target must not be
+        # treated as the registered default or rewritten to selection truth.
+        for key in ("workspace_id", "graph_revision", "node_id"):
+            artifact = self.changed("control", lambda raw:raw["target"].update({key:"foreign"}))
+            self.refusal(lambda:decoder.decode(self.selection("control", artifact=artifact)))
+        artifact = self.changed("control", lambda raw:raw.update(runtime_id="foreign"))
+        self.refusal(lambda:decoder.decode(self.selection("control", artifact=artifact)))
+
+    def test_all_three_selections_require_same_provenance_and_selected_transit_socket(self):
+        for family in ("transit", "targets", "control"):
+            for name in ("workspace_id", "authored_graph_id", "realized_projection_id", "receiver_node_id", "runtime_id", "provider_socket_name"):
+                selected = self.selections()
+                selected[family] = replace(selected[family], **{name:"foreign"})
+                with self.subTest(family=family, name=name):
+                    self.refusal(lambda:self.select(**selected))
+            selected = self.selections()
+            selected[family] = replace(selected[family], graph_side=PlanGraphSide.BASE_GRAPH)
+            self.refusal(lambda:self.select(**selected))
+            doc = document("foreign-product", self.value.contract)
+            selected[family] = self.selection(family, doc=doc)
+            self.refusal(lambda:self.select(**selected))
+
+    def test_wrong_slots_profiles_and_missing_registered_slot_refuse(self):
+        for family in ("transit", "targets", "control"):
+            for changes in ({"artifact_id":"foreign"}, {"target_path":"/etc/foreign.json"},
+                            {"media_type":ConfigurationMediaType.TEXT}, {"file_mode":ConfigurationFileMode.OWNER_READ_ONLY}):
+                selected = self.selections()
+                selected[family] = self.selection(family, artifact=replace(self.value.artifacts[family], **changes))
+                self.refusal(lambda:self.select(**selected))
+            selected = self.selections()
+            selected[family] = self.selection(family, artifact=self.changed(family, lambda raw:raw.update(profile="foreign.v1")))
+            self.refusal(lambda:self.select(**selected))
+            missing = document("missing-slot", replace(self.value.contract, configuration_artifacts=tuple(
+                value for value in self.value.contract.configuration_artifacts if value.artifact_id != self.value.artifacts[family].artifact_id)))
+            self.refusal(lambda:self.select(**{name:self.selection(name, doc=missing) for name in self.selections()}))
+        wrong = document("wrong-product", self.value.contract)
+        self.refusal(lambda:self.decoder().decode(self.selection("control", doc=wrong)))
+        self.refusal(lambda:self.api.health_receiver_decoders(gateway_self_documents=(self.value.document, self.value.document)))
+
+    def test_missing_foreign_and_duplicate_self_bindings_use_actual_codec_refusals(self):
+        changes = [lambda raw:raw.update(targets=[]),
+            lambda raw:raw["targets"][0]["target"].update(graph_revision="foreign"),
+            lambda raw:raw["targets"][0]["target"].update(node_id="foreign"),
+            lambda raw:raw["targets"][0].update(runtime_id="foreign"),
+            lambda raw:raw["targets"].append(dict(raw["targets"][0])),
+            lambda raw:raw["targets"].append({**raw["targets"][0], "target_id":"second-alias"})]
+        for change in changes:
+            selected = self.selections()
+            selected["targets"] = self.selection("targets", artifact=self.changed("targets", change))
+            self.refusal(lambda:self.select(**selected))
+        for family in ("transit", "targets"):
+            selected = self.selections()
+            selected[family] = self.selection(family, artifact=self.changed(family, lambda raw:raw.update(gateway_node_id="foreign")))
+            self.refusal(lambda:self.select(**selected))
+
+    def test_pure_selection_and_bounded_candidate_free_errors(self):
+        selected = self.selections()
+        with patch("builtins.open", side_effect=AssertionError("file effect")), \
+             patch("os.open", side_effect=AssertionError("file effect")), \
+             patch("socket.create_connection", side_effect=AssertionError("network effect")):
+            self.assertEqual(self.select(**selected), self.value.binding)
+            facts = self.decoder().decode(selected["control"])
+        for value in (facts, self.decoder()):
+            self.assertNotIn("BEGIN PUBLIC KEY", repr(value))
+        selected["targets"] = self.selection("targets", artifact=self.changed("targets",
+            lambda raw:raw.update(extra="PRIVATE-CONFIG-CANARY" * 100)))
+        self.refusal(lambda:self.select(**selected))
+        selected["control"] = self.selection("control", artifact=self.changed("control",
+            lambda raw:raw["surface_read"].update(public_keys=[])))
+        self.refusal(lambda:self.decoder().decode(selected["control"]))
