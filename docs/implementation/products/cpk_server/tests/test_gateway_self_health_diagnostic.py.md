@@ -11,3 +11,15 @@ credited for import/fixture/dependency failure. Deeper assertions remain unexecu
 until implementation. The recording store/UOW tests prove adapter call ordering,
 not PostgreSQL isolation/rollback or actual live custody. Existing Operations owns
 those database laws. No fake concurrency or provider result earns live evidence.
+
+Meridian review5795971387 strengthened targets before source: actual configured
+verifier with wrong role/scope/workspace; independently mismatched approval;
+current key/issuer/fingerprint/private-reference and returned custody routing;
+approval shorter than original windows; each one-sided existing correlation;
+stable locks across changed valid window/key selection; exit-event-driven expiry,
+approval withdrawal and cancellation; actual offline CLI without private bootstrap
+loading; and original dispatch values/default client construction. Recording
+transactions still prove only adapter composition, not database guarantees.
+Initial0b639b1 reached ten missing-module assertions with real public fixture
+setup succeeding (CI35868947539). Later target branches remained unexecuted;
+that red does not waive the requested stronger tests or their source-green proof.

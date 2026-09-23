@@ -74,17 +74,20 @@ def recording_authority(api, selected, world, *, existing=False, exit_error=Fals
     refs = tuple(RegisteredSecretReference("reference-"+family,"workspace-a",
         SecretReference("secret://provider-a/"+family),"provider-a",(intent,),"fixture",stamp)
         for family,intent in zip(("transit","workload"),intents))
-    keys = tuple(RegisteredDelegationSigningKey("key-"+family,"workspace-a",purpose,issuer,key,ref.reference,
+    keys = list(RegisteredDelegationSigningKey("key-"+family,"workspace-a",purpose,issuer,key,ref.reference,
         "fixture",stamp,status=RegisteredDelegationSigningKeyStatus.ACTIVE,activated_by="fixture",activated_at=stamp)
         for family,purpose,issuer,key,ref in zip(("transit","workload"),
             (world.value.trust.purpose,world.value.config.health_keys.purpose),
             (world.value.trust.issuer,world.value.config.health_issuer),
             (world.value.trust.public_keys[0],world.value.config.health_keys.public_keys[0]),refs))
+    providers = [provider]
+    references = list(refs)
+    hooks = SimpleNamespace(on_exit=lambda:None)
     class Uses:
         def lock_correlation(self,workspace,correlation): events.append(("lock",correlation))
         def for_correlation(self,workspace,correlation):
             events.append(("read",correlation))
-            return object() if existing else None
+            return object() if existing is True or (existing and correlation in existing) else None
         def add(self,value):
             if fail_second and added: raise ValueError("provider-private-canary")
             added.append(value)
@@ -95,13 +98,14 @@ def recording_authority(api, selected, world, *, existing=False, exit_error=Fals
                 delegation_signing_keys=SimpleNamespace(require_unambiguous_active=lambda workspace,purpose:
                     next(key for key in keys if key.purpose is purpose)),
                 secret_references=SimpleNamespace(get_active_for_update=lambda workspace,reference:
-                    next(ref for ref in refs if ref.reference==reference)),
-                secret_providers=SimpleNamespace(require_active_registration_for_update=lambda workspace,registration:provider))
+                    next(ref for ref in references if ref.reference==reference)),
+                secret_providers=SimpleNamespace(require_active_registration_for_update=lambda workspace,registration:providers[0]))
         def __enter__(self): events.append(("enter",)); return self
         def commit(self): events.append(("commit-request",))
         def __exit__(self,*args):
             events.append(("exit",args[0]))
             if exit_error: raise RuntimeError("database-private-canary")
+            hooks.on_exit()
     approval = dict(packet_digest=selected.packet_digest,issuer="test-issuer",subject="operator-a",
         workspace_id="workspace-a",attempt_id="diagnostic-attempt",database_identity="existing-db",expires_at=210,
         reference="reviewed-approval")
@@ -109,4 +113,5 @@ def recording_authority(api, selected, world, *, existing=False, exit_error=Fals
         verifier=StaticDevelopmentMultiCredentialVerifier((StaticDevelopmentPrincipalCredential(b"test-token",world.principal),)),
         credential=b"test-token",approval_reader=lambda:dict(approval),workspace_id="workspace-a",database_identity="existing-db",
         unit_of_work=Uow,resolver=None)
-    return SimpleNamespace(authority=authority,events=events,added=added,approval=approval,keys=keys)
+    return SimpleNamespace(authority=authority,events=events,added=added,approval=approval,keys=keys,
+        providers=providers,references=references,hooks=hooks)

@@ -83,10 +83,30 @@ class GatewayDiagnosticTests(unittest.IsolatedAsyncioTestCase):
         # Runtime behavior and private bootstrap read laws are exercised after module discovery.
         self.assertTrue(callable(self.api.main))
 
-    async def exercise(self, *, existing=False, exit_error=False, fail_second=False, clock=None, signer_error=False):
+    def test_offline_cli_reads_only_public_inputs_and_emits_bounded_plan(self):
+        import contextlib
+        import io
+        from pathlib import Path
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            (root/"packet.json").write_bytes(self.world.raw)
+            for name,raw in self.world.artifacts.items(): (root/(name+".json")).write_bytes(raw)
+            output=io.StringIO()
+            with patch.object(self.api,"load_authority",side_effect=AssertionError("private bootstrap read")) as loader, \
+                    patch("socket.getaddrinfo",side_effect=AssertionError("offline network")), contextlib.redirect_stdout(output):
+                code=self.api.main(["plan","--packet",str(root/"packet.json"),"--artifacts",str(root)])
+            self.assertEqual(code,0)
+            loader.assert_not_called()
+            self.assertLessEqual(len(output.getvalue()),4096)
+            self.assertEqual(json.loads(output.getvalue())["status"],"offline-plan")
+
+    async def exercise(self, *, existing=False, exit_error=False, fail_second=False, clock=None, signer_error=False, configure=None):
         from gateway_diagnostic_fixtures import recording_authority
         selected = self.prepare()
         state = recording_authority(self.api,selected,self.world,existing=existing,exit_error=exit_error,fail_second=fail_second)
+        if configure is not None: configure(state)
+        signed=object()
         def sign(context,**kwargs):
             self.assertIn(("exit",None),state.events)
             state.events.append(("sign",))
@@ -95,15 +115,22 @@ class GatewayDiagnosticTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(key.resolution_grant.authorization_id.startswith("suse_"))
                 self.assertEqual(key.resolution_grant.operation_id,"diagnostic-attempt")
             if signer_error: raise ValueError("private-signing-canary")
-            return object()
+            self.assertEqual(context,selected.context)
+            self.assertEqual(kwargs["transit_grant"],selected.transit_grant)
+            self.assertEqual(kwargs["workload_grant"],selected.workload_grant)
+            return signed
         async def dispatch(*args,**kwargs):
             state.events.append(("dispatch",))
+            self.assertEqual(args,(selected.context,signed,selected.destination))
+            self.assertEqual(kwargs,{"transit_grant":selected.transit_grant,"workload_grant":selected.workload_grant})
             from control_plane_kit_interpreters.probes.health_transport import GatewayHealthTransportResult,GatewayHealthTransportCode
             return GatewayHealthTransportResult(GatewayHealthTransportCode.TIMED_OUT)
         with patch.object(self.api,"Ed25519HealthCredentialPairSigner") as signer, patch.object(self.api,"SignedGatewayHealthClient") as client:
             signer.return_value.sign.side_effect=sign
             client.return_value.dispatch.side_effect=dispatch
             result=await self.api.run_diagnostic(selected,state.authority,clock=clock or (lambda:150))
+            if client.called:
+                self.assertEqual(set(client.call_args.kwargs),{"clock"})
         return result,state
 
     async def test_real_authorization_projection_precedes_one_sign_and_dispatch_after_exit(self):
@@ -135,7 +162,76 @@ class GatewayDiagnosticTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["status"],"authorized-not-dispatched")
         self.assertEqual(len(result["authorization_ids"]),2)
         self.assertNotIn(("dispatch",),state.events)
-        ticks=iter((150,150,211,211,211))
-        result,state=await self.exercise(clock=lambda:next(ticks,211))
+        current=[150]
+        def configure(state):
+            state.hooks.on_exit=lambda:current.__setitem__(0,211)
+        result,state=await self.exercise(clock=lambda:current[0],configure=configure)
         self.assertEqual(result["status"],"authorized-not-dispatched")
         self.assertNotIn(("sign",),state.events)
+
+    async def test_real_verifier_policy_and_independent_approval_fail_closed(self):
+        from control_plane_kit_core.identity import PrincipalKind,WorkspaceGrant
+        original=self.world.principal
+        principals=(replace(original,identity=replace(original.identity,kind=PrincipalKind.WORKER)),
+            replace(original,workspace_grants=(WorkspaceGrant("workspace-a",()),)),
+            replace(original,workspace_grants=(WorkspaceGrant("foreign",original.workspace_grants[0].scopes),)))
+        for principal in principals:
+            self.world.principal=principal
+            result,state=await self.exercise()
+            self.assertEqual(result["status"],"approval-authentication-denied")
+            self.assertEqual(state.events,[])
+        self.world.principal=original
+        for field,value in (("issuer","other"),("subject","other"),("packet_digest","f"*64),
+                ("attempt_id","other"),("database_identity","other"),("workspace_id","other"),
+                ("expires_at",149),("expires_at",190)):
+            result,state=await self.exercise(configure=lambda state:state.approval.__setitem__(field,value))
+            self.assertEqual(result["status"],"approval-authentication-denied")
+            self.assertEqual(state.events,[])
+
+    async def test_each_existing_family_refuses_only_after_both_stable_locks(self):
+        selected=self.prepare()
+        for correlation in selected.correlations:
+            result,state=await self.exercise(existing={correlation})
+            self.assertEqual(result["status"],"prior-attempt-refused")
+            self.assertEqual(state.events[1:3],[("lock",key) for key in sorted(selected.correlations)])
+            self.assertEqual(state.added,[])
+            self.assertNotIn(("sign",),state.events)
+
+    async def test_changed_current_key_and_custody_routing_refuse_before_commit(self):
+        from control_plane_kit_core.secrets import SecretReference,SecretProviderEndpointReference
+        mutations=(
+            lambda s:s.keys.__setitem__(0,replace(s.keys[0],registration_id="other")),
+            lambda s:s.keys.__setitem__(0,replace(s.keys[0],issuer="other")),
+            lambda s:s.keys.__setitem__(0,replace(s.keys[0],public_key=s.keys[1].public_key)),
+            lambda s:s.keys.__setitem__(0,replace(s.keys[0],private_key_reference=SecretReference("secret://provider-a/other"))),
+            lambda s:s.providers.__setitem__(0,replace(s.providers[0],endpoint_reference=SecretProviderEndpointReference("other"))),
+            lambda s:s.providers.__setitem__(0,replace(s.providers[0],credential_reference=SecretReference("secret://bootstrap/other"))),
+            lambda s:s.references.__setitem__(0,replace(s.references[0],registration_id="other")),
+        )
+        for change in mutations:
+            result,state=await self.exercise(configure=change)
+            self.assertEqual(result["status"],"admission-refused")
+            self.assertNotIn(("commit-request",),state.events)
+            self.assertNotIn(("sign",),state.events)
+
+    def test_correlations_do_not_change_with_valid_window_or_key_selection(self):
+        packet={**self.world.packet,"keys":[dict(item) for item in self.world.packet["keys"]]}
+        packet["keys"][0]["registration_id"]="other-registration"
+        for name,grant in (("transit_grant",self.world.transit),("workload_grant",self.world.workload)):
+            packet[name]=replace(grant,issued_at=110,not_before=111,expires_at=210).descriptor()
+        self.assertEqual(self.prepare(packet).correlations,self.prepare().correlations)
+
+    async def test_postexit_approval_withdrawal_and_cancellation_do_not_sign(self):
+        import asyncio
+        def withdraw(state): state.hooks.on_exit=lambda:state.approval.clear()
+        result,state=await self.exercise(configure=withdraw)
+        self.assertEqual(result["status"],"authorized-not-dispatched")
+        self.assertEqual(len(result["authorization_ids"]),2)
+        self.assertNotIn(("sign",),state.events)
+        observed=[]
+        def cancel(state):
+            observed.append(state)
+            def cancelled(): raise asyncio.CancelledError()
+            state.hooks.on_exit=cancelled
+        with self.assertRaises(asyncio.CancelledError): await self.exercise(configure=cancel)
+        self.assertNotIn(("sign",),observed[0].events)
