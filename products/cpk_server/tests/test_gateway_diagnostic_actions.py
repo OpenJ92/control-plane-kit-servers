@@ -53,6 +53,36 @@ class RouteProvider:
 
 
 class GatewayDiagnosticActionTests(unittest.TestCase):
+    def test_generated_keys_use_actual_selected_secrets_provider_and_scoped_credentials(self):
+        module = api(self)
+        from fastapi.testclient import TestClient
+        from control_plane_kit_secrets.api import create_app
+        from control_plane_kit_secrets.bootstrap import load_provider_credentials
+        from control_plane_kit_secrets.control import decode_secrets_control_configuration
+        from control_plane_kit_secrets.crypto import load_master_key_file
+        from control_plane_kit_secrets.custody import admit_provider_custody
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "fresh"
+            module.prepare_private_material(root)
+            store, audit = admit_provider_custody(root / "provider.sqlite3",
+                master_key=load_master_key_file(root / "master.key", version="fixture"),
+                provider_id="cpk221-self-health-r1")
+            credentials = load_provider_credentials({"CPK_SECRETS_CREDENTIALS_FILE": str(root / "provider-credentials.json")})
+            control = decode_secrets_control_configuration((root / "secrets-control.json").read_bytes())
+            with TestClient(create_app(control=control, provider_id="cpk221-self-health-r1",
+                    initialize_provider=lambda: (store, audit, credentials))) as provider:
+                calls = []
+                def handle(request):
+                    calls.append(request.url.path)
+                    response = provider.request(request.method, request.url.raw_path.decode(),
+                        headers=dict(request.headers), content=request.content)
+                    return httpx.Response(response.status_code, headers=response.headers, content=response.content)
+                results = module.generate_health_keys(root, transport=httpx.MockTransport(handle))
+            self.assertEqual(len(results), 2)
+            self.assertEqual(calls, [action["path"] for action in module.generation_actions()])
+            self.assertEqual(len({result["fingerprint_sha256"] for result in results}), 2)
+            self.assertNotIn("PRIVATE KEY", json.dumps(results))
+
     def test_two_provider_generations_are_single_send_and_partial_failure_is_retained(self):
         module = api(self)
         for fail_second in (False, True):
