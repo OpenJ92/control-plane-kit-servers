@@ -374,19 +374,19 @@ def seal_packet(root, *, controller_image_digest, resource_plan, now):
     operations = read_json(root / "operations-receipt.json")
     if operations["status"] != "complete": raise SetupHold
     request = core.NodeHealthReadRequest(configured.target, configured.runtime_id, core.NodeHealthReadKind.READINESS,
-        configured.declaration.identity(), WORKSPACE + ":request")
+        configured.declaration.identity(), WORKSPACE + "-request")
     common = dict(canonicalization=core.NodeControlCanonicalization.JCS_RFC8785_V1, target=request.target,
         runtime_id=request.runtime_id, kind=request.kind, declaration_identity=request.declaration_identity,
         request_id=request.request_id, request_digest=request.canonical_digest(), issued_at=now, not_before=now, expires_at=now + 300)
     transit = core.DelegatedGatewayNodeHealthReadTransitGrant(profile=core.DelegatedGatewayNodeHealthReadTransitGrantProfile.V1,
         purpose=core.DelegationKeyPurpose.GATEWAY_NODE_HEALTH_READ_TRANSIT, issuer="cpk221-transit", key_id=public[0].key_id,
-        gateway_node_id=request.target.node_id, attempt_id=WORKSPACE + ":attempt", jti=WORKSPACE + ":transit", **common)
+        gateway_node_id=request.target.node_id, attempt_id=WORKSPACE + "-attempt", jti=WORKSPACE + "-transit", **common)
     workload = core.DelegatedWorkloadNodeHealthReadGrant(profile=core.DelegatedWorkloadNodeHealthReadGrantProfile.V1,
         purpose=core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ, issuer="cpk221-workload", key_id=public[1].key_id,
-        audience=core.workload_node_control_audience(request.target), jti=WORKSPACE + ":workload", **common)
+        audience=core.workload_node_control_audience(request.target), jti=WORKSPACE + "-workload", **common)
     ingress = NamedPublicIngress("management", IngressAuthorityReference("cpk221-retained-tunnel"),
         PublicIngressTarget("gateway", "control"), "cpk221-connector", HOSTNAME)
-    packet = dict(profile="gateway-self-health-diagnostic.v1", attempt_id=WORKSPACE + ":attempt", request=request.descriptor(),
+    packet = dict(profile="gateway-self-health-diagnostic.v1", attempt_id=WORKSPACE + "-attempt", request=request.descriptor(),
         ingress=ingress.descriptor(), target_id="cpk221-gateway-self", transit_socket="control",
         source_commit="369b3a3e2ad497ac4ab75e0c51ad11cb68dc1c0e", image_digest=controller_image_digest,
         resource_plan=resource_plan, artifacts={name: sha256(raw).hexdigest() for name, raw in artifacts.items()},
@@ -561,6 +561,17 @@ def seal_runner_authority(root, approval, packet):
         secret_credentials={f"secret://bootstrap/{WORKSPACE}/resolve": str(root / "provider-resolve.token")}))
 
 
+@bounded_failure
+def seal_approved_packet(root, approval, *, now):
+    # Refuse before writing any seal files if the remaining approval cannot
+    # contain the original full grant window. Never emit an unusable success.
+    if type(approval["expires_at"]) is not int or approval["expires_at"] < now + 300: raise SetupHold
+    packet = seal_packet(root, controller_image_digest=approval["controller_image_digest"],
+        resource_plan=approval["resource_plan"], now=now)
+    seal_runner_authority(root, approval, packet)
+    return packet
+
+
 def main(argv=None):
     import argparse
     import json
@@ -574,9 +585,7 @@ def main(argv=None):
         elif args.phase == "generate": generate_health_keys(root)
         elif args.phase == "operations": initialize_operations(root)
         elif args.phase == "seal":
-            packet = seal_packet(root, controller_image_digest=approval["controller_image_digest"],
-                resource_plan=approval["resource_plan"], now=int(time.time()))
-            seal_runner_authority(root, approval, packet)
+            seal_approved_packet(root, approval, now=int(time.time()))
         else:
             from .gateway_ingress_admission import load_credentials, EXPECTED_TUNNEL
             admission = read_json(Path(approval["ingress_receipt_file"]))

@@ -251,12 +251,23 @@ class GatewayDiagnosticActionTests(unittest.TestCase):
             (root / "operations-receipt.json").chmod(0o600)
             module.build_artifacts(root, gateway_image_digest="sha256:" + "a" * 64,
                 runtime_id="fixture-runtime", private_hostname="fixture-gateway")
-            raw = module.seal_packet(root, controller_image_digest="sha256:" + "b" * 64,
-                resource_plan="approved-resource-plan", now=2000000000)
+            approval = dict(controller_image_digest="sha256:" + "b" * 64,
+                resource_plan="approved-resource-plan", expires_at=2000000299)
+            with self.assertRaises(module.SetupHold): module.seal_approved_packet(root, approval, now=2000000000)
+            for name in ("packet.json", "runner-approval.json", "runner-principals.json", "runner-bootstrap.json"):
+                self.assertFalse((root / name).exists())
+            approval["expires_at"] = 2000000600
+            raw = module.seal_approved_packet(root, approval, now=2000000000)
             artifacts = {name: (root / "artifacts" / (name + ".json")).read_bytes()
                          for name in ("control", "transit", "targets", "product")}
             result = prepare_packet(raw, artifacts)
             self.assertEqual(result.plan()["status"], "offline-plan")
+            from control_plane_kit_servers_cpk_server._gateway_diagnostic_bootstrap import read_authority
+            from control_plane_kit_servers_cpk_server.gateway_self_health_diagnostic import _approval
+            authority = read_authority(root / "runner-bootstrap.json")
+            principal = authority.verifier.authenticate(authority.credential)
+            admitted = _approval(result, authority, principal.command_context(module.WORKSPACE), lambda: 2000000001)
+            self.assertEqual(admitted["expires_at"], 2000000300)
             self.assertNotIn("PRIVATE KEY", raw.decode())
             with self.assertRaises(module.SetupHold):
                 module.seal_packet(root, controller_image_digest="sha256:" + "b" * 64,

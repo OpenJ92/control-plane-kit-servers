@@ -37,6 +37,9 @@ provider bodies, credentials, private origins, database URLs or exception text.
 The final `seal` produces a single canonical runner packet, then derives its
 separate trusted bindings and digest approval inside the previously approved
 scope. It cannot reseal/retry an existing packet or renew an expired grant.
+Sealing refuses before writing any packet/authority files when less than the
+full 300-second grant window remains on the original approval. Tests join the
+generated seal to the actual runner authority loader and approval validator.
 
 ## Owner composition
 
@@ -72,6 +75,8 @@ published registry manifest. `seal_packet` uses actual Core paired grants and
 the existing diagnostic decoder; its validity window is at most 300 seconds.
 Seal only after route readiness and the separately reviewed unsigned denial
 observation. No alternate attempt or automatic retry is provided.
+Those readiness/denial prerequisites are enforced by the fixed external
+execution order and retained gate evidence, not by this module itself.
 
 ## Tunnel change and restoration
 
@@ -113,6 +118,9 @@ Each delivery creates/removes a finite network-disabled helper; pin its image
 explicitly to the reviewed controller. Do not silently pull the SDK default.
 Setup/runner do not receive the Docker socket. Any new password-file delivery
 volume must be separately named in the final resource ledger.
+Mount only the runner's named files at the absolute paths recorded in its
+bootstrap, never the entire setup directory containing the master, generation
+token, setup bindings or provider credential document.
 
 Keep delivery volumes, fresh database, Secrets custody/master and audit receipts
 after owned runtime container/network cleanup. Preserve old tunnel, DNS, token,
