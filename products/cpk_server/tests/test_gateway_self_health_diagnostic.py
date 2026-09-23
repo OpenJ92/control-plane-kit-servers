@@ -214,6 +214,14 @@ class GatewayDiagnosticTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn(("commit-request",),state.events)
             self.assertNotIn(("sign",),state.events)
 
+    async def test_missing_or_ambiguous_current_key_refuses_with_existing_owner_error(self):
+        from control_plane_kit_operations.delegation_signing_keys import DelegationSigningKeyNotFound
+        def missing(state): state.hooks.key_error=DelegationSigningKeyNotFound("current key unavailable")
+        result,state=await self.exercise(configure=missing)
+        self.assertEqual(result["status"],"admission-refused")
+        self.assertNotIn(("commit-request",),state.events)
+        self.assertNotIn(("sign",),state.events)
+
     def test_correlations_do_not_change_with_valid_window_or_key_selection(self):
         packet={**self.world.packet,"keys":[dict(item) for item in self.world.packet["keys"]]}
         packet["keys"][0]["registration_id"]="other-registration"
@@ -231,7 +239,10 @@ class GatewayDiagnosticTests(unittest.IsolatedAsyncioTestCase):
         observed=[]
         def cancel(state):
             observed.append(state)
-            def cancelled(): raise asyncio.CancelledError()
+            def cancelled(): asyncio.current_task().cancel()
             state.hooks.on_exit=cancelled
-        with self.assertRaises(asyncio.CancelledError): await self.exercise(configure=cancel)
+        task=asyncio.create_task(self.exercise(configure=cancel))
+        with self.assertRaises(asyncio.CancelledError): await task
+        self.assertIn(("exit",None),observed[0].events)
         self.assertNotIn(("sign",),observed[0].events)
+        self.assertNotIn(("dispatch",),observed[0].events)

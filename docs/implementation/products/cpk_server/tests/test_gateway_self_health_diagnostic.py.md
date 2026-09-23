@@ -23,3 +23,10 @@ transactions still prove only adapter composition, not database guarantees.
 Initial0b639b1 reached ten missing-module assertions with real public fixture
 setup succeeding (CI35868947539). Later target branches remained unexecuted;
 that red does not waive the requested stronger tests or their source-green proof.
+
+Final target review corrects cancellation to request cancellation on an independent
+running task during a normally returning UOW exit. It must be observed before the
+synchronous signer, rather than simulating an exception from exit. Missing or
+ambiguous current key selection uses the actual Operations-owned not-found error;
+no fake SQL selection engine is introduced. Source remains absent until this
+complete target set has independent review and genuine red evidence.

@@ -82,7 +82,10 @@ def recording_authority(api, selected, world, *, existing=False, exit_error=Fals
             (world.value.trust.public_keys[0],world.value.config.health_keys.public_keys[0]),refs))
     providers = [provider]
     references = list(refs)
-    hooks = SimpleNamespace(on_exit=lambda:None)
+    hooks = SimpleNamespace(on_exit=lambda:None,key_error=None)
+    def select_key(workspace,purpose):
+        if hooks.key_error is not None: raise hooks.key_error
+        return next(key for key in keys if key.purpose is purpose)
     class Uses:
         def lock_correlation(self,workspace,correlation): events.append(("lock",correlation))
         def for_correlation(self,workspace,correlation):
@@ -95,8 +98,7 @@ def recording_authority(api, selected, world, *, existing=False, exit_error=Fals
     class Uow:
         def __init__(self):
             self.stores = SimpleNamespace(secret_use_authorizations=Uses(),
-                delegation_signing_keys=SimpleNamespace(require_unambiguous_active=lambda workspace,purpose:
-                    next(key for key in keys if key.purpose is purpose)),
+                delegation_signing_keys=SimpleNamespace(require_unambiguous_active=select_key),
                 secret_references=SimpleNamespace(get_active_for_update=lambda workspace,reference:
                     next(ref for ref in references if ref.reference==reference)),
                 secret_providers=SimpleNamespace(require_active_registration_for_update=lambda workspace,registration:providers[0]))
