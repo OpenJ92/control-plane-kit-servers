@@ -70,7 +70,8 @@ def recording_authority(api, selected, world, *, existing=False, exit_error=Fals
     stamp = "2026-09-23T00:00:00Z"
     provider = RegisteredSecretProvider("provider-a","workspace-a",SecretProviderId("provider-a"),
         SecretProviderKind.CONTROL_PLANE_KIT_SECRETS,"Diagnostic fixture",SecretProviderEndpointReference("provider-a"),
-        SecretReference("secret://bootstrap/provider-a"),(SecretReference("secret://provider-a"),),intents,"fixture",stamp)
+        SecretReference("secret://bootstrap/provider-a"),
+        (SecretReference("secret://provider-a/transit"),SecretReference("secret://provider-a/workload")),intents,"fixture",stamp)
     refs = tuple(RegisteredSecretReference("reference-"+family,"workspace-a",
         SecretReference("secret://provider-a/"+family),"provider-a",(intent,),"fixture",stamp)
         for family,intent in zip(("transit","workload"),intents))
