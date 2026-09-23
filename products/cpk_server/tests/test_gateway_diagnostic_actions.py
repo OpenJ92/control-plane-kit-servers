@@ -52,7 +52,7 @@ class RouteProvider:
         if self.drift_after_put:
             self.config["ingress"][0]["service"] = "http://concurrent-writer.internal:9000"
         if self.lose_put: raise TimeoutError("private-provider-body")
-        return copy.deepcopy(self.config)
+        return copy.deepcopy(value)
 
 
 class GatewayDiagnosticActionTests(unittest.TestCase):
@@ -326,6 +326,7 @@ class GatewayDiagnosticActionTests(unittest.TestCase):
                 elif fault == "lost-put": provider.lose_put = True
                 else: provider.drift_after_put = True
                 with self.assertRaises(module.SetupHold) as raised: module.restore_route(root, provider)
+                if fault == "post-put-drift": self.assertEqual(provider.calls[-1], "get-config")
                 self.assertNotIn("private-provider-body", repr(raised.exception))
                 self.assertEqual(json.loads((root / "route-original.json").read_text()), original)
                 if fault != "connections":
@@ -342,6 +343,7 @@ class GatewayDiagnosticActionTests(unittest.TestCase):
             root, provider = Path(directory), RouteProvider()
             provider.drift_after_put = True
             with self.assertRaises(module.SetupHold): module.change_route(root, ORIGIN, provider)
+            self.assertEqual(provider.calls[-1], "get-config")
             self.assertEqual(json.loads((root / "route-action.json").read_text())["status"], "pending-update")
             with self.assertRaises(module.SetupHold): module.change_route(root, ORIGIN, provider)
             self.assertEqual(len([value for value in provider.calls if isinstance(value, tuple)]), 1)
