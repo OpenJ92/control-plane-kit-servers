@@ -36,6 +36,7 @@ class RouteProvider:
         self.calls = []
         self.connections = []
         self.lose_put = False
+        self.drift_after_put = False
 
     def get_config(self):
         self.calls.append("get-config")
@@ -48,6 +49,8 @@ class RouteProvider:
     def put_config(self, value):
         self.calls.append(("put-config", copy.deepcopy(value)))
         self.config = copy.deepcopy(value)
+        if self.drift_after_put:
+            self.config["ingress"][0]["service"] = "http://concurrent-writer.internal:9000"
         if self.lose_put: raise TimeoutError("private-provider-body")
         return copy.deepcopy(self.config)
 
@@ -95,6 +98,8 @@ class GatewayDiagnosticActionTests(unittest.TestCase):
                     index = len(calls)
                     calls.append(request)
                     self.assertEqual(request.method, "POST")
+                    self.assertEqual(request.headers["authorization"],
+                        "Bearer " + (root / "provider-generate.token").read_text().strip())
                     self.assertEqual(request.url.path, actions[index]["path"])
                     self.assertEqual(json.loads(request.content), actions[index]["body"])
                     if fail_second and index == 1: raise httpx.ReadTimeout("provider-private", request=request)
@@ -116,16 +121,67 @@ class GatewayDiagnosticActionTests(unittest.TestCase):
 
     def test_setup_authentication_precedes_schema_or_operations_writes(self):
         module = api(self)
+        from control_plane_kit_servers_cpk_server.authentication import authenticate_bearer_credential
+        from control_plane_kit_core.policies import PolicyScope
+        for presented in ("unrecognized", "runner"):
+            with self.subTest(presented=presented), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory) / "fresh"
+                module.prepare_private_material(root)
+                actions = module.generation_actions()
+                module.generate_health_keys(root, transport=httpx.MockTransport(
+                    lambda request: httpx.Response(200, json=generated(next(
+                        action for action in actions if action["path"] == request.url.path)))))
+                # Presenting another token never changes independently protected bindings.
+                token = "unrecognized-credential" if presented == "unrecognized" else (root / "runner-operator.token").read_text()
+                (root / "setup-operator.token").write_text(token)
+                called, authenticated = [], []
+                def authenticate(headers, verifier):
+                    principal = authenticate_bearer_credential(headers, verifier)
+                    authenticated.append(principal.command_context("cpk221-self-health-r1"))
+                    return principal
+                with patch.object(module, "authenticate_bearer_credential", side_effect=authenticate):
+                    with self.assertRaises(module.SetupHold):
+                        module.initialize_operations(root, schema_initializer=lambda: called.append("schema"),
+                            uow_factory=lambda: called.append("uow"))
+                self.assertEqual(called, [])
+                self.assertEqual(len(authenticated), 0 if presented == "unrecognized" else 1)
+                if authenticated:
+                    self.assertEqual(set(authenticated[0].granted_scopes), {PolicyScope.SECRET_PROVIDER_USE})
+
+    def test_operations_partial_commit_receipt_stops_reentry_and_downstream_calls(self):
+        module = api(self)
+        from types import SimpleNamespace
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "fresh"
             module.prepare_private_material(root)
-            # Presenting another token never changes independently protected bindings.
-            (root / "setup-operator.token").write_text("unrecognized-credential")
+            actions = module.generation_actions()
+            module.generate_health_keys(root, transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, json=generated(next(
+                    action for action in actions if action["path"] == request.url.path)))))
             called = []
-            with self.assertRaises(module.SetupHold):
-                module.initialize_operations(root, schema_initializer=lambda: called.append("schema"),
-                    uow_factory=lambda: called.append("uow"))
-            self.assertEqual(called, [])
+            with patch.object(module, "WorkspaceCommandService") as workspaces, \
+                 patch.object(module, "SecretProviderRegistrationService") as providers, \
+                 patch.object(module, "DelegationSigningKeyRegistrationService") as keys:
+                workspaces.return_value.create.return_value = SimpleNamespace(
+                    replayed=False, current_graph=SimpleNamespace(graph_id="owner-returned-graph"))
+                providers.return_value.register_provider.return_value = SimpleNamespace(registration_id="sprov_" + "a" * 64)
+                providers.return_value.register_reference.return_value = SimpleNamespace(registration_id="sref_" + "b" * 64)
+                keys.return_value.register.side_effect = RuntimeError("private-database-canary")
+                with self.assertRaises(module.SetupHold) as raised:
+                    module.initialize_operations(root, schema_initializer=lambda: called.append("schema"), uow_factory=lambda: None)
+                receipt = json.loads((root / "operations-receipt.json").read_text())
+                self.assertNotEqual(receipt["status"], "complete")
+                self.assertEqual(receipt["graph_id"], "owner-returned-graph")
+                self.assertEqual(receipt["provider_registration_id"], "sprov_" + "a" * 64)
+                self.assertEqual(receipt["keys"][0]["reference_registration_id"], "sref_" + "b" * 64)
+                self.assertEqual(receipt["pending"], "register-transit-key")
+                self.assertNotIn("private-database-canary", json.dumps(receipt) + repr(raised.exception))
+                keys.return_value.activate.assert_not_called()
+                before = (list(workspaces.mock_calls), list(providers.mock_calls), list(keys.mock_calls))
+                with self.assertRaises(module.SetupHold):
+                    module.initialize_operations(root, schema_initializer=lambda: called.append("schema"), uow_factory=lambda: None)
+                self.assertEqual(called, ["schema"])
+                self.assertEqual(before, (list(workspaces.mock_calls), list(providers.mock_calls), list(keys.mock_calls)))
 
     def test_setup_calls_existing_services_with_authenticated_identity_and_returned_ids(self):
         module = api(self)
@@ -259,6 +315,37 @@ class GatewayDiagnosticActionTests(unittest.TestCase):
             self.assertEqual(len([value for value in provider.calls if isinstance(value, tuple)]), 1)
             self.assertEqual(provider.config["ingress"][0]["service"], "http://other-writer.internal:9000")
 
+    def test_restore_connections_uncertain_response_and_verification_hold_without_replay(self):
+        module = api(self)
+        for fault in ("connections", "lost-put", "post-put-drift"):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as directory:
+                root, provider = Path(directory), RouteProvider()
+                original = copy.deepcopy(provider.config)
+                module.change_route(root, ORIGIN, provider)
+                if fault == "connections": provider.connections = [{"id": "active"}]
+                elif fault == "lost-put": provider.lose_put = True
+                else: provider.drift_after_put = True
+                with self.assertRaises(module.SetupHold) as raised: module.restore_route(root, provider)
+                self.assertNotIn("private-provider-body", repr(raised.exception))
+                self.assertEqual(json.loads((root / "route-original.json").read_text()), original)
+                if fault != "connections":
+                    receipt = json.loads((root / "route-restore.json").read_text())
+                    self.assertEqual(receipt["status"], "pending-restore")
+                    self.assertEqual((root / "route-restore.json").stat().st_mode & 0o777, 0o600)
+                    with self.assertRaises(module.SetupHold): module.restore_route(root, provider)
+                self.assertEqual(len([value for value in provider.calls if isinstance(value, tuple)]),
+                    1 if fault == "connections" else 2)
+
+    def test_update_post_put_drift_cannot_report_success_or_repeat_write(self):
+        module = api(self)
+        with tempfile.TemporaryDirectory() as directory:
+            root, provider = Path(directory), RouteProvider()
+            provider.drift_after_put = True
+            with self.assertRaises(module.SetupHold): module.change_route(root, ORIGIN, provider)
+            self.assertEqual(json.loads((root / "route-action.json").read_text())["status"], "pending-update")
+            with self.assertRaises(module.SetupHold): module.change_route(root, ORIGIN, provider)
+            self.assertEqual(len([value for value in provider.calls if isinstance(value, tuple)]), 1)
+
     def test_generation_actions_are_the_two_exact_approved_original_requests(self):
         module = api(self)
         actions = module.generation_actions()
@@ -283,11 +370,13 @@ class GatewayDiagnosticActionTests(unittest.TestCase):
             result = module.validate_generated_key(action, original)
             self.assertIsInstance(result, core.DelegationPublicKey)
             self.assertEqual(result.fingerprint_sha256, original["fingerprint_sha256"])
-            for fault in ("workspace_id", "secret_id", "intent", "issuer", "correlation_id", "replayed", "private", "fingerprint_sha256"):
+            for fault in ("workspace_id", "secret_id", "intent", "issuer", "correlation_id", "replayed", "private", "fingerprint_sha256",
+                          "secret_reference", "purpose", "label-purpose", "label-issuer", "label-key_id"):
                 with self.subTest(fault=fault):
                     payload = copy.deepcopy(original)
                     if fault in ("workspace_id", "secret_id"): payload["metadata"][fault] = "substituted"
                     elif fault == "intent": payload["metadata"]["labels"]["intent"] = "gateway.probe-signing-key"
+                    elif fault.startswith("label-"): payload["metadata"]["labels"][fault.removeprefix("label-")] = "substituted"
                     elif fault == "replayed": payload[fault] = True
                     else: payload[fault] = "private-substituted-canary"
                     with self.assertRaises(module.SetupHold) as raised: module.validate_generated_key(action, payload)
@@ -296,6 +385,7 @@ class GatewayDiagnosticActionTests(unittest.TestCase):
     def test_bootstrap_material_is_private_separated_and_public_verifiers_decode(self):
         module = api(self)
         from control_plane_kit_secrets.control import decode_secrets_control_configuration
+        from control_plane_kit_secrets.bootstrap import load_provider_credentials
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "fresh"
             module.prepare_private_material(root)
@@ -303,10 +393,18 @@ class GatewayDiagnosticActionTests(unittest.TestCase):
             for name in ("master.key", "provider-credentials.json", "provider-generate.token", "provider-resolve.token",
                          "setup-operator.token", "runner-operator.token", "postgres-password", "database.dsn"):
                 self.assertEqual((root / name).stat().st_mode & 0o777, 0o600)
-            credentials = json.loads((root / "provider-credentials.json").read_text())
+            credentials = load_provider_credentials({"CPK_SECRETS_CREDENTIALS_FILE": str(root / "provider-credentials.json")})
             self.assertNotEqual((root / "provider-generate.token").read_bytes(), (root / "provider-resolve.token").read_bytes())
-            self.assertIn("secret.generate-delegation-key", json.dumps(credentials))
-            self.assertIn("secret.resolve", json.dumps(credentials))
+            self.assertEqual(len(credentials), 2)
+            for family, action in (("generate", "secret.generate-delegation-key"), ("resolve", "secret.resolve")):
+                token = (root / ("provider-" + family + ".token")).read_text().strip()
+                credential = next(value for value in credentials if value.token == token)
+                self.assertEqual(len(credential.grants), 1)
+                grant = credential.grants[0]
+                self.assertEqual(grant.action, action)
+                self.assertEqual(grant.workspace_id, "cpk221-self-health-r1")
+                self.assertEqual(set(grant.intents), {value["intent"] for value in module.generation_actions()})
+                self.assertEqual(len(grant.intents), 2)
             control = decode_secrets_control_configuration((root / "secrets-control.json").read_bytes())
             self.assertEqual(control.target.workspace_id.value, "cpk221-self-health-r1")
             public = json.loads((root / "bootstrap-public.json").read_text())
