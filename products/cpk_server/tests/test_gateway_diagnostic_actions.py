@@ -288,7 +288,8 @@ class GatewayDiagnosticActionTests(unittest.TestCase):
 
 def generated(action):
     private = Ed25519PrivateKey.generate()
-    public = core.DelegationPublicKey("generated-health-key", core.DelegationKeyAlgorithm.ED25519,
+    family = "transit" if action["body"]["purpose"] == "gateway-node-health-read-transit" else "workload"
+    public = core.DelegationPublicKey("generated-" + family, core.DelegationKeyAlgorithm.ED25519,
         private.public_key().public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo).decode())
     body = action["body"]
     return {"outcome": "generated", "secret_reference": action["reference"],
