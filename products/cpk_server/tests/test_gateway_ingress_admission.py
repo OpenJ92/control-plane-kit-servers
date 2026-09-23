@@ -57,6 +57,42 @@ class Provider:
 
 
 class GatewayIngressAdmissionTests(unittest.TestCase):
+    def test_four_read_success_uses_actual_bounded_http_transport(self):
+        module = api(self)
+        provider = Provider()
+        calls = []
+
+        def handle(request):
+            calls.append(request)
+            self.assertEqual(request.method, "GET")
+            self.assertEqual(request.headers["Authorization"], "Bearer " + TOKEN)
+            self.assertEqual(request.content, b"")
+            return httpx.Response(200, json=provider.responses[request.url.path.removeprefix("/client/v4")])
+
+        allowed = {BASE + path for path in provider.responses}
+        transport = module.ReadOnlyTransport(allowed, transport=httpx.MockTransport(handle))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "credentials.env"
+            env(path)
+            result = module.inspect_ingress(module.load_credentials(path), transport=transport)
+        self.assertEqual(result.public()["status"], "read-only-compatible")
+        self.assertEqual(result.private()["origin_service"], ORIGIN)
+        self.assertEqual([request.url.path for request in calls], ["/client/v4" + path for path in provider.responses])
+        self.assertEqual(dict(calls[0].url.params), {"name": HOST, "page": "1", "per_page": "2"})
+
+    def test_global_origin_request_override_refuses_even_with_plain_rule(self):
+        module = api(self)
+        provider = Provider()
+        provider.responses[ROOT + "/configurations"]["result"]["config"]["originRequest"] = {
+            "httpHostHeader": "private-override.internal"}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "credentials.env"
+            env(path)
+            with self.assertRaises(module.AdmissionError) as raised:
+                module.inspect_ingress(module.load_credentials(path), transport=provider)
+        self.assertEqual(len(provider.calls), 4)
+        self.assertNotIn("private-override", repr(raised.exception))
+
     def test_exact_four_gets_bind_retained_ingress_and_keep_origin_private(self):
         module = api(self)
         with tempfile.TemporaryDirectory() as directory:
