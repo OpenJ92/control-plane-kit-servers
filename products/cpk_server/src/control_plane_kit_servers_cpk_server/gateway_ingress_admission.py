@@ -189,7 +189,7 @@ def inspect_ingress(credentials, *, transport=None):
         if (origin.scheme != "http" or not origin.hostname or origin.username is not None
                 or origin.password is not None or origin.path not in ("", "/")
                 or origin.query or origin.fragment or any(char.isspace() for char in service)
-                or "\\" in service or not 1 <= (origin.port or 80) <= 65535):
+                or "\\" in service or not 1 <= (80 if origin.port is None else origin.port) <= 65535):
             raise AdmissionError
         return AdmissionResult(record["id"], service, datetime.now(timezone.utc).isoformat())
     except Exception:

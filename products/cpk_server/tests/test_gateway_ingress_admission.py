@@ -150,6 +150,7 @@ class GatewayIngressAdmissionTests(unittest.TestCase):
             path = Path(directory) / "credentials.env"
             env(path)
             for rules in (
+                [{"hostname": HOST, "service": "http://retained-origin.internal:0"}, {"service": "http_status:404"}],
                 [{"hostname": "*.openj92.dev", "service": ORIGIN}, {"service": "http_status:404"}],
                 [{"hostname": HOST, "service": "http://user:secret@host/"}, {"service": "http_status:404"}],
                 [{"hostname": HOST, "service": ORIGIN, "path": "/private"}, {"service": "http_status:404"}],

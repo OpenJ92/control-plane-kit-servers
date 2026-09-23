@@ -8,7 +8,8 @@ Expected hostname/tunnel are comparison inputs, not inferred ownership.
 The new transport permits only those four URLs and GET, with no request body,
 redirect, retry, environment proxy or token endpoint. TLS verification remains
 enabled. Each response has a 64 KiB cap, ten-second I/O timeout and twenty-second
-elapsed bound checked during/after streaming. No successful live observation is
+elapsed check during/after streaming; this is not a hard wall-clock deadline.
+The concrete invocation also needs bounded outer supervision. No successful live observation is
 claimed by tests. The existing provider owns auth/status handling; its private
 `_request` is used narrowly for these reads and is a selected-version dependency.
 
