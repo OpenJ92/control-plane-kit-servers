@@ -3,7 +3,6 @@
 This is a diagnostic entrypoint, not a reusable deployment or recovery engine.
 Independent provider/Operations commits are never described as one transaction.
 """
-import base64
 import copy
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -62,8 +61,8 @@ def bounded_failure(function):
         try:
             return function(*args, **kwargs)
         except Exception:
-            pass
-        raise SetupHold() from None
+            failure = SetupHold()
+        raise failure from None
     return call
 
 
