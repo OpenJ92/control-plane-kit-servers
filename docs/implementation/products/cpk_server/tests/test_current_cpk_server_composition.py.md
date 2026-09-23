@@ -33,3 +33,7 @@ valid mutation, real PostgreSQL, external effects or a live ASGI listener.
 Broader runtime acceptance belongs to the owning gates.
 
 Related source and evidence: [products/cpk_server/src/control_plane_kit_servers_cpk_server/server.py](../../../../../products/cpk_server/src/control_plane_kit_servers_cpk_server/server.py), [products/cpk_server/src/control_plane_kit_servers_cpk_server/composition.py](../../../../../products/cpk_server/src/control_plane_kit_servers_cpk_server/composition.py), [coordinates/server-products.json](../../../../../coordinates/server-products.json), [pyproject.toml](../../../../../pyproject.toml), [products/cpk_server/Dockerfile](../../../../../products/cpk_server/Dockerfile), [products/cpk_local_gateway/Dockerfile](../../../../../products/cpk_local_gateway/Dockerfile).
+
+#221 advances only the independent expected Interpreter coordinate to accepted
+388282, matching the canonical diagnostic adoption. Existing assertions remain;
+this is installation/composition evidence, not publication or live readiness.
