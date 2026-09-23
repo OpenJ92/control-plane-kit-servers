@@ -239,6 +239,7 @@ def initialize_operations(root, *, schema_initializer=None, uow_factory=None):
         active = keys.activate(ActivateDelegationSigningKeyCommand(WORKSPACE, purpose, action["body"]["issuer"],
             registered.public_key.key_id, context.actor_id, stamp(), context.granted_scopes))
         if active.registration_id != registered.registration_id or active.public_key != public: raise SetupHold
+        entry["activated"] = True
     receipt.update(status="complete", pending=None)
     write_private(root / "operations-receipt.json", receipt, replace=True)
     return receipt
@@ -249,15 +250,16 @@ def postgres_setup(root):
     from control_plane_kit_operations.postgres import PostgresUnitOfWork
     from control_plane_kit_operations.postgres.schema import install_schema
     dsn = read_file(root / "database.dsn", 4096, protected=True).decode()
+    connect = lambda: psycopg.connect(dsn, connect_timeout=10, options="-c statement_timeout=10000 -c lock_timeout=5000")
     def initialize():
-        with psycopg.connect(dsn) as connection:
+        with connect() as connection:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT current_database()")
                 if cursor.fetchone() != ("cpk221_self_health_r1",): raise SetupHold
                 cursor.execute("SELECT count(*) FROM information_schema.tables WHERE table_schema='public'")
                 if cursor.fetchone() != (0,): raise SetupHold
             install_schema(connection)
-    return initialize, lambda: PostgresUnitOfWork(lambda: psycopg.connect(dsn))
+    return initialize, lambda: PostgresUnitOfWork(connect)
 
 
 def target(node, graph):
@@ -413,9 +415,16 @@ def route_copy(config, expected_origin):
             or origin.password is not None or origin.path not in ("", "/") or origin.query or origin.fragment
             or any(char.isspace() for char in expected_origin) or "\\" in expected_origin): raise SetupHold
     changed = copy.deepcopy(config)
-    hostname = "[" + origin.hostname + "]" if ":" in origin.hostname else origin.hostname
-    changed["ingress"][0]["service"] = urlunsplit(("http", hostname + ":8000", origin.path, "", ""))
+    changed["ingress"][0]["service"] = urlunsplit(("http", origin.netloc.rsplit(":", 1)[0] + ":8000", origin.path, "", ""))
     return changed
+
+
+def route_evidence(status, original, changed, previous=None, provider=None):
+    history = [] if previous is None else list(previous["history"])
+    history.append(dict(status=status, observed_at=datetime.now(timezone.utc).isoformat()))
+    return dict(status=status, original_sha256=sha256(rfc8785.dumps(original)).hexdigest(),
+        temporary_sha256=sha256(rfc8785.dumps(changed)).hexdigest(), history=history,
+        provider_observations=copy.deepcopy(getattr(provider, "observations", [])))
 
 
 @bounded_failure
@@ -426,10 +435,11 @@ def change_route(root, expected_origin, provider):
     changed = route_copy(original, expected_origin)
     if provider.get_connections() != []: raise SetupHold
     write_private(root / "route-original.json", original)
-    write_private(root / "route-action.json", {"status": "pending-update"})
-    provider.put_config(changed)
+    pending = route_evidence("pending-update", original, changed, provider=provider)
+    write_private(root / "route-action.json", pending)
+    if provider.put_config(changed) != changed: raise SetupHold
     if provider.get_config() != changed: raise SetupHold
-    result = {"status": "route-updated"}
+    result = route_evidence("route-updated", original, changed, pending, provider)
     write_private(root / "route-action.json", result, replace=True)
     return result
 
@@ -438,13 +448,153 @@ def change_route(root, expected_origin, provider):
 def restore_route(root, provider):
     root = private_root(root)
     if (root / "route-restore.json").exists(): raise SetupHold
-    if read_json(root / "route-action.json") != {"status": "route-updated"}: raise SetupHold
+    if read_json(root / "route-action.json")["status"] != "route-updated": raise SetupHold
     original = read_json(root / "route-original.json")
     changed = route_copy(original, original["ingress"][0]["service"])
     if provider.get_config() != changed or provider.get_connections() != []: raise SetupHold
-    write_private(root / "route-restore.json", {"status": "pending-restore"})
-    provider.put_config(original)
+    pending = route_evidence("pending-restore", original, changed, provider=provider)
+    write_private(root / "route-restore.json", pending)
+    if provider.put_config(original) != original: raise SetupHold
     if provider.get_config() != original: raise SetupHold
-    result = {"status": "route-restored"}
+    result = route_evidence("route-restored", original, changed, pending, provider)
     write_private(root / "route-restore.json", result, replace=True)
     return result
+
+
+class CloudflareRouteProvider:
+    """Existing provider client; exact retained-tunnel config/connections only."""
+    def __init__(self, credentials, *, transport=None):
+        from control_plane_kit_interpreters.cloudflare.client import CloudflareApiClient, CloudflareZoneAuthority
+        from .gateway_ingress_admission import BASE, EXPECTED_TUNNEL, Credentials
+        if type(credentials) is not Credentials: raise SetupHold
+        self.root = f"/accounts/{credentials.account}/cfd_tunnel/{EXPECTED_TUNNEL}"
+        self.observations = []
+        authority = CloudflareZoneAuthority(credentials.account, credentials.zone, "openj92.dev",
+            SecretReference("secret://bootstrap/cpk221/cloudflare-api"), HOSTNAME)
+        self.client = CloudflareApiClient(authority, credentials.token,
+            RouteTransport(BASE + self.root, transport=transport))
+
+    def get_config(self):
+        response = self.client._request("GET", self.root + "/configurations")
+        observed = dict(observed_at=datetime.now(timezone.utc).isoformat())
+        version = response["result"].get("version")
+        if type(version) is int and version >= 0: observed["version"] = version
+        self.observations.append(observed)
+        return response["result"]["config"]
+
+    def get_connections(self):
+        response = self.client._request("GET", self.root + "/connections")
+        value = response["result"]
+        if type(value) is not list: raise SetupHold
+        return value
+
+    def put_config(self, value):
+        response = self.client._request("PUT", self.root + "/configurations", json={"config": value})
+        result = response["result"]["config"]
+        if result != value: raise SetupHold
+        return result
+
+
+class RouteTransport:
+    def __init__(self, root, *, transport=None):
+        self.root, self.transport = root, transport
+
+    @bounded_failure
+    def request(self, method, url, *, headers, json=None, params=None):
+        from control_plane_kit_interpreters.cloudflare.client import CloudflareHttpResponse
+        if params is not None or (method, url) not in (
+                ("GET", self.root + "/connections"), ("GET", self.root + "/configurations"),
+                ("PUT", self.root + "/configurations")):
+            raise SetupHold
+        if method == "GET" and json is not None: raise SetupHold
+        if method == "PUT":
+            closed(json, {"config"})
+            if len(rfc8785.dumps(json)) > 65536: raise SetupHold
+        deadline = time.monotonic() + 20
+        with httpx.Client(timeout=10, verify=True, follow_redirects=False, trust_env=False, transport=self.transport) as client:
+            with client.stream(method, url, headers={**headers, "Accept-Encoding": "identity"}, json=json) as response:
+                if not 200 <= response.status_code < 300 or response.headers.get("content-encoding", "identity") != "identity": raise SetupHold
+                body = bytearray()
+                for chunk in response.iter_bytes():
+                    if len(body) + len(chunk) > 65536 or time.monotonic() > deadline: raise SetupHold
+                    body.extend(chunk)
+                if time.monotonic() > deadline: raise SetupHold
+                value = bounded_json(bytes(body))
+                if type(value) is not dict or value.get("success") is not True: raise SetupHold
+                return CloudflareHttpResponse(response.status_code, value)
+
+
+def approved_inputs(path, phase):
+    """Protected operator-authored authority, separately mounted from candidates.
+
+    Filesystem integrity is the trust boundary; this is not a signed approval
+    service. The external operator must mount this exact reviewed authorization.
+    """
+    value = closed(read_json(Path(path)), {"profile", "source_sha256", "root", "expires_at", "phases", "resource_plan",
+        "controller_image_digest", "gateway_image_digest", "runtime_id", "ingress_receipt_file", "cloudflare_credentials_file"})
+    if (value["profile"] != "cpk221-approved-setup.v1" or type(value["expires_at"]) is not int
+            or type(value["phases"]) is not list or not all(type(item) is str for item in value["phases"])
+            or value["expires_at"] <= int(time.time()) or phase not in value["phases"]
+            or value["source_sha256"] != sha256(Path(__file__).read_bytes()).hexdigest()
+            or value["root"] != "/private/tmp/cpk221-self-health-r1"):
+        raise SetupHold
+    root = Path(value["root"])
+    if Path(path).resolve().is_relative_to(root): raise SetupHold
+    return value, root
+
+
+def seal_runner_authority(root, approval, packet):
+    """Derive the original one-shot runner seal within the approved scope."""
+    value = bounded_json(packet)
+    bindings = [dict(issuer="urn:cpk221:diagnostic", subject="cpk221-runner-operator", kind="operator",
+        workspace_grants=[dict(workspace_id=WORKSPACE, scopes=[PolicyScope.SECRET_PROVIDER_USE.value])],
+        credential_file=str(root / "runner-binding.token"))]
+    write_private(root / "runner-principals.json", bindings)
+    write_private(root / "runner-approval.json", dict(packet_digest=sha256(packet).hexdigest(),
+        issuer="urn:cpk221:diagnostic", subject="cpk221-runner-operator", workspace_id=WORKSPACE,
+        attempt_id=value["attempt_id"], database_identity="cpk221_self_health_r1",
+        expires_at=min(approval["expires_at"], value["workload_grant"]["expires_at"]), reference=approval["resource_plan"]))
+    write_private(root / "runner-bootstrap.json", dict(workspace_id=WORKSPACE, database_identity="cpk221_self_health_r1",
+        database_dsn_file=str(root / "database.dsn"), operator_credential_file=str(root / "runner-operator.token"),
+        principal_bindings_file=str(root / "runner-principals.json"), approval_file=str(root / "runner-approval.json"),
+        secret_endpoints={"cpk221-secrets": PROVIDER_URL},
+        secret_credentials={f"secret://bootstrap/{WORKSPACE}/resolve": str(root / "provider-resolve.token")}))
+
+
+def main(argv=None):
+    import argparse
+    import json
+    parser = argparse.ArgumentParser(description="Finite approved #221 setup; each phase is single use.")
+    parser.add_argument("phase", choices=("prepare", "generate", "operations", "artifacts", "seal", "route-update", "route-restore"))
+    parser.add_argument("--approval", required=True)
+    args = parser.parse_args(argv)
+    try:
+        approval, root = approved_inputs(args.approval, args.phase)
+        if args.phase == "prepare": prepare_private_material(root)
+        elif args.phase == "generate": generate_health_keys(root)
+        elif args.phase == "operations": initialize_operations(root)
+        elif args.phase == "seal":
+            packet = seal_packet(root, controller_image_digest=approval["controller_image_digest"],
+                resource_plan=approval["resource_plan"], now=int(time.time()))
+            seal_runner_authority(root, approval, packet)
+        else:
+            from .gateway_ingress_admission import load_credentials, EXPECTED_TUNNEL
+            admission = read_json(Path(approval["ingress_receipt_file"]))
+            if admission["hostname"] != HOSTNAME or admission["tunnel_id"] != EXPECTED_TUNNEL: raise SetupHold
+            origin = admission["origin_service"]
+            if args.phase == "artifacts":
+                build_artifacts(root, gateway_image_digest=approval["gateway_image_digest"],
+                    runtime_id=approval["runtime_id"], private_hostname=urlsplit(origin).hostname)
+            else:
+                provider = CloudflareRouteProvider(load_credentials(approval["cloudflare_credentials_file"]))
+                if args.phase == "route-update": change_route(root, origin, provider)
+                else: restore_route(root, provider)
+        print(json.dumps({"status": "phase-complete", "phase": args.phase}))
+        return 0
+    except Exception:
+        print(json.dumps({"status": "setup-held", "phase": args.phase}))
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

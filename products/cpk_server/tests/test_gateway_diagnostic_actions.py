@@ -37,6 +37,7 @@ class RouteProvider:
         self.connections = []
         self.lose_put = False
         self.drift_after_put = False
+        self.bad_put_response = False
 
     def get_config(self):
         self.calls.append("get-config")
@@ -52,6 +53,7 @@ class RouteProvider:
         if self.drift_after_put:
             self.config["ingress"][0]["service"] = "http://concurrent-writer.internal:9000"
         if self.lose_put: raise TimeoutError("private-provider-body")
+        if self.bad_put_response: return {"malformed": True}
         return copy.deepcopy(value)
 
 
@@ -246,6 +248,7 @@ class GatewayDiagnosticActionTests(unittest.TestCase):
                 "keys": [{"registration_id": "dkey_" + marker * 64,
                           "reference_registration_id": "sref_" + marker * 64} for marker in "bc"]}
             (root / "operations-receipt.json").write_text(json.dumps(operations))
+            (root / "operations-receipt.json").chmod(0o600)
             module.build_artifacts(root, gateway_image_digest="sha256:" + "a" * 64,
                 runtime_id="fixture-runtime", private_hostname="fixture-gateway")
             raw = module.seal_packet(root, controller_image_digest="sha256:" + "b" * 64,
@@ -347,6 +350,73 @@ class GatewayDiagnosticActionTests(unittest.TestCase):
             self.assertEqual(json.loads((root / "route-action.json").read_text())["status"], "pending-update")
             with self.assertRaises(module.SetupHold): module.change_route(root, ORIGIN, provider)
             self.assertEqual(len([value for value in provider.calls if isinstance(value, tuple)]), 1)
+
+    def test_malformed_put_response_never_reports_success_or_repeats(self):
+        module = api(self)
+        for phase in ("update", "restore"):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as directory:
+                root, provider = Path(directory), RouteProvider()
+                if phase == "restore": module.change_route(root, ORIGIN, provider)
+                provider.bad_put_response = True
+                call = lambda: module.change_route(root, ORIGIN, provider) if phase == "update" else module.restore_route(root, provider)
+                with self.assertRaises(module.SetupHold): call()
+                with self.assertRaises(module.SetupHold): call()
+                self.assertEqual(len([value for value in provider.calls if isinstance(value, tuple)]), 1 if phase == "update" else 2)
+
+    def test_real_cloudflare_adapter_limits_paths_methods_bodies_and_validates_put(self):
+        module = api(self)
+        from control_plane_kit_servers_cpk_server.gateway_ingress_admission import Credentials
+        from control_plane_kit_core.secrets import SecretValue
+        original = RouteProvider().config
+        path = "/client/v4/accounts/account-a/cfd_tunnel/" + TUNNEL
+        calls = []
+        def handle(request):
+            calls.append((request.method, request.url.path))
+            self.assertEqual(request.headers["authorization"], "Bearer test-api-token")
+            if request.url.path.endswith("/connections"):
+                return httpx.Response(200, json={"success": True, "result": []})
+            if request.method == "PUT": self.assertEqual(json.loads(request.content), {"config": original})
+            return httpx.Response(200, json={"success": True, "result": {"config": original}})
+        provider = module.CloudflareRouteProvider(Credentials("account-a", "zone-a", SecretValue("test-api-token")),
+            transport=httpx.MockTransport(handle))
+        self.assertEqual(provider.get_config(), original)
+        self.assertEqual(provider.get_connections(), [])
+        self.assertEqual(provider.put_config(original), original)
+        self.assertEqual(calls, [("GET", path + "/configurations"), ("GET", path + "/connections"), ("PUT", path + "/configurations")])
+        for method, suffix in (("DELETE", "/configurations"), ("GET", "/token"), ("PUT", "/connections")):
+            with self.assertRaises(module.SetupHold):
+                provider.client.transport.request(method, "https://api.cloudflare.com" + path + suffix, headers={})
+        self.assertEqual(len(calls), 3)
+        malformed = module.CloudflareRouteProvider(Credentials("account-a", "zone-a", SecretValue("test-api-token")),
+            transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"success": True, "result": {"config": {}}})))
+        with self.assertRaises(module.SetupHold): malformed.put_config(original)
+
+    def test_cli_requires_independent_protected_unexpired_exact_source_approval(self):
+        module = api(self)
+        import contextlib
+        import io
+        from hashlib import sha256
+        import time
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "approval.json"
+            approval = dict(profile="cpk221-approved-setup.v1", source_sha256=sha256(Path(module.__file__).read_bytes()).hexdigest(),
+                root="/private/tmp/cpk221-self-health-r1", expires_at=int(time.time()) + 300, phases=["generate"], resource_plan="reviewed-plan",
+                controller_image_digest="sha256:" + "a" * 64, gateway_image_digest="sha256:" + "b" * 64,
+                runtime_id="runtime-a", ingress_receipt_file="/private/mounted/receipt", cloudflare_credentials_file="/private/mounted/credentials")
+            for fault in (None, "source", "expired", "phase", "mode"):
+                with self.subTest(fault=fault):
+                    value = dict(approval)
+                    if fault == "source": value["source_sha256"] = "0" * 64
+                    elif fault == "expired": value["expires_at"] = 0
+                    elif fault == "phase": value["phases"] = []
+                    path.write_text(json.dumps(value))
+                    path.chmod(0o644 if fault == "mode" else 0o600)
+                    output = io.StringIO()
+                    with patch.object(module, "generate_health_keys", return_value=[]) as generate, contextlib.redirect_stdout(output):
+                        result = module.main(["generate", "--approval", str(path)])
+                    self.assertEqual(result, 0 if fault is None else 2)
+                    self.assertEqual(generate.call_count, 1 if fault is None else 0)
+                    self.assertLessEqual(len(output.getvalue()), 4096)
 
     def test_generation_actions_are_the_two_exact_approved_original_requests(self):
         module = api(self)
