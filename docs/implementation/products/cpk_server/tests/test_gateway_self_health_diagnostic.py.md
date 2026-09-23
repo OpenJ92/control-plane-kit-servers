@@ -30,3 +30,9 @@ synchronous signer, rather than simulating an exception from exit. Missing or
 ambiguous current key selection uses the actual Operations-owned not-found error;
 no fake SQL selection engine is introduced. Source remains absent until this
 complete target set has independent review and genuine red evidence.
+
+Source review adds an actual protected bootstrap-loader test: valid configured
+identity/registry without database access, followed by provider credential mode,
+symlink, FIFO, directory, missing-file and size rejection. These test the loader
+rather than bypassing it with an injected authority object. They do not establish
+real operator setup provenance or immunity to later mount/parent replacement.

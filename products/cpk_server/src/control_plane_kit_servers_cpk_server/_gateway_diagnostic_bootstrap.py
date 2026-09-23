@@ -54,6 +54,11 @@ def read_authority(path):
     dsn=read_file(setup["database_dsn_file"],4096,protected=True).decode("utf-8")
     if type(setup["secret_endpoints"]) is not dict or type(setup["secret_credentials"]) is not dict: raise ValueError
     if not 1<=len(setup["secret_endpoints"])<=64 or not 1<=len(setup["secret_credentials"])<=64: raise ValueError
+    # The existing provider client later opens these files itself. Validate the
+    # same protected-file boundary now, before an authorization transaction;
+    # the invocation must keep their readonly mounts/parents intact afterward.
+    for credential_path in setup["secret_credentials"].values():
+        read_file(credential_path,4096,protected=True)
     registry=SecretProviderBootstrapRegistry(
         {SecretProviderEndpointReference(key):value for key,value in setup["secret_endpoints"].items()},
         {SecretReference(key):Path(value) for key,value in setup["secret_credentials"].items()})

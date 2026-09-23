@@ -15,3 +15,11 @@ routing; no keys, credentials or registrations are created. Approval is reopened
 on each check so file replacement can withdraw it. There is no atomic revocation
 claim across subsequent provider/network effects; current provider policy still
 applies. Private values never enter structured output or exception evidence.
+
+Meridian source review5796185611 found that Secrets credential paths needed the
+same early protected-file validation. The loader now validates every configured
+provider credential as bounded/regular/no-follow/nonblocking/root-or-current-owner
+and private before constructing authority. The real provider client later opens
+its credential itself; continued readonly mount/parent integrity remains explicit,
+not an atomic race-free guarantee. Actual-loader tests cover valid setup and
+insecure mode, symlink, FIFO, directory, missing and oversized files with no DB open.

@@ -101,6 +101,48 @@ class GatewayDiagnosticTests(unittest.IsolatedAsyncioTestCase):
             self.assertLessEqual(len(output.getvalue()),4096)
             self.assertEqual(json.loads(output.getvalue())["status"],"offline-plan")
 
+    def test_actual_private_loader_validates_provider_credential_files_before_authority(self):
+        import os
+        from pathlib import Path
+        import tempfile
+        from control_plane_kit_core.policies import PolicyScope
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            def write(name,raw):
+                path=root/name
+                path.write_bytes(raw)
+                path.chmod(0o600)
+                return str(path)
+            token=write("operator",b"test-token")
+            provider=write("provider",b"test-provider-token")
+            bindings=write("principals",encode([dict(issuer="test-issuer",subject="operator-a",kind="operator",
+                workspace_grants=[dict(workspace_id="workspace-a",scopes=[PolicyScope.SECRET_PROVIDER_USE.value])],
+                credential_file=token)]))
+            setup=dict(workspace_id="workspace-a",database_identity="existing-db",
+                database_dsn_file=write("dsn",b"postgresql://database.invalid/existing"),
+                operator_credential_file=token,principal_bindings_file=bindings,
+                approval_file=write("approval",encode({"reference":"unread-until-admission"})),
+                secret_endpoints={"provider-a":"http://provider.invalid:9000"},
+                secret_credentials={"secret://bootstrap/provider-a":provider})
+            bootstrap=write("bootstrap",encode(setup))
+            with patch("psycopg.connect",side_effect=AssertionError("loader opened database")) as connect:
+                authority=self.api.load_authority(Path(bootstrap))
+                self.assertEqual(authority.verifier.authenticate(b"test-token"),self.world.principal)
+                self.assertEqual(authority.workspace_id,"workspace-a")
+                Path(provider).chmod(0o644)
+                with self.assertRaises(ValueError): self.api.load_authority(Path(bootstrap))
+                Path(provider).chmod(0o600)
+                link=root/"provider-link"
+                link.symlink_to(provider)
+                fifo=root/"provider-fifo"
+                os.mkfifo(fifo,0o600)
+                oversized=write("oversized",b"x"*4097)
+                for unsafe in (str(link),str(fifo),str(root),str(root/"missing"),oversized):
+                    setup["secret_credentials"]["secret://bootstrap/provider-a"]=unsafe
+                    write("bootstrap",encode(setup))
+                    with self.assertRaises((ValueError,OSError)): self.api.load_authority(Path(bootstrap))
+                connect.assert_not_called()
+
     async def exercise(self, *, existing=False, exit_error=False, fail_second=False, clock=None, signer_error=False, configure=None):
         from gateway_diagnostic_fixtures import recording_authority
         selected = self.prepare()
