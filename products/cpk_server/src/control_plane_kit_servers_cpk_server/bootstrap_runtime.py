@@ -215,11 +215,14 @@ def acquire_root(plan, index_path, state):
 def _acquire(plan, material, state):
     with bootstrap_stage(BootstrapStage.LOAD_RUNTIME_DEPENDENCIES):
         import docker
+        from control_plane_kit_core.configuration import ConfigurationFileMode
         from control_plane_kit_core.secrets import (
             LocalDevelopmentSecretResolver, SecretFileMode, SecretProviderAuthority, SecretReference, SecretValue,
         )
         from control_plane_kit_core.topology import GraphDescriptorCodec
-        from control_plane_kit_interpreters.docker import DockerSdkClient, DockerSdkSecretMount, DockerRegistryAuthConfig
+        from control_plane_kit_interpreters.docker import (
+            DockerSdkClient, DockerSdkConfigurationMount, DockerSdkSecretMount, DockerRegistryAuthConfig,
+        )
         from control_plane_kit_interpreters.secrets import parse_image_pull_credential, resolve_secret_deliveries
 
     with bootstrap_stage(BootstrapStage.DECODE_GRAPH):
@@ -300,7 +303,7 @@ def _acquire(plan, material, state):
             network_name = resources["network"]["name"]
             setup_name = network_name + "-setup"
             volume_names = [entry["name"] for node in resources["nodes"]
-                            for entry in (*node["data_volumes"], *node["secret_files"])] + [setup_name + "-plan", setup_name + "-credential"]
+                            for entry in (*node["data_volumes"], *node["secret_files"], *node["configuration_files"])] + [setup_name + "-plan", setup_name + "-credential"]
             if (client.networks.list(names=[network_name])
                     or any(client.containers.list(all=True, filters={"name": "^/" + name + "$"})
                            for name in [n["name"] for n in resources["nodes"]] + [setup_name])
@@ -323,6 +326,12 @@ def _acquire(plan, material, state):
                 owner = protected_file_owner(node["secret_files"], image)
                 if owner is not None:
                     file_owners[node["node_id"]] = owner
+                # The existing configuration archive is root-owned. Preserve
+                # its declared mode; do not make private files world-readable.
+                if (any(artifact.file_mode is ConfigurationFileMode.OWNER_READ_ONLY
+                        for artifact in graph.node(node["node_id"]).configuration_artifacts)
+                        and image.secret_file_owner_uid() != 0):
+                    raise RootBootstrapHold("bootstrap configuration mode is unreadable by recipient")
             if node["node_id"] == plan["secrets_node_id"]:
                 with bootstrap_stage(BootstrapStage.VERIFY_PROVIDER_IMAGE):
                     configured = dict(entry.split("=", 1) for entry in client.images.get(image.image_id).attrs["Config"].get("Env", []) if "=" in entry)
@@ -346,6 +355,18 @@ def _acquire(plan, material, state):
                 value = next(item.value for item in files if item.target_path == entry["target"])
                 file_volume(entry["name"], value, file_owners[node["node_id"]])
                 mounts.append(dict(DockerSdkSecretMount(entry["target"], entry["name"]).docker_mount()))
+            for entry in node["configuration_files"]:
+                artifact = next(item for item in graph.node(node["node_id"]).configuration_artifacts
+                                if item.target_path == entry["target"])
+                volume(entry["name"])
+                effect("materialize-configuration:" + entry["name"],
+                       lambda: sdk.materialize_configuration_artifact(entry["name"], artifact))
+                if sdk.configuration_artifact_digest(entry["name"]) != entry["sha256"]:
+                    raise RootBootstrapHold("bootstrap configuration delivery could not be verified")
+                receipt["observations"].setdefault("configuration_files", {})[entry["name"]] = {
+                    "sha256": entry["sha256"], "digest_verified": True}
+                observed()
+                mounts.append(dict(DockerSdkConfigurationMount(artifact, entry["name"]).docker_mount()))
             options = {}
             if node["local_docker_access"] is not None:
                 socket_path = node["local_docker_access"]["socket"]
@@ -364,7 +385,7 @@ def _acquire(plan, material, state):
             inspection = sdk.inspect_container(container.id)
             if (inspection is None or inspection.image_id != image.image_id
                     or {(item.target_path, item.volume_name) for item in inspection.readonly_secret_mounts}
-                    != {(item["target"], item["name"]) for item in node["secret_files"]}):
+                    != {(item["target"], item["name"]) for item in (*node["secret_files"], *node["configuration_files"])}):
                 raise RootBootstrapHold("bootstrap recipient mounts could not be verified")
             observed()
             effect("start-container:" + node["node_id"], container.start)
