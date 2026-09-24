@@ -2,6 +2,7 @@
 import copy
 from dataclasses import replace
 from hashlib import sha256
+import importlib
 import json
 from pathlib import Path
 import tempfile
@@ -13,7 +14,6 @@ from control_plane_kit_core.configuration import ConfigurationArtifact, Configur
 from control_plane_kit_core.products import ProductDescriptorCodec
 from control_plane_kit_core.topology import GraphDescriptorCodec
 from control_plane_kit_interpreters.docker.sdk import DockerSdkImageInspection
-from control_plane_kit_servers_cpk_server import bootstrap
 from test_root_bootstrap import installation_input, DRIVER
 
 
@@ -32,8 +32,13 @@ def configured_input(mode=ConfigurationFileMode.READ_ONLY):
 
 
 class RootBootstrapConfigurationTests(unittest.TestCase):
+    def setUp(self):
+        # Composition tests evict product modules. Resolve the current API so
+        # lazy runtime imports and exception assertions share the same classes.
+        self.bootstrap = importlib.import_module("control_plane_kit_servers_cpk_server.bootstrap")
+
     def planned(self, mode=ConfigurationFileMode.READ_ONLY):
-        plan = bootstrap.plan_root_bootstrap(configured_input(mode), driver_image_id=DRIVER)
+        plan = self.bootstrap.plan_root_bootstrap(configured_input(mode), driver_image_id=DRIVER)
         for node in plan["resources"]["nodes"]:
             self.assertIn("configuration_files", node, "compiled configuration is missing from root delivery projection")
         return plan
@@ -55,7 +60,7 @@ class RootBootstrapConfigurationTests(unittest.TestCase):
             names.append(entry["name"])
             self.assertNotIn(entry["name"], [item["name"] for item in node["secret_files"] + node["data_volumes"]])
         self.assertEqual(len(set(names)), 3)
-        baseline = bootstrap.plan_root_bootstrap(installation_input(), driver_image_id=DRIVER)
+        baseline = self.bootstrap.plan_root_bootstrap(installation_input(), driver_image_id=DRIVER)
         self.assertEqual(plan["required_material"], baseline["required_material"])
 
     def test_saved_projection_content_path_mode_or_digest_drift_refuses_before_acquisition(self):
@@ -67,8 +72,8 @@ class RootBootstrapConfigurationTests(unittest.TestCase):
                 if field in ("sha256", "name"): entry[field] = "substituted"
                 else: entry["artifact"][field] = "substituted"
                 state = Path(directory) / "state"
-                with self.assertRaises(bootstrap.RootBootstrapError):
-                    bootstrap.apply_root_bootstrap(candidate, expected_digest=plan["digest"], driver_image_id=DRIVER,
+                with self.assertRaises(self.bootstrap.RootBootstrapError):
+                    self.bootstrap.apply_root_bootstrap(candidate, expected_digest=plan["digest"], driver_image_id=DRIVER,
                         index_path=Path(directory) / "absent", state_directory=state)
                 self.assertFalse((state / "receipt.json").exists())
 
@@ -118,8 +123,8 @@ class RootBootstrapConfigurationTests(unittest.TestCase):
                     image_id="sha256:" + "b" * 64,
                     readonly_secret_mounts=tuple(SimpleNamespace(target_path=item["target"], volume_name=item["name"])
                                                 for item in first["secret_files"]))
-                with self.assertRaises(bootstrap.RootBootstrapHold) as raised:
-                    bootstrap.apply_root_bootstrap(plan, expected_digest=plan["digest"], driver_image_id=DRIVER,
+                with self.assertRaises(self.bootstrap.RootBootstrapHold) as raised:
+                    self.bootstrap.apply_root_bootstrap(plan, expected_digest=plan["digest"], driver_image_id=DRIVER,
                         index_path=index_path, state_directory=state)
                 self.assertNotIn("private-error-canary", str(raised.exception))
                 client.containers.create.return_value.start.assert_not_called()
@@ -137,8 +142,8 @@ class RootBootstrapConfigurationTests(unittest.TestCase):
                     receipt_path = state / "receipt.json"
                     before = receipt_path.read_bytes()
                     self.assertIsNotNone(json.loads(before)["pending"])
-                    with self.assertRaises(bootstrap.RootBootstrapHold):
-                        bootstrap.apply_root_bootstrap(plan, expected_digest=plan["digest"], driver_image_id=DRIVER,
+                    with self.assertRaises(self.bootstrap.RootBootstrapHold):
+                        self.bootstrap.apply_root_bootstrap(plan, expected_digest=plan["digest"], driver_image_id=DRIVER,
                             index_path=index_path, state_directory=state)
                     self.assertEqual(before, receipt_path.read_bytes())
                     self.assertEqual(sdk.materialize_configuration_artifact.call_count, 1)

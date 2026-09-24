@@ -26,6 +26,15 @@ parent181, prerequisite225. Base `e8e770167dbc0cae69a6c376c829e96894145b42`.
   CPK/Secrets recipients, exact bytes/mode/read-only mounts and owned cleanup.
   Historical product images prove delivery only, not current-source startup.
 
+The first source gate35938626768 exposed stale exception identities in the new
+fixture: earlier composition tests evict product modules, while the fixture held
+its collection-time bootstrap module. All five fault subcases reached their
+intended runtime refusals, but `assertRaises` compared against the old class.
+The fixture now imports the current bootstrap API in `setUp`, matching the
+existing root tests. Exception types and all behavior assertions are preserved;
+no application or shared harness change was needed. The target-red runs establish
+missing projection, not independent proof of these previously masked branches.
+
 ## Security, data and history
 
 Public configuration is secret-free but integrity-sensitive. Existing secret
