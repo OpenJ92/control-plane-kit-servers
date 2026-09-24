@@ -22,7 +22,7 @@ dependencies = [
 cpk = "control_plane_kit_servers_cpk_server.client.cli:main"
 
 [tool.setuptools.packages.find]
-where = ["src", "products/cpk_server/src", "products/hello_server/src", "products/http_active_router/src", "products/http_multiplexer/src", "products/cpk_local_gateway/src", "products/secrets_server/src"]
+where = ["src", "products/cpk_server/src", "products/hello_server/src", "products/http_active_router/src", "products/http_multiplexer/src", "products/cpk_local_gateway/src", "products/secrets_server/src", "products/cloudflared_connector/src"]
 
 [tool.setuptools.package-data]
 control_plane_kit_servers = ["catalogue.json", "catalogue.json.sha256"]
