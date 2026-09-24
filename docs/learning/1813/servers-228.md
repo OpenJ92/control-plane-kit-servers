@@ -48,6 +48,12 @@ SIGTERM shutdown; Meridian accepted explicit configuration/source evidence here,
 with actual bidirectional SDK/native signal/lifecycle gate remaining on188.
 Source validation and review are pending at this checkpoint.
 
+Meridian source HOLD5816889979 found four shell absence checks that could treat
+a failed Docker query with empty stdout as absence. The witness now captures
+each query with explicit status handling before testing emptiness, including
+cleanup verification and preflight. Image tag identity reads also fail explicitly.
+Reader and the original 13 target methods are unchanged by this correction.
+
 The later #148 consumer must inspect only an authorized exact target and latest
 sample; verify effective pinned image/configuration, ownership, incarnation,
 sample freshness and original stage authority before I/O and acceptance. A

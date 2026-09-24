@@ -17,7 +17,8 @@ cleanup() {
       [ "$owner" = "$RUN" ] || return 1
       docker rm -f "$identity" >/dev/null || failed=1
     fi
-    [ -z "$(docker container ls -aq --no-trunc --filter "id=$identity")" ] || failed=1
+    observed="$(docker container ls -aq --no-trunc --filter "id=$identity")" || return 1
+    [ -z "$observed" ] || failed=1
   fi
   observed="$(docker image ls -q --no-trunc --filter "reference=$TAG")" || return 1
   if [ -n "$observed" ]; then
@@ -26,9 +27,11 @@ cleanup() {
     fi
     owner="$(docker image inspect --format '{{index .Config.Labels "org.openj92.cpk.test-run"}}' "$observed")" || return 1
     [ "$owner" = "$RUN" ] || return 1
-    [ "$(docker image inspect --format '{{.Id}}' "$TAG")" = "$observed" ] || return 1
+    tagged_identity="$(docker image inspect --format '{{.Id}}' "$TAG")" || return 1
+    [ "$tagged_identity" = "$observed" ] || return 1
     docker image rm "$TAG" >/dev/null || failed=1
-    [ -z "$(docker image ls -q --filter "reference=$TAG")" ] || failed=1
+    observed="$(docker image ls -q --filter "reference=$TAG")" || return 1
+    [ -z "$observed" ] || failed=1
   fi
   if [ "$failed" = 0 ]; then
     rm -f "$RECORDS/container" "$RECORDS/config.json"
@@ -37,8 +40,10 @@ cleanup() {
   return "$failed"
 }
 
-[ -z "$(docker container ls -aq --filter "name=^/$RUN$")" ]
-[ -z "$(docker image ls -q --filter "reference=$TAG")" ]
+existing="$(docker container ls -aq --filter "name=^/$RUN$")" || exit 1
+[ -z "$existing" ]
+existing="$(docker image ls -q --filter "reference=$TAG")" || exit 1
+[ -z "$existing" ]
 trap 'result=$?; trap - EXIT INT TERM; cleanup || result=1; exit "$result"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
