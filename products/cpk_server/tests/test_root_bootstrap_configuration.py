@@ -112,12 +112,23 @@ class RootBootstrapConfigurationTests(unittest.TestCase):
                     observed.append((name, artifact))
                     if fault == "uncertain": raise TimeoutError("private-error-canary")
                 sdk.materialize_configuration_artifact.side_effect = materialize
-                sdk.configuration_artifact_digest.return_value = "0" * 64
+                sdk.configuration_artifact_digest.return_value = entry["sha256"] if fault == "mount" else "0" * 64
+                client.containers.create.return_value.id = "fixture-recipient"
+                sdk.inspect_container.return_value = SimpleNamespace(
+                    image_id="sha256:" + "b" * 64,
+                    readonly_secret_mounts=tuple(SimpleNamespace(target_path=item["target"], volume_name=item["name"])
+                                                for item in first["secret_files"]))
                 with self.assertRaises(bootstrap.RootBootstrapHold) as raised:
                     bootstrap.apply_root_bootstrap(plan, expected_digest=plan["digest"], driver_image_id=DRIVER,
                         index_path=index_path, state_directory=state)
                 self.assertNotIn("private-error-canary", str(raised.exception))
-                client.containers.create.assert_not_called()
+                client.containers.create.return_value.start.assert_not_called()
+                if fault == "mount":
+                    client.containers.create.assert_called_once()
+                    sdk.inspect_container.assert_called_once_with("fixture-recipient")
+                    sdk.configuration_artifact_digest.assert_called_once_with(entry["name"])
+                else:
+                    client.containers.create.assert_not_called()
                 if fault in ("occupied", "mode"):
                     client.networks.create.assert_not_called()
                     sdk.materialize_configuration_artifact.assert_not_called()
@@ -131,6 +142,8 @@ class RootBootstrapConfigurationTests(unittest.TestCase):
                             index_path=index_path, state_directory=state)
                     self.assertEqual(before, receipt_path.read_bytes())
                     self.assertEqual(sdk.materialize_configuration_artifact.call_count, 1)
+                    self.assertEqual(client.containers.create.call_count, 1 if fault == "mount" else 0)
+                    client.containers.create.return_value.start.assert_not_called()
 
     def test_configuration_only_volume_occupancy_refuses_before_acquisition(self):
         self.exercise_refusal("occupied")
@@ -141,3 +154,6 @@ class RootBootstrapConfigurationTests(unittest.TestCase):
     def test_digest_mismatch_or_lost_materialization_retains_pending_without_recipient_or_retry(self):
         for fault in ("digest", "uncertain"):
             with self.subTest(fault=fault): self.exercise_refusal(fault)
+
+    def test_missing_configuration_mount_retains_pending_without_recipient_start_or_retry(self):
+        self.exercise_refusal("mount")
