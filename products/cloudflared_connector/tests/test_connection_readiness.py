@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import contextmanager, redirect_stdout
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 import io
 import json
 import os
@@ -14,6 +14,10 @@ from control_plane_kit_servers_cloudflared_connector import readiness
 
 
 CONNECTOR = "77a0325c-ff03-4be4-8064-d940252751c3"
+UNKNOWN_REASONS = {
+    "invalid_response", "invalid_http", "response_too_large", "timeout",
+    "transport_unavailable", "invalid_invocation",
+}
 
 
 def native_body(status=200, count=2, **changes):
@@ -30,7 +34,7 @@ def response(body, status=200, headers=b""):
 
 
 @contextmanager
-def native_server(payload, *, delay=0, byte_delay=0):
+def native_server(payload, *, delay=0, byte_delay=0, header_byte_delay=0, body_delay=0):
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listener.bind(("127.0.0.1", 20241))
@@ -52,11 +56,23 @@ def native_server(payload, *, delay=0, byte_delay=0):
                 return
             with connection:
                 connection.settimeout(4)
-                requests.append(connection.recv(4096))
+                request = b""
+                while b"\r\n\r\n" not in request:
+                    part = connection.recv(4097 - len(request))
+                    if not part or len(request) + len(part) > 4096:
+                        raise AssertionError("incomplete or oversized fixture request")
+                    request += part
+                requests.append(request)
                 time.sleep(delay)
-                if byte_delay:
+                if byte_delay or header_byte_delay or body_delay:
                     header, _, body = payload.partition(b"\r\n\r\n")
-                    connection.sendall(header + b"\r\n\r\n")
+                    if header_byte_delay:
+                        for byte in header + b"\r\n\r\n":
+                            connection.sendall(bytes([byte]))
+                            time.sleep(header_byte_delay)
+                    else:
+                        connection.sendall(header + b"\r\n\r\n")
+                    time.sleep(body_delay)
                     for byte in body:
                         connection.sendall(bytes([byte]))
                         time.sleep(byte_delay)
@@ -86,7 +102,10 @@ class ConnectionClassificationTests(unittest.TestCase):
         line = readiness.classify_response(status, body).encode()
         self.assertLessEqual(len(line.encode()), 256)
         self.assertNotIn("SECRET_SENTINEL", line)
-        return json.loads(line)
+        result = json.loads(line)
+        if result["outcome"] == "unknown":
+            self.assertIn(result["reason"], UNKNOWN_REASONS)
+        return result
 
     def test_native_connection_and_zero_have_distinct_truth(self):
         for status, count, outcome in ((200, 2, "connected"), (503, 0, "disconnected")):
@@ -124,6 +143,11 @@ class ConnectionClassificationTests(unittest.TestCase):
         for body in cases:
             with self.subTest(body=body[:40]):
                 self.assertEqual(self.decoded(200, body)["outcome"], "unknown")
+
+    def test_valid_padded_json_has_exact_body_boundary(self):
+        body = native_body()
+        self.assertEqual(self.decoded(200, body.ljust(1024, b" "))["outcome"], "connected")
+        self.assertEqual(self.decoded(200, body.ljust(1025, b" "))["outcome"], "unknown")
 
 
 class ConnectionTransportTests(unittest.TestCase):
@@ -164,27 +188,52 @@ class ConnectionTransportTests(unittest.TestCase):
                 self.assertLessEqual(len(encoded.encode()), 256)
                 self.assertNotIn("SECRET_SENTINEL", encoded)
 
+    def test_valid_http_body_has_exact_byte_boundary(self):
+        for size, expected in ((1024, "connected"), (1025, "unknown")):
+            with self.subTest(size=size), native_server(response(native_body().ljust(size, b" "))):
+                self.assertEqual(json.loads(readiness.read_connection().encode())["outcome"], expected)
+
     def test_slow_headers_and_body_share_total_deadline(self):
-        for payload, delay, byte_delay in (
-            (response(native_body()), 2.4, 0),
-            (response(native_body()), 0, 0.04),
+        for timing in (
+            {"delay": 2.4},
+            {"byte_delay": 0.04},
+            {"header_byte_delay": 0.06},
+            {"delay": 1.1, "body_delay": 1.1},
         ):
-            with self.subTest(delay=delay), native_server(payload, delay=delay, byte_delay=byte_delay):
+            with self.subTest(timing=timing), native_server(response(native_body()), **timing):
                 started = time.monotonic()
                 encoded = readiness.read_connection().encode()
                 elapsed = time.monotonic() - started
                 self.assertEqual(json.loads(encoded)["outcome"], "unknown")
+                self.assertEqual(json.loads(encoded)["reason"], "timeout")
                 self.assertLess(elapsed, 2.8)
 
     def test_command_outputs_one_bounded_line_and_truthful_exit(self):
         for status, count, exit_code in ((200, 1, 0), (503, 0, 1)):
             with self.subTest(status=status), native_server(response(native_body(status, count), status)):
                 output = io.StringIO()
-                with redirect_stdout(output):
+                errors = io.StringIO()
+                with redirect_stdout(output), redirect_stderr(errors):
                     observed = readiness.main()
                 self.assertEqual(observed, exit_code)
                 self.assertEqual(len(output.getvalue().splitlines()), 1)
                 self.assertLessEqual(len(output.getvalue().encode()), 256)
+                self.assertEqual(errors.getvalue(), "")
+
+    def test_unknown_command_has_closed_reason_and_no_stderr(self):
+        with native_server(response(b"SECRET_SENTINEL")):
+            output, errors = io.StringIO(), io.StringIO()
+            with redirect_stdout(output), redirect_stderr(errors):
+                observed = readiness.main()
+        self.assertEqual(observed, 1)
+        self.assertEqual(errors.getvalue(), "")
+        self.assertEqual(len(output.getvalue().splitlines()), 1)
+        self.assertLessEqual(len(output.getvalue().encode()), 256)
+        self.assertNotIn("SECRET_SENTINEL", output.getvalue())
+        result = json.loads(output.getvalue())
+        self.assertEqual(set(result), {"schema", "outcome", "reason"})
+        self.assertEqual(result["outcome"], "unknown")
+        self.assertIn(result["reason"], UNKNOWN_REASONS)
 
 
 if __name__ == "__main__":
