@@ -29,7 +29,24 @@ Owning CI36017103830/job107692339549 passed26 policy and48 root methods, then
 collected16 connector methods with37 expected subtest errors from NotImplementedError.
 No collection/import/fixture/daemon failure caused this red. Log SHA256:
 291d4c138865b238f13feff3494d45409405db667f80cd95d32edcd1f836b240.
-Application implementation and packaged witness are pending at this checkpoint.
+Meridian target HOLD5816670408 strengthened valid padded-body boundary, combined
+header/body deadline, bounded TCP fixture framing and unknown/stderr/reason laws.
+Corrected target28aca90bfe81e61018c6a1141097d1f3ced3d583 passed review5816710887.
+Owning CI36017536764/job107693803780 then collected19 connector methods with43
+intended NotImplementedError subtests;26 policy and48 root methods passed.
+Corrected red log SHA256:
+04048328dc7c6ac76c9a441ff9ff12a04fd5e8d0f5d10b3aa2a0c1415f29fa8b.
+Meridian causal-red PASS5816793184 released the existing source step.
+
+Source now implements the reviewed classifier/read/CLI and packages it beside
+the exact native binary, retaining65532:65532, direct native PID1 and SIGTERM.
+The normal owning gate adds an isolated network-none packaged witness, including
+effective image/command/healthcheck configuration, native version/nonzero invalid
+command, actual numeric UID and synthetic0400/000 file permissions. Historical
+descriptor/digest remains unchanged. This does not claim an observed live native
+SIGTERM shutdown; Meridian accepted explicit configuration/source evidence here,
+with actual bidirectional SDK/native signal/lifecycle gate remaining on188.
+Source validation and review are pending at this checkpoint.
 
 The later #148 consumer must inspect only an authorized exact target and latest
 sample; verify effective pinned image/configuration, ownership, incarnation,

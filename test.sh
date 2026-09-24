@@ -207,4 +207,5 @@ CPK_SERVER_IMAGE="$CPK_IMAGE" sh scripts/cpk_server_published_image_smoke.sh
     -e PYTHONPATH=/source:/app/products/cpk_server/src "$DRIVER" \
     python /source/products/cpk_server/tests/live_root_bootstrap.py unchanged "$RUN"
 )
+sh scripts/cloudflared_connection_witness.sh
 sh scripts/docker_residue_audit.sh
