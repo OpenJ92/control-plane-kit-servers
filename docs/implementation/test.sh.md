@@ -1,6 +1,13 @@
 Source: [test.sh](../../test.sh).
 Maintain with the normal Docker-backed owning gate and prerequisite effects.
 
+Servers #228 adds scripts/cloudflared_connection_witness.sh before the final
+residue audit. It builds the source connector and checks packaged reader output,
+numeric UID, synthetic token permissions and effective image configuration in
+an isolated network-none fixture. Original published product stages remain;
+no tunnel, provider credential or image publication is involved. See the script
+companion for exact owned cleanup and the limits of signal-path evidence.
+
 Servers200 changes only the source CPK smoke invocation to explicit wrapped-source
 and passes the just-built existing test/controller image. It owns no alternative
 harness. That source smoke now creates bounded synthetic receiving files/grants
