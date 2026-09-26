@@ -1,4 +1,12 @@
+Source: [test_health_relay.py](../../../../../products/cpk_local_gateway/tests/test_health_relay.py).
+Maintain this companion alongside its source and selected dependency contracts.
+
 # Closed gateway health relay laws
+
+The #181 adoption translates the existing prerequisite assertion to Operations
+f1e's target_surface field. It still compares the exact selected declaration
+surface and workload operation while requiring an edge-free management graph.
+No fixture, grant, transport, callback or denial assertion changes.
 
 Governing design: Servers #180 comment5733806716 and startup/port amendments
 5733823699/5733837190. Tests preserve the original Core request and semantic result

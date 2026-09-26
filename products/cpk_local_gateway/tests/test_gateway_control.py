@@ -18,7 +18,7 @@ import control_plane_kit_core as core
 from control_plane_kit_core.products import ProductRuntimeContractCodec
 from control_plane_kit_core.planning import (
     compile_graph_activity_plan, resolve_management_observation, ObserveManagementBootstrap,
-    ManagementBootstrapStage, StartNode, ObserveNodeHealth,
+    ManagementBootstrapStage, StartNode, ObserveNodeHealth, AllocatePublicIngress,
 )
 from gateway_control_fixtures import fixture, credential, topology, CONTROL_PATH
 
@@ -114,7 +114,7 @@ class GatewayControlTests(unittest.TestCase):
             self.assertEqual(client.get("/health/ready").status_code, 200)
             self.assertEqual(len(self.value.outbound.requests), 1)
 
-    def test_complete_source_contract_compiles_real_local_bootstrap_order(self):
+    def test_complete_source_contract_compiles_real_fresh_bootstrap_order(self):
         factory = importlib.import_module(PACKAGE + ".health_relay_configuration").gateway_health_source_runtime_contract
         contract = factory(*self.value.artifacts)
         self.assertEqual(ProductRuntimeContractCodec().decode(contract.descriptor()), contract)
@@ -133,18 +133,28 @@ class GatewayControlTests(unittest.TestCase):
         plan = compile_graph_activity_plan(current, desired)
         self.assertTrue(plan.ready_for_execution)
         stages = {item.operation.stage:item for item in plan.activities if type(item.operation) is ObserveManagementBootstrap}
-        local = stages[ManagementBootstrapStage.GATEWAY_LOCAL_READY]
-        resolved = resolve_management_observation(local.operation, current, desired, expected_operation=local.operation)
+        self.assertNotIn(ManagementBootstrapStage.GATEWAY_LOCAL_READY, stages)
+        ready = stages[ManagementBootstrapStage.GATEWAY_INGRESS_READY]
+        resolved = resolve_management_observation(ready.operation, current, desired, expected_operation=ready.operation)
         self.assertEqual(resolved.gateway_readiness_socket, "control")
         self.assertEqual(resolved.gateway_node.block_spec.control_surfaces, contract.control_surfaces)
         connector = next(item for item in plan.activities if type(item.operation) is StartNode and item.operation.target.node_id == "connector")
-        self.assertIn(local.activity_id, {item.predecessor for item in connector.dependencies})
+        gateway_start = next(item for item in plan.activities if type(item.operation) is StartNode
+            and item.operation.target.node_id == gateway.node_id)
+        allocation = next(item for item in plan.activities if type(item.operation) is AllocatePublicIngress)
+        self.assertIn(gateway_start.activity_id, {item.predecessor for item in allocation.dependencies})
+        self.assertIn(allocation.activity_id, {item.predecessor for item in connector.dependencies})
         connected = stages[ManagementBootstrapStage.CONNECTOR_CONNECTED]
         path = stages[ManagementBootstrapStage.AUTHENTICATED_MANAGEMENT_PATH]
-        self.assertIn(local.activity_id, {item.predecessor for item in connected.dependencies})
-        self.assertIn(connected.activity_id, {item.predecessor for item in path.dependencies})
+        for observation in (connected, path):
+            self.assertTrue({connector.activity_id, allocation.activity_id}.issubset(
+                {item.predecessor for item in observation.dependencies}))
+        self.assertNotIn(connected.activity_id, {item.predecessor for item in path.dependencies})
+        self.assertNotIn(path.activity_id, {item.predecessor for item in connected.dependencies})
+        self.assertIn(path.activity_id, {item.predecessor for item in ready.dependencies})
         workload = next(item for item in plan.activities if type(item.operation) is ObserveNodeHealth)
-        self.assertIn(path.activity_id, {item.predecessor for item in workload.dependencies})
+        self.assertTrue({ready.activity_id, connected.activity_id}.issubset(
+            {item.predecessor for item in workload.dependencies}))
 
     def test_control_artifact_is_closed_bounded_and_identity_checked(self):
         artifact = self.value.artifacts[2]
