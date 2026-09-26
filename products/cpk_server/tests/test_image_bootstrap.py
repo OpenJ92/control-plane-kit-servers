@@ -1547,9 +1547,13 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             and isinstance(node.func, ast.Attribute)
             and isinstance(node.func.value, ast.Name)
             and node.func.value.id == "http_boundary"
-            and node.func.attr == "handle"
+            and node.func.attr == "handle_async"
         ]
         self.assertEqual(len(calls), 1)
+        self.assertTrue(any(
+            isinstance(node, ast.Await) and node.value is calls[0]
+            for node in ast.walk(handlers[0])
+        ))
         keywords = {
             keyword.arg: keyword.value
             for keyword in calls[0].keywords
