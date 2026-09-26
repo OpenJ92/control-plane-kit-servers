@@ -35,3 +35,20 @@ codec failures become bounded detached trust errors; unexpected owner failures
 preserve identity. No I/O, credentials, signing, attempts, signer admission,
 installed-state evidence or async execution is introduced. #148/#1860 consume
 selection later; #181 still owns concrete composition.
+
+#233 adds explicit `hello_documents` and `HelloWorkloadHealthReceiverDecoder`.
+Its exact slot is `hello-control`, `/etc/cpk/hello/control.json`, JSON/read-only,
+profile `hello-control-configuration.v1`. The actual Hello codec validates the
+complete selected configuration. Existing WorkloadHealthReceiverTrust projects
+only configured health issuer/keys, target/runtime/declaration and the derived
+workload audience. Selected values are not replaced by descriptor defaults or
+static surface keys. Configured identity is preserved for Operations coverage
+to judge; the adapter does not rewrite it to match the selection.
+
+Hello's complete source contract remains intact, including its legacy checks.
+Source binding does not establish support admission or plan/image readiness.
+The selected Operations owner now supplies the first-start/reload consumers;
+their process registry wiring still belongs to181. Standalone CPK currently
+copies only CPK source; activating this module requires packaging the real
+gateway/Hello codec modules and verifying the installed entrypoint separately.
+Root-package decoder tests do not qualify that standalone installation.
