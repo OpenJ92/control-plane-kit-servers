@@ -13,6 +13,14 @@ verification-extra installation assertion. Existing published-image and Secrets 
 remain intact. These tests execute in the normal Docker-backed ./test.sh and
 do not claim that an image was built, published or deployed.
 
+The current adoption can select one commit for Core and Operations. The
+synthetic upstream-drift test therefore computes expected replacements with
+complete package archive URL/subdirectory needles, not bare old SHAs. Each
+independent synthetic coordinate, destination check, full generated-byte
+equality and unchanged product-coordinate assertion remains intact. This
+corrects the test's former SHA-distinctness assumption; generator behavior is
+unchanged.
+
 Servers185 extends the existing synthetic SDK drift destination set and explicit
 SDK[verification] recipe assertion to the active-router Dockerfile. Published
 product descriptors remain byte-preserved; no image coordinate is advanced.
