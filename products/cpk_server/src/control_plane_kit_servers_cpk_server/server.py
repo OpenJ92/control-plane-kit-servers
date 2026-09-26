@@ -520,14 +520,14 @@ def create_app(
                 400,
                 {"error": {"status": 400, "message": "invalid JSON request body"}},
             )
-        response = mcp_boundary.handle(
+        response = await mcp_boundary.handle_async(
             headers=request.headers,
             message=message,
         )
         return _json_response(response.status, response.body)
 
     async def http(request: Request) -> JSONResponse:
-        response = http_boundary.handle(
+        response = await http_boundary.handle_async(
             method=request.method,
             path=request.url.path,
             headers=request.headers,

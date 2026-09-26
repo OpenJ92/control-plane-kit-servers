@@ -12,13 +12,17 @@ from control_plane_kit_core.identity import (
     AuthenticatedPrincipal,
     CredentialVerifier,
 )
-from control_plane_kit_core.operations import ControlPlaneServiceRole
+from control_plane_kit_core.operations import ControlPlaneServiceRole, InvalidEffectRecoveryContract
 from control_plane_kit_core.operations.http import (
     HttpApiRouteContract,
     HttpMethod,
     HttpOperationSafety,
 )
-from control_plane_kit_operations import CpkServerApplicationError
+from control_plane_kit_operations import (
+    CpkServerApplicationError,
+    CpkServerOperationsApplication,
+    InvalidOperationCommand,
+)
 
 from .composition import CpkServerComposition, CpkServerCompositionError
 from .authentication import (
@@ -67,6 +71,7 @@ class CpkServerApplicationBoundary:
         if not callable(getattr(credential_verifier, "authenticate", None)):
             raise CpkServerCompositionError("credential verifier is required")
         self._services = dict(services)
+        self._application = CpkServerOperationsApplication(self._services)
         self._credential_verifier = credential_verifier
 
     def authenticate(
@@ -76,7 +81,10 @@ class CpkServerApplicationBoundary:
         return authenticate_bearer_credential(headers, self._credential_verifier)
 
     def dispatch(self, request: CpkServerServiceRequest) -> Mapping[str, object]:
-        return self._services[request.service_role].handle(request)
+        return self._application.handle(request)
+
+    async def dispatch_async(self, request: CpkServerServiceRequest) -> Mapping[str, object]:
+        return await self._application.handle_async(request)
 
 
 class CpkServerHttpProcessBoundary:
@@ -99,6 +107,29 @@ class CpkServerHttpProcessBoundary:
         body: bytes,
         query_string: bytes = b"",
     ) -> CpkServerBoundaryResponse:
+        request = self._prepare(method, path, headers, body, query_string)
+        if isinstance(request, CpkServerBoundaryResponse):
+            return request
+        return _http_response(_dispatch_application(self.application, request))
+
+    async def handle_async(
+        self,
+        *,
+        method: str,
+        path: str,
+        headers: Mapping[str, str],
+        body: bytes,
+        query_string: bytes = b"",
+    ) -> CpkServerBoundaryResponse:
+        request = self._prepare(method, path, headers, body, query_string)
+        if isinstance(request, CpkServerBoundaryResponse):
+            return request
+        return _http_response(await _dispatch_application_async(self.application, request))
+
+    def _prepare(
+        self, method: str, path: str, headers: Mapping[str, str],
+        body: bytes, query_string: bytes,
+    ) -> CpkServerServiceRequest | CpkServerBoundaryResponse:
         route_match = _match_http_route(self.composition, method, path)
         if route_match is None:
             return _error(404, "unknown route")
@@ -110,7 +141,10 @@ class CpkServerHttpProcessBoundary:
         payload = _decode_http_payload(route, body, query_string)
         if isinstance(payload, CpkServerBoundaryResponse):
             return payload
-        request = CpkServerServiceRequest(
+        framing_error = _validate_reobserve_frame(route, payload, surface="http")
+        if framing_error is not None:
+            return framing_error
+        return CpkServerServiceRequest(
             surface="http",
             route_id=route.route_id,
             service_role=route.service_role,
@@ -118,11 +152,6 @@ class CpkServerHttpProcessBoundary:
             payload=payload,
             principal=principal,
         )
-        response = _dispatch_application(self.application, request)
-        if isinstance(response, CpkServerBoundaryResponse):
-            return response
-        result = response
-        return CpkServerBoundaryResponse(200, dict(result))
 
 
 class CpkServerMcpProcessBoundary:
@@ -142,6 +171,25 @@ class CpkServerMcpProcessBoundary:
         headers: Mapping[str, str],
         message: Mapping[str, object],
     ) -> CpkServerBoundaryResponse:
+        request = self._prepare(headers, message)
+        if isinstance(request, CpkServerBoundaryResponse):
+            return request
+        return _mcp_response(message, _dispatch_application(self.application, request))
+
+    async def handle_async(
+        self,
+        *,
+        headers: Mapping[str, str],
+        message: Mapping[str, object],
+    ) -> CpkServerBoundaryResponse:
+        request = self._prepare(headers, message)
+        if isinstance(request, CpkServerBoundaryResponse):
+            return request
+        return _mcp_response(message, await _dispatch_application_async(self.application, request))
+
+    def _prepare(
+        self, headers: Mapping[str, str], message: Mapping[str, object],
+    ) -> CpkServerServiceRequest | CpkServerBoundaryResponse:
         header_error = _validate_mcp_headers(headers)
         if header_error is not None:
             return header_error
@@ -149,27 +197,54 @@ class CpkServerMcpProcessBoundary:
             principal = self.application.authenticate(headers)
         except CredentialAuthenticationError:
             return _error(401, "invalid credential")
+        if not isinstance(message, Mapping):
+            return _error(400, "MCP message must be an object")
         method_header = next(
             (value for key, value in headers.items() if key.lower() == "mcp-method"),
             None,
         )
         if method_header != message.get("method"):
             return _error(400, "MCP method header does not match message")
-        request = _decode_mcp_message(self.composition, message, principal)
-        if isinstance(request, CpkServerBoundaryResponse):
-            return request
-        response = _dispatch_application(self.application, request)
-        if isinstance(response, CpkServerBoundaryResponse):
-            return response
-        result = response
-        return CpkServerBoundaryResponse(
-            200,
-            {
-                "jsonrpc": "2.0",
-                "id": _message_id(message),
-                "result": dict(result),
-            },
-        )
+        return _decode_mcp_message(self.composition, message, principal)
+
+
+def _http_response(
+    response: Mapping[str, object] | CpkServerBoundaryResponse,
+) -> CpkServerBoundaryResponse:
+    if isinstance(response, CpkServerBoundaryResponse):
+        return response
+    return CpkServerBoundaryResponse(200, dict(response))
+
+
+def _mcp_response(
+    message: Mapping[str, object],
+    response: Mapping[str, object] | CpkServerBoundaryResponse,
+) -> CpkServerBoundaryResponse:
+    if isinstance(response, CpkServerBoundaryResponse):
+        return response
+    return CpkServerBoundaryResponse(
+        200, {"jsonrpc": "2.0", "id": _message_id(message), "result": dict(response)},
+    )
+
+
+def _validate_reobserve_frame(
+    route: HttpApiRouteContract, payload: Mapping[str, object], *, surface: str,
+) -> CpkServerBoundaryResponse | None:
+    if route.route_id != "command.deployment.reobserve-connector":
+        return None
+    # Wire framing only. Operations owns typed values, ranges and authority.
+    fields = {"activity_id", "prior_attempt", "claim_generation", "idempotency_key"}
+    if surface == "mcp":
+        fields |= {"workspace_id", "run_id"}
+        try:
+            size = len(json.dumps(payload, ensure_ascii=True).encode("utf-8"))
+        except (TypeError, ValueError, RecursionError):
+            return _error(400, "invalid reobserve arguments")
+        if size > route.request_schema.max_bytes:
+            return _error(413, "request arguments too large")
+    if set(payload) != fields:
+        return _error(400, "invalid reobserve fields")
+    return None
 
 
 def _match_http_route(
@@ -361,6 +436,9 @@ def _decode_mcp_message(
         return _error(400, "tools/call requires a command route")
     if method == "resources/read" and route.safety is not HttpOperationSafety.READ_ONLY:
         return _error(400, "resources/read requires a read route")
+    framing_error = _validate_reobserve_frame(route, arguments, surface="mcp")
+    if framing_error is not None:
+        return framing_error
     return CpkServerServiceRequest(
         surface="mcp",
         route_id=route.route_id,
@@ -415,7 +493,23 @@ def _dispatch_application(
 ) -> Mapping[str, object] | CpkServerBoundaryResponse:
     try:
         return application.dispatch(request)
-    except CpkServerApplicationError as error:
+    except Exception as error:  # noqa: BLE001 - bounded process response.
+        return _application_error(error)
+
+
+async def _dispatch_application_async(
+    application: CpkServerApplicationBoundary,
+    request: CpkServerServiceRequest,
+) -> Mapping[str, object] | CpkServerBoundaryResponse:
+    try:
+        return await application.dispatch_async(request)
+    except Exception as error:  # noqa: BLE001 - cancellation is not an Exception.
+        return _application_error(error)
+
+
+def _application_error(error: Exception) -> CpkServerBoundaryResponse:
+    if isinstance(error, CpkServerApplicationError):
         return CpkServerBoundaryResponse(error.status, error.descriptor())
-    except Exception:  # noqa: BLE001 - process boundary must fail closed without leaking details.
-        return _error(500, "application service failed")
+    if isinstance(error, (InvalidOperationCommand, InvalidEffectRecoveryContract)):
+        return _error(400, "invalid operation arguments")
+    return _error(500, "application service failed")

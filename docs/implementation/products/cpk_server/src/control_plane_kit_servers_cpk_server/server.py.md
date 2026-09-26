@@ -17,3 +17,11 @@ is undeclared. Legacy /health/ready remains configuration-only. Main requires th
 fixed receiving file and port8080, creates the complete app before logging that
 it will listen, and then starts Uvicorn. This is source behavior; the historical
 published image remains separate until candidate qualification/publication.
+
+HTTP and MCP host closures await their process boundary handle_async methods.
+The shared boundary uses the exact constructed service objects in the actual
+Operations application, whose async entrance selects managed execute/reobserve.
+No task is detached and no nested event loop is introduced. Synchronous neutral
+entrances remain available for existing callers; the hosted routes use the
+awaited path. This joins transport to Operations, not the still-separate
+managed-health registry/signing/native observer composition under issue181.
