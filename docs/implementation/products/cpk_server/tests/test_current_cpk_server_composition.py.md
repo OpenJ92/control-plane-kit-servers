@@ -1,13 +1,18 @@
 Source: [products/cpk_server/tests/test_current_cpk_server_composition.py](../../../../../products/cpk_server/tests/test_current_cpk_server_composition.py).
+
+The September 26 #181 adoption updates exact selected dependencies to Core/Operations f1e6cf2, Interpreters4bb9d857, SDK22f1267b and Secrets43b742d1. Installed provenance and published-image boundaries remain unchanged.
 Maintain this document alongside its source file. When the source or relevant imported contracts change, verify and update this companion in the same change.
 
 This suite checks current package adoption and server composition through
 metadata/text/AST inspection, actual imports, Core route values and selected
 service construction. Its independent expected Core/Operations and Interpreters
 revisions must match the canonical manifest and generated package/Dockerfile
-pins. Servers #177 selects reviewed Core/Operations e3e29995 and Interpreters
-e19da40. The constants change with deliberate accepted dependency adoption;
-every equality and pin-count assertion remains intact. Counting pins does not
+pins. Servers #193 historically selected reviewed Core/Operations95452249 and Interpreters
+77c9a7f. The constants change with deliberate accepted dependency adoption;
+the current adoption counts complete package archive URLs/subdirectories rather
+than bare SHAs: Core and Operations can share a commit while requiring one
+distinct URL each. Gateway still must contain one Core URL and no Operations
+package dependency. Counting pins does not
 verify registry bytes or execute an image.
 
 Retired names/routes are checked against a named inventory, current Core
@@ -31,3 +36,7 @@ valid mutation, real PostgreSQL, external effects or a live ASGI listener.
 Broader runtime acceptance belongs to the owning gates.
 
 Related source and evidence: [products/cpk_server/src/control_plane_kit_servers_cpk_server/server.py](../../../../../products/cpk_server/src/control_plane_kit_servers_cpk_server/server.py), [products/cpk_server/src/control_plane_kit_servers_cpk_server/composition.py](../../../../../products/cpk_server/src/control_plane_kit_servers_cpk_server/composition.py), [coordinates/server-products.json](../../../../../coordinates/server-products.json), [pyproject.toml](../../../../../pyproject.toml), [products/cpk_server/Dockerfile](../../../../../products/cpk_server/Dockerfile), [products/cpk_local_gateway/Dockerfile](../../../../../products/cpk_local_gateway/Dockerfile).
+
+#221 advances only the independent expected Interpreter coordinate to accepted
+388282, matching the canonical diagnostic adoption. Existing assertions remain;
+this is installation/composition evidence, not publication or live readiness.

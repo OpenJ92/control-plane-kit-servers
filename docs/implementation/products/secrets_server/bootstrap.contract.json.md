@@ -1,0 +1,4 @@
+Source: [bootstrap.contract.json](../../../../products/secrets_server/bootstrap.contract.json).
+Maintain with the source process ABI and product contract.
+
+This adjacent bootstrap contract keeps the two private0400 master-key/credential inputs nonrecursive and outside the public product artifact. The source receiver additionally requires one separate public configuration_files entry: canonical path, environment name, JSON profile,65536-byte bound and0444 mode. The recipe supplies that fixed environment value; it is not a graph PublicStaticEnvironmentBinding because the accepted name is secret-shaped under Core's current rule. Public configuration provides no private provider credential or key. Historical published descriptors and baseline smoke do not acquire source receiver credit from this documentation.

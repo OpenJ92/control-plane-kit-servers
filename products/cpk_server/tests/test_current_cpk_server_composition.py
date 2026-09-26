@@ -21,8 +21,9 @@ PRODUCT_SRC = ROOT / "products" / "cpk_server" / "src"
 SERVER_SOURCE = (
     PRODUCT_SRC / "control_plane_kit_servers_cpk_server" / "server.py"
 )
-CPK_COMMIT = "e3e29995a4ffc6e6645c2b35d41f394438464d2d"
-INTERPRETERS_COMMIT = "e19da40f948d324fbb37cd53075bcbf66a4ee77f"
+CORE_COMMIT = "f1e6cf2420bf2ec381aab745f462d4e64baef5fc"
+OPERATIONS_COMMIT = "f1e6cf2420bf2ec381aab745f462d4e64baef5fc"
+INTERPRETERS_COMMIT = "4bb9d85799b35540c5596779a96455af6bb7dc44"
 PUBLIC_DEPLOYMENT_COMMAND_ROUTES = frozenset(
     {
         "command.deployment.prepare",
@@ -94,7 +95,10 @@ class CurrentCpkServerCompositionTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            coordinates["upstreams"]["control_plane_kit_commit"], CPK_COMMIT
+            coordinates["upstreams"]["control_plane_kit_core_commit"], CORE_COMMIT
+        )
+        self.assertEqual(
+            coordinates["upstreams"]["control_plane_kit_operations_commit"], OPERATIONS_COMMIT
         )
         self.assertEqual(
             coordinates["upstreams"]["control_plane_kit_interpreters_commit"],
@@ -113,11 +117,26 @@ class CurrentCpkServerCompositionTests(unittest.TestCase):
             ROOT / "products" / "cpk_local_gateway" / "Dockerfile"
         ).read_text(encoding="utf-8")
 
-        self.assertEqual(dependencies.count(CPK_COMMIT), 2)
-        self.assertEqual(dependencies.count(INTERPRETERS_COMMIT), 1)
-        self.assertEqual(cpk_dockerfile.count(CPK_COMMIT), 2)
-        self.assertEqual(cpk_dockerfile.count(INTERPRETERS_COMMIT), 1)
-        self.assertEqual(gateway_dockerfile.count(CPK_COMMIT), 1)
+        # Core and Operations can select one commit while remaining distinct
+        # package dependencies. Preserve exact identity including subdirectory.
+        core_url = (
+            f"https://github.com/OpenJ92/control-plane-kit/archive/{CORE_COMMIT}.zip"
+            "#subdirectory=control-plane-kit-core"
+        )
+        operations_url = (
+            f"https://github.com/OpenJ92/control-plane-kit/archive/{OPERATIONS_COMMIT}.zip"
+            "#subdirectory=control-plane-kit-operations"
+        )
+        interpreters_url = (
+            "https://github.com/OpenJ92/control-plane-kit-interpreters/archive/"
+            f"{INTERPRETERS_COMMIT}.zip"
+        )
+        for content in (dependencies, cpk_dockerfile):
+            self.assertEqual(content.count(core_url), 1)
+            self.assertEqual(content.count(operations_url), 1)
+            self.assertEqual(content.count(interpreters_url), 1)
+        self.assertEqual(gateway_dockerfile.count(core_url), 1)
+        self.assertNotIn("control-plane-kit-operations", gateway_dockerfile)
 
     def test_complete_retired_operations_inventory_is_absent(self) -> None:
         tree = ast.parse(

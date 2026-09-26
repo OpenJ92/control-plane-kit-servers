@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import copy
 import json
 from pathlib import Path
 import sys
@@ -37,6 +38,129 @@ def load_product_image_script_module():
 
 
 class CoordinateGenerationTests(unittest.TestCase):
+    def test_shared_archive_pin_splits_by_package_subdirectory(self) -> None:
+        module = load_script_module()
+        archive = "https://github.com/OpenJ92/control-plane-kit/archive/" + "f" * 40 + ".zip"
+        source = "\n".join(archive + "#subdirectory=control-plane-kit-" + package
+                           for package in ("core", "operations", "core-other"))
+        rendered = module._replace_dependency_pins(source, core_commit="a" * 40,
+            operations_commit="b" * 40, interpreters_commit="c" * 40,
+            secrets_commit="d" * 40, sdk_commit="e" * 40)
+        self.assertEqual(rendered, "\n".join((
+            archive.replace("f" * 40, "a" * 40) + "#subdirectory=control-plane-kit-core",
+            archive.replace("f" * 40, "b" * 40) + "#subdirectory=control-plane-kit-operations",
+            archive + "#subdirectory=control-plane-kit-core-other",
+        )))
+
+    def test_independent_core_and_operations_coordinates_are_required_and_canonical(self) -> None:
+        module = load_script_module()
+        original = json.loads(module.COORDINATES.read_text(encoding="utf-8"))
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "coordinates.json"
+            for key in ("control_plane_kit_core_commit", "control_plane_kit_operations_commit"):
+                for value in (None, "", "main", "a" * 39, "a" * 41, "A" * 40, 123):
+                    document = copy.deepcopy(original)
+                    if value is None:
+                        document["upstreams"].pop(key)
+                    else:
+                        document["upstreams"][key] = value
+                    path.write_text(json.dumps(document), encoding="utf-8")
+                    with self.subTest(key=key, value=value), self.assertRaises(module.CoordinateError):
+                        module.load_coordinates(path)
+
+    def test_sdk_coordinate_is_required_and_canonical(self) -> None:
+        module = load_script_module()
+        original = json.loads(module.COORDINATES.read_text(encoding="utf-8"))
+        key = "control_plane_kit_server_sdk_commit"
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "coordinates.json"
+            for value in (None, "", "main", "a" * 39, "a" * 41, "A" * 40, 123):
+                document = copy.deepcopy(original)
+                if value is None:
+                    document["upstreams"].pop(key)
+                else:
+                    document["upstreams"][key] = value
+                path.write_text(json.dumps(document), encoding="utf-8")
+                with self.subTest(value=value), self.assertRaises(module.CoordinateError):
+                    module.load_coordinates(path)
+
+    def test_changed_upstreams_regenerate_dependencies_without_rewriting_products(self) -> None:
+        module = load_script_module()
+        coordinates = module.load_coordinates(module.COORDINATES)
+        original = module.generate_updates(coordinates)
+        changed = copy.deepcopy(coordinates)
+        replacements = {
+            "control_plane_kit_core_commit": "a" * 40,
+            "control_plane_kit_operations_commit": "e" * 40,
+            "control_plane_kit_interpreters_commit": "b" * 40,
+            "control_plane_kit_secrets_commit": "c" * 40,
+            "control_plane_kit_server_sdk_commit": "d" * 40,
+        }
+        changed["upstreams"].update(replacements)
+        generated = module.generate_updates(changed)
+        destinations = {
+            module.PYPROJECT: (
+                "control_plane_kit_core_commit", "control_plane_kit_interpreters_commit",
+                "control_plane_kit_operations_commit",
+                "control_plane_kit_server_sdk_commit", "control_plane_kit_secrets_commit",
+            ),
+            module.CPK_SERVER_DOCKERFILE: (
+                "control_plane_kit_core_commit", "control_plane_kit_interpreters_commit",
+                "control_plane_kit_operations_commit",
+                "control_plane_kit_server_sdk_commit",
+            ),
+            module.CPK_LOCAL_GATEWAY_DOCKERFILE: (
+                "control_plane_kit_core_commit", "control_plane_kit_server_sdk_commit",
+            ),
+            module.SECRETS_SERVER_DOCKERFILE: ("control_plane_kit_secrets_commit",),
+            module.HELLO_SERVER_DOCKERFILE: ("control_plane_kit_server_sdk_commit",),
+            module.HTTP_ACTIVE_ROUTER_DOCKERFILE: ("control_plane_kit_server_sdk_commit",),
+            module.HTTP_MULTIPLEXER_DOCKERFILE: ("control_plane_kit_server_sdk_commit",),
+        }
+        archive_templates = {
+            "control_plane_kit_core_commit": (
+                "https://github.com/OpenJ92/control-plane-kit/archive/{commit}.zip"
+                "#subdirectory=control-plane-kit-core"
+            ),
+            "control_plane_kit_operations_commit": (
+                "https://github.com/OpenJ92/control-plane-kit/archive/{commit}.zip"
+                "#subdirectory=control-plane-kit-operations"
+            ),
+            "control_plane_kit_interpreters_commit": (
+                "https://github.com/OpenJ92/control-plane-kit-interpreters/archive/{commit}.zip"
+            ),
+            "control_plane_kit_secrets_commit": (
+                "https://github.com/OpenJ92/control-plane-kit-secrets/archive/{commit}.zip"
+            ),
+            "control_plane_kit_server_sdk_commit": (
+                "https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/{commit}.zip"
+            ),
+        }
+        for path, content in generated.items():
+            with self.subTest(path=path.relative_to(ROOT).as_posix()):
+                expected = original[path]
+                for key in destinations.get(path, ()):
+                    expected = expected.replace(
+                        archive_templates[key].format(commit=coordinates["upstreams"][key]).encode(),
+                        archive_templates[key].format(commit=replacements[key]).encode(),
+                    )
+                self.assertEqual(content, expected)
+        for path, keys in destinations.items():
+            for key in keys:
+                with self.subTest(path=path.name, upstream=key):
+                    self.assertIn(replacements[key].encode(), generated[path])
+        self.assertEqual(coordinates["products"], changed["products"])
+
+    def test_actual_cpk_host_dependencies_select_sdk_fastapi_extra(self) -> None:
+        module = load_script_module()
+        coordinates = module.load_coordinates(module.COORDINATES)
+        sdk = coordinates["upstreams"]["control_plane_kit_server_sdk_commit"]
+        dependency = "control-plane-kit-server-sdk[fastapi] @ " + f"https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/{sdk}.zip"
+        for path in (module.PYPROJECT, module.CPK_SERVER_DOCKERFILE):
+            with self.subTest(path=path):
+                self.assertIn(dependency, path.read_text(encoding="utf-8"))
+                self.assertNotIn("fastapi>=", path.read_text(encoding="utf-8"))
+
     def test_coordinate_manifest_is_the_source_for_generated_files(self) -> None:
         module = load_script_module()
         coordinates = module.load_coordinates(module.COORDINATES)
@@ -53,20 +177,43 @@ class CoordinateGenerationTests(unittest.TestCase):
     def test_coordinates_drive_every_generated_dependency_pin(self) -> None:
         module = load_script_module()
         coordinates = module.load_coordinates(module.COORDINATES)
-        cpk_commit = coordinates["upstreams"]["control_plane_kit_commit"]
+        core_commit = coordinates["upstreams"]["control_plane_kit_core_commit"]
         interpreters_commit = coordinates["upstreams"][
             "control_plane_kit_interpreters_commit"
         ]
         secrets_commit = coordinates["upstreams"][
             "control_plane_kit_secrets_commit"
         ]
+        self.assertIn(
+            "control-plane-kit-server-sdk[verification] @ "
+            "https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/"
+            f"{coordinates['upstreams']['control_plane_kit_server_sdk_commit']}.zip",
+            module.HELLO_SERVER_DOCKERFILE.read_text(encoding="utf-8"),
+        )
+        self.assertIn(
+            "control-plane-kit-server-sdk[verification] @ "
+            "https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/"
+            f"{coordinates['upstreams']['control_plane_kit_server_sdk_commit']}.zip",
+            module.HTTP_MULTIPLEXER_DOCKERFILE.read_text(encoding="utf-8"),
+        )
+        self.assertIn(
+            "control-plane-kit-server-sdk[verification] @ "
+            "https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/"
+            f"{coordinates['upstreams']['control_plane_kit_server_sdk_commit']}.zip",
+            module.HTTP_ACTIVE_ROUTER_DOCKERFILE.read_text(encoding="utf-8"),
+        )
 
         for path in (module.PYPROJECT, module.CPK_SERVER_DOCKERFILE):
             text = path.read_text(encoding="utf-8")
             with self.subTest(path=path.relative_to(ROOT).as_posix()):
                 self.assertIn(
                     "https://github.com/OpenJ92/control-plane-kit/archive/"
-                    f"{cpk_commit}.zip",
+                    f"{coordinates['upstreams']['control_plane_kit_operations_commit']}.zip"
+                    "#subdirectory=control-plane-kit-operations", text,
+                )
+                self.assertIn(
+                    "https://github.com/OpenJ92/control-plane-kit/archive/"
+                    f"{core_commit}.zip",
                     text,
                 )
                 self.assertIn(
@@ -79,7 +226,7 @@ class CoordinateGenerationTests(unittest.TestCase):
         )
         self.assertIn(
             "https://github.com/OpenJ92/control-plane-kit/archive/"
-            f"{cpk_commit}.zip",
+            f"{core_commit}.zip",
             gateway_dockerfile,
         )
         secrets_dockerfile = module.SECRETS_SERVER_DOCKERFILE.read_text(
@@ -173,7 +320,7 @@ class CoordinateGenerationTests(unittest.TestCase):
         )
         self.assertEqual(
             document["upstreams"]["control_plane_kit_secrets_commit"],
-            "68d0da6aed3a383d6bdc284cf4a6a6063a31487e",
+            "43b742d1ecb4b7b1fbabb62890a4045afa7a2fec",
         )
         self.assertEqual(
             secrets_server["image"]["digest"],

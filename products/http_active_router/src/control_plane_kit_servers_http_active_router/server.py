@@ -2,41 +2,30 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import http.server
-import os
-import socketserver
 import sys
-from typing import Mapping
-from urllib import error, parse, request
+import time
+from http.server import ThreadingHTTPServer
+from typing import Callable, Mapping
+from urllib import error, request
+
+import control_plane_kit_core as core
+from control_plane_kit_server_sdk.health import WorkloadNodeHealthReadDispatcher
+from control_plane_kit_server_sdk.stdlib import install_cpk_control_routes
+from control_plane_kit_server_sdk.verification import (
+    Ed25519WorkloadNodeControlSurfaceReadVerifier, Ed25519WorkloadNodeHealthReadVerifier,
+)
+from control_plane_kit_server_sdk.verifier_keys import (
+    AtomicWorkloadNodeControlSurfaceReadVerifierKeySet, AtomicWorkloadNodeHealthReadVerifierKeySet,
+)
+from .configuration import (
+    RouterConfigurationError, RouterSettings, RouterControlConfiguration,
+    read_router_control_configuration, router_control_configuration_artifact,
+)
 
 
 MAX_RESPONSE_BYTES = 1_048_576
 DEFAULT_PORT = 8000
-
-
-class RouterConfigurationError(ValueError):
-    """Raised when the router startup contract is invalid."""
-
-
-@dataclass(frozen=True)
-class RouterSettings:
-    active_target_url: str
-    port: int = DEFAULT_PORT
-
-    @classmethod
-    def from_environment(cls, environment: Mapping[str, str] | None = None) -> "RouterSettings":
-        values = environment or os.environ
-        active_target_url = values.get("ACTIVE_TARGET_URL", "").strip()
-        if not active_target_url:
-            raise RouterConfigurationError("ACTIVE_TARGET_URL is required")
-        parsed = parse.urlparse(active_target_url)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise RouterConfigurationError("ACTIVE_TARGET_URL must be an absolute HTTP URL")
-        port = int(values.get("PORT", str(DEFAULT_PORT)))
-        if not 0 < port < 65536:
-            raise RouterConfigurationError("PORT must be between 1 and 65535")
-        return cls(active_target_url=active_target_url.rstrip("/"), port=port)
 
 
 class NoRedirects(request.HTTPRedirectHandler):
@@ -107,21 +96,61 @@ def handler(settings: RouterSettings) -> type[http.server.BaseHTTPRequestHandler
     return ActiveRouterHandler
 
 
-class ThreadingHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
-    daemon_threads = True
+def install_router_control(server: ThreadingHTTPServer, config: RouterControlConfiguration,
+                           *, clock: Callable[[], int] = lambda: int(time.time())) -> None:
+    audience = core.workload_node_control_audience(config.target)
+    static = Ed25519WorkloadNodeControlSurfaceReadVerifier(
+        AtomicWorkloadNodeControlSurfaceReadVerifierKeySet(config.surface_keys),
+        expected_issuer=config.surface_issuer, expected_audience=audience, clock=clock,
+    )
+    health = Ed25519WorkloadNodeHealthReadVerifier(
+        AtomicWorkloadNodeHealthReadVerifierKeySet(config.health_keys),
+        expected_issuer=config.health_issuer, expected_audience=audience, clock=clock,
+    )
+    dispatcher = WorkloadNodeHealthReadDispatcher(
+        target=config.target, runtime_id=config.runtime_id, declaration=config.declaration, verifier=health,
+        liveness=lambda: core.NodeHealthReadOutcome.HEALTHY, readiness=None,
+    )
+    install_cpk_control_routes(
+        server, reserve_control_namespace=True, target=config.target, declaration=config.declaration,
+        variables=(), command_verifier=None, surface_read_verifier=static, health_dispatcher=dispatcher,
+    )
+
+
+def create_router_server(config: RouterControlConfiguration, settings: RouterSettings, *,
+                         address: tuple[str, int] = ("0.0.0.0", 8000),
+                         clock: Callable[[], int] = lambda: int(time.time())) -> ThreadingHTTPServer:
+    """Install on an unbound standard host; the product owns its socket lifecycle."""
+    router_control_configuration_artifact(config)
+    if type(settings) is not RouterSettings:
+        raise RouterConfigurationError("ACTIVE_TARGET_URL or PORT is invalid")
+    server = ThreadingHTTPServer(address, handler(settings), bind_and_activate=False)
+    try:
+        install_router_control(server, config, clock=clock)
+        server.server_bind()
+        server.server_activate()
+        return server
+    except BaseException:
+        server.server_close()
+        raise
 
 
 def main() -> int:
     try:
         settings = RouterSettings.from_environment()
+        if settings.port != DEFAULT_PORT:
+            raise RouterConfigurationError("wrapped router requires port 8000")
+        config = read_router_control_configuration()
     except RouterConfigurationError as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    server = ThreadingHTTPServer(("0.0.0.0", settings.port), handler(settings))
+    server = create_router_server(config, settings, address=("0.0.0.0", DEFAULT_PORT))
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         return 0
+    finally:
+        server.server_close()
     return 0
 
 

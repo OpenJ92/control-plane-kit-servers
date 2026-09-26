@@ -2,50 +2,31 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import http.server
-import os
-import socketserver
 import sys
-from typing import Mapping
-from urllib import error, parse, request
+import time
+from http.server import ThreadingHTTPServer
+from typing import Callable, Mapping
+from urllib import error, request
+
+import control_plane_kit_core as core
+from control_plane_kit_server_sdk.health import WorkloadNodeHealthReadDispatcher
+from control_plane_kit_server_sdk.stdlib import install_cpk_control_routes
+from control_plane_kit_server_sdk.verification import (
+    Ed25519WorkloadNodeControlSurfaceReadVerifier, Ed25519WorkloadNodeHealthReadVerifier,
+)
+from control_plane_kit_server_sdk.verifier_keys import (
+    AtomicWorkloadNodeControlSurfaceReadVerifierKeySet, AtomicWorkloadNodeHealthReadVerifierKeySet,
+)
+from .configuration import (
+    MultiplexerConfigurationError, MultiplexerSettings, MultiplexerControlConfiguration,
+    read_multiplexer_control_configuration, multiplexer_control_configuration_artifact,
+)
 
 
 MAX_RESPONSE_BYTES = 1_048_576
 MAX_OBSERVER_RESPONSE_BYTES = 16_384
 DEFAULT_PORT = 8000
-OBSERVER_ENVIRONMENTS = (
-    "MULTIPLEXER_OBSERVER_A_URL",
-    "MULTIPLEXER_OBSERVER_B_URL",
-)
-
-
-class MultiplexerConfigurationError(ValueError):
-    """Raised when the multiplexer startup contract is invalid."""
-
-
-@dataclass(frozen=True)
-class MultiplexerSettings:
-    primary_url: str
-    observer_urls: tuple[str, ...] = ()
-    port: int = DEFAULT_PORT
-
-    @classmethod
-    def from_environment(
-        cls,
-        environment: Mapping[str, str] | None = None,
-    ) -> "MultiplexerSettings":
-        values = environment or os.environ
-        primary_url = _required_url(values.get("MULTIPLEXER_PRIMARY_URL", ""), "MULTIPLEXER_PRIMARY_URL")
-        observers = tuple(
-            _optional_url(values.get(name, ""), name)
-            for name in OBSERVER_ENVIRONMENTS
-            if values.get(name, "").strip()
-        )
-        port = int(values.get("PORT", str(DEFAULT_PORT)))
-        if not 0 < port < 65536:
-            raise MultiplexerConfigurationError("PORT must be between 1 and 65535")
-        return cls(primary_url=primary_url, observer_urls=observers, port=port)
 
 
 class NoRedirects(request.HTTPRedirectHandler):
@@ -152,40 +133,62 @@ def handler(settings: MultiplexerSettings) -> type[http.server.BaseHTTPRequestHa
     return MultiplexerHandler
 
 
-class ThreadingHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
-    daemon_threads = True
+def install_multiplexer_control(server: ThreadingHTTPServer, config: MultiplexerControlConfiguration,
+                                *, clock: Callable[[], int] = lambda: int(time.time())) -> None:
+    audience = core.workload_node_control_audience(config.target)
+    static = Ed25519WorkloadNodeControlSurfaceReadVerifier(
+        AtomicWorkloadNodeControlSurfaceReadVerifierKeySet(config.surface_keys),
+        expected_issuer=config.surface_issuer, expected_audience=audience, clock=clock,
+    )
+    health = Ed25519WorkloadNodeHealthReadVerifier(
+        AtomicWorkloadNodeHealthReadVerifierKeySet(config.health_keys),
+        expected_issuer=config.health_issuer, expected_audience=audience, clock=clock,
+    )
+    dispatcher = WorkloadNodeHealthReadDispatcher(
+        target=config.target, runtime_id=config.runtime_id, declaration=config.declaration, verifier=health,
+        liveness=lambda: core.NodeHealthReadOutcome.HEALTHY, readiness=None,
+    )
+    install_cpk_control_routes(
+        server, reserve_control_namespace=True, target=config.target, declaration=config.declaration,
+        variables=(), command_verifier=None, surface_read_verifier=static, health_dispatcher=dispatcher,
+    )
+
+
+def create_multiplexer_server(config: MultiplexerControlConfiguration, settings: MultiplexerSettings, *,
+                             address: tuple[str, int] = ("0.0.0.0", 8000),
+                             clock: Callable[[], int] = lambda: int(time.time())) -> ThreadingHTTPServer:
+    """Install on an unbound standard host; the product owns its socket lifecycle."""
+    multiplexer_control_configuration_artifact(config)
+    if type(settings) is not MultiplexerSettings:
+        raise MultiplexerConfigurationError("MULTIPLEXER_PRIMARY_URL, observer URL or PORT is invalid")
+    server = ThreadingHTTPServer(address, handler(settings), bind_and_activate=False)
+    try:
+        install_multiplexer_control(server, config, clock=clock)
+        server.server_bind()
+        server.server_activate()
+        return server
+    except BaseException:
+        server.server_close()
+        raise
 
 
 def main() -> int:
     try:
         settings = MultiplexerSettings.from_environment()
+        if settings.port != DEFAULT_PORT:
+            raise MultiplexerConfigurationError("wrapped multiplexer requires port 8000")
+        config = read_multiplexer_control_configuration()
     except MultiplexerConfigurationError as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    server = ThreadingHTTPServer(("0.0.0.0", settings.port), handler(settings))
+    server = create_multiplexer_server(config, settings, address=("0.0.0.0", DEFAULT_PORT))
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         return 0
+    finally:
+        server.server_close()
     return 0
-
-
-def _required_url(value: str, name: str) -> str:
-    if not value.strip():
-        raise MultiplexerConfigurationError(f"{name} is required")
-    return _validate_url(value, name)
-
-
-def _optional_url(value: str, name: str) -> str:
-    return _validate_url(value, name)
-
-
-def _validate_url(value: str, name: str) -> str:
-    candidate = value.strip().rstrip("/")
-    parsed = parse.urlparse(candidate)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise MultiplexerConfigurationError(f"{name} must be an absolute HTTP URL")
-    return candidate
 
 
 if __name__ == "__main__":

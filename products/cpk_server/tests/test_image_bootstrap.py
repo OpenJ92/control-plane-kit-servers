@@ -26,7 +26,8 @@ PRODUCT_SRC = PRODUCT / "src"
 COORDINATES = json.loads(
     (ROOT / "coordinates" / "server-products.json").read_text(encoding="utf-8")
 )
-CPK_PIN = COORDINATES["upstreams"]["control_plane_kit_commit"]
+CORE_PIN = COORDINATES["upstreams"]["control_plane_kit_core_commit"]
+OPERATIONS_PIN = COORDINATES["upstreams"]["control_plane_kit_operations_commit"]
 INTERPRETERS_PIN = COORDINATES["upstreams"][
     "control_plane_kit_interpreters_commit"
 ]
@@ -67,12 +68,12 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("control_plane_kit_servers_cpk_server.server", dockerfile)
         self.assertIn(
             "control-plane-kit-core @ "
-            f"https://github.com/OpenJ92/control-plane-kit/archive/{CPK_PIN}.zip",
+            f"https://github.com/OpenJ92/control-plane-kit/archive/{CORE_PIN}.zip",
             dockerfile,
         )
         self.assertIn(
             "control-plane-kit-operations @ "
-            f"https://github.com/OpenJ92/control-plane-kit/archive/{CPK_PIN}.zip",
+            f"https://github.com/OpenJ92/control-plane-kit/archive/{OPERATIONS_PIN}.zip",
             dockerfile,
         )
         self.assertIn(
@@ -81,7 +82,12 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             f"{INTERPRETERS_PIN}.zip",
             dockerfile,
         )
-        self.assertIn("fastapi>=0.115", dockerfile)
+        self.assertIn(
+            "control-plane-kit-server-sdk[fastapi] @ "
+            "https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/"
+            f"{COORDINATES['upstreams']['control_plane_kit_server_sdk_commit']}.zip",
+            dockerfile,
+        )
         self.assertIn("uvicorn>=0.30", dockerfile)
         self.assertIn("COPY products/cpk_server/src ./products/cpk_server/src", dockerfile)
         self.assertNotIn("COPY products/cpk_server ./products/cpk_server", dockerfile)

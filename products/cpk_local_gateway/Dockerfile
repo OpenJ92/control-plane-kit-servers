@@ -9,10 +9,12 @@ ENV PIP_DEFAULT_TIMEOUT=120 \
 WORKDIR /app
 
 RUN python -m pip install --no-cache-dir \
-    "control-plane-kit-core @ https://github.com/OpenJ92/control-plane-kit/archive/e3e29995a4ffc6e6645c2b35d41f394438464d2d.zip#subdirectory=control-plane-kit-core" \
+    "control-plane-kit-core @ https://github.com/OpenJ92/control-plane-kit/archive/f1e6cf2420bf2ec381aab745f462d4e64baef5fc.zip#subdirectory=control-plane-kit-core" \
+    "control-plane-kit-server-sdk[fastapi] @ https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/22f1267bde5015efe2fea4f07be4ce8ddf83bc0c.zip" \
     "fastapi>=0.115" \
     "PyJWT[crypto]>=2.10" \
     "uvicorn>=0.30" \
+    "httpx>=0.27,<1" \
     "psycopg[binary]>=3.2"
 
 COPY products/cpk_local_gateway/src ./products/cpk_local_gateway/src
