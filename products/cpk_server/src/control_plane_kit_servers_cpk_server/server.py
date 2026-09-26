@@ -84,6 +84,8 @@ from .http_host import install_operator_http_routes
 import control_plane_kit_core as core
 from control_plane_kit_server_sdk.fastapi import install_cpk_control_routes
 from control_plane_kit_server_sdk.health import WorkloadNodeHealthReadDispatcher
+from control_plane_kit_operations.health_signing_authority import HealthSigningAuthorityReloadService
+from .managed_health_support import ManagedHealthSupportError, read_managed_health_support
 from control_plane_kit_server_sdk.verification import (
     Ed25519WorkloadNodeControlSurfaceReadVerifier, Ed25519WorkloadNodeHealthReadVerifier,
 )
@@ -190,6 +192,7 @@ class CpkServerBootstrapConfiguration:
     public_dns_resolver_endpoint: str = field(repr=False)
     gateway_probe_signer: str = "none"
     gateway_probe_grant_lifetime_seconds: int = 60
+    managed_health_support_file: str | None = field(default=None, repr=False)
     control_auth_static_workspace_grants: tuple[WorkspaceGrant, ...] = ()
     control_auth_static_principals: tuple[
         StaticDevelopmentPrincipalCredential, ...
@@ -448,6 +451,7 @@ class CpkServerBootstrapConfiguration:
             store_endpoints=store_endpoints,
             public_dns_resolver_endpoint=public_dns_resolver_endpoint,
             gateway_probe_signer=gateway_probe_signer,
+            managed_health_support_file=values.get("CPK_MANAGED_HEALTH_SUPPORT_FILE"),
             gateway_probe_grant_lifetime_seconds=(
                 gateway_probe_grant_lifetime_seconds
             ),
@@ -573,7 +577,8 @@ def main() -> int:
         if config.port != 8080:
             raise BootstrapConfigurationError("CPK_PORT must be 8080")
         app = create_app(config, credential_verifier, control=control)
-    except (BootstrapConfigurationError, CpkServerCompositionError, CpkControlConfigurationError) as error:
+    except (BootstrapConfigurationError, CpkServerCompositionError, CpkControlConfigurationError,
+            ManagedHealthSupportError) as error:
         print(f"cpk-server bootstrap error: {error}", flush=True)
         return 2
     print(f"cpk-server listening on 0.0.0.0:{config.port}", flush=True)
@@ -778,6 +783,7 @@ def _static_principals(
 def _operations_application(
     config: CpkServerBootstrapConfiguration,
 ) -> CpkServerOperationsApplication:
+    support = read_managed_health_support(config.managed_health_support_file)
     database_url = config.operations_database_url()
     _install_operations_schema(database_url)
 
@@ -808,6 +814,10 @@ def _operations_application(
     start_service = EffectAttemptStartService(
         unit_of_work,
         id_factory=_start_id,
+        health_receiver_decoders=support.receiver_decoders,
+    )
+    health_signing_authority = HealthSigningAuthorityReloadService(
+        unit_of_work, health_receiver_decoders=support.receiver_decoders,
     )
     reconciliation_service = EffectAttemptReconciliationService(
         unit_of_work,
@@ -821,6 +831,7 @@ def _operations_application(
         start_service=start_service,
         fold_service=fold_service,
         reconciliation_service=reconciliation_service,
+        health_signing_authority=health_signing_authority,
         clock=_clock,
         id_factory=_coordinator_id,
     )
