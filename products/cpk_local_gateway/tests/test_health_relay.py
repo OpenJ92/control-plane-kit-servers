@@ -87,7 +87,7 @@ class HealthRelayTests(unittest.TestCase):
         self.assertEqual(w.transit.verify(verifier, signed.encode(), w.request, expected_target=w.target), w.request)
         projected = w.projection()
         self.assertFalse(projected.graph.edges)
-        self.assertEqual(projected.projected.workload_surface, w.declaration.surface)
+        self.assertEqual(projected.projected.target_surface, w.declaration.surface)
         self.assertEqual(projected.projected.operation.node_id, "wrapped-db")
 
     def test_both_kinds_all_outcomes_and_repeated_original_request_are_preserved(self):

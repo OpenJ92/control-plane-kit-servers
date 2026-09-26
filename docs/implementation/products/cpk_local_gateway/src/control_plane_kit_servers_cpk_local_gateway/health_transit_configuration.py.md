@@ -7,7 +7,7 @@ issuer, exact gateway health-transit purpose and one to sixteen public keys.
 Audience is derived as `gateway:<workspace>:<gateway>`. Workload target,
 declaration, health kind, attempt and time are not startup trust.
 
-Issuer uses exactstr plus selected Coreb79a02d1's
+Issuer uses exactstr plus selected Coref1e6cf2's
 `_node_control_public_wire.reference_violation`, including its endpoint and
 credential-envelope rejection. The direct private-helper dependency is an
 explicit compatibility risk: future Core pin upgrades must verify this

@@ -117,12 +117,32 @@ class CoordinateGenerationTests(unittest.TestCase):
             module.HTTP_ACTIVE_ROUTER_DOCKERFILE: ("control_plane_kit_server_sdk_commit",),
             module.HTTP_MULTIPLEXER_DOCKERFILE: ("control_plane_kit_server_sdk_commit",),
         }
+        archive_templates = {
+            "control_plane_kit_core_commit": (
+                "https://github.com/OpenJ92/control-plane-kit/archive/{commit}.zip"
+                "#subdirectory=control-plane-kit-core"
+            ),
+            "control_plane_kit_operations_commit": (
+                "https://github.com/OpenJ92/control-plane-kit/archive/{commit}.zip"
+                "#subdirectory=control-plane-kit-operations"
+            ),
+            "control_plane_kit_interpreters_commit": (
+                "https://github.com/OpenJ92/control-plane-kit-interpreters/archive/{commit}.zip"
+            ),
+            "control_plane_kit_secrets_commit": (
+                "https://github.com/OpenJ92/control-plane-kit-secrets/archive/{commit}.zip"
+            ),
+            "control_plane_kit_server_sdk_commit": (
+                "https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/{commit}.zip"
+            ),
+        }
         for path, content in generated.items():
             with self.subTest(path=path.relative_to(ROOT).as_posix()):
                 expected = original[path]
                 for key in destinations.get(path, ()):
                     expected = expected.replace(
-                        coordinates["upstreams"][key].encode(), replacements[key].encode(),
+                        archive_templates[key].format(commit=coordinates["upstreams"][key]).encode(),
+                        archive_templates[key].format(commit=replacements[key]).encode(),
                     )
                 self.assertEqual(content, expected)
         for path, keys in destinations.items():
@@ -300,7 +320,7 @@ class CoordinateGenerationTests(unittest.TestCase):
         )
         self.assertEqual(
             document["upstreams"]["control_plane_kit_secrets_commit"],
-            "8273b7de86dcaac254a8fcaca22b2769c5e16a4d",
+            "43b742d1ecb4b7b1fbabb62890a4045afa7a2fec",
         )
         self.assertEqual(
             secrets_server["image"]["digest"],

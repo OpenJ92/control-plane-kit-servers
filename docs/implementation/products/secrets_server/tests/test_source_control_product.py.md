@@ -1,6 +1,6 @@
 Source: [test_source_control_product.py](../../../../../products/secrets_server/tests/test_source_control_product.py).
 
-Early #181 compatibility for #208 updates exact selected dependency assertions for independent Coreb79 and Operationsbc559, Interpreter6b1c75a9, SDK2c5b5882 and Secrets8273b7de. Existing behavior assertions remain; no published image capability is inferred.
+The September 26 #181 adoption updates exact selected dependencies to Core/Operations f1e6cf2, Interpreters4bb9d857, SDK22f1267b and Secrets43b742d1. Installed provenance and published-image boundaries remain unchanged.
 Maintain with the source file and actual imported contracts.
 
 Six product-owned laws require the installed artifact/source-contract entrance before importing it. This makes absent product behavior an explicit assertion with clean collection; no stub or collection/import failure supplies red evidence. Downstream assertions prove exact service-encoded bytes and artifact framing, full original runtime-field preservation with only the declared public/control additions, actual Core codec/instantiation, invalid framing/service input and fixed context-free errors, recipe/public-bootstrap agreement with unchanged private/published coordinates, and isolated installed dependency/public-import boundaries.

@@ -64,7 +64,7 @@ class HealthRelayConfigurationTests(unittest.TestCase):
         projected = w.projection()  # Exercise existing owner before missing-interface guard.
         api = self.api()
         self.assertFalse(projected.graph.edges)
-        target = replace(w.target, provider_socket_name=projected.projected.workload_surface.provider_socket_name)
+        target = replace(w.target, provider_socket_name=projected.projected.target_surface.provider_socket_name)
         binding = api.gateway_health_target_binding(target_id="database-management", target=target,
             runtime_id=w.runtime, runtime_contract=w.contract, hostname="wrapped-db")
         self.assertEqual(binding.target, target)

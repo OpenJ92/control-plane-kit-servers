@@ -1,4 +1,11 @@
+Source: [test_health_relay_configuration.py](../../../../../products/cpk_local_gateway/tests/test_health_relay_configuration.py).
+Maintain this companion alongside its source and selected dependency contracts.
+
 # Health relay configuration and startup laws
+
+The #181 adoption uses Operations f1e's target_surface projection field, which
+names the same selected workload surface for this case. Edge-free management
+socket selection, exact declaration/origin and all negative cases remain intact.
 
 The product-owned target factory receives the actual Operations-selected
 management socket and a Core runtime contract, selecting HTTP control8087 instead

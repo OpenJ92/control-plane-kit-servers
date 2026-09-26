@@ -52,7 +52,11 @@ class CpkHttpHostTests(unittest.TestCase):
 
     def test_every_operator_contract_reaches_unchanged_auth_boundary(self):
         routes = self.app.state.http_boundary.composition.http_api.routes
-        self.assertEqual(len(routes), 74)
+        self.assertEqual(len(routes), 75)
+        self.assertEqual(
+            sum(route.route_id == "command.deployment.reobserve-connector" for route in routes),
+            1,
+        )
         with TestClient(self.app, follow_redirects=False) as client:
             for route in routes:
                 path = re.sub(r"\{[^}]+\}", "fixture", route.path_template)

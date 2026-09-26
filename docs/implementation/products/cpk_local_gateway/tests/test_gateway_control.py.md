@@ -1,6 +1,7 @@
-# Gateway self-health laws (#182)
+Source: [test_gateway_control.py](../../../../../products/cpk_local_gateway/tests/test_gateway_control.py).
+Maintain this companion alongside its source and selected dependency contracts.
 
-Source: `products/cpk_local_gateway/tests/test_gateway_control.py`.
+# Gateway self-health laws (#182)
 
 Target stage follows reviewed plan5743544407 and source-contract correction
 5743553420 on Servers182. Seven focused tests exercise actual SDK surface/health
@@ -18,8 +19,12 @@ governing and unchanged during target red. Their required third-file/signature
 adaptation belongs with source implementation after causal red and target review.
 The complete managed source contract must replace its own two legacy independent
 HttpChecks with the actual SDK surface, with no health_path; the graph fixture
-does not strip anything. Actual compiler ordering must retain local readiness
-before connector, management path and workload progress.
+does not strip anything. Under the adopted Core f1e fresh-bootstrap law,
+gateway start precedes allocation and connector creation; PATH and CONNECTED
+are independent observations after creation. GATEWAY_INGRESS_READY resolves
+the real gateway-own control surface after PATH. Workload progress requires
+both gateway readiness and CONNECTED. Fresh bootstrap contains no private
+GATEWAY_LOCAL_READY stage; retained-runtime behavior belongs to Core's tests.
 
 Ordinary pinned Docker PR CI supplies missing-interface red and later owner green;
 the reviewed target stage precedes implementation. Public minimal status is not a
