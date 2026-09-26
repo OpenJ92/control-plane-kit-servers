@@ -8,11 +8,11 @@ ENV PIP_DEFAULT_TIMEOUT=120 \
 WORKDIR /app
 
 RUN python -m pip install --no-cache-dir \
-    "control-plane-kit-server-sdk[fastapi] @ https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/2c5b588237fbe289c965029b4bc2f072715c42f3.zip" \
+    "control-plane-kit-server-sdk[fastapi] @ https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/22f1267bde5015efe2fea4f07be4ce8ddf83bc0c.zip" \
     "uvicorn>=0.30" \
-    "control-plane-kit-core @ https://github.com/OpenJ92/control-plane-kit/archive/b79a02d1ac8ef987dd34abeb2297a231b109f7a6.zip#subdirectory=control-plane-kit-core" \
-    "control-plane-kit-operations @ https://github.com/OpenJ92/control-plane-kit/archive/bc559a0253028f1c0bc2cde1f94ce18cdf5536f7.zip#subdirectory=control-plane-kit-operations" \
-    "control-plane-kit-interpreters[cloudflare,docker,gateway,public-dns] @ https://github.com/OpenJ92/control-plane-kit-interpreters/archive/388282ae42d3a5629707d24630cc079664112636.zip"
+    "control-plane-kit-core @ https://github.com/OpenJ92/control-plane-kit/archive/f1e6cf2420bf2ec381aab745f462d4e64baef5fc.zip#subdirectory=control-plane-kit-core" \
+    "control-plane-kit-operations @ https://github.com/OpenJ92/control-plane-kit/archive/f1e6cf2420bf2ec381aab745f462d4e64baef5fc.zip#subdirectory=control-plane-kit-operations" \
+    "control-plane-kit-interpreters[cloudflare,docker,gateway,public-dns] @ https://github.com/OpenJ92/control-plane-kit-interpreters/archive/4bb9d85799b35540c5596779a96455af6bb7dc44.zip"
 
 COPY products/cpk_server/src ./products/cpk_server/src
 

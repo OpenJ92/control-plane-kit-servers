@@ -3,7 +3,7 @@ Maintain alongside product transport compatibility.
 
 Tests call real create_app, replacing only the effectful operations factory with
 existing RecordingService/DeterministicVerifier fixtures from the neutral boundary
-tests. All74 current routes must reach auth before malformed payload decode;
+tests. All75 current routes must reach auth before malformed payload decode;
 exact workspace creation and raw query paging must preserve boundary responses.
 The compatibility table checks bodies, methods, Allow sets, strict slashes,
 legacy public health and MCP parsing/auth/dispatch order, with zero-work counters.
@@ -20,6 +20,11 @@ static/health test authority entirely in memory. It is not a production receiver
 issuer service or deployable default. Existing18 neutral boundary laws remain.
 Only the normal Docker-backed ./test.sh executes these tests. No source-host or
 published-image result establishes a production CPK wrapper in this child.
+
+The #181 dependency adoption selects Core f1e's added reobserve-connector route.
+The closed count changes74→75 and requires exactly one such declaration; the
+same per-route authentication/zero-service-work assertions cover it. This is
+route-value adoption, not the later awaited Operations execution composition.
 
 Parity compares the entire neutral response after standard JSON serialization,
 preserving wire-list representation of tuple-valued principal grants. The first
