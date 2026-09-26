@@ -8,6 +8,9 @@ Roles are `cpk-workload`, `hello-workload`, `gateway`, and
 `cloudflared-native-reader-v1`. Maximum input is1MiB and16 entries. Unknown
 fields/roles, duplicate/conflicting product identities, more than one native
 entry, malformed documents and missing exact receiver slots refuse.
+Inline descriptor objects enter Core's bounded mapping decoder, which produces
+the canonical document bytes; ordinary envelope JSON spacing is not required to
+be the separate product codec's canonical byte representation.
 
 ManagedHealthProduct and ManagedHealthSupport are frozen values with redacted
 repr. Canonical documents are revalidated even for direct construction. Known

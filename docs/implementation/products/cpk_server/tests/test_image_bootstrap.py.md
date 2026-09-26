@@ -8,3 +8,7 @@ awaited. This preserves query decoding ownership at the process boundary.
 The separate real-ASGI awaited-execution tests exercise runtime completion,
 identity, errors and cancellation; this source assertion alone proves none of
 those behaviors. Other bootstrap/package/runtime assertions remain unchanged.
+
+Issue235 adds the optional managed-health support path to the existing exact
+environment declaration assertion and requires its optional status. Existing
+secret-free metadata assertions remain intact.

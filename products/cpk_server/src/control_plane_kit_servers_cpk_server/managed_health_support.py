@@ -113,8 +113,10 @@ def decode_managed_health_support(raw: bytes) -> ManagedHealthSupport:
             entry = _closed(entry, {"role", "document"})
             if type(entry["document"]) is not dict:
                 raise ValueError
-            document = ProductDescriptorCodec().decode_document(
-                json.dumps(entry["document"], allow_nan=False).encode("utf-8"))
+            # The support envelope contains an object. Let Core's bounded
+            # mapping entrance produce canonical bytes; ordinary JSON spacing
+            # is not the product codec's canonical byte format.
+            document = ProductDescriptorCodec().decode_document(entry["document"])
             products.append(ManagedHealthProduct(entry["role"], document))
         return ManagedHealthSupport(tuple(products))
     except (ValueError, TypeError, AttributeError, RecursionError, OverflowError):
