@@ -29,3 +29,9 @@ These selected laws do not audit every product codec or bootstrap effect.
 Related source and evidence: [products/cpk_server/src/control_plane_kit_servers_cpk_server/installation.py](../../../../../products/cpk_server/src/control_plane_kit_servers_cpk_server/installation.py), [products/cpk_server/tests/test_installation_control_auth.py](../../../../../products/cpk_server/tests/test_installation_control_auth.py), [products/cpk_server/product.docker-cloudflare.cpk.json](../../../../../products/cpk_server/product.docker-cloudflare.cpk.json).
 
 The runtime-material composition regression continues from the actual installation composer through Core compilation into public Operations translation. Exact composed variant documents provide registration identity/digest; a minimal public record context supplies pinned inputs without dispatch. The second case re-instantiates only the Secrets child with changed reference configuration while asserting descriptor bytes unchanged. Full ordered delivery-tuple equality detects both duplicate slots and retained default references. These cases prove dependency composition, not secret resolution, grant authorization, Docker execution or historical failure cause; those remain with their owners.
+
+Issue235 also preserves an explicitly selected source-support ConfigurationArtifact
+and its public startup path environment through the real installation composer.
+Bytes/path/read-only0444 mode and existing verification remain unchanged. The
+empty support fixture proves inspectable configuration delivery representation;
+the separate numeric witness owns actual file readability, not this pure test.
