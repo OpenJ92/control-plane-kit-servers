@@ -102,6 +102,28 @@ class DockerInstallationTests(unittest.TestCase):
             connector_product=document("cloudflared_connector"),
         )
 
+    def test_selected_support_artifact_and_public_path_survive_installation(self):
+        from control_plane_kit_core.configuration import ConfigurationArtifact, ConfigurationFileMode, ConfigurationMediaType
+        from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
+        api = self.api()
+        selected = self.installation(api)
+        artifact = ConfigurationArtifact("managed-health-support", "/etc/cpk/managed-health-support.json",
+            ConfigurationMediaType.JSON,
+            json.dumps({"profile": "cpk-managed-health-source-support.v1", "products": []}),
+            ConfigurationFileMode.READ_ONLY)
+        base = selected.cpk_product.product
+        contract = replace(base.runtime_contract, configuration_artifacts=(*base.runtime_contract.configuration_artifacts, artifact),
+            public_environment=(*base.runtime_contract.public_environment,
+                PublicStaticEnvironmentBinding("CPK_MANAGED_HEALTH_SUPPORT_FILE", artifact.target_path)))
+        codec = ProductDescriptorCodec()
+        source = codec.decode_document(codec.encode_document(replace(base, runtime_contract=contract)).content)
+        graph = compile_topology(api.compose_docker_cpk_installation(replace(selected, cpk_product=source)))
+        node = graph.node("child-a-cpk")
+        self.assertIn(artifact, node.configuration_artifacts)
+        self.assertEqual(node.non_secret_environment()["CPK_MANAGED_HEALTH_SUPPORT_FILE"], artifact.target_path)
+        self.assertEqual(artifact.file_mode.value, "0444")
+        self.assertEqual(node.block_spec.verification, contract.verification)
+
     def test_named_installation_composes_real_products_and_reference_deliveries(self):
         api = self.api()
         desired = self.installation(api)

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import secrets
 from uuid import uuid4
 
 from control_plane_kit_core.secrets import SecretFileMode, SecretValue
-from control_plane_kit_interpreters.docker import DockerSdkSecretMount
+from control_plane_kit_core.configuration import ConfigurationArtifact, ConfigurationMediaType, ConfigurationFileMode
+from control_plane_kit_interpreters.docker import DockerSdkSecretMount, DockerSdkConfigurationMount
 
 
 def exercise_cpk_file(*, engine, sdk, resources, labels, image_id, network_id):
@@ -30,6 +32,15 @@ def exercise_cpk_file(*, engine, sdk, resources, labels, image_id, network_id):
     assert evidence is not None
     assert evidence.uid == uid and evidence.mode == 0o400 and evidence.regular_file
     assert evidence.content_digest == digest, "CPK client material mismatch"
+    support = ConfigurationArtifact("managed-health-support", "/etc/cpk/managed-health-support.json",
+        ConfigurationMediaType.JSON,
+        json.dumps({"profile": "cpk-managed-health-source-support.v1", "products": []}),
+        ConfigurationFileMode.READ_ONLY)
+    support_volume = engine.volumes.create(name=f"cpk-support-file-{uuid4().hex}", labels=labels)
+    resources.append((engine.volumes, support_volume.name))
+    sdk.materialize_configuration_artifact(support_volume.name, support)
+    assert sdk.configuration_artifact_digest(support_volume.name) == support.content_digest
+    support_mount = DockerSdkConfigurationMount(support, support_volume.name)
     probe = f'''
 import hashlib, os, pathlib, pwd, stat
 account = pwd.getpwnam("cpk")
@@ -48,20 +59,37 @@ except OSError:
     pass
 else:
     raise AssertionError("CPK bootstrap file writable")
+import control_plane_kit_servers_cpk_server.server
+from control_plane_kit_servers_cpk_server.managed_health_support import read_managed_health_support
+support_file = pathlib.Path({support.target_path!r})
+support_info = support_file.stat()
+assert stat.S_ISREG(support_info.st_mode) and support_info.st_uid == 0
+assert stat.S_IMODE(support_info.st_mode) == 0o444
+assert hashlib.sha256(support_file.read_bytes()).hexdigest() == {support.content_digest!r}
+snapshot = read_managed_health_support(str(support_file))
+assert snapshot.products == () and snapshot.receiver_decoders.bindings == ()
+try:
+    support_file.write_bytes(b"forbidden")
+except OSError:
+    pass
+else:
+    raise AssertionError("CPK support file writable")
 '''
     name = f"cpk-client-recipient-{uuid4().hex}"
     mount = DockerSdkSecretMount(target, volume.name)
     sdk.create_container(name=name, image=image_id, environment={}, labels=labels,
-                         volumes={}, secret_mounts=(mount,), network=network_id,
+                         volumes={}, secret_mounts=(mount,), configuration_mounts=(support_mount,), network=network_id,
                          aliases=(name,), command=("python", "-B", "-c", probe))
     recipient = engine.containers.get(name)
     resources.append((engine.containers, recipient.id))
     observed = sdk.inspect_container(name)
     assert observed is not None and observed.image_id == image_id
     assert observed.configured_user == "10001"
-    assert observed.readonly_secret_mounts == (mount,)
+    assert {(item.target_path, item.volume_name) for item in observed.readonly_secret_mounts} == {
+        (mount.target_path, mount.volume_name), (support.target_path, support_volume.name)}
     sdk.start_container(name)
     result = recipient.wait(timeout=30)
     output = recipient.logs(tail=30)
     assert value.encode() not in output, "CPK recipient material leaked"
     assert result.get("StatusCode") == 0, "CPK UID/account/HOME/protected-file law failed"
+    print("CPK UID10001 root-owned0444 support read and packaged codec imports passed")

@@ -34,3 +34,11 @@ in bootstrap.contract.json. The recipe still copies only product src: synthetic
 private test authority and grant/header files are never image inputs. UID10001
 reads the explicit0444 readonly file mount in the source smoke. Historical image
 coordinates remain unchanged; current source dependencies are selected independently above.
+
+Issue235 includes the actual gateway and Hello source package directories in COPY
+and PYTHONPATH alongside CPK. The activated startup support loader imports their
+owned codecs; no parser is copied into CPK. Product source only is included, not
+test fixtures, credentials or a default support file. The ordinary source image
+starts the real server module; the existing numeric recipient witness additionally
+imports that module and reads a root-owned0444 empty support artifact as UID10001.
+Those installed-source checks do not qualify a new published managed image.

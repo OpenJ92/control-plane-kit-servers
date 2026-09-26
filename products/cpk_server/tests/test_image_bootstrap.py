@@ -113,6 +113,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
                 "CPK_RUNTIME_INTERPRETERS",
                 "CPK_INGRESS_INTERPRETERS",
                 "CPK_GATEWAY_PROBE_SIGNER",
+                "CPK_MANAGED_HEALTH_SUPPORT_FILE",
                 "CPK_PUBLIC_DNS_RESOLVER_ENDPOINT",
                 "CPK_PRODUCT_MATERIAL_RESOLVER",
                 "CPK_PRODUCT_SECRET_VALUES_JSON",
@@ -122,6 +123,9 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             ],
         )
         self.assertNotIn("postgres://", rendered)
+        support_input = next(item for item in contract["environment"]
+                             if item["name"] == "CPK_MANAGED_HEALTH_SUPPORT_FILE")
+        self.assertFalse(support_input["required"])
         self.assertNotIn("token-not-for-output", rendered)
         self.assertNotIn("secret://", rendered)
         self.assertNotIn("postgres-secret", rendered)

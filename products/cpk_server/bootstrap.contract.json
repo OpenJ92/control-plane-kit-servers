@@ -62,6 +62,13 @@
       ]
     },
     {
+      "name": "CPK_MANAGED_HEALTH_SUPPORT_FILE",
+      "required": false,
+      "allowed_values": [
+        "absolute-operator-owned-readonly-source-support-file"
+      ]
+    },
+    {
       "name": "CPK_PUBLIC_DNS_RESOLVER_ENDPOINT",
       "required": false,
       "allowed_values": [
@@ -133,6 +140,7 @@
     "runtime interpreter authority is selected explicitly and never inferred",
     "ingress interpreter authority is selected explicitly and never inferred",
     "gateway probe signing authority is selected explicitly and resolves only its secret reference at dispatch",
+    "managed health source support is an optional bounded root/current-owned 0444 file read once before schema setup; absent is unsupported and malformed present fails startup; source policy admission is not image qualification",
     "public DNS resolution uses bounded fresh queries against a trusted process-bootstrap endpoint that is never echoed",
     "store endpoints are runtime-supplied and never echoed by readiness",
     "provider endpoint references map to bounded process-local routes and are never echoed",

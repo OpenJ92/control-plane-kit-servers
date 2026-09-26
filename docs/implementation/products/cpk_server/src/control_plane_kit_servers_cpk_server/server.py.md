@@ -25,3 +25,13 @@ No task is detached and no nested event loop is introduced. Synchronous neutral
 entrances remain available for existing callers; the hosted routes use the
 awaited path. This joins transport to Operations, not the still-separate
 managed-health registry/signing/native observer composition under issue181.
+
+Issue235 adds optional CPK_MANAGED_HEALTH_SUPPORT_FILE. The actual
+_operations_application(config) reads it once before database/schema/service
+construction. Its immutable registry is supplied to both real
+EffectAttemptStartService and HealthSigningAuthorityReloadService; the coordinator
+receives the latter. Their defensive registry copies preserve the same admitted
+contents. Signing reload refreshes authority, not process support policy. Main
+returns bounded startup failure for invalid present support; absent support is
+empty. The managed effect port remains absent until the next composition child.
+Existing SDK-before-schema ordering and _operations_application signature remain.
