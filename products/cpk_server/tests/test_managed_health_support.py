@@ -109,7 +109,12 @@ class ManagedHealthSupportTests(unittest.TestCase):
             support.products = ()
         for value in (support, *support.products):
             self.assertNotIn("BEGIN PUBLIC KEY", repr(value))
-        self.assertTrue(all(doc.product.runtime_contract.verification.checks for doc in self.documents.values()))
+        for entry in support.products:
+            self.assertEqual(entry.document.product.runtime_contract.verification,
+                             self.documents[entry.role].product.runtime_contract.verification)
+        self.assertTrue(self.documents["cpk-workload"].product.runtime_contract.verification.checks)
+        self.assertTrue(self.documents["hello-workload"].product.runtime_contract.verification.checks)
+        self.assertEqual(self.documents["gateway"].product.runtime_contract.verification.checks, ())
 
     def test_unknown_duplicate_conflicting_and_malformed_documents_refuse(self):
         original = self.payload()
