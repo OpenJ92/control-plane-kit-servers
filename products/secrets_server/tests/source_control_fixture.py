@@ -59,6 +59,7 @@ def check(directory: Path) -> None:
     from control_plane_kit_secrets.control import decode_secrets_control_configuration
 
     configuration = decode_secrets_control_configuration(read_file(directory / "control.json", MAX_RESPONSE_BYTES))
+    authority = core.NodeControlAuthorityContext("source-authored", "source-projection")
 
     def read(path: str, token: str | None = None) -> tuple[int, bytes]:
         headers = {} if token is None else {"Authorization": "Bearer " + token}
@@ -73,22 +74,22 @@ def check(directory: Path) -> None:
 
     surface_token = header_token(directory / "surface.headers")
     health_token = header_token(directory / "health.headers")
-    surface_request = core.NodeControlSurfaceReadRequest(
-        configuration.target, core.NodeControlSurfaceReadKind.CAPABILITIES,
+    surface_request = core.ReceiverControlSurfaceReadRequest(
+        configuration.target, authority, core.NodeControlSurfaceReadKind.CAPABILITIES,
         configuration.declaration.identity(), "source-static",
     )
     status, body = read("/__control/capabilities", surface_token)
-    expected = core.NodeControlSurfaceReadResultCodec(surface_request, configuration.declaration).capabilities_result()
+    expected = core.ReceiverControlSurfaceReadResultCodec(surface_request, configuration.declaration).capabilities_result()
     if status != 200 or body != expected.canonical_bytes():
         raise ValueError
-    health_request = core.NodeHealthReadRequest(
-        configuration.target, configuration.runtime_id, core.NodeHealthReadKind.LIVENESS,
+    health_request = core.ReceiverHealthReadRequest(
+        configuration.target, authority, core.NodeHealthReadKind.LIVENESS,
         configuration.declaration.identity(), "source-health",
     )
     status, body = read("/__control/health/liveness", health_token)
     if status != 200:
         raise ValueError
-    result = core.NodeHealthReadResultCodec(health_request, configuration.declaration).decode(json.loads(body))
+    result = core.ReceiverHealthReadResultCodec(health_request, configuration.declaration).decode(json.loads(body))
     if result.outcome is not core.NodeHealthReadOutcome.HEALTHY:
         raise ValueError
     for path in ("/__control/capabilities", "/__control/health/liveness"):
