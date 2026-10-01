@@ -3,7 +3,7 @@ Maintain alongside product transport compatibility.
 
 Tests call real create_app, replacing only the effectful operations factory with
 existing RecordingService/DeterministicVerifier fixtures from the neutral boundary
-tests. All75 current routes must reach auth before malformed payload decode;
+tests. All 77 current routes must reach auth before malformed payload decode;
 exact workspace creation and raw query paging must preserve boundary responses.
 The compatibility table checks bodies, methods, Allow sets, strict slashes,
 legacy public health and MCP parsing/auth/dispatch order, with zero-work counters.
@@ -25,6 +25,18 @@ The #181 dependency adoption selects Core f1e's added reobserve-connector route.
 The closed count changes74→75 and requires exactly one such declaration; the
 same per-route authentication/zero-service-work assertions cover it. This is
 route-value adoption, not the later awaited Operations execution composition.
+
+The #237 receiving adoption selects accepted Core K's two additional GET routes:
+`read.receiver-authoring-context` at
+`/workspaces/{workspace_id}/receiver-authoring-context` and
+`read.workload-verifier-configuration` at
+`/workspaces/{workspace_id}/workload-verifier-configuration/{purposes}`.
+The closed count is 77, and both exact declarations must occur once with READS
+service role, READ scope and READ_ONLY safety. Every declaration still traverses
+the same rejected-credential, malformed-body, exact 401/error-body checks,
+verifier-call count and zero-service-work assertion. Run 36937458083 exposed the
+stale 75 expectation before that loop executed; this target correction changes
+no production routing or authorization and needs the unchanged whole gate.
 
 Parity compares the entire neutral response after standard JSON serialization,
 preserving wire-list representation of tuple-valued principal grants. The first
