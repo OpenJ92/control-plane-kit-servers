@@ -13,7 +13,10 @@ from unittest.mock import patch
 
 import control_plane_kit_core as core
 from control_plane_kit_core.configuration import ConfigurationArtifact
+from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
 from control_plane_kit_core.products import ProductRuntimeContractCodec, ProductDescriptorCodec
+from control_plane_kit_core.wrapper_configuration import WrapperConfigurationError
+from control_plane_kit_server_sdk import stdlib as sdk_stdlib
 from control_plane_kit_servers_http_multiplexer import configuration as config
 from control_plane_kit_servers_http_multiplexer import server as multiplexer
 from multiplexer_control_fixtures import fixture, running, request, token
@@ -38,6 +41,7 @@ class MultiplexerControlTests(unittest.TestCase):
         self.assertEqual(vars(caught.exception), {})
 
     def test_configuration_artifact_and_source_contract_are_real_values(self):
+        self.assertIs(type(self.config), core.ReceiverNodeControlConfiguration)
         self.assertEqual(config.decode_multiplexer_control_configuration(self.artifact.content.encode()), self.config)
         self.assertEqual(ConfigurationArtifact.from_descriptor(self.artifact.descriptor()), self.artifact)
         self.assertEqual(self.artifact.target_path, "/etc/cpk/multiplexer/control.json")
@@ -47,6 +51,8 @@ class MultiplexerControlTests(unittest.TestCase):
         self.assertEqual(contract.control_surfaces, (self.config.declaration.surface,))
         self.assertEqual(contract.provider_ports[0].container_port, 8000)
         self.assertEqual(contract.configuration_artifacts, (self.artifact,))
+        self.assertIn(PublicStaticEnvironmentBinding("CPK_WRAPPER_CONFIGURATION_FILE",
+            self.artifact.target_path), contract.public_environment)
         self.assertIn("node-controllable", [c.value for c in contract.capabilities])
         descriptor = Path(__file__).resolve().parents[1] / "product.cpk.json"
         old = ProductDescriptorCodec().decode_document(descriptor.read_bytes()).product
@@ -54,9 +60,11 @@ class MultiplexerControlTests(unittest.TestCase):
         self.assertEqual(old.runtime_contract.control_surfaces, ())
         self.assertEqual(old.runtime_contract.configuration_artifacts, ())
         self.assertEqual(contract.verification, old.runtime_contract.verification)
-        for field in ("sockets", "provider_ports", "public_environment", "secret_deliveries",
+        for field in ("sockets", "provider_ports", "secret_deliveries",
                       "retained_data_mounts", "lifecycle"):
             self.assertEqual(getattr(contract, field), getattr(old.runtime_contract, field))
+        self.assertEqual(contract.public_environment, (*old.runtime_contract.public_environment,
+            PublicStaticEnvironmentBinding("CPK_WRAPPER_CONFIGURATION_FILE", self.artifact.target_path)))
         self.assertNotIn("public_key", repr(self.config))
         result = subprocess.run([sys.executable, "-I", "-B", "-c",
             "import sys; import control_plane_kit_servers_http_multiplexer; import control_plane_kit_servers_http_multiplexer.configuration; "
@@ -66,33 +74,37 @@ class MultiplexerControlTests(unittest.TestCase):
 
     def test_closed_configuration_rejects_invalid_keys_identity_and_oversize(self):
         original = json.loads(self.artifact.content)
+        surface, health = original["verifiers"]
         raw_cases = [b"", b"\xff", b"{" + b" " * 65536,
                      b'{"profile":"multiplexer-control-unconfigured.v1"}',
                      self.artifact.content.replace('"profile":', '"profile":"duplicate", "profile":', 1).encode()]
-        for field, value in (("runtime_id", ""), ("extra", True), ("profile", "unknown"),
+        for field, value in (("target", {**original["target"], "runtime_id":""}), ("extra", True), ("profile", "unknown"),
                              ("target", {**original["target"], "provider_socket_name":"elsewhere"}),
+                             ("target", {**original["target"], "receiver_id":"not-hex"}),
                              ("declaration", {**original["declaration"], "profile":"workload-node-control-surface-declaration.v1"}),
-                             ("surface_read", {"issuer":"x", "public_keys":[]}),
-                             ("health_read", {**original["health_read"], "public_keys":[
-                                 {**original["health_read"]["public_keys"][0], "public_key_pem":"private malformed key"}]}),
-                             ("health_read", {**original["health_read"], "purpose":"workload-node-control"}),
-                             ("health_read", {"issuer":"secret\nissuer", "public_keys":original["health_read"]["public_keys"]}),
-                             ("health_read", {**original["health_read"], "public_keys":original["health_read"]["public_keys"] * 17})):
+                             ("verifiers", [{**surface, "issuer":"x", "public_keys":[]}, health]),
+                             ("verifiers", [surface, {**health, "public_keys":[
+                                 {**health["public_keys"][0], "public_key_pem":"private malformed key"}]}]),
+                             ("verifiers", [surface, {**health, "purpose":"workload-node-control"}]),
+                             ("verifiers", [surface, {**health, "issuer":"secret\nissuer"}]),
+                             ("verifiers", [surface, {**health, "public_keys":health["public_keys"] * 17}])):
             raw_cases.append(json.dumps({**original, field:value}).encode())
         for raw in raw_cases:
             with self.subTest(size=len(raw)):
                 self.rejected(lambda: config.decode_multiplexer_control_configuration(raw))
-        self.rejected(lambda: replace(self.config, health_keys=self.config.surface_keys))
-        self.rejected(lambda: replace(self.config, runtime_id=core.NodeControlGraphReference(
-            core.NodeControlGraphReferenceRole.NODE, "wrong-role")))
+        with self.assertRaises(WrapperConfigurationError):
+            replace(self.config, verifiers=(self.config.verifiers[0], self.config.verifiers[0]))
+        with self.assertRaises(core.ReceiverIdentityError):
+            replace(self.config.target, runtime_id=core.NodeControlGraphReference(
+                core.NodeControlGraphReferenceRole.NODE, "wrong-role"))
         self.rejected(lambda: config.multiplexer_control_configuration_artifact(None))
         self.rejected(lambda: config.multiplexer_source_runtime_contract(None))
         interrupted = KeyboardInterrupt()
-        with patch.object(config.json, "loads", side_effect=interrupted):
+        with patch.object(json, "loads", side_effect=interrupted):
             with self.assertRaises(KeyboardInterrupt) as caught:
                 config.decode_multiplexer_control_configuration(self.artifact.content.encode())
             self.assertIs(caught.exception, interrupted)
-        with patch.object(multiplexer, "ThreadingHTTPServer") as listener:
+        with patch.object(multiplexer, "CpkThreadingHTTPServer") as listener:
             self.rejected(lambda: multiplexer.create_multiplexer_server(None, config.MultiplexerSettings("http://upstream.invalid")))
             listener.assert_not_called()
 
@@ -100,16 +112,20 @@ class MultiplexerControlTests(unittest.TestCase):
         raw = self.artifact.content.encode()
         with TemporaryDirectory() as directory:
             path = Path(directory) / "control.json"
-            with patch.object(config, "CONTROL_PATH", str(path)):
+            with patch.dict(os.environ, {"CPK_WRAPPER_CONFIGURATION_FILE":str(path)}):
                 self.rejected(config.read_multiplexer_control_configuration)
                 path.write_bytes(raw + b" " * (65536 - len(raw)))
+                path.chmod(0o444)
                 self.assertEqual(config.read_multiplexer_control_configuration(), self.config)
+                path.chmod(0o644)
                 with path.open("ab") as stream:
                     stream.write(b" ")
+                path.chmod(0o444)
                 self.rejected(config.read_multiplexer_control_configuration)
                 path.unlink()
                 target = Path(directory) / "target"
                 target.write_bytes(raw)
+                target.chmod(0o444)
                 path.symlink_to(target)
                 self.rejected(config.read_multiplexer_control_configuration)
                 path.unlink()
@@ -120,6 +136,9 @@ class MultiplexerControlTests(unittest.TestCase):
                 self.rejected(config.read_multiplexer_control_configuration)
                 path.unlink()
                 path.write_bytes(raw)
+                path.chmod(0o644)
+                self.rejected(config.read_multiplexer_control_configuration)
+                path.chmod(0o444)
                 replacement = Path(directory) / "replacement"
                 replacement.write_bytes(b"unconfigured")
                 real_open = os.open
@@ -127,27 +146,26 @@ class MultiplexerControlTests(unittest.TestCase):
                     descriptor = real_open(name, flags)
                     replacement.replace(path)
                     return descriptor
-                with patch.object(config.os, "open", side_effect=swap_after_open):
+                with patch.object(os, "open", side_effect=swap_after_open):
                     self.assertEqual(config.read_multiplexer_control_configuration(), self.config)
                 self.rejected(config.read_multiplexer_control_configuration)
 
     def test_passive_installation_bind_failure_and_production_port_policy(self):
         captured = []
-        real = multiplexer.ThreadingHTTPServer
-        def create(*args, **kwargs):
-            host = real(*args, **kwargs)
+        real = sdk_stdlib.ThreadingHTTPServer.__init__
+        def create(host, *args, **kwargs):
+            real(host, *args, **kwargs)
             captured.append(host)
             self.assertEqual(host.socket.getsockname()[1], 0)
-            return host
-        for failure in ("install_multiplexer_control", "server_bind", "server_activate"):
-            with self.subTest(stage=failure), patch.object(multiplexer, "ThreadingHTTPServer", side_effect=create):
-                owner = multiplexer if failure == "install_multiplexer_control" else real
+        for failure in ("install_cpk_control_routes", "server_bind", "server_activate"):
+            with self.subTest(stage=failure), patch.object(sdk_stdlib.ThreadingHTTPServer, "__init__", create):
+                owner = sdk_stdlib if failure == "install_cpk_control_routes" else sdk_stdlib.CpkThreadingHTTPServer
                 with patch.object(owner, failure, side_effect=RuntimeError("test startup failure")):
                     with self.assertRaises(RuntimeError):
                         multiplexer.create_multiplexer_server(self.config, config.MultiplexerSettings("http://upstream.invalid"), address=("127.0.0.1", 0))
                 self.assertEqual(captured[-1].socket.fileno(), -1)
         for port in ("8001", "0", "invalid"):
-            with patch.dict(os.environ, {"PORT":port, "MULTIPLEXER_PRIMARY_URL":"http://upstream.invalid"}), patch.object(multiplexer, "ThreadingHTTPServer") as listener:
+            with patch.dict(os.environ, {"PORT":port, "MULTIPLEXER_PRIMARY_URL":"http://upstream.invalid"}), patch.object(multiplexer, "CpkThreadingHTTPServer") as listener:
                 self.assertEqual(multiplexer.main(), 2)
                 listener.assert_not_called()
         with patch.dict(os.environ, {"PORT":"8000", "MULTIPLEXER_PRIMARY_URL":"http://upstream.invalid"}), \
@@ -171,9 +189,9 @@ class MultiplexerControlTests(unittest.TestCase):
             self.assertEqual(json.loads(static[1])["declaration"], self.config.declaration.descriptor())
             status, body, headers = request(host, live, token(self.fixture))
             self.assertEqual(status, 200)
-            observed = core.NodeHealthReadRequest(self.config.target, self.config.runtime_id,
+            observed = core.ReceiverHealthReadRequest(self.config.target, self.fixture.authority,
                 core.NodeHealthReadKind.LIVENESS, self.config.declaration.identity(), "health-request")
-            result = core.NodeHealthReadResultCodec(observed, self.config.declaration).decode(json.loads(body))
+            result = core.ReceiverHealthReadResultCodec(observed, self.config.declaration).decode(json.loads(body))
             self.assertIs(result.outcome, core.NodeHealthReadOutcome.HEALTHY)
             self.assertEqual(headers["Cache-Control"], "no-store")
             self.assertEqual(self.config.declaration.surface.health_reads, (core.NodeHealthReadKind.LIVENESS,))
@@ -181,7 +199,10 @@ class MultiplexerControlTests(unittest.TestCase):
             self.assertNotEqual(request(host, "/__control/health/readiness", readiness)[0], 200)
             for changes in (
                 {"target":replace(self.config.target, node_id=core.NodeControlGraphReference(core.NodeControlGraphReferenceRole.NODE,"other"))},
-                {"runtime_id":core.NodeControlGraphReference(core.NodeControlGraphReferenceRole.RUNTIME,"other")},
+                {"target":replace(self.config.target, runtime_id=core.NodeControlGraphReference(core.NodeControlGraphReferenceRole.RUNTIME,"other"))},
+                {"target":replace(self.config.target, receiver_id="f" * 32)},
+                {"target":replace(self.config.target, workspace_id=core.NodeControlGraphReference(core.NodeControlGraphReferenceRole.WORKSPACE,"other"))},
+                {"target":replace(self.config.target, provider_socket_name=core.NodeControlGraphReference(core.NodeControlGraphReferenceRole.PROVIDER_SOCKET,"other"))},
                 {"declaration_identity":core.WorkloadNodeControlSurfaceDeclarationIdentity("0" * 64)},
             ):
                 self.assertNotEqual(request(host, live, token(self.fixture, request_changes=changes))[0], 200)
@@ -241,6 +262,18 @@ class MultiplexerControlTests(unittest.TestCase):
         with running(self, self.fixture) as host, patch.object(multiplexer, "_open", return_value=(200,b"primary","text/plain")) as opened:
             self.assertEqual(request(host, "/without-observers")[:2], (200, b"primary"))
             self.assertEqual(opened.call_count, 1)
+
+    def test_retained_receiver_accepts_separate_request_authority_contexts(self):
+        installed = self.artifact.content
+        with running(self, self.fixture) as host:
+            for authority in (self.fixture.authority, core.NodeControlAuthorityContext("revision-b", "projection-b")):
+                for static, path in ((True, "/__control/capabilities"), (False, "/__control/health/liveness")):
+                    credential = token(self.fixture, static=static,
+                        kind=None if static else core.NodeHealthReadKind.LIVENESS,
+                        request_changes={"authority_context":authority})
+                    self.assertEqual(request(host, path, credential)[0], 200)
+        self.assertEqual(self.artifact.content, installed)
+        self.assertIs(type(self.config.target), core.NodeControlReceiverTarget)
 
     def test_settings_and_trust_are_instance_local(self):
         first_env = {"MULTIPLEXER_PRIMARY_URL":"http://first.invalid", "PORT":"18082",
