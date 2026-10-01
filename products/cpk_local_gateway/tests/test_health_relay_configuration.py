@@ -5,6 +5,7 @@ import importlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import time
@@ -37,9 +38,8 @@ class HealthRelayConfigurationTests(unittest.TestCase):
     def configuration(self, api):
         w = self.world
         binding = api.gateway_health_target_binding(target_id="database-management", target=w.target,
-            runtime_id=w.runtime, runtime_contract=w.contract, hostname="wrapped-db")
-        return api.GatewayHealthRelayConfiguration(workspace_id=w.target.workspace_id,
-            gateway_node_id=w.transit.gateway, runtime_id=w.runtime, targets=(binding,))
+            runtime_contract=w.contract, hostname="wrapped-db")
+        return api.GatewayHealthRelayConfiguration(gateway_target=w.transit.gateway_target, targets=(binding,))
 
     def artifacts(self, api):
         trust_api, _ = self.world.transit.api()
@@ -66,23 +66,23 @@ class HealthRelayConfigurationTests(unittest.TestCase):
         self.assertFalse(projected.graph.edges)
         target = replace(w.target, provider_socket_name=projected.projected.target_surface.provider_socket_name)
         binding = api.gateway_health_target_binding(target_id="database-management", target=target,
-            runtime_id=w.runtime, runtime_contract=w.contract, hostname="wrapped-db")
+            runtime_contract=w.contract, hostname="wrapped-db")
         self.assertEqual(binding.target, target)
-        self.assertEqual(binding.runtime_id, w.runtime)
+        self.assertEqual(binding.target.runtime_id, w.runtime)
         self.assertEqual(binding.declaration, w.declaration)
         self.assertEqual(binding.origin, "http://wrapped-db:8087")
         for socket in ("application", "sql", "absent"):
             candidate = replace(target, provider_socket_name=replace(target.provider_socket_name, value=socket))
             self.refused(api, lambda:api.gateway_health_target_binding(target_id="database-management", target=candidate,
-                runtime_id=w.runtime, runtime_contract=w.contract, hostname="wrapped-db"))
+                runtime_contract=w.contract, hostname="wrapped-db"))
         # A forged nominal object must be revalidated at this public boundary.
         ambiguous = replace(w.contract)
         object.__setattr__(ambiguous, "provider_ports", (*ambiguous.provider_ports, ambiguous.provider_ports[-1]))
         self.refused(api, lambda:api.gateway_health_target_binding(target_id="database-management", target=target,
-            runtime_id=w.runtime, runtime_contract=ambiguous, hostname="wrapped-db"))
+            runtime_contract=ambiguous, hostname="wrapped-db"))
         for hostname in ("http://private-marker", "user@host", "host/path", "host?query", "host#fragment", "host\r\nX: x"):
             self.refused(api, lambda:api.gateway_health_target_binding(target_id="database-management", target=target,
-                runtime_id=w.runtime, runtime_contract=w.contract, hostname=hostname))
+                runtime_contract=w.contract, hostname=hostname))
 
     def test_configuration_roundtrip_closed_bounded_and_duplicate_target_refusal(self):
         api = self.api()
@@ -92,6 +92,9 @@ class HealthRelayConfigurationTests(unittest.TestCase):
         self.assertIs(artifact.file_mode, ConfigurationFileMode.READ_ONLY)
         self.assertIs(artifact.media_type, ConfigurationMediaType.JSON)
         self.assertEqual(api.decode_gateway_health_relay_configuration(artifact.content.encode()), value)
+        document = json.loads(artifact.content)
+        self.refused(api, lambda:api.decode_gateway_health_relay_configuration(json.dumps({**document,
+            "profile":"cpk-gateway-health-relay-configuration.v1"}).encode()))
         self.assertNotIn("wrapped-db", repr(value))
         self.refused(api, lambda:replace(value, targets=(*value.targets, value.targets[0])))
         duplicate_identity = replace(value.targets[0], target_id="other-alias")
@@ -109,7 +112,9 @@ class HealthRelayConfigurationTests(unittest.TestCase):
         self.assertEqual({item.artifact_id:item for item in contract.configuration_artifacts},
                          {trust.artifact_id:trust, targets.artifact_id:targets, control.artifact_id:control})
         self.assertEqual(contract.gateway_transit.provider_socket_name, "control")
-        self.assertEqual(contract.gateway_transit.protocol.value, "gateway-node-health-read-transit.v1")
+        self.assertEqual(contract.gateway_transit.protocol.value, "gateway-receiver-health-read-transit.v2")
+        self.assertIn(("CPK_WRAPPER_CONFIGURATION_FILE", CONTROL_PATH),
+            [(binding.name, binding.value) for binding in contract.public_environment])
         self.assertEqual({port.provider_socket:port.container_port for port in contract.provider_ports}, {"control":8000})
         historical = Path(__file__).resolve().parents[1] / "product.cpk.json"
         document = ProductDescriptorCodec().decode_document(historical.read_bytes())
@@ -117,7 +122,8 @@ class HealthRelayConfigurationTests(unittest.TestCase):
         self.assertEqual(document.product.runtime_contract.configuration_artifacts, ())
         self.assertEqual(document.product.image.digest,
             "sha256:b7cca6d0556eb5b68ef92386bc9b8e198ee62ccf10a7304b076a07283f821792")
-        bad_config = replace(self.configuration(api), gateway_node_id=replace(self.world.transit.gateway, value="other-gateway"))
+        bad_config = replace(self.configuration(api), gateway_target=replace(self.world.transit.gateway_target,
+            node_id=replace(self.world.transit.gateway, value="other-gateway")))
         other = api.gateway_health_relay_configuration_artifact(bad_config)
         self.refused(api, lambda:api.gateway_health_source_runtime_contract(trust, other, control))
         for bad in (replace(targets, target_path="/tmp/private-marker.json"),
@@ -127,6 +133,7 @@ class HealthRelayConfigurationTests(unittest.TestCase):
     def run_main(self, files, environment):
         server = importlib.import_module(PACKAGE + ".server")
         actual_open = builtins.open
+        actual_os_open = os.open
         opened = []
         output = io.StringIO()
         with tempfile.TemporaryDirectory() as directory:
@@ -134,6 +141,7 @@ class HealthRelayConfigurationTests(unittest.TestCase):
             for name, raw in files.items():
                 path = Path(directory) / Path(name).name
                 path.write_bytes(raw)
+                path.chmod(0o444)
                 paths[name] = path
             def selected_open(path, *args, **kwargs):
                 name = str(path)
@@ -143,9 +151,17 @@ class HealthRelayConfigurationTests(unittest.TestCase):
                         raise FileNotFoundError("private-marker")
                     return actual_open(paths[name], *args, **kwargs)
                 return actual_open(path, *args, **kwargs)
+            def selected_os_open(path, *args, **kwargs):
+                if str(path) == CONTROL_PATH:
+                    opened.append(CONTROL_PATH)
+                    if CONTROL_PATH not in paths:
+                        raise FileNotFoundError("private-marker")
+                    path = paths[CONTROL_PATH]
+                return actual_os_open(path, *args, **kwargs)
             # Patch only filesystem path placement and process serving. The actual
             # main/loader/config decoder/app construction still execute in CI.
-            with patch.dict("os.environ", environment, clear=True), patch("builtins.open", selected_open), \
+            with patch.dict("os.environ", {"CPK_WRAPPER_CONFIGURATION_FILE":CONTROL_PATH, **environment}, clear=True), \
+                    patch("builtins.open", selected_open), patch.object(os, "open", selected_os_open), \
                     patch("io.open", selected_open), patch.object(server.uvicorn, "run") as serve, \
                     redirect_stdout(output), redirect_stderr(output):
                 exit_code = None

@@ -40,14 +40,17 @@ class GatewayHealthTransitTests(unittest.TestCase):
         self.workspace = self.ref(roles.WORKSPACE, "workspace-a")
         self.gateway = self.ref(roles.NODE, "gateway-a")
         self.runtime = self.ref(roles.RUNTIME, "runtime-a")
-        self.target = core.NodeControlTarget(self.workspace,
-            self.ref(roles.GRAPH_REVISION, "graph-a"), self.ref(roles.NODE, "workload-a"),
-            self.ref(roles.PROVIDER_SOCKET, "management"))
+        self.target = core.NodeControlReceiverTarget(self.workspace,
+            self.runtime, self.ref(roles.NODE, "workload-a"),
+            self.ref(roles.PROVIDER_SOCKET, "management"), "a" * 32)
+        self.gateway_target = core.NodeControlReceiverTarget(self.workspace,
+            self.runtime, self.gateway, self.ref(roles.PROVIDER_SOCKET, "control"), "b" * 32)
+        self.authority = core.NodeControlAuthorityContext("graph-a", "projection-a")
         self.declaration = core.WorkloadNodeControlSurfaceDeclaration(
             core.WorkloadNodeControlSurfaceDescriptor(self.target.provider_socket_name, (),
                 health_reads=(core.NodeHealthReadKind.LIVENESS, core.NodeHealthReadKind.READINESS)),
             profile=core.WorkloadNodeControlSurfaceDeclarationProfile.V2)
-        self.request = core.NodeHealthReadRequest(self.target, self.runtime,
+        self.request = core.ReceiverHealthReadRequest(self.target, self.authority,
             core.NodeHealthReadKind.READINESS, self.declaration.identity(), "request-a")
 
     def api(self):
@@ -67,8 +70,7 @@ class GatewayHealthTransitTests(unittest.TestCase):
                 serialization.PublicFormat.SubjectPublicKeyInfo).decode("ascii"))
 
     def config(self, api, **changes):
-        return api.GatewayHealthTransitConfiguration(**(dict(workspace_id=self.workspace,
-            gateway_node_id=self.gateway, runtime_id=self.runtime, issuer="parent-a",
+        return api.GatewayHealthTransitConfiguration(**(dict(gateway_target=self.gateway_target, issuer="parent-a",
             purpose=core.DelegationKeyPurpose.GATEWAY_NODE_HEALTH_READ_TRANSIT,
             public_keys=(self.key_a,)) | changes))
 
@@ -80,12 +82,12 @@ class GatewayHealthTransitTests(unittest.TestCase):
 
     def grant(self, request=None, **changes):
         request = self.request if request is None else request
-        return core.DelegatedGatewayNodeHealthReadTransitGrant(**(dict(
-            profile=core.DelegatedGatewayNodeHealthReadTransitGrantProfile.V1,
+        return core.DelegatedGatewayReceiverHealthReadTransitGrant(**(dict(
+            profile=core.DelegatedGatewayReceiverHealthReadTransitGrantProfile.V2,
             canonicalization=core.NodeControlCanonicalization.JCS_RFC8785_V1,
             purpose=core.DelegationKeyPurpose.GATEWAY_NODE_HEALTH_READ_TRANSIT,
             issuer="parent-a", key_id=self.key_a.key_id, attempt_id="attempt-a",
-            gateway_node_id=self.gateway, target=request.target, runtime_id=request.runtime_id,
+            gateway_target=self.gateway_target, target=request.target, authority_context=request.authority_context,
             kind=request.kind, declaration_identity=request.declaration_identity,
             request_id=request.request_id, request_digest=request.canonical_digest(),
             issued_at=100, not_before=110, expires_at=200, jti="transit-a") | changes))
@@ -108,7 +110,7 @@ class GatewayHealthTransitTests(unittest.TestCase):
     def verify(self, verifier, credential=None, request=None, **changes):
         return verifier.verify(self.token() if credential is None else credential,
             self.request if request is None else request, **(dict(expected_attempt_id="attempt-a",
-                expected_target=self.target, expected_runtime_id=self.runtime,
+                expected_target=self.target,
                 expected_declaration=self.declaration, expected_kind=core.NodeHealthReadKind.READINESS,
                 now=150) | changes))
 
@@ -171,8 +173,13 @@ class GatewayHealthTransitTests(unittest.TestCase):
             dict(public_keys=(self.key_a, duplicate_material)), dict(public_keys=(malformed,)),
             dict(public_keys=(wrong_curve,)),
             dict(public_keys=(derived,)), dict(issuer="bad\nissuer"), dict(issuer=""),
-            dict(workspace_id=self.gateway), dict(gateway_node_id=self.runtime),
-            dict(runtime_id=self.workspace), dict(purpose="gateway-node-health-read-transit")]
+            dict(gateway_target=None), dict(purpose="gateway-node-health-read-transit")]
+        for field, wrong in (("workspace_id", self.gateway), ("node_id", self.runtime),
+                             ("runtime_id", self.workspace), ("provider_socket_name", self.runtime),
+                             ("receiver_id", "invalid")):
+            forged = replace(self.gateway_target)
+            object.__setattr__(forged, field, wrong)
+            cases.append(dict(gateway_target=forged))
         cases += [dict(issuer=value) for value in ("https://example.invalid", "sk-synthetic")]
         cases += [dict(purpose=purpose) for purpose in core.DelegationKeyPurpose
                   if purpose is not core.DelegationKeyPurpose.GATEWAY_NODE_HEALTH_READ_TRANSIT]
@@ -201,7 +208,9 @@ class GatewayHealthTransitTests(unittest.TestCase):
             {"extra": True}, {"profile": "unknown"}, {"public_keys": None},
             {"purpose": "workload-node-health-read"}, {"issuer": True},
             {"issuer": "https://example.invalid"}, {"issuer": "sk-synthetic"},
-            {"runtime_id": ["nested"]}, {"public_keys": [dict(document["public_keys"][0], algorithm="rsa")]},
+            {"gateway_target": {**document["gateway_target"], "runtime_id":["nested"]}},
+            {"profile":"cpk-gateway-health-transit-configuration.v1"},
+            {"public_keys": [dict(document["public_keys"][0], algorithm="rsa")]},
             {"public_keys": [dict(document["public_keys"][0], fingerprint_sha256="a" * 64)]})]
         private_pem = self.private_a.private_bytes(serialization.Encoding.PEM,
             serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode()
@@ -251,23 +260,28 @@ class GatewayHealthTransitTests(unittest.TestCase):
         config_api, verifier_api = self.api()
         verifier = self.verifier(config_api, verifier_api)
         for kind in core.NodeHealthReadKind:
-            request = replace(self.request, kind=kind)
-            credential = self.token(self.grant(request))
-            for _ in range(2):
-                self.assertTrue(self.verify(verifier, credential, request, expected_kind=kind) is request,
-                    "pure verifier returns the exact independently supplied request")
+            for authority in (self.authority, core.NodeControlAuthorityContext("graph-b", "projection-b")):
+                request = replace(self.request, kind=kind, authority_context=authority)
+                credential = self.token(self.grant(request))
+                for _ in range(2):
+                    self.assertTrue(self.verify(verifier, credential, request, expected_kind=kind) is request,
+                        "pure verifier returns the exact independently supplied request")
 
     def test_expected_attempt_target_runtime_declaration_and_action_are_independent(self):
         config_api, verifier_api = self.api()
         verifier = self.verifier(config_api, verifier_api)
         cases = [dict(expected_attempt_id="other-attempt"), dict(expected_attempt_id=True),
-            dict(expected_runtime_id=replace(self.runtime, value="other-runtime")),
+            dict(expected_target=replace(self.target, runtime_id=replace(self.runtime, value="other-runtime"))),
+            dict(expected_target=replace(self.target, receiver_id="f" * 32)),
             dict(expected_kind=core.NodeHealthReadKind.LIVENESS),
             dict(expected_declaration=replace(self.declaration,
                 surface=replace(self.declaration.surface, health_reads=(core.NodeHealthReadKind.LIVENESS,))))]
         cases += [dict(expected_target=replace(self.target,
             **{field: replace(getattr(self.target, field), value="other")}))
-            for field in ("workspace_id", "graph_revision", "node_id", "provider_socket_name")]
+            for field in ("workspace_id", "node_id", "provider_socket_name")]
+        for field in ("authored_graph_id", "realized_projection_id"):
+            changed = replace(self.request, authority_context=replace(self.authority, **{field:"other"}))
+            self.bad_token(verifier_api, lambda:self.verify(verifier, request=changed))
         for index, changes in enumerate(cases):
             with self.subTest(case=index):
                 self.bad_token(verifier_api, lambda: self.verify(verifier, **changes))
@@ -277,11 +291,14 @@ class GatewayHealthTransitTests(unittest.TestCase):
     def test_configured_receiver_workspace_gateway_runtime_and_issuer_are_required(self):
         config_api, verifier_api = self.api()
         for field, value in (("workspace_id", replace(self.workspace, value="other-workspace")),
-                             ("gateway_node_id", replace(self.gateway, value="other-gateway")),
+                             ("node_id", replace(self.gateway, value="other-gateway")),
                              ("runtime_id", replace(self.runtime, value="other-runtime")),
-                             ("issuer", "other-parent")):
+                             ("provider_socket_name", replace(self.gateway_target.provider_socket_name, value="other")),
+                             ("receiver_id", "f" * 32), ("issuer", "other-parent")):
             with self.subTest(field=field):
-                verifier = self.verifier(config_api, verifier_api, **{field: value})
+                changes = {"issuer":value} if field == "issuer" else {
+                    "gateway_target":replace(self.gateway_target, **{field:value})}
+                verifier = self.verifier(config_api, verifier_api, **changes)
                 self.bad_token(verifier_api, lambda: self.verify(verifier))
 
     def test_exact_half_open_interval_has_no_probe_skew_or_implicit_clock(self):
@@ -319,6 +336,7 @@ class GatewayHealthTransitTests(unittest.TestCase):
         header = dict(alg="EdDSA", typ=TOKEN_TYPE, kid=self.key_a.key_id)
         payload = self.payload(self.grant())
         cases = [self.token(header=header | {"alg": "none"}),
+            self.token(payload=payload | {CLAIM:payload[CLAIM] | {"profile":"gateway-node-health-read-transit-grant.v1"}}),
             self.token(header=header | {"typ": "CPK-GATEWAY-PROBE+JWT"}),
             self.token(header=header | {"extra": True}), self.token(payload=payload | {"extra": True}),
             self.token(header_bytes=b'{"kid":"duplicate",' + wire(header)[1:]),

@@ -10,23 +10,19 @@ from control_plane_kit_core.public_ingress import NamedPublicIngress, PublicIngr
 from control_plane_kit_core.topology import DeploymentGraph, Node, RuntimeRecord, validate_graph
 from control_plane_kit_core.topology.graph import Endpoint, LiteralAddress
 from control_plane_kit_core.types import BlockFamily, RuntimeKind
-from control_plane_kit_server_sdk.verifier_keys import (
-    WorkloadNodeControlSurfaceReadVerifierKeySet, WorkloadNodeHealthReadVerifierKeySet,
-)
+from control_plane_kit_core.wrapper_configuration import NodeControlVerificationConfiguration
 from health_relay_fixtures import World
 
 CONTROL_PATH = "/etc/cpk/gateway/control.json"
 
 
 def configuration(api, world):
-    target = replace(world.target, node_id=world.transit.gateway,
-        provider_socket_name=replace(world.target.provider_socket_name, value="control"))
-    return api.GatewayControlConfiguration(target=target, runtime_id=world.runtime,
-        declaration=api.gateway_control_declaration(), surface_issuer="surface-issuer",
-        surface_keys=WorkloadNodeControlSurfaceReadVerifierKeySet(
-            core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ, (world.static_key,)),
-        health_issuer="own-health-issuer", health_keys=WorkloadNodeHealthReadVerifierKeySet(
-            core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ, (world.key,)))
+    return core.ReceiverNodeControlConfiguration(world.transit.gateway_target,
+        api.gateway_control_declaration(), (
+            NodeControlVerificationConfiguration(core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ,
+                "surface-issuer", (world.static_key,)),
+            NodeControlVerificationConfiguration(core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ,
+                "own-health-issuer", (world.key,))))
 
 
 def fixture(api, world=None):
@@ -39,9 +35,9 @@ def fixture(api, world=None):
     config = configuration(api, world)
     trust_api, _ = world.transit.api()
     trust = world.transit.artifact(trust_api)
-    targets = GatewayHealthRelayConfiguration(config.target.workspace_id, world.transit.gateway, world.runtime,
+    targets = GatewayHealthRelayConfiguration(config.target,
         (gateway_health_target_binding(target_id="database-management", target=world.target,
-            runtime_id=world.runtime, runtime_contract=world.contract, hostname="wrapped-db"),))
+            runtime_contract=world.contract, hostname="wrapped-db"),))
     outbound = FailingDownstream()
     relay = GatewayHealthRelay(targets, gateway_health_transit_verifier_from_artifact(trust),
         clock=lambda:world.now, transport=outbound)
@@ -63,25 +59,27 @@ def credential(value, *, static=False, kind=core.NodeHealthReadKind.READINESS,
                request_changes=None, private=None, issued=100, expires=200):
     config, world = value.config, value.world
     if static:
-        request = core.NodeControlSurfaceReadRequest(config.target, core.NodeControlSurfaceReadKind.CAPABILITIES,
+        request = core.ReceiverControlSurfaceReadRequest(config.target, world.transit.authority, core.NodeControlSurfaceReadKind.CAPABILITIES,
             config.declaration.identity(), "own-surface")
-        family, issuer = config.surface_keys, config.surface_issuer
-        grant_type, profile = core.DelegatedWorkloadNodeControlSurfaceReadGrant, core.DelegatedWorkloadNodeControlSurfaceReadGrantProfile.V1
+        family = next(item for item in config.verifiers if item.purpose is core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ)
+        issuer = family.issuer
+        grant_type, profile = core.DelegatedWorkloadReceiverControlSurfaceReadGrant, core.DelegatedWorkloadReceiverControlSurfaceReadGrantProfile.V2
         claim, typ = "workload_node_control_surface_read", "CPK-WORKLOAD-NODE-CONTROL-SURFACE-READ+JWT"
         private = world.static_private if private is None else private
     else:
-        request = core.NodeHealthReadRequest(config.target, config.runtime_id, kind, config.declaration.identity(), "own-health")
-        family, issuer = config.health_keys, config.health_issuer
-        grant_type, profile = core.DelegatedWorkloadNodeHealthReadGrant, core.DelegatedWorkloadNodeHealthReadGrantProfile.V1
+        request = core.ReceiverHealthReadRequest(config.target, world.transit.authority, kind, config.declaration.identity(), "own-health")
+        family = next(item for item in config.verifiers if item.purpose is core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ)
+        issuer = family.issuer
+        grant_type, profile = core.DelegatedWorkloadReceiverHealthReadGrant, core.DelegatedWorkloadReceiverHealthReadGrantProfile.V2
         claim, typ = "workload_node_health_read", "CPK-WORKLOAD-NODE-HEALTH-READ+JWT"
         private = world.private if private is None else private
     request = replace(request, **(request_changes or {}))
     grant = grant_type(profile=profile, canonicalization=core.NodeControlCanonicalization.JCS_RFC8785_V1,
         purpose=family.purpose, issuer=issuer, key_id=family.public_keys[0].key_id,
-        audience=core.workload_node_control_audience(config.target), target=request.target, kind=request.kind,
+        audience=core.receiver_node_control_audience(config.target), target=request.target, kind=request.kind,
         declaration_identity=request.declaration_identity, request_id=request.request_id,
         request_digest=request.canonical_digest(), issued_at=issued, not_before=issued, expires_at=expires,
-        jti="own-health-fixture", **({} if static else {"runtime_id":request.runtime_id}))
+        jti="own-health-fixture", authority_context=request.authority_context)
     token = jwt.encode(dict(iss=issuer, aud=grant.audience, iat=issued, nbf=issued, exp=expires,
         jti=grant.jti, **{claim:grant.descriptor()}), private, algorithm="EdDSA",
         headers={"kid":grant.key_id, "typ":typ})
@@ -99,6 +97,7 @@ def topology(value, contract):
                 control_surfaces=selected.control_surfaces, gateway_transit=selected.gateway_transit),
             "container-server", world.runtime.value, selected.sockets,
             configuration_artifacts=selected.configuration_artifacts,
+            public_environment=selected.public_environment,
             endpoints={provider.name:Endpoint(LiteralAddress(
                 ("http" if provider.protocol.value == "http" else "postgres") + "://" + node_id + ":" + str(ports[provider.name])),
                 provider.protocol) for provider in selected.sockets.providers})
