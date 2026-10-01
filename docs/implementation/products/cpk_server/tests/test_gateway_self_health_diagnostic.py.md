@@ -36,3 +36,12 @@ identity/registry without database access, followed by provider credential mode,
 symlink, FIFO, directory, missing-file and size rejection. These test the loader
 rather than bypassing it with an injected authority object. They do not establish
 real operator setup provenance or immunity to later mount/parent replacement.
+
+For #237, Kepler translates only selected common receiver fixtures and adds
+original-context correlation laws: one installed receiver can supply offline
+plans for independently described A/B contexts, while mixed grant context and
+foreign full receiver/gateway identities refuse. This proves offline congruence,
+not current permission, process continuity or deployed health. Existing methods,
+actual authorization projection, transaction-exit ordering, approval reread,
+cancellation, ambiguous commit and no-retry assertions are retained. The earlier
+missing-module red remains historical; this tranche has no executable evidence.

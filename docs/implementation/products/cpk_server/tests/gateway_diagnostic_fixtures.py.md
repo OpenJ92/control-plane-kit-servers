@@ -12,3 +12,10 @@ provider prefix had no path and Core rejected its SecretReference before nine
 deeper tests reached the adapter. The correction admits the two exact synthetic
 transit/workload handles instead. This preserves source and assertions and narrows
 the fixture provider admission; the failed run is not transaction/source-green.
+
+The #237 target fixture now uses actual receiver-health request/workload/transit
+contracts, full gateway and workload identities and independent authored/realized
+request context. Keys come from purpose-indexed common verifier families. The
+outer diagnostic packet retains its existing structure; obsolete nested receiver
+profiles are not accepted or aliased. Existing recording authorization/UOW hooks
+and all downstream transaction/approval tests are unchanged.

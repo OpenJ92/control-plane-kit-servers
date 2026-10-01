@@ -68,6 +68,41 @@ class GatewayDiagnosticTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(set(a.correlations)),2)
         self.assertNotEqual(a.packet_digest,b.packet_digest)
 
+    def test_retained_receiver_uses_each_original_request_authority_context(self):
+        import control_plane_kit_core as core
+        first = self.prepare()
+        request = replace(self.world.request,
+            authority_context=core.NodeControlAuthorityContext("revision-b", "projection-b"))
+        packet = {**self.world.packet, "request":request.descriptor()}
+        for name, grant in (("transit_grant", self.world.transit), ("workload_grant", self.world.workload)):
+            packet[name] = replace(grant, authority_context=request.authority_context,
+                request_digest=request.canonical_digest()).descriptor()
+        second = self.prepare(packet)
+        self.assertEqual(first.context.request.target, second.context.request.target)
+        self.assertEqual(first.context.gateway_target, second.context.gateway_target)
+        self.assertEqual(second.context.request, request)
+        self.assertNotEqual(first.context.request.authority_context, second.context.request.authority_context)
+        self.assertEqual(first.correlations, second.correlations)
+        # Offline congruence does not grant approval or establish current authority.
+        self.assertEqual(second.plan()["status"], "offline-plan")
+
+    def test_foreign_receiver_and_mixed_authority_refuse_offline_without_rewriting(self):
+        import control_plane_kit_core as core
+        target = self.world.request.target
+        for name in ("workspace_id", "runtime_id", "node_id", "provider_socket_name", "receiver_id"):
+            value = "f" * 32 if name == "receiver_id" else replace(getattr(target, name), value="foreign")
+            request = replace(self.world.request, target=replace(target, **{name:value}))
+            with self.subTest(name=name), patch("socket.getaddrinfo", side_effect=AssertionError("offline network")):
+                with self.assertRaises(self.api.DiagnosticInputError):
+                    self.prepare({**self.world.packet, "request":request.descriptor()})
+        context = core.NodeControlAuthorityContext("revision-b", "projection-b")
+        for name, grant in (("transit_grant", self.world.transit), ("workload_grant", self.world.workload)):
+            with self.subTest(family=name), self.assertRaises(self.api.DiagnosticInputError):
+                self.prepare({**self.world.packet, name:replace(grant, authority_context=context).descriptor()})
+        with self.assertRaises(self.api.DiagnosticInputError):
+            self.prepare({**self.world.packet, "transit_grant":replace(self.world.transit,
+                gateway_target=replace(self.world.transit.gateway_target, receiver_id="f"*32)).descriptor()})
+
     async def test_authentication_and_approval_refuse_before_opening_transaction(self):
         selected = self.prepare()
         authority = self.api.DiagnosticAuthority(verifier=None,credential=b"invalid",

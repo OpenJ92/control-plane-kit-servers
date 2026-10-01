@@ -12,3 +12,9 @@ inside the existing normal Docker-backed ./test.sh.
 
 The missing-control probe's tracked create/start ID, finite15-inspection loop,
 4096-byte output capture and exact-ID cleanup are part of its shell ABI tests.
+
+#237 selects health trust from the common verifier families and uses the actual
+SDK receiver-health verifier without the removed separate runtime argument.
+It asserts full target runtime and independent fixture authority context after
+admission. Existing byte/lifetime/file/mode/exclusive-create and shell ABI laws
+are retained; no runner or gate modification is part of this target tranche.

@@ -14,9 +14,10 @@ from unittest.mock import patch
 import control_plane_kit_core as core
 from control_plane_kit_core.capabilities import CapabilityName
 from control_plane_kit_core.configuration import ConfigurationArtifact
+from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
 from control_plane_kit_core.products import ProductRuntimeContractCodec, ProductDescriptorCodec
 from fastapi.testclient import TestClient
-from cpk_http_host_fixtures import fixture, token
+from cpk_http_host_fixtures import fixture, token, verifier_family
 from test_http_mcp_boundaries import DeterministicVerifier, RecordingService
 from control_plane_kit_core.operations import ControlPlaneServiceRole
 
@@ -73,37 +74,53 @@ class CpkControlReceiverTests(unittest.TestCase):
                 old = ProductDescriptorCodec().decode_document((PRODUCT / filename).read_bytes()).product.runtime_contract
                 actual = self.config.cpk_source_runtime_contract(variant,self.artifact)
                 self.assertEqual(ProductRuntimeContractCodec().decode(actual.descriptor()),actual)
-                for field in ("sockets","provider_ports","public_environment","secret_deliveries","retained_data_mounts","verification","lifecycle"):
+                for field in ("sockets","provider_ports","secret_deliveries","retained_data_mounts","verification","lifecycle"):
                     self.assertEqual(getattr(actual,field),getattr(old,field))
+                self.assertEqual(set(actual.public_environment), {*old.public_environment,
+                    PublicStaticEnvironmentBinding("CPK_WRAPPER_CONFIGURATION_FILE", self.artifact.target_path)})
+                self.assertEqual(len(actual.public_environment), len(old.public_environment) + 1)
                 self.assertEqual(actual.configuration_artifacts,(self.artifact,))
                 self.assertEqual(actual.control_surfaces,(self.control.declaration.surface,))
                 self.assertEqual(set(actual.capabilities),set(old.capabilities)|{CapabilityName.NODE_CONTROLLABLE})
                 self.assertEqual(old.control_surfaces,())
         self.rejected(lambda:self.config.cpk_source_runtime_contract("cpk-server",self.artifact))
         self.rejected(lambda:self.config.cpk_source_runtime_contract(variants.CPK,None))
-        self.assertNotIn("public_key",repr(self.control))
+        self.assertIs(type(self.control), core.ReceiverNodeControlConfiguration)
+        self.assertNotIn("PRIVATE KEY", self.artifact.content)
 
     def test_closed_configuration_fixed_errors_and_wrong_authority_types(self):
         original = json.loads(self.artifact.content)
         cases = [b"",b"\xff",b"{"+b" "*65536,self.artifact.content.replace('"profile":','"profile":"duplicate", "profile":',1).encode()]
+        health = next(value for value in original["verifiers"]
+                      if value["purpose"] == core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ.value)
+        def health_families(**changes):
+            return [{**value, **changes} if value["purpose"] == health["purpose"] else dict(value)
+                    for value in original["verifiers"]]
         for field,value in (("extra",True),("runtime_id",""),("profile","unknown"),
             ("target",{**original["target"],"provider_socket_name":"mcp"}),
-            ("surface_read",{"issuer":"x","public_keys":[]}),
-            ("health_read",{**original["health_read"],"purpose":"wrong"}),
-            ("health_read",{"issuer":"secret\nissuer","public_keys":original["health_read"]["public_keys"]}),
-            ("health_read",{**original["health_read"],"public_keys":original["health_read"]["public_keys"]*17}),
-            ("health_read",{**original["health_read"],"public_keys":[{**original["health_read"]["public_keys"][0],"public_key_pem":"private malformed material"}]})):
+            ("target",{**original["target"],"runtime_id":""}),
+            ("verifiers", []),
+            ("verifiers",health_families(purpose="wrong")),
+            ("verifiers",health_families(issuer="secret\nissuer")),
+            ("verifiers",health_families(public_keys=health["public_keys"]*17)),
+            ("verifiers",health_families(public_keys=[{**health["public_keys"][0],"public_key_pem":"private malformed material"}]))):
             cases.append(json.dumps({**original,field:value}).encode())
+        cases.append(json.dumps({**original, "verifiers":[{**value, "public_keys":[]}
+            if value["purpose"] == core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ.value
+            else dict(value) for value in original["verifiers"]]}).encode())
         for raw in cases:
             with self.subTest(size=len(raw)):
                 self.rejected(lambda:self.config.decode_cpk_control_configuration(raw))
-        self.rejected(lambda:replace(self.control,health_keys=self.control.surface_keys))
-        self.rejected(lambda:replace(self.control,declaration=replace(
+        with self.assertRaises(ValueError):
+            replace(self.control, verifiers=(verifier_family(self.control,
+                core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ),))
+        self.rejected(lambda:self.config.cpk_control_configuration_artifact(replace(self.control,declaration=replace(
             self.control.declaration,surface=replace(self.control.declaration.surface,
-                health_reads=(core.NodeHealthReadKind.READINESS,)))))
-        self.rejected(lambda:replace(self.control,runtime_id=core.NodeControlGraphReference(core.NodeControlGraphReferenceRole.NODE,"wrong")))
+                health_reads=(core.NodeHealthReadKind.READINESS,))))))
+        malformed = {**original, "target": {**original["target"], "receiver_id":"wrong"}}
+        self.rejected(lambda:self.config.decode_cpk_control_configuration(json.dumps(malformed).encode()))
         self.rejected(lambda:self.config.cpk_control_configuration_artifact(None))
-        with patch.object(self.config.json,"loads",side_effect=KeyboardInterrupt):
+        with patch.object(core.ReceiverNodeControlConfigurationCodec,"decode_bytes",side_effect=KeyboardInterrupt):
             with self.assertRaises(KeyboardInterrupt):
                 self.config.decode_cpk_control_configuration(self.artifact.content.encode())
 
@@ -111,7 +128,7 @@ class CpkControlReceiverTests(unittest.TestCase):
         raw = self.artifact.content.encode()
         with TemporaryDirectory() as directory:
             path = Path(directory)/"control.json"
-            with patch.object(self.config,"CONTROL_PATH",str(path)):
+            with patch.dict(os.environ, {"CPK_WRAPPER_CONFIGURATION_FILE":str(path)}):
                 self.rejected(self.config.read_cpk_control_configuration)
                 path.write_bytes(raw+b" "*(65536-len(raw)))
                 self.assertEqual(self.config.read_cpk_control_configuration(),self.control)
@@ -143,7 +160,7 @@ class CpkControlReceiverTests(unittest.TestCase):
 
     def test_sdk_install_completes_before_schema_and_schema_failure_returns_no_app(self):
         captured=[]
-        original=self.server.install_cpk_control_routes
+        original=self.server.install_cpk_wrapper
         def install(app,**kwargs):
             original(app,**kwargs)
             captured.append(app)
@@ -151,7 +168,7 @@ class CpkControlReceiverTests(unittest.TestCase):
             self.assertEqual(len(captured),1)
             self.assertTrue(any(route.path.startswith("/__control/") for route in captured[0].routes))
             raise RuntimeError("test schema failure")
-        with patch.object(self.server,"install_cpk_control_routes",side_effect=install), patch.object(self.server,"_operations_application",side_effect=fail_schema) as operations:
+        with patch.object(self.server,"install_cpk_wrapper",side_effect=install), patch.object(self.server,"_operations_application",side_effect=fail_schema) as operations:
             with self.assertRaisesRegex(RuntimeError,"test schema failure"):
                 self.server.create_app(self.bootstrap,self.verifier,control=self.control,clock=lambda:150)
             operations.assert_called_once_with(self.bootstrap)
@@ -164,8 +181,8 @@ class CpkControlReceiverTests(unittest.TestCase):
             self.assertEqual(static.json()["declaration"],self.control.declaration.descriptor())
             live=first.get("/__control/health/liveness",headers={"Authorization":"Bearer "+token(self.fixture)})
             self.assertEqual(live.status_code,200)
-            request=core.NodeHealthReadRequest(self.control.target,self.control.runtime_id,core.NodeHealthReadKind.LIVENESS,self.control.declaration.identity(),"health-request")
-            result=core.NodeHealthReadResultCodec(request,self.control.declaration).decode(live.json())
+            request=core.ReceiverHealthReadRequest(self.control.target,self.fixture.authority,core.NodeHealthReadKind.LIVENESS,self.control.declaration.identity(),"health-request")
+            result=core.ReceiverHealthReadResultCodec(request,self.control.declaration).decode(live.json())
             self.assertIs(result.outcome,core.NodeHealthReadOutcome.HEALTHY)
             self.assertEqual(live.headers["cache-control"],"no-store")
             for client,credential in ((first,None),(first,"valid-token"),(first,token(self.fixture,static=True)),(other,token(self.fixture))):
@@ -184,3 +201,22 @@ class CpkControlReceiverTests(unittest.TestCase):
         result=subprocess.run([sys.executable,"-I","-B","-c",
             "import sys; sys.path.insert(0,sys.argv[1]); import control_plane_kit_servers_cpk_server.control_configuration; assert 'fastapi' not in sys.modules; assert 'control_plane_kit_servers_cpk_server.server' not in sys.modules",str(PRODUCT/"src")],capture_output=True,text=True,timeout=10)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
+    def test_same_installed_receiver_accepts_two_contexts_and_refuses_foreign_scope(self):
+        with TestClient(self.app()) as client:
+            for authority in (self.fixture.authority, core.NodeControlAuthorityContext("revision-b", "projection-b")):
+                request = core.ReceiverHealthReadRequest(self.control.target, authority,
+                    core.NodeHealthReadKind.LIVENESS, self.control.declaration.identity(), "health-request")
+                response = client.get("/__control/health/liveness", headers={"Authorization":"Bearer " +
+                    token(self.fixture, request_changes={"authority_context":authority})})
+                self.assertEqual(response.status_code, 200)
+                actual = core.ReceiverHealthReadResultCodec(request, self.control.declaration).decode(response.json())
+                self.assertIs(actual.outcome, core.NodeHealthReadOutcome.HEALTHY)
+            for name in ("workspace_id", "runtime_id", "node_id", "provider_socket_name", "receiver_id"):
+                value = "f"*32 if name == "receiver_id" else replace(getattr(self.control.target, name), value="foreign")
+                credential = token(self.fixture, request_changes={"target":replace(self.control.target, **{name:value})})
+                with self.subTest(name=name):
+                    response = client.get("/__control/health/liveness", headers={"Authorization":"Bearer " + credential})
+                    self.assertNotEqual(response.status_code, 200)
+        self.assertEqual(self.verifier.credentials, [])
+        self.assertEqual([request for service in self.services.values() for request in service.requests], [])
