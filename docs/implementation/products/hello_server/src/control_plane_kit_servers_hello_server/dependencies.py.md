@@ -1,6 +1,16 @@
 Source: [dependencies.py](../../../../../../products/hello_server/src/control_plane_kit_servers_hello_server/dependencies.py).
 Maintain with dependency semantics and bounds.
 
+The duplicate-JSON-member hook is owned here with its remaining dependency
+declaration consumer. The #237 common receiver refactor removed the old control
+parser that previously hosted this shared private helper. The first receiving
+candidate consequently failed root collection on the stale import. The correction
+moves the exact helper body here, preserves HelloConfigurationError and the
+existing decoding exception boundary, and changes no parsing law or test.
+test_finite_input_boundaries_reject_without_truncating retains the raw duplicate
+member refusal. The unchanged whole gate must validate the corrected candidate;
+the failed candidate's unreached product/runtime stages remain uncredited.
+
 The existing DependencyCheck/environment naming language now lives independently
 of the HTTP process. Input limits are explicit compatibility changes: 8 entries,
 8192 UTF-8 declaration bytes, 64-character names, 128-character environment names,

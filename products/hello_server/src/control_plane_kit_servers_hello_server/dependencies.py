@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 
 from control_plane_kit_core import NodeHealthReadOutcome
-from .configuration import HelloConfigurationError, _unique_object
+from .configuration import HelloConfigurationError
 
 _DEPENDENCY_NAME = re.compile(r"[a-z][a-z0-9-]*\Z")
 _MAX_RESPONSE_BYTES = 16_384
@@ -133,6 +133,15 @@ def dependency_environment_names(name: str) -> tuple[str, str]:
         f"HELLO_HTTP_{suffix}_URL",
         f"HELLO_DATABASE_{suffix}_URL",
     )
+
+
+def _unique_object(pairs: list[tuple[str, object]]) -> dict:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError
+        result[key] = value
+    return result
 
 
 def load_dependencies(raw: str | None) -> tuple[DependencyCheck, ...]:
