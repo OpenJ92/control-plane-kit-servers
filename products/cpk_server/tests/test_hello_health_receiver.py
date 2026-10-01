@@ -81,7 +81,9 @@ class HelloHealthReceiverTests(unittest.TestCase):
 
     def test_exact_reference_slot_and_registry_membership_fail_closed(self):
         other = document("other-hello", self.contract)
-        self.refusal(lambda:self.decode(replace(self.selection(), descriptor_document=other)))
+        forged = replace(self.selection())
+        object.__setattr__(forged, "descriptor_document", other)
+        self.refusal(lambda:self.decode(forged))
         absent = document("hello-no-slot", replace(self.contract, configuration_artifacts=()))
         self.refusal(lambda:self.decode(self.selection(doc=absent)))
         # Own-health needs no registration; descriptor-selected material is still exact.

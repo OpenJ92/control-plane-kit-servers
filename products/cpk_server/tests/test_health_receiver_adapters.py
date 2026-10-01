@@ -155,9 +155,13 @@ class HealthReceiverAdapterTests(unittest.TestCase):
             doc = self.world.documents[family]
             original = self.selection(family)
             other = document("substituted-" + family, doc.product.runtime_contract)
-            self.refusal(lambda:self.decode(family, replace(original, descriptor_document=other)))
+            forged = replace(original)
+            object.__setattr__(forged, "descriptor_document", other)
+            self.refusal(lambda:self.decode(family, forged))
             absent = document("missing-slot-" + family, replace(doc.product.runtime_contract, configuration_artifacts=()))
             self.refusal(lambda:self.decode(family, self.selection(family, doc=absent)))
+            if family == "gateway":
+                self.refusal(lambda:self.api.health_receiver_decoders(gateway_documents=(absent,)))
             for change in (dict(artifact_id="other"), dict(target_path="/etc/other.json"),
                            dict(media_type=ConfigurationMediaType.TEXT), dict(file_mode=ConfigurationFileMode.OWNER_READ_ONLY)):
                 artifact = replace(self.world.artifacts[family], **change)
@@ -196,10 +200,13 @@ class HealthReceiverAdapterTests(unittest.TestCase):
 
     def test_unexpected_decoder_and_product_owner_errors_keep_identity(self):
         marker = RuntimeError("synthetic programmer failure")
+        selected = self.selection("workload")
         with patch.object(core.ReceiverNodeControlConfigurationCodec, "decode_bytes", side_effect=marker):
-            with self.assertRaises(RuntimeError) as caught:
-                self.api.select_own_health_configuration(self.selection("workload"))
-        self.assertIs(caught.exception, marker)
+            for action in (lambda:self.api.select_own_health_configuration(selected),
+                           lambda:self.coverage(self.world, "b")):
+                with self.assertRaises(RuntimeError) as caught:
+                    action()
+                self.assertIs(caught.exception, marker)
         owner = HealthReceiverTrustError("synthetic store owner refusal")
         with patch.object(self.world.stores.registered_products, "get", side_effect=owner):
             with self.assertRaises(HealthReceiverTrustError) as caught:
@@ -213,8 +220,13 @@ class HealthReceiverAdapterTests(unittest.TestCase):
                  patch("os.open", side_effect=AssertionError("file effect")), \
                  patch("socket.create_connection", side_effect=AssertionError("network effect")):
                 facts = self.decode(family, selection)
-            for sensitive in ("BEGIN PUBLIC KEY", "workspace-a", "health-b"):
-                self.assertNotIn(sensitive, repr(facts))
+            public_values = [facts]
+            if family == "gateway":
+                public_values.append(self.registry().binding_for(selection.product_reference,
+                    core.DelegationKeyPurpose.GATEWAY_NODE_HEALTH_READ_TRANSIT).decoder)
+            for value in public_values:
+                for sensitive in ("BEGIN PUBLIC KEY", "workspace-a", "health-b"):
+                    self.assertNotIn(sensitive, repr(value))
 
 
 class GatewaySelfHealthAdapterTests(unittest.TestCase):
@@ -320,7 +332,9 @@ class GatewaySelfHealthAdapterTests(unittest.TestCase):
                 value for value in self.value.contract.configuration_artifacts if value.artifact_id != self.value.artifacts[family].artifact_id)))
             self.refusal(lambda:self.select(**{name:self.selection(name, doc=missing) for name in self.selections()}))
         wrong = document("wrong-product", self.value.contract)
-        self.refusal(lambda:self.own(replace(self.selection("control"), descriptor_document=wrong)))
+        forged = replace(self.selection("control"))
+        object.__setattr__(forged, "descriptor_document", wrong)
+        self.refusal(lambda:self.own(forged))
         self.refusal(lambda:self.api.health_receiver_decoders(gateway_documents=(self.value.document, self.value.document)))
 
     def test_missing_foreign_and_duplicate_self_bindings_use_actual_codec_refusals(self):

@@ -36,3 +36,12 @@ provenance, arbitrary alias, exact socket, full receiver equality and duplicate/
 missing binding refusals. Foreign gateway receiver ID/socket coverage is explicit.
 No production private Operations import is proposed: the existing test-only
 coverage join remains an integration witness. These targets are unexecuted.
+Meridian's target review separates nominally forged selections from their
+constructor: descriptor/reference substitution is prepared with object.__setattr__
+before refusal, then the actual adapter must revalidate it. Unexpected common
+codec errors must preserve identity through both direct adapter and actual
+Operations coverage. The surviving transit decoder retains its original repr
+non-rendering assertions; removing own decoders does not remove that law.
+An absent transit artifact is also refused directly while constructing the actual
+registry from that descriptor, preserving the original declared-slot law beyond
+an unrelated missing-reference lookup in an already-built registry.

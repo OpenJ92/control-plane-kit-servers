@@ -16,3 +16,6 @@ transit duplicate binding refusal remains covered by the adapter tests. No
 Operations state machine, product admission, image, plan-ready or live claim.
 The existing test method names preserve provenance. Kepler authored this target
 translation; Meridian independently reviews it. No executable evidence yet.
+Meridian review requires the forged descriptor/reference specimen to be prepared
+before refusal; only actual adapter decoding is under the assertion. This proves
+boundary revalidation rather than merely HealthReceiverSelection construction.
