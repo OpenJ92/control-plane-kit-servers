@@ -25,3 +25,13 @@ host law holds installed target/keys fixed across two caller contexts and refuse
 each foreign workspace/runtime/node/socket/receiver-ID, without operator work.
 No permanent graph revision is installed and no authority is inferred from token
 self-description. Kepler target authorship; independent review and full gate pending.
+
+Vale's static integration review found that the shared SDK loader also requires
+exact 0444 file mode. The bound-positive fixture now sets that mode explicitly;
+0644 is a separate negative. Appending the overflow byte temporarily enables
+writing, then restores 0444 so overflow cannot fail merely on mode. The symlink
+target also has valid 0444 mode, isolating no-follow refusal. No test was run.
+Meridian also retained two distinct original laws explicitly: the public config
+repr does not expose public-key fields, and a typed runtime reference with NODE
+role refuses at the Core receiver-target constructor. Neither is substituted by
+the separate private-material or malformed receiver-ID negatives.

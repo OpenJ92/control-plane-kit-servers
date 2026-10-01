@@ -86,6 +86,7 @@ class CpkControlReceiverTests(unittest.TestCase):
         self.rejected(lambda:self.config.cpk_source_runtime_contract("cpk-server",self.artifact))
         self.rejected(lambda:self.config.cpk_source_runtime_contract(variants.CPK,None))
         self.assertIs(type(self.control), core.ReceiverNodeControlConfiguration)
+        self.assertNotIn("public_key", repr(self.control))
         self.assertNotIn("PRIVATE KEY", self.artifact.content)
 
     def test_closed_configuration_fixed_errors_and_wrong_authority_types(self):
@@ -119,6 +120,9 @@ class CpkControlReceiverTests(unittest.TestCase):
                 health_reads=(core.NodeHealthReadKind.READINESS,))))))
         malformed = {**original, "target": {**original["target"], "receiver_id":"wrong"}}
         self.rejected(lambda:self.config.decode_cpk_control_configuration(json.dumps(malformed).encode()))
+        with self.assertRaises(ValueError):
+            replace(self.control.target, runtime_id=core.NodeControlGraphReference(
+                core.NodeControlGraphReferenceRole.NODE, "wrong"))
         self.rejected(lambda:self.config.cpk_control_configuration_artifact(None))
         with patch.object(core.ReceiverNodeControlConfigurationCodec,"decode_bytes",side_effect=KeyboardInterrupt):
             with self.assertRaises(KeyboardInterrupt):
@@ -131,12 +135,17 @@ class CpkControlReceiverTests(unittest.TestCase):
             with patch.dict(os.environ, {"CPK_WRAPPER_CONFIGURATION_FILE":str(path)}):
                 self.rejected(self.config.read_cpk_control_configuration)
                 path.write_bytes(raw+b" "*(65536-len(raw)))
+                path.chmod(0o444)
                 self.assertEqual(self.config.read_cpk_control_configuration(),self.control)
+                path.chmod(0o644)
+                self.rejected(self.config.read_cpk_control_configuration)
                 with path.open("ab") as stream:
                     stream.write(b" ")
+                path.chmod(0o444)
                 self.rejected(self.config.read_cpk_control_configuration)
                 path.unlink()
                 target=Path(directory)/"target"; target.write_bytes(raw)
+                target.chmod(0o444)
                 path.symlink_to(target)
                 self.rejected(self.config.read_cpk_control_configuration)
                 path.unlink(); path.mkdir()
