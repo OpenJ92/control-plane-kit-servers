@@ -1,6 +1,23 @@
 Source: [test_gateway_control.py](../../../../../products/cpk_local_gateway/tests/test_gateway_control.py).
 Maintain this companion alongside its source and selected dependency contracts.
 
+#237 receiving target checkpoint adds one profile-admission law under the
+unchanged accepted old dependency closure. A complete independent old gateway
+configuration document, exact declaration and real ephemeral public keys are
+constructed before the assertion. Only the real product decoder call is inside
+`assertRaises(GatewayControlConfigurationError)`; accepting that document is
+the intended missing-refusal red. The old wire does not use the migrating
+configuration factory and must retain its meaning afterward.
+
+The successor half requires the same receiving boundary to decode the common
+Core receiver V2 configuration as the actual Core value. It receives no positive
+red credit behind the missing refusal; it must execute in the candidate's full
+green gate. This focused law does not establish other products, relay/signature
+admission, installed wrapper callbacks or live behavior. All existing tests and
+ordinary gate stages remain required, with their protocol fixture translation
+reviewed before production implementation. No pins, runtime source, collection
+or runner change belongs to this target checkpoint.
+
 # Gateway self-health laws (#182)
 
 Target stage follows reviewed plan5743544407 and source-contract correction

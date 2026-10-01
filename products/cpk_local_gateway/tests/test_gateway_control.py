@@ -6,6 +6,7 @@ from dataclasses import replace
 import importlib
 import importlib.util
 import io
+import json
 from pathlib import Path
 import tempfile
 import time
@@ -13,6 +14,7 @@ import unittest
 from unittest.mock import patch
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives import serialization
 from fastapi.testclient import TestClient
 import control_plane_kit_core as core
 from control_plane_kit_core.products import ProductRuntimeContractCodec
@@ -23,6 +25,51 @@ from control_plane_kit_core.planning import (
 from gateway_control_fixtures import fixture, credential, topology, CONTROL_PATH
 
 PACKAGE = "control_plane_kit_servers_cpk_local_gateway"
+
+
+class GatewayControlMigrationTests(unittest.TestCase):
+    def test_configuration_admits_only_common_receiver_profile(self):
+        api = importlib.import_module(PACKAGE + ".control_configuration")
+        # Freeze the old wire independently of the migrating product factory.
+        # Both real public-key families and the exact declaration are lawful.
+        declaration = core.WorkloadNodeControlSurfaceDeclaration(
+            core.WorkloadNodeControlSurfaceDescriptor(core.NodeControlGraphReference(
+                core.NodeControlGraphReferenceRole.PROVIDER_SOCKET, "control"), (),
+                health_reads=(core.NodeHealthReadKind.LIVENESS, core.NodeHealthReadKind.READINESS)),
+            profile=core.WorkloadNodeControlSurfaceDeclarationProfile.V2)
+        families = []
+        for name in ("surface", "health"):
+            public = Ed25519PrivateKey.generate().public_key().public_bytes(
+                serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo).decode("ascii")
+            families.append({"issuer": name + "-issuer", "public_keys": [{
+                "key_id": name + "-key", "algorithm": "ed25519", "public_key_pem": public}]})
+        old = {"profile": "cpk-gateway-control-configuration.v1", "target": {
+            "workspace_id": "workspace-a", "graph_revision": "revision-a",
+            "node_id": "gateway-a", "provider_socket_name": "control"},
+            "runtime_id": "runtime-a", "declaration": declaration.descriptor(),
+            "surface_read": families[0], "health_read": families[1]}
+        raw = json.dumps(old, sort_keys=True, separators=(",", ":")).encode()
+        # Only actual decoding is inside the assertion. The old production
+        # decoder accepts this complete document, yielding meaningful red.
+        with self.assertRaises(api.GatewayControlConfigurationError) as caught:
+            api.decode_gateway_control_configuration(raw)
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIsNone(caught.exception.__context__)
+
+        # Successor half of this same profile-admission contract: no positive
+        # red credit until the accepted Core/SDK and real receiving source run.
+        target = {"workspace_id": "workspace-a", "runtime_id": "runtime-a",
+            "node_id": "gateway-a", "provider_socket_name": "control", "receiver_id": "a" * 32}
+        common = {"profile": "workload-node-control-configuration.v2", "target": target,
+            "declaration": declaration.descriptor(), "verifiers": [
+                {"purpose": purpose, **family} for purpose, family in zip((
+                    "workload-node-control-surface-read", "workload-node-health-read"), families, strict=True)]}
+        admitted = api.decode_gateway_control_configuration(json.dumps(common).encode())
+        self.assertIs(type(admitted), core.ReceiverNodeControlConfiguration)
+        self.assertEqual(admitted.target.descriptor(), target)
+        self.assertEqual(admitted.declaration, declaration)
+        self.assertEqual(tuple(family.issuer for family in admitted.verifiers),
+                         ("surface-issuer", "health-issuer"))
 
 
 class GatewayControlTests(unittest.TestCase):
