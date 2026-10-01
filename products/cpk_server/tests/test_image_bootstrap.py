@@ -26,7 +26,8 @@ PRODUCT_SRC = PRODUCT / "src"
 COORDINATES = json.loads(
     (ROOT / "coordinates" / "server-products.json").read_text(encoding="utf-8")
 )
-CPK_PIN = COORDINATES["upstreams"]["control_plane_kit_commit"]
+CORE_PIN = COORDINATES["upstreams"]["control_plane_kit_core_commit"]
+OPERATIONS_PIN = COORDINATES["upstreams"]["control_plane_kit_operations_commit"]
 INTERPRETERS_PIN = COORDINATES["upstreams"][
     "control_plane_kit_interpreters_commit"
 ]
@@ -67,12 +68,12 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("control_plane_kit_servers_cpk_server.server", dockerfile)
         self.assertIn(
             "control-plane-kit-core @ "
-            f"https://github.com/OpenJ92/control-plane-kit/archive/{CPK_PIN}.zip",
+            f"https://github.com/OpenJ92/control-plane-kit/archive/{CORE_PIN}.zip",
             dockerfile,
         )
         self.assertIn(
             "control-plane-kit-operations @ "
-            f"https://github.com/OpenJ92/control-plane-kit/archive/{CPK_PIN}.zip",
+            f"https://github.com/OpenJ92/control-plane-kit/archive/{OPERATIONS_PIN}.zip",
             dockerfile,
         )
         self.assertIn(
@@ -81,7 +82,12 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             f"{INTERPRETERS_PIN}.zip",
             dockerfile,
         )
-        self.assertIn("fastapi>=0.115", dockerfile)
+        self.assertIn(
+            "control-plane-kit-server-sdk[fastapi] @ "
+            "https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/"
+            f"{COORDINATES['upstreams']['control_plane_kit_server_sdk_commit']}.zip",
+            dockerfile,
+        )
         self.assertIn("uvicorn>=0.30", dockerfile)
         self.assertIn("COPY products/cpk_server/src ./products/cpk_server/src", dockerfile)
         self.assertNotIn("COPY products/cpk_server ./products/cpk_server", dockerfile)
@@ -1541,9 +1547,13 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             and isinstance(node.func, ast.Attribute)
             and isinstance(node.func.value, ast.Name)
             and node.func.value.id == "http_boundary"
-            and node.func.attr == "handle"
+            and node.func.attr == "handle_async"
         ]
         self.assertEqual(len(calls), 1)
+        self.assertTrue(any(
+            isinstance(node, ast.Await) and node.value is calls[0]
+            for node in ast.walk(handlers[0])
+        ))
         keywords = {
             keyword.arg: keyword.value
             for keyword in calls[0].keywords

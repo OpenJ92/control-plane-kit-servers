@@ -133,3 +133,36 @@ visibility: private
 
 Authenticated Docker Desktop and GitHub Actions can pull the digest. Public
 unauthenticated pulls require an explicit package visibility decision.
+
+## Secrets source product
+
+The source product consumes the accepted Secrets receiving codec and provides
+`secrets_control_configuration_artifact(configuration)` and
+`secrets_source_runtime_contract(artifact)` from
+`control_plane_kit_servers_secrets_server.configuration`.
+The supplied configuration is an actual Secrets `SecretsControlConfiguration`;
+the product factory creates a public JSON artifact at
+`/etc/cpk/secrets-server/control.json`, read-only mode0444.
+
+The source recipe fixes `CPK_SECRETS_CONTROL_CONFIGURATION_FILE` to that path.
+Topology supplies the artifact and preserves its existing public environment;
+the service variable is not represented as a Core public environment binding.
+Private master/credential files remain separate0400 bootstrap inputs. Control8081,
+UID10006, retained provider data and both original live/ready verification checks
+remain; authenticated SDK health currently advertises process liveness only.
+
+Published descriptor/image coordinates remain historical until qualified image
+adoption. The maintained `scripts/secrets_server_image_smoke.sh` defaults to a
+wrapped source build. It supplies public configuration and fresh signed control
+reads for initial startup and restart, retaining the original private bootstrap,
+custody and retained-data checks. Explicit `CPK_SECRETS_BUILD_IMAGE=0` retains
+historical mode and requires an immutable `CPK_SECRETS_IMAGE` reference.
+`CPK_SECRETS_SMOKE_PROFILE` can explicitly select `wrapped-source` or
+`published-baseline`; contradictory profile/build inputs fail before effects.
+
+The ordinary `./test.sh` forces both profiles and retains the separate numeric
+source/private-file witness. `CPK_SECRETS_SOURCE_IMAGE` selects the source smoke
+image tag for that gate. Private temporary headers and bounded log capture are
+removed on exit; log retrieval, overflow and redaction failures are failures,
+with no matching secret output. Off-normal adjacent-checkout
+source-live scripts need their own future public-ABI review and remain uncredited.
