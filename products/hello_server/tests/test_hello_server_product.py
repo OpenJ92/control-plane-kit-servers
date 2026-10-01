@@ -95,7 +95,7 @@ class HelloServerProductTests(unittest.TestCase):
             with self.subTest(color=color):
                 self.assertIn(accent.encode(), server.render_hello("Hello", color))
         with patch.dict(os.environ, {"HELLO_COLOR": "blue; background: url(secret)"}), patch.object(
-            server, "ThreadingHTTPServer"
+            server, "CpkThreadingHTTPServer"
         ) as listener:
             with self.assertRaises(server.HelloConfigurationError) as caught:
                 server.main()
