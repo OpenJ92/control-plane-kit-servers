@@ -2,7 +2,7 @@
 
 Source: `products/cpk_local_gateway/src/control_plane_kit_servers_cpk_local_gateway/health_relay_configuration.py`.
 
-The immutable receiving map binds a name to exact Core target, runtime, V2
+The immutable receiving map binds a name to exact Core receiver target (including runtime and receiver ID), V2
 health declaration and HTTP origin. Its pure factory selects only the target's
 control surface and declared provider port from a revalidated Core runtime
 contract. It never enumerates ordinary edges, infers permission from runtime
@@ -18,7 +18,7 @@ private-network transport assumes runtime DNS/network integrity; bearers remain
 independently verified at receivers. Addresses are configuration, not HTTP errors.
 
 The complete source runtime contract frames the exact selected trust, target and own-control artifacts,
-requires matching workspace/gateway/runtime, and advertises health transit on
+requires matching full gateway receiver targets, supplies the common wrapper environment binding, and advertises canonical receiver V2 health transit on
 control8000. It creates no published image association and changes no historical
 catalogue. Fixed configuration failures exclude candidate exception chains.
 

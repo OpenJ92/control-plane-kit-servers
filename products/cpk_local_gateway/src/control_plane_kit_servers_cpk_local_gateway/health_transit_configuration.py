@@ -15,11 +15,11 @@ from control_plane_kit_core.configuration import (
 from control_plane_kit_core.node_health_transit import MAX_GATEWAY_NODE_HEALTH_READ_TRANSIT_AUDIENCE_BYTES
 
 
-PROFILE = "cpk-gateway-health-transit-configuration.v1"
+PROFILE = "cpk-gateway-health-transit-configuration.v2"
 ARTIFACT_ID = "gateway-health-transit"
 CONFIGURATION_PATH = "/etc/cpk/gateway/health-transit.json"
 MAX_CONFIGURATION_BYTES = 16_384
-_FIELDS = frozenset({"profile", "workspace_id", "gateway_node_id", "runtime_id",
+_FIELDS = frozenset({"profile", "gateway_target",
     "issuer", "purpose", "public_keys"})
 _KEY_FIELDS = frozenset({"key_id", "algorithm", "public_key_pem"})
 _ERROR = "gateway health transit configuration is invalid"
@@ -33,21 +33,17 @@ class GatewayHealthTransitConfigurationError(ValueError):
 
 @dataclass(frozen=True, slots=True, repr=False)
 class GatewayHealthTransitConfiguration:
-    workspace_id: core.NodeControlGraphReference
-    gateway_node_id: core.NodeControlGraphReference
-    runtime_id: core.NodeControlGraphReference
+    gateway_target: core.NodeControlReceiverTarget
     issuer: str
     purpose: core.DelegationKeyPurpose
     public_keys: tuple[core.DelegationPublicKey, ...] = field(repr=False)
 
     def __post_init__(self) -> None:
         try:
-            roles = core.NodeControlGraphReferenceRole
-            for value, role in ((self.workspace_id, roles.WORKSPACE),
-                                (self.gateway_node_id, roles.NODE), (self.runtime_id, roles.RUNTIME)):
-                if (type(value) is not core.NodeControlGraphReference or value.role is not role
-                        or core.NodeControlGraphReference(role, value.value) != value):
-                    raise ValueError
+            codec = core.NodeControlReceiverTargetCodec()
+            if (type(self.gateway_target) is not core.NodeControlReceiverTarget
+                    or codec.decode(codec.encode(self.gateway_target)) != self.gateway_target):
+                raise ValueError
             if (type(self.issuer) is not str or reference_violation(self.issuer) is not None
                     or self.purpose is not core.DelegationKeyPurpose.GATEWAY_NODE_HEALTH_READ_TRANSIT
                     or len(self.audience.encode("ascii")) > MAX_GATEWAY_NODE_HEALTH_READ_TRANSIT_AUDIENCE_BYTES):
@@ -67,7 +63,7 @@ class GatewayHealthTransitConfiguration:
 
     @property
     def audience(self) -> str:
-        return f"gateway:{self.workspace_id.value}:{self.gateway_node_id.value}"
+        return f"gateway:{self.gateway_target.workspace_id.value}:{self.gateway_target.node_id.value}"
 
     def __repr__(self) -> str:
         return "GatewayHealthTransitConfiguration(<redacted>)"
@@ -148,11 +144,8 @@ def decode_gateway_health_transit_configuration(raw: bytes) -> GatewayHealthTran
                 raise ValueError
             keys.append(core.DelegationPublicKey(entry["key_id"],
                 core.DelegationKeyAlgorithm(entry["algorithm"]), entry["public_key_pem"]))
-        roles = core.NodeControlGraphReferenceRole
         return GatewayHealthTransitConfiguration(
-            core.NodeControlGraphReference(roles.WORKSPACE, value["workspace_id"]),
-            core.NodeControlGraphReference(roles.NODE, value["gateway_node_id"]),
-            core.NodeControlGraphReference(roles.RUNTIME, value["runtime_id"]),
+            core.NodeControlReceiverTargetCodec().decode(value["gateway_target"]),
             value["issuer"], core.DelegationKeyPurpose.GATEWAY_NODE_HEALTH_READ_TRANSIT, tuple(keys))
     except _INPUT_ERRORS:
         failure = GatewayHealthTransitConfigurationError(_ERROR)
@@ -166,8 +159,7 @@ def gateway_health_transit_configuration_artifact(
         if type(configuration) is not GatewayHealthTransitConfiguration:
             raise TypeError
         configuration = replace(configuration)
-        content = json.dumps(dict(profile=PROFILE, workspace_id=configuration.workspace_id.value,
-            gateway_node_id=configuration.gateway_node_id.value, runtime_id=configuration.runtime_id.value,
+        content = json.dumps(dict(profile=PROFILE, gateway_target=configuration.gateway_target.descriptor(),
             issuer=configuration.issuer, purpose=configuration.purpose.value,
             public_keys=[dict(key_id=key.key_id, algorithm=key.algorithm.value,
                 public_key_pem=key.public_key_pem) for key in configuration.public_keys]),

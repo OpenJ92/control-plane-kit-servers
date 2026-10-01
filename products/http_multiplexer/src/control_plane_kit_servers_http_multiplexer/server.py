@@ -5,21 +5,13 @@ from __future__ import annotations
 import http.server
 import sys
 import time
-from http.server import ThreadingHTTPServer
 from typing import Callable, Mapping
 from urllib import error, request
 
-import control_plane_kit_core as core
-from control_plane_kit_server_sdk.health import WorkloadNodeHealthReadDispatcher
-from control_plane_kit_server_sdk.stdlib import install_cpk_control_routes
-from control_plane_kit_server_sdk.verification import (
-    Ed25519WorkloadNodeControlSurfaceReadVerifier, Ed25519WorkloadNodeHealthReadVerifier,
-)
-from control_plane_kit_server_sdk.verifier_keys import (
-    AtomicWorkloadNodeControlSurfaceReadVerifierKeySet, AtomicWorkloadNodeHealthReadVerifierKeySet,
-)
+from control_plane_kit_core.receiver_configuration import ReceiverNodeControlConfiguration
+from control_plane_kit_server_sdk.stdlib import CpkThreadingHTTPServer
 from .configuration import (
-    MultiplexerConfigurationError, MultiplexerSettings, MultiplexerControlConfiguration,
+    MultiplexerConfigurationError, MultiplexerSettings,
     read_multiplexer_control_configuration, multiplexer_control_configuration_artifact,
 )
 
@@ -133,37 +125,16 @@ def handler(settings: MultiplexerSettings) -> type[http.server.BaseHTTPRequestHa
     return MultiplexerHandler
 
 
-def install_multiplexer_control(server: ThreadingHTTPServer, config: MultiplexerControlConfiguration,
-                                *, clock: Callable[[], int] = lambda: int(time.time())) -> None:
-    audience = core.workload_node_control_audience(config.target)
-    static = Ed25519WorkloadNodeControlSurfaceReadVerifier(
-        AtomicWorkloadNodeControlSurfaceReadVerifierKeySet(config.surface_keys),
-        expected_issuer=config.surface_issuer, expected_audience=audience, clock=clock,
-    )
-    health = Ed25519WorkloadNodeHealthReadVerifier(
-        AtomicWorkloadNodeHealthReadVerifierKeySet(config.health_keys),
-        expected_issuer=config.health_issuer, expected_audience=audience, clock=clock,
-    )
-    dispatcher = WorkloadNodeHealthReadDispatcher(
-        target=config.target, runtime_id=config.runtime_id, declaration=config.declaration, verifier=health,
-        liveness=lambda: core.NodeHealthReadOutcome.HEALTHY, readiness=None,
-    )
-    install_cpk_control_routes(
-        server, reserve_control_namespace=True, target=config.target, declaration=config.declaration,
-        variables=(), command_verifier=None, surface_read_verifier=static, health_dispatcher=dispatcher,
-    )
-
-
-def create_multiplexer_server(config: MultiplexerControlConfiguration, settings: MultiplexerSettings, *,
+def create_multiplexer_server(config: ReceiverNodeControlConfiguration, settings: MultiplexerSettings, *,
                              address: tuple[str, int] = ("0.0.0.0", 8000),
-                             clock: Callable[[], int] = lambda: int(time.time())) -> ThreadingHTTPServer:
+                             clock: Callable[[], int] = lambda: int(time.time())) -> CpkThreadingHTTPServer:
     """Install on an unbound standard host; the product owns its socket lifecycle."""
     multiplexer_control_configuration_artifact(config)
     if type(settings) is not MultiplexerSettings:
         raise MultiplexerConfigurationError("MULTIPLEXER_PRIMARY_URL, observer URL or PORT is invalid")
-    server = ThreadingHTTPServer(address, handler(settings), bind_and_activate=False)
+    server = CpkThreadingHTTPServer(address, handler(settings), bind_and_activate=False,
+        configuration=config, clock=clock)
     try:
-        install_multiplexer_control(server, config, clock=clock)
         server.server_bind()
         server.server_activate()
         return server

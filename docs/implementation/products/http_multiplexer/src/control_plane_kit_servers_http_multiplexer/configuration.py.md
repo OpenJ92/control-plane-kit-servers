@@ -1,23 +1,32 @@
 Source: [configuration.py](../../../../../../products/http_multiplexer/src/control_plane_kit_servers_http_multiplexer/configuration.py).
-Maintain with the product receiving ABI, settings and pure source topology.
 
-Fixed multiplexer profile/path/artifact ID and V2 liveness-only declaration remain
-product-owned. Closed bounded JSON admits actual Core target/runtime/declaration
-and purpose-typed SDK static/health public snapshots with separate issuers and
-Core-derived audience. The opened no-follow/nonblocking descriptor is checked
-for regularity, read at most65,537 bytes, and closed. Fixed errors are raised after
-leaving active exception handlers; no raw material/cause/context or swallowed
-BaseException. Trusted parent path and producer delivery remain prerequisites.
+Multiplexer now consumes the actual Core ReceiverNodeControlConfiguration and its
+closed workload-node-control-configuration.v2 codec. Installed identity contains
+workspace, runtime, node, socket and receiver ID; caller authored/projection
+context belongs to requests. There is no product configuration DTO, old-profile
+fallback, private wire parser or issuer inferred from a request. Product policy
+still requires exactly multiplexer_control_declaration(). Core validates the full
+configuration, required purpose-indexed verifier families and bounded public keys.
 
-Renderer returns actual JSON/0444 ConfigurationArtifact and revalidates receiving
-limits. The source contract preserves required primary, both optional observers
-and their exact environment bindings, internal8000, lifecycle and the complete
-historical single-check/five-attempt policy. It adds only source control capability
-and requires the actual configured artifact. No published descriptor/image is
-advanced;1821/149 own authorized identity and selected artifact delivery.
+Decode, artifact and startup failures retain the existing fixed, detached product
+error. BaseException is not caught. The SDK load_wrapper_configuration reads the
+explicit CPK_WRAPPER_CONFIGURATION_FILE slot: absolute regular non-symlink 0444
+file, at most 65536 bytes, one opened descriptor and stable metadata. The import
+is deferred to the reader; pure configuration/contract imports start no host.
+Parsing and the local file snapshot do not establish current authorization.
 
-Frozen/repr-suppressed settings validate primary, immutable observer tuple and
-port. Only None selects ambient environment. Existing A/B slot ordering and blank
-omission survive; valid standalone tuples are not capped by production's two slots.
-Production8000 is enforced by main; standalone18082 remains possible. No shared
-configuration framework or import from another product is introduced.
+The product artifact retains its ID, path, JSON media and 0444 mode. Its renderer
+uses Core's actual codec and rechecks product declaration policy. Source contracts
+add the common environment binding to that artifact path while preserving existing
+sockets, ports, requirements, capabilities, legacy checks and other runtime facts.
+Historical published descriptors and images are unchanged. CPK's three variants
+retain their existing complete database requirements and process settings; Hello
+keeps dependency defaults/readiness; router and multiplexer declare liveness only.
+
+Reviewed target tests retain malformed/duplicate/foreign-scope and detached-error
+laws, opened-file bounds/refusals, full source-contract comparisons and pure import.
+These source changes require the unchanged whole Servers and paired Interpreters
+gates; authored fixtures and dependency selection are not executed acceptance.
+No secret resolution, new durable state, provider effect or authority store exists
+in this module. Selected-artifact admission and lifecycle production retain their
+existing owners.

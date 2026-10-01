@@ -1,5 +1,26 @@
 Source: [pyproject.toml](../../pyproject.toml).
 
+## Current receiving adoption (#237)
+
+The receiving candidate selects Core and Operations
+250d65e19dc748ebe840f705be77eb732dab3cb3, SDK
+5dc93b92c27bb9bbe2af027f945a347e5e4131bc and Secrets
+edfb8c0ebfc0cfcf3a667fb60d52b4a83bda1634. Its Interpreters runtime dependency is
+reviewed, deliberately unvalidated candidate I-A
+8c88dda505c1aa6c7490c0bb16c541bf524644fd under the approved finite paired-gate
+exception. Earlier dependency coordinates in historical evidence below do not
+describe this candidate. Final accepted Interpreters repinning and another whole
+Servers gate are still required before merge.
+
+The existing coordinate generator ran in repository policy Docker image
+python:3.14-slim with network disabled and only this checkout writable. Canonical
+upstream fields generate pyproject and six product recipes; published source/image
+coordinates, product descriptors and both catalogue byte sets are unchanged.
+Generation is not test green or image qualification. All existing gate stages,
+installed provenance checks, source/historical witnesses and cleanup remain.
+
+Historical context follows; the current adoption above governs selected dependencies.
+
 Servers #228 adds the cloudflared connector implementation namespace to package
 discovery for its bounded native reader. This is product-owned standard-library
 code, with no SDK/process startup on import and no dependency-coordinate change.

@@ -1,54 +1,32 @@
 Source: [health_receiver_adapters.py](../../../../../../products/cpk_server/src/control_plane_kit_servers_cpk_server/health_receiver_adapters.py).
 
-This CPK composition module implements the public Operations receiver port using existing product-owned parsers. Explicit exact canonical documents produce immutable bindings for the fixed workload or gateway profile/slot. The caller still owns supported-product/input admission: accepting a supplied document is not catalogue discovery or an image support claim. Empty input retains Operations' fail-closed registry.
+select_own_health_configuration accepts public Operations HealthReceiverSelection
+and returns actual Core ReceiverNodeControlConfiguration. It reconstructs canonical
+selection provenance, selects the declared common slot through Core's public
+selector, requires the selected slot to agree, then decodes the selected bytes
+through that same selector/codec. Workspace/runtime/node/socket must match the
+independent selection; declaration must match the descriptor surface. Descriptor
+defaults identify a slot, never replace selected trust. Authored/projection caller
+context is deliberately absent from installed receiver identity.
 
-Each decoder revalidates HealthReceiverSelection provenance and selected artifact, enforces its bound reference/slot and decodes only those bytes. Workload facts come from health issuer/keys, target/runtime/declaration; static surface authority is not substituted. Gateway facts come from configured workspace/gateway/runtime/issuer/purpose/keys. Operations compares these facts to its independently pinned expected context. Descriptor default bytes are never trust fallback.
+health_receiver_decoders is transit-only. Exact supplied gateway documents bind
+the existing GatewayHealthReceiverDecoder to its fixed artifact slot/profile.
+It projects actual configured keys, issuer, purpose and workspace/node/runtime
+into the existing Operations GatewayHealthReceiverTrust. That limited DTO does
+not prove receiver-ID/socket; full identity stays in common own configuration and
+gateway transit/relay/request comparison. No per-product own decoder, replacement
+trust DTO, new registry or production private Operations import remains.
 
-Only the explicit product parsing refusals become the fixed HealthReceiverTrustError outside caught exception context. Unexpected decoder failures propagate. There is no file/network/database access, clock, material resolution, signing, mutable key cache, authority decision or durable history. The public registry does not change first-start/reload invocation; actual production composition and usable lifecycle remain181/1860.
+select_gateway_self_health_binding still validates all three selected artifacts,
+shared authored/projection/graph-side/product provenance, canonical V2 transit
+advertisement/socket and own readiness declaration. Actual product codecs require
+full gateway target equality; exactly one alias binding must match full own target
+and declaration. It returns internal origin material, not an HTTP/history receipt.
 
-Tests use the real product verifiers and pinned Operations coverage function. Private Operations imports are confined to tests; neither gateway receiver nor SDK acquires an Operations dependency. Full CPK contracts still contain legacy verification; synthetic receiver-only plans do not prove production readiness or deployment.
-
-#219 adds explicit `gateway_self_documents` to the existing registry. A
-`GatewaySelfHealthReceiverDecoder` binds the selected `gateway-control`
-JSON/read-only artifact and decodes it with the actual #182 codec. Selected
-workspace, authored revision, node, runtime and socket must match configured
-truth, and the canonical descriptor must declare that exact own READINESS
-surface. Existing WorkloadHealthReceiverTrust carries only health issuer/keys;
-complete surface-read trust is validated but grants no extra health authority.
-Transit and self-health bindings coexist as distinct purposes for one product
-reference. Existing defaults and decoders are unchanged.
-
-`select_gateway_self_health_binding(transit=..., targets=..., control=...)`
-revalidates three existing HealthReceiverSelection values and their unique
-declared slots. Workspace, revision, projection, graph side, receiver, runtime
-and canonical product provenance must agree. Transit and target selections use
-the declared transit socket; own readiness uses its declared control surface.
-Socket names may coincide. Real product codecs parse selected bytes; existing
-receiver/control matching functions validate joins. Exactly one binding must
-match the full own target, runtime and V2 declaration. Its actual configured alias
-is returned without naming inference or default-content substitution.
-
-GatewayHealthTargetBinding includes a private origin and is internal material,
-not a route/receipt/history result. This adapter neither logs nor serializes it,
-and makes no general repr-redaction promise about that type. Explicit product
-codec failures become bounded detached trust errors; unexpected owner failures
-preserve identity. No I/O, credentials, signing, attempts, signer admission,
-installed-state evidence or async execution is introduced. #148/#1860 consume
-selection later; #181 still owns concrete composition.
-
-#233 adds explicit `hello_documents` and `HelloWorkloadHealthReceiverDecoder`.
-Its exact slot is `hello-control`, `/etc/cpk/hello/control.json`, JSON/read-only,
-profile `hello-control-configuration.v1`. The actual Hello codec validates the
-complete selected configuration. Existing WorkloadHealthReceiverTrust projects
-only configured health issuer/keys, target/runtime/declaration and the derived
-workload audience. Selected values are not replaced by descriptor defaults or
-static surface keys. Configured identity is preserved for Operations coverage
-to judge; the adapter does not rewrite it to match the selection.
-
-Hello's complete source contract remains intact, including its legacy checks.
-Source binding does not establish support admission or plan/image readiness.
-The selected Operations owner now supplies the first-start/reload consumers;
-their process registry wiring still belongs to181. Standalone CPK currently
-copies only CPK source; activating this module requires packaging the real
-gateway/Hello codec modules and verifying the installed entrypoint separately.
-Root-package decoder tests do not qualify that standalone installation.
+Expected codec refusals become fixed detached HealthReceiverTrustError; unrelated
+programmer/owner failures retain identity. No I/O, clock, key resolution, signing,
+current authority decision, retry or durable history is introduced. Tests join the
+actual accepted Operations coverage owner to real SDK/gateway verification and
+preserve selected A/B/AB keys, original graph sides, provenance and refusal laws.
+Standalone packaging/production observer activation remains issue181; this pure
+selection change neither installs receivers nor qualifies published images.

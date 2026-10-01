@@ -3,15 +3,15 @@
 Source: `products/cpk_local_gateway/src/control_plane_kit_servers_cpk_local_gateway/health_relay.py`.
 
 `POST /cpk/health/{kind}` accepts the closed
-`cpk-gateway-health-relay-request.v1` envelope: target_id, attempt_id, existing Core
+`cpk-gateway-health-relay-request.v2` envelope: target_id, attempt_id, receiver V2 Core
 request descriptor, and workload credential. The single Authorization bearer is
-transit authority. Configured target/runtime/declaration and actual route kind
+transit authority. Configured full receiver target/declaration and actual route kind
 constrain that signature. Envelope attempt ID is signed correlation, not current
 Operations eligibility, revocation or once-only use. Original-window repeated
 reads are permitted; request ID/digest are preserved.
 
 The gateway structurally checks the workload JWT's exact family, outer/inner
-congruence, target/audience/runtime/kind/declaration/request/digest using existing
+congruence, target/audience/authority-context/kind/declaration/request/digest using existing
 Core codecs. It deliberately does not authenticate workload signatures: a
 matching forged signature may reach SDK, which rejects before protected callback.
 Transit/context/structural-pair denials occur before target HTTP.

@@ -12,31 +12,26 @@ import control_plane_kit_core as core
 from control_plane_kit_core.algebra import BlockSockets, ProviderSocket
 from control_plane_kit_core.capabilities import CapabilityName
 from control_plane_kit_core.configuration import ConfigurationArtifact, ConfigurationFileMode, ConfigurationMediaType
+from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
+from control_plane_kit_core.wrapper_configuration import WORKLOAD_NODE_CONTROL_CONFIGURATION_ENVIRONMENT
 from control_plane_kit_core.products import ProductRuntimeContract, ProductRuntimeContractCodec, ProviderRuntimePort
 from control_plane_kit_core.types import Protocol
 from control_plane_kit_core.verification import VerificationContract
 from .health_transit_configuration import _decode_json, _object, _configuration_from_artifact, _INPUT_ERRORS
 
-PROFILE = "cpk-gateway-health-relay-configuration.v1"
+PROFILE = "cpk-gateway-health-relay-configuration.v2"
 ARTIFACT_ID = "gateway-health-targets"
 CONFIGURATION_PATH = "/etc/cpk/gateway/health-targets.json"
 MAX_CONFIGURATION_BYTES = 131_072
 _ID = re.compile(r"[a-z][a-z0-9_.-]{0,127}\Z")
 _HOST = re.compile(r"[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\Z")
-_FIELDS = frozenset({"profile", "workspace_id", "gateway_node_id", "runtime_id", "targets"})
-_BINDING_FIELDS = frozenset({"target_id", "target", "runtime_id", "declaration", "origin"})
-_TARGET_FIELDS = frozenset({"workspace_id", "graph_revision", "node_id", "provider_socket_name"})
+_FIELDS = frozenset({"profile", "gateway_target", "targets"})
+_BINDING_FIELDS = frozenset({"target_id", "target", "declaration", "origin"})
 _ERROR = "gateway health relay configuration is invalid"
 
 
 class GatewayHealthRelayConfigurationError(ValueError):
     """Bounded configuration failure without candidate context."""
-
-
-def _reference(value, role):
-    if type(value) is not core.NodeControlGraphReference or value.role is not role:
-        raise ValueError
-    return core.NodeControlGraphReference(role, value.value)
 
 
 def _hostname(value):
@@ -46,18 +41,13 @@ def _hostname(value):
 
 
 def _target(raw):
-    value = _object(raw, _TARGET_FIELDS)
-    roles = core.NodeControlGraphReferenceRole
-    return core.NodeControlTarget(*(core.NodeControlGraphReference(role, value[name]) for name, role in (
-        ("workspace_id", roles.WORKSPACE), ("graph_revision", roles.GRAPH_REVISION),
-        ("node_id", roles.NODE), ("provider_socket_name", roles.PROVIDER_SOCKET))))
+    return core.NodeControlReceiverTargetCodec().decode(raw)
 
 
 @dataclass(frozen=True, slots=True, repr=False)
 class GatewayHealthTargetBinding:
     target_id: str
-    target: core.NodeControlTarget
-    runtime_id: core.NodeControlGraphReference
+    target: core.NodeControlReceiverTarget
     declaration: core.WorkloadNodeControlSurfaceDeclaration
     origin: str
 
@@ -65,9 +55,8 @@ class GatewayHealthTargetBinding:
         try:
             if type(self.target_id) is not str or _ID.fullmatch(self.target_id) is None:
                 raise ValueError
-            if type(self.target) is not core.NodeControlTarget or _target(self.target.descriptor()) != self.target:
+            if type(self.target) is not core.NodeControlReceiverTarget or _target(self.target.descriptor()) != self.target:
                 raise ValueError
-            _reference(self.runtime_id, core.NodeControlGraphReferenceRole.RUNTIME)
             if type(self.declaration) is not core.WorkloadNodeControlSurfaceDeclaration:
                 raise ValueError
             declaration = core.WorkloadNodeControlSurfaceDeclarationCodec().decode(self.declaration.descriptor())
@@ -88,14 +77,14 @@ class GatewayHealthTargetBinding:
         raise failure
 
     def descriptor(self):
-        return dict(target_id=self.target_id, target=self.target.descriptor(), runtime_id=self.runtime_id.value,
+        return dict(target_id=self.target_id, target=self.target.descriptor(),
                     declaration=self.declaration.descriptor(), origin=self.origin)
 
 
-def gateway_health_target_binding(*, target_id, target, runtime_id, runtime_contract, hostname):
+def gateway_health_target_binding(*, target_id, target, runtime_contract, hostname):
     """Select only the exact declared control provider; never enumerate edges."""
     try:
-        if type(runtime_contract) is not ProductRuntimeContract or type(target) is not core.NodeControlTarget:
+        if type(runtime_contract) is not ProductRuntimeContract or type(target) is not core.NodeControlReceiverTarget:
             raise ValueError
         contract = ProductRuntimeContractCodec().decode(runtime_contract.descriptor())
         socket = target.provider_socket_name.value
@@ -105,7 +94,7 @@ def gateway_health_target_binding(*, target_id, target, runtime_id, runtime_cont
             raise ValueError
         declaration = core.WorkloadNodeControlSurfaceDeclaration(surfaces[0],
             profile=core.WorkloadNodeControlSurfaceDeclarationProfile.V2)
-        return GatewayHealthTargetBinding(target_id, target, runtime_id, declaration,
+        return GatewayHealthTargetBinding(target_id, target, declaration,
             f"http://{_hostname(hostname)}:{ports[0].container_port}")
     except _INPUT_ERRORS:
         failure = GatewayHealthRelayConfigurationError(_ERROR)
@@ -114,17 +103,14 @@ def gateway_health_target_binding(*, target_id, target, runtime_id, runtime_cont
 
 @dataclass(frozen=True, slots=True, repr=False)
 class GatewayHealthRelayConfiguration:
-    workspace_id: core.NodeControlGraphReference
-    gateway_node_id: core.NodeControlGraphReference
-    runtime_id: core.NodeControlGraphReference
+    gateway_target: core.NodeControlReceiverTarget
     targets: tuple[GatewayHealthTargetBinding, ...]
 
     def __post_init__(self):
         try:
-            roles = core.NodeControlGraphReferenceRole
-            for value, role in ((self.workspace_id, roles.WORKSPACE), (self.gateway_node_id, roles.NODE),
-                                (self.runtime_id, roles.RUNTIME)):
-                _reference(value, role)
+            if (type(self.gateway_target) is not core.NodeControlReceiverTarget
+                    or _target(self.gateway_target.descriptor()) != self.gateway_target):
+                raise ValueError
             if type(self.targets) is not tuple or len(self.targets) > 128:
                 raise ValueError
             admitted = []
@@ -132,7 +118,7 @@ class GatewayHealthRelayConfiguration:
                 if type(item) is not GatewayHealthTargetBinding:
                     raise ValueError
                 item = replace(item)
-                if item.target.workspace_id != self.workspace_id or item.runtime_id != self.runtime_id:
+                if item.target.workspace_id != self.gateway_target.workspace_id or item.target.runtime_id != self.gateway_target.runtime_id:
                     raise ValueError
                 admitted.append(item)
             if (len({item.target_id for item in admitted}) != len(admitted)
@@ -147,8 +133,7 @@ class GatewayHealthRelayConfiguration:
         raise failure
 
     def descriptor(self):
-        return dict(profile=PROFILE, workspace_id=self.workspace_id.value, gateway_node_id=self.gateway_node_id.value,
-            runtime_id=self.runtime_id.value, targets=[item.descriptor() for item in self.targets])
+        return dict(profile=PROFILE, gateway_target=self.gateway_target.descriptor(), targets=[item.descriptor() for item in self.targets])
 
 
 def _encode(value):
@@ -160,16 +145,12 @@ def decode_gateway_health_relay_configuration(raw):
         value = _object(_decode_json(raw, MAX_CONFIGURATION_BYTES), _FIELDS)
         if value["profile"] != PROFILE or type(value["targets"]) is not list or len(value["targets"]) > 128:
             raise ValueError
-        roles = core.NodeControlGraphReferenceRole
         bindings = []
         for entry in value["targets"]:
             entry = _object(entry, _BINDING_FIELDS)
             bindings.append(GatewayHealthTargetBinding(entry["target_id"], _target(entry["target"]),
-                core.NodeControlGraphReference(roles.RUNTIME, entry["runtime_id"]),
                 core.WorkloadNodeControlSurfaceDeclarationCodec().decode(entry["declaration"]), entry["origin"]))
-        return GatewayHealthRelayConfiguration(core.NodeControlGraphReference(roles.WORKSPACE, value["workspace_id"]),
-            core.NodeControlGraphReference(roles.NODE, value["gateway_node_id"]),
-            core.NodeControlGraphReference(roles.RUNTIME, value["runtime_id"]), tuple(bindings))
+        return GatewayHealthRelayConfiguration(_target(value["gateway_target"]), tuple(bindings))
     except _INPUT_ERRORS:
         failure = GatewayHealthRelayConfigurationError(_ERROR)
     raise failure
@@ -206,7 +187,9 @@ def gateway_health_source_runtime_contract(trust_artifact, targets_artifact, con
         require_matching_gateway_control(control, targets)
         return ProductRuntimeContract(sockets=BlockSockets(providers=(ProviderSocket("control", Protocol.HTTP),)),
             provider_ports=(ProviderRuntimePort("control", 8000),), configuration_artifacts=(trust_artifact, artifact, control_artifact),
-            gateway_transit=core.GatewayTransitDeclaration("control", core.GatewayTransitProtocol.NODE_HEALTH_READ_V1),
+            gateway_transit=core.GatewayTransitDeclaration("control", core.GatewayTransitProtocol.RECEIVER_HEALTH_READ_V2),
+            public_environment=(PublicStaticEnvironmentBinding(
+                WORKLOAD_NODE_CONTROL_CONFIGURATION_ENVIRONMENT, control_artifact.target_path),),
             capabilities=(CapabilityName.HEALTH_CHECKABLE, CapabilityName.NODE_CONTROLLABLE),
             control_surfaces=(control.declaration.surface,), verification=VerificationContract())
     except _INPUT_ERRORS:
@@ -215,5 +198,5 @@ def gateway_health_source_runtime_contract(trust_artifact, targets_artifact, con
 
 
 def require_matching_receiver(trust, targets):
-    if any(getattr(trust, name) != getattr(targets, name) for name in ("workspace_id", "gateway_node_id", "runtime_id")):
+    if trust.gateway_target != targets.gateway_target:
         raise GatewayHealthRelayConfigurationError(_ERROR)

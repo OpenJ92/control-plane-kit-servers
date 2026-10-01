@@ -30,7 +30,7 @@
       ]
     },
     {
-      "name": "CPK_SECRETS_CONTROL_CONFIGURATION_FILE",
+      "name": "CPK_WRAPPER_CONFIGURATION_FILE",
       "required": true,
       "allowed_values": [
         "/etc/cpk/secrets-server/control.json (fixed source image ENV)"
@@ -63,9 +63,9 @@
   "configuration_files": [
     {
       "path": "/etc/cpk/secrets-server/control.json",
-      "environment_name": "CPK_SECRETS_CONTROL_CONFIGURATION_FILE",
+      "environment_name": "CPK_WRAPPER_CONFIGURATION_FILE",
       "required": true,
-      "profile": "secrets-control-configuration.v1",
+      "profile": "workload-node-control-configuration.v2",
       "media_type": "application/json",
       "maximum_bytes": 65536,
       "mode": "0444",

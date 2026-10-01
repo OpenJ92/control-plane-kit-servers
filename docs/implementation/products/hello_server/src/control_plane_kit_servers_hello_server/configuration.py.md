@@ -1,35 +1,32 @@
 Source: [configuration.py](../../../../../../products/hello_server/src/control_plane_kit_servers_hello_server/configuration.py).
-Maintain with the Hello receiving ABI and source contract.
 
-Hello owns a closed public configuration document, not an issuer or generic SDK
-configuration language. Local target references use Core's actual roles, runtime
-uses RUNTIME, and the declaration must equal Hello's fixed internal-socket V2
-liveness/readiness surface. Static and health key families have different nominal
-SDK snapshot types/purposes; audiences derive from the supplied target. None of
-these values comes from incoming credentials. At most 16 keys per family and
-65,536 total UTF-8 bytes are accepted; malformed/duplicate/unknown input fails
-with a fixed cause/context-free error. Key-shape validity does not prove issuer
-provenance or cryptographic attestation.
+Hello now consumes the actual Core ReceiverNodeControlConfiguration and its
+closed workload-node-control-configuration.v2 codec. Installed identity contains
+workspace, runtime, node, socket and receiver ID; caller authored/projection
+context belongs to requests. There is no product configuration DTO, old-profile
+fallback, private wire parser or issuer inferred from a request. Product policy
+still requires exactly hello_control_declaration(). Core validates the full
+configuration, required purpose-indexed verifier families and bounded public keys.
 
-Ordinary decode/render/read failures are translated to a fixed product error and
-raised after leaving the exception handler. Validation exceptions set the actual
-rejection flag. No empty exception handler, raw error attachment or BaseException
-capture is used; process interruption propagates. The owning tests check error
-chain absence across decoder/file/artifact/contract boundaries.
+Decode, artifact and startup failures retain the existing fixed, detached product
+error. BaseException is not caught. The SDK load_wrapper_configuration reads the
+explicit CPK_WRAPPER_CONFIGURATION_FILE slot: absolute regular non-symlink 0444
+file, at most 65536 bytes, one opened descriptor and stable metadata. The import
+is deferred to the reader; pure configuration/contract imports start no host.
+Parsing and the local file snapshot do not establish current authorization.
 
-The fixed-file reader opens with NOFOLLOW/NONBLOCK, checks regularity on that
-descriptor and reads at most 65,537 bytes before close. It does not check a path
-then reopen it. The parent directory and public file delivery are trusted local
-composition prerequisites; reading a regular file does not establish provenance.
+The product artifact retains its ID, path, JSON media and 0444 mode. Its renderer
+uses Core's actual codec and rechecks product declaration policy. Source contracts
+add the common environment binding to that artifact path while preserving existing
+sockets, ports, requirements, capabilities, legacy checks and other runtime facts.
+Historical published descriptors and images are unchanged. CPK's three variants
+retain their existing complete database requirements and process settings; Hello
+keeps dependency defaults/readiness; router and multiplexer declare liveness only.
 
-The pure renderer emits Core ConfigurationArtifact with hello-control ID, fixed
-/etc/cpk/hello/control.json path, JSON media and 0444 mode. It computes digests
-through Core and revalidates the receiving byte limit. The source runtime-contract
-factory adds a required actual artifact, internal HTTP8000, existing environment
-defaults/legacy verification, explicit NODE_CONTROLLABLE and HEALTH_CHECKABLE,
-and the fixed surface. It neither registers nor publishes a descriptor. Legacy
-verification uses Core's keyword-only HttpCheck constructor and explicitly
-retains the published five-attempt policy; an owning assertion compares the source
-and historical verification contracts. Historical
-product.cpk.json and catalogue remain unchanged; #191 qualifies a future image.
-Operations selected-artifact delivery/identity production belongs to #1821/#149.
+Reviewed target tests retain malformed/duplicate/foreign-scope and detached-error
+laws, opened-file bounds/refusals, full source-contract comparisons and pure import.
+These source changes require the unchanged whole Servers and paired Interpreters
+gates; authored fixtures and dependency selection are not executed acceptance.
+No secret resolution, new durable state, provider effect or authority store exists
+in this module. Selected-artifact admission and lifecycle production retain their
+existing owners.

@@ -1,19 +1,21 @@
-# Gateway own control configuration
+Source: [control_configuration.py](../../../../../../products/cpk_local_gateway/src/control_plane_kit_servers_cpk_local_gateway/control_configuration.py).
 
-The product owns `GatewayControlConfiguration`: exact gateway target/runtime,
-fixed V2 control-socket declaration with liveness/readiness and no commands,
-plus separate actual SDK surface-read and health-read public verifier families.
-The public artifact `gateway-control` is JSON0444 at
-`/etc/cpk/gateway/control.json`, profile `cpk-gateway-control-configuration.v1`.
-Closed decoding bounds input to65536 bytes, rejects duplicate/nonfinite/deep
-JSON, validates canonical public Ed25519 keys and the exact declared surface.
-Errors retain no candidate material or exception chain; representations redact
-configuration. The reader rejects symlinks/nonregular files and uses nonblocking
-open plus a bounded read. It resolves no secret and makes no network request.
+Gateway own configuration is the actual Core ReceiverNodeControlConfiguration,
+profile workload-node-control-configuration.v2. Core owns closed wire parsing,
+full workspace/runtime/node/socket/receiver-ID identity, declaration and required
+purpose-indexed verification families. The product requires its exact control
+liveness/readiness declaration and preserves its stricter existing canonical
+Ed25519/512-byte public-key check. No old product DTO/parser/profile fallback exists.
 
-Artifact admission requires the exact slot/path/media/mode. Startup and the
-complete runtime-contract factory require own target workspace/node/runtime to
-match the relay's selected workspace/gateway/runtime. Graph revision and key
-selection are supplied independently by the parent; parsing does not grant
-current authorization. Source artifact and installed trust are not proof of
-production provenance or image association.
+The gateway-control artifact retains JSON0444 and /etc/cpk/gateway/control.json.
+Actual SDK loading uses CPK_WRAPPER_CONFIGURATION_FILE and enforces an absolute,
+regular, non-symlink 0444 file, bounded size and stable opened-file metadata.
+Malformed values become the existing fixed detached error; interruption propagates.
+Artifact admission revalidates the exact slot and content digest. Own configuration
+must match the relay's entire gateway_target, including receiver ID and socket.
+
+No credential supplies installed identity or trust. Parsing grants no current
+Operations permission and produces no I/O beyond the explicit loader. Actual
+SDK startup verifies the selected public keys; source contracts and historical
+image coordinates remain separate evidence. The original obsolete-profile
+causal-red fixture remains independent and must now refuse at this real decoder.

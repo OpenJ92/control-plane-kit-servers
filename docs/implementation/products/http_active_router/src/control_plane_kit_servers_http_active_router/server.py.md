@@ -1,22 +1,22 @@
 Source: [server.py](../../../../../../products/http_active_router/src/control_plane_kit_servers_http_active_router/server.py).
-Maintain with router process composition and forwarding.
 
-Forwarding and ordinary application handlers retain their prior semantics.
-Factory composition uses exact standard ThreadingHTTPServer, unbound, with the
-SDK installed before bind/activate. SDK keeps protected requests inside the
-reserved namespace before any application do-method; no SDK admission code is
-copied. Separate static and health holders/verifiers capture immutable local
-identity, issuer/audience and keys. The sole liveness callback returns HEALTHY
-without upstream work; readiness=None. No commands, variables, cache or switching.
+The product factory validates common configuration and settings, then constructs
+the actual accepted SDK CpkThreadingHTTPServer with bind_and_activate=False.
+That wrapper prepares and installs authenticated routes before bind/activation;
+SDK setup failure closes its unbound socket. The product binds and activates only
+after composition and closes on subsequent failure. Main retains its existing
+port policy, serving loop and final close. No private lifecycle flag or duplicate
+route installer remains in the product.
 
-Canonical control paths end in liveness/readiness. Undeclared readiness is not
-the same test as unknown /__control/health/ready; both remain zero-forward.
-Ordinary /health/ready forwards, including ordinary application authorization.
-Liveness says only that the configured local process handles the request.
+Router keeps its existing application forwarding/settings behavior and declares only SDK liveness; no readiness callback or observer retry is introduced.
+SDK owns purpose-separated verification, full installed target/declaration and
+request authority-context congruence. Its actual host lifecycle gates readiness;
+fixtures wait for public cpk_is_serving, then shut down, close and join the real
+server. Denied requests reach no protected callback or ordinary forwarding.
 
-Invalid configuration or production port fails before socket creation. Construction
-failures close the socket, and serving always closes in finally. KeyboardInterrupt
-retains the clean exit behavior. Tests join their host thread and workers; no
-same-thread shutdown, process supervisor or new listener is introduced. Application
-request bodies/concurrency and existing HTTP-error handling are not rewritten as
-whole-server hardening. No durable mutation/history or provider action is owned here.
+The source Docker recipe supplies CPK_WRAPPER_CONFIGURATION_FILE for the existing
+mounted public configuration. No default key is supplied. HTML, ordinary routes,
+public legacy health, network budgets and bounded/redacted observations remain
+product-owned. No new persistence, external port, provider mutation, supervisor,
+command handler or replay store is added. Static source/target review does not
+qualify the historical image; the unchanged whole owner gate remains required.

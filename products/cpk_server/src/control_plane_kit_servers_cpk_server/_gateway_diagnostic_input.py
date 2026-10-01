@@ -115,28 +115,30 @@ def prepare_packet(raw, artifacts):
         if (actual.gateway_transit!=contract.gateway_transit or actual.control_surfaces!=contract.control_surfaces
                 or actual.sockets!=contract.sockets or actual.provider_ports!=contract.provider_ports): raise ValueError
         bindings=tuple(item for item in targets.targets if item.target==configured.target
-            and item.runtime_id==configured.runtime_id and item.declaration==configured.declaration)
+            and item.declaration==configured.declaration)
         if len(bindings)!=1: raise ValueError
         binding,=bindings
-        request=core.NodeHealthReadRequestCodec().decode(packet["request"])
+        request=core.ReceiverHealthReadRequestCodec().decode(packet["request"])
         ingress=NamedPublicIngressCodec().decode(packet["ingress"])
-        if (request.target!=configured.target or request.runtime_id!=configured.runtime_id
+        if (request.target!=configured.target
                 or request.kind is not core.NodeHealthReadKind.READINESS
                 or request.declaration_identity!=configured.declaration.identity()
                 or binding.target_id!=packet["target_id"]
                 or packet["transit_socket"]!=contract.gateway_transit.provider_socket_name
                 or ingress.target.node_id!=configured.target.node_id.value
                 or ingress.target.provider_socket!=packet["transit_socket"]): raise ValueError
-        context=HealthSigningContext(request,packet["attempt_id"],configured.target.node_id,
-            configured.declaration,trust.issuer,configured.health_issuer)
-        grants=(core.DelegatedGatewayNodeHealthReadTransitGrantCodec().decode(packet["transit_grant"]),
-                core.DelegatedWorkloadNodeHealthReadGrantCodec().decode(packet["workload_grant"]))
+        health_family = next(value for value in configured.verifiers
+            if value.purpose is core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ)
+        context=HealthSigningContext(request,packet["attempt_id"],configured.target,
+            configured.declaration,trust.issuer,health_family.issuer)
+        grants=(core.DelegatedGatewayReceiverHealthReadTransitGrantCodec().decode(packet["transit_grant"]),
+                core.DelegatedWorkloadReceiverHealthReadGrantCodec().decode(packet["workload_grant"]))
         if (grants[0].issued_at,grants[0].not_before,grants[0].expires_at)!=(
                 grants[1].issued_at,grants[1].not_before,grants[1].expires_at): raise ValueError
         if type(packet["keys"]) is not list or len(packet["keys"])!=2: raise ValueError
         publics=[]
         inventory=[]
-        for item,grant,available in zip(packet["keys"],grants,(trust.public_keys,configured.health_keys.public_keys)):
+        for item,grant,available in zip(packet["keys"],grants,(trust.public_keys,health_family.public_keys)):
             closed(item,{"registration_id","key_id","fingerprint","private_reference","reference_registration_id",
                 "provider_registration_id","endpoint_reference","credential_reference"})
             for value in item.values(): reference(value)
@@ -144,18 +146,19 @@ def prepare_packet(raw, artifacts):
             if len(keys)!=1 or grant.key_id!=item["key_id"]: raise ValueError
             publics.append(keys[0]); inventory.append(MappingProxyType(dict(item)))
         if publics[0].fingerprint_sha256==publics[1].fingerprint_sha256: raise ValueError
-        from control_plane_kit_core.node_health_reads import verify_workload_node_health_read_grant
-        from control_plane_kit_core.node_health_transit import verify_gateway_node_health_read_transit_grant
-        expected=dict(expected_target=request.target,expected_runtime_id=request.runtime_id,
+        from control_plane_kit_core.receiver_health_reads import verify_workload_receiver_health_read_grant
+        from control_plane_kit_core.receiver_health_transit import verify_gateway_receiver_health_read_transit_grant
+        expected=dict(expected_target=request.target,
             expected_declaration=configured.declaration,expected_kind=request.kind,now=grants[0].not_before)
-        if not verify_gateway_node_health_read_transit_grant(grants[0],request,
+        if not verify_gateway_receiver_health_read_transit_grant(grants[0],request,
                 expected_issuer=context.transit_issuer,expected_key_id=publics[0].key_id,
-                expected_attempt_id=context.attempt_id,expected_gateway_node_id=context.gateway_node_id,**expected).is_accepted: raise ValueError
-        if not verify_workload_node_health_read_grant(grants[1],request,
+                expected_attempt_id=context.attempt_id,expected_gateway_target=context.gateway_target,**expected).is_accepted: raise ValueError
+        if not verify_workload_receiver_health_read_grant(grants[1],request,
                 expected_issuer=context.workload_issuer,expected_key_id=publics[1].key_id,
-                expected_audience=core.workload_node_control_audience(request.target),**expected).is_accepted: raise ValueError
+                expected_audience=core.receiver_node_control_audience(request.target),**expected).is_accepted: raise ValueError
         return PreparedDiagnostic(sha256(canonical).hexdigest(),context,
-            SelectedManagementGateway(ingress,context.gateway_node_id,packet["transit_socket"],request.runtime_id,binding.target_id),
+            SelectedManagementGateway(ingress,context.gateway_target.node_id,packet["transit_socket"],
+                request.target.runtime_id,binding.target_id,contract.gateway_transit.protocol),
             *grants,tuple(publics),tuple(inventory),MappingProxyType(dict(packet["artifacts"])),
             packet["source_commit"],packet["image_digest"],packet["resource_plan"])
     except (ValueError,TypeError,KeyError,AttributeError,OverflowError,RecursionError):

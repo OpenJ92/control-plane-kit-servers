@@ -14,7 +14,7 @@ from .health_transit_verification import (
     Ed25519GatewayHealthTransitVerifier, GatewayHealthTransitVerificationError, _compact,
 )
 
-_PROFILE = "cpk-gateway-health-relay-request.v1"
+_PROFILE = "cpk-gateway-health-relay-request.v2"
 _FIELDS = frozenset({"profile", "target_id", "attempt_id", "request", "workload_credential"})
 _HEADER_FIELDS = frozenset({"alg", "typ", "kid"})
 _CLAIM = "workload_node_health_read"
@@ -74,12 +74,12 @@ def _paired_workload(credential, request):
                 or any(type(claims[name]) is not str for name in ("iss", "aud", "jti"))
                 or any(type(claims[name]) is not int for name in ("iat", "nbf", "exp"))):
             raise ValueError
-        grant = core.DelegatedWorkloadNodeHealthReadGrantCodec().decode(claims[_CLAIM])
+        grant = core.DelegatedWorkloadReceiverHealthReadGrantCodec().decode(claims[_CLAIM])
         if (header["kid"] != grant.key_id or claims["iss"] != grant.issuer or claims["aud"] != grant.audience
                 or claims["iat"] != grant.issued_at or claims["nbf"] != grant.not_before
                 or claims["exp"] != grant.expires_at or claims["jti"] != grant.jti
-                or grant.audience != core.workload_node_control_audience(request.target)
-                or grant.target != request.target or grant.runtime_id != request.runtime_id or grant.kind != request.kind
+                or grant.audience != core.receiver_node_control_audience(request.target)
+                or grant.target != request.target or grant.authority_context != request.authority_context or grant.kind != request.kind
                 or grant.declaration_identity != request.declaration_identity or grant.request_id != request.request_id
                 or grant.request_digest != request.canonical_digest()):
             raise ValueError
@@ -136,14 +136,14 @@ class GatewayHealthRelay:
                 if (value["profile"] != _PROFILE or type(value["target_id"]) is not str
                         or type(value["attempt_id"]) is not str or not 1 <= len(value["attempt_id"]) <= 128):
                     raise ValueError
-                request = core.NodeHealthReadRequestCodec().decode(value["request"])
+                request = core.ReceiverHealthReadRequestCodec().decode(value["request"])
             except _INPUT_ERRORS:
                 raise _Refusal(400) from None
             binding = next((item for item in self.configuration.targets if item.target_id == value["target_id"]), None)
             if binding is None:
                 raise _Refusal(403)
             self.verifier.verify(credential, request, expected_attempt_id=value["attempt_id"],
-                expected_target=binding.target, expected_runtime_id=binding.runtime_id,
+                expected_target=binding.target,
                 expected_declaration=binding.declaration, expected_kind=kind, now=self.clock())
             workload = _paired_workload(value["workload_credential"], request)
             result = await self._forward(binding, request, workload)
@@ -179,7 +179,7 @@ class GatewayHealthRelay:
                                 if len(body) + len(chunk) > 446:
                                     raise _Refusal(502)
                                 body.extend(chunk)
-                        return core.NodeHealthReadResultCodec(request, binding.declaration).decode(_decode_json(bytes(body), 446))
+                        return core.ReceiverHealthReadResultCodec(request, binding.declaration).decode(_decode_json(bytes(body), 446))
         except (TimeoutError, httpx.TimeoutException):
             raise _Refusal(504) from None
         except Exception:
