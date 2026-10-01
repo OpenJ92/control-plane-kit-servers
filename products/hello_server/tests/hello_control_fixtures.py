@@ -3,19 +3,18 @@ from contextlib import contextmanager
 from dataclasses import replace
 from http.client import HTTPConnection
 from threading import Thread
+import time
 from types import SimpleNamespace
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives import serialization
 import control_plane_kit_core as core
-from control_plane_kit_server_sdk.verifier_keys import (
-    WorkloadNodeControlSurfaceReadVerifierKeySet, WorkloadNodeHealthReadVerifierKeySet,
-)
+from control_plane_kit_core.wrapper_configuration import NodeControlVerificationConfiguration
 
 
 def fixture(suffix="a"):
-    from control_plane_kit_servers_hello_server.configuration import HelloControlConfiguration, hello_control_declaration
+    from control_plane_kit_servers_hello_server.configuration import hello_control_declaration
     def key(family):
         private = Ed25519PrivateKey.generate()
         public = core.DelegationPublicKey(
@@ -27,52 +26,56 @@ def fixture(suffix="a"):
     static_private, static_key = key("static")
     health_private, health_key = key("health")
     roles = core.NodeControlGraphReferenceRole
-    target = core.NodeControlTarget(
+    target = core.NodeControlReceiverTarget(
         core.NodeControlGraphReference(roles.WORKSPACE, f"workspace-{suffix}"),
-        core.NodeControlGraphReference(roles.GRAPH_REVISION, f"revision-{suffix}"),
+        core.NodeControlGraphReference(roles.RUNTIME, f"runtime-{suffix}"),
         core.NodeControlGraphReference(roles.NODE, f"hello-{suffix}"),
         core.NodeControlGraphReference(roles.PROVIDER_SOCKET, "internal"),
+        suffix * 32,
     )
-    config = HelloControlConfiguration(
-        target=target, runtime_id=core.NodeControlGraphReference(roles.RUNTIME, f"runtime-{suffix}"),
-        declaration=hello_control_declaration(), surface_issuer=f"surface-{suffix}", health_issuer=f"health-{suffix}",
-        surface_keys=WorkloadNodeControlSurfaceReadVerifierKeySet(
-            core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ, (static_key,)),
-        health_keys=WorkloadNodeHealthReadVerifierKeySet(core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ, (health_key,)),
+    config = core.ReceiverNodeControlConfiguration(
+        target, hello_control_declaration(), (
+            NodeControlVerificationConfiguration(core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ,
+                f"surface-{suffix}", (static_key,)),
+            NodeControlVerificationConfiguration(core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ,
+                f"health-{suffix}", (health_key,))),
     )
-    return SimpleNamespace(config=config, static_private=static_private, health_private=health_private)
+    return SimpleNamespace(config=config, static_private=static_private, health_private=health_private,
+        authority=core.NodeControlAuthorityContext(f"revision-{suffix}", f"projection-{suffix}"))
 
 
 def token(f, *, static=False, kind=None, request_changes=None):
     config = f.config
     if static:
-        request = core.NodeControlSurfaceReadRequest(
-            config.target, kind or core.NodeControlSurfaceReadKind.CAPABILITIES,
+        request = core.ReceiverControlSurfaceReadRequest(
+            config.target, f.authority, kind or core.NodeControlSurfaceReadKind.CAPABILITIES,
             config.declaration.identity(), "surface-request",
         )
-        grant_type = core.DelegatedWorkloadNodeControlSurfaceReadGrant
-        profile = core.DelegatedWorkloadNodeControlSurfaceReadGrantProfile.V1
-        family = config.surface_keys
-        issuer, private = config.surface_issuer, f.static_private
+        grant_type = core.DelegatedWorkloadReceiverControlSurfaceReadGrant
+        profile = core.DelegatedWorkloadReceiverControlSurfaceReadGrantProfile.V2
+        family = next(item for item in config.verifiers
+            if item.purpose is core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ)
+        issuer, private = family.issuer, f.static_private
         payload_key = "workload_node_control_surface_read"
         typ = "CPK-WORKLOAD-NODE-CONTROL-SURFACE-READ+JWT"
     else:
-        request = core.NodeHealthReadRequest(config.target, config.runtime_id,
+        request = core.ReceiverHealthReadRequest(config.target, f.authority,
             kind or core.NodeHealthReadKind.READINESS, config.declaration.identity(), "health-request")
-        grant_type = core.DelegatedWorkloadNodeHealthReadGrant
-        profile = core.DelegatedWorkloadNodeHealthReadGrantProfile.V1
-        family = config.health_keys
-        issuer, private = config.health_issuer, f.health_private
+        grant_type = core.DelegatedWorkloadReceiverHealthReadGrant
+        profile = core.DelegatedWorkloadReceiverHealthReadGrantProfile.V2
+        family = next(item for item in config.verifiers
+            if item.purpose is core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ)
+        issuer, private = family.issuer, f.health_private
         payload_key = "workload_node_health_read"
         typ = "CPK-WORKLOAD-NODE-HEALTH-READ+JWT"
     request = replace(request, **(request_changes or {}))
     grant = grant_type(
         profile=profile, canonicalization=core.NodeControlCanonicalization.JCS_RFC8785_V1,
         purpose=family.purpose, issuer=issuer, key_id=family.public_keys[0].key_id,
-        audience=core.workload_node_control_audience(config.target), target=request.target, kind=request.kind,
+        audience=core.receiver_node_control_audience(config.target), target=request.target, kind=request.kind,
         declaration_identity=request.declaration_identity, request_id=request.request_id,
         request_digest=request.canonical_digest(), issued_at=100, not_before=100, expires_at=200, jti="hello-test",
-        **({} if static else {"runtime_id": request.runtime_id}),
+        authority_context=request.authority_context,
     )
     return jwt.encode({"iss": issuer, "aud": grant.audience, "iat":100, "nbf":100, "exp":200,
                        "jti":grant.jti, payload_key:grant.descriptor()}, private, algorithm="EdDSA",
@@ -87,6 +90,11 @@ def running(test, f, environ=None, **kwargs):
     thread = Thread(target=server.serve_forever, kwargs={"poll_interval":0.01})
     thread.start()
     try:
+        deadline = time.monotonic() + 3
+        while not server.cpk_is_serving:
+            if time.monotonic() >= deadline:
+                raise AssertionError("actual wrapper did not observe its host serving")
+            time.sleep(0.001)
         yield server
     finally:
         server.shutdown()

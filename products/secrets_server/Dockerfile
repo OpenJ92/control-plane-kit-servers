@@ -5,12 +5,12 @@ ENV PIP_DEFAULT_TIMEOUT=120 \
     PYTHONDONTWRITEBYTECODE=1 \
     CPK_SECRETS_DATABASE_PATH=/var/lib/cpk-secrets/secrets.sqlite3 \
     CPK_SECRETS_PROVIDER_ID=control-plane-kit \
-    CPK_SECRETS_CONTROL_CONFIGURATION_FILE=/etc/cpk/secrets-server/control.json
+    CPK_WRAPPER_CONFIGURATION_FILE=/etc/cpk/secrets-server/control.json
 
 COPY products/secrets_server/entrypoint.sh /usr/local/bin/cpk-secrets-entrypoint
 
 RUN python -m pip install --no-cache-dir \
-    "control-plane-kit-secrets @ https://github.com/OpenJ92/control-plane-kit-secrets/archive/43b742d1ecb4b7b1fbabb62890a4045afa7a2fec.zip" \
+    "control-plane-kit-secrets @ https://github.com/OpenJ92/control-plane-kit-secrets/archive/edfb8c0ebfc0cfcf3a667fb60d52b4a83bda1634.zip" \
     "uvicorn>=0.35" \
     && adduser --disabled-password --gecos "" --uid 10006 secrets \
     && chmod 0555 /usr/local/bin/cpk-secrets-entrypoint \

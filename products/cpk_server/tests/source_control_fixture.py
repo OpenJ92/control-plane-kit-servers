@@ -16,11 +16,13 @@ import control_plane_kit_core as core
 
 LIFETIME_SECONDS = 240
 MAX_RESPONSE_BYTES = 65_536
+AUTHORITY = core.NodeControlAuthorityContext("source-smoke", "source-smoke-projection")
 
 
 def generate(directory: Path) -> None:
     from control_plane_kit_servers_cpk_server.control_configuration import cpk_control_configuration_artifact
     authority=fixture(uuid4().hex,issued_at=int(time.time()),lifetime=LIFETIME_SECONDS)
+    authority.authority = AUTHORITY
     artifact=cpk_control_configuration_artifact(authority.config)
     files={
         "control.json":(artifact.content.encode(),0o444),
@@ -47,8 +49,8 @@ def verify(directory: Path) -> None:
             if response.get("declaration") != control.declaration.descriptor():
                 raise ValueError("smoke control declaration mismatch")
         else:
-            request=core.NodeHealthReadRequest(control.target,control.runtime_id,core.NodeHealthReadKind.LIVENESS,control.declaration.identity(),"health-request")
-            result=core.NodeHealthReadResultCodec(request,control.declaration).decode(response)
+            request=core.ReceiverHealthReadRequest(control.target,AUTHORITY,core.NodeHealthReadKind.LIVENESS,control.declaration.identity(),"health-request")
+            result=core.ReceiverHealthReadResultCodec(request,control.declaration).decode(response)
             if result.outcome is not core.NodeHealthReadOutcome.HEALTHY:
                 raise ValueError("smoke liveness is not healthy")
 

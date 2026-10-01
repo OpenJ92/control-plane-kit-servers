@@ -10,7 +10,8 @@ import unittest
 import jwt
 import control_plane_kit_core as core
 from control_plane_kit_server_sdk.verification import Ed25519WorkloadNodeHealthReadVerifier
-from control_plane_kit_server_sdk.verifier_keys import AtomicWorkloadNodeHealthReadVerifierKeySet
+from control_plane_kit_server_sdk.verifier_keys import AtomicWorkloadNodeHealthReadVerifierKeySet, WorkloadNodeHealthReadVerifierKeySet
+from cpk_http_host_fixtures import verifier_family
 
 
 class SourceControlFixtureTests(unittest.TestCase):
@@ -36,12 +37,14 @@ class SourceControlFixtureTests(unittest.TestCase):
             self.assertLess(len(credential),4096)
             untrusted=jwt.decode(credential,options={"verify_signature":False})
             self.assertEqual(untrusted["exp"]-untrusted["iat"],240)
+            family = verifier_family(control)
             verifier=Ed25519WorkloadNodeHealthReadVerifier(
-                AtomicWorkloadNodeHealthReadVerifierKeySet(control.health_keys),
-                expected_issuer=control.health_issuer,expected_audience=core.workload_node_control_audience(control.target),clock=lambda:untrusted["iat"]+1,
+                AtomicWorkloadNodeHealthReadVerifierKeySet(WorkloadNodeHealthReadVerifierKeySet(family.purpose, family.public_keys)),
+                expected_issuer=family.issuer,expected_audience=core.receiver_node_control_audience(control.target),clock=lambda:untrusted["iat"]+1,
             )
-            request=verifier.admit(credential.encode(),route_kind=core.NodeHealthReadKind.LIVENESS,candidate=None,expected_target=control.target,expected_runtime_id=control.runtime_id,expected_declaration=control.declaration)
-            self.assertEqual(request.runtime_id,control.runtime_id)
+            request=verifier.admit(credential.encode(),route_kind=core.NodeHealthReadKind.LIVENESS,candidate=None,expected_target=control.target,expected_declaration=control.declaration)
+            self.assertEqual(request.target.runtime_id,control.target.runtime_id)
+            self.assertEqual(request.authority_context,self.source.AUTHORITY)
             with self.assertRaises(FileExistsError):
                 self.source.generate(directory)
 

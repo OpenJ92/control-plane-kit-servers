@@ -6,6 +6,8 @@ from types import SimpleNamespace
 import jwt
 import control_plane_kit_core as core
 from control_plane_kit_core.algebra import BlockSpec, BlockSockets, ProviderSocket
+from control_plane_kit_core.configuration import ConfigurationArtifact, ConfigurationMediaType, ConfigurationFileMode
+from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
 from control_plane_kit_core.products import (
     ContainerServerProduct, OciImageReference, ProductDescriptorCodec, ProductIdentity,
     ProductReference, ProductRuntimeContract, ProviderRuntimePort,
@@ -19,7 +21,7 @@ from control_plane_kit_core.public_ingress import IngressAuthorityReference, Nam
 from control_plane_kit_operations.products import RegisteredProduct, InlineDescriptorSource
 from control_plane_kit_operations.delegation_signing_keys import RegisteredDelegationSigningKey, RegisteredDelegationSigningKeyStatus
 from control_plane_kit_operations.runtime_management_targets import project_management_health_target
-from cpk_http_host_fixtures import fixture
+from cpk_http_host_fixtures import fixture, verifier_family, with_health
 
 
 def document(name, contract):
@@ -59,38 +61,54 @@ def world(test, *, selected="b", side=PlanGraphSide.DESIRED_GRAPH, configuration
         other = fixture(letter)
         authority = SimpleNamespace(**vars(a))
         authority.health_private = other.health_private
-        authority.config = replace(a.config, health_keys=other.config.health_keys)
+        authority.config = with_health(a.config, public_keys=verifier_family(other.config).public_keys)
         authorities[letter] = authority
-    keys = tuple(authorities[letter].config.health_keys.public_keys[0] for letter in selected)
-    workload = replace(a.config, health_keys=replace(a.config.health_keys, public_keys=keys))
+    keys = tuple(verifier_family(authorities[letter].config).public_keys[0] for letter in selected)
+    workload = with_health(a.config, public_keys=keys)
     roles = core.NodeControlGraphReferenceRole
+    gateway_target = replace(a.config.target,
+        node_id=core.NodeControlGraphReference(roles.NODE, "gateway-a"),
+        provider_socket_name=core.NodeControlGraphReference(roles.PROVIDER_SOCKET, "http"), receiver_id="d"*32)
     gateway_config = gateway.GatewayHealthTransitConfiguration(
-        a.config.target.workspace_id, core.NodeControlGraphReference(roles.NODE, "gateway-a"),
-        a.config.runtime_id, "transit-issuer", core.DelegationKeyPurpose.GATEWAY_NODE_HEALTH_READ_TRANSIT, keys)
+        gateway_target, "transit-issuer", core.DelegationKeyPurpose.GATEWAY_NODE_HEALTH_READ_TRANSIT, keys)
     artifacts = {"workload": cpk.cpk_control_configuration_artifact(workload),
                  "gateway": gateway.gateway_health_transit_configuration_artifact(gateway_config)}
     for family, changes in (configuration_changes or {}).items():
         artifact = artifacts[family]
-        artifacts[family] = replace(artifact, content=json.dumps({**json.loads(artifact.content), **changes}))
+        raw = json.loads(artifact.content)
+        # Runtime is now part of installed receiver scope, not a duplicate field.
+        if "runtime_id" in changes:
+            raw["target" if family == "workload" else "gateway_target"]["runtime_id"] = changes["runtime_id"]
+        else:
+            raw.update(changes)
+        artifacts[family] = replace(artifact, content=json.dumps(raw))
     defaults = {"workload": cpk.cpk_control_configuration_artifact(a.config),
                 "gateway": gateway.gateway_health_transit_configuration_artifact(
-                    replace(gateway_config, public_keys=a.config.health_keys.public_keys))}
+                    replace(gateway_config, public_keys=verifier_family(a.config).public_keys))}
     full = cpk.cpk_source_runtime_contract(cpk.CpkSourceVariant.CPK, defaults["workload"])
     # Explicit receiver-only projection: do not include the four DB requirements
     # or claim the legacy HttpChecks are a ready managed production topology.
     workload_contract = ProductRuntimeContract(
         sockets=BlockSockets(providers=full.sockets.providers), provider_ports=full.provider_ports,
         capabilities=full.capabilities, control_surfaces=full.control_surfaces,
-        configuration_artifacts=(defaults["workload"],))
+        configuration_artifacts=(defaults["workload"],), public_environment=full.public_environment)
     readiness = core.WorkloadNodeControlSurfaceDescriptor(
         core.NodeControlGraphReference(roles.PROVIDER_SOCKET, "http"), (),
         health_reads=(core.NodeHealthReadKind.READINESS,))
+    gateway_own = core.ReceiverNodeControlConfiguration(gateway_target,
+        core.WorkloadNodeControlSurfaceDeclaration(readiness, core.WorkloadNodeControlSurfaceDeclarationProfile.V2),
+        a.config.verifiers)
+    own_artifact = ConfigurationArtifact("gateway-own", "/etc/cpk/test/gateway-own.json",
+        ConfigurationMediaType.JSON, core.ReceiverNodeControlConfigurationCodec().encode_bytes(gateway_own).decode(),
+        ConfigurationFileMode.READ_ONLY)
+    artifacts["gateway-own"] = defaults["gateway-own"] = own_artifact
     gateway_contract = ProductRuntimeContract(
         sockets=BlockSockets(providers=(ProviderSocket("http", Protocol.HTTP),)),
         provider_ports=(ProviderRuntimePort("http", 8000),), capabilities=full.capabilities,
         control_surfaces=(readiness,),
-        gateway_transit=core.GatewayTransitDeclaration("http", core.GatewayTransitProtocol.NODE_HEALTH_READ_V1),
-        configuration_artifacts=(defaults["gateway"],))
+        gateway_transit=core.GatewayTransitDeclaration("http", core.GatewayTransitProtocol.RECEIVER_HEALTH_READ_V2),
+        configuration_artifacts=(defaults["gateway"], own_artifact),
+        public_environment=(PublicStaticEnvironmentBinding("CPK_WRAPPER_CONFIGURATION_FILE", own_artifact.target_path),))
     documents = {"workload": document("cpk-receiver-model", workload_contract),
                  "gateway": document("gateway-receiver-model", gateway_contract)}
     nodes = {}
@@ -102,7 +120,8 @@ def world(test, *, selected="b", side=PlanGraphSide.DESIRED_GRAPH, configuration
                       gateway_transit=contract.gateway_transit), "container-server", "runtime-a", contract.sockets,
             endpoints={socket.name: Endpoint(LiteralAddress("http://" + node_id + ":8000"), socket.protocol)
                        for socket in contract.sockets.providers},
-            configuration_artifacts=(artifacts[family],),
+            configuration_artifacts=(artifacts[family], own_artifact) if family == "gateway" else (artifacts[family],),
+            public_environment=contract.public_environment,
             metadata={"product_identity": reference.identity.key,
                       "product_descriptor_digest": reference.descriptor_sha256.value})
     nodes["connector"] = Node("connector", BlockFamily.APPLICATION, BlockSpec("connector"),
@@ -133,7 +152,8 @@ def world(test, *, selected="b", side=PlanGraphSide.DESIRED_GRAPH, configuration
         # now fails the graph pin and B coverage instead of accidentally passing.
         alternate = dict(graph.nodes)
         for family, node_id in (("workload", "cpk-a"), ("gateway", "gateway-a")):
-            alternate[node_id] = replace(alternate[node_id], configuration_artifacts=(defaults[family],))
+            alternate[node_id] = replace(alternate[node_id], configuration_artifacts=(defaults[family], own_artifact)
+                if family == "gateway" else (defaults[family],))
         desired = validate_graph(replace(graph, nodes=alternate))
         desired.require_valid()
     projected = project_management_health_target(plan, activity.activity_id, activity.operation, current, desired)
@@ -146,28 +166,28 @@ def world(test, *, selected="b", side=PlanGraphSide.DESIRED_GRAPH, configuration
 
 
 def signers(value, letter):
-    key = value.authorities[letter].config.health_keys.public_keys[0]
+    key = verifier_family(value.authorities[letter].config).public_keys[0]
     return tuple(RegisteredDelegationSigningKey("fixture-" + family, "workspace-a", purpose, issuer,
         key, SecretReference("secret://synthetic/never-resolved/" + family),
         "fixture", "2026-09-16T00:00:00Z", status=RegisteredDelegationSigningKeyStatus.ACTIVE,
         activated_by="fixture", activated_at="2026-09-16T00:00:00Z")
         for family, purpose, issuer in (
             ("gateway", value.gateway_config.purpose, value.gateway_config.issuer),
-            ("workload", value.config.health_keys.purpose, value.config.health_issuer)))
+            ("workload", verifier_family(value.config).purpose, verifier_family(value.config).issuer)))
 
 
 def gateway_token(value, letter):
     config = value.config
     authority = value.authorities[letter]
-    key = authority.config.health_keys.public_keys[0]
-    request = core.NodeHealthReadRequest(config.target, config.runtime_id,
+    key = verifier_family(authority.config).public_keys[0]
+    request = core.ReceiverHealthReadRequest(config.target, authority.authority,
         core.NodeHealthReadKind.LIVENESS, config.declaration.identity(), "request-a")
-    grant = core.DelegatedGatewayNodeHealthReadTransitGrant(
-        profile=core.DelegatedGatewayNodeHealthReadTransitGrantProfile.V1,
+    grant = core.DelegatedGatewayReceiverHealthReadTransitGrant(
+        profile=core.DelegatedGatewayReceiverHealthReadTransitGrantProfile.V2,
         canonicalization=core.NodeControlCanonicalization.JCS_RFC8785_V1,
         purpose=value.gateway_config.purpose, issuer=value.gateway_config.issuer,
-        key_id=key.key_id, attempt_id="attempt-a", gateway_node_id=value.gateway_config.gateway_node_id,
-        target=request.target, runtime_id=request.runtime_id, kind=request.kind,
+        key_id=key.key_id, attempt_id="attempt-a", gateway_target=value.gateway_config.gateway_target,
+        target=request.target, authority_context=request.authority_context, kind=request.kind,
         declaration_identity=request.declaration_identity, request_id=request.request_id,
         request_digest=request.canonical_digest(), issued_at=100, not_before=100, expires_at=200, jti="transit-test")
     encoded = jwt.encode(dict(iss=grant.issuer, aud=grant.audience, iat=100, nbf=100, exp=200,
@@ -184,27 +204,26 @@ def gateway_self_world():
     a, b = fixture(), fixture("b")
     target = replace(a.config.target, node_id=replace(a.config.target.node_id, value="gateway-a"),
                      provider_socket_name=replace(a.config.target.provider_socket_name, value="control"))
-    configured = control.GatewayControlConfiguration(target=target, runtime_id=a.config.runtime_id,
-        declaration=control.gateway_control_declaration(), surface_issuer=a.config.surface_issuer,
-        surface_keys=a.config.surface_keys, health_issuer=a.config.health_issuer, health_keys=a.config.health_keys)
-    trusted = transit.GatewayHealthTransitConfiguration(target.workspace_id, target.node_id,
-        configured.runtime_id, "transit-issuer", core.DelegationKeyPurpose.GATEWAY_NODE_HEALTH_READ_TRANSIT,
-        configured.health_keys.public_keys)
-    targets = relay.GatewayHealthRelayConfiguration(target.workspace_id, target.node_id, configured.runtime_id, ())
+    configured = core.ReceiverNodeControlConfiguration(target=target,
+        declaration=control.gateway_control_declaration(), verifiers=a.config.verifiers)
+    trusted = transit.GatewayHealthTransitConfiguration(target,
+        "transit-issuer", core.DelegationKeyPurpose.GATEWAY_NODE_HEALTH_READ_TRANSIT,
+        verifier_family(configured).public_keys)
+    targets = relay.GatewayHealthRelayConfiguration(target, ())
     trust_artifact = transit.gateway_health_transit_configuration_artifact(trusted)
     control_artifact = control.gateway_control_configuration_artifact(configured)
     contract = relay.gateway_health_source_runtime_contract(trust_artifact,
         relay.gateway_health_relay_configuration_artifact(targets), control_artifact)
     binding = relay.gateway_health_target_binding(target_id="unrelated-alias-73", target=target,
-        runtime_id=configured.runtime_id, runtime_contract=contract, hostname="private-origin-canary")
+        runtime_contract=contract, hostname="private-origin-canary")
     targets = replace(targets, targets=(binding,))
     defaults = dict(transit=trust_artifact, targets=relay.gateway_health_relay_configuration_artifact(targets),
                     control=control_artifact)
     contract = relay.gateway_health_source_runtime_contract(defaults["transit"], defaults["targets"], defaults["control"])
     doc = document("gateway-self-source", contract)
     # Selected B differs from registered default A in BOTH independently selected purposes.
-    configured = replace(configured, health_keys=b.config.health_keys)
-    trusted = replace(trusted, public_keys=b.config.health_keys.public_keys)
+    configured = with_health(configured, public_keys=verifier_family(b.config).public_keys)
+    trusted = replace(trusted, public_keys=verifier_family(b.config).public_keys)
     artifacts = dict(defaults, transit=transit.gateway_health_transit_configuration_artifact(trusted),
                      control=control.gateway_control_configuration_artifact(configured))
     return SimpleNamespace(config=configured, trust=trusted, targets=targets, binding=binding,

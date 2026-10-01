@@ -8,7 +8,7 @@ import control_plane_kit_core as core
 from control_plane_kit_core.identity import AuthenticatedPrincipal, PrincipalIdentity, PrincipalKind, WorkspaceGrant
 from control_plane_kit_core.policies import PolicyScope
 from control_plane_kit_core.public_ingress import NamedPublicIngress, IngressAuthorityReference, PublicIngressTarget
-from cpk_http_host_fixtures import fixture
+from cpk_http_host_fixtures import fixture, verifier_family
 from health_receiver_join_fixtures import gateway_self_world, document
 
 
@@ -19,28 +19,28 @@ def encode(value):
 def packet_world():
     value = gateway_self_world()
     other = fixture("transit")
-    value.trust = replace(value.trust, public_keys=other.config.health_keys.public_keys)
+    value.trust = replace(value.trust, public_keys=verifier_family(other.config).public_keys)
     value.artifacts["transit"] = value.transit.gateway_health_transit_configuration_artifact(value.trust)
     value.contract = value.relay.gateway_health_source_runtime_contract(
         value.artifacts["transit"], value.artifacts["targets"], value.artifacts["control"])
     value.document = document("diagnostic-gateway", value.contract)
     artifacts = {name: item.content.encode() for name, item in value.artifacts.items()}
     artifacts["product"] = value.document.content
-    request = core.NodeHealthReadRequest(value.config.target, value.config.runtime_id,
+    request = core.ReceiverHealthReadRequest(value.config.target, core.NodeControlAuthorityContext("revision-a", "projection-desired"),
         core.NodeHealthReadKind.READINESS, value.config.declaration.identity(), "diagnostic-request")
     common = dict(canonicalization=core.NodeControlCanonicalization.JCS_RFC8785_V1,
-        target=request.target, runtime_id=request.runtime_id, kind=request.kind,
+        target=request.target, authority_context=request.authority_context, kind=request.kind,
         declaration_identity=request.declaration_identity, request_id=request.request_id,
         request_digest=request.canonical_digest(), issued_at=100, not_before=101, expires_at=200)
-    transit = core.DelegatedGatewayNodeHealthReadTransitGrant(
-        profile=core.DelegatedGatewayNodeHealthReadTransitGrantProfile.V1,
+    transit = core.DelegatedGatewayReceiverHealthReadTransitGrant(
+        profile=core.DelegatedGatewayReceiverHealthReadTransitGrantProfile.V2,
         purpose=value.trust.purpose, issuer=value.trust.issuer, key_id=value.trust.public_keys[0].key_id,
-        gateway_node_id=request.target.node_id, attempt_id="diagnostic-attempt", jti="transit-jti", **common)
-    workload = core.DelegatedWorkloadNodeHealthReadGrant(
-        profile=core.DelegatedWorkloadNodeHealthReadGrantProfile.V1,
-        purpose=value.config.health_keys.purpose, issuer=value.config.health_issuer,
-        key_id=value.config.health_keys.public_keys[0].key_id,
-        audience=core.workload_node_control_audience(request.target), jti="workload-jti", **common)
+        gateway_target=value.config.target, attempt_id="diagnostic-attempt", jti="transit-jti", **common)
+    workload = core.DelegatedWorkloadReceiverHealthReadGrant(
+        profile=core.DelegatedWorkloadReceiverHealthReadGrantProfile.V2,
+        purpose=verifier_family(value.config).purpose, issuer=verifier_family(value.config).issuer,
+        key_id=verifier_family(value.config).public_keys[0].key_id,
+        audience=core.receiver_node_control_audience(request.target), jti="workload-jti", **common)
     ingress = NamedPublicIngress("management", IngressAuthorityReference("diagnostic-authority"),
         PublicIngressTarget("gateway-a", "control"), "connector-a", "diagnostic.example.invalid")
     packet = dict(profile="gateway-self-health-diagnostic.v1", attempt_id="diagnostic-attempt",
@@ -52,7 +52,7 @@ def packet_world():
             fingerprint=key.fingerprint_sha256, private_reference="secret://provider-a/"+family,
             reference_registration_id="reference-"+family, provider_registration_id="provider-a",
             endpoint_reference="provider-a", credential_reference="secret://bootstrap/provider-a")
-            for family,key in (("transit",value.trust.public_keys[0]),("workload",value.config.health_keys.public_keys[0]))])
+            for family,key in (("transit",value.trust.public_keys[0]),("workload",verifier_family(value.config).public_keys[0]))])
     principal = AuthenticatedPrincipal(PrincipalIdentity("test-issuer","operator-a",PrincipalKind.OPERATOR),
         (WorkspaceGrant("workspace-a",(PolicyScope.SECRET_PROVIDER_USE,)),))
     return SimpleNamespace(value=value, artifacts=artifacts, packet=packet, raw=encode(packet),
@@ -78,9 +78,9 @@ def recording_authority(api, selected, world, *, existing=False, exit_error=Fals
     keys = list(RegisteredDelegationSigningKey("key-"+family,"workspace-a",purpose,issuer,key,ref.reference,
         "fixture",stamp,status=RegisteredDelegationSigningKeyStatus.ACTIVE,activated_by="fixture",activated_at=stamp)
         for family,purpose,issuer,key,ref in zip(("transit","workload"),
-            (world.value.trust.purpose,world.value.config.health_keys.purpose),
-            (world.value.trust.issuer,world.value.config.health_issuer),
-            (world.value.trust.public_keys[0],world.value.config.health_keys.public_keys[0]),refs))
+            (world.value.trust.purpose,verifier_family(world.value.config).purpose),
+            (world.value.trust.issuer,verifier_family(world.value.config).issuer),
+            (world.value.trust.public_keys[0],verifier_family(world.value.config).public_keys[0]),refs))
     providers = [provider]
     references = list(refs)
     hooks = SimpleNamespace(on_exit=lambda:None,key_error=None)

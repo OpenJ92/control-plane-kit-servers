@@ -9,6 +9,7 @@ import sys
 import unittest
 
 from control_plane_kit_core.types import Protocol
+from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
 from control_plane_kit_core.capabilities import CapabilityName
 from control_plane_kit_core.configuration import (
     ConfigurationArtifact, ConfigurationFileMode, ConfigurationMediaType,
@@ -22,8 +23,8 @@ from secrets_control_fixtures import configuration
 ROOT = Path(__file__).resolve().parents[3]
 PRODUCT = ROOT / "products" / "secrets_server"
 PATH = "/etc/cpk/secrets-server/control.json"
-ENVIRONMENT = "CPK_SECRETS_CONTROL_CONFIGURATION_FILE"
-ACCEPTED_SECRETS = "43b742d1ecb4b7b1fbabb62890a4045afa7a2fec"
+ENVIRONMENT = "CPK_WRAPPER_CONFIGURATION_FILE"
+ACCEPTED_SECRETS = "edfb8c0ebfc0cfcf3a667fb60d52b4a83bda1634"
 
 
 class SecretsSourceControlProductTests(unittest.TestCase):
@@ -72,10 +73,12 @@ class SecretsSourceControlProductTests(unittest.TestCase):
         self.assertEqual(current.configuration_artifacts, (artifact,))
         self.assertEqual(current.control_surfaces, (value.declaration.surface,))
         self.assertEqual(set(current.capabilities), set(old.capabilities) | {CapabilityName.NODE_CONTROLLABLE})
-        self.assertEqual(current.public_environment, old.public_environment)
+        self.assertEqual(current.public_environment, (*old.public_environment,
+            PublicStaticEnvironmentBinding(ENVIRONMENT, artifact.target_path)))
         self.assertEqual(replace(current, configuration_artifacts=old.configuration_artifacts,
                                  capabilities=old.capabilities,
-                                 control_surfaces=old.control_surfaces), old)
+                                 control_surfaces=old.control_surfaces,
+                                 public_environment=old.public_environment), old)
         self.assertEqual(old.configuration_artifacts, ())
         self.assertEqual(old.control_surfaces, ())
         self.assertEqual(current.sockets.provider("control").protocol, Protocol.HTTP)
@@ -111,7 +114,7 @@ class SecretsSourceControlProductTests(unittest.TestCase):
         object.__setattr__(forged, "content", "malformed-json-marker")
         self.rejected(owner, lambda: owner.secrets_source_runtime_contract(forged))
         changed = json.loads(artifact.content)
-        changed["surface_read"]["issuer"] = "changed-public-issuer"
+        changed["verifiers"][0]["issuer"] = "changed-public-issuer"
         stale = replace(artifact)
         object.__setattr__(stale, "content", json.dumps(changed, sort_keys=True, separators=(",", ":")))
         self.rejected(owner, lambda: owner.secrets_source_runtime_contract(stale))
@@ -121,7 +124,9 @@ class SecretsSourceControlProductTests(unittest.TestCase):
         for candidate in (None, {}, b"not-a-typed-configuration"):
             self.rejected(owner, lambda: owner.secrets_control_configuration_artifact(candidate))
         forged = configuration()
-        object.__setattr__(forged, "health_issuer", "invalid issuer marker")
+        family = replace(forged.verifiers[-1])
+        object.__setattr__(family, "issuer", "invalid issuer marker")
+        object.__setattr__(forged, "verifiers", (*forged.verifiers[:-1], family))
         self.rejected(owner, lambda: owner.secrets_control_configuration_artifact(forged))
 
     def test_recipe_and_separate_public_bootstrap_contract_match_actual_artifact(self):

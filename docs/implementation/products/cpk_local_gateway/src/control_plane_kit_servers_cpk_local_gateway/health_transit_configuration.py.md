@@ -1,13 +1,13 @@
 Source: [health_transit_configuration.py](../../../../../../products/cpk_local_gateway/src/control_plane_kit_servers_cpk_local_gateway/health_transit_configuration.py).
 Maintain this companion alongside its source.
 
-This product owns `cpk-gateway-health-transit-configuration.v1`, a public but
-integrity-sensitive snapshot: configured workspace, gateway node, runtime,
+This product owns `cpk-gateway-health-transit-configuration.v2`, a public but
+integrity-sensitive snapshot: full configured gateway receiver target (workspace, runtime, node, socket and receiver ID),
 issuer, exact gateway health-transit purpose and one to sixteen public keys.
-Audience is derived as `gateway:<workspace>:<gateway>`. Workload target,
+Audience is derived as `gateway:<workspace>:<gateway>`. Caller authority context, workload target,
 declaration, health kind, attempt and time are not startup trust.
 
-Issuer uses exactstr plus selected Coref1e6cf2's
+Issuer uses exactstr plus selected Core250d65e's
 `_node_control_public_wire.reference_violation`, including its endpoint and
 credential-envelope rejection. The direct private-helper dependency is an
 explicit compatibility risk: future Core pin upgrades must verify this

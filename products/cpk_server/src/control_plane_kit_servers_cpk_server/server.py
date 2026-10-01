@@ -77,19 +77,12 @@ from control_plane_kit_operations.postgres import PostgresUnitOfWork, install_sc
 from control_plane_kit_operations.desired_topology_drafts import DesiredTopologyDraftCommandService
 
 from .control_configuration import (
-    CpkControlConfiguration, CpkControlConfigurationError,
+    CpkControlConfigurationError,
     cpk_control_configuration_artifact, read_cpk_control_configuration,
 )
 from .http_host import install_operator_http_routes
-import control_plane_kit_core as core
-from control_plane_kit_server_sdk.fastapi import install_cpk_control_routes
-from control_plane_kit_server_sdk.health import WorkloadNodeHealthReadDispatcher
-from control_plane_kit_server_sdk.verification import (
-    Ed25519WorkloadNodeControlSurfaceReadVerifier, Ed25519WorkloadNodeHealthReadVerifier,
-)
-from control_plane_kit_server_sdk.verifier_keys import (
-    AtomicWorkloadNodeControlSurfaceReadVerifierKeySet, AtomicWorkloadNodeHealthReadVerifierKeySet,
-)
+from control_plane_kit_core.receiver_configuration import ReceiverNodeControlConfiguration
+from control_plane_kit_server_sdk.fastapi import install_cpk_wrapper
 from .boundary import (
     CpkServerApplicationBoundary,
     CpkServerHttpProcessBoundary,
@@ -474,7 +467,7 @@ class CpkServerBootstrapConfiguration:
 def create_app(
     config: CpkServerBootstrapConfiguration,
     credential_verifier: CredentialVerifier,
-    *, control: CpkControlConfiguration,
+    *, control: ReceiverNodeControlConfiguration,
     clock: Callable[[], int] = lambda: int(time.time()),
 ) -> FastAPI:
     """Create the hosted cpk-server FastAPI application."""
@@ -537,24 +530,7 @@ def create_app(
         return _json_response(response.status, response.body)
 
     install_operator_http_routes(app, composition.http_api, http)
-    audience = core.workload_node_control_audience(control.target)
-    static = Ed25519WorkloadNodeControlSurfaceReadVerifier(
-        AtomicWorkloadNodeControlSurfaceReadVerifierKeySet(control.surface_keys),
-        expected_issuer=control.surface_issuer, expected_audience=audience, clock=clock,
-    )
-    health = Ed25519WorkloadNodeHealthReadVerifier(
-        AtomicWorkloadNodeHealthReadVerifierKeySet(control.health_keys),
-        expected_issuer=control.health_issuer, expected_audience=audience, clock=clock,
-    )
-    install_cpk_control_routes(
-        app, target=control.target, declaration=control.declaration,
-        surface_read_verifier=static,
-        health_dispatcher=WorkloadNodeHealthReadDispatcher(
-            target=control.target, runtime_id=control.runtime_id,
-            declaration=control.declaration, verifier=health,
-            liveness=lambda: core.NodeHealthReadOutcome.HEALTHY, readiness=None,
-        ),
-    )
+    install_cpk_wrapper(app, configuration=control, clock=clock)
     # No application/listener escapes before both admitted routes and existing
     # Operations schema/services are ready. Callbacks never perform schema work.
     application = CpkServerApplicationBoundary(_operations_application(config).services, credential_verifier)

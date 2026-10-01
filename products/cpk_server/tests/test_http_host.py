@@ -14,7 +14,10 @@ from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 from starlette.exceptions import HTTPException
 from control_plane_kit_core import NodeHealthReadKind
-from control_plane_kit_core.operations import ControlPlaneServiceRole, HttpApiContract, HttpMethod
+from control_plane_kit_core.operations import (
+    ControlPlaneServiceRole, HttpApiContract, HttpAuthScope, HttpMethod,
+    HttpOperationSafety,
+)
 
 from test_http_mcp_boundaries import DeterministicVerifier, RecordingService
 from cpk_http_host_fixtures import fixture, install_control, token
@@ -52,7 +55,18 @@ class CpkHttpHostTests(unittest.TestCase):
 
     def test_every_operator_contract_reaches_unchanged_auth_boundary(self):
         routes = self.app.state.http_boundary.composition.http_api.routes
-        self.assertEqual(len(routes), 75)
+        self.assertEqual(len(routes), 77)
+        for route_id, path in (
+            ("read.receiver-authoring-context", "/workspaces/{workspace_id}/receiver-authoring-context"),
+            ("read.workload-verifier-configuration", "/workspaces/{workspace_id}/workload-verifier-configuration/{purposes}"),
+        ):
+            with self.subTest(route_id=route_id):
+                self.assertEqual(
+                    [(route.method, route.path_template, route.service_role, route.auth_scope, route.safety)
+                     for route in routes if route.route_id == route_id],
+                    [(HttpMethod.GET, path, ControlPlaneServiceRole.READS,
+                      HttpAuthScope.READ, HttpOperationSafety.READ_ONLY)],
+                )
         self.assertEqual(
             sum(route.route_id == "command.deployment.reobserve-connector" for route in routes),
             1,

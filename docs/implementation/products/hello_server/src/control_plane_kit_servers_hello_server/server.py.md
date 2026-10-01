@@ -1,23 +1,22 @@
 Source: [server.py](../../../../../../products/hello_server/src/control_plane_kit_servers_hello_server/server.py).
-Maintain with listener composition and application behavior.
 
-Production validates port8000, palette, fixed configuration and dependency inputs
-before creating a socket. create_hello_server captures one frozen settings value,
-creates exact standard ThreadingHTTPServer with bind_and_activate=False, installs
-SDK routes, then binds/activates. Installation/bind failures close the socket;
-main closes it when serving exits. Tests inject ephemeral addresses but separately
-assert the production port policy. No SDK process supervisor or same-thread
-shutdown call is introduced; the existing threaded-host model is retained.
+The product factory validates common configuration and settings, then constructs
+the actual accepted SDK CpkThreadingHTTPServer with bind_and_activate=False.
+That wrapper prepares and installs authenticated routes before bind/activation;
+SDK setup failure closes its unbound socket. The product binds and activates only
+after composition and closes on subsequent failure. Main retains its existing
+port policy, serving loop and final close. No private lifecycle flag or duplicate
+route installer remains in the product.
 
-The same per-server dependency snapshot feeds the ordinary legacy readiness
-handler and SDK's admitted callback. No handler rereads os.environ. Static/health
-verifiers use separate holders, issuers and purposes, with integer Unix time;
-the health dispatcher binds exact local target/runtime/declaration. SDK owns
-authentication/protocol, Hello owns health meaning. No command verifier, variables
-or replay store is configured. Denial reaches no product callbacks.
+Hello captures immutable dependency/settings and per-server bounded observations; the same dependency inspection supplies public legacy readiness and the admitted SDK readiness callback.
+SDK owns purpose-separated verification, full installed target/declaration and
+request authority-context congruence. Its actual host lifecycle gates readiness;
+fixtures wait for public cpk_is_serving, then shut down, close and join the real
+server. Denied requests reach no protected callback or ordinary forwarding.
 
-Escaped HTML and ordinary route responses remain. Budget exhaustion is a new
-explicit legacy503/SDK UNKNOWN result; legacy application health stays public.
-Request observations are bounded and instance-local, stripping query strings.
-Dependency/config values are absent from results/logging. No persistence,
-provider operations, automatic recovery or new listener/public port is added.
+The source Docker recipe supplies CPK_WRAPPER_CONFIGURATION_FILE for the existing
+mounted public configuration. No default key is supplied. HTML, ordinary routes,
+public legacy health, network budgets and bounded/redacted observations remain
+product-owned. No new persistence, external port, provider mutation, supervisor,
+command handler or replay store is added. Static source/target review does not
+qualify the historical image; the unchanged whole owner gate remains required.

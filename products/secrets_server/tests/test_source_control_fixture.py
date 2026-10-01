@@ -33,10 +33,13 @@ class SourceControlFixtureTests(unittest.TestCase):
                 self.assertNotEqual((root / "surface.headers").read_bytes(),
                                     (root / "health.headers").read_bytes())
             first, second = configurations
-            self.assertEqual((first.target, first.runtime_id, first.declaration),
-                             (second.target, second.runtime_id, second.declaration))
-            self.assertNotEqual(first.surface_keys, second.surface_keys)
-            self.assertNotEqual(first.health_keys, second.health_keys)
+            self.assertEqual((first.target, first.declaration), (second.target, second.declaration))
+            self.assertEqual(first.target.runtime_id, second.target.runtime_id)
+            self.assertEqual({family.purpose for family in first.verifiers},
+                             {family.purpose for family in second.verifiers})
+            for family in first.verifiers:
+                changed = next(item for item in second.verifiers if item.purpose is family.purpose)
+                self.assertNotEqual(family.public_keys, changed.public_keys)
 
     def test_log_cli_is_bounded_and_never_echoes_failure_material(self):
         with TemporaryDirectory() as directory:

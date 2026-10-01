@@ -35,9 +35,8 @@ class HealthRelayTests(unittest.TestCase):
         config_api, relay_api = self.api()
         w = self.world
         binding = config_api.gateway_health_target_binding(target_id="database-management", target=w.target,
-            runtime_id=w.runtime, runtime_contract=w.contract, hostname="wrapped-db")
-        config = config_api.GatewayHealthRelayConfiguration(workspace_id=w.target.workspace_id,
-            gateway_node_id=w.transit.gateway, runtime_id=w.runtime, targets=(binding,))
+            runtime_contract=w.contract, hostname="wrapped-db")
+        config = config_api.GatewayHealthRelayConfiguration(gateway_target=w.transit.gateway_target, targets=(binding,))
         trust_api, verify_api = w.transit.api()
         verifier = w.transit.verifier(trust_api, verify_api)
         relay = relay_api.GatewayHealthRelay(configuration=config, verifier=verifier,
@@ -72,7 +71,7 @@ class HealthRelayTests(unittest.TestCase):
                 response = client.get("/__control/health/" + kind.value,
                     headers={"Authorization":"Bearer " + token})
                 self.assertEqual(response.status_code, 200)
-                self.assertEqual(core.NodeHealthReadResultCodec(request, w.declaration).decode(response.json()).request, request)
+                self.assertEqual(core.ReceiverHealthReadResultCodec(request, w.declaration).decode(response.json()).request, request)
             before = list(w.callbacks)
             _, bad = w.pair(workload_private=Ed25519PrivateKey.generate())
             response = client.get("/__control/health/readiness", headers={"Authorization":"Bearer " + bad})
@@ -101,7 +100,7 @@ class HealthRelayTests(unittest.TestCase):
                     for _ in range(2):
                         response = self.call(client, request=request)
                         self.assertEqual(response.status_code, 200)
-                        result = core.NodeHealthReadResultCodec(request, w.declaration).decode(response.json())
+                        result = core.ReceiverHealthReadResultCodec(request, w.declaration).decode(response.json())
                         self.assertIs(result.outcome, outcome)
                         self.assertEqual(response.content, result.canonical_bytes())
                         self.assertEqual(response.headers.get("cache-control"), "no-store")
@@ -123,8 +122,9 @@ class HealthRelayTests(unittest.TestCase):
             wrong = w.envelope()
             wrong["attempt_id"] = "other-attempt"
             self.assert_bounded_failure(self.call(client, envelope=wrong), 401)
-            for field in ("workspace_id", "graph_revision", "node_id", "provider_socket_name"):
-                target = replace(w.target, **{field:replace(getattr(w.target, field), value="other")})
+            for field in ("workspace_id", "runtime_id", "node_id", "provider_socket_name", "receiver_id"):
+                target = replace(w.target, **{field:("f" * 32 if field == "receiver_id"
+                    else replace(getattr(w.target, field), value="other"))})
                 candidate = replace(w.request, target=target)
                 response = self.call(client, request=candidate)
                 self.assertIn(response.status_code, (401, 403))
@@ -143,7 +143,9 @@ class HealthRelayTests(unittest.TestCase):
         with TestClient(app) as client:
             for candidate in (replace(w.request, request_id="other-request"),
                               replace(w.request, kind=core.NodeHealthReadKind.LIVENESS),
-                              replace(w.request, runtime_id=replace(w.runtime, value="other-runtime"))):
+                              replace(w.request, target=replace(w.target, runtime_id=replace(w.runtime, value="other-runtime"))),
+                              replace(w.request, authority_context=replace(w.request.authority_context, realized_projection_id="other")),
+                              replace(w.request, authority_context=replace(w.request.authority_context, authored_graph_id="other"))):
                 _, token = w.pair(candidate)
                 self.assert_bounded_failure(self.call(client, envelope=w.envelope(workload=token)), 403)
             transit, _ = w.pair()
@@ -161,7 +163,7 @@ class HealthRelayTests(unittest.TestCase):
         with TestClient(app) as client:
             for change, status in (({"target_id":"same-runtime-peer"}, 403),
                     ({"url":"http://arbitrary.invalid"}, 400), ({"attempt_id":True}, 400),
-                    ({"profile":"unknown"}, 400)):
+                    ({"profile":"unknown"}, 400), ({"profile":"cpk-gateway-health-relay-request.v1"}, 400)):
                 self.assert_bounded_failure(self.call(client, envelope=w.envelope() | change), status)
             response = self.call(client, path="/cpk/health/readiness?url=http://arbitrary.invalid")
             self.assert_bounded_failure(response, 400)
@@ -207,7 +209,7 @@ class HealthRelayTests(unittest.TestCase):
 
     def test_transport_refusal_redirect_and_uncorrelated_200_never_become_health(self):
         w = self.world
-        valid = core.NodeHealthReadResult(w.request, w.declaration, core.NodeHealthReadOutcome.HEALTHY).descriptor()
+        valid = core.ReceiverHealthReadResult(w.request, w.declaration, core.NodeHealthReadOutcome.HEALTHY).descriptor()
         candidates = [(302, b"private-marker", {"Location":"http://foreign.invalid"}),
             (401, b"private-marker", {}), (503, b"private-marker", {}),
             (200, b'{"status":"ready"}', {}),

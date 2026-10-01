@@ -92,10 +92,10 @@ def exercise_control(authority, sensitive):
         assert status == 200, "source control read failed"
         if static:
             static_token = token
-            expected = core.NodeControlSurfaceReadResultCodec(request, authority.declaration).capabilities_result()
+            expected = core.ReceiverControlSurfaceReadResultCodec(request, authority.declaration).capabilities_result()
             assert body == expected.canonical_bytes(), "source static contract mismatch"
         else:
-            result = core.NodeHealthReadResultCodec(request, authority.declaration).decode(json.loads(body))
+            result = core.ReceiverHealthReadResultCodec(request, authority.declaration).decode(json.loads(body))
             assert result.outcome is core.NodeHealthReadOutcome.HEALTHY, "source liveness mismatch"
         assert read(path)[0] == 401, "source control accepted missing authority"
     assert read("/__control/health/liveness", static_token)[0] == 401, "source control accepted wrong purpose"
@@ -199,7 +199,7 @@ def main() -> None:
         assert source.attrs["Config"]["User"] == "10006"
         assert not source.attrs["HostConfig"]["PortBindings"]
         actual_environment = dict(item.split("=", 1) for item in source.attrs["Config"]["Env"])
-        assert actual_environment.get("CPK_SECRETS_CONTROL_CONFIGURATION_FILE") == control.target_path, "recipe control path missing"
+        assert actual_environment.get("CPK_WRAPPER_CONFIGURATION_FILE") == control.target_path, "recipe control path missing"
         actual_mounts = {mount["Destination"]: mount for mount in source.attrs["Mounts"]}
         public_observed = actual_mounts[control.target_path]
         assert public_observed["Name"] == public_volume.name and public_observed["RW"] is False

@@ -13,7 +13,7 @@ The closed receiver envelope for Interpreters149/Servers180 is:
 ```text
 header: alg=EdDSA, typ=CPK-GATEWAY-NODE-HEALTH-READ-TRANSIT+JWT, kid
 payload: iss, aud, iat, nbf, exp, jti, gateway_node_health_read_transit
-inner: existing Core DelegatedGatewayNodeHealthReadTransitGrant descriptor
+inner: existing Core DelegatedGatewayReceiverHealthReadTransitGrant V2 descriptor
 ```
 
 Compact input is exact ASCII bytes with three canonical unpadded base64url
@@ -24,11 +24,11 @@ duplicate-free, nonfinite-free and depth-bounded using product-local parsing.
 Outer time scalars require exactint, so bool cannot satisfy equality. All outer
 claims and headerkid must match the decoded Core grant exactly.
 
-Configuration provides expected issuer/gateway and derived audience. Per-call
-context provides envelope attempt correlation, configured target/runtime, declaration, requested
+Configuration provides expected issuer/full gateway receiver target and derived audience. Per-call
+context provides envelope attempt correlation, configured full receiver target, declaration, requested
 kind and one trusted integer time observation. Configured workspace/runtime
 must match that context. Core's existing comparator owns request digest,
-declaration/kind/purpose/identity and exact half-open interval semantics. The
+declaration/kind/purpose/full identity/original authority context and exact half-open interval semantics. The
 returned object is the same supplied request. Core comparison is not current
 Operations approval. The #180 HTTP caller obtains target context from configuration
 and matches envelope attempt correlation to the signed original attempt. Issuer

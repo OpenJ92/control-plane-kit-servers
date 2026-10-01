@@ -10,3 +10,14 @@ descriptor. The own binding has an arbitrary alias and an internal origin. Both
 selected health trust artifacts contain public key B while registered defaults
 contain A, exposing default substitution. This fixture does not invent an
 admitted bootstrap plan, attempts, installed state or provider evidence.
+
+For #237 the selected own artifacts are actual common receiver configuration and
+carry CPK_WRAPPER_CONFIGURATION_FILE in both registered and selected graph
+contracts. Gateway own-health gets a separate explicit common artifact, alongside
+its product-specific transit artifact. This is required by the accepted real
+Operations coverage owner; it is not a new registry or fabricated lifecycle.
+Both full receiver targets remain independently installed; receiver-health grants
+carry separate caller authority. BASE/DESIRED selection, A/B/AB trust coverage,
+real compiler/resolver and exact read-only product lookup are unchanged laws.
+Gateway-self fixtures use the actual common own configuration, full gateway
+transit/relay targets and distinct selected versus default health keys.

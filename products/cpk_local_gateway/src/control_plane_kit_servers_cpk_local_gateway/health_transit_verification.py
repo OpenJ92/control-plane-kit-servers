@@ -9,8 +9,8 @@ from types import MappingProxyType
 from cryptography.exceptions import InvalidSignature
 import control_plane_kit_core as core
 from control_plane_kit_core.configuration import ConfigurationArtifact
-from control_plane_kit_core.node_health_transit import (
-    DelegatedGatewayNodeHealthReadTransitGrantCodec, verify_gateway_node_health_read_transit_grant,
+from control_plane_kit_core.receiver_health_transit import (
+    DelegatedGatewayReceiverHealthReadTransitGrantCodec, verify_gateway_receiver_health_read_transit_grant,
 )
 
 from .health_transit_configuration import (
@@ -54,18 +54,16 @@ class Ed25519GatewayHealthTransitVerifier:
     def __repr__(self) -> str:
         return "Ed25519GatewayHealthTransitVerifier(<redacted>)"
 
-    def verify(self, credential: bytes, request: core.NodeHealthReadRequest, *,
-               expected_attempt_id: str, expected_target: core.NodeControlTarget,
-               expected_runtime_id: core.NodeControlGraphReference,
+    def verify(self, credential: bytes, request: core.ReceiverHealthReadRequest, *,
+               expected_attempt_id: str, expected_target: core.NodeControlReceiverTarget,
                expected_declaration: core.WorkloadNodeControlSurfaceDeclaration,
-               expected_kind: core.NodeHealthReadKind, now: int) -> core.NodeHealthReadRequest:
+               expected_kind: core.NodeHealthReadKind, now: int) -> core.ReceiverHealthReadRequest:
         try:
             configuration = self._configuration
-            if (type(request) is not core.NodeHealthReadRequest
-                    or type(expected_target) is not core.NodeControlTarget
-                    or type(expected_runtime_id) is not core.NodeControlGraphReference
-                    or expected_target.workspace_id != configuration.workspace_id
-                    or expected_runtime_id != configuration.runtime_id
+            if (type(request) is not core.ReceiverHealthReadRequest
+                    or type(expected_target) is not core.NodeControlReceiverTarget
+                    or expected_target.workspace_id != configuration.gateway_target.workspace_id
+                    or expected_target.runtime_id != configuration.gateway_target.runtime_id
                     or type(now) is not int or not 0 <= now <= 2**53 - 1):
                 raise ValueError
             parts, decoded = _compact(credential)
@@ -79,17 +77,17 @@ class Ed25519GatewayHealthTransitVerifier:
                 raise ValueError
             key = self._keys[header["kid"]]
             key.verify(decoded[2], parts[0] + b"." + parts[1])
-            grant = DelegatedGatewayNodeHealthReadTransitGrantCodec().decode(claims[_CLAIM])
+            grant = DelegatedGatewayReceiverHealthReadTransitGrantCodec().decode(claims[_CLAIM])
             if (header["kid"] != grant.key_id
                     or claims["iss"] != grant.issuer or claims["aud"] != grant.audience
                     or claims["iat"] != grant.issued_at or claims["nbf"] != grant.not_before
                     or claims["exp"] != grant.expires_at or claims["jti"] != grant.jti
                     or grant.audience != configuration.audience):
                 raise ValueError
-            comparison = verify_gateway_node_health_read_transit_grant(
+            comparison = verify_gateway_receiver_health_read_transit_grant(
                 grant, request, expected_issuer=configuration.issuer, expected_key_id=header["kid"],
-                expected_attempt_id=expected_attempt_id, expected_gateway_node_id=configuration.gateway_node_id,
-                expected_target=expected_target, expected_runtime_id=expected_runtime_id,
+                expected_attempt_id=expected_attempt_id, expected_gateway_target=configuration.gateway_target,
+                expected_target=expected_target,
                 expected_declaration=expected_declaration, expected_kind=expected_kind, now=now)
             if not comparison.is_accepted:
                 raise ValueError

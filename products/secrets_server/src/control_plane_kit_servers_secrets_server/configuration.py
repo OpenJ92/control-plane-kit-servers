@@ -4,6 +4,9 @@ from control_plane_kit_core.capabilities import CapabilityName
 from control_plane_kit_core.configuration import (
     ConfigurationArtifact, ConfigurationFileMode, ConfigurationMediaType,
 )
+from control_plane_kit_core.receiver_configuration import ReceiverNodeControlConfiguration
+from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
+from control_plane_kit_core.wrapper_configuration import WORKLOAD_NODE_CONTROL_CONFIGURATION_ENVIRONMENT
 from control_plane_kit_core.lifecycle import ResourceLifecycle
 from control_plane_kit_core.products import (
     ProductRuntimeContract, ProviderRuntimePort, RetainedDataMount,
@@ -11,7 +14,6 @@ from control_plane_kit_core.products import (
 from control_plane_kit_core.types import Protocol
 from control_plane_kit_core.verification import HttpCheck, VerificationContract, VerificationPolicy
 from control_plane_kit_secrets.control import (
-    SecretsControlConfiguration,
     decode_secrets_control_configuration,
     encode_secrets_control_configuration,
 )
@@ -26,7 +28,7 @@ class SecretsProductConfigurationError(ValueError):
 
 
 def secrets_control_configuration_artifact(
-    configuration: SecretsControlConfiguration,
+    configuration: ReceiverNodeControlConfiguration,
 ) -> ConfigurationArtifact:
     try:
         content = encode_secrets_control_configuration(configuration).decode("utf-8")
@@ -53,8 +55,8 @@ def secrets_source_runtime_contract(artifact: ConfigurationArtifact) -> ProductR
         return ProductRuntimeContract(
             sockets=BlockSockets(providers=(ProviderSocket("control", Protocol.HTTP),)),
             provider_ports=(ProviderRuntimePort("control", 8081),),
-            # The fixed path variable is image ENV, not a graph public binding.
-            public_environment=(),
+            public_environment=(PublicStaticEnvironmentBinding(
+                WORKLOAD_NODE_CONTROL_CONFIGURATION_ENVIRONMENT, CONTROL_PATH),),
             configuration_artifacts=(admitted,),
             secret_deliveries=(),
             retained_data_mounts=(RetainedDataMount("provider-data", "/var/lib/cpk-secrets"),),

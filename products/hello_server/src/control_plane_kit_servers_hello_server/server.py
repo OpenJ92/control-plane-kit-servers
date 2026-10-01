@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass
 from html import escape
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 import json
 import os
 import sys
@@ -14,16 +14,10 @@ from threading import Lock
 from typing import Callable, Mapping
 from urllib.parse import urlsplit
 import control_plane_kit_core as core
-from control_plane_kit_server_sdk.health import WorkloadNodeHealthReadDispatcher
-from control_plane_kit_server_sdk.stdlib import install_cpk_control_routes
-from control_plane_kit_server_sdk.verification import (
-    Ed25519WorkloadNodeControlSurfaceReadVerifier, Ed25519WorkloadNodeHealthReadVerifier,
-)
-from control_plane_kit_server_sdk.verifier_keys import (
-    AtomicWorkloadNodeControlSurfaceReadVerifierKeySet, AtomicWorkloadNodeHealthReadVerifierKeySet,
-)
+from control_plane_kit_core.receiver_configuration import ReceiverNodeControlConfiguration
+from control_plane_kit_server_sdk.stdlib import CpkThreadingHTTPServer
 from .configuration import (
-    HelloConfigurationError, HelloControlConfiguration, hello_control_configuration_artifact,
+    HelloConfigurationError, hello_control_configuration_artifact,
     read_hello_control_configuration,
 )
 from .dependencies import DependencySnapshot, load_dependencies
@@ -179,43 +173,20 @@ class RequestObservations:
         return {"count": len(requests), "retained_limit": _OBSERVED_REQUEST_LIMIT, "requests": requests}
 
 
-def install_hello_control(server: ThreadingHTTPServer, config: HelloControlConfiguration,
-                          *, clock: Callable[[], int]) -> None:
-    audience = core.workload_node_control_audience(config.target)
-    static = Ed25519WorkloadNodeControlSurfaceReadVerifier(
-        AtomicWorkloadNodeControlSurfaceReadVerifierKeySet(config.surface_keys),
-        expected_issuer=config.surface_issuer, expected_audience=audience, clock=clock,
-    )
-    health = Ed25519WorkloadNodeHealthReadVerifier(
-        AtomicWorkloadNodeHealthReadVerifierKeySet(config.health_keys),
-        expected_issuer=config.health_issuer, expected_audience=audience, clock=clock,
-    )
-    settings = server.hello_settings
-    dispatcher = WorkloadNodeHealthReadDispatcher(
-        target=config.target, runtime_id=config.runtime_id, declaration=config.declaration, verifier=health,
-        liveness=lambda: core.NodeHealthReadOutcome.HEALTHY,
-        readiness=lambda: settings.inspect().outcome,
-    )
-    install_cpk_control_routes(
-        server, reserve_control_namespace=True, target=config.target, declaration=config.declaration,
-        variables=(), command_verifier=None, surface_read_verifier=static, health_dispatcher=dispatcher,
-    )
-
-
-def create_hello_server(config: HelloControlConfiguration, environ: Mapping[str, str], *,
+def create_hello_server(config: ReceiverNodeControlConfiguration, environ: Mapping[str, str], *,
                         address: tuple[str, int] = ("0.0.0.0", 8000),
                         clock: Callable[[], int] = lambda: int(time.time()),
-                        observation_clock: Callable[[], float] = time.monotonic) -> ThreadingHTTPServer:
+                        observation_clock: Callable[[], float] = time.monotonic) -> CpkThreadingHTTPServer:
     """Product-owned composition; ephemeral addresses are for package test hosts."""
     html = render_hello(environ.get("HELLO_MESSAGE", "Hello, world!"), environ.get("HELLO_COLOR", "blue"))
     dependencies = DependencySnapshot(load_dependencies(environ.get("HELLO_DEPENDENCIES_JSON", "[]")), environ)
     hello_control_configuration_artifact(config)  # Bound/revalidate local material before socket creation.
     settings = HelloSettings(html, dependencies, observation_clock)
-    server = ThreadingHTTPServer(address, HelloHandler, bind_and_activate=False)
+    server = CpkThreadingHTTPServer(address, HelloHandler, bind_and_activate=False,
+        configuration=config, clock=clock, readiness=lambda: settings.inspect().outcome)
     try:
         server.hello_settings = settings
         server.hello_observations = RequestObservations()
-        install_hello_control(server, config, clock=clock)
         server.server_bind()
         server.server_activate()
         return server

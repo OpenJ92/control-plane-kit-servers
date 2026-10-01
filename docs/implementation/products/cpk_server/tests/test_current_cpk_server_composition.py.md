@@ -1,5 +1,27 @@
 Source: [products/cpk_server/tests/test_current_cpk_server_composition.py](../../../../../products/cpk_server/tests/test_current_cpk_server_composition.py).
 
+## Current receiving adoption (#237)
+
+The receiving candidate selects Core and Operations
+250d65e19dc748ebe840f705be77eb732dab3cb3, SDK
+5dc93b92c27bb9bbe2af027f945a347e5e4131bc and Secrets
+edfb8c0ebfc0cfcf3a667fb60d52b4a83bda1634. Its Interpreters runtime dependency is
+accepted Interpreters I-M
+bdbab01c0babaead958450b3c5e643317b2f4cd9, whose merge tree equals reviewed
+I-C 6137017. Its shipped implementation is byte-identical to producer I-A.
+The approved finite paired-gate exception retains S-B 9921911 as the final
+Interpreters test witness. Earlier coordinates below are historical. This S-D
+adoption still requires the unchanged whole Servers gate before merge.
+
+The existing coordinate generator ran in repository policy Docker image
+python:3.14-slim with network disabled and only this checkout writable. Canonical
+upstream fields generate pyproject and six product recipes; published source/image
+coordinates, product descriptors and both catalogue byte sets are unchanged.
+Generation is not test green or image qualification. All existing gate stages,
+installed provenance checks, source/historical witnesses and cleanup remain.
+
+Historical context follows; the current adoption above governs selected dependencies.
+
 The September 26 #181 adoption updates exact selected dependencies to Core/Operations f1e6cf2, Interpreters4bb9d857, SDK22f1267b and Secrets43b742d1. Installed provenance and published-image boundaries remain unchanged.
 Maintain this document alongside its source file. When the source or relevant imported contracts change, verify and update this companion in the same change.
 

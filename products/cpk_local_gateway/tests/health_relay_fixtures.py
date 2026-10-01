@@ -17,15 +17,8 @@ from control_plane_kit_core.topology.graph import Endpoint, LiteralAddress
 from control_plane_kit_core.planning import compile_graph_activity_plan, ObserveNodeHealth
 from control_plane_kit_core.public_ingress import IngressAuthorityReference, NamedPublicIngress, PublicIngressTarget
 from control_plane_kit_operations.runtime_management_targets import project_management_health_target
-from control_plane_kit_server_sdk.fastapi import install_cpk_control_routes
-from control_plane_kit_server_sdk.health import WorkloadNodeHealthReadDispatcher
-from control_plane_kit_server_sdk.verification import (
-    Ed25519WorkloadNodeHealthReadVerifier, Ed25519WorkloadNodeControlSurfaceReadVerifier,
-)
-from control_plane_kit_server_sdk.verifier_keys import (
-    WorkloadNodeHealthReadVerifierKeySet, AtomicWorkloadNodeHealthReadVerifierKeySet,
-    WorkloadNodeControlSurfaceReadVerifierKeySet, AtomicWorkloadNodeControlSurfaceReadVerifierKeySet,
-)
+from control_plane_kit_server_sdk.fastapi import install_cpk_wrapper
+from control_plane_kit_core.wrapper_configuration import NodeControlVerificationConfiguration
 import test_health_transit as transit
 
 
@@ -57,13 +50,13 @@ class World:
 
     def pair(self, request=None, *, workload_private=None, transit_changes=None):
         request = self.request if request is None else request
-        grant = core.DelegatedWorkloadNodeHealthReadGrant(
-            profile=core.DelegatedWorkloadNodeHealthReadGrantProfile.V1,
+        grant = core.DelegatedWorkloadReceiverHealthReadGrant(
+            profile=core.DelegatedWorkloadReceiverHealthReadGrantProfile.V2,
             canonicalization=core.NodeControlCanonicalization.JCS_RFC8785_V1,
             purpose=core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ,
             issuer="workload-issuer", key_id=self.key.key_id,
-            audience=core.workload_node_control_audience(self.target), target=request.target,
-            runtime_id=request.runtime_id, kind=request.kind, declaration_identity=request.declaration_identity,
+            audience=core.receiver_node_control_audience(self.target), target=request.target,
+            authority_context=request.authority_context, kind=request.kind, declaration_identity=request.declaration_identity,
             request_id=request.request_id, request_digest=request.canonical_digest(),
             issued_at=100, not_before=110, expires_at=200, jti="workload-jti")
         token = jwt.encode(dict(iss=grant.issuer, aud=grant.audience, iat=grant.issued_at,
@@ -71,35 +64,32 @@ class World:
             workload_node_health_read=grant.descriptor()),
             self.private if workload_private is None else workload_private, algorithm="EdDSA",
             headers={"typ":"CPK-WORKLOAD-NODE-HEALTH-READ+JWT", "kid":self.key.key_id})
-        signed = self.transit.token(self.transit.grant(request, **(transit_changes or {}))).decode()
+        gateway_target = replace(self.transit.gateway_target, workspace_id=request.target.workspace_id,
+            runtime_id=request.target.runtime_id)
+        signed = self.transit.token(self.transit.grant(request,
+            **({"gateway_target":gateway_target} | (transit_changes or {})))).decode()
         return signed, token
 
     def envelope(self, request=None, *, workload=None):
         request = self.request if request is None else request
         _, token = self.pair(request)
-        return dict(profile="cpk-gateway-health-relay-request.v1", target_id="database-management",
+        return dict(profile="cpk-gateway-health-relay-request.v2", target_id="database-management",
             attempt_id="attempt-a", request=request.descriptor(),
             workload_credential=token if workload is None else workload)
 
     def receiver(self):
-        audience = core.workload_node_control_audience(self.target)
-        verifier = Ed25519WorkloadNodeHealthReadVerifier(
-            AtomicWorkloadNodeHealthReadVerifierKeySet(WorkloadNodeHealthReadVerifierKeySet(
-                core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ, (self.key,))),
-            expected_issuer="workload-issuer", expected_audience=audience, clock=lambda:self.now)
-        static = Ed25519WorkloadNodeControlSurfaceReadVerifier(
-            AtomicWorkloadNodeControlSurfaceReadVerifierKeySet(WorkloadNodeControlSurfaceReadVerifierKeySet(
-                core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ, (self.static_key,))),
-            expected_issuer="surface-issuer", expected_audience=audience, clock=lambda:self.now)
+        configuration = core.ReceiverNodeControlConfiguration(self.target, self.declaration, (
+            NodeControlVerificationConfiguration(core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ,
+                "surface-issuer", (self.static_key,)),
+            NodeControlVerificationConfiguration(core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ,
+                "workload-issuer", (self.key,))))
         def callback(kind):
             self.callbacks.append(kind)
             return self.outcome
         app = FastAPI()
-        install_cpk_control_routes(app, target=self.target, declaration=self.declaration,
-            surface_read_verifier=static, health_dispatcher=WorkloadNodeHealthReadDispatcher(
-                target=self.target, runtime_id=self.runtime, declaration=self.declaration, verifier=verifier,
-                liveness=lambda:callback(core.NodeHealthReadKind.LIVENESS),
-                readiness=lambda:callback(core.NodeHealthReadKind.READINESS)))
+        install_cpk_wrapper(app, configuration=configuration, clock=lambda:self.now,
+            liveness=lambda:callback(core.NodeHealthReadKind.LIVENESS),
+            readiness=lambda:callback(core.NodeHealthReadKind.READINESS))
         return app
 
     def projection(self):
@@ -111,7 +101,7 @@ class World:
         nodes = {
             gateway_id: Node(gateway_id, BlockFamily.APPLICATION,
                 BlockSpec(gateway_id, capabilities=self.contract.capabilities, control_surfaces=(gateway_surface,), gateway_transit=
-                    core.GatewayTransitDeclaration("control", core.GatewayTransitProtocol.NODE_HEALTH_READ_V1)),
+                    core.GatewayTransitDeclaration("control", core.GatewayTransitProtocol.RECEIVER_HEALTH_READ_V2)),
                 "container-server", self.runtime.value, gateway_sockets,
                 endpoints={"control":Endpoint(LiteralAddress("http://gateway:8000"), Protocol.HTTP)}),
             self.target.node_id.value: Node(self.target.node_id.value, BlockFamily.APPLICATION,
@@ -144,13 +134,15 @@ class World:
 
 class ReceiverTransport(httpx.AsyncBaseTransport):
     def __init__(self, app):
+        self.app = app
         self.inner = httpx.ASGITransport(app=app)
         self.requests = []
         self.closed = False
 
     async def handle_async_request(self, request):
         self.requests.append(request)
-        return await self.inner.handle_async_request(request)
+        async with self.app.router.lifespan_context(self.app):
+            return await self.inner.handle_async_request(request)
 
     async def aclose(self):
         self.closed = True
