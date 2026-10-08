@@ -135,6 +135,8 @@ assert "control_plane_kit_servers_cpk_server.client.authoring" not in sys.module
 
         def verifiers(declaration):
             purposes = [core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ]
+            if declaration.surface.variables:
+                purposes.append(core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL)
             if declaration.surface.health_reads:
                 purposes.append(core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ)
             return tuple(
@@ -242,6 +244,36 @@ assert "control_plane_kit_servers_cpk_server.client.authoring" not in sys.module
             (),
             "http://hello-y:8000",
         )
+        variable = core.ControlPlaneVariableDescriptor(
+            ref(roles.VARIABLE, "mode"),
+            core.ControlPlaneVariableKind.SCALAR,
+            core.ControlPlaneStateCodec.SCALAR_V1,
+            (
+                core.ControlPlaneVariableOperationContract(
+                    core.NodeControlOperation.READ_STATE,
+                    None,
+                    core.ControlPlaneResultCodec.STATE_V1,
+                ),
+                core.ControlPlaneVariableOperationContract(
+                    core.NodeControlOperation.APPLY_COMMAND,
+                    core.ControlPlaneCommandCodec.REPLACE_SCALAR_V1,
+                    core.ControlPlaneResultCodec.TRANSITION_V1,
+                ),
+            ),
+        )
+        variable_declaration = core.WorkloadNodeControlSurfaceDeclaration(
+            core.WorkloadNodeControlSurfaceDescriptor(
+                ref(roles.PROVIDER_SOCKET, "internal"),
+                (variable,),
+            ),
+            profile=core.WorkloadNodeControlSurfaceDeclarationProfile.V1,
+        )
+        hello_variable = node(
+            "hello-y",
+            variable_declaration,
+            (),
+            "http://hello-y:8000",
+        )
         graph_a = DeploymentGraph(
             "receiver-authoring",
             nodes={"gateway": gateway, "hello-x": hello_x},
@@ -261,13 +293,17 @@ assert "control_plane_kit_servers_cpk_server.client.authoring" not in sys.module
                 )
             },
         )
+        graph_variable = replace(
+            graph_b,
+            nodes={**graph_b.nodes, "hello-y": hello_variable},
+        )
 
         def receiver(binding_target, artifact):
             return {
                 "binding": {
                     "workspace_id": "workspace-a",
-                    "graph_id": "graph-a",
-                    "realized_projection_id": "projection-a",
+                    "graph_id": "graph-current",
+                    "realized_projection_id": "projection-current",
                     "runtime_id": binding_target.runtime_id.value,
                     "node_id": binding_target.node_id.value,
                     "provider_socket_name": binding_target.provider_socket_name.value,
@@ -293,8 +329,8 @@ assert "control_plane_kit_servers_cpk_server.client.authoring" not in sys.module
             }
 
         expectation = {
-            "current_graph_id": "graph-a",
-            "current_realized_projection_id": "projection-a",
+            "current_graph_id": "graph-current",
+            "current_realized_projection_id": "projection-current",
             "desired_graph_id": None,
             "desired_realized_projection_id": None,
             "desired_graph_revision": 0,
@@ -304,8 +340,8 @@ assert "control_plane_kit_servers_cpk_server.client.authoring" not in sys.module
             "workspace_id": "workspace-a",
             "expectation": expectation,
             "current": {
-                "graph_id": "graph-a",
-                "realized_projection_id": "projection-a",
+                "graph_id": "graph-current",
+                "realized_projection_id": "projection-current",
                 "receivers": [
                     receiver(gateway_target, gateway_wrapper),
                     receiver(x_target, x_wrapper),
@@ -329,6 +365,7 @@ assert "control_plane_kit_servers_cpk_server.client.authoring" not in sys.module
                         ],
                     }
                     for purpose in (
+                        core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL,
                         core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ,
                         core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ,
                     )
@@ -339,6 +376,7 @@ assert "control_plane_kit_servers_cpk_server.client.authoring" not in sys.module
             "core": core,
             "graph_a": graph_a,
             "graph_b": graph_b,
+            "graph_variable": graph_variable,
             "context": context,
             "verifiers": verifier_configuration,
             "gateway_target": gateway_target,
@@ -423,6 +461,85 @@ assert "control_plane_kit_servers_cpk_server.client.authoring" not in sys.module
             ),
             fixture["trust"],
         )
+
+    def test_variable_receiver_requests_and_installs_control_verifier(self):
+        api = self.api()
+        fixture = self.fixture()
+        from control_plane_kit_core.receiver_configuration import (
+            ReceiverNodeControlConfigurationCodec,
+            select_receiver_node_control_configuration_artifact,
+        )
+        from control_plane_kit_core.topology import GraphDescriptorCodec
+        from test_topology_client import DeterministicIds
+        from control_plane_kit_servers_cpk_server.client import TopologyClient
+
+        path = self.root / "variable.json"
+        path.write_text(
+            json.dumps(GraphDescriptorCodec().encode(fixture["graph_variable"])),
+            encoding="utf-8",
+        )
+        desired = api.AuthoredDesiredGraph(
+            path,
+            introductions=(
+                api.ReceiverIntroduction(
+                    api.ReceiverScope("hello-y", "internal"),
+                    "hello-control",
+                    "/etc/cpk/hello/control.json",
+                ),
+            ),
+        )
+        transport = self.authoring_transport(fixture, lose_prepare_once=False)
+        client = TopologyClient(
+            self.client_profile(),
+            transport=transport,
+            identity_factory=DeterministicIds(),
+            receiver_identity_factory=lambda: "c" * 32,
+        )
+        client.plan(desired)
+
+        verifier_call = next(
+            call
+            for call in transport.calls
+            if call["route_id"] == "read.workload-verifier-configuration"
+        )
+        self.assertEqual(
+            set(verifier_call["path_parameters"]["purposes"].split(",")),
+            {
+                fixture["core"].DelegationKeyPurpose.WORKLOAD_NODE_CONTROL.value,
+                fixture["core"].DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ.value,
+            },
+        )
+        prepare = next(
+            call
+            for call in transport.calls
+            if call["route_id"] == "command.deployment.prepare"
+        )
+        authored = GraphDescriptorCodec().decode(prepare["payload"]["desired_graph"])
+        node = authored.node("hello-y")
+        artifact = select_receiver_node_control_configuration_artifact(
+            artifacts=node.configuration_artifacts,
+            environment=node.public_environment + node.socket_environment,
+            control_surfaces=node.block_spec.control_surfaces,
+        )
+        configured = ReceiverNodeControlConfigurationCodec().decode_bytes(
+            artifact.content.encode("utf-8")
+        )
+        self.assertEqual(
+            {verifier.purpose for verifier in configured.verifiers},
+            {
+                fixture["core"].DelegationKeyPurpose.WORKLOAD_NODE_CONTROL,
+                fixture["core"].DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ,
+            },
+        )
+
+    def test_owner_coordinates_use_owner_grammars(self):
+        api = self.api()
+        scope = api.ReceiverScope("2Node", "API.Socket")
+        continuation = api.PendingReceiverContinuation("Draft.UPPER-2", 1, (scope,))
+        self.assertEqual(scope.node_id, "2Node")
+        self.assertEqual(continuation.draft_id, "Draft.UPPER-2")
+        with self.assertRaises(ValueError):
+            api.GatewayHealthTargetIntent("UPPER", scope, "http://target:8000")
 
     def test_gateway_route_omission_preserves_bytes_and_explicit_empty_replaces(self):
         api = self.api()
@@ -751,6 +868,10 @@ assert "control_plane_kit_servers_cpk_server.client.authoring" not in sys.module
                         "kind": "workload-verifier-configuration",
                         "payload": fixture["verifiers"],
                     }
+                if route_id == "command.deployment.prepare" and hasattr(
+                    inner, "before_prepare"
+                ):
+                    inner.before_prepare(payload)
                 return super().call(
                     route_id,
                     path_parameters=path_parameters,
@@ -778,6 +899,23 @@ assert "control_plane_kit_servers_cpk_server.client.authoring" not in sys.module
             identity_factory=DeterministicIds(),
             receiver_identity_factory=lambda: receiver_calls.append("generated") or "c" * 32,
         )
+        operation_ref = "00000000-0000-4000-8000-000000000001"
+
+        def verify_persisted_before_dispatch(payload):
+            journal = client.journal.read(operation_ref)
+            preparation = journal["preparation"]
+            artifact = client.journal.root / preparation["name"]
+            self.assertEqual(journal["schema"], PREPARATION_JOURNAL_SCHEMA)
+            self.assertEqual(
+                journal["pending_request"]["route_id"],
+                "command.deployment.prepare",
+            )
+            self.assertEqual(
+                json.loads(artifact.read_text(encoding="utf-8")),
+                payload["desired_graph"],
+            )
+
+        transport.before_prepare = verify_persisted_before_dispatch
         unresolved = client.plan(desired)
         journal = client.journal.read(unresolved.operation_ref)
         preparation = journal["preparation"]
@@ -826,6 +964,67 @@ assert "control_plane_kit_servers_cpk_server.client.authoring" not in sys.module
                 "read.workload-verifier-configuration"
             ),
             1,
+        )
+
+    def test_context_expectation_mismatch_refuses_before_keys_identity_or_dispatch(self):
+        api = self.api()
+        fixture = self.fixture()
+        desired = self.authored_input(api, fixture)
+        fixture["context"]["expectation"] = {
+            **fixture["context"]["expectation"],
+            "desired_graph_revision": 9,
+        }
+        transport = self.authoring_transport(fixture, lose_prepare_once=False)
+        from test_topology_client import DeterministicIds
+        from control_plane_kit_servers_cpk_server.client import ClientInputError, TopologyClient
+
+        generated = []
+        client = TopologyClient(
+            self.client_profile(),
+            transport=transport,
+            identity_factory=DeterministicIds(),
+            receiver_identity_factory=lambda: generated.append(True) or "c" * 32,
+        )
+        with self.assertRaises(ClientInputError):
+            client.plan(desired)
+        self.assertEqual(generated, [])
+        self.assertNotIn(
+            "read.workload-verifier-configuration",
+            [call["route_id"] for call in transport.calls],
+        )
+        self.assertNotIn(
+            "command.deployment.prepare",
+            [call["route_id"] for call in transport.calls],
+        )
+
+    def test_preparation_persistence_failure_never_dispatches(self):
+        api = self.api()
+        fixture = self.fixture()
+        desired = self.authored_input(api, fixture)
+        transport = self.authoring_transport(fixture, lose_prepare_once=False)
+        from test_topology_client import DeterministicIds
+        from control_plane_kit_servers_cpk_server.client import (
+            JournalError,
+            JournalStore,
+            TopologyClient,
+        )
+
+        class FailingPreparationStore(JournalStore):
+            def create_preparation(self, operation_ref, raw):
+                raise JournalError("prepared graph could not be persisted")
+
+        client = TopologyClient(
+            self.client_profile(),
+            transport=transport,
+            journal=FailingPreparationStore(self.root / "failed-state"),
+            identity_factory=DeterministicIds(),
+            receiver_identity_factory=lambda: "c" * 32,
+        )
+        with self.assertRaises(JournalError):
+            client.plan(desired)
+        self.assertNotIn(
+            "command.deployment.prepare",
+            [call["route_id"] for call in transport.calls],
         )
 
     def test_retry_refuses_source_drift_and_missing_or_corrupt_preparation(self):

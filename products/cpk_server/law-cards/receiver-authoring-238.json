@@ -53,6 +53,30 @@
       "owner": "control-plane-kit-servers/cpk_server"
     },
     {
+      "classification": "strengthened",
+      "law": "declaration-complete-verifier-selection",
+      "reference": "products.cpk_server.tests.test_receiver_authoring.ReceiverAuthoringTests.test_variable_receiver_requests_and_installs_control_verifier",
+      "observable": "A variable-only receiver requests and installs surface-read plus control verifier families without inventing a health requirement.",
+      "negative": "A required declaration verifier family cannot be omitted merely because the surface has no health reads.",
+      "owner": "control-plane-kit-servers/cpk_server"
+    },
+    {
+      "classification": "strengthened",
+      "law": "authoring-context-correlates-requested-fences",
+      "reference": "products.cpk_server.tests.test_receiver_authoring.ReceiverAuthoringTests.test_context_expectation_mismatch_refuses_before_keys_identity_or_dispatch",
+      "observable": "The returned authoring context repeats all five requested workspace expectation fields before keys, identities, persistence, or dispatch.",
+      "negative": "Any response/request fence mismatch refuses without interpreting it as fresh owner truth.",
+      "owner": "control-plane-kit-servers/cpk_server"
+    },
+    {
+      "classification": "strengthened",
+      "law": "owner-values-retain-owner-grammars",
+      "reference": "products.cpk_server.tests.test_receiver_authoring.ReceiverAuthoringTests.test_owner_coordinates_use_owner_grammars",
+      "observable": "Workspace and receiver scopes accept Core graph-reference values while pending drafts retain opaque client coordinates.",
+      "negative": "The stricter gateway target ID grammar is not reused to reject legal owner coordinates.",
+      "owner": "control-plane-kit-servers/cpk_server"
+    },
+    {
       "classification": "new-law",
       "law": "retained-material-and-source-boundary",
       "reference": "products.cpk_server.tests.test_receiver_authoring.ReceiverAuthoringTests.test_retry_refuses_source_drift_and_missing_or_corrupt_preparation",
