@@ -58,6 +58,71 @@ cpk --profile PROFILE plan --resume OPERATION_REFERENCE
 This can only replay the exact persisted request key and the request rebuilt
 from the same verified desired-file bytes. It never issues a fresh prepare key.
 
+## Author complete receiver graphs
+
+Receiver authoring is an explicit graph-file mode. The input remains an ordinary
+typed deployment graph: callers name receiver scopes and artifact slots rather
+than writing receiver IDs, verifier-key JSON, or gateway route JSON by hand.
+For example, graph B adds fresh Hello Y, retains the accepted G and X receivers,
+and replaces G's complete health-route group:
+
+```bash
+cpk --profile PROFILE plan graph-b.json \
+  --introduce-receiver hello-y internal hello-control /etc/cpk/hello/control.json \
+  --replace-gateway-health-routes gateway control \
+  --gateway-health-target gateway control hello-x hello-x internal http://hello-x:8000 \
+  --gateway-health-target gateway control hello-y hello-y internal http://hello-y:8000
+```
+
+An omitted gateway group preserves the graph file's artifact bytes. A declared
+group is a complete replacement. To remove the last target in graph C, declare
+the group with no target entries:
+
+```bash
+cpk --profile PROFILE plan graph-c.json \
+  --replace-gateway-health-routes gateway control
+```
+
+The client reads the authenticated, pinned receiver-authoring context for the
+current workspace. Every receiver-capable graph scope must resolve exactly as
+accepted current, explicitly continued pending, or explicitly fresh. An exact
+pending introduction is selected with all three parts:
+
+```bash
+cpk --profile PROFILE plan graph-b.json \
+  --pending-authoring-draft DRAFT_ID \
+  --pending-authoring-head 3 \
+  --continue-pending-receiver hello-y internal
+```
+
+Fresh non-gateway receivers receive a new 32-hex identity and only the public
+verifier families required by their declared V2 control surface. Fresh gateway
+receivers refuse because the existing gateway transit trust also embeds the
+receiver target and this command has no trust-authoring input. Retained and
+pending scopes use the owner-returned exact wrapper artifact. Explicit gateway
+route intent is interpreted only through the gateway product's typed
+constructors; the client defines no competing route format.
+
+Before the first prepare request, the client writes the complete canonical graph
+as an immutable `0600` `<operation>.graph.json` file, fsyncs it, then creates the
+`topology-client-preparation.v1` journal and records the pending request. A lost
+response or process restart first verifies that the original graph-file
+path/size/SHA has not changed, then reconstructs the request exclusively from
+that immutable artifact. It does not decode the original source, generate a new
+identity, reread authoring context or verifier keys, or rebuild routes. Missing,
+changed, non-private, non-regular, symlinked, noncanonical, or digest-mismatched
+prepared material refuses without redispatch.
+
+An interrupted write before journal publication may leave one bounded orphan
+graph artifact. It is inspectable local residue, not evidence of server
+acceptance or runtime effects; removing local preparation files never removes
+runtime resources. The operation lock prevents concurrent mutation of one
+operation reference, while server-side desired-CAS and receiver admission remain
+authoritative. Authoring contains public keys and public origins only—never
+private signing keys, bearer credentials, provider secrets, or installed-state
+claims. A prepared graph expresses desired intent; it does not prove routing,
+readiness, approval, execution, cleanup, or current convergence.
+
 ## Apply
 
 Every apply names the local operation and repeats the exact reviewed plan:
@@ -128,7 +193,7 @@ cpk --profile PROFILE overview
 ```
 
 Use the dependency coordinates in that checkout's `pyproject.toml`: Core and
-Operations are pinned to `e3d773d022fd36e727ee1d94f4c4396b25c722c6`.
+Operations are pinned to `250d65e19dc748ebe840f705be77eb732dab3cb3`.
 The distribution installs the existing `cpk` entrypoint and its normal server
 and interpreter dependencies; no second client package is needed. Configuration
 and private credential-file roles are the same as above. These installation

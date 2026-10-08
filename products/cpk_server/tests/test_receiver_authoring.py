@@ -453,6 +453,27 @@ class ReceiverAuthoringTests(unittest.TestCase):
         api = self.api()
         fixture = self.fixture()
         gateway_scope = api.ReceiverScope("gateway", "control")
+        without_current_gateway = {
+            **fixture["context"],
+            "current": {
+                **fixture["context"]["current"],
+                "receivers": fixture["context"]["current"]["receivers"][1:],
+            },
+        }
+        with self.assertRaises(api.ReceiverAuthoringError):
+            api.author_receiver_graph(
+                fixture["graph_a"],
+                workspace_id="workspace-a",
+                context=without_current_gateway,
+                verifier_configuration=fixture["verifiers"],
+                introductions=(
+                    api.ReceiverIntroduction(
+                        gateway_scope,
+                        "fresh-gateway-control",
+                        "/etc/cpk/gateway/fresh-control.json",
+                    ),
+                ),
+            )
         cases = (
             dict(
                 introductions=(
@@ -499,6 +520,134 @@ class ReceiverAuthoringTests(unittest.TestCase):
                     )
                 self.assertEqual(str(caught.exception), "receiver graph could not be authored")
                 self.assertEqual(vars(caught.exception), {})
+
+    def test_exact_pending_scope_installs_owner_artifact_without_key_reselection(self):
+        api = self.api()
+        fixture = self.fixture()
+        core = fixture["core"]
+        from control_plane_kit_core.configuration import (
+            ConfigurationArtifact,
+            ConfigurationMediaType,
+        )
+        from control_plane_kit_core.receiver_configuration import (
+            ReceiverNodeControlConfiguration,
+            ReceiverNodeControlConfigurationCodec,
+        )
+
+        y_scope = api.ReceiverScope("hello-y", "internal")
+        roles = core.NodeControlGraphReferenceRole
+        y_target = core.NodeControlReceiverTarget(
+            core.NodeControlGraphReference(roles.WORKSPACE, "workspace-a"),
+            core.NodeControlGraphReference(roles.RUNTIME, "runtime-a"),
+            core.NodeControlGraphReference(roles.NODE, "hello-y"),
+            core.NodeControlGraphReference(roles.PROVIDER_SOCKET, "internal"),
+            "e" * 32,
+        )
+        declaration = core.WorkloadNodeControlSurfaceDeclaration(
+            fixture["graph_b"].node("hello-y").block_spec.control_surfaces[0],
+            profile=core.WorkloadNodeControlSurfaceDeclarationProfile.V2,
+        )
+        x_configuration = ReceiverNodeControlConfigurationCodec().decode_bytes(
+            fixture["x_wrapper"].content.encode("utf-8")
+        )
+        configured = ReceiverNodeControlConfiguration(
+            y_target, declaration, x_configuration.verifiers
+        )
+        artifact = ConfigurationArtifact(
+            "hello-control",
+            "/etc/cpk/hello/control.json",
+            ConfigurationMediaType.JSON,
+            ReceiverNodeControlConfigurationCodec()
+            .encode_bytes(configured)
+            .decode("utf-8"),
+        )
+        pending_receiver = {
+            "binding": {
+                "workspace_id": "workspace-a",
+                "graph_id": "graph-pending",
+                "realized_projection_id": None,
+                "runtime_id": "runtime-a",
+                "node_id": "hello-y",
+                "provider_socket_name": "internal",
+                "receiver_id": "e" * 32,
+                "selected_configuration_digest": artifact.content_digest,
+                "declaration_identity": declaration.identity().value,
+            },
+            "configuration_artifact": artifact.descriptor(),
+            "origin": {
+                "introducing_graph_id": "graph-pending",
+                "introducing_realized_projection_id": None,
+                "introducing_action_id": "action-pending",
+                "introducing_session_id": "session-pending",
+                "introducing_draft_id": "draft-a",
+                "first_accepted_action_id": None,
+                "first_accepted_session_id": None,
+            },
+            "lifecycle": "pending",
+        }
+        context = {
+            **fixture["context"],
+            "pending_draft": {
+                "draft_id": "draft-a",
+                "head_revision": 7,
+                "graph_id": "graph-pending",
+                "realized_projection_id": None,
+                "receivers": [pending_receiver],
+            },
+        }
+        authored = api.author_receiver_graph(
+            fixture["graph_b"],
+            workspace_id="workspace-a",
+            context=context,
+            verifier_configuration=None,
+            pending=api.PendingReceiverContinuation("draft-a", 7, (y_scope,)),
+        )
+        self.assertIn(artifact, authored.node("hello-y").configuration_artifacts)
+        with self.assertRaises(api.ReceiverAuthoringError):
+            api.author_receiver_graph(
+                fixture["graph_b"],
+                workspace_id="workspace-a",
+                context=context,
+                verifier_configuration=None,
+                pending=api.PendingReceiverContinuation("draft-a", 8, (y_scope,)),
+            )
+
+    def test_cli_builds_closed_groups_and_rejects_unattached_targets(self):
+        self.api()
+        from control_plane_kit_servers_cpk_server.client import cli
+        from control_plane_kit_servers_cpk_server.client import ClientInputError
+
+        arguments = cli._parser().parse_args(
+            [
+                "--profile",
+                "local",
+                "plan",
+                str(self.root / "desired.json"),
+                "--introduce-receiver",
+                "hello-y",
+                "internal",
+                "hello-control",
+                "/etc/cpk/hello/control.json",
+                "--replace-gateway-health-routes",
+                "gateway",
+                "control",
+                "--gateway-health-target",
+                "gateway",
+                "control",
+                "hello-y",
+                "hello-y",
+                "internal",
+                "http://hello-y:8000",
+            ]
+        )
+        selected = cli._authored_plan_input(arguments)
+        self.assertEqual(len(selected.introductions), 1)
+        self.assertEqual(len(selected.gateway_health_replacements), 1)
+        self.assertEqual(len(selected.gateway_health_replacements[0].targets), 1)
+
+        arguments.replace_gateway_health_routes = []
+        with self.assertRaises(ClientInputError):
+            cli._authored_plan_input(arguments)
 
     def authored_input(self, api, fixture, name="desired.json"):
         from control_plane_kit_core.topology import GraphDescriptorCodec

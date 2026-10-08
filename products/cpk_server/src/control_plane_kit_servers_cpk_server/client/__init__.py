@@ -8,12 +8,24 @@ from .transport import (
     PublicHttpTransport,
 )
 from .workflow import ClientInputError, ClientResult, SavedDesiredRevision, TopologyClient
+from .authoring import (
+    AuthoredDesiredGraph,
+    GatewayHealthRoutes,
+    GatewayHealthTargetIntent,
+    PendingReceiverContinuation,
+    ReceiverAuthoringError,
+    ReceiverIntroduction,
+    ReceiverScope,
+)
 from .catalogue import CatalogueResult
 from .report import ReportResult
 
 
 __all__ = (
+    "AuthoredDesiredGraph",
     "CatalogueResult",
+    "GatewayHealthRoutes",
+    "GatewayHealthTargetIntent",
     "ReportResult",
     "ClientAuthorizationError",
     "ClientConfigurationError",
@@ -23,7 +35,11 @@ __all__ = (
     "ClientTransportError",
     "JournalError",
     "JournalStore",
+    "PendingReceiverContinuation",
     "PublicHttpTransport",
+    "ReceiverAuthoringError",
+    "ReceiverIntroduction",
+    "ReceiverScope",
     "TopologyClient",
     "SavedDesiredRevision",
     "canonical_operation_ref",
