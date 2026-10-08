@@ -96,7 +96,10 @@ cpk --profile PROFILE plan graph-b.json \
 ```
 
 Fresh non-gateway receivers receive a new 32-hex identity and only the public
-verifier families required by their declared V2 control surface. Fresh gateway
+verifier families required by their declared control surface: surface-read for
+every receiver, control for variables, and health-read for declared health
+reads. V1 variable-only and V2 health-bearing declarations retain their exact
+profile. Fresh gateway
 receivers refuse because the existing gateway transit trust also embeds the
 receiver target and this command has no trust-authoring input. Retained and
 pending scopes use the owner-returned exact wrapper artifact. Explicit gateway
@@ -112,6 +115,12 @@ that immutable artifact. It does not decode the original source, generate a new
 identity, reread authoring context or verifier keys, or rebuild routes. Missing,
 changed, non-private, non-regular, symlinked, noncanonical, or digest-mismatched
 prepared material refuses without redispatch.
+
+The returned authoring context must repeat all five requested workspace fence
+fields exactly before verifier keys are read or a fresh identity is generated.
+Workspace, node, and socket coordinates use Core's graph-reference grammar;
+pending draft IDs retain the client's opaque public-coordinate grammar. The
+stricter lowercase grammar remains local to gateway route target IDs.
 
 An interrupted write before journal publication may leave one bounded orphan
 graph artifact. It is inspectable local residue, not evidence of server

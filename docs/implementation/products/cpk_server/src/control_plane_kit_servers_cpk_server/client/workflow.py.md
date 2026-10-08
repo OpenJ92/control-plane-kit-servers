@@ -6,6 +6,11 @@ receiver context, reads only required public verifier families, performs the pur
 pre-wire transform, canonicalizes the complete graph, persists it, journals the
 request, and only then dispatches.
 
+The context response must echo the exact five requested workspace expectation
+fields before verifier reads, identity generation, preparation persistence, or
+dispatch. This is a correlation check over owner evidence, not a duplicate owner
+state machine.
+
 Prepared retry rereads the original file solely to compare path, byte size, and
 SHA-256. The outgoing graph comes only from the immutable preparation artifact,
 which must also decode and re-encode to identical canonical Core graph bytes.

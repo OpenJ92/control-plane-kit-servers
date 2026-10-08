@@ -38,7 +38,7 @@ from control_plane_kit_servers_cpk_local_gateway.health_relay_configuration impo
 
 
 _ERROR = "receiver graph could not be authored"
-_IDENTITY = re.compile(r"[a-z][a-z0-9_.-]{0,127}\Z")
+_GATEWAY_TARGET_IDENTITY = re.compile(r"[a-z][a-z0-9_.-]{0,127}\Z")
 _RECEIVER_ID = re.compile(r"[0-9a-f]{32}\Z")
 _INPUT_ERRORS = (
     ValueError,
@@ -55,8 +55,28 @@ class ReceiverAuthoringError(ValueError):
     """Fixed public refusal without leaking rejected candidate material."""
 
 
-def _identity(value: object) -> str:
-    if type(value) is not str or _IDENTITY.fullmatch(value) is None:
+def _graph_reference(
+    role: core.NodeControlGraphReferenceRole, value: object
+) -> str:
+    if type(value) is not str:
+        raise ValueError
+    core.NodeControlGraphReference(role, value)
+    return value
+
+
+def _opaque_coordinate(value: object) -> str:
+    if (
+        type(value) is not str
+        or not value
+        or len(value.encode("utf-8")) > 512
+        or any(ord(char) < 32 or ord(char) == 127 for char in value)
+    ):
+        raise ValueError
+    return value
+
+
+def _gateway_target_identity(value: object) -> str:
+    if type(value) is not str or _GATEWAY_TARGET_IDENTITY.fullmatch(value) is None:
         raise ValueError
     return value
 
@@ -67,8 +87,9 @@ class ReceiverScope:
     provider_socket_name: str
 
     def __post_init__(self) -> None:
-        _identity(self.node_id)
-        _identity(self.provider_socket_name)
+        roles = core.NodeControlGraphReferenceRole
+        _graph_reference(roles.NODE, self.node_id)
+        _graph_reference(roles.PROVIDER_SOCKET, self.provider_socket_name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,7 +117,7 @@ class PendingReceiverContinuation:
     scopes: tuple[ReceiverScope, ...]
 
     def __post_init__(self) -> None:
-        _identity(self.draft_id)
+        _opaque_coordinate(self.draft_id)
         if type(self.expected_head_revision) is not int or self.expected_head_revision < 0:
             raise ValueError
         if (
@@ -115,7 +136,7 @@ class GatewayHealthTargetIntent:
     origin: str
 
     def __post_init__(self) -> None:
-        _identity(self.target_id)
+        _gateway_target_identity(self.target_id)
         if type(self.target_scope) is not ReceiverScope or type(self.origin) is not str:
             raise ValueError
 
@@ -177,9 +198,12 @@ def _surface(graph: DeploymentGraph, scope: ReceiverScope):
     if len(surfaces) != 1:
         raise ValueError
     node.provider_socket(scope.provider_socket_name)
-    declaration = core.WorkloadNodeControlSurfaceDeclaration(
-        surfaces[0], profile=core.WorkloadNodeControlSurfaceDeclarationProfile.V2
+    profile = (
+        core.WorkloadNodeControlSurfaceDeclarationProfile.V2
+        if surfaces[0].health_reads
+        else core.WorkloadNodeControlSurfaceDeclarationProfile.V1
     )
+    declaration = core.WorkloadNodeControlSurfaceDeclaration(surfaces[0], profile=profile)
     return node, declaration
 
 
@@ -323,6 +347,8 @@ def _verifiers(
     if type(document) is not dict or set(document) != {"verifiers"}:
         raise ValueError
     purposes = {core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ}
+    if declaration.surface.variables:
+        purposes.add(core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL)
     if declaration.surface.health_reads:
         purposes.add(core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ)
     admitted = []
@@ -530,7 +556,7 @@ def author_receiver_graph(
     try:
         if type(graph) is not DeploymentGraph:
             raise ValueError
-        _identity(workspace_id)
+        _graph_reference(core.NodeControlGraphReferenceRole.WORKSPACE, workspace_id)
         if (
             type(introductions) is not tuple
             or not all(type(item) is ReceiverIntroduction for item in introductions)

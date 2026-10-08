@@ -227,6 +227,14 @@ class TopologyClient:
                     path_parameters={"workspace_id": self.profile.workspace_id},
                     payload=context_payload,
                 )
+                if (
+                    type(context) is not dict
+                    or type(context.get("expectation")) is not dict
+                    or context["expectation"] != expectation
+                ):
+                    raise ClientInputError(
+                        "receiver authoring context expectation is invalid"
+                    )
                 verifier_configuration = None
                 if desired_path.introductions:
                     purposes = _receiver_verifier_purposes(
@@ -1343,6 +1351,8 @@ def _receiver_verifier_purposes(graph, introductions) -> tuple[str, ...]:
         )
         if len(surfaces) != 1:
             raise ClientInputError("receiver graph could not be authored")
+        if surfaces[0].variables:
+            purposes.add(core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL.value)
         if surfaces[0].health_reads:
             purposes.add(
                 core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ.value
