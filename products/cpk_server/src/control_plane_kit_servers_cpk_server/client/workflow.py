@@ -11,6 +11,7 @@ import stat
 from typing import TYPE_CHECKING, Callable, Mapping, Protocol
 
 if TYPE_CHECKING:
+    from .authoring import AuthoredDesiredGraph
     from .catalogue import CatalogueResult
 from uuid import uuid4
 
@@ -22,11 +23,6 @@ from .journal import (
     JournalError,
     JournalStore,
     canonical_operation_ref,
-)
-from .authoring import (
-    AuthoredDesiredGraph,
-    ReceiverAuthoringError,
-    author_receiver_graph,
 )
 from .profile import ClientProfile
 from .transport import (
@@ -185,7 +181,10 @@ class TopologyClient:
         title: str = "Topology deployment",
     ) -> ClientResult:
         saved = isinstance(desired_path, SavedDesiredRevision)
-        authored = type(desired_path) is AuthoredDesiredGraph
+        authored = False
+        if not isinstance(desired_path, Path) and type(desired_path) is not SavedDesiredRevision:
+            from .authoring import AuthoredDesiredGraph
+            authored = type(desired_path) is AuthoredDesiredGraph
         if saved:
             source = {"draft_id": desired_path.draft_id, "revision": desired_path.revision}
             desired = None
@@ -211,6 +210,7 @@ class TopologyClient:
         preparation = None
         preparation_raw = None
         if authored:
+            from .authoring import ReceiverAuthoringError, author_receiver_graph
             try:
                 from control_plane_kit_core.topology import GraphDescriptorCodec
 

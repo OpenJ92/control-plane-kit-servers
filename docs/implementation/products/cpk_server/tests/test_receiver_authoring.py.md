@@ -10,3 +10,5 @@ The client tests prove `0600` artifact publication, authored journal profile,
 byte-identical lost-response/restart replay, no callback or owner-read
 regeneration, original-source drift refusal, and missing/corrupt artifact
 refusal before a second dispatch. CLI tests preserve the closed group grammar.
+The import-isolation test also keeps the lightweight profile/bootstrap path
+usable when the optional receiver-authoring Core surface is not installed.

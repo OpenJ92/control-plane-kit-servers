@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import re
 import os
+import subprocess
 import sys
 from tempfile import TemporaryDirectory
 import unittest
@@ -38,6 +39,24 @@ class ReceiverAuthoringTests(unittest.TestCase):
             "#238 receiver authoring module is missing",
         )
         return importlib.import_module(AUTHORING_MODULE)
+
+    def test_profile_import_does_not_require_receiver_authoring_dependencies(self):
+        script = """
+import sys
+
+from control_plane_kit_servers_cpk_server.client.profile import ClientProfile
+assert "control_plane_kit_servers_cpk_server.client.authoring" not in sys.modules
+"""
+        environment = dict(os.environ)
+        environment["PYTHONPATH"] = str(PRODUCT_SRC)
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def fixture(self):
         from cryptography.hazmat.primitives import serialization

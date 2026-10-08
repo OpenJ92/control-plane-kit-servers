@@ -8,17 +8,26 @@ from .transport import (
     PublicHttpTransport,
 )
 from .workflow import ClientInputError, ClientResult, SavedDesiredRevision, TopologyClient
-from .authoring import (
-    AuthoredDesiredGraph,
-    GatewayHealthRoutes,
-    GatewayHealthTargetIntent,
-    PendingReceiverContinuation,
-    ReceiverAuthoringError,
-    ReceiverIntroduction,
-    ReceiverScope,
-)
 from .catalogue import CatalogueResult
 from .report import ReportResult
+
+
+_AUTHORING_EXPORTS = frozenset({
+    "AuthoredDesiredGraph",
+    "GatewayHealthRoutes",
+    "GatewayHealthTargetIntent",
+    "PendingReceiverContinuation",
+    "ReceiverAuthoringError",
+    "ReceiverIntroduction",
+    "ReceiverScope",
+})
+
+
+def __getattr__(name: str):
+    if name not in _AUTHORING_EXPORTS:
+        raise AttributeError(name)
+    from . import authoring
+    return getattr(authoring, name)
 
 
 __all__ = (
