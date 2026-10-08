@@ -5,6 +5,8 @@ name, URL and environment-name limits. Controlled clocks/checks prove no more
 than 16 operations, remaining timeout propagation, no dispatch after exhaustion,
 and no late healthy result. Concrete HTTP/TCP helper tests preserve status,
 redirect refusal, capped samples without overflow failure and connect-only PG.
-Actual Hello SDK/legacy routes agree on UNKNOWN versus readiness503; liveness is
-independent. These are cooperative checkpoint laws, not cancellation/DNS timing
+Actual Hello SDK readiness preserves UNKNOWN after budget exhaustion; SDK
+liveness remains independent. #241 removes only legacy HTTP encoding assertions,
+retaining the selected dependency callback, no-late-healthy and bounded-work laws.
+These are cooperative checkpoint laws, not cancellation/DNS timing
 or SQL/provider acceptance evidence.

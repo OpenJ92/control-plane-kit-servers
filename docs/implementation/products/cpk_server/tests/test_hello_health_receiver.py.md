@@ -19,3 +19,8 @@ translation; Meridian independently reviews it. No executable evidence yet.
 Meridian review requires the forged descriptor/reference specimen to be prepared
 before refusal; only actual adapter decoding is under the assertion. This proves
 boundary revalidation rather than merely HealthReceiverSelection construction.
+
+#241 updates the maintained Hello selection expectation: zero duplicate native
+checks and an explicit SDK liveness/readiness declaration. Exact reference,
+selected artifact/keys, malformed-input refusal and pure-adapter laws remain.
+No historical image descriptor or generic native verification contract changes.

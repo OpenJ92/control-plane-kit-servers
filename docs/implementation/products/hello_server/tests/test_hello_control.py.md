@@ -21,7 +21,7 @@ receiver must accept both request contexts; this is protocol evidence, not
 Operations admission/current-authority or retained-process acceptance.
 
 The source contract adds the single CPK_WRAPPER_CONFIGURATION_FILE binding.
-Existing runtime ports, declarations, verification and forwarding semantics are
+Existing runtime ports, declarations and forwarding semantics are
 preserved. Opened-file/symlink/FIFO/directory/byte-limit laws now enter the common
 SDK loader through that binding, with exact 0444 mode required. Actual SDK
 CpkThreadingHTTPServer owns passive setup, real serving state and teardown;
@@ -35,3 +35,11 @@ boundary. All preexisting methods and effect assertions remain.
 This target checkpoint has not run with the new closure. Initial gateway target
 red proves only missing obsolete-profile refusal. Whole Servers and paired
 Interpreter gates remain required; no host execution or alternate runner.
+
+Current #241 coverage supersedes the earlier duplicate verification comparison:
+the maintained source has empty native checks and keeps its SDK declaration;
+the historical published descriptor still has native live/ready checks. Existing
+real signed SDK cases retain healthy, unhealthy, callback-error and independent
+instance/authority laws. Legacy HTTP-only assertions are removed; the second
+instance now explicitly requires typed HEALTHY, not merely HTTP200. SDK owns
+not-serving lifecycle semantics; the product still uses its real host wrapper.

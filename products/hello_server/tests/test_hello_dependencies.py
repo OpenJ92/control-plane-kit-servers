@@ -68,7 +68,6 @@ class HelloDependencyTests(unittest.TestCase):
             self.assertEqual(http.call_count, 1)
             self.assertEqual(postgres.call_count, 1)
             self.assertAlmostEqual(postgres.call_args.kwargs["timeout"], 0.2)
-            self.assertEqual(result.legacy_response(), (503,b"dependency observation budget exhausted\n"))
         times = iter((0, 5))
         with patch.object(deps, "_check_http") as http:
             self.assertIs(self.snapshot().inspect(clock=lambda:next(times)).outcome, NodeHealthReadOutcome.UNKNOWN)
@@ -102,7 +101,7 @@ class HelloDependencyTests(unittest.TestCase):
         for url in ("postgresql-fake://host", "postgresql://", "postgresql://host:invalid"):
             self.assertTrue(deps._check_postgres("a",url))
 
-    def test_sdk_and_legacy_share_budget_and_failure_results(self):
+    def test_sdk_readiness_preserves_unknown_budget_and_independent_liveness(self):
         f = fixture()
         environment = {"HELLO_DEPENDENCIES_JSON":'[{"name":"a"}]',
                        "HELLO_HTTP_A_URL":"http://private", "HELLO_DATABASE_A_URL":"postgresql://private"}
@@ -113,7 +112,6 @@ class HelloDependencyTests(unittest.TestCase):
         with patch.object(deps, "_check_http", side_effect=late), \
                 patch.object(deps, "_check_postgres") as postgres, \
                 running(self,f,environment,observation_clock=lambda:now[0]) as host:
-            self.assertEqual(request(host,"/health/ready")[:2], (503,b"dependency observation budget exhausted\n"))
             status, body, _ = request(host,"/__control/health/readiness",token(f))
             self.assertEqual(status,200)
             self.assertEqual(json.loads(body)["outcome"],"unknown")

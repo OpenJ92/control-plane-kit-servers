@@ -74,16 +74,6 @@ class HelloHandler(BaseHTTPRequestHandler):
     server_version = "control-plane-kit-hello/1"
 
     def do_GET(self) -> None:  # noqa: N802
-        if self.path == "/health/live":
-            self._send(200, b"live\n")
-            return
-        if self.path == "/health/ready":
-            try:
-                status, body = self.server.hello_settings.inspect().legacy_response()
-            except Exception:
-                status, body = 500, b"dependency observation failed\n"
-            self._send(status, body)
-            return
         if self.path == "/dependencies":
             payload = json.dumps(
                 [dependency.descriptor() for dependency in self.server.hello_settings.dependencies.dependencies],
