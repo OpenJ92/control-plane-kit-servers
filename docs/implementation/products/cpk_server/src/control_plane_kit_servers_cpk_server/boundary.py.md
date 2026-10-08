@@ -14,6 +14,17 @@ then validates object shape before inspecting the method. Trusted identity is
 provided only by the configured verifier. Operations owns workspace/kind/scope
 authorization and canonical command construction.
 
+Read query decoding is route-local transport framing. Existing paged reads keep
+the closed `limit` integer and `after` JSON-object grammar. The receiver
+authoring-context route instead admits only strict JSON `expected` and
+`pending_draft` values, passing their semantic type, pin and lineage validation
+to Operations. Strict percent decoding, duplicate names after decoding,
+duplicate JSON members, non-finite numbers, excessive nesting and encoded query
+size fail without reflection. Authoring fields cannot enter unrelated routes;
+pagination fields cannot enter the authoring route. Authentication still occurs
+before any sensitive query decode, and GET bodies and command queries remain
+forbidden.
+
 Connector reobservation uses one transport-only allowlist: activity_id,
 prior_attempt, claim_generation, idempotency_key. HTTP takes workspace_id/run_id
 from the route and rejects them in the body; MCP requires both in its arguments.
