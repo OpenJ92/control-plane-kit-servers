@@ -28,14 +28,6 @@ class DependencyObservation:
     outcome: NodeHealthReadOutcome
     failures: tuple[str, ...] = ()
 
-    def legacy_response(self) -> tuple[int, bytes]:
-        if self.outcome is NodeHealthReadOutcome.HEALTHY:
-            return 200, b"ready\n"
-        if self.outcome is NodeHealthReadOutcome.UNKNOWN:
-            return 503, b"dependency observation budget exhausted\n"
-        return 503, ("\n".join(self.failures) + "\n").encode("utf-8")
-
-
 @dataclass(frozen=True, slots=True, repr=False)
 class DependencySnapshot:
     dependencies: tuple[DependencyCheck, ...]

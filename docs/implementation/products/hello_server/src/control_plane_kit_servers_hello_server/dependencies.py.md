@@ -21,7 +21,7 @@ immutable mapping and hides them from repr. Missing URLs remain readiness failur
 One inspection checks at most 16 sequential HTTP/TCP operations. Before and after
 each, it checks a five-second monotonic cooperative budget, passing at most two
 seconds or remaining budget to blocking I/O. Budget exhaustion produces UNKNOWN
-with fixed legacy503 text and no partial success or late HEALTHY. This is not a
+with no partial success or late HEALTHY. This is not a
 DNS/socket cancellation or wall-clock return guarantee; there are no extra
 threads, retries, cache or Operations deadline/history semantics.
 
@@ -29,4 +29,6 @@ HTTP refuses redirects, considers status and reads a capped 16,385-byte sample.
 An oversized sample alone remains successful. Postgres checks only TCP connection,
 never login/SQL. Failure text is bounded by finite validated names and fixed error
 categories, without URL values. Unexpected exceptions are left for SDK's fixed
-nonsemantic failure boundary. The same observation law feeds legacy and SDK paths.
+nonsemantic failure boundary. The SDK readiness callback consumes this observation.
+#241 removes the exclusive legacy HTTP response formatter, while retaining the
+dependency snapshot, failure categories and cooperative observation semantics.

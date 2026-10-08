@@ -53,7 +53,9 @@ class HelloControlTests(unittest.TestCase):
         self.assertEqual(old.identity.contract_revision, 2)
         self.assertEqual(old.runtime_contract.control_surfaces, ())
         self.assertEqual(old.runtime_contract.configuration_artifacts, ())
-        self.assertEqual(contract.verification, old.runtime_contract.verification)
+        self.assertEqual(contract.verification.checks, ())
+        # The immutable published image retains its original native contract.
+        self.assertEqual(tuple(check.check_id for check in old.runtime_contract.verification.checks), ("live", "ready"))
         self.assertNotIn("public_key", repr(self.config))
         result = subprocess.run([sys.executable, "-I", "-B", "-c",
             "import sys; import control_plane_kit_servers_hello_server.configuration; "
@@ -196,7 +198,6 @@ class HelloControlTests(unittest.TestCase):
             status, body, _ = request(host, "/__control/health/readiness", token(self.fixture))
             self.assertEqual(status, 500)
             self.assertNotIn(b"private", body)
-            self.assertEqual(request(host, "/health/ready")[:2], (500, b"dependency observation failed\n"))
 
     def test_retained_receiver_accepts_separate_request_authority_contexts(self):
         installed = self.artifact.content
@@ -219,10 +220,10 @@ class HelloControlTests(unittest.TestCase):
             with patch.dict(os.environ, {"HELLO_MESSAGE":"global", "HELLO_DEPENDENCIES_JSON":"invalid"}):
                 self.assertIn(b"first", request(first, "/")[1])
                 self.assertIn(b"second", request(second, "/")[1])
-                self.assertEqual(request(first, "/health/ready")[0], 503)
-                self.assertEqual(request(second, "/health/ready")[:2], (200, b"ready\n"))
                 self.assertEqual(json.loads(request(first, "/__control/health/readiness", token(self.fixture))[1])["outcome"], "unhealthy")
-                self.assertEqual(request(second, "/__control/health/readiness", token(other))[0], 200)
+                status, body, _ = request(second, "/__control/health/readiness", token(other))
+                self.assertEqual(status, 200)
+                self.assertEqual(json.loads(body)["outcome"], "healthy")
                 self.assertNotEqual(request(second, "/__control/health/readiness", token(self.fixture))[0], 200)
                 self.assertEqual(request(first, "/missing")[:2], (404,b"not found\n"))
             self.assertEqual(first.hello_observations.payload()["count"], 1)

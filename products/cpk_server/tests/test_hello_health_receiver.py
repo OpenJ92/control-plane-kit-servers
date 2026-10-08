@@ -73,7 +73,9 @@ class HelloHealthReceiverTests(unittest.TestCase):
         self.assertNotEqual(family.public_keys, verifier_family(self.selected,
             core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ).public_keys)
         self.assertEqual(self.document.product.runtime_contract.verification, self.contract.verification)
-        self.assertEqual(len(self.contract.verification.checks), 2)
+        self.assertEqual(self.contract.verification.checks, ())
+        self.assertEqual(self.contract.control_surfaces[0].health_reads,
+            (core.NodeHealthReadKind.LIVENESS, core.NodeHealthReadKind.READINESS))
         self.assertIsNotNone(registry.binding_for(ProductReference.from_document(existing.documents["gateway"]),
             core.DelegationKeyPurpose.GATEWAY_NODE_HEALTH_READ_TRANSIT))
         self.refusal(lambda:registry.binding_for(ProductReference.from_document(self.document),

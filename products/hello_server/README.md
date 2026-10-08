@@ -7,7 +7,8 @@ The greeting is displayed directly and HTML-escaped, never interpreted as markup
 `HELLO_COLOR` accepts exactly `blue` (the default), `purple`, `green`, or `red`.
 An unsupported explicit value prevents startup with a fixed configuration error.
 These are process environment inputs, not graph display metadata.
-Health, dependency and bounded request-observation endpoints are unchanged.
+The pinned image retains its original health, dependency and bounded
+request-observation endpoints. Current wrapped source uses SDK health below.
 
 `render_hello(message, color)` in the product's `server` module owns the exact
 UTF-8 response bytes for matching-image verification. It has no network or file
@@ -32,6 +33,13 @@ same `internal` HTTP8000 listener. The published revision2 descriptor and digest
 above remain unchanged and contain no claim of this wrapper. #191 owns new image
 qualification and catalogue adoption. The ordinary package gate exercises this
 source on Python3.12; it does not build or qualify the new Hello image separately.
+
+Following #241, the maintained source contract uses SDK health only. It declares
+no native HTTP verification checks and no longer serves `/health/live` or
+`/health/ready`. A deployment must observe Hello's protected SDK readiness
+through its selected gateway; gateway health alone does not establish Hello
+readiness. The old routes' status/body evidence and five-attempt native policy
+are retired from this source contract, not relabeled as SDK evidence.
 
 Startup now requires `/etc/cpk/hello/control.json`, read once from an opened regular
 file with final-component symlinks rejected and a 65536-byte ceiling. The file
@@ -60,8 +68,8 @@ delivery and issuer work; Operations currently does not transfer selected node
 configuration artifacts into runtime product material. Receiver tests do not
 prove mounted configuration, gateway routing or public deployment acceptance.
 
-Each server captures its greeting and selected dependency inputs once, shared
-by both legacy handlers and SDK callbacks. Dependency declarations accept at most
+Each server captures its greeting and selected dependency inputs once. Its SDK
+readiness callback evaluates that dependency snapshot. Declarations accept at most
 8 entries/8192 UTF-8 bytes, names at most 64 characters, environment names at
 most128 characters and selected URLs at most 2048 UTF-8 bytes. Overflow is rejected
 before socket creation. Environment changes after startup do not reconfigure it.
@@ -71,13 +79,19 @@ connect meaning; sample overflow alone is not failure, and TCP success does not
 prove SQL authentication. An observation starts at most 16 sequential operations,
 checks a 5-second monotonic cooperative budget and supplies each operation at most
 2 seconds or remaining budget. A late return produces UNKNOWN, never late
-HEALTHY; legacy readiness maps this to503 with fixed budget-exhausted text.
+HEALTHY. SDK results preserve HEALTHY, UNHEALTHY and UNKNOWN as distinct outcomes;
+callback errors remain bounded failures rather than healthy results.
 Blocking DNS/address attempts or body reads can overrun the budget. It is not a
 hard return/cancellation deadline. There is no retry worker, cache or bounded
 global thread-count claim.
 
-Normal in-bound HTML, palette, legacy health/dependencies/404 and bounded query-
-redacted observation behavior remain; observations are instance-local. Existing
-application health routes remain unauthenticated. SDK credential denial runs no
+Normal in-bound HTML, palette, dependencies/404 and bounded query-redacted
+observation behavior remain; observations are instance-local. SDK credential denial runs no
 protected dependency or application observation callback. Liveness means the
 Hello process can execute its callback; static status is not readiness.
+
+`scripts/hello_server_published_image_smoke.sh` remains a historical pinned-image
+witness. Its underlying smoke requires an immutable published image and cannot
+build current wrapped source. Published descriptors and existing approved graphs
+keep their original native-check meaning; selecting this new source contract
+requires new authored material and later image qualification.

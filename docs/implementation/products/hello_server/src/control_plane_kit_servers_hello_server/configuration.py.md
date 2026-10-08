@@ -18,7 +18,9 @@ Parsing and the local file snapshot do not establish current authorization.
 The product artifact retains its ID, path, JSON media and 0444 mode. Its renderer
 uses Core's actual codec and rechecks product declaration policy. Source contracts
 add the common environment binding to that artifact path while preserving existing
-sockets, ports, requirements, capabilities, legacy checks and other runtime facts.
+sockets, ports, requirements, capabilities and other runtime facts. #241 deliberately
+removes Hello's duplicate native checks from the maintained source contract;
+the declared SDK liveness/readiness surface remains the health obligation.
 Historical published descriptors and images are unchanged. CPK's three variants
 retain their existing complete database requirements and process settings; Hello
 keeps dependency defaults/readiness; router and multiplexer declare liveness only.

@@ -43,7 +43,7 @@ class HelloServerProductTests(unittest.TestCase):
     def decode(self):
         return ProductDescriptorCodec().decode_document(DESCRIPTOR.read_bytes())
 
-    def test_root_serves_escaped_html_and_preserves_health_and_dependencies(self) -> None:
+    def test_root_serves_escaped_html_and_preserves_dependencies(self) -> None:
         from control_plane_kit_servers_hello_server.server import (
             create_hello_server,
             render_hello,
@@ -72,14 +72,9 @@ class HelloServerProductTests(unittest.TestCase):
                             self.assertEqual(body, render_hello(message, color))
                             self.assertIn(f"<h1>{escaped}</h1>", body.decode("utf-8"))
                             self.assertNotIn(b"<script>", body)
-                        for path, expected in (
-                            ("/health/live", b"live\n"),
-                            ("/health/ready", b"ready\n"),
-                            ("/dependencies", b"[]"),
-                        ):
-                            with urlopen(root + path, timeout=2) as response:
-                                self.assertEqual(response.status, 200)
-                                self.assertEqual(response.read(), expected)
+                        with urlopen(root + "/dependencies", timeout=2) as response:
+                            self.assertEqual(response.status, 200)
+                            self.assertEqual(response.read(), b"[]")
                     finally:
                         server.shutdown()
                         thread.join(timeout=2)
