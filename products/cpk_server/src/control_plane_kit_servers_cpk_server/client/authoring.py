@@ -326,19 +326,38 @@ def _verifiers(
     if declaration.surface.health_reads:
         purposes.add(core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ)
     admitted = []
-    for entry in document["verifiers"]:
+    entries = document["verifiers"]
+    if type(entries) is not list or not 1 <= len(entries) <= 3:
+        raise ValueError
+    for entry in entries:
+        if (
+            type(entry) is not dict
+            or set(entry) != {"purpose", "issuer", "public_keys"}
+            or type(entry["public_keys"]) is not list
+            or not 1 <= len(entry["public_keys"]) <= 16
+        ):
+            raise ValueError
         purpose = core.DelegationKeyPurpose(entry["purpose"])
         if purpose not in purposes:
             continue
-        keys = tuple(
-            core.DelegationPublicKey(
-                key["key_id"],
-                core.DelegationKeyAlgorithm(key["algorithm"]),
-                key["public_key_pem"],
+        keys = []
+        for key in entry["public_keys"]:
+            if (
+                type(key) is not dict
+                or set(key) != {"key_id", "algorithm", "public_key_pem"}
+                or not all(type(key[name]) is str for name in key)
+            ):
+                raise ValueError
+            keys.append(
+                core.DelegationPublicKey(
+                    key["key_id"],
+                    core.DelegationKeyAlgorithm(key["algorithm"]),
+                    key["public_key_pem"],
+                )
             )
-            for key in entry["public_keys"]
+        admitted.append(
+            NodeControlVerificationConfiguration(purpose, entry["issuer"], tuple(keys))
         )
-        admitted.append(NodeControlVerificationConfiguration(purpose, entry["issuer"], keys))
     return tuple(admitted)
 
 
@@ -413,7 +432,11 @@ def _install_selected_wrapper(
         for item in node.public_environment + node.socket_environment
         if item.name == WORKLOAD_NODE_CONTROL_CONFIGURATION_ENVIRONMENT
     )
-    if len(bindings) > 1 or (bindings and bindings[0].value != artifact.target_path):
+    if (
+        len(bindings) > 1
+        or bool(collisions) != bool(bindings)
+        or (bindings and bindings[0].value != artifact.target_path)
+    ):
         raise ValueError
     artifacts = (
         tuple(

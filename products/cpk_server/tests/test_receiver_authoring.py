@@ -474,6 +474,16 @@ class ReceiverAuthoringTests(unittest.TestCase):
                     ),
                 ),
             )
+        partial_x = replace(
+            fixture["graph_a"].node("hello-x"), configuration_artifacts=()
+        )
+        with self.assertRaises(api.ReceiverAuthoringError):
+            api.author_receiver_graph(
+                fixture["graph_a"].update_node(partial_x),
+                workspace_id="workspace-a",
+                context=fixture["context"],
+                verifier_configuration=None,
+            )
         cases = (
             dict(
                 introductions=(
