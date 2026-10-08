@@ -6,6 +6,7 @@ import importlib.util
 import json
 from pathlib import Path
 import re
+import os
 import sys
 from tempfile import TemporaryDirectory
 import unittest
@@ -498,6 +499,200 @@ class ReceiverAuthoringTests(unittest.TestCase):
                     )
                 self.assertEqual(str(caught.exception), "receiver graph could not be authored")
                 self.assertEqual(vars(caught.exception), {})
+
+    def authored_input(self, api, fixture, name="desired.json"):
+        from control_plane_kit_core.topology import GraphDescriptorCodec
+
+        path = self.root / name
+        path.write_text(
+            json.dumps(GraphDescriptorCodec().encode(fixture["graph_b"])),
+            encoding="utf-8",
+        )
+        y_scope = api.ReceiverScope("hello-y", "internal")
+        return api.AuthoredDesiredGraph(
+            path,
+            introductions=(
+                api.ReceiverIntroduction(
+                    y_scope, "hello-control", "/etc/cpk/hello/control.json"
+                ),
+            ),
+            gateway_health_replacements=(
+                api.GatewayHealthRoutes(
+                    api.ReceiverScope("gateway", "control"),
+                    (
+                        api.GatewayHealthTargetIntent(
+                            "hello-x",
+                            api.ReceiverScope("hello-x", "internal"),
+                            "http://hello-x:8000",
+                        ),
+                        api.GatewayHealthTargetIntent(
+                            "hello-y", y_scope, "http://hello-y:8000"
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+    def client_profile(self, state="state"):
+        from control_plane_kit_servers_cpk_server.client import ClientProfile
+
+        credentials = {
+            role: self.root / f"{role}.token"
+            for role in ("operator", "approver", "worker")
+        }
+        return ClientProfile(
+            "https://cpk.example", "workspace-a", credentials, self.root / state
+        )
+
+    def authoring_transport(self, fixture, *, lose_prepare_once=True):
+        from test_topology_client import ScriptedTransport
+
+        class AuthoringTransport(ScriptedTransport):
+            def call(inner, route_id, *, path_parameters, payload, credential_role):
+                if route_id == "read.receiver-authoring-context":
+                    inner.calls.append(
+                        {
+                            "route_id": route_id,
+                            "path_parameters": dict(path_parameters),
+                            "payload": dict(payload),
+                            "credential_role": credential_role,
+                        }
+                    )
+                    return fixture["context"]
+                if route_id == "read.workload-verifier-configuration":
+                    inner.calls.append(
+                        {
+                            "route_id": route_id,
+                            "path_parameters": dict(path_parameters),
+                            "payload": dict(payload),
+                            "credential_role": credential_role,
+                        }
+                    )
+                    return {
+                        "workspace_id": "workspace-a",
+                        "kind": "workload-verifier-configuration",
+                        "payload": fixture["verifiers"],
+                    }
+                return super().call(
+                    route_id,
+                    path_parameters=path_parameters,
+                    payload=payload,
+                    credential_role=credential_role,
+                )
+
+        return AuthoringTransport(lose_prepare_once=lose_prepare_once)
+
+    def test_client_persists_before_send_and_restart_replays_exact_authored_graph(self):
+        api = self.api()
+        fixture = self.fixture()
+        desired = self.authored_input(api, fixture)
+        transport = self.authoring_transport(fixture)
+        from test_topology_client import DeterministicIds
+        from control_plane_kit_servers_cpk_server.client import TopologyClient
+        from control_plane_kit_servers_cpk_server.client.journal import (
+            PREPARATION_JOURNAL_SCHEMA,
+        )
+
+        receiver_calls = []
+        client = TopologyClient(
+            self.client_profile(),
+            transport=transport,
+            identity_factory=DeterministicIds(),
+            receiver_identity_factory=lambda: receiver_calls.append("generated") or "c" * 32,
+        )
+        unresolved = client.plan(desired)
+        journal = client.journal.read(unresolved.operation_ref)
+        preparation = journal["preparation"]
+        artifact = client.journal.root / preparation["name"]
+        first_prepare = next(
+            call
+            for call in transport.calls
+            if call["route_id"] == "command.deployment.prepare"
+        )
+
+        self.assertEqual(unresolved.status, "attention-required")
+        self.assertEqual(journal["schema"], PREPARATION_JOURNAL_SCHEMA)
+        self.assertEqual(receiver_calls, ["generated"])
+        self.assertTrue(artifact.is_file())
+        self.assertEqual(os.stat(artifact).st_mode & 0o777, 0o600)
+        self.assertEqual(
+            json.loads(artifact.read_text(encoding="utf-8")),
+            first_prepare["payload"]["desired_graph"],
+        )
+
+        def regenerated():
+            raise AssertionError("restart must not regenerate identities")
+
+        restarted = TopologyClient(
+            self.client_profile(),
+            transport=transport,
+            identity_factory=regenerated,
+            receiver_identity_factory=regenerated,
+        )
+        resumed = restarted.resume_prepare(unresolved.operation_ref)
+        prepare_calls = [
+            call
+            for call in transport.calls
+            if call["route_id"] == "command.deployment.prepare"
+        ]
+        self.assertEqual(resumed.status, "planned")
+        self.assertEqual(prepare_calls, [first_prepare, first_prepare])
+        self.assertEqual(
+            [call["route_id"] for call in transport.calls].count(
+                "read.receiver-authoring-context"
+            ),
+            1,
+        )
+        self.assertEqual(
+            [call["route_id"] for call in transport.calls].count(
+                "read.workload-verifier-configuration"
+            ),
+            1,
+        )
+
+    def test_retry_refuses_source_drift_and_missing_or_corrupt_preparation(self):
+        api = self.api()
+        fixture = self.fixture()
+        from test_topology_client import DeterministicIds
+        from control_plane_kit_servers_cpk_server.client import JournalError, TopologyClient
+
+        for damage in ("source", "missing", "corrupt"):
+            with self.subTest(damage=damage):
+                desired = self.authored_input(api, fixture, f"{damage}.json")
+                transport = self.authoring_transport(fixture)
+                client = TopologyClient(
+                    self.client_profile(state=f"state-{damage}"),
+                    transport=transport,
+                    identity_factory=DeterministicIds(),
+                    receiver_identity_factory=lambda: "d" * 32,
+                )
+                unresolved = client.plan(desired)
+                journal = client.journal.read(unresolved.operation_ref)
+                artifact = client.journal.root / journal["preparation"]["name"]
+                if damage == "source":
+                    desired.path.write_text("{}", encoding="utf-8")
+                    refused = client.resume_prepare(unresolved.operation_ref)
+                    self.assertEqual(refused.status, "attention-required")
+                elif damage == "missing":
+                    artifact.unlink()
+                    with self.assertRaises(JournalError):
+                        client.resume_prepare(unresolved.operation_ref)
+                else:
+                    artifact.write_bytes(b"{}")
+                    with self.assertRaises(JournalError):
+                        client.resume_prepare(unresolved.operation_ref)
+                self.assertEqual(
+                    [
+                        call
+                        for call in transport.calls
+                        if call["route_id"] == "command.deployment.prepare"
+                    ][0:1],
+                    [
+                        call
+                        for call in transport.calls
+                        if call["route_id"] == "command.deployment.prepare"
+                    ],
+                )
 
 
 if __name__ == "__main__":
