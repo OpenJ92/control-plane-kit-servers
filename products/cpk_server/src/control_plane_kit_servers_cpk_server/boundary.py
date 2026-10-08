@@ -284,7 +284,7 @@ def _decode_http_payload(
             return _error(400, "read routes do not accept request bodies")
         if len(query_string) > route.request_schema.max_bytes:
             return _error(413, "request query too large")
-        return _decode_http_read_query(query_string)
+        return _decode_http_read_query(route, query_string)
     if query_string != b"":
         return _error(400, "command routes do not accept query arguments")
     if len(body) > route.request_schema.max_bytes:
@@ -301,6 +301,7 @@ def _decode_http_payload(
 
 
 def _decode_http_read_query(
+    route: HttpApiRouteContract,
     query_string: bytes,
 ) -> Mapping[str, object] | CpkServerBoundaryResponse:
     if query_string == b"":
@@ -308,6 +309,11 @@ def _decode_http_read_query(
     if not isinstance(query_string, bytes):
         return _error(400, "invalid query arguments")
 
+    fields = (
+        {"expected", "pending_draft"}
+        if route.route_id == "read.receiver-authoring-context"
+        else {"limit", "after"}
+    )
     arguments: dict[str, object] = {}
     for field in query_string.split(b"&"):
         if field == b"" or b"=" not in field:
@@ -318,7 +324,7 @@ def _decode_http_read_query(
             value = _strict_percent_decode(encoded_value).decode("utf-8")
         except (UnicodeDecodeError, ValueError):
             return _error(400, "invalid query arguments")
-        if name not in {"limit", "after"} or name in arguments:
+        if name not in fields or name in arguments:
             return _error(400, "invalid query arguments")
         if name == "limit":
             if re.fullmatch(r"[1-9][0-9]*", value) is None:
@@ -329,7 +335,7 @@ def _decode_http_read_query(
                 return _error(400, "invalid query arguments")
             continue
         try:
-            cursor = json.loads(
+            decoded = json.loads(
                 value,
                 object_pairs_hook=_unique_json_object,
                 parse_constant=_reject_json_constant,
@@ -337,9 +343,9 @@ def _decode_http_read_query(
             )
         except (json.JSONDecodeError, RecursionError, ValueError):
             return _error(400, "invalid query arguments")
-        if not isinstance(cursor, dict) or _json_nesting(cursor) > 64:
+        if (name == "after" and not isinstance(decoded, dict)) or _json_nesting(decoded) > 64:
             return _error(400, "invalid query arguments")
-        arguments[name] = cursor
+        arguments[name] = decoded
     return arguments
 
 
