@@ -1,0 +1,64 @@
+{
+  "schema": "cpk-server.receiver-authoring-law-cards",
+  "issue": "#238",
+  "selected_servers": "0d383c9e9e5236c06b8183b598adc2f4397eed65",
+  "selected_core_operations": "250d65e19dc748ebe840f705be77eb732dab3cb3",
+  "law_cards": [
+    {
+      "classification": "isomorphic",
+      "law": "exact-prepare-replay",
+      "reference": "products.cpk_server.tests.test_topology_client.TopologyClientTests.test_lost_prepare_replays_exact_request_or_returns_attention_without_mutation",
+      "observable": "A lost prepare response reuses the original canonical request and idempotency key.",
+      "negative": "A changed original source refuses replay; it is never used to regenerate an authored graph.",
+      "owner": "control-plane-kit-servers/cpk_server"
+    },
+    {
+      "classification": "isomorphic",
+      "law": "restart-preserves-fences",
+      "reference": "products.cpk_server.tests.test_topology_client_saved.TopologyClientSavedTests.test_lost_response_restart_replays_original_fences_without_workspace_read",
+      "observable": "Process restart replays the stored request and original workspace fences without rebasing.",
+      "negative": "A fresh invocation uses fresh fences; retry does not.",
+      "owner": "control-plane-kit-servers/cpk_server"
+    },
+    {
+      "classification": "strengthened",
+      "law": "qualified-authoring-read-parity",
+      "reference": "products.cpk_server.tests.test_http_mcp_boundaries.CpkServerHttpMcpBoundaryTests.test_http_receiver_authoring_query_matches_mcp_application_request",
+      "observable": "HTTP expected/pending_draft decoding reaches the same application request as MCP.",
+      "negative": "Cross-route, duplicate, malformed, non-finite, excessive-depth and over-budget query material refuses after authentication and before dispatch.",
+      "owner": "control-plane-kit-servers/cpk_server"
+    },
+    {
+      "classification": "new-law",
+      "law": "fresh-assignment-precedes-complete-route",
+      "reference": "#238 approved A-to-B-to-C authoring handoff",
+      "observable": "The default fresh 32-hex Y identity is identical in Y's wrapper and G's explicitly replaced gateway-health route artifact before persistence.",
+      "negative": "A copied, current-conflicting, unresolved, foreign-runtime or ambiguous receiver scope refuses instead of minting around owner truth.",
+      "owner": "control-plane-kit-servers/cpk_server"
+    },
+    {
+      "classification": "new-law",
+      "law": "route-replacement-is-explicit-and-total",
+      "reference": "#238 corrected Kepler-reviewed interface freeze",
+      "observable": "Absent gateway group preserves exact route bytes; present nonempty replaces the complete group; present empty writes the canonical empty route artifact.",
+      "negative": "Duplicate groups/target IDs, missing selected assignments and partial artifact-slot collisions refuse.",
+      "owner": "control-plane-kit-servers/cpk_server"
+    },
+    {
+      "classification": "new-law",
+      "law": "immutable-authored-preparation",
+      "reference": "docs/design/0007-logical-receiver-lifecycle.md section 3",
+      "observable": "A private immutable canonical graph artifact is durably published before its versioned journal and before first dispatch; retry uses those exact bytes.",
+      "negative": "Missing, corrupt, mismatched, unsafe or over-budget artifacts refuse without context/key/identity/route recomputation.",
+      "owner": "control-plane-kit-servers/cpk_server"
+    },
+    {
+      "classification": "new-law",
+      "law": "retained-material-and-source-boundary",
+      "reference": "#238 retained G/X route amendment",
+      "observable": "X wrapper and retained G transit trust stay byte-identical while only the explicitly selected G route artifact changes across B and C.",
+      "negative": "Fresh G is refused because its target-bearing transit trust is outside the retained-G A-to-B-to-C composition boundary.",
+      "owner": "control-plane-kit-servers/cpk_server"
+    }
+  ]
+}
