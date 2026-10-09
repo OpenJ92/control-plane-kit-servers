@@ -74,6 +74,7 @@ class BootstrapReason(Enum):
     DRIVER_USER_UNSUPPORTED = "driver-user-unsupported"
     RESOURCE_CONFLICT = "resource-conflict"
     PRODUCT_IMAGE_UNVERIFIED = "product-image-unverified"
+    CONFIGURATION_USER_UNSUPPORTED = "configuration-user-unsupported"
     PROVIDER_IDENTITY_MISMATCH = "provider-identity-mismatch"
 
 
@@ -92,6 +93,7 @@ _FIXED_REASONS = {
     "bootstrap driver requires its explicit root helper image": BootstrapReason.DRIVER_USER_UNSUPPORTED,
     "bootstrap resource already exists; adoption is not supported": BootstrapReason.RESOURCE_CONFLICT,
     "bootstrap canonical image could not be verified": BootstrapReason.PRODUCT_IMAGE_UNVERIFIED,
+    "bootstrap configuration mode is unreadable by recipient": BootstrapReason.CONFIGURATION_USER_UNSUPPORTED,
     "bootstrap provider identity differs from selected image configuration": BootstrapReason.PROVIDER_IDENTITY_MISMATCH,
 }
 
@@ -303,6 +305,10 @@ def plan_root_bootstrap(document: Mapping[str, object], *, driver_image_id: str)
             nodes.append({"node_id": node_id, "name": name, "aliases": [node_id],
                 "image": product.image.execution_reference,
                 "environment": node.non_secret_environment(), "secret_files": files,
+                "configuration_files": [{"name": f"{name}-configuration-{hashlib.sha256(artifact.target_path.encode()).hexdigest()[:16]}",
+                    "target": artifact.target_path, "artifact": artifact.descriptor(),
+                    "sha256": hashlib.sha256(artifact.content.encode()).hexdigest()}
+                    for artifact in node.configuration_artifacts],
                 "http_checks": [{"check": check.descriptor(), "url": f"http://{node_id}:{next(port.container_port for port in product.runtime_contract.provider_ports if port.provider_socket == check.provider_socket)}{check.path}"}
                                 for check in product.runtime_contract.verification.checks if isinstance(check, HttpCheck)],
                 "local_docker_access": ({"socket": "/var/run/docker.sock", "supplementary_group": "inspected-socket-gid"}

@@ -11,11 +11,13 @@ import stat
 from typing import TYPE_CHECKING, Callable, Mapping, Protocol
 
 if TYPE_CHECKING:
+    from .authoring import AuthoredDesiredGraph
     from .catalogue import CatalogueResult
 from uuid import uuid4
 
 from .journal import (
     JOURNAL_SCHEMA,
+    PREPARATION_JOURNAL_SCHEMA,
     SAVED_JOURNAL_SCHEMA,
     MAXIMUM_REQUEST_RECORDS,
     JournalError,
@@ -132,11 +134,13 @@ class TopologyClient:
         transport: PublicTransport | None = None,
         journal: JournalStore | None = None,
         identity_factory: Callable[[], str] | None = None,
+        receiver_identity_factory: Callable[[], str] | None = None,
     ) -> None:
         self.profile = profile
         self.transport = transport or PublicHttpTransport(profile)
         self.journal = journal or JournalStore(profile.state_directory)
         self._identity_factory = identity_factory or (lambda: str(uuid4()))
+        self._receiver_identity_factory = receiver_identity_factory or (lambda: uuid4().hex)
 
     def report(self, operation_refs):
         from .report import collect
@@ -170,13 +174,24 @@ class TopologyClient:
         from .catalogue import resume
         return resume(self, operation_ref)
 
-    def plan(self, desired_path: Path | SavedDesiredRevision, *, title: str = "Topology deployment") -> ClientResult:
+    def plan(
+        self,
+        desired_path: Path | SavedDesiredRevision | AuthoredDesiredGraph,
+        *,
+        title: str = "Topology deployment",
+    ) -> ClientResult:
         saved = isinstance(desired_path, SavedDesiredRevision)
+        authored = False
+        if not isinstance(desired_path, Path) and type(desired_path) is not SavedDesiredRevision:
+            from .authoring import AuthoredDesiredGraph
+            authored = type(desired_path) is AuthoredDesiredGraph
         if saved:
             source = {"draft_id": desired_path.draft_id, "revision": desired_path.revision}
             desired = None
         else:
-            source, desired = _read_desired(desired_path)
+            source, desired = _read_desired(
+                desired_path.path if authored else desired_path
+            )
         operation_ref = canonical_operation_ref(self._identity_factory())
         workspace = self._workspace()
         current = _pointer(workspace, "current")
@@ -192,6 +207,77 @@ class TopologyClient:
             "title": _bounded_text(title, "title", 512),
             "idempotency_key": self._new_key(),
         }
+        preparation = None
+        preparation_raw = None
+        if authored:
+            from .authoring import ReceiverAuthoringError, author_receiver_graph
+            try:
+                from control_plane_kit_core.topology import GraphDescriptorCodec
+
+                graph = GraphDescriptorCodec().decode(desired)
+                expectation = _receiver_expectation(workspace)
+                context_payload = {"expected": expectation}
+                if desired_path.pending is not None:
+                    context_payload["pending_draft"] = {
+                        "draft_id": desired_path.pending.draft_id,
+                        "expected_head_revision": desired_path.pending.expected_head_revision,
+                    }
+                context = self._read(
+                    "read.receiver-authoring-context",
+                    path_parameters={"workspace_id": self.profile.workspace_id},
+                    payload=context_payload,
+                )
+                if (
+                    type(context) is not dict
+                    or type(context.get("expectation")) is not dict
+                    or context["expectation"] != expectation
+                ):
+                    raise ClientInputError(
+                        "receiver authoring context expectation is invalid"
+                    )
+                verifier_configuration = None
+                if desired_path.introductions:
+                    purposes = _receiver_verifier_purposes(
+                        graph, desired_path.introductions
+                    )
+                    verifier_response = self._read(
+                        "read.workload-verifier-configuration",
+                        path_parameters={
+                            "workspace_id": self.profile.workspace_id,
+                            "purposes": ",".join(purposes),
+                        },
+                    )
+                    if (
+                        verifier_response.get("workspace_id")
+                        != self.profile.workspace_id
+                        or verifier_response.get("kind")
+                        != "workload-verifier-configuration"
+                    ):
+                        raise ClientInputError(
+                            "receiver verifier configuration is invalid"
+                        )
+                    verifier_configuration = _mapping(verifier_response, "payload")
+                graph = author_receiver_graph(
+                    graph,
+                    workspace_id=self.profile.workspace_id,
+                    context=context,
+                    verifier_configuration=verifier_configuration,
+                    introductions=desired_path.introductions,
+                    pending=desired_path.pending,
+                    gateway_health_replacements=(
+                        desired_path.gateway_health_replacements
+                    ),
+                    receiver_identity_factory=self._receiver_identity_factory,
+                )
+                desired = GraphDescriptorCodec().encode(graph)
+                preparation_raw = _canonical_document_bytes(desired)
+                body["desired_graph"] = desired
+            except ReceiverAuthoringError as error:
+                raise ClientInputError(str(error)) from None
+            except ClientInputError:
+                raise
+            except (ValueError, TypeError, KeyError, AttributeError) as error:
+                raise ClientInputError("receiver graph could not be authored") from None
         journal = _new_journal(self.profile, operation_ref, source)
         if saved:
             generation = body["expected_desired_graph_revision"]
@@ -206,6 +292,12 @@ class TopologyClient:
             journal["schema"] = SAVED_JOURNAL_SCHEMA
             journal["prepare_request"] = dict(body)
         with self.journal.mutation_lock(operation_ref):
+            if authored:
+                preparation = self.journal.create_preparation(
+                    operation_ref, preparation_raw
+                )
+                journal["schema"] = PREPARATION_JOURNAL_SCHEMA
+                journal["preparation"] = dict(preparation)
             self.journal.create(operation_ref, journal)
             result = self._mutate(
                 journal,
@@ -213,7 +305,7 @@ class TopologyClient:
                 path_parameters={"workspace_id": self.profile.workspace_id},
                 body=body,
                 credential_role="operator",
-                desired_source=source,
+                desired_source=preparation if authored else source,
             )
             if isinstance(result, ClientResult):
                 return result
@@ -633,15 +725,32 @@ class TopologyClient:
         if not isinstance(pending, dict):
             raise JournalError("operation has no pending request")
         body = dict(_mapping(pending, "body"))
-        if pending.get("route_id") == "command.deployment.prepare" and journal["schema"] == JOURNAL_SCHEMA:
-            source = _mapping(pending, "desired_source")
-            verified_source, desired = _read_desired(Path(_text(source, "path")))
+        if (
+            pending.get("route_id") == "command.deployment.prepare"
+            and journal["schema"] in {JOURNAL_SCHEMA, PREPARATION_JOURNAL_SCHEMA}
+        ):
+            source = (
+                _mapping(journal, "desired")
+                if journal["schema"] == PREPARATION_JOURNAL_SCHEMA
+                else _mapping(pending, "desired_source")
+            )
+            if journal["schema"] == PREPARATION_JOURNAL_SCHEMA:
+                verified_source, _raw = _read_desired_raw(Path(_text(source, "path")))
+                desired = None
+            else:
+                verified_source, desired = _read_desired(Path(_text(source, "path")))
             if verified_source != source:
                 return self._attention(
                     journal,
                     execution="unverified",
                     next_public_read="read.workspace",
                 )
+            if journal["schema"] == PREPARATION_JOURNAL_SCHEMA:
+                preparation = _mapping(pending, "desired_source")
+                raw = self.journal.read_preparation(
+                    _text(journal, "operation_ref"), preparation
+                )
+                desired = _decode_prepared_graph(raw)
             body["desired_graph"] = desired
         if _canonical_digest(body) != pending.get("body_sha256"):
             return self._attention(
@@ -822,7 +931,11 @@ class TopologyClient:
 
     def _load(self, operation_ref: str) -> dict[str, object]:
         journal = self.journal.read(operation_ref)
-        if journal.get("schema") not in {JOURNAL_SCHEMA, SAVED_JOURNAL_SCHEMA}:
+        if journal.get("schema") not in {
+            JOURNAL_SCHEMA,
+            SAVED_JOURNAL_SCHEMA,
+            PREPARATION_JOURNAL_SCHEMA,
+        }:
             raise JournalError("operation is not a deployment invocation")
         target = _mapping(journal, "target")
         if (
@@ -1121,7 +1234,9 @@ def _new_journal(
     }
 
 
-def _read_desired(path: Path) -> tuple[dict[str, object], dict[str, object]]:
+def _read_desired_raw(path: Path) -> tuple[dict[str, object], bytes]:
+    if not isinstance(path, Path):
+        raise ClientInputError("desired graph path is invalid")
     absolute = path.absolute()
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
@@ -1145,6 +1260,13 @@ def _read_desired(path: Path) -> tuple[dict[str, object], dict[str, object]]:
         os.close(descriptor)
     if len(raw) > MAXIMUM_DESIRED_BYTES:
         raise ClientInputError("desired graph exceeds the public request bound")
+    return (
+        {"path": str(absolute), "size": len(raw), "sha256": sha256(raw).hexdigest()},
+        raw,
+    )
+
+
+def _decode_desired_document(raw: bytes) -> dict[str, object]:
     try:
         value = json.loads(
             raw.decode("utf-8"),
@@ -1155,10 +1277,87 @@ def _read_desired(path: Path) -> tuple[dict[str, object], dict[str, object]]:
         raise ClientInputError("desired graph document is invalid") from error
     if not isinstance(value, dict):
         raise ClientInputError("desired graph document must be an object")
-    return (
-        {"path": str(absolute), "size": len(raw), "sha256": sha256(raw).hexdigest()},
-        value,
-    )
+    return value
+
+
+def _read_desired(path: Path) -> tuple[dict[str, object], dict[str, object]]:
+    source, raw = _read_desired_raw(path)
+    return source, _decode_desired_document(raw)
+
+
+def _canonical_document_bytes(value: Mapping[str, object]) -> bytes:
+    try:
+        raw = json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError, UnicodeEncodeError) as error:
+        raise ClientInputError("desired graph document is invalid") from error
+    if not 1 <= len(raw) <= MAXIMUM_DESIRED_BYTES:
+        raise ClientInputError("desired graph exceeds the public request bound")
+    return raw
+
+
+def _decode_prepared_graph(raw: bytes) -> dict[str, object]:
+    from control_plane_kit_core.topology import GraphDescriptorCodec
+
+    value = _decode_desired_document(raw)
+    try:
+        graph = GraphDescriptorCodec().decode(value)
+        canonical = GraphDescriptorCodec().encode(graph)
+    except (ValueError, TypeError, KeyError, AttributeError) as error:
+        raise JournalError("prepared graph is invalid") from error
+    if _canonical_document_bytes(canonical) != raw:
+        raise JournalError("prepared graph is not canonical")
+    return canonical
+
+
+def _receiver_expectation(workspace: Mapping[str, object]) -> dict[str, object]:
+    current = _pointer(workspace, "current")
+    if current is None:
+        raise ClientInputError("workspace has no current graph")
+    desired = _pointer(workspace, "desired")
+    return {
+        "current_graph_id": current["authored_graph_id"],
+        "current_realized_projection_id": current["realized_projection_id"],
+        "desired_graph_id": (
+            desired["authored_graph_id"] if desired is not None else None
+        ),
+        "desired_realized_projection_id": (
+            desired["realized_projection_id"] if desired is not None else None
+        ),
+        "desired_graph_revision": _integer(
+            workspace, "desired_graph_revision", minimum=0
+        ),
+    }
+
+
+def _receiver_verifier_purposes(graph, introductions) -> tuple[str, ...]:
+    import control_plane_kit_core as core
+
+    purposes = {
+        core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ.value
+    }
+    for introduction in introductions:
+        node = graph.node(introduction.scope.node_id)
+        surfaces = tuple(
+            surface
+            for surface in node.block_spec.control_surfaces
+            if surface.provider_socket_name.value
+            == introduction.scope.provider_socket_name
+        )
+        if len(surfaces) != 1:
+            raise ClientInputError("receiver graph could not be authored")
+        if surfaces[0].variables:
+            purposes.add(core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL.value)
+        if surfaces[0].health_reads:
+            purposes.add(
+                core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ.value
+            )
+    return tuple(sorted(purposes))
 
 
 def _plan_result(

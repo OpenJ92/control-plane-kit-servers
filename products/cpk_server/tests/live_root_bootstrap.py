@@ -160,6 +160,13 @@ def prepare(run):
     if not port_text.isascii() or not port_text.isdecimal() or not 1 <= int(port_text) <= 65535:
         raise ValueError("CPK_ROOT_TEST_PORT must be an integer from 1 to 65535")
     document = example_input(installation_id=run, workspace_id=run, port=int(port_text))
+    from control_plane_kit_core.configuration import ConfigurationArtifact, ConfigurationFileMode, ConfigurationMediaType
+    # This is an inert delivery witness on historical images, not current-source
+    # control configuration or qualification of a new receiving protocol.
+    for role in ("cpk", "secrets"):
+        artifact = ConfigurationArtifact("bootstrap-file-witness", "/etc/cpk/bootstrap-witness.json",
+            ConfigurationMediaType.JSON, json.dumps({"recipient": role, "run": run}), ConfigurationFileMode.READ_ONLY)
+        document["installation"]["products"][role]["product"]["runtime_contract"]["configuration_artifacts"] = [artifact.descriptor()]
     input_path = ROOT / "input.json"
     input_path.write_text(json.dumps(document))
     # The real launcher must plan from the documented invoking-user private input.
@@ -244,10 +251,38 @@ def check(run):
                 assert inspection.bind_mounts == ()
                 assert inspection.supplementary_groups == ()
             assert {(entry.target_path, entry.volume_name) for entry in inspection.readonly_secret_mounts} == {
-                (entry["target"], entry["name"]) for entry in node["secret_files"]}
+                (entry["target"], entry["name"]) for entry in node["secret_files"] + node["configuration_files"]}
             for entry in node["secret_files"]:
                 assert receipt["observations"]["protected_files"][entry["name"]] == {
                     "uid": image.secret_file_owner_uid(), "mode": "0400", "verified": True}
+            for entry in node["configuration_files"]:
+                assert entry["name"] in receipt["resources"]["volumes"]
+                expected = {"path": entry["target"], "sha256": entry["sha256"],
+                    "uid": image.secret_file_owner_uid(), "mode": int(entry["artifact"]["file_mode"], 8)}
+                probe = '''
+import hashlib, json, os, stat
+from pathlib import Path
+path = Path(EXPECTED["path"])
+metadata = path.stat()
+assert os.geteuid() == EXPECTED["uid"] and os.geteuid() != 0
+assert stat.S_ISREG(metadata.st_mode) and metadata.st_uid == 0
+assert stat.S_IMODE(metadata.st_mode) == EXPECTED["mode"] == 0o444
+with path.open("rb") as stream:
+    raw = stream.read(4097)
+assert len(raw) <= 4096 and hashlib.sha256(raw).hexdigest() == EXPECTED["sha256"]
+try:
+    with path.open("ab") as stream:
+        stream.write(b"unexpected-write")
+except OSError:
+    denied = True
+else:
+    denied = False
+assert denied
+print(json.dumps({"numeric_read": True, "mode": True, "bytes": True, "write_denied": True}))
+'''
+                result = container.exec_run(["python", "-I", "-c", "EXPECTED=" + repr(expected) + "\n" + probe])
+                assert result.exit_code == 0 and len(result.output) <= 256, "configuration numeric recipient witness failed"
+                assert json.loads(result.output) == {"numeric_read": True, "mode": True, "bytes": True, "write_denied": True}
             for value_path in (ROOT / "material").iterdir():
                 if value_path.name != "index.json":
                     assert value_path.read_bytes() not in container.logs(tail=1000), "secret in product logs"

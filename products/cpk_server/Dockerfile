@@ -3,16 +3,17 @@ FROM python:3.12-slim
 ENV PIP_DEFAULT_TIMEOUT=120 \
     PIP_RETRIES=5 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONPATH=/app/products/cpk_server/src
+    PYTHONPATH=/app/products/cpk_server/src \
+    CPK_WRAPPER_CONFIGURATION_FILE=/etc/cpk/cpk-server/control.json
 
 WORKDIR /app
 
 RUN python -m pip install --no-cache-dir \
-    "fastapi>=0.115" \
+    "control-plane-kit-server-sdk[fastapi] @ https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/5dc93b92c27bb9bbe2af027f945a347e5e4131bc.zip" \
     "uvicorn>=0.30" \
-    "control-plane-kit-core @ https://github.com/OpenJ92/control-plane-kit/archive/e3e29995a4ffc6e6645c2b35d41f394438464d2d.zip#subdirectory=control-plane-kit-core" \
-    "control-plane-kit-operations @ https://github.com/OpenJ92/control-plane-kit/archive/e3e29995a4ffc6e6645c2b35d41f394438464d2d.zip#subdirectory=control-plane-kit-operations" \
-    "control-plane-kit-interpreters[cloudflare,docker,gateway,public-dns] @ https://github.com/OpenJ92/control-plane-kit-interpreters/archive/e19da40f948d324fbb37cd53075bcbf66a4ee77f.zip"
+    "control-plane-kit-core @ https://github.com/OpenJ92/control-plane-kit/archive/250d65e19dc748ebe840f705be77eb732dab3cb3.zip#subdirectory=control-plane-kit-core" \
+    "control-plane-kit-operations @ https://github.com/OpenJ92/control-plane-kit/archive/250d65e19dc748ebe840f705be77eb732dab3cb3.zip#subdirectory=control-plane-kit-operations" \
+    "control-plane-kit-interpreters[cloudflare,docker,gateway,public-dns] @ https://github.com/OpenJ92/control-plane-kit-interpreters/archive/bdbab01c0babaead958450b3c5e643317b2f4cd9.zip"
 
 COPY products/cpk_server/src ./products/cpk_server/src
 
