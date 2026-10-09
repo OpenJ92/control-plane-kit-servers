@@ -37,7 +37,8 @@ def _canonical_origin(value: str) -> str:
 
     Reject WHATWG numeric-host aliases and explicit default ports so the Node
     host does not silently select a different origin. DNS names use ordinary
-    labels (IDNs must already be punycode); this is an authoring subset.
+    labels without IDNA A-labels; this is an authoring subset, not an IDNA or
+    WHATWG implementation. The web process remains the final URL validator.
     """
     try:
         if (type(value) is not str or not 1 <= len(value) <= 2048 or "%" in value
@@ -55,7 +56,8 @@ def _canonical_origin(value: str) -> str:
                 canonical_host = str(ipaddress.IPv4Address(host))
             except ValueError:
                 labels = host.removesuffix(".").split(".")
-                if (len(host) > 253 or not all(_DNS_LABEL.fullmatch(label) for label in labels)
+                if (len(host) > 253 or not all(_DNS_LABEL.fullmatch(label)
+                                              and not label.startswith("xn--") for label in labels)
                         or labels[-1].isdigit() or re.fullmatch(r"0x[0-9a-f]*", labels[-1])):
                     raise ValueError
                 canonical_host = host

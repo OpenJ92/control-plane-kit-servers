@@ -62,12 +62,15 @@ CPK routes. Product identity incorporates canonical image and runtime contract
 material, so changes cannot silently keep the same material identity.
 
 `CPK_WEB_UPSTREAM` is required public configuration. The authoring helper accepts
-bounded canonical HTTPS origins: ordinary lowercase ASCII DNS labels (already
-punycode for IDNs), canonical IPv4 and compressed IPv6, and optional nondefault
+bounded canonical HTTPS origins: ordinary lowercase ASCII DNS labels excluding
+IDNA A-labels (`xn--`), canonical IPv4 and compressed IPv6, and optional nondefault
 ports. It rejects credentials, paths, queries, fragments, URL normalization
 aliases and explicit default port 443. Errors omit rejected values. The web
 process remains the final validator; this helper deliberately supports a bounded
-subset of its URL parser, not a second general URL implementation.
+subset of its URL parser, not a second general URL implementation. IDN origins
+are outside this helper's current contract, including valid punycode labels:
+accepting arbitrary `xn--` labels would admit values the web process refuses, and
+approximating its IDNA normalization would introduce another parser boundary.
 
 The provider socket is `http`. Container port defaults to 8080; `port=` must be an
 integer from 1024 to 65535 and changes both `PORT` and the provider port. The image

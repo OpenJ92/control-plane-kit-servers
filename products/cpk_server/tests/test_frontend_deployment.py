@@ -94,6 +94,7 @@ class FrontendDeploymentTests(unittest.TestCase):
             "https://cpk.example.test\\evil", "https://cpk.example.test\n", "https://127.1",
             "https://0x7f000001", "https://cpk.123", "https://%63pk.example.test",
             "https://[fe80::1%25eth0]", "https://[fe80::1%eth0]", "", None,
+            "https://xn--a.example", "https://xn--abc.example", "https://xn--bcher-kva.example",
         ):
             with self.subTest(origin=origin):
                 with self.assertRaisesRegex(ValueError, "^frontend upstream must be a canonical HTTPS origin$"):

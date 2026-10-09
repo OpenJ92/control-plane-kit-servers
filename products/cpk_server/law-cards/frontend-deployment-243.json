@@ -14,7 +14,7 @@
     "The graph is ordinary, nonmanaged, roundtrippable and scoped only to the explicit frontend workspace/runtime.",
     "Separate workspace lifetime preserves the website during Hello teardown; live inventory disjointness remains the run plan's obligation."
   ],
-  "negative_cases": "Credential/path/query-bearing or noncanonical origins; invalid port or unpinned image; mismatched connector document; wrong ingress socket; aliased website/connector; untyped authority.",
+  "negative_cases": "Credential/path/query-bearing or noncanonical origins; IPv6 zone IDs; unsupported IDNA A-labels; invalid port or unpinned image; mismatched connector document; wrong ingress socket; aliased website/connector; untyped authority.",
   "discarded_assumptions": "No root bootstrap extension, fictitious SDK receiver, temporary probe, or source-test claim of live readiness/retention.",
   "evidence": "Existing DockerInstallationTests informs pure product/reference composition. No migration or frozen-suite translation; unchanged owning Docker ./test.sh supplies target-red and green."
 }
