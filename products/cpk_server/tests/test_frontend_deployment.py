@@ -115,7 +115,7 @@ class FrontendDeploymentTests(unittest.TestCase):
         topology = api.compose_frontend_deployment(**inputs, port=9090)
         graph = compile_topology(topology)
         self.assertTrue(validate_graph(graph).valid)
-        self.assertEqual(graph.workspace_id, inputs["workspace_id"])
+        self.assertEqual(graph.name, inputs["workspace_id"])
         self.assertEqual(set(graph.nodes), {"website", "frontend-connector"})
         self.assertEqual(set(graph.runtimes), {"frontend-runtime"})
         self.assertEqual(topology.root.authority_ref, inputs["authority_ref"])
@@ -151,12 +151,17 @@ class FrontendDeploymentTests(unittest.TestCase):
         foreign = ProductDescriptorCodec().encode_document(api.frontend_product(self.image(), upstream=inputs["upstream"]))
         with self.assertRaises(ValueError):
             api.compose_frontend_deployment(**{**inputs, "connector_product": foreign})
+        changed = ProductDescriptorCodec().encode_document(replace(selected.product,
+            runtime_contract=replace(selected.product.runtime_contract, public_environment=(
+                PublicStaticEnvironmentBinding("UNREVIEWED_SETTING", "value"),))))
+        with self.assertRaises(ValueError):
+            api.compose_frontend_deployment(**{**inputs, "connector_product": changed})
 
     def test_composition_contains_only_frontend_scope_not_hello_or_root_resources(self):
         api = self.api()
         topology = api.compose_frontend_deployment(**self.inputs())
         graph = compile_topology(topology)
-        self.assertEqual(graph.workspace_id, "frontend-workspace")
+        self.assertEqual(graph.name, "frontend-workspace")
         self.assertEqual({node.runtime_id for node in graph.nodes.values()}, {"frontend-runtime"})
         self.assertEqual(graph.edges, {})
         self.assertEqual([(i.ingress_id, i.target.node_id, i.connector_node_id) for i in graph.public_ingresses],
