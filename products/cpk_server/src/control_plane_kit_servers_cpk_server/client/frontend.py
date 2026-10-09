@@ -40,7 +40,7 @@ def _canonical_origin(value: str) -> str:
     labels (IDNs must already be punycode); this is an authoring subset.
     """
     try:
-        if (type(value) is not str or not 1 <= len(value) <= 2048
+        if (type(value) is not str or not 1 <= len(value) <= 2048 or "%" in value
                 or any(ord(c) < 33 or ord(c) > 126 for c in value)):
             raise ValueError
         parsed = urlsplit(value)

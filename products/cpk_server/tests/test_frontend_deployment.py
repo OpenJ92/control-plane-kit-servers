@@ -92,7 +92,8 @@ class FrontendDeploymentTests(unittest.TestCase):
             "https://cpk.example.test/", "https://cpk.example.test/path", "https://cpk.example.test?token=secret",
             "https://cpk.example.test#secret", "https://cpk.example.test:443", "https://cpk.example.test:08080",
             "https://cpk.example.test\\evil", "https://cpk.example.test\n", "https://127.1",
-            "https://0x7f000001", "https://cpk.123", "https://%63pk.example.test", "", None,
+            "https://0x7f000001", "https://cpk.123", "https://%63pk.example.test",
+            "https://[fe80::1%25eth0]", "https://[fe80::1%eth0]", "", None,
         ):
             with self.subTest(origin=origin):
                 with self.assertRaisesRegex(ValueError, "^frontend upstream must be a canonical HTTPS origin$"):
