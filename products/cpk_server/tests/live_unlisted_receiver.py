@@ -20,6 +20,8 @@ from uuid import uuid4
 
 import httpx
 import jwt
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 import control_plane_kit_core as core
 from control_plane_kit_core.algebra import BlockSockets, BlockSpec, ProviderSocket
 from control_plane_kit_core.capabilities import CapabilityName
@@ -297,6 +299,54 @@ class LoseCompletedPreparation:
         return result
 
 
+async def register_surface_verifier(transport, material):
+    """237-only public prerequisite; do not expand the 1912 health fixture.
+
+    The selected owner maps surface-read registration to the existing legacy
+    gateway.probe-signing-key intent. A separate synthetic provider/reference
+    grants only that intent; no health reference permissions are widened.
+    """
+    private = Ed25519PrivateKey.generate()
+    material.private["surface"] = private.private_bytes(serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+    public = private.public_key().public_bytes(serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo).decode("ascii")
+    instant = utc_now()
+    intent = "gateway.probe-signing-key"
+    reference = "secret://unlisted-surface/keys/surface"
+    purpose = "workload-node-control-surface-read"
+    async def register(route, payload):
+        return await asyncio.to_thread(transport.call, route,
+            path_parameters={"workspace_id": "workspace-a"}, payload=payload,
+            credential_role="operator")
+    provider = await register("command.secret-provider.register", {
+        "provider_id": "unlisted-surface", "display_name": "Unlisted surface test key custody",
+        "provider_kind": "control-plane-kit-secrets", "endpoint_reference": "unlisted-surface",
+        "credential_reference": "secret://bootstrap/unlisted-surface/client-token",
+        "allowed_reference_prefixes": ["secret://unlisted-surface/keys"],
+        "allowed_intents": [intent], "admitted_at": instant,
+        "metadata": {"acceptance": "unlisted-sdk-237"}, "idempotency_key": "unlisted-surface-provider"})
+    assert provider["status"] == "active" and provider["allowed_intents"] == [intent]
+    registered = await register("command.secret-reference.register", {
+        "reference": reference, "provider_registration_id": provider["registration_id"],
+        "allowed_intents": [intent], "admitted_at": instant,
+        "metadata": {"acceptance": "unlisted-sdk-237"}, "idempotency_key": "unlisted-surface-reference"})
+    assert registered["status"] == "active" and registered["reference_id"] == reference
+    assert registered["allowed_intents"] == [intent]
+    key = await register("command.delegation-key.register", {
+        "purpose": purpose, "issuer": "cpk-server", "key_id": "unlisted-surface",
+        "algorithm": "ed25519", "public_key_pem": public, "private_key_reference": reference,
+        "admitted_at": instant, "idempotency_key": "unlisted-surface-key"})
+    assert key["status"] == "verify-only" and key["purpose"] == purpose
+    active = await register("command.delegation-key.activate", {
+        "purpose": purpose, "issuer": "cpk-server", "key_id": "unlisted-surface",
+        "activated_at": instant, "idempotency_key": "unlisted-surface-activate"})
+    assert active["status"] == "active" and active["purpose"] == purpose
+    assert active["registration_id"] == key["registration_id"]
+    assert active["key_id"] == "unlisted-surface"
+    print("unlisted receiver: distinct surface verifier admitted through public owners", flush=True)
+
+
 def unlisted_graph(material, root):
     nodes = dict(material.a.nodes)
     documents, introductions, routes = {}, [], []
@@ -367,6 +417,7 @@ async def witness():
                         denied = await socket.get(host.endpoint + "/workspaces/workspace-a")
                         assert denied.status_code == 401
                     transport = LoseCompletedPreparation(host.profile)
+                    await register_surface_verifier(transport, material)
                     for name, document in documents.items():
                         imported = await asyncio.to_thread(transport.call, "command.product.import",
                             path_parameters={"workspace_id": "workspace-a"},
@@ -417,6 +468,12 @@ async def witness():
                             control_surfaces=authored.node(name).block_spec.control_surfaces)
                         assert processes.paths[name].read_bytes() == selected.content.encode()
                         assert processes.hashes[name] == digest(selected.content.encode())
+                        configured = core.ReceiverNodeControlConfigurationCodec().decode_bytes(selected.content.encode())
+                        families = {item.purpose: item for item in configured.verifiers}
+                        assert set(families) == {core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ,
+                            core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ}
+                        assert tuple(key.key_id for key in families[
+                            core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ].public_keys) == ("unlisted-surface",)
                     first, second = (item[0] for item in EXAMPLES)
                     async with httpx.AsyncClient(timeout=3, trust_env=False) as socket:
                         credential, protected_path = processes.tokens[first]

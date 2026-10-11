@@ -58,3 +58,20 @@ files and its private directory, drops/verifies the isolated schema and reuses t
 existing exact container/residue audits. Durable configuration history is not a
 physical cleanup grant. Full #237, provider cleanup/E4, production transport,
 published images and #225 remain separately unproved.
+
+The first owning run stopped at real verifier projection: #1912 intentionally
+registers only health/transit families, while fresh authoring always also requires
+an active surface-read family. `register_surface_verifier` adds this missing
+#237-only prerequisite through the same actual HTTP public registration routes.
+It generates a distinct ephemeral key and registers a separate synthetic provider,
+reference, key and activation. The selected owner maps surface-read admission to
+`gateway.probe-signing-key`; the isolated provider/reference grants only that
+existing intent. No #1912 helper, health permissions, production selector or
+projection response is changed. Generated receiver files must contain exactly
+surface-read plus health-read and the newly registered surface key identity.
+The first failure is fixture setup evidence, not a missing-behavior red.
+
+Profile-negative controls independently verify both re-signed JWT signatures and
+headers, restore only the unsupported nested profile and compare all claims,
+then require the re-signed unchanged-profile credential to succeed on the same
+socket before and after refusal. No new cryptographic implementation is added.
