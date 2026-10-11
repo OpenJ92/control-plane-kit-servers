@@ -328,6 +328,7 @@ async def diagnose_execution(client, transport, result):
     pending = journal.get("pending_request") or {}
     print(json.dumps({"unlisted_execution_diagnostics": transport.execution_diagnostics,
         "pending_route": pending.get("route_id"),
+        "pending_claim_generation": pending.get("body", {}).get("claim_generation"),
         "completed_routes": [item["route_id"] for item in journal["request_history"][-16:]]}), flush=True)
     for route, coordinate, identity in (
         ("read.plan-runs", "plan_id", result.plan_id),

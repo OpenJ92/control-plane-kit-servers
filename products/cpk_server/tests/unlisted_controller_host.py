@@ -40,6 +40,40 @@ from receiver_acceptance_operations import witness_principal
 
 
 _ROLES = ("operator", "approver", "worker")
+
+
+class DiagnosticApplicationBoundary(CpkServerApplicationBoundary):
+    """Observe exception identity/source coordinates, then preserve sanitization."""
+    diagnostic_count = 0
+
+    async def dispatch_async(self, request):
+        try:
+            return await super().dispatch_async(request)
+        except Exception as error:
+            if self.diagnostic_count < 8:
+                self.diagnostic_count += 1
+                frames = []
+                trace = error.__traceback__
+                while trace is not None:
+                    code = trace.tb_frame.f_code
+                    module = trace.tb_frame.f_globals.get("__name__", "")
+                    if (isinstance(module, str) and len(module) <= 160
+                            and module.startswith(("control_plane_kit_", "unlisted_controller_host",
+                                "live_unlisted_receiver", "receiver_acceptance_"))
+                            and all(part.isidentifier() for part in module.split("."))):
+                        frames.append({"module": module,
+                            "function": code.co_name if code.co_name.isidentifier()
+                                and len(code.co_name) <= 128 else "anonymous",
+                            "line": trace.tb_lineno})
+                        frames = frames[-8:]
+                    trace = trace.tb_next
+                kind = type(error).__name__
+                print(json.dumps({"unlisted_owner_exception": kind if kind in {
+                    "InvalidOperationCommand", "InvalidEffectRecoveryContract",
+                    "CpkServerApplicationError"} else "other",
+                    "route": request.route_id,
+                    "frames": frames}), flush=True)
+            raise
 _MAXIMUM_PREPARE_EXCHANGES = 16
 
 
@@ -172,7 +206,7 @@ class ControllerHost:
                     for role in _ROLES
                 )
             )
-            application = CpkServerApplicationBoundary(services, verifier)
+            application = DiagnosticApplicationBoundary(services, verifier)
             boundary = CpkServerHttpProcessBoundary(composition, application)
             prepare_route = composition.http_api.route("command.deployment.prepare")
             prepare_path = prepare_route.path_template.replace(
@@ -199,6 +233,7 @@ class ControllerHost:
                     error = response.body.get("error")
                     message = error.get("message") if isinstance(error, Mapping) else None
                     allowed = {
+                        "invalid operation arguments": "invalid-operation-arguments",
                         "draft command was not admitted": "draft-not-admitted",
                         "draft graph is malformed": "draft-graph-malformed",
                         "receiver expectation is malformed": "receiver-expectation-malformed",

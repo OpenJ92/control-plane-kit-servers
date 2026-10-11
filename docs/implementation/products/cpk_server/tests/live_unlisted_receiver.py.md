@@ -137,3 +137,11 @@ transport failures print the fixed route ID and exception class, while the HTTP
 host prints bounded status/allowlisted reason categories from the actual response.
 No request is repeated for diagnostics. The sixth numeric status was not captured;
 the missing service is a source-confirmed omission, not an observed response body.
+
+The seventh run passed draft create/select and authored preparation, then recorded
+runtime and first-node success before an actual execution HTTP 400. Public events
+prove effects occurred; cleanup is disposal of the test world, not compensation.
+The reason remained unclassified. The next diagnostic-only run preserves the
+scenario and assertions, adding the pending numeric claim generation and passive
+trusted exception source coordinates in the HTTP host. It locates the rejecting
+owner without replaying the interrupted run or claiming a causal fix.
