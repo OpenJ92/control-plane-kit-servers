@@ -77,13 +77,23 @@ def unsupported_profile_credential(credential, target, material):
     installed signer; mutate only the profile after decoding a valid signature.
     """
     encoded = credential.removeprefix("Bearer ")
-    claims = jwt.decode(encoded, material.public["workload"].public_key_pem,
-        algorithms=["EdDSA"], audience=core.receiver_node_control_audience(target),
-        issuer="cpk-server")
+    def verify(token):
+        return jwt.decode(token, material.public["workload"].public_key_pem,
+            algorithms=["EdDSA"], audience=core.receiver_node_control_audience(target),
+            issuer="cpk-server")
+    claims = verify(encoded)
     assert claims["workload_node_health_read"]["profile"] == "workload-node-health-read-grant.v2"
+    header = jwt.get_unverified_header(encoded)
+    original = json.loads(json.dumps(claims))
+    positive = jwt.encode(claims, material.private["workload"], algorithm="EdDSA", headers=header)
     claims["workload_node_health_read"]["profile"] = "workload-node-health-read-grant.v999"
-    return "Bearer " + jwt.encode(claims, material.private["workload"], algorithm="EdDSA",
-        headers=jwt.get_unverified_header(encoded))
+    negative = jwt.encode(claims, material.private["workload"], algorithm="EdDSA", headers=header)
+    assert verify(positive) == original and verify(negative) == claims
+    assert jwt.get_unverified_header(positive) == jwt.get_unverified_header(negative) == header
+    restored = verify(negative)
+    restored["workload_node_health_read"]["profile"] = "workload-node-health-read-grant.v2"
+    assert restored == original, "negative changed a second claim"
+    return "Bearer " + positive, "Bearer " + negative
 
 
 def controller_identity():
@@ -416,15 +426,18 @@ async def witness():
                         refused = await socket.get(processes.origins[second] + protected_path,
                             headers={"Authorization": credential})
                         assert refused.status_code in (401, 403) and len(refused.content) <= 16384
-                        unsupported = unsupported_profile_credential(credential,
+                        resigned, unsupported = unsupported_profile_credential(credential,
                             health.installed_configuration(first).target, material)
+                        resigned_valid = await socket.get(processes.origins[first] + protected_path,
+                            headers={"Authorization": resigned})
+                        assert resigned_valid.status_code == 200
                         bad_profile = await socket.get(processes.origins[first] + protected_path,
                             headers={"Authorization": unsupported})
                         assert bad_profile.status_code in (401, 403) and len(bad_profile.content) <= 16384
                         # Same original valid request still succeeds: the process
                         # remains serving and refusal did not replace its state.
                         still_valid = await socket.get(processes.origins[first] + protected_path,
-                            headers={"Authorization": credential})
+                            headers={"Authorization": resigned})
                         assert still_valid.status_code == 200
                         unknown = await socket.get(processes.origins[second] + "/__control/health/ready",
                             headers={"Authorization": processes.tokens[second][0]})
