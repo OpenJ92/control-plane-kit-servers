@@ -1,9 +1,10 @@
 Source: [live_unlisted_receiver.py](../../../../../products/cpk_server/tests/live_unlisted_receiver.py).
 
 The #237 witness joins already implemented #238 authoring/journal and #1912
-Operations/installed-health owners. No production source or coordinate changes
-are intended. First executable outcomes must be classified honestly; this source
-checkpoint has not been executed and does not manufacture a missing-interface red.
+Operations/installed-health owners. The witness changes no production contracts
+or dependency coordinates; this PR separately repairs the real client verifier
+response consumer found by the third run. Executable outcomes and unreached
+boundaries are recorded separately in the PR and maintained learning document.
 
 Governing existing laws are `receiver-authoring-238.json`, especially exact
 prepare replay, qualified context fences, immutable authored preparation and
@@ -104,3 +105,27 @@ maintained client still re-reads and validates approval before dispatch and owns
 the approval/admission/claim/start/execute/advance payloads and role selection.
 No private owner access, inferred destructive flag, policy relaxation or fallback
 is introduced. Receiver process/health/restart evidence awaits a fresh owning run.
+
+The fifth run passed the exact ordinary approval but returned unverified execution.
+Its actual execution response/events were not retained, so its precise runtime
+cause is unobserved. Source inspection established that adding two distinct products
+to accepted A is outside the selected managed-update shape. The witness now uses
+initial deployment: real HTTP draft create/select reserves the named baseline
+gateway/api fixture as pending desired state, while current remains the real empty
+graph. Both commands carry fresh workspace-derived lifecycle fences and returned
+draft coordinates. The ordinary authored client consumes that exact pending draft
+and generates only the two new receiver configurations, then performs the unchanged
+lost-response/retry, approval, installation, health, restart and teardown path.
+The baseline is not executed separately. Assertions check empty current, selected
+desired lineage and absent runtime effects before preparation.
+
+This prerequisite uses maintained PublicHttpTransport and existing public commands;
+it does not claim that high-level draft_save/select support receiver-bearing graphs
+(those helpers currently omit lifecycle fences). No synthetic current/pending
+records or management policy widening is introduced. On a nonconverged apply,
+finite diagnostics preserve the last 16 execution response summaries or transport
+exception classes, journal route names, and one 32-item page each of public plan
+runs and run events. Only allowlisted bounded coordinate/status/event-kind scalars
+are printed; request bodies, evidence/failure text, tokens and configuration are
+excluded. Diagnostics neither retry mutations nor replace the failed assertion;
+all existing cleanup still runs.

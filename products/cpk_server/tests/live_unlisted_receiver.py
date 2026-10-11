@@ -37,7 +37,7 @@ from control_plane_kit_core.types import BlockFamily, Protocol, RuntimeKind
 from control_plane_kit_operations.ingress_authorities import IngressAuthorityProviderKind
 from control_plane_kit_servers_cpk_server.client import TopologyClient
 from control_plane_kit_servers_cpk_server.client.authoring import (
-    AuthoredDesiredGraph, ReceiverIntroduction, ReceiverScope,
+    AuthoredDesiredGraph, PendingReceiverContinuation, ReceiverIntroduction, ReceiverScope,
     GatewayHealthRoutes, GatewayHealthTargetIntent,
 )
 from control_plane_kit_servers_cpk_server.client.transport import (
@@ -284,12 +284,24 @@ class LoseCompletedPreparation:
     def __init__(self, profile):
         self.inner = PublicHttpTransport(profile)
         self.calls, self.preparations = [], []
+        self.execution_diagnostics = []
         self.lost = False
 
     def call(self, route_id, **arguments):
         snapshot = json.loads(json.dumps(arguments))
         self.calls.append((route_id, snapshot))
-        result = self.inner.call(route_id, **arguments)
+        observed = route_id in {"command.run.start", "command.deployment.execute"}
+        try:
+            result = self.inner.call(route_id, **arguments)
+        except ClientTransportError as error:
+            if observed:
+                self.execution_diagnostics.append({"route": route_id,
+                    "transport_error": type(error).__name__})
+                self.execution_diagnostics = self.execution_diagnostics[-16:]
+            raise
+        if observed:
+            self.execution_diagnostics.append({"route": route_id, **diagnostic_fields(result)})
+            self.execution_diagnostics = self.execution_diagnostics[-16:]
         if route_id == "command.deployment.prepare":
             assert result["status"] == "approval-required"
             self.preparations.append((snapshot, result))
@@ -297,6 +309,80 @@ class LoseCompletedPreparation:
                 self.lost = True
                 raise ClientTransportError("synthetic loss after completed HTTP preparation")
         return result
+
+
+def diagnostic_fields(value):
+    """Only bounded protocol coordinates/statuses; never payload or failure text."""
+    names = ("run_id", "execution_request_id", "run_status", "coordinator_status",
+        "effects_attempted", "activity_id", "claim_generation", "event_id",
+        "event_type", "ordinal", "status", "plan_id")
+    return {key: item for key in names if key in value
+        and (item := value[key]) is not None
+        and (type(item) is int or type(item) is str and len(item) <= 256)}
+
+
+async def diagnose_execution(client, transport, result):
+    journal = client.journal.read(result.operation_ref)
+    pending = journal.get("pending_request") or {}
+    print(json.dumps({"unlisted_execution_diagnostics": transport.execution_diagnostics,
+        "pending_route": pending.get("route_id"),
+        "completed_routes": [item["route_id"] for item in journal["request_history"][-16:]]}), flush=True)
+    for route, coordinate, identity in (
+        ("read.plan-runs", "plan_id", result.plan_id),
+        ("read.run-events", "run_id", result.run_id)):
+        if identity is None:
+            continue
+        try:
+            page = await asyncio.to_thread(transport.inner.call, route,
+                path_parameters={"workspace_id": "workspace-a", coordinate: identity},
+                payload={"limit": 32}, credential_role="operator")
+            print(json.dumps({"unlisted_public_diagnostic": route,
+                "items": [diagnostic_fields(item) for item in page["items"][:32]],
+                "more": page.get("next_cursor") is not None}), flush=True)
+        except Exception as error:
+            print(json.dumps({"unlisted_public_diagnostic": route,
+                "error_type": type(error).__name__}), flush=True)
+
+
+async def select_pending_baseline(transport, material):
+    """Public prerequisite for initial deployment, not high-level draft-save proof."""
+    async def call(route, payload=None, draft_id=None):
+        path = {"workspace_id": "workspace-a"}
+        if draft_id is not None:
+            path["draft_id"] = draft_id
+        return await asyncio.to_thread(transport.call, route, path_parameters=path,
+            payload=payload or {}, credential_role="operator")
+    names = ("current_graph_id", "current_realized_projection_id", "desired_graph_id",
+        "desired_realized_projection_id", "desired_graph_revision")
+    before = (await call("read.workspace"))["workspace"]
+    current = await call("read.current-graph")
+    empty = DEFAULT_GRAPH_CODEC.decode(current["graph_descriptor"])
+    assert not empty.nodes and not empty.runtimes
+    assert not transport.preparations
+    session = await call("command.operation-session.start", {"workspace_id": "workspace-a",
+        "title": "Unlisted baseline pending draft", "metadata": {}, "idempotency_key": str(uuid4())})
+    draft = await call("command.desired-topology-draft.create", {
+        "session_id": session["session_id"], "graph": DEFAULT_GRAPH_CODEC.encode(material.a),
+        "title": "Named baseline fixture", "receiver_lifecycle": {key: before[key] for key in names},
+        "idempotency_key": str(uuid4())})
+    fresh = (await call("read.workspace"))["workspace"]
+    assert all(fresh[key] == before[key] for key in names)
+    selected = await call("command.desired-topology-draft.select", {
+        "session_id": session["session_id"], "revision": draft["revision"],
+        "expected_desired_graph_id": fresh["desired_graph_id"],
+        "expected_desired_realized_projection_id": fresh["desired_realized_projection_id"],
+        "expected_desired_graph_revision": fresh["desired_graph_revision"],
+        "receiver_lifecycle": {key: fresh[key] for key in names},
+        "idempotency_key": str(uuid4())}, draft["draft_id"])
+    after = (await call("read.workspace"))["workspace"]
+    assert all(after[key] == before[key] for key in names[:2])
+    assert all(selected[key] == draft[key] for key in ("workspace_id", "draft_id", "revision", "graph_id"))
+    assert after["desired_graph_id"] == draft["graph_id"]
+    assert after["desired_realized_projection_id"] == selected["desired_realized_projection_id"]
+    assert after["desired_graph_revision"] == selected["desired_graph_revision"]
+    print("unlisted receiver: real pending baseline selected; current remains empty", flush=True)
+    return PendingReceiverContinuation(draft["draft_id"], draft["revision"],
+        (ReceiverScope("gateway", "control"), ReceiverScope("api", "http")))
 
 
 async def register_surface_verifier(transport, material):
@@ -410,7 +496,6 @@ async def witness():
                 driver = PublicOperationsDriver(factory, workspace_id="workspace-a")
                 await driver.create_workspace()
                 await register_material(driver, material)
-                await driver.accept(label="bootstrap", desired_graph=material.a, destructive=False)
                 graph, documents, introductions, routes = unlisted_graph(material, root)
                 # Immutable controller image/source precedes these new product registrations.
                 with ControllerHost(factory, driver, root / "controller") as host:
@@ -419,6 +504,8 @@ async def witness():
                         assert denied.status_code == 401
                     transport = LoseCompletedPreparation(host.profile)
                     await register_surface_verifier(transport, material)
+                    baseline = await select_pending_baseline(transport, material)
+                    assert not compute.installed and not compute.runtimes and not ingress.allocations
                     for name, document in documents.items():
                         imported = await asyncio.to_thread(transport.call, "command.product.import",
                             path_parameters={"workspace_id": "workspace-a"},
@@ -432,6 +519,7 @@ async def witness():
                     client = TopologyClient(host.profile, transport=transport)
                     pending = await asyncio.to_thread(client.plan,
                         AuthoredDesiredGraph(source, introductions=introductions,
+                            pending=baseline,
                             gateway_health_replacements=routes))
                     assert pending.status == "attention-required" and len(transport.preparations) == 1
                     journal = client.journal.read(pending.operation_ref)
@@ -465,6 +553,11 @@ async def witness():
                         "required_scope": planned.required_scope}), flush=True)
                     result = await asyncio.to_thread(restarted.apply, planned.operation_ref,
                         execute_plan=planned.plan_id, **{approval_option: planned.plan_id})
+                    if result.status != "converged":
+                        try:
+                            await diagnose_execution(restarted, transport, result)
+                        except Exception as error:
+                            print(json.dumps({"unlisted_diagnostic_error": type(error).__name__}), flush=True)
                     assert result.status == "converged", result.descriptor()
                     assert health.restarted == {item[0] for item in EXAMPLES}
                     assert len(set(health.configured_ids.values())) == 2
