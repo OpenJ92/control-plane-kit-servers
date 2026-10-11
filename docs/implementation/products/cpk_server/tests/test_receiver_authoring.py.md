@@ -29,3 +29,18 @@ route intents. Common own-health selection must agree with Y's authored target
 and actual declaration. This is pure source composition using never-executed
 image descriptors, not deployment, current graph advancement or saga evidence.
 Omitted routes preserve bytes; the existing explicit-empty law remains tested.
+
+#237's real HTTP witness exposed a production response-shape bug masked by the
+scripted fixture. The fixture now uses the selected Operations
+`FocusedDetailReadModel(...).descriptor()` rather than inventing nested `payload`.
+A focused valid-flat response case proves planning succeeds, generates exactly
+one receiver identity and preserves the source file. Missing/null/list/text fields
+and a nested-only legacy response refuse before receiver identity/prepare dispatch.
+The existing complete persist-before-send/lost-response/restart/no-reselection
+law runs against that same owner-shaped response without weakened assertions.
+
+Target commit `efcdd751` precedes the production fix. These new unit regressions
+were not separately executed red: the maintained runner has no focused mode and
+AGENTS forbids ad-hoc containers. North explicitly accepted actual joined run
+`38136777213` as causal red and released one ordinary corrected CI instead of a
+duplicate full red cycle. Collection/setup failures are not claimed as this red.

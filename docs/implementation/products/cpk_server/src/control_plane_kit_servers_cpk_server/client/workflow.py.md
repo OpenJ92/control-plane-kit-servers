@@ -16,3 +16,12 @@ SHA-256. The outgoing graph comes only from the immutable preparation artifact,
 which must also decode and re-encode to identical canonical Core graph bytes.
 Identity factories, context reads, verifier reads, and route composition are
 never invoked on replay.
+
+The public workload-verifier read is the flattened Operations
+`FocusedDetailReadModel.descriptor()`: `workspace_id`, `kind` and
+`workload_verifier_configuration` are siblings. After validating workspace/kind,
+the client extracts only that top-level configuration mapping into the exact
+input envelope expected by `author_receiver_graph`. It does not read a `payload`
+field or accept a nested compatibility shape. Missing/non-mapping fields refuse
+before fresh receiver identity generation or prepare dispatch; the pure authoring
+owner retains all verifier family, purpose, key and declaration checks.
