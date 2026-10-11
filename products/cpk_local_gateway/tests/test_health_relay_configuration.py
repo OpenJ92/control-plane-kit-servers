@@ -46,6 +46,42 @@ class HealthRelayConfigurationTests(unittest.TestCase):
         return (self.world.transit.artifact(trust_api),
                 api.gateway_health_relay_configuration_artifact(self.configuration(api)))
 
+    def test_shared_routes_enter_product_artifact_boundary_without_translation(self):
+        from control_plane_kit_core.receiver_management_routes import (
+            ReceiverManagementRouteBinding, ReceiverManagementRoutes,
+            ReceiverManagementRoutesCodec,
+        )
+        w = self.world
+        routes = ReceiverManagementRoutes(w.transit.gateway_target, (
+            ReceiverManagementRouteBinding("database-management", w.target,
+                w.declaration, "http://wrapped-db:8087"),
+        ))
+        api = self.api()
+        try:
+            artifact = api.gateway_health_relay_configuration_artifact(routes)
+        except api.GatewayHealthRelayConfigurationError:
+            self.fail("Servers artifact boundary must accept the shared Core route value")
+        self.assertEqual(artifact.content.encode(), ReceiverManagementRoutesCodec().encode_bytes(routes))
+        self.assertEqual((artifact.artifact_id, artifact.target_path),
+                         ("gateway-health-targets", TARGET_PATH))
+        self.assertIs(artifact.file_mode, ConfigurationFileMode.READ_ONLY)
+
+    def test_selected_management_port_produces_shared_binding(self):
+        from control_plane_kit_core.receiver_management_routes import (
+            ReceiverManagementRouteBinding, ReceiverManagementRoutes,
+            ReceiverManagementRoutesCodec,
+        )
+        w = self.world
+        binding = self.api().gateway_health_target_binding(
+            target_id="database-management", target=w.target,
+            runtime_contract=w.contract, hostname="wrapped-db")
+        self.assertIs(type(binding), ReceiverManagementRouteBinding,
+                      "Servers port selection must produce the shared Core binding")
+        routes = ReceiverManagementRoutes(w.transit.gateway_target, (binding,))
+        self.assertEqual(ReceiverManagementRoutesCodec().decode_bytes(
+            ReceiverManagementRoutesCodec().encode_bytes(routes)), routes)
+        self.assertEqual(binding.origin, "http://wrapped-db:8087")
+
     def control_artifact(self):
         api = importlib.import_module(PACKAGE + ".control_configuration")
         return api.gateway_control_configuration_artifact(own_configuration(api, self.world))

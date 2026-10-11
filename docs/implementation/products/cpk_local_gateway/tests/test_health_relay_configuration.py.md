@@ -64,3 +64,11 @@ This is target-only static preparation, not executable green. Initial929f829 red
 proves missing obsolete own-profile refusal only. New receiving closure and the
 unchanged whole Servers/paired Interpreter gates remain required. No host test,
 manual runner, provider, credential publication or live deployment occurred.
+
+Servers #245 adds two causal adoption targets: an actual Core management-route
+value must cross the product artifact boundary without nominal translation, and
+the declared management-port factory must return a Core binding consumable by
+that same route language. The initial checkpoint deliberately leaves production
+source unchanged; the expected failures are the old product-local nominal type
+checks. Installed dependency checks and all existing tests remain in the owning
+gate. No target-red result is claimed until observed.
