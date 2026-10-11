@@ -25,6 +25,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 import control_plane_kit_core as core
 from control_plane_kit_core.algebra import BlockSockets, BlockSpec, ProviderSocket
 from control_plane_kit_core.capabilities import CapabilityName
+from control_plane_kit_core.configuration import ConfigurationArtifact, ConfigurationMediaType
+from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
 from control_plane_kit_core.products import (
     ContainerServerProduct, OciImageReference, ProductDescriptorCodec, ProductIdentity,
     ProductReference, ProductRuntimeContract, ProviderRuntimePort,
@@ -441,6 +443,8 @@ def unlisted_graph(material, root):
     nodes = dict(material.a.nodes)
     documents, introductions, routes = {}, [], []
     for name, script, business_path, artifact_id, port in EXAMPLES:
+        target_path = str(root / name / "wrapper.json")
+        slot = ConfigurationArtifact(artifact_id, target_path, ConfigurationMediaType.JSON, "{}")
         surface = core.WorkloadNodeControlSurfaceDescriptor(
             core.NodeControlGraphReference(core.NodeControlGraphReferenceRole.PROVIDER_SOCKET, "http"),
             (), (core.NodeHealthReadKind.LIVENESS, core.NodeHealthReadKind.READINESS))
@@ -448,7 +452,9 @@ def unlisted_graph(material, root):
             sockets=BlockSockets(providers=(ProviderSocket("http", Protocol.HTTP),)),
             provider_ports=(ProviderRuntimePort("http", port),),
             capabilities=(CapabilityName.NODE_CONTROLLABLE, CapabilityName.HEALTH_CHECKABLE),
-            control_surfaces=(surface,))
+            control_surfaces=(surface,), configuration_artifacts=(slot,),
+            public_environment=(PublicStaticEnvironmentBinding(
+                "CPK_WRAPPER_CONFIGURATION_FILE", target_path),))
         document = ProductDescriptorCodec().encode_document(ContainerServerProduct(
             ProductIdentity("independent-sdk-example", name, 1),
             OciImageReference("example.invalid", "source-example/" + name, "sha256:" + "d" * 64), contract))
@@ -461,7 +467,7 @@ def unlisted_graph(material, root):
             metadata={"product_identity": reference.identity.key,
                 "product_descriptor_digest": reference.descriptor_sha256.value})
         scope = ReceiverScope(name, "http")
-        introductions.append(ReceiverIntroduction(scope, artifact_id, str(root / name / "wrapper.json")))
+        introductions.append(ReceiverIntroduction(scope, artifact_id, target_path))
         routes.append(GatewayHealthTargetIntent(name, scope, nodes[name].endpoint("http").url))
     graph = replace(material.a, nodes=nodes, runtimes={"docker":
         replace(material.a.runtimes["docker"], children=tuple(nodes))})
@@ -546,6 +552,24 @@ async def witness():
                     assert source.read_bytes() == original and prepared.read_bytes() == prepared_bytes
                     assert all(sum(call[0] == route for call in transport.calls) == count
                         for route, count in counts.items())
+                    authored = DEFAULT_GRAPH_CODEC.decode(json.loads(prepared_bytes))
+                    for name, document in documents.items():
+                        contract = document.product.runtime_contract
+                        declared, = contract.configuration_artifacts
+                        node = authored.node(name)
+                        selected = select_receiver_node_control_configuration_artifact(
+                            artifacts=node.configuration_artifacts,
+                            environment=node.public_environment,
+                            control_surfaces=node.block_spec.control_surfaces)
+                        assert (selected.artifact_id, selected.target_path,
+                            selected.media_type, selected.file_mode) == (
+                            declared.artifact_id, declared.target_path,
+                            declared.media_type, declared.file_mode)
+                        assert node.public_environment == contract.public_environment
+                        assert selected.content != declared.content == "{}"
+                        assert not graph.node(name).configuration_artifacts
+                        assert not graph.node(name).public_environment
+                    print("unlisted receiver: generated wrapper slots match declared product contracts", flush=True)
                     assert type(planned.destructive) is bool
                     assert planned.required_scope == (
                         "plan:approve-destructive" if planned.destructive else "plan:approve")
@@ -564,7 +588,6 @@ async def witness():
                     assert result.status == "converged", result.descriptor()
                     assert health.restarted == {item[0] for item in EXAMPLES}
                     assert len(set(health.configured_ids.values())) == 2
-                    authored = DEFAULT_GRAPH_CODEC.decode(json.loads(prepared_bytes))
                     for name, *_ in EXAMPLES:
                         selected = select_receiver_node_control_configuration_artifact(
                             artifacts=authored.node(name).configuration_artifacts,

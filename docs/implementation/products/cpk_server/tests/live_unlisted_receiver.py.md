@@ -145,3 +145,15 @@ The reason remained unclassified. The next diagnostic-only run preserves the
 scenario and assertions, adding the pending numeric claim generation and passive
 trusted exception source coordinates in the HTTP host. It locates the rejecting
 owner without replaying the interrupted run or claiming a causal fix.
+
+The ninth diagnostic run located the real rejection at Operations runtime-effects
+product materialization: authored configuration slot keys did not match the new
+products' empty declared slot sets. Each independent product now declares its
+exact artifact ID/path/JSON/read-only slot and the matching public configuration
+file binding. The descriptor's inert `{}` content is a slot template only; it
+contains no receiver identity or verifier material. Raw desired nodes remain
+artifact/environment-free so the actual client must generate their full payloads.
+Before approval/execution, the witness compares generated slot coordinates and
+environment to the registered descriptor and proves the placeholder is not the
+selected content. Existing installed-byte/SDK-decode/restart checks remain.
+No runtime contract validation is relaxed or copied into a substitute owner.
