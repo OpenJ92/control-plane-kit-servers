@@ -394,7 +394,7 @@ async def register_material(
     for name in ("gateway", "api", "connector"):
         document = documents[name]
         content = getattr(document, "content", None)
-        if not isinstance(content, str):
+        if not isinstance(content, bytes):
             raise ValueError(f"{name} product document has no encoded content")
         descriptor = json.loads(content)
         if not isinstance(descriptor, dict):

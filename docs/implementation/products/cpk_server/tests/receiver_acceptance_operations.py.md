@@ -48,3 +48,8 @@ Docker-backed owning gate and independent review remain pending.
 execution response and retains its bounded run/result context. Negative witnesses
 must match the expected uncertain disposition and durable attempt; generic
 `OperationsSequenceError` does not satisfy an injected-fault test.
+
+The second owning run reached real schema bootstrap and workspace creation, then
+stopped at this helper's incorrect string guard. Core's `ProductDescriptorDocument`
+contract owns canonical `bytes`; registration now requires bytes and passes them
+to JSON decoding without a coercive fallback. No deployment plan/effect had started.

@@ -47,3 +47,9 @@ historical-protection owner. Every exact allocation is reported with its current
 Neither an empty current manifest nor schema deletion grants configuration cleanup
 or proves physical volume removal; no such physical volume is created by the
 named compute substitute. North accepted this evidence boundary after Kepler traced the existing owners: immutable history may remain, while physical staging and configuration cleanup remain explicitly unmodeled/unproven. No E4 transfer is claimed.
+
+Both failed-update paths also account for references before dropping their schema.
+They compare the full accepted A binding map before/after the fault. Newly captured
+references must be attributable to actual requests delivered on the uncertain run;
+those references are labelled unaccepted with cleanup unproven. All historical
+protection reads must remain complete; schema disposal does not erase the report.

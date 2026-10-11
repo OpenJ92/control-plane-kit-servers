@@ -48,7 +48,10 @@ cleanup_control_fixture() {
 
 cleanup() {
   receiver_cleanup_status=0
-  cleanup_receiver_fixture || receiver_cleanup_status=1
+  cleanup_receiver_fixture || {
+    echo "receiver acceptance cleanup incomplete; records=$RECEIVER_RECORDS" >&2
+    receiver_cleanup_status=1
+  }
   if [ -n "$MISSING_CONTROL_CONTAINER" ]; then
     docker rm -f "$MISSING_CONTROL_CONTAINER" >/dev/null 2>&1 || true
   fi
@@ -90,6 +93,7 @@ cleanup_receiver_fixture() {
   rm -f "$RECEIVER_RECORDS/container" || return 1
   rmdir "$RECEIVER_RECORDS" || return 1
   RECEIVER_RECORDS=""
+  echo "receiver acceptance witness container absence verified"
 }
 
 finish() {
@@ -575,7 +579,6 @@ if [ "$PROFILE" = wrapped-source ]; then
   docker start -a "$receiver_id"
   [ "$(docker inspect --format '{{.State.ExitCode}}' "$receiver_id")" = 0 ]
   cleanup_receiver_fixture
-  echo "receiver acceptance witness container absence verified"
 fi
 
 phase "clean owned smoke resources"

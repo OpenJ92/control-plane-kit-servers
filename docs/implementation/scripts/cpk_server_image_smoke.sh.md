@@ -44,3 +44,9 @@ no broad prune or implicit retry. The witness creates and drops isolated issue
 schemas through real Operations bootstrap/UoW, leaving the source server schema
 separate. Published-baseline does not invoke this source witness. The additional
 container has no host listener, daemon mount or credentials from the user.
+
+The witness cleanup function emits its bounded absence marker after successful
+identity/label verification, removal, absence queries and cidfile-directory cleanup,
+including on a failed witness path. Failure emits an incomplete-cleanup marker
+with its retained record directory. Prior runs without these distinct markers
+must not be retroactively described as separately verified absence evidence.

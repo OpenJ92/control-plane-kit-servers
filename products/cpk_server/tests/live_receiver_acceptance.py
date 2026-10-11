@@ -43,7 +43,7 @@ def origin(schema, receiver="a" * 32):
         return uow.stores.graphs.receiver_introduction("workspace-a", receiver)
 
 
-def configuration_accounting(schema, compute, expected_slots, label):
+def configuration_accounting(schema, compute, expected_slots, label, unaccepted_refs=frozenset()):
     """Observe owner truth; absence from current is never cleanup permission."""
     refs = tuple(compute.configuration_refs.values())
     assert refs and len(refs) <= 32
@@ -66,9 +66,12 @@ def configuration_accounting(schema, compute, expected_slots, label):
     bindings = {(value.ref.node_id, value.ref.artifact_id): value.ref for value in current.bindings}
     assert len(bindings) == expected_slots
     current_ids = {value.allocation_id for value in bindings.values()}
+    assert unaccepted_refs <= set(compute.configuration_refs)
+    assert not unaccepted_refs & current_ids
     print(json.dumps({"configuration_accounting": label, "allocations": [
         {"allocation_id": ref.allocation_id, "node_id": ref.node_id, "artifact_id": ref.artifact_id,
-         "role": "current" if ref.allocation_id in current_ids else "superseded-or-historical",
+         "role": ("unaccepted-fault" if ref.allocation_id in unaccepted_refs else
+             "current" if ref.allocation_id in current_ids else "superseded-or-historical"),
          "historical_protection": history[ref.allocation_id].state,
          "physical_staging": "unmodeled", "cleanup": "unproven"}
         for ref in sorted(refs, key=lambda value:value.allocation_id)]}, sort_keys=True), flush=True)
@@ -192,6 +195,8 @@ async def failed_update(database_url, fault):
         await driver.accept(label="a", desired_graph=material.a, destructive=False)
         original = origin(schema)
         before = await driver.workspace()
+        original_bindings, _ = configuration_accounting(schema, compute, 4, fault + "-before")
+        original_refs = set(compute.configuration_refs)
         reads = tuple(health.signed_reads)
         prior_compute = len(compute.calls)
         prior_key_failures = health.keys.failures
@@ -201,9 +206,11 @@ async def failed_update(database_url, fault):
             health.keys.unavailable = True
         else:
             raise ValueError("unknown witness fault")
+        failed_run_id = None
         try:
             await driver.accept(label="b", desired_graph=material.b, destructive=False)
         except CoordinatorStopped as stopped:
+            failed_run_id = stopped.run_id
             assert stopped.execution["coordinator_status"] == "uncertain"
             assert stopped.execution["run_status"] != "succeeded"
             if fault == "missing-installation-receipt":
@@ -226,6 +233,13 @@ async def failed_update(database_url, fault):
         assert (after["current_graph_id"], after["current_realized_projection_id"]) == (
             before["current_graph_id"], before["current_realized_projection_id"])
         assert origin(schema) == original and original.retired_action_id is None
+        delivered = {ref.allocation_id for request in compute.calls[prior_compute:]
+            if request.source.run_id.value == failed_run_id and request.configuration_instances is not None
+            for ref in request.configuration_instances.instances}
+        new_refs = set(compute.configuration_refs) - original_refs
+        assert new_refs and new_refs <= delivered, "failed-run allocation delivery was not recorded"
+        failed_bindings, _ = configuration_accounting(schema, compute, 4, fault + "-after", frozenset(new_refs))
+        assert failed_bindings == original_bindings, "failed update changed exact accepted A bindings"
         assert tuple(health.signed_reads) == reads, "failed prerequisite produced successful health"
         assert not any(type(request.operation) is RemoveNodeResource for request in compute.calls)
         print("receiver acceptance: " + fault + " preserved accepted A and original receiver", flush=True)
