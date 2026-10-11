@@ -567,6 +567,9 @@ PY
 
 if [ "$PROFILE" = wrapped-source ]; then
   phase "receiver acceptance owner composition"
+  frozen_controller="$(docker image inspect --format '{{.Id}}' "$CPK_SERVERS_TEST_IMAGE")"
+  examples="$(pwd)/products/cpk_server/examples/unlisted_sdk"
+  [ -d "$examples" ]
   RECEIVER_RECORDS="$(mktemp -d)"
   observed="$(docker container ls -aq --filter "name=^/$NETWORK-receiver-acceptance$")"
   [ -z "$observed" ]
@@ -574,10 +577,16 @@ if [ "$PROFILE" = wrapped-source ]; then
     --cidfile "$RECEIVER_RECORDS/container" --label "$LABEL" \
     --label "org.openj92.cpk.test-run=$NETWORK" --network "$NETWORK" \
     -e CPK_RECEIVER_ACCEPTANCE_DATABASE_URL=postgresql://cpk:cpk@cpk-postgres:5432/cpk \
-    "$CPK_SERVERS_TEST_IMAGE" python products/cpk_server/tests/live_receiver_acceptance.py)"
+    -e "CPK_FROZEN_CONTROLLER_IMAGE=$frozen_controller" \
+    -e CPK_UNLISTED_EXAMPLES=/external-sdk-examples \
+    -v "$examples:/external-sdk-examples:ro" \
+    "$frozen_controller" sh -ec 'python products/cpk_server/tests/live_receiver_acceptance.py
+exec python products/cpk_server/tests/live_unlisted_receiver.py')"
   [ "$receiver_id" = "$(cat "$RECEIVER_RECORDS/container")" ]
   docker start -a "$receiver_id"
   [ "$(docker inspect --format '{{.State.ExitCode}}' "$receiver_id")" = 0 ]
+  [ "$(docker inspect --format '{{.Image}}' "$receiver_id")" = "$frozen_controller" ]
+  [ "$(docker image inspect --format '{{.Id}}' "$CPK_SERVERS_TEST_IMAGE")" = "$frozen_controller" ]
   cleanup_receiver_fixture
 fi
 
