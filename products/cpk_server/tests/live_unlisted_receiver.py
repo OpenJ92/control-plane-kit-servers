@@ -19,6 +19,7 @@ import time
 from uuid import uuid4
 
 import httpx
+import jwt
 import control_plane_kit_core as core
 from control_plane_kit_core.algebra import BlockSockets, BlockSpec, ProviderSocket
 from control_plane_kit_core.capabilities import CapabilityName
@@ -66,6 +67,23 @@ EXAMPLES = (
 
 def digest(raw):
     return hashlib.sha256(raw).hexdigest()
+
+
+def unsupported_profile_credential(credential, target, material):
+    """One intentional wire fault, signed with the existing test-only key.
+
+    Public grant constructors correctly refuse unsupported profiles. Preserve the
+    already admitted claims/header and use the same PyJWT EdDSA primitive as the
+    installed signer; mutate only the profile after decoding a valid signature.
+    """
+    encoded = credential.removeprefix("Bearer ")
+    claims = jwt.decode(encoded, material.public["workload"].public_key_pem,
+        algorithms=["EdDSA"], audience=core.receiver_node_control_audience(target),
+        issuer="cpk-server")
+    assert claims["workload_node_health_read"]["profile"] == "workload-node-health-read-grant.v2"
+    claims["workload_node_health_read"]["profile"] = "workload-node-health-read-grant.v999"
+    return "Bearer " + jwt.encode(claims, material.private["workload"], algorithm="EdDSA",
+        headers=jwt.get_unverified_header(encoded))
 
 
 def controller_identity():
@@ -398,6 +416,16 @@ async def witness():
                         refused = await socket.get(processes.origins[second] + protected_path,
                             headers={"Authorization": credential})
                         assert refused.status_code in (401, 403) and len(refused.content) <= 16384
+                        unsupported = unsupported_profile_credential(credential,
+                            health.installed_configuration(first).target, material)
+                        bad_profile = await socket.get(processes.origins[first] + protected_path,
+                            headers={"Authorization": unsupported})
+                        assert bad_profile.status_code in (401, 403) and len(bad_profile.content) <= 16384
+                        # Same original valid request still succeeds: the process
+                        # remains serving and refusal did not replace its state.
+                        still_valid = await socket.get(processes.origins[first] + protected_path,
+                            headers={"Authorization": credential})
+                        assert still_valid.status_code == 200
                         unknown = await socket.get(processes.origins[second] + "/__control/health/ready",
                             headers={"Authorization": processes.tokens[second][0]})
                         assert unknown.status_code == 404
@@ -406,7 +434,7 @@ async def witness():
                         assert credential not in prepared_bytes
                         assert credential not in json.dumps(restarted.journal.read(planned.operation_ref)).encode()
                     assert controller_identity() == frozen
-                    print("unlisted receiver: real authoring, exact completed-response retry, installed default SDK health, target refusal and PID restart passed", flush=True)
+                    print("unlisted receiver: real authoring, exact completed-response retry, installed default SDK health, target/profile refusal and PID restart passed", flush=True)
                 await driver.accept(label="teardown", desired_graph=DeploymentGraph("unlisted-teardown"), destructive=True)
                 assert not compute.installed and not compute.runtimes and not ingress.allocations
         finally:
