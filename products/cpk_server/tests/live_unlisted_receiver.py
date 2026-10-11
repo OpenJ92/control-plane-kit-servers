@@ -315,9 +315,9 @@ async def register_surface_verifier(transport, material):
     intent = "gateway.probe-signing-key"
     reference = "secret://unlisted-surface/keys/surface"
     purpose = "workload-node-control-surface-read"
-    async def register(route, payload):
+    async def register(route, payload, *, path=None):
         return await asyncio.to_thread(transport.call, route,
-            path_parameters={"workspace_id": "workspace-a"}, payload=payload,
+            path_parameters={"workspace_id": "workspace-a", **(path or {})}, payload=payload,
             credential_role="operator")
     provider = await register("command.secret-provider.register", {
         "provider_id": "unlisted-surface", "display_name": "Unlisted surface test key custody",
@@ -340,7 +340,8 @@ async def register_surface_verifier(transport, material):
     assert key["status"] == "verify-only" and key["purpose"] == purpose
     active = await register("command.delegation-key.activate", {
         "purpose": purpose, "issuer": "cpk-server", "key_id": "unlisted-surface",
-        "activated_at": instant, "idempotency_key": "unlisted-surface-activate"})
+        "activated_at": instant, "idempotency_key": "unlisted-surface-activate"},
+        path={"issuer": "cpk-server", "key_id": "unlisted-surface"})
     assert active["status"] == "active" and active["purpose"] == purpose
     assert active["registration_id"] == key["registration_id"]
     assert active["key_id"] == "unlisted-surface"

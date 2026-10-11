@@ -75,3 +75,22 @@ Profile-negative controls independently verify both re-signed JWT signatures and
 headers, restore only the unsupported nested profile and compare all claims,
 then require the re-signed unchanged-profile credential to succeed on the same
 socket before and after refusal. No new cryptographic implementation is added.
+
+The second run admitted provider/reference/key successfully, then the client
+refused activation before HTTP because its URL still lacked issuer/key ID.
+The #237 registration helper now accepts explicit path coordinates only where
+needed. The affected public-call audit uses the actual Core route metadata:
+
+| Call | Path coordinates | Body/query ownership |
+| --- | --- | --- |
+| secret-provider.register | workspace_id | provider capability, reference policy, admission and idempotency body |
+| secret-reference.register | workspace_id | reference/provider/intents/admission and idempotency body |
+| delegation-key.register | workspace_id | purpose/issuer/key/public material/reference/admission body |
+| delegation-key.activate | workspace_id, issuer, key_id | matching issuer/key values, purpose/activation/idempotency body |
+| product.import | workspace_id | descriptor/admission/idempotency body |
+| workload-verifier-configuration read | workspace_id, purposes | maintained client supplies purposes in the path; no substitute response |
+
+The helper does not infer URL fields from JSON, change the transport, add default
+coordinates or bypass authentication. The activation path/body values match
+exactly. Real HTTP execution remains the meaningful call-shape verification;
+no parallel fake route translator or test framework is added.
