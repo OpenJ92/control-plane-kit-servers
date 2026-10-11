@@ -15,6 +15,9 @@ and function identifiers are bounded and validated. No exception message, source
 line, filesystem path, locals, request data or key material is read into evidence.
 This instrumentation exists to locate the seventh run's post-effect rejection;
 it changes neither classification nor execution and supplies no success fallback.
+If diagnostic emission itself fails, the original owner exception is explicitly
+raised; there is no pass-only exception handler. This preserves error propagation
+and the existing package-integrity rule without an exemption.
 
 Servers #237 source-composition helper. `ControllerHost` owns one
 ephemeral IPv4 loopback socket, bounded uvicorn thread, and one private temporary

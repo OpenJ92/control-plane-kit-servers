@@ -53,7 +53,7 @@ class DiagnosticApplicationBoundary(CpkServerApplicationBoundary):
             try:
                 self._diagnose(error, request.route_id)
             except Exception:
-                pass  # Diagnostic failure must not replace the original error.
+                raise error  # Preserve the original owner error if diagnostics fail.
             raise
 
     def _diagnose(self, error, route_id):
