@@ -33,3 +33,17 @@ schemas are discarded; no compensating success is claimed for those failures.
 
 Initial draft is unvalidated. A missing dependency/import/setup is apparatus
 failure, never causal behavioral red. No successful durable history is seeded.
+
+Source review tightened the fault oracle: only a real coordinator `uncertain`
+response can satisfy a negative case, with proof the injected external boundary
+was reached and its exact durable effect attempt/outcome exists. Other setup,
+policy, replay or execution-bound errors fail the witness.
+
+Configuration accounting captures every exact instance reference delivered by
+real preparation, checks accepted manifests of 4/5/4 slots, unchanged-slot reuse
+and distinct G route replacements. After accepted graph teardown it requires
+zero current bindings and reads every captured allocation through the public
+historical-protection owner. Every exact allocation is reported with its current or historical role. This no-completion fixture must retain complete historical protection; unexplained unavailable evidence fails.
+Neither an empty current manifest nor schema deletion grants configuration cleanup
+or proves physical volume removal; no such physical volume is created by the
+named compute substitute. North accepted this evidence boundary after Kepler traced the existing owners: immutable history may remain, while physical staging and configuration cleanup remain explicitly unmodeled/unproven. No E4 transfer is claimed.

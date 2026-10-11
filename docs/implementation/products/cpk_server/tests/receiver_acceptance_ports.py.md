@@ -18,3 +18,8 @@ Returned health is decoded and folded by the actual owners, never manufactured.
 This is source composition with named transport substitution, not a production
 local observer, provider readiness or cloud/Docker replacement proof. Missing
 receipt and key-material faults remain uncertain through the existing owners.
+
+The ordinary `execute` arm explicitly refuses unregistered dispatch; only
+`execute_with_authority` is usable. Unsupported operations fail closed. Exact
+configuration-instance references received from Operations are retained for the
+main witness's bounded owner reads, not interpreted as cleanup permission.

@@ -51,14 +51,22 @@ class ComputeSubstitute:
     def __init__(self):
         self.installed, self.identities, self.calls = {}, {}, []
         self.runtimes = set()
+        self.configuration_refs = {}
         self.order = []
         self.receipt_mode = "valid"
+
+    def execute(self, request):
+        raise AssertionError("compute dispatch requires registered runtime authority")
 
     def execute_with_authority(self, request, authority):
         assert authority.authority_ref == request.authority_ref
         assert type(request.operation) in (StartRuntime, ReconcileRuntime, StopRuntime,
             RemoveRuntimeResource, StartNode, ReconcileNode, StopNode, RemoveNodeResource)
         self.calls.append(request)
+        if request.configuration_instances is not None:
+            for ref in request.configuration_instances.instances:
+                previous = self.configuration_refs.setdefault(ref.allocation_id, ref)
+                assert previous == ref, "allocation identity changed selected material"
         self.order.append((type(request.operation).__name__, request.activity_id.value))
         evidence = {"provider_boundary": "1912-memory-compute"}
         if type(request.operation) in (StartNode, ReconcileNode):
@@ -134,10 +142,12 @@ class KeyMaterialSubstitute:
     def __init__(self, material):
         self.material, self.calls = material, []
         self.unavailable = False
+        self.failures = 0
 
     def resolve(self, grant):
         self.calls.append(grant)
         if self.unavailable:
+            self.failures += 1
             raise RuntimeError("synthetic external key material unavailable")
         family = grant.reference.reference_id.rsplit("/", 1)[-1]
         assert grant.reference.reference_id == "secret://health-secrets/keys/" + family
@@ -166,6 +176,7 @@ class SignedHealthComposition:
         self.keys = KeyMaterialSubstitute(material)
         self.signed_reads, self.native_reads, self.local_reads = [], [], []
         self.public_dispatches = []
+        self.attempted_reads = []
 
     def select(self, *, plan, current, desired, registered_products, runtime_authorities):
         return tuple(value.activity_id for value in plan.activities
@@ -211,6 +222,7 @@ class SignedHealthComposition:
         return apps, routes, transport
 
     async def observe_signed(self, realization, request, authority):
+        self.attempted_reads.append(request)
         preparation = authority.preparation
         configured = self.installed_configuration(preparation.request.target.node_id.value)
         assert configured.target == preparation.request.target

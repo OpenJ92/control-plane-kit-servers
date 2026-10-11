@@ -10,6 +10,7 @@ import json
 import os
 from uuid import uuid4
 
+from control_plane_kit_core.operations import EffectAttemptIdentity, EffectAttemptStatus
 from control_plane_kit_core.planning import ReconcileNode, RemoveNodeResource, StartNode
 from control_plane_kit_core.topology import DeploymentGraph
 from control_plane_kit_core.types import RuntimeKind
@@ -17,7 +18,7 @@ from control_plane_kit_operations.ingress_authorities import IngressAuthorityPro
 from receiver_acceptance_material import AuthoredMaterial
 from receiver_acceptance_operations import (
     IsolatedOperationsSchema, OperationsApplicationFactory, OperationsEffectPorts,
-    PublicOperationsDriver, OperationsSequenceError, register_material,
+    PublicOperationsDriver, CoordinatorStopped, register_material,
 )
 from receiver_acceptance_ports import ComputeSubstitute, IngressSubstitute, SignedHealthComposition
 
@@ -42,6 +43,38 @@ def origin(schema, receiver="a" * 32):
         return uow.stores.graphs.receiver_introduction("workspace-a", receiver)
 
 
+def configuration_accounting(schema, compute, expected_slots, label):
+    """Observe owner truth; absence from current is never cleanup permission."""
+    refs = tuple(compute.configuration_refs.values())
+    assert refs and len(refs) <= 32
+    with schema.unit_of_work() as uow:
+        current = uow.stores.configuration_acceptance.read_current_configuration("workspace-a")
+        uses = uow.stores.configuration_acceptance.read_configuration_use("workspace-a", refs)
+        history = {ref.allocation_id: uow.stores.configuration_preparation.read_allocation_evidence(ref)
+            for ref in refs}
+    assert current.state == uses.state == "complete"
+    assert current.manifest_slot_count == expected_slots
+    assert current.bindings == uses.bindings
+    # This compute substitute emits no configuration-completion evidence, so
+    # no E4 accepted-transfer disposition is asserted. These original claims
+    # must retain complete historical protection; unexplained absence fails.
+    assert all(value.state == "complete" for value in history.values()), "unexplained configuration evidence absence"
+    for allocation_id, evidence in history.items():
+        if evidence.state == "complete":
+            assert evidence.birth.ref == compute.configuration_refs[allocation_id]
+            assert evidence.claims and all(value.ref == evidence.birth.ref for value in evidence.claims)
+    bindings = {(value.ref.node_id, value.ref.artifact_id): value.ref for value in current.bindings}
+    assert len(bindings) == expected_slots
+    current_ids = {value.allocation_id for value in bindings.values()}
+    print(json.dumps({"configuration_accounting": label, "allocations": [
+        {"allocation_id": ref.allocation_id, "node_id": ref.node_id, "artifact_id": ref.artifact_id,
+         "role": "current" if ref.allocation_id in current_ids else "superseded-or-historical",
+         "historical_protection": history[ref.allocation_id].state,
+         "physical_staging": "unmodeled", "cleanup": "unproven"}
+        for ref in sorted(refs, key=lambda value:value.allocation_id)]}, sort_keys=True), flush=True)
+    return bindings, history
+
+
 async def accepted_history(database_url):
     material = AuthoredMaterial()
     compute = ComputeSubstitute()
@@ -64,10 +97,21 @@ async def accepted_history(database_url):
         original_x_compute = None
         original_connector = None
         original_ingress = None
+        prior_bindings = None
+        route_allocations = set()
         for label, graph in (("a", material.a), ("b", material.b), ("c", material.c)):
             start_calls = len(compute.calls)
             start_reads = len(health.signed_reads)
             accepted.append(await driver.accept(label=label, desired_graph=graph, destructive=label == "c"))
+            bindings, _ = configuration_accounting(schema, compute, 5 if label == "b" else 4, label)
+            route = bindings[("gateway", "gateway-health-targets")]
+            assert route.allocation_id not in route_allocations
+            route_allocations.add(route.allocation_id)
+            if prior_bindings is not None:
+                for slot, ref in bindings.items():
+                    if slot in prior_bindings and slot != ("gateway", "gateway-health-targets"):
+                        assert ref == prior_bindings[slot], "unchanged configuration slot was reallocated"
+            prior_bindings = bindings
             current_origin = origin(schema)
             assert current_origin.first_accepted_action_id and current_origin.first_accepted_session_id
             assert current_origin.retired_action_id is None
@@ -120,6 +164,13 @@ async def accepted_history(database_url):
         assert sum(type(value.operation) is StartNode and value.operation.target.node_id == "api"
             for value in compute.calls) == 1
         assert len(ingress.calls) == 2 and [value[0] for value in ingress.calls] == ["create", "remove"]
+        bindings, allocation_history = configuration_accounting(schema, compute, 0, "teardown")
+        assert not bindings
+        complete = sum(value.state == "complete" for value in allocation_history.values())
+        print("receiver acceptance: configuration references=" + str(len(allocation_history))
+            + ", current=0, complete historical protection=" + str(complete)
+            + ", unavailable historical protection=" + str(len(allocation_history) - complete)
+            + "; configuration cleanup is not asserted", flush=True)
         print("receiver acceptance: accepted A/B/C, original X, restart replay and approved teardown passed", flush=True)
     print("receiver acceptance: isolated schema cleanup completed", flush=True)
 
@@ -142,6 +193,8 @@ async def failed_update(database_url, fault):
         original = origin(schema)
         before = await driver.workspace()
         reads = tuple(health.signed_reads)
+        prior_compute = len(compute.calls)
+        prior_key_failures = health.keys.failures
         if fault == "missing-installation-receipt":
             compute.receipt_mode = "missing"
         elif fault == "unavailable-signing-material":
@@ -150,8 +203,23 @@ async def failed_update(database_url, fault):
             raise ValueError("unknown witness fault")
         try:
             await driver.accept(label="b", desired_graph=material.b, destructive=False)
-        except OperationsSequenceError:
-            pass
+        except CoordinatorStopped as stopped:
+            assert stopped.execution["coordinator_status"] == "uncertain"
+            assert stopped.execution["run_status"] != "succeeded"
+            if fault == "missing-installation-receipt":
+                attempted, = (value for value in compute.calls[prior_compute:]
+                    if type(value.operation) is ReconcileNode)
+                assert attempted.operation.target.node_id == "gateway"
+            else:
+                assert health.keys.failures == prior_key_failures + 1
+                attempted = health.attempted_reads[-1]
+            assert attempted.source.run_id.value == stopped.run_id
+            identity = EffectAttemptIdentity(attempted.source.run_id, attempted.activity_id.value, 1)
+            with schema.unit_of_work() as uow:
+                attempt = uow.stores.effect_attempts.get(identity)
+                assert attempt.state.status is EffectAttemptStatus.UNCERTAIN
+                outcome = uow.stores.effect_outcomes.get(identity, attempt.latest_transition_event.event_id)
+                assert outcome is not None
         else:
             raise AssertionError("failed provider boundary fabricated acceptance")
         after = await driver.workspace()

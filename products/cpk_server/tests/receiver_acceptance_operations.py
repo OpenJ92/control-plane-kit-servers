@@ -333,6 +333,15 @@ class OperationsSequenceError(RuntimeError):
     """The public sequence stopped without inventing a successful transition."""
 
 
+class CoordinatorStopped(OperationsSequenceError):
+    """Only an actual execution response, not an arbitrary fixture failure."""
+
+    def __init__(self, label, run_id, execution):
+        super().__init__(f"{label} stopped with coordinator status {execution.get('coordinator_status')!r}")
+        self.run_id = run_id
+        self.execution = dict(execution)
+
+
 def graph_descriptor(value: Mapping[str, object] | DeploymentGraph) -> dict[str, object]:
     """Copy an authored graph through Core's public descriptor boundary."""
 
@@ -1010,9 +1019,7 @@ class PublicOperationsDriver:
             if status == "completed":
                 break
             if status != "progressed":
-                raise OperationsSequenceError(
-                    f"{label} stopped with coordinator status {status!r}"
-                )
+                raise CoordinatorStopped(label, run_id, execution)
         else:
             raise OperationsSequenceError(f"{label} exceeded its execution bound")
         if execution is None or execution.get("run_status") != "succeeded":

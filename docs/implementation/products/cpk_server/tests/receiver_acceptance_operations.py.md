@@ -43,3 +43,8 @@ Cloudflare, credential custody or live-provider acceptance.
 
 No executable validation was run for this helper tranche; the governing
 Docker-backed owning gate and independent review remain pending.
+
+`CoordinatorStopped` is reserved for an actual non-progress/non-completed public
+execution response and retains its bounded run/result context. Negative witnesses
+must match the expected uncertain disposition and durable attempt; generic
+`OperationsSequenceError` does not satisfy an injected-fault test.
