@@ -197,7 +197,7 @@ class LocalReceiverSocketTransport(InstalledTransport):
         if name not in self.processes.origins:
             return await super().handle_async_request(request)
         self.calls.append((name, request.url.path))
-        self.processes.tokens[name] = request.headers["authorization"]
+        self.processes.tokens[name] = (request.headers["authorization"], request.url.path)
         destination = self.processes.origins[name] + request.url.raw_path.decode("ascii")
         async with httpx.AsyncClient(timeout=3, trust_env=False, follow_redirects=False) as client:
             response = await client.request(request.method, destination,
@@ -391,11 +391,15 @@ async def witness():
                         assert processes.hashes[name] == digest(selected.content.encode())
                     first, second = (item[0] for item in EXAMPLES)
                     async with httpx.AsyncClient(timeout=3, trust_env=False) as socket:
-                        refused = await socket.get(processes.origins[second] + "/__control/health/readiness",
-                            headers={"Authorization": processes.tokens[first]})
+                        credential, protected_path = processes.tokens[first]
+                        admitted = await socket.get(processes.origins[first] + protected_path,
+                            headers={"Authorization": credential})
+                        assert admitted.status_code == 200 and len(admitted.content) <= 16384
+                        refused = await socket.get(processes.origins[second] + protected_path,
+                            headers={"Authorization": credential})
                         assert refused.status_code in (401, 403) and len(refused.content) <= 16384
                         unknown = await socket.get(processes.origins[second] + "/__control/health/ready",
-                            headers={"Authorization": processes.tokens[second]})
+                            headers={"Authorization": processes.tokens[second][0]})
                         assert unknown.status_code == 404
                     for credential_path in host.credential_files.values():
                         credential = credential_path.read_bytes()
