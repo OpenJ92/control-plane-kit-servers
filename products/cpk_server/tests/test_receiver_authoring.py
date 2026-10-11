@@ -964,6 +964,7 @@ assert "control_plane_kit_servers_cpk_server.client.authoring" not in sys.module
 
     def authoring_transport(self, fixture, *, lose_prepare_once=True):
         from test_topology_client import ScriptedTransport
+        from control_plane_kit_operations.read_services.models import FocusedDetailReadModel
 
         class AuthoringTransport(ScriptedTransport):
             def call(inner, route_id, *, path_parameters, payload, credential_role):
@@ -986,11 +987,13 @@ assert "control_plane_kit_servers_cpk_server.client.authoring" not in sys.module
                             "credential_role": credential_role,
                         }
                     )
-                    return {
-                        "workspace_id": "workspace-a",
-                        "kind": "workload-verifier-configuration",
-                        "payload": fixture["verifiers"],
-                    }
+                    if hasattr(inner, "verifier_response"):
+                        return inner.verifier_response
+                    return FocusedDetailReadModel(
+                        workspace_id="workspace-a",
+                        kind="workload-verifier-configuration",
+                        payload=fixture["verifiers"],
+                    ).descriptor()
                 if route_id == "command.deployment.prepare" and hasattr(
                     inner, "before_prepare"
                 ):
@@ -1003,6 +1006,52 @@ assert "control_plane_kit_servers_cpk_server.client.authoring" not in sys.module
                 )
 
         return AuthoringTransport(lose_prepare_once=lose_prepare_once)
+
+    def test_client_accepts_flat_owner_verifier_descriptor(self):
+        api = self.api()
+        fixture = self.fixture()
+        desired = self.authored_input(api, fixture)
+        original = desired.path.read_bytes()
+        transport = self.authoring_transport(fixture, lose_prepare_once=False)
+        from control_plane_kit_servers_cpk_server.client import TopologyClient
+
+        generated = []
+        client = TopologyClient(self.client_profile(), transport=transport,
+            receiver_identity_factory=lambda: generated.append(True) or "c" * 32)
+        result = client.plan(desired)
+        self.assertEqual(result.status, "planned")
+        self.assertEqual(generated, [True])
+        self.assertEqual(desired.path.read_bytes(), original)
+        self.assertEqual(sum(call["route_id"] == "command.deployment.prepare"
+            for call in transport.calls), 1)
+
+    def test_invalid_verifier_response_field_refuses_before_identity_or_prepare(self):
+        api = self.api()
+        fixture = self.fixture()
+        desired = self.authored_input(api, fixture)
+        envelope = {"workspace_id": "workspace-a", "kind": "workload-verifier-configuration"}
+        invalid = (
+            envelope,
+            {**envelope, "workload_verifier_configuration": None},
+            {**envelope, "workload_verifier_configuration": []},
+            {**envelope, "workload_verifier_configuration": "invalid"},
+            {**envelope, "payload": fixture["verifiers"]},
+        )
+        from control_plane_kit_servers_cpk_server.client import ClientInputError, TopologyClient
+
+        for number, response in enumerate(invalid):
+            with self.subTest(response=number):
+                transport = self.authoring_transport(fixture, lose_prepare_once=False)
+                transport.verifier_response = response
+                generated = []
+                client = TopologyClient(self.client_profile(state=f"invalid-{number}"),
+                    transport=transport,
+                    receiver_identity_factory=lambda: generated.append(True) or "c" * 32)
+                with self.assertRaises(ClientInputError):
+                    client.plan(desired)
+                self.assertEqual(generated, [])
+                self.assertNotIn("command.deployment.prepare",
+                    [call["route_id"] for call in transport.calls])
 
     def test_client_persists_before_send_and_restart_replays_exact_authored_graph(self):
         api = self.api()
