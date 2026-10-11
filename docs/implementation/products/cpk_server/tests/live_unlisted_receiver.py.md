@@ -94,3 +94,13 @@ The helper does not infer URL fields from JSON, change the transport, add defaul
 coordinates or bypass authentication. Activation names the same registered
 issuer/key only in the path. Real HTTP execution remains the meaningful verification;
 no parallel fake route translator or test framework is added.
+
+The fourth run passed the repaired production verifier consumer, all 549 package
+tests and exact successful preparation replay, then rejected the fixture's attempt
+to supply both approval options. The witness now uses the authoritative planned
+result's boolean and matching required scope to supply exactly one approval option
+for that same plan. It prints only the plan coordinate, boolean and scope. The
+maintained client still re-reads and validates approval before dispatch and owns
+the approval/admission/claim/start/execute/advance payloads and role selection.
+No private owner access, inferred destructive flag, policy relaxation or fallback
+is introduced. Receiver process/health/restart evidence awaits a fresh owning run.

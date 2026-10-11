@@ -455,9 +455,16 @@ async def witness():
                     assert source.read_bytes() == original and prepared.read_bytes() == prepared_bytes
                     assert all(sum(call[0] == route for call in transport.calls) == count
                         for route, count in counts.items())
+                    assert type(planned.destructive) is bool
+                    assert planned.required_scope == (
+                        "plan:approve-destructive" if planned.destructive else "plan:approve")
+                    approval_option = (
+                        "approve_destructive_plan" if planned.destructive else "approve_plan")
+                    print(json.dumps({"unlisted_plan_approval": planned.plan_id,
+                        "destructive": planned.destructive,
+                        "required_scope": planned.required_scope}), flush=True)
                     result = await asyncio.to_thread(restarted.apply, planned.operation_ref,
-                        execute_plan=planned.plan_id, approve_plan=planned.plan_id,
-                        approve_destructive_plan=planned.plan_id)
+                        execute_plan=planned.plan_id, **{approval_option: planned.plan_id})
                     assert result.status == "converged", result.descriptor()
                     assert health.restarted == {item[0] for item in EXAMPLES}
                     assert len(set(health.configured_ids.values())) == 2
