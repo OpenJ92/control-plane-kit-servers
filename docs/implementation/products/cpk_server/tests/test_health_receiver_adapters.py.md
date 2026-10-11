@@ -7,8 +7,9 @@ valid declared default. Existing slot/profile/surface/provenance/context refusal
 tests remain unchanged. Core #1968 owns the structural-selector and Operations
 admission laws; these tests prove this Servers consumer uses that split.
 The tenth joined failure and accepted Core causal-red evidence establish the
-defect. These added adapter assertions await the next normal Servers gate;
-they do not create separate live or publication evidence.
+defect. Both added adapter assertions passed in normal owning run `38172548595`
+at source `bb78df98`; the 551 package/product tests and joined unlisted receiver
+witness passed. This is source composition, not live or publication evidence.
 
 The tests connect real selected common configuration plus transit decoding and real CPK app/SDK and gateway signature verification to the actual pinned Operations coverage function. Its private import is test-only coupling; application adapters use public contracts. A/default and B/selected plus AB overlap must affect both signature acceptance and coverage. Wrong selected slot/profile/exact reference and configured runtime refuse without rewriting configuration into expected identity. Unexpected decoder/owner failures preserve identity, and decoding has no file/network effects.
 

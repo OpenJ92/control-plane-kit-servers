@@ -6,6 +6,17 @@ or dependency coordinates; this PR separately repairs the real client verifier
 response consumer found by the third run. Executable outcomes and unreached
 boundaries are recorded separately in the PR and maintained learning document.
 
+Normal owning run `38172548595` at reviewed source `bb78df98` passed this joined
+witness with the accepted Core/Operations #1969, SDK #50, Secrets #48 and
+Interpreters #188 tuple. Both independent receivers passed public authoring,
+exact completed-response retry, installed default SDK health, target/profile
+refusal, business calls and PID restart. The controller/receiver process, file
+and private-directory absence checks and final Docker residue audit passed.
+This clears the earlier declared-default refusal while preserving strict actual
+V2 validation. Full #237, physical E4/provider cleanup, production transport and
+live/published acceptance remain outside this bounded result. Earlier run
+descriptions below preserve failure provenance.
+
 Governing existing laws are `receiver-authoring-238.json`, especially exact
 prepare replay, qualified context fences, immutable authored preparation and
 complete verifier selection; the distinct registered-product and restart-replay
