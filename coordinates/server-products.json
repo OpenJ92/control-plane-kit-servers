@@ -1,11 +1,11 @@
 {
   "schema": "cpk-servers.coordinates",
   "upstreams": {
-    "control_plane_kit_core_commit": "ba0bd45e7fa7673b837366f7f5da5f9159b0dee8",
-    "control_plane_kit_operations_commit": "cafdc9050ceeb9e430912b9ba9dd034a6712fb1f",
-    "control_plane_kit_interpreters_commit": "67a0d3d13974314fbc49fe8ac9639b2d760216a7",
-    "control_plane_kit_server_sdk_commit": "23500b1445dc6a748bd92a441e781d7f9ed90299",
-    "control_plane_kit_secrets_commit": "d8849bbfe12b9c613ace71ed86531baab2695236"
+    "control_plane_kit_core_commit": "a3f212063b0eb83f08599fc729c05c473aa5a1ef",
+    "control_plane_kit_operations_commit": "a3f212063b0eb83f08599fc729c05c473aa5a1ef",
+    "control_plane_kit_interpreters_commit": "7c52e67807fd655359a67e09b61048d95c3b0a41",
+    "control_plane_kit_server_sdk_commit": "f1bc730a7b244d7a713eb4a6531a5fb5fb76eee0",
+    "control_plane_kit_secrets_commit": "fc018b091ac880f7120c71281e8b781cdde61a90"
   },
   "products": [
     {

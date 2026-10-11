@@ -2,9 +2,11 @@ Source: [health_receiver_adapters.py](../../../../../../products/cpk_server/src/
 
 select_own_health_configuration accepts public Operations HealthReceiverSelection
 and returns actual Core ReceiverNodeControlConfiguration. It reconstructs canonical
-selection provenance, selects the declared common slot through Core's public
-selector, requires the selected slot to agree, then decodes the selected bytes
-through that same selector/codec. Workspace/runtime/node/socket must match the
+selection provenance, selects declared structure through Core's public
+`select_receiver_node_control_configuration_slot`, requires the selected slot to
+agree, then validates selected actual bytes through the unchanged strict V2
+artifact selector and codec. Declared payload can be inert `{}`; actual payload
+must contain valid receiver configuration. Workspace/runtime/node/socket must match the
 independent selection; declaration must match the descriptor surface. Descriptor
 defaults identify a slot, never replace selected trust. Authored/projection caller
 context is deliberately absent from installed receiver identity.

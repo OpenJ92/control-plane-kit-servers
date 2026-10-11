@@ -1,6 +1,16 @@
 Source: [products/cpk_server/tests/test_current_cpk_server_composition.py](../../../../../products/cpk_server/tests/test_current_cpk_server_composition.py).
 
-## Current #1912 composition
+## Current #237 declared-slot composition
+
+Core and Operations now select accepted #1969 merge
+`a3f212063b0eb83f08599fc729c05c473aa5a1ef`, and Interpreters selects accepted
+#188 merge `7c52e67807fd655359a67e09b61048d95c3b0a41`. SDK #50 and Secrets
+#48 complete the same-Core tuple in the canonical manifest. Only exact expected
+coordinates advance; all generated-URL, source-boundary and composition
+assertions remain. Package adoption and joined runtime success require the
+owning gate and do not change published image coordinates.
+
+## Historical #1912 composition
 
 The independent Operations expectation is accepted #1911 merge
 `cafdc9050ceeb9e430912b9ba9dd034a6712fb1f`; Core remains `ba0bd45e`, SDK

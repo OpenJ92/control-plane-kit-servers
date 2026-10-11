@@ -150,6 +150,33 @@ class HealthReceiverAdapterTests(unittest.TestCase):
             self.assertEqual(len(doc.product.runtime_contract.sockets.requirements), 4)
             self.assertTrue(doc.product.runtime_contract.verification.checks)
 
+    def test_inert_declared_slot_accepts_only_the_selected_actual_configuration(self):
+        original = self.world.documents["workload"]
+        inert = replace(self.world.defaults["workload"], content="{}")
+        declared = document("inert-declared-slot", replace(
+            original.product.runtime_contract, configuration_artifacts=(inert,)))
+        selected = self.selection("workload", doc=declared)
+
+        actual = self.api.select_own_health_configuration(selected)
+
+        expected = core.ReceiverNodeControlConfigurationCodec().decode_bytes(
+            selected.artifact.content.encode("utf-8"))
+        self.assertEqual(actual, expected)
+        self.assertEqual(actual.target, self.world.config.target)
+        self.assertEqual(verifier_family(actual).public_keys,
+                         verifier_family(self.world.config).public_keys)
+        self.assertEqual(declared.product.runtime_contract.configuration_artifacts[0].content, "{}")
+        self.assertNotEqual(selected.artifact.content, "{}")
+
+    def test_empty_actual_configuration_refuses_despite_valid_declared_default(self):
+        original = self.selection("workload")
+        self.assertIs(type(self.api.select_own_health_configuration(original)),
+                      core.ReceiverNodeControlConfiguration)
+        empty = replace(original.artifact, content="{}")
+
+        self.refusal(lambda:self.api.select_own_health_configuration(
+            self.selection("workload", artifact=empty)))
+
     def test_exact_product_and_declared_slot_bindings_refuse_substitution(self):
         for family in ("workload", "gateway"):
             doc = self.world.documents[family]

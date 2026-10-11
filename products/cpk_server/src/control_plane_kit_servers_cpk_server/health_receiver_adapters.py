@@ -28,6 +28,7 @@ from control_plane_kit_core.receiver_management_routes import (
 )
 from control_plane_kit_core.receiver_configuration import (
     ReceiverNodeControlConfiguration, ReceiverNodeControlConfigurationCodec,
+    select_receiver_node_control_configuration_slot,
     select_receiver_node_control_configuration_artifact,
 )
 from control_plane_kit_core.wrapper_configuration import WrapperConfigurationError
@@ -61,7 +62,7 @@ def select_own_health_configuration(selection: HealthReceiverSelection) -> Recei
     checked = replace(selection)
     contract = checked.descriptor_document.product.runtime_contract
     try:
-        declared = select_receiver_node_control_configuration_artifact(
+        declared = select_receiver_node_control_configuration_slot(
             artifacts=contract.configuration_artifacts, environment=contract.public_environment,
             control_surfaces=contract.control_surfaces)
         if _slot(declared) != _slot(checked.artifact):
