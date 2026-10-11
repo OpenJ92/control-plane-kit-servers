@@ -50,30 +50,38 @@ class DiagnosticApplicationBoundary(CpkServerApplicationBoundary):
         try:
             return await super().dispatch_async(request)
         except Exception as error:
-            if self.diagnostic_count < 8:
-                self.diagnostic_count += 1
-                frames = []
-                trace = error.__traceback__
-                while trace is not None:
-                    code = trace.tb_frame.f_code
-                    module = trace.tb_frame.f_globals.get("__name__", "")
-                    if (isinstance(module, str) and len(module) <= 160
-                            and module.startswith(("control_plane_kit_", "unlisted_controller_host",
-                                "live_unlisted_receiver", "receiver_acceptance_"))
-                            and all(part.isidentifier() for part in module.split("."))):
-                        frames.append({"module": module,
-                            "function": code.co_name if code.co_name.isidentifier()
-                                and len(code.co_name) <= 128 else "anonymous",
-                            "line": trace.tb_lineno})
-                        frames = frames[-8:]
-                    trace = trace.tb_next
-                kind = type(error).__name__
-                print(json.dumps({"unlisted_owner_exception": kind if kind in {
-                    "InvalidOperationCommand", "InvalidEffectRecoveryContract",
-                    "CpkServerApplicationError"} else "other",
-                    "route": request.route_id,
-                    "frames": frames}), flush=True)
+            try:
+                self._diagnose(error, request.route_id)
+            except Exception:
+                pass  # Diagnostic failure must not replace the original error.
             raise
+
+    def _diagnose(self, error, route_id):
+        if self.diagnostic_count >= 8:
+            return
+        self.diagnostic_count += 1
+        frames = []
+        trace = error.__traceback__
+        while trace is not None:
+            code = trace.tb_frame.f_code
+            module = trace.tb_frame.f_globals.get("__name__", "")
+            if (isinstance(module, str) and len(module) <= 160
+                    and module.startswith(("control_plane_kit_", "unlisted_controller_host",
+                        "live_unlisted_receiver", "receiver_acceptance_"))
+                    and all(part.isidentifier() for part in module.split("."))):
+                frames.append({"module": module,
+                    "function": code.co_name if code.co_name.isidentifier()
+                        and len(code.co_name) <= 128 else "anonymous",
+                    "line": trace.tb_lineno})
+                frames = frames[-8:]
+            trace = trace.tb_next
+        kind = type(error).__name__
+        print(json.dumps({"unlisted_owner_exception": kind if kind in {
+            "InvalidOperationCommand", "InvalidEffectRecoveryContract",
+            "CpkServerApplicationError"} else "other",
+            "route": route_id, "frames": frames}), flush=True)
+
+
 _MAXIMUM_PREPARE_EXCHANGES = 16
 
 
