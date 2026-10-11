@@ -45,3 +45,9 @@ Its recorded generation invocation uses the maintained Python container with
 only the isolated checkout writable and omits `--check`; it performs no install,
 provider access or test substitution. Root metadata and all six dependency
 recipes change; historical product descriptors and catalogue bytes stay fixed.
+
+Core #1912 ordinarily adopts Operations `cafdc9050ceeb9e430912b9ba9dd034a6712fb1f`
+with unchanged Core/SDK/Secrets/Interpreters. The generator changes root dependency
+metadata and CPK's Docker recipe, the destinations that install Operations.
+Published descriptors and catalogue bytes remain unchanged. Installation and
+source witness provenance are required before any behavioral claim.

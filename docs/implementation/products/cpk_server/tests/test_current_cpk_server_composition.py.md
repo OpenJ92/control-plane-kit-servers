@@ -1,6 +1,16 @@
 Source: [products/cpk_server/tests/test_current_cpk_server_composition.py](../../../../../products/cpk_server/tests/test_current_cpk_server_composition.py).
 
-## Current receiving adoption (#237)
+## Current #1912 composition
+
+The independent Operations expectation is accepted #1911 merge
+`cafdc9050ceeb9e430912b9ba9dd034a6712fb1f`; Core remains `ba0bd45e`, SDK
+`23500b1`, Secrets `d8849bb` and Interpreters `67a0d3d`. Exact canonical-coordinate
+and generated-URL assertions remain intact. The first #1912 CI run failed these
+two assertions because the old Operations constant remained `ba0bd45e`; changing
+that one expectation matches the already-approved ordinary dependency adoption.
+This is an adoption-fixture correction, not behavioral red for the new witness.
+
+## Historical receiving adoption (#237)
 
 The receiving candidate selects Core and Operations
 250d65e19dc748ebe840f705be77eb732dab3cb3, SDK
