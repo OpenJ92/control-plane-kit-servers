@@ -25,3 +25,8 @@ input envelope expected by `author_receiver_graph`. It does not read a `payload`
 field or accept a nested compatibility shape. Missing/non-mapping fields refuse
 before fresh receiver identity generation or prepare dispatch; the pure authoring
 owner retains all verifier family, purpose, key and declaration checks.
+
+The extraction stays inside the fresh-introductions branch. Retained-only,
+pending-only and gateway-route-only authoring keeps `verifier_configuration=None`
+and does not perform a verifier read. This preserves the existing optional-read
+boundary rather than referencing an unassigned response for zero introductions.

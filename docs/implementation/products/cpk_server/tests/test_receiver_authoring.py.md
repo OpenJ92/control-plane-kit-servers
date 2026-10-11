@@ -44,3 +44,9 @@ were not separately executed red: the maintained runner has no focused mode and
 AGENTS forbids ad-hoc containers. North explicitly accepted actual joined run
 `38136777213` as causal red and released one ordinary corrected CI instead of a
 duplicate full red cycle. Collection/setup failures are not claimed as this red.
+
+Independent review caught an initially dedented extraction that would break zero
+introductions. A retained-only client case now verifies successful preparation
+with no verifier read or fresh identity allocation, unchanged selected artifact
+values, and unchanged source bytes. This complements the existing pure pending
+law by exercising the actual client branch. The faulty candidate was not executed.
