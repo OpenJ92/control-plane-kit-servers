@@ -180,8 +180,10 @@ class ControllerHost:
             )
 
             app = FastAPI()
+            diagnostic_count = 0
 
             async def http(request: Request) -> JSONResponse:
+                nonlocal diagnostic_count
                 body = await request.body()
                 response = await boundary.handle_async(
                     method=request.method,
@@ -192,6 +194,22 @@ class ControllerHost:
                 )
                 if request.method == "POST" and request.url.path == prepare_path:
                     self._record_prepare(body, response.status, response.body)
+                if response.status >= 400 and diagnostic_count < 16:
+                    diagnostic_count += 1
+                    error = response.body.get("error")
+                    message = error.get("message") if isinstance(error, Mapping) else None
+                    allowed = {
+                        "draft command was not admitted": "draft-not-admitted",
+                        "draft graph is malformed": "draft-graph-malformed",
+                        "receiver expectation is malformed": "receiver-expectation-malformed",
+                        "draft intent conflicts with current truth": "draft-conflict",
+                    }
+                    for route_id in ("command.desired-topology-draft.create",
+                            "command.desired-topology-draft.select"):
+                        allowed[f"{route_id!r} is not configured in cpk-server operations"] = "draft-service-not-configured"
+                    print(json.dumps({"unlisted_http_failure_status": response.status,
+                        "reason": allowed.get(message, "unclassified")
+                            if isinstance(message, str) else "unclassified"}), flush=True)
                 return JSONResponse(status_code=response.status, content=dict(response.body))
 
             install_operator_http_routes(app, composition.http_api, http)

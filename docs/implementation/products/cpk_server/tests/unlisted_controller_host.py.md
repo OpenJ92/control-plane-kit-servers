@@ -1,5 +1,11 @@
 Source: [unlisted_controller_host.py](../../../../../products/cpk_server/tests/unlisted_controller_host.py).
 
+For at most 16 actual HTTP error responses, the host prints status and a fixed
+allowlisted reason category. Unknown response messages are reported only as
+unclassified; bodies, headers, URLs and candidate text are never printed. The
+witness transport separately names the failed maintained route and exception
+class without redispatch. This covers setup errors as well as execution failures.
+
 Servers #237 source-composition helper. `ControllerHost` owns one
 ephemeral IPv4 loopback socket, bounded uvicorn thread, and one private temporary
 child beneath a fresh absolute controller state root for credential files and

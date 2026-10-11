@@ -47,6 +47,7 @@ from control_plane_kit_operations.cpk_server import (
 from control_plane_kit_operations.delegation_signing_keys import (
     DelegationSigningKeyRegistrationService,
 )
+from control_plane_kit_operations.desired_topology_drafts import DesiredTopologyDraftCommandService
 from control_plane_kit_operations.effect_attempt_fold_interpreter import (
     EffectAttemptFoldService,
 )
@@ -298,6 +299,11 @@ class OperationsApplicationFactory:
                     unit_of_work
                 ),
                 desired_graphs=DesiredGraphCommandService(
+                    unit_of_work,
+                    clock=self.clock,
+                    id_factory=self.id_factory,
+                ),
+                desired_topology_drafts=DesiredTopologyDraftCommandService(
                     unit_of_work,
                     clock=self.clock,
                     id_factory=self.id_factory,

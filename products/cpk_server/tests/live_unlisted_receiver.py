@@ -294,6 +294,8 @@ class LoseCompletedPreparation:
         try:
             result = self.inner.call(route_id, **arguments)
         except ClientTransportError as error:
+            print(json.dumps({"unlisted_failed_public_route": route_id,
+                "error_type": type(error).__name__}), flush=True)
             if observed:
                 self.execution_diagnostics.append({"route": route_id,
                     "transport_error": type(error).__name__})

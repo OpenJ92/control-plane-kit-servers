@@ -129,3 +129,11 @@ runs and run events. Only allowlisted bounded coordinate/status/event-kind scala
 are printed; request bodies, evidence/failure text, tokens and configuration are
 excluded. Diagnostics neither retry mutations nor replace the failed assertion;
 all existing cleanup still runs.
+
+The sixth run reached draft create but the test application omitted its optional
+draft service. The shared factory now wires the actual owner with its existing
+unit of work/clock/ID factory; both create and select use that same service. Setup
+transport failures print the fixed route ID and exception class, while the HTTP
+host prints bounded status/allowlisted reason categories from the actual response.
+No request is repeated for diagnostics. The sixth numeric status was not captured;
+the missing service is a source-confirmed omission, not an observed response body.
