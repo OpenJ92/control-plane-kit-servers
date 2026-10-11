@@ -339,7 +339,7 @@ async def register_surface_verifier(transport, material):
         "admitted_at": instant, "idempotency_key": "unlisted-surface-key"})
     assert key["status"] == "verify-only" and key["purpose"] == purpose
     active = await register("command.delegation-key.activate", {
-        "purpose": purpose, "issuer": "cpk-server", "key_id": "unlisted-surface",
+        "purpose": purpose,
         "activated_at": instant, "idempotency_key": "unlisted-surface-activate"},
         path={"issuer": "cpk-server", "key_id": "unlisted-surface"})
     assert active["status"] == "active" and active["purpose"] == purpose

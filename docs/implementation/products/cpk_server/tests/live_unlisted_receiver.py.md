@@ -86,11 +86,11 @@ needed. The affected public-call audit uses the actual Core route metadata:
 | secret-provider.register | workspace_id | provider capability, reference policy, admission and idempotency body |
 | secret-reference.register | workspace_id | reference/provider/intents/admission and idempotency body |
 | delegation-key.register | workspace_id | purpose/issuer/key/public material/reference/admission body |
-| delegation-key.activate | workspace_id, issuer, key_id | matching issuer/key values, purpose/activation/idempotency body |
+| delegation-key.activate | workspace_id, issuer, key_id | purpose/activation/idempotency body; no duplicated path fields |
 | product.import | workspace_id | descriptor/admission/idempotency body |
 | workload-verifier-configuration read | workspace_id, purposes | maintained client supplies purposes in the path; no substitute response |
 
 The helper does not infer URL fields from JSON, change the transport, add default
-coordinates or bypass authentication. The activation path/body values match
-exactly. Real HTTP execution remains the meaningful call-shape verification;
+coordinates or bypass authentication. Activation names the same registered
+issuer/key only in the path. Real HTTP execution remains the meaningful verification;
 no parallel fake route translator or test framework is added.
