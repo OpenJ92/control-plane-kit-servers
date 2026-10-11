@@ -6,6 +6,7 @@ BUILD_IMAGE="${CPK_SERVER_BUILD_IMAGE:-1}"
 PROFILE="${CPK_SERVER_SMOKE_PROFILE:-wrapped-source}"
 CONTROL_RECORDS=""
 MISSING_CONTROL_CONTAINER=""
+RECEIVER_RECORDS=""
 case "$PROFILE" in
   wrapped-source)
     : "${CPK_SERVERS_TEST_IMAGE:?wrapped-source requires the owning test/controller image}"
@@ -46,6 +47,8 @@ cleanup_control_fixture() {
 }
 
 cleanup() {
+  receiver_cleanup_status=0
+  cleanup_receiver_fixture || receiver_cleanup_status=1
   if [ -n "$MISSING_CONTROL_CONTAINER" ]; then
     docker rm -f "$MISSING_CONTROL_CONTAINER" >/dev/null 2>&1 || true
   fi
@@ -58,6 +61,35 @@ cleanup() {
     docker rm -f "$POSTGRES_CONTAINER" >/dev/null 2>&1 || true
   fi
   docker network rm "$NETWORK" >/dev/null 2>&1 || true
+  return "$receiver_cleanup_status"
+}
+
+cleanup_receiver_fixture() {
+  [ -n "$RECEIVER_RECORDS" ] || return 0
+  receiver_name="$NETWORK-receiver-acceptance"
+  receiver_id=""
+  if [ -s "$RECEIVER_RECORDS/container" ]; then
+    receiver_id="$(cat "$RECEIVER_RECORDS/container")" || return 1
+    observed="$(docker container ls -aq --no-trunc --filter "id=$receiver_id")" || return 1
+    [ -z "$observed" ] || [ "$observed" = "$receiver_id" ] || return 1
+  else
+    # A create interrupted before returning its ID is resolved by exact name
+    # and the unique run label; no retry of the allocation is attempted.
+    observed="$(docker container ls -aq --no-trunc --filter "name=^/$receiver_name$")" || return 1
+    receiver_id="$observed"
+  fi
+  if [ -n "$observed" ]; then
+    owner="$(docker inspect --format '{{index .Config.Labels "org.openj92.cpk.test-run"}}' "$receiver_id")" || return 1
+    [ "$owner" = "$NETWORK" ] || return 1
+    docker rm -f "$receiver_id" >/dev/null || return 1
+    observed="$(docker container ls -aq --no-trunc --filter "id=$receiver_id")" || return 1
+    [ -z "$observed" ] || return 1
+  fi
+  observed="$(docker container ls -aq --filter "name=^/$receiver_name$")" || return 1
+  [ -z "$observed" ] || return 1
+  rm -f "$RECEIVER_RECORDS/container" || return 1
+  rmdir "$RECEIVER_RECORDS" || return 1
+  RECEIVER_RECORDS=""
 }
 
 finish() {
@@ -74,7 +106,7 @@ finish() {
       docker logs --tail 40 "$POSTGRES_CONTAINER" >&2 || true
     fi
   fi
-  cleanup
+  cleanup || status=1
   cleanup_control_fixture || status=1
   exit "$status"
 }
@@ -528,6 +560,23 @@ status, message = mcp("read.desired-topology-draft-revision", identity)
 assert status == 200 and message["result"] == detail, (status, message)
 print("packaged empty revision history HTTP/MCP composition passed")
 PY
+
+if [ "$PROFILE" = wrapped-source ]; then
+  phase "receiver acceptance owner composition"
+  RECEIVER_RECORDS="$(mktemp -d)"
+  observed="$(docker container ls -aq --filter "name=^/$NETWORK-receiver-acceptance$")"
+  [ -z "$observed" ]
+  receiver_id="$(docker create --name "$NETWORK-receiver-acceptance" \
+    --cidfile "$RECEIVER_RECORDS/container" --label "$LABEL" \
+    --label "org.openj92.cpk.test-run=$NETWORK" --network "$NETWORK" \
+    -e CPK_RECEIVER_ACCEPTANCE_DATABASE_URL=postgresql://cpk:cpk@cpk-postgres:5432/cpk \
+    "$CPK_SERVERS_TEST_IMAGE" python products/cpk_server/tests/live_receiver_acceptance.py)"
+  [ "$receiver_id" = "$(cat "$RECEIVER_RECORDS/container")" ]
+  docker start -a "$receiver_id"
+  [ "$(docker inspect --format '{{.State.ExitCode}}' "$receiver_id")" = 0 ]
+  cleanup_receiver_fixture
+  echo "receiver acceptance witness container absence verified"
+fi
 
 phase "clean owned smoke resources"
 cleanup

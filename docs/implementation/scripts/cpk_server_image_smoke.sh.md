@@ -35,3 +35,12 @@ the exact ID; it does not block in a foreground docker run or use a generic runn
 
 The15-poll bound assumes responsive Docker CLI calls; it is not a hard wall-clock
 deadline against a hung daemon. Apparatus failure remains a stop condition.
+
+Core #1912 adds one identified socket-free witness container only in wrapped-source,
+using the maintained test image and this smoke's existing disposable PostgreSQL
+network. A private cidfile, exact name and unique run label preserve allocation
+identity across interruption. Cleanup verifies identity/ownership and absence;
+no broad prune or implicit retry. The witness creates and drops isolated issue
+schemas through real Operations bootstrap/UoW, leaving the source server schema
+separate. Published-baseline does not invoke this source witness. The additional
+container has no host listener, daemon mount or credentials from the user.
