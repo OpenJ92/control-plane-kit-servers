@@ -45,3 +45,8 @@ non-rendering assertions; removing own decoders does not remove that law.
 An absent transit artifact is also refused directly while constructing the actual
 registry from that descriptor, preserving the original declared-slot law beyond
 an unrelated missing-reference lookup in an already-built registry.
+
+Servers #245 translates the existing unexpected-decoder error witness to the
+actual Core codec entry point. Malformed/duplicate/missing/foreign self-binding
+cases still exercise the real canonical decoder and the product selector's
+bounded refusal. No malformed case or owner-error identity assertion is removed.

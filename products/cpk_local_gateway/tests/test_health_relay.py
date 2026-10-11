@@ -36,7 +36,7 @@ class HealthRelayTests(unittest.TestCase):
         w = self.world
         binding = config_api.gateway_health_target_binding(target_id="database-management", target=w.target,
             runtime_contract=w.contract, hostname="wrapped-db")
-        config = config_api.GatewayHealthRelayConfiguration(gateway_target=w.transit.gateway_target, targets=(binding,))
+        config = core.ReceiverManagementRoutes(gateway_target=w.transit.gateway_target, targets=(binding,))
         trust_api, verify_api = w.transit.api()
         verifier = w.transit.verifier(trust_api, verify_api)
         relay = relay_api.GatewayHealthRelay(configuration=config, verifier=verifier,

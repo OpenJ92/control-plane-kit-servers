@@ -21,8 +21,10 @@ from control_plane_kit_servers_cpk_local_gateway.control_configuration import (
 )
 from control_plane_kit_servers_cpk_local_gateway.health_relay_configuration import (
     ARTIFACT_ID as TARGETS_ARTIFACT_ID, CONFIGURATION_PATH as TARGETS_PATH,
-    GatewayHealthRelayConfigurationError, GatewayHealthTargetBinding,
-    decode_gateway_health_relay_configuration, require_matching_receiver,
+    GatewayHealthRelayConfigurationError, require_matching_receiver,
+)
+from control_plane_kit_core.receiver_management_routes import (
+    ReceiverManagementRouteBinding, ReceiverManagementRoutesCodec, ReceiverManagementRoutesError,
 )
 from control_plane_kit_core.receiver_configuration import (
     ReceiverNodeControlConfiguration, ReceiverNodeControlConfigurationCodec,
@@ -120,7 +122,7 @@ def _gateway_self_configuration(selection):
 def select_gateway_self_health_binding(
     *, transit: HealthReceiverSelection, targets: HealthReceiverSelection,
     control: HealthReceiverSelection,
-) -> GatewayHealthTargetBinding:
+) -> ReceiverManagementRouteBinding:
     """Return selected internal relay material, never authority or installed-state proof."""
     transit_raw = _declared_selected_bytes(transit, _GATEWAY_SLOT)
     targets_raw = _declared_selected_bytes(targets, _TARGETS_SLOT)
@@ -136,10 +138,11 @@ def select_gateway_self_health_binding(
         raise HealthReceiverTrustError(_UNAVAILABLE)
     try:
         trust = decode_gateway_health_transit_configuration(transit_raw)
-        relay = decode_gateway_health_relay_configuration(targets_raw)
+        relay = ReceiverManagementRoutesCodec().decode_bytes(targets_raw)
         require_matching_receiver(trust, relay)
         require_matching_gateway_control(configured, relay)
-    except (GatewayHealthTransitConfigurationError, GatewayHealthRelayConfigurationError, GatewayControlConfigurationError):
+    except (GatewayHealthTransitConfigurationError, GatewayHealthRelayConfigurationError,
+            ReceiverManagementRoutesError, GatewayControlConfigurationError):
         failure = HealthReceiverTrustError(_UNAVAILABLE)
     else:
         bindings = tuple(value for value in relay.targets if value.target == configured.target

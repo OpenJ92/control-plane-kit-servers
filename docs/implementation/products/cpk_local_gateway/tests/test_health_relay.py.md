@@ -56,3 +56,6 @@ This is target-only static preparation, not executable green. Initial929f829 red
 proves missing obsolete own-profile refusal only. New receiving closure and the
 unchanged whole Servers/paired Interpreter gates remain required. No host test,
 manual runner, provider, credential publication or live deployment occurred.
+
+Servers #245 composes the real relay with Core's route value. Existing signed
+pairing, downstream request and bounded refusal assertions remain unchanged.

@@ -13,3 +13,7 @@ for hostile filesystem owners. Missing or malformed files prevent serving. No
 private key or secret-provider operation is involved. Actual temporary-file/main
 loading is covered by owner tests; Docker mount delivery evidence remains the
 previous #156 owner evidence, not a claim newly made by this loader.
+
+Servers #245 sends the bounded target-file bytes directly to Core's
+`ReceiverManagementRoutesCodec`. File paths, regular-file checks and byte-read
+limits remain in this process adapter; Core owns only the semantic document.

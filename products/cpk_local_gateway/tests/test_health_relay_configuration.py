@@ -14,6 +14,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+import control_plane_kit_core as core
 from control_plane_kit_core.configuration import ConfigurationFileMode, ConfigurationMediaType
 from control_plane_kit_core.products import ProductRuntimeContractCodec, ProductDescriptorCodec
 from control_plane_kit_core.gateway_delegation import GatewayProbeRequest, GatewayProbeCommandKind
@@ -39,7 +40,7 @@ class HealthRelayConfigurationTests(unittest.TestCase):
         w = self.world
         binding = api.gateway_health_target_binding(target_id="database-management", target=w.target,
             runtime_contract=w.contract, hostname="wrapped-db")
-        return api.GatewayHealthRelayConfiguration(gateway_target=w.transit.gateway_target, targets=(binding,))
+        return core.ReceiverManagementRoutes(gateway_target=w.transit.gateway_target, targets=(binding,))
 
     def artifacts(self, api):
         trust_api, _ = self.world.transit.api()
@@ -86,8 +87,8 @@ class HealthRelayConfigurationTests(unittest.TestCase):
         api = importlib.import_module(PACKAGE + ".control_configuration")
         return api.gateway_control_configuration_artifact(own_configuration(api, self.world))
 
-    def refused(self, api, action):
-        with self.assertRaises(api.GatewayHealthRelayConfigurationError) as caught:
+    def refused(self, api, action, *, error=None):
+        with self.assertRaises(error or api.GatewayHealthRelayConfigurationError) as caught:
             action()
         self.assertLess(len(str(caught.exception)), 100)
         self.assertEqual(vars(caught.exception), {})
@@ -122,22 +123,28 @@ class HealthRelayConfigurationTests(unittest.TestCase):
 
     def test_configuration_roundtrip_closed_bounded_and_duplicate_target_refusal(self):
         api = self.api()
+        codec = core.ReceiverManagementRoutesCodec()
+        def refused(action):
+            self.refused(api, action, error=core.ReceiverManagementRoutesError)
         value = self.configuration(api)
         artifact = api.gateway_health_relay_configuration_artifact(value)
         self.assertEqual((artifact.artifact_id, artifact.target_path), ("gateway-health-targets", TARGET_PATH))
         self.assertIs(artifact.file_mode, ConfigurationFileMode.READ_ONLY)
         self.assertIs(artifact.media_type, ConfigurationMediaType.JSON)
-        self.assertEqual(api.decode_gateway_health_relay_configuration(artifact.content.encode()), value)
+        self.assertEqual(codec.decode_bytes(artifact.content.encode()), value)
         document = json.loads(artifact.content)
-        self.refused(api, lambda:api.decode_gateway_health_relay_configuration(json.dumps({**document,
+        self.assertEqual(document["profile"], "cpk-gateway-health-relay-configuration.v2")
+        self.assertEqual(artifact.content, json.dumps(document,
+            sort_keys=True, separators=(",", ":"), ensure_ascii=True))
+        refused(lambda:codec.decode_bytes(json.dumps({**document,
             "profile":"cpk-gateway-health-relay-configuration.v1"}).encode()))
         self.assertNotIn("wrapped-db", repr(value))
-        self.refused(api, lambda:replace(value, targets=(*value.targets, value.targets[0])))
+        refused(lambda:replace(value, targets=(*value.targets, value.targets[0])))
         duplicate_identity = replace(value.targets[0], target_id="other-alias")
-        self.refused(api, lambda:replace(value, targets=(*value.targets, duplicate_identity)))
+        refused(lambda:replace(value, targets=(*value.targets, duplicate_identity)))
         for raw in (b"x"*131073, b'{"profile":"x","profile":"y"}', b'{"profile":NaN}',
                     b"["*40+b"]"*40, b"{}", b"private-marker"):
-            self.refused(api, lambda:api.decode_gateway_health_relay_configuration(raw))
+            refused(lambda:codec.decode_bytes(raw))
 
     def test_source_contract_exact_slots_port_and_transit_without_rewriting_historical_descriptor(self):
         api = self.api()

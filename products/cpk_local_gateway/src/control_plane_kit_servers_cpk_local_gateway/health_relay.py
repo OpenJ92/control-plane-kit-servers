@@ -8,7 +8,7 @@ import httpx
 from fastapi import Request
 from fastapi.responses import Response
 import control_plane_kit_core as core
-from .health_relay_configuration import GatewayHealthRelayConfiguration, require_matching_receiver
+from .health_relay_configuration import require_matching_receiver
 from .health_transit_configuration import _decode_json, _object, _INPUT_ERRORS
 from .health_transit_verification import (
     Ed25519GatewayHealthTransitVerifier, GatewayHealthTransitVerificationError, _compact,
@@ -91,7 +91,7 @@ def _paired_workload(credential, request):
 
 @dataclass(frozen=True, slots=True, repr=False)
 class GatewayHealthRelay:
-    configuration: GatewayHealthRelayConfiguration
+    configuration: core.ReceiverManagementRoutes
     verifier: Ed25519GatewayHealthTransitVerifier
     clock: Callable[[], int] = field(repr=False)
     transport: httpx.AsyncBaseTransport | None = field(default=None, repr=False)
@@ -99,14 +99,14 @@ class GatewayHealthRelay:
 
     def __post_init__(self):
         try:
-            if (type(self.configuration) is not GatewayHealthRelayConfiguration
+            if (type(self.configuration) is not core.ReceiverManagementRoutes
                     or type(self.verifier) is not Ed25519GatewayHealthTransitVerifier or not callable(self.clock)
                     or type(self.timeout_seconds) not in (int, float) or not math.isfinite(self.timeout_seconds)
                     or not 0 < self.timeout_seconds <= 5
                     or (self.transport is not None and not isinstance(self.transport, httpx.AsyncBaseTransport))):
                 raise ValueError
             object.__setattr__(self, "configuration", replace(self.configuration))
-            # Both are product-owned values; this never obtains authority from a token.
+            # Product trust must match the canonical routes; neither grants authority.
             require_matching_receiver(self.verifier._configuration, self.configuration)
             return
         except _INPUT_ERRORS:

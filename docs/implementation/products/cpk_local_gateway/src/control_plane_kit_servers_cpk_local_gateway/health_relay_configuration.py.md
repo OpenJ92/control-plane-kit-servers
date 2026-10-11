@@ -2,7 +2,7 @@
 
 Source: `products/cpk_local_gateway/src/control_plane_kit_servers_cpk_local_gateway/health_relay_configuration.py`.
 
-The immutable receiving map binds a name to exact Core receiver target (including runtime and receiver ID), V2
+Core's immutable `ReceiverManagementRoutes` binds a name to an exact receiver target (including runtime and receiver ID), V2
 health declaration and HTTP origin. Its pure factory selects only the target's
 control surface and declared provider port from a revalidated Core runtime
 contract. It never enumerates ordinary edges, infers permission from runtime
@@ -11,7 +11,7 @@ owns pinned Operations projection membership and hostname resolution (#181).
 
 The closed JSON artifact is `gateway-health-targets` at
 `/etc/cpk/gateway/health-targets.json`, mode0444, maximum131072 bytes, at most128
-unique names and target identities. JSON depth is bounded by the product parser;
+unique names and target identities. JSON depth is bounded by Core's canonical codec;
 duplicate/nonfinite/unknown fields refuse. Only hostname-based plain HTTP origins
 with an explicit port and no path/userinfo/query/fragment are supported. This
 private-network transport assumes runtime DNS/network integrity; bearers remain
@@ -31,6 +31,14 @@ retained. The complete returned contract enters actual Core compilation unchange
 including verification and artifacts; its local-readiness obligation must gate
 connector and subsequent authenticated-path/workload progress. The older #180
 edge-free projection fixture remains only an endpoint-selection witness.
+
+Servers #245 removes the local semantic types and decoder without aliases.
+The product port factory returns `ReceiverManagementRouteBinding`; the artifact
+factory accepts `ReceiverManagementRoutes` and uses `ReceiverManagementRoutesCodec`
+directly. Product errors still frame port/artifact/trust/control policy, while
+Core owns syntax and immutable route validation. Startup's byte-read limit stays
+product-owned. The wire profile and canonical bytes remain v2. Graph eligibility
+and active registered-product admission remain Operations responsibilities.
 
 Validation: reviewed causal red and subsequent corrections are historical.
 Exact source/test head ba9bc249 passed full owning CI35379205171:26 support and436

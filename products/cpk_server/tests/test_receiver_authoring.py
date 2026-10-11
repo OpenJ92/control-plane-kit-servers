@@ -74,10 +74,10 @@ assert "control_plane_kit_servers_cpk_server.client.authoring" not in sys.module
             WORKLOAD_NODE_CONTROL_CONFIGURATION_ENVIRONMENT,
         )
         from control_plane_kit_servers_cpk_local_gateway.health_relay_configuration import (
-            GatewayHealthRelayConfiguration,
-            GatewayHealthTargetBinding,
             gateway_health_relay_configuration_artifact,
         )
+        from control_plane_kit_servers_cpk_local_gateway.control_configuration import gateway_control_declaration
+        from control_plane_kit_servers_hello_server.configuration import hello_control_declaration
         from control_plane_kit_servers_cpk_local_gateway.health_transit_configuration import (
             GatewayHealthTransitConfiguration,
             gateway_health_transit_configuration_artifact,
@@ -102,25 +102,8 @@ assert "control_plane_kit_servers_cpk_server.client.authoring" not in sys.module
 
         gateway_target = target("gateway", "control", "a" * 32)
         x_target = target("hello-x", "internal", "b" * 32)
-        gateway_declaration = core.WorkloadNodeControlSurfaceDeclaration(
-            core.WorkloadNodeControlSurfaceDescriptor(
-                gateway_target.provider_socket_name,
-                (),
-                health_reads=(core.NodeHealthReadKind.READINESS,),
-            ),
-            profile=core.WorkloadNodeControlSurfaceDeclarationProfile.V2,
-        )
-        hello_declaration = core.WorkloadNodeControlSurfaceDeclaration(
-            core.WorkloadNodeControlSurfaceDescriptor(
-                x_target.provider_socket_name,
-                (),
-                health_reads=(
-                    core.NodeHealthReadKind.LIVENESS,
-                    core.NodeHealthReadKind.READINESS,
-                ),
-            ),
-            profile=core.WorkloadNodeControlSurfaceDeclarationProfile.V2,
-        )
+        gateway_declaration = gateway_control_declaration()
+        hello_declaration = hello_control_declaration()
         private = Ed25519PrivateKey.generate()
         public = core.DelegationPublicKey(
             "public-a",
@@ -173,10 +156,14 @@ assert "control_plane_kit_servers_cpk_server.client.authoring" not in sys.module
             )
         )
         routes = gateway_health_relay_configuration_artifact(
-            GatewayHealthRelayConfiguration(
+            core.ReceiverManagementRoutes(
                 gateway_target,
                 (
-                    GatewayHealthTargetBinding(
+                    core.ReceiverManagementRouteBinding(
+                        "gateway-self", gateway_target, gateway_declaration,
+                        "http://gateway:8000",
+                    ),
+                    core.ReceiverManagementRouteBinding(
                         "hello-x",
                         x_target,
                         hello_declaration,
@@ -394,9 +381,7 @@ assert "control_plane_kit_servers_cpk_server.client.authoring" not in sys.module
             ReceiverNodeControlConfigurationCodec,
             select_receiver_node_control_configuration_artifact,
         )
-        from control_plane_kit_servers_cpk_local_gateway.health_relay_configuration import (
-            decode_gateway_health_relay_configuration,
-        )
+        from control_plane_kit_core.receiver_management_routes import ReceiverManagementRoutesCodec
 
         y_scope = api.ReceiverScope("hello-y", "internal")
         authored = api.author_receiver_graph(
@@ -414,12 +399,16 @@ assert "control_plane_kit_servers_cpk_server.client.authoring" not in sys.module
                     api.ReceiverScope("gateway", "control"),
                     (
                         api.GatewayHealthTargetIntent(
-                            "hello-x",
-                            api.ReceiverScope("hello-x", "internal"),
-                            "http://hello-x:8000",
+                            "gateway-self", api.ReceiverScope("gateway", "control"),
+                            fixture["graph_b"].node("gateway").endpoint("control").url,
                         ),
                         api.GatewayHealthTargetIntent(
-                            "hello-y", y_scope, "http://hello-y:8000"
+                            "hello-x",
+                            api.ReceiverScope("hello-x", "internal"),
+                            fixture["graph_b"].node("hello-x").endpoint("internal").url,
+                        ),
+                        api.GatewayHealthTargetIntent(
+                            "hello-y", y_scope, fixture["graph_b"].node("hello-y").endpoint("internal").url
                         ),
                     ),
                 ),
@@ -441,12 +430,16 @@ assert "control_plane_kit_servers_cpk_server.client.authoring" not in sys.module
             for artifact in authored.node("gateway").configuration_artifacts
             if artifact.artifact_id == "gateway-health-targets"
         )
-        route = decode_gateway_health_relay_configuration(
+        route = ReceiverManagementRoutesCodec().decode_bytes(
             route_artifact.content.encode("utf-8")
         )
         routed_y = next(item for item in route.targets if item.target_id == "hello-y")
         self.assertEqual(routed_y.target, y_configuration.target)
         self.assertEqual(route.gateway_target, fixture["gateway_target"])
+        self.assertEqual({item.target_id for item in route.targets},
+                         {"gateway-self", "hello-x", "hello-y"})
+        previous = ReceiverManagementRoutesCodec().decode_bytes(fixture["routes"].content.encode())
+        self.assertEqual(tuple(item for item in route.targets if item.target_id != "hello-y"), previous.targets)
         self.assertEqual(
             next(
                 item for item in authored.node("hello-x").configuration_artifacts
@@ -461,6 +454,134 @@ assert "control_plane_kit_servers_cpk_server.client.authoring" not in sys.module
             ),
             fixture["trust"],
         )
+
+    def test_complete_registered_same_product_routes_preserve_self_and_x(self):
+        self.assert_complete_registered_routes(distinct_product=False)
+
+    def test_distinct_registered_products_use_common_receiver_routes_without_registry(self):
+        self.assert_complete_registered_routes(distinct_product=True)
+
+    def assert_complete_registered_routes(self, *, distinct_product):
+        """Pure source-product composition; no deployed-image or saga claim."""
+        import control_plane_kit_core as core
+        from control_plane_kit_core.algebra import DeploymentTopology, DockerRuntime
+        from control_plane_kit_core.products import (
+            ContainerServerProduct, OciImageReference, ProductDescriptorCodec,
+            ProductIdentity, ProductInstanceConfiguration, instantiate_product,
+        )
+        from control_plane_kit_core.topology import compile_topology
+        from control_plane_kit_core.planning import PlanGraphSide
+        from control_plane_kit_core.wrapper_configuration import WORKLOAD_NODE_CONTROL_CONFIGURATION_ENVIRONMENT
+        from control_plane_kit_operations.products import RegisteredProduct, InlineDescriptorSource
+        from control_plane_kit_operations.health_receiver_trust import HealthReceiverSelection
+        from control_plane_kit_servers_cpk_local_gateway.health_relay_configuration import gateway_health_source_runtime_contract
+        from control_plane_kit_servers_hello_server.configuration import hello_source_runtime_contract
+        from control_plane_kit_servers_secrets_server.configuration import (
+            secrets_control_configuration_artifact, secrets_source_runtime_contract,
+        )
+        from control_plane_kit_secrets.control import secrets_control_declaration
+        from control_plane_kit_servers_cpk_server.health_receiver_adapters import (
+            select_gateway_self_health_binding, select_own_health_configuration,
+        )
+
+        api, fixture = self.api(), self.fixture()
+        wrapper_codec = core.ReceiverNodeControlConfigurationCodec()
+        route_codec = core.ReceiverManagementRoutesCodec()
+
+        def registered(name, contract):
+            # A distinct never-executed descriptor records this source contract;
+            # no historical published image is associated with new behavior.
+            codec = ProductDescriptorCodec()
+            document = codec.encode_document(ContainerServerProduct(
+                ProductIdentity("receiver-test", name, 1),
+                OciImageReference("example.invalid", "never-executed/" + name, "sha256:" + "b" * 64),
+                contract,
+            ))
+            return RegisteredProduct.from_document(workspace_id="workspace-a",
+                descriptor_document=codec.decode_document(document.content),
+                source=InlineDescriptorSource(), imported_by="fixture",
+                imported_at="2026-10-10T00:00:00Z")
+
+        gateway = registered("gateway", gateway_health_source_runtime_contract(
+            fixture["trust"], fixture["routes"], fixture["gateway_wrapper"]))
+        hello = registered("hello", hello_source_runtime_contract(fixture["x_wrapper"]))
+        y_name, y_socket, y_port = ("secrets-y", "control", 8081) if distinct_product else ("hello-y", "internal", 8000)
+        y_product = hello
+        y_artifact = fixture["x_wrapper"]
+        if distinct_product:
+            configured = wrapper_codec.decode_bytes(fixture["x_wrapper"].content.encode())
+            y_target = replace(configured.target,
+                node_id=replace(configured.target.node_id, value=y_name),
+                provider_socket_name=replace(configured.target.provider_socket_name, value=y_socket))
+            y_artifact = secrets_control_configuration_artifact(replace(configured,
+                target=y_target, declaration=secrets_control_declaration()))
+            y_product = registered("secrets", secrets_source_runtime_contract(y_artifact))
+            self.assertNotEqual(hello.reference, y_product.reference)
+
+        def block(record, name):
+            product = record.descriptor_document.product
+            return instantiate_product(product, name, ProductInstanceConfiguration.from_contract(product.runtime_contract))
+
+        blocks = (block(gateway, "gateway"), block(hello, "hello-x"))
+        graph_a = compile_topology(DeploymentTopology("registered-receivers",
+            DockerRuntime(runtime_id="runtime-a", children=blocks)))
+        graph_b = compile_topology(DeploymentTopology("registered-receivers",
+            DockerRuntime(runtime_id="runtime-a", children=(*blocks, block(y_product, y_name)))))
+        # Y is an unconfigured desired receiver. Authoring owns the explicit
+        # fresh wrapper installation; this does not assert running state.
+        y_node = graph_b.node(y_name)
+        graph_b = graph_b.update_node(replace(y_node,
+            configuration_artifacts=tuple(item for item in y_node.configuration_artifacts
+                if item.artifact_id != y_artifact.artifact_id),
+            public_environment=tuple(item for item in y_node.public_environment
+                if item.name != WORKLOAD_NODE_CONTROL_CONFIGURATION_ENVIRONMENT)))
+
+        scopes = (("gateway-self", "gateway", "control", 8000), ("hello-x", "hello-x", "internal", 8000))
+        def routes(graph, members):
+            intents = []
+            for identity, name, socket, port in members:
+                node = graph.node(name)
+                self.assertEqual(node.runtime_id, "runtime-a")
+                # Actual Core product materialization is the endpoint owner.
+                self.assertEqual(node.endpoint(socket).url, f"http://{name}:{port}")
+                intents.append(api.GatewayHealthTargetIntent(identity, api.ReceiverScope(name, socket), node.endpoint(socket).url))
+            return (api.GatewayHealthRoutes(api.ReceiverScope("gateway", "control"), tuple(intents)),)
+
+        authored = {}
+        for letter, graph, members in (("a", graph_a, scopes),
+                ("b", graph_b, (*scopes, (y_name, y_name, y_socket, y_port))),
+                ("c", graph_a, scopes)):
+            authored[letter] = api.author_receiver_graph(graph, workspace_id="workspace-a",
+                context=fixture["context"], verifier_configuration=fixture["verifiers"],
+                introductions=((api.ReceiverIntroduction(api.ReceiverScope(y_name, y_socket),
+                    y_artifact.artifact_id, y_artifact.target_path),) if letter == "b" else ()),
+                gateway_health_replacements=routes(graph, members),
+                receiver_identity_factory=lambda:"c" * 32)
+
+        documents = {}
+        for letter, graph in authored.items():
+            artifacts = {item.artifact_id:item for item in graph.node("gateway").configuration_artifacts}
+            documents[letter] = route_codec.decode_bytes(artifacts["gateway-health-targets"].content.encode())
+            def selection(identity):
+                return HealthReceiverSelection("workspace-a", "graph-" + letter, "projection-" + letter,
+                    PlanGraphSide.DESIRED_GRAPH, "gateway", "runtime-a", "control",
+                    gateway.reference, gateway.descriptor_document, artifacts[identity])
+            selected = select_gateway_self_health_binding(transit=selection("gateway-health-transit"),
+                targets=selection("gateway-health-targets"), control=selection("gateway-control"))
+            self.assertEqual(selected.target, fixture["gateway_target"])
+            self.assertEqual(selected.origin, graph.node("gateway").endpoint("control").url)
+        self.assertEqual(documents["a"], documents["c"])
+        self.assertEqual({item.target_id for item in documents["a"].targets}, {"gateway-self", "hello-x"})
+        self.assertEqual({item.target_id for item in documents["b"].targets}, {"gateway-self", "hello-x", y_name})
+        self.assertEqual(tuple(item for item in documents["b"].targets if item.target_id != y_name), documents["a"].targets)
+        y_route = next(item for item in documents["b"].targets if item.target_id == y_name)
+        y_control = next(item for item in authored["b"].node(y_name).configuration_artifacts if item.artifact_id == y_artifact.artifact_id)
+        selected_y = select_own_health_configuration(HealthReceiverSelection(
+            "workspace-a", "graph-b", "projection-b", PlanGraphSide.DESIRED_GRAPH,
+            y_name, "runtime-a", y_socket, y_product.reference, y_product.descriptor_document, y_control))
+        self.assertEqual(y_route.target, selected_y.target)
+        self.assertEqual(y_route.declaration, selected_y.declaration)
+        self.assertEqual(y_route.origin, authored["b"].node(y_name).endpoint(y_socket).url)
 
     def test_variable_receiver_requests_and_installs_control_verifier(self):
         api = self.api()
@@ -544,9 +665,7 @@ assert "control_plane_kit_servers_cpk_server.client.authoring" not in sys.module
     def test_gateway_route_omission_preserves_bytes_and_explicit_empty_replaces(self):
         api = self.api()
         fixture = self.fixture()
-        from control_plane_kit_servers_cpk_local_gateway.health_relay_configuration import (
-            decode_gateway_health_relay_configuration,
-        )
+        from control_plane_kit_core.receiver_management_routes import ReceiverManagementRoutesCodec
 
         preserved = api.author_receiver_graph(
             fixture["graph_a"],
@@ -578,7 +697,7 @@ assert "control_plane_kit_servers_cpk_server.client.authoring" not in sys.module
             if item.artifact_id == "gateway-health-targets"
         )
         self.assertEqual(
-            decode_gateway_health_relay_configuration(
+            ReceiverManagementRoutesCodec().decode_bytes(
                 empty_route.content.encode("utf-8")
             ).targets,
             (),
@@ -816,12 +935,16 @@ assert "control_plane_kit_servers_cpk_server.client.authoring" not in sys.module
                     api.ReceiverScope("gateway", "control"),
                     (
                         api.GatewayHealthTargetIntent(
-                            "hello-x",
-                            api.ReceiverScope("hello-x", "internal"),
-                            "http://hello-x:8000",
+                            "gateway-self", api.ReceiverScope("gateway", "control"),
+                            fixture["graph_b"].node("gateway").endpoint("control").url,
                         ),
                         api.GatewayHealthTargetIntent(
-                            "hello-y", y_scope, "http://hello-y:8000"
+                            "hello-x",
+                            api.ReceiverScope("hello-x", "internal"),
+                            fixture["graph_b"].node("hello-x").endpoint("internal").url,
+                        ),
+                        api.GatewayHealthTargetIntent(
+                            "hello-y", y_scope, fixture["graph_b"].node("hello-y").endpoint("internal").url
                         ),
                     ),
                 ),

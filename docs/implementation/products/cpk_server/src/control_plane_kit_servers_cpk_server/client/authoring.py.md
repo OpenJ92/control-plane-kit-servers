@@ -27,3 +27,17 @@ health-bearing surfaces preserve V2.
 The transform handles public verifier keys and public route origins only. It
 does not persist, approve, dispatch, inspect installed state, or hold private key
 or credential material.
+
+Servers #245 constructs Core `ReceiverManagementRouteBinding` and
+`ReceiverManagementRoutes` directly, then invokes the existing product artifact
+factory. Complete examples explicitly include gateway self-health plus X in A/C
+and retain those bindings while adding Y in B. Explicit empty authoring remains
+valid; the consumer's self-selection requirement is not a universal Core law.
+
+Registered source-product examples obtain origins from the compiled
+`node.endpoint(socket).url`, whose Core owner derives the protocol/node/declared
+provider port. Same-product Hello X/Y and a separate Hello/Secrets case use the
+same common receiving configuration and decoder, without an application registry.
+The latter tests ports 8000 and 8081 and differing health declarations. Explicit
+caller origins remain configuration, not admission authority: Operations must
+independently verify eligible pinned graph and registered-product truth.

@@ -38,3 +38,10 @@ Synthetic drift now proves SDK reaches it, while root/CPK require the FastAPI
 extra and the three stdlib product recipes retain verification.
 
 Servers203 adds a root Secrets requirement, which the existing Secrets archive replacement already handles. Generator source is unchanged; synthetic drift now includes root plus Secrets recipe as actual destinations while published product output stays byte-identical.
+
+Servers #245 selects the accepted common Core/Operations contract coordinate and
+aligned SDK/Secrets/Interpreters producer tuple through this unchanged generator.
+Its recorded generation invocation uses the maintained Python container with
+only the isolated checkout writable and omits `--check`; it performs no install,
+provider access or test substitution. Root metadata and all six dependency
+recipes change; historical product descriptors and catalogue bytes stay fixed.

@@ -108,7 +108,7 @@ def prepare_packet(raw, artifacts):
             selected[name]=replace(item,content=artifacts[name].decode("utf-8"))
         configured=control.decode_gateway_control_configuration(artifacts["control"])
         trust=transit.decode_gateway_health_transit_configuration(artifacts["transit"])
-        targets=relay.decode_gateway_health_relay_configuration(artifacts["targets"])
+        targets=core.ReceiverManagementRoutesCodec().decode_bytes(artifacts["targets"])
         relay.require_matching_receiver(trust,targets)
         control.require_matching_gateway_control(configured,targets)
         actual=relay.gateway_health_source_runtime_contract(selected["transit"],selected["targets"],selected["control"])
