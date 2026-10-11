@@ -256,7 +256,11 @@ class TopologyClient:
                         raise ClientInputError(
                             "receiver verifier configuration is invalid"
                         )
-                    verifier_configuration = _mapping(verifier_response, "payload")
+                    verifier_configuration = {
+                        "workload_verifier_configuration": _mapping(
+                            verifier_response, "workload_verifier_configuration"
+                        )
+                    }
                 graph = author_receiver_graph(
                     graph,
                     workspace_id=self.profile.workspace_id,

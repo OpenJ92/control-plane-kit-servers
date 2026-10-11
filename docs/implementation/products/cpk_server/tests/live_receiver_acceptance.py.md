@@ -1,5 +1,11 @@
 Source: [live_receiver_acceptance.py](../../../../../products/cpk_server/tests/live_receiver_acceptance.py).
 
+The current #237 dependency alignment advances this witness's five installed
+provenance expectations to accepted Core/Operations #1969, SDK #50, Secrets #48
+and Interpreters #188. They must exactly match the canonical coordinate manifest.
+Scenario, substitutes, assertions and cleanup remain unchanged; new joined
+evidence must come from the normal owning Servers gate with this selected tuple.
+
 Core #1912 source-only owner composition, invoked by the existing wrapped-source
 CPK image smoke in its normal test image. Normal installed distribution provenance
 must match the accepted tuple before behavioral results count. The witness owns

@@ -6,6 +6,14 @@ constructs the actual CPK application services over that namespace, and drops
 the namespace on exit. Teardown verifies `to_regnamespace` is null; it does not
 claim cleanup from a local flag or an unverified `DROP` request.
 
+The #237 pending-baseline prerequisite also uses the actual
+`DesiredTopologyDraftCommandService`, wired into `cpk_server_services` with the
+same unit of work, clock and ID factory. Both create and select share this owner;
+workspace/session and authoring-context reads retain their existing service
+composition. The sixth #237 run exposed this previously omitted optional service.
+This is test application wiring, not a new production service or a change to #1912
+behavior, which does not call draft routes.
+
 `register_material` admits only the authored witness material through public
 command routes: three product documents, local-Docker authority, health,
 Cloudflare and generated-secret providers, the Cloudflare API reference, two

@@ -50,3 +50,10 @@ identity/label verification, removal, absence queries and cidfile-directory clea
 including on a failed witness path. Failure emits an incomplete-cleanup marker
 with its retained record directory. Prior runs without these distinct markers
 must not be retroactively described as separately verified absence evidence.
+
+The #237 extension runs after #1912 in the same identified witness container with
+`sh -e` failure propagation, ending in `exec` of the unlisted witness. It freezes
+and later rechecks the controller image's immutable ID, mounts independent example
+files read-only after build, and permits only container-local loopback listeners
+and at most two tracked receiver children. No host ports or Docker socket are
+added. Existing exact container cleanup runs for success, failure and interruption.

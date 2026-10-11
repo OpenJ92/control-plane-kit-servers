@@ -1,6 +1,17 @@
 Source: [Dockerfile](../../../../products/http_multiplexer/Dockerfile).
 
-## Current receiving adoption (#237)
+## Current declared-slot adoption (#237)
+
+The canonical tuple selects accepted Core/Operations #1969 `a3f21206`, SDK #50
+`f1bc730a`, Secrets #48 `fc018b09` and Interpreters #188 `7c52e678`.
+The manifest contains full immutable commits; each generated destination keeps
+its existing package subset and extras. Exact provenance expectations move with
+these pins. The maintained offline generator updates only dependency mirrors;
+published source/image, descriptor and catalogue bytes remain unchanged.
+The normal owning Servers gate must establish this tuple's joined compatibility.
+Earlier selection and pending statements below describe historical checkpoints.
+
+## Historical receiving adoption (#237)
 
 The receiving candidate selects Core and Operations
 250d65e19dc748ebe840f705be77eb732dab3cb3, SDK
