@@ -64,3 +64,18 @@ This is target-only static preparation, not executable green. Initial929f829 red
 proves missing obsolete own-profile refusal only. New receiving closure and the
 unchanged whole Servers/paired Interpreter gates remain required. No host test,
 manual runner, provider, credential publication or live deployment occurred.
+
+Servers #245 adds two causal adoption targets: an actual Core management-route
+value must cross the product artifact boundary without nominal translation, and
+the declared management-port factory must return a Core binding consumable by
+that same route language. The initial checkpoint deliberately leaves production
+source unchanged; the expected failures are the old product-local nominal type
+checks. Installed dependency checks and all existing tests remain in the owning
+gate. No target-red result is claimed until observed.
+
+The reviewed target checkpoint `6bcbc528247c25c1966a0cb450785120f08de0d6`
+failed on precisely those two assertions in run38108503398; no test errors.
+[Observed red and stage cutoff](https://github.com/OpenJ92/control-plane-kit-servers/pull/246#issuecomment-6105036392).
+Existing semantic roundtrip/refusal assertions now call Core's codec/error type;
+product policy assertions keep the product error. Final green is still pending
+independent source review and the owning gate at this implementation checkpoint.

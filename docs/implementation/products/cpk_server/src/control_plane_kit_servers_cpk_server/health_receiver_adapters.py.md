@@ -30,3 +30,10 @@ actual accepted Operations coverage owner to real SDK/gateway verification and
 preserve selected A/B/AB keys, original graph sides, provenance and refusal laws.
 Standalone packaging/production observer activation remains issue181; this pure
 selection change neither installs receivers nor qualifies published images.
+
+Servers #245 decodes targets directly with Core `ReceiverManagementRoutesCodec`
+and returns a `ReceiverManagementRouteBinding`. Canonical syntax refusals are
+translated alongside existing product trust/control failures to the existing
+bounded `HealthReceiverTrustError`. Unexpected owner errors still propagate.
+Declared slots, full selection context and exact self-target/declaration matching
+remain unchanged. No receiver registry or dispatch authority is added.

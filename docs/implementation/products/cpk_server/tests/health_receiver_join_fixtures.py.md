@@ -21,3 +21,8 @@ carry separate caller authority. BASE/DESIRED selection, A/B/AB trust coverage,
 real compiler/resolver and exact read-only product lookup are unchanged laws.
 Gateway-self fixtures use the actual common own configuration, full gateway
 transit/relay targets and distinct selected versus default health keys.
+
+Servers #245 constructs Core route values directly. The temporary empty value
+in `gateway_self_world` only bootstraps the source contract for selecting its
+actual declared management port; the final selected artifact contains the exact
+self binding before the consumer runs. It is not a complete empty-route example.

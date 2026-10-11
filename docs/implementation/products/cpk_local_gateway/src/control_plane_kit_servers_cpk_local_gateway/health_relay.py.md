@@ -40,3 +40,8 @@ with zero outbound requests, rather than an internal500. The existing framing
 test carries this single regression case. Explicit bounded failure objects are
 constructed in catch handlers and raised outside their exception context, as
 required by the owning integrity policy.
+
+Servers #245 consumes Core `ReceiverManagementRoutes` directly. Composition
+still revalidates the immutable value and matches the product trust receiver;
+HTTP pairing, verification, fixed routes, transport bounds and errors do not
+change. A canonical route value remains configuration, never dispatch authority.

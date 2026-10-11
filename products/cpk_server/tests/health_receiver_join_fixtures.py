@@ -209,7 +209,7 @@ def gateway_self_world():
     trusted = transit.GatewayHealthTransitConfiguration(target,
         "transit-issuer", core.DelegationKeyPurpose.GATEWAY_NODE_HEALTH_READ_TRANSIT,
         verifier_family(configured).public_keys)
-    targets = relay.GatewayHealthRelayConfiguration(target, ())
+    targets = core.ReceiverManagementRoutes(target, ())
     trust_artifact = transit.gateway_health_transit_configuration_artifact(trusted)
     control_artifact = control.gateway_control_configuration_artifact(configured)
     contract = relay.gateway_health_source_runtime_contract(trust_artifact,

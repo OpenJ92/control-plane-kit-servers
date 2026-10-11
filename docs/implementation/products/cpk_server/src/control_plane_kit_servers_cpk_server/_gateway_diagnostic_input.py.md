@@ -20,3 +20,7 @@ canonical V2 transit protocol. Same installed receiver may appear under differen
 request contexts; offline congruence grants no current authority. Existing packet,
 origin, time, key selection and no-I/O bounds remain. The execution/transaction
 owner is unchanged; no command, retry or durable history behavior is added.
+
+Servers #245 uses Core's route codec directly for offline selected target bytes.
+Packet fingerprints, product slot checks and all existing diagnostic admission
+remain unchanged; codec adoption does not authorize a diagnostic or live action.

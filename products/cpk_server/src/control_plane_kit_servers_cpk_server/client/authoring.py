@@ -31,8 +31,6 @@ from control_plane_kit_core.wrapper_configuration import (
 from control_plane_kit_servers_cpk_local_gateway.health_relay_configuration import (
     ARTIFACT_ID as GATEWAY_ROUTES_ARTIFACT_ID,
     CONFIGURATION_PATH as GATEWAY_ROUTES_PATH,
-    GatewayHealthRelayConfiguration,
-    GatewayHealthTargetBinding,
     gateway_health_relay_configuration_artifact,
 )
 
@@ -513,12 +511,12 @@ def _replace_routes(
             raise ValueError
         target, declaration = assignments[intent.target_scope]
         bindings.append(
-            GatewayHealthTargetBinding(
+            core.ReceiverManagementRouteBinding(
                 intent.target_id, target, declaration, intent.origin
             )
         )
     artifact = gateway_health_relay_configuration_artifact(
-        GatewayHealthRelayConfiguration(assignments[routes.gateway_scope][0], tuple(bindings))
+        core.ReceiverManagementRoutes(assignments[routes.gateway_scope][0], tuple(bindings))
     )
     collisions = tuple(
         item

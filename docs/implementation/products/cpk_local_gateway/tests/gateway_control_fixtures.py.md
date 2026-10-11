@@ -40,3 +40,7 @@ This is target-only static preparation, not executable green. Initial929f829 red
 proves missing obsolete own-profile refusal only. New receiving closure and the
 unchanged whole Servers/paired Interpreter gates remain required. No host test,
 manual runner, provider, credential publication or live deployment occurred.
+
+Servers #245 uses Core route values directly. This fixture's downstream-only
+map remains an intentional own-process/control test context; complete A/B/C
+route examples live in the Servers receiver-authoring tests.

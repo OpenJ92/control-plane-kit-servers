@@ -376,7 +376,7 @@ class GatewaySelfHealthAdapterTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError) as caught:
                     action()
                 self.assertIs(caught.exception, marker)
-        with patch.object(self.api, "decode_gateway_health_relay_configuration", side_effect=marker):
+        with patch.object(core.ReceiverManagementRoutesCodec, "decode_bytes", side_effect=marker):
             with self.assertRaises(RuntimeError) as caught:
                 self.select(**selected)
             self.assertIs(caught.exception, marker)

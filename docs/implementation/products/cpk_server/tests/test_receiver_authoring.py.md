@@ -18,3 +18,14 @@ journal at the transport boundary, while injected preparation failure proves no
 prepare dispatch occurs.
 The import-isolation test also keeps the lightweight profile/bootstrap path
 usable when the optional receiver-authoring Core surface is not installed.
+
+Servers #245 strengthens complete authoring scenarios to retain self+X in A/C
+and self+X+Y in B. The actual product self-health selector consumes every document;
+it must return the retained gateway receiver. Separate registered source-product
+scenarios compile real Gateway/Hello contracts and either another Hello or
+Secrets. Core materialization supplies the exact same-runtime endpoint and each
+product's declared port; Servers authoring copies those endpoints into explicit
+route intents. Common own-health selection must agree with Y's authored target
+and actual declaration. This is pure source composition using never-executed
+image descriptors, not deployment, current graph advancement or saga evidence.
+Omitted routes preserve bytes; the existing explicit-empty law remains tested.

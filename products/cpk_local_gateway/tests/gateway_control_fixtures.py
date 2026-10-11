@@ -27,7 +27,7 @@ def configuration(api, world):
 
 def fixture(api, world=None):
     from control_plane_kit_servers_cpk_local_gateway.health_relay_configuration import (
-        GatewayHealthRelayConfiguration, gateway_health_target_binding, gateway_health_relay_configuration_artifact,
+        gateway_health_target_binding, gateway_health_relay_configuration_artifact,
     )
     from control_plane_kit_servers_cpk_local_gateway.health_relay import GatewayHealthRelay
     from control_plane_kit_servers_cpk_local_gateway.health_transit_verification import gateway_health_transit_verifier_from_artifact
@@ -35,7 +35,7 @@ def fixture(api, world=None):
     config = configuration(api, world)
     trust_api, _ = world.transit.api()
     trust = world.transit.artifact(trust_api)
-    targets = GatewayHealthRelayConfiguration(config.target,
+    targets = core.ReceiverManagementRoutes(config.target,
         (gateway_health_target_binding(target_id="database-management", target=world.target,
             runtime_contract=world.contract, hostname="wrapped-db"),))
     outbound = FailingDownstream()
