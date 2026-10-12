@@ -2,12 +2,13 @@ Source: [products/cpk_server/tests/test_current_cpk_server_composition.py](../..
 
 ## Current #249 retained-update dependency composition
 
-Core and Operations select accepted #1981 merge
-`fe8d44fa09eed7d0d3df70f7782203f3045f9c15`; Interpreters selects #192 merge
-`6b8697f403ef34f36cc3f77756c719a5c0f45b3d`. Accepted SDK #51 and Secrets #49
-complete the same-Core tuple in the manifest. Only exact coordinates change;
-generated URL, ownership and composition assertions remain intact. The owning
-gate supplies new adoption evidence; published images remain unchanged.
+Core selects accepted #1981 merge `fe8d44fa09eed7d0d3df70f7782203f3045f9c15`;
+Operations independently selects accepted #1983 merge
+`8fb86473948c86a7376c0b3dc2f8da79266a37c2`. Interpreters #192 remains
+`6b8697f403ef34f36cc3f77756c719a5c0f45b3d`; accepted SDK #51 and Secrets #49
+also remain unchanged. The exact Operations expectation follows the canonical
+manifest. Generated URL/count, ownership and composition assertions stay intact.
+The owning gate supplies adoption evidence; published images remain unchanged.
 
 ## Historical #237 declared-slot composition
 
