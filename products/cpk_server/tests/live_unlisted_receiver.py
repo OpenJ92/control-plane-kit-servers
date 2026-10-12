@@ -26,12 +26,19 @@ import control_plane_kit_core as core
 from control_plane_kit_core.algebra import BlockSockets, BlockSpec, ProviderSocket
 from control_plane_kit_core.capabilities import CapabilityName
 from control_plane_kit_core.configuration import ConfigurationArtifact, ConfigurationMediaType
+from control_plane_kit_core.configuration_installation import (
+    ConfigurationInstallationDisposition, ConfigurationInstallationReceipt,
+)
+from control_plane_kit_core.configuration_invocation import (
+    configuration_invocation_correlation_for_request, configuration_invocation_selection_fingerprint,
+)
 from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
 from control_plane_kit_core.products import (
     ContainerServerProduct, OciImageReference, ProductDescriptorCodec, ProductIdentity,
     ProductReference, ProductRuntimeContract, ProviderRuntimePort,
 )
-from control_plane_kit_core.planning import StartNode, RemoveNodeResource
+from control_plane_kit_core.planning import StartNode, ReconcileNode, RemoveNodeResource
+from control_plane_kit_core.runtime_effects import RuntimeEffectRequest, RuntimeEffectResult, RuntimeEffectFailure
 from control_plane_kit_core.receiver_configuration import select_receiver_node_control_configuration_artifact
 from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC, DeploymentGraph, Node
 from control_plane_kit_core.topology.graph import Endpoint, LiteralAddress
@@ -119,12 +126,17 @@ class ReceiverProcesses:
         self.root, self.examples = root, examples
         self.children, self.origins, self.paths, self.hashes = {}, {}, {}, {}
         self.starts, self.stops, self.tokens = [], [], {}
+        self.application_paths, self.identities = {}, {}
+        self.owned_files, self.replacement_started = set(), set()
+        self.scope, self.generation = uuid4().hex, 0
 
     def launch(self, name):
         assert name not in self.children and len(self.children) < 2
         script = next(item[1] for item in EXAMPLES if item[0] == name)
         environment = {**os.environ, "CPK_WRAPPER_CONFIGURATION_FILE": str(self.paths[name]),
             "PYTHONDONTWRITEBYTECODE": "1"}
+        if name in self.application_paths:
+            environment["PALETTE_CONFIGURATION_FILE"] = str(self.application_paths[name])
         process = subprocess.Popen([sys.executable, str(self.examples / script)],
             env=environment, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL)
@@ -142,23 +154,82 @@ class ReceiverProcesses:
             # A first completed application response proves the serving loop ran.
             response = client.get(self.origins[name] + business_path)
             assert response.status_code == 200 and len(response.content) < 1024
+            if name in self.application_paths:
+                assert response.json() == json.loads(self.application_paths[name].read_bytes())
+        self.generation += 1
+        self.identities[name] = digest(json.dumps(
+            [self.scope, name, process.pid, self.generation]).encode())
         return process.pid
 
-    def install(self, name, material):
+    def selected_files(self, name, material):
         contract = material.product.runtime_contract
-        artifact = select_receiver_node_control_configuration_artifact(
+        wrapper = select_receiver_node_control_configuration_artifact(
             artifacts=contract.configuration_artifacts,
             environment=(*material.public_environment, *material.socket_environment),
             control_surfaces=contract.control_surfaces)
-        path = Path(artifact.target_path)
+        path = Path(wrapper.target_path)
         assert path.parent == self.root / name and path.name == "wrapper.json"
-        path.parent.mkdir(mode=0o700)
-        raw = artifact.content.encode("utf-8")
-        with path.open("xb") as stream:
-            stream.write(raw)
-        path.chmod(0o444)
-        self.paths[name], self.hashes[name] = path, digest(raw)
+        application = None
+        if name == "palette-example":
+            application, = (item for item in contract.configuration_artifacts if item != wrapper)
+            assert application.artifact_id == "palette-data"
+            assert Path(application.target_path) == self.root / name / "colors.json"
+            assert application.media_type is ConfigurationMediaType.JSON
+            assert PublicStaticEnvironmentBinding("PALETTE_CONFIGURATION_FILE",
+                application.target_path) in material.public_environment
+        else:
+            assert contract.configuration_artifacts == (wrapper,)
+        selected = (wrapper,) if application is None else (wrapper, application)
+        assert all(item.file_mode.value == "0444" for item in selected)
+        return wrapper, application
+
+    def install(self, name, material):
+        wrapper, application = self.selected_files(name, material)
+        assert name not in self.children and name not in self.paths
+        directory = self.root / name
+        directory.mkdir(mode=0o700)
+        for artifact in (wrapper,) if application is None else (wrapper, application):
+            path = Path(artifact.target_path)
+            raw = artifact.content.encode("utf-8")
+            self.owned_files.add(path)
+            with path.open("xb") as stream:
+                stream.write(raw)
+            path.chmod(0o444)
+            assert path.read_bytes() == raw
+        self.paths[name] = Path(wrapper.target_path)
+        self.hashes[name] = digest(wrapper.content.encode())
+        if application is not None:
+            self.application_paths[name] = Path(application.target_path)
         self.launch(name)
+        return self.identities[name]
+
+    def replace(self, name, material):
+        wrapper, application = self.selected_files(name, material)
+        assert application is not None and name not in self.replacement_started
+        assert self.children[name].poll() is None
+        wrapper_path, app_path = self.paths[name], self.application_paths[name]
+        assert Path(wrapper.target_path) == wrapper_path
+        assert Path(application.target_path) == app_path
+        assert not wrapper_path.is_symlink() and not app_path.is_symlink()
+        assert wrapper_path.parent.is_dir() and not wrapper_path.parent.is_symlink()
+        wrapper_bytes = wrapper_path.read_bytes()
+        assert wrapper_bytes == wrapper.content.encode() and digest(wrapper_bytes) == self.hashes[name]
+        raw = application.content.encode("utf-8")
+        prior = self.identities[name]  # Includes any same-config health restart.
+        descriptor, temporary = tempfile.mkstemp(prefix=".colors-", dir=app_path.parent)
+        staged = Path(temporary)
+        self.owned_files.add(staged)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(raw)
+        staged.chmod(0o444)
+        assert staged.read_bytes() == raw
+        # No old-process/file mutation precedes the successful private stage.
+        self.replacement_started.add(name)
+        self.stop(name)
+        os.replace(staged, app_path)
+        self.launch(name)
+        assert app_path.read_bytes() == raw and wrapper_path.read_bytes() == wrapper_bytes
+        return prior, self.identities[name]
 
     def stop(self, name):
         process = self.children[name]
@@ -194,10 +265,10 @@ class ReceiverProcesses:
                 self.stop(name)
             except Exception as error:
                 failures.append(type(error).__name__)
-        for path in self.paths.values():
+        for path in self.owned_files:
             path.unlink(missing_ok=True)
         assert not failures and not self.children, "owned receiver process cleanup incomplete"
-        assert all(not path.exists() for path in self.paths.values())
+        assert all(not path.exists() for path in self.owned_files)
         print("unlisted receiver process/file absence verified", flush=True)
 
 
@@ -208,14 +279,52 @@ class ProcessCompute(ComputeSubstitute):
         self.processes = processes
 
     def execute_with_authority(self, request, authority):
-        result = super().execute_with_authority(request, authority)
         node = getattr(request.operation.target, "node_id", None)
         names = {item[0] for item in EXAMPLES}
-        if type(request.operation) is StartNode and node in names:
-            self.processes.install(node, self.installed[node])
-        elif type(request.operation) is RemoveNodeResource and node in names:
-            self.processes.stop(node)
-        return result
+        operation = type(request.operation)
+        if node not in names or operation not in (StartNode, ReconcileNode, RemoveNodeResource):
+            return super().execute_with_authority(request, authority)
+        assert authority.authority_ref == request.authority_ref
+        RuntimeEffectRequest.__post_init__(request)
+        self.calls.append(request)
+        self.order.append((operation.__name__, request.activity_id.value))
+        evidence = {"provider_boundary": "249-owned-source-process"}
+        begun = False
+        try:
+            if operation is RemoveNodeResource:
+                begun = True
+                self.processes.stop(node)
+                self.installed.pop(node)
+                self.identities.pop(node)
+                return RuntimeEffectResult.succeeded(request.effect_id, evidence=evidence)
+            correlation = configuration_invocation_correlation_for_request(request)
+            for ref in correlation.selection.instances:
+                assert self.configuration_refs.get(ref.allocation_id, ref) == ref
+            material, = request.products
+            if operation is StartNode:
+                assert node not in self.installed
+                begun = True
+                identity = self.processes.install(node, material)
+                prior, disposition = None, ConfigurationInstallationDisposition.CREATED
+            else:
+                assert node in self.installed
+                prior, identity = self.processes.replace(node, material)
+                disposition = ConfigurationInstallationDisposition.REPLACED
+            evidence["configuration_installation_receipt"] = ConfigurationInstallationReceipt(
+                correlation.request_fingerprint,
+                configuration_invocation_selection_fingerprint(correlation.selection),
+                disposition, prior, identity).descriptor()
+            result = RuntimeEffectResult.succeeded(request.effect_id, evidence=evidence)
+            self.installed[node], self.identities[node] = material, identity
+            self.configuration_refs.update((ref.allocation_id, ref) for ref in correlation.selection.instances)
+            self.processes.replacement_started.discard(node)
+            return result
+        except Exception:
+            failure = RuntimeEffectFailure("source-process.installation-incomplete",
+                "Owned source process installation did not complete.")
+            result = (RuntimeEffectResult.uncertain if begun or node in self.processes.replacement_started
+                else RuntimeEffectResult.failed)
+            return result(request.effect_id, failure)
 
 
 class LocalReceiverSocketTransport(InstalledTransport):
@@ -307,7 +416,7 @@ class LoseCompletedPreparation:
             self.execution_diagnostics.append({"route": route_id, **diagnostic_fields(result)})
             self.execution_diagnostics = self.execution_diagnostics[-16:]
         if route_id == "command.deployment.prepare":
-            assert result["status"] == "approval-required"
+            assert result["status"] in ("approval-required", "no-changes")
             self.preparations.append((snapshot, result))
             if not self.lost:
                 self.lost = True
@@ -445,6 +554,12 @@ def unlisted_graph(material, root):
     for name, script, business_path, artifact_id, port in EXAMPLES:
         target_path = str(root / name / "wrapper.json")
         slot = ConfigurationArtifact(artifact_id, target_path, ConfigurationMediaType.JSON, "{}")
+        application_slots, application_environment = (), ()
+        if name == "palette-example":
+            application_slots = (ConfigurationArtifact("palette-data", str(root / name / "colors.json"),
+                ConfigurationMediaType.JSON, '{"colors":["indigo","amber"]}'),)
+            application_environment = (PublicStaticEnvironmentBinding("PALETTE_CONFIGURATION_FILE",
+                application_slots[0].target_path),)
         surface = core.WorkloadNodeControlSurfaceDescriptor(
             core.NodeControlGraphReference(core.NodeControlGraphReferenceRole.PROVIDER_SOCKET, "http"),
             (), (core.NodeHealthReadKind.LIVENESS, core.NodeHealthReadKind.READINESS))
@@ -452,9 +567,9 @@ def unlisted_graph(material, root):
             sockets=BlockSockets(providers=(ProviderSocket("http", Protocol.HTTP),)),
             provider_ports=(ProviderRuntimePort("http", port),),
             capabilities=(CapabilityName.NODE_CONTROLLABLE, CapabilityName.HEALTH_CHECKABLE),
-            control_surfaces=(surface,), configuration_artifacts=(slot,),
+            control_surfaces=(surface,), configuration_artifacts=(slot, *application_slots),
             public_environment=(PublicStaticEnvironmentBinding(
-                "CPK_WRAPPER_CONFIGURATION_FILE", target_path),))
+                "CPK_WRAPPER_CONFIGURATION_FILE", target_path), *application_environment))
         document = ProductDescriptorCodec().encode_document(ContainerServerProduct(
             ProductIdentity("independent-sdk-example", name, 1),
             OciImageReference("example.invalid", "source-example/" + name, "sha256:" + "d" * 64), contract))
@@ -464,6 +579,7 @@ def unlisted_graph(material, root):
             BlockSpec(name, capabilities=contract.capabilities, control_surfaces=contract.control_surfaces),
             "container-server", "docker", contract.sockets,
             endpoints={"http": Endpoint(LiteralAddress(f"http://{name}:{port}"), Protocol.HTTP)},
+            configuration_artifacts=application_slots, public_environment=application_environment,
             metadata={"product_identity": reference.identity.key,
                 "product_descriptor_digest": reference.descriptor_sha256.value})
         scope = ReceiverScope(name, "http")
@@ -477,6 +593,108 @@ def unlisted_graph(material, root):
     )
     return graph, documents, tuple(introductions), (
         GatewayHealthRoutes(ReceiverScope("gateway", "control"), (*existing, *routes)),)
+
+
+async def retained_application_update(host, transport, client, initial, authored, processes, compute, health):
+    """Actual retained update via public HTTP; local evidence never writes owner truth."""
+    async def read(route, **coordinates):
+        return await asyncio.to_thread(transport.call, route,
+            path_parameters={"workspace_id": "workspace-a", **coordinates},
+            payload={}, credential_role="operator")
+
+    async def history(result):
+        plan = await read("read.plan-detail", plan_id=result.plan_id)
+        pages = {}
+        for route, coordinate in (("read.plan-runs", {"plan_id": result.plan_id}),
+                ("read.run-events", {"run_id": result.run_id})):
+            items, after = [], None
+            for _ in range(8):
+                payload = {"limit": 100}
+                if after is not None:
+                    payload["after"] = after
+                page = await asyncio.to_thread(transport.call, route,
+                    path_parameters={"workspace_id": "workspace-a", **coordinate},
+                    payload=payload, credential_role="operator")
+                items.extend(page["items"])
+                after = page.get("next_cursor")
+                if after is None:
+                    break
+            assert after is None and items, "public history missing or exceeds witness bound"
+            pages[route] = items
+        return plan["plan"], pages
+
+    original_history = await history(initial)
+    receivers = (await read("read.receiver-authoring-context"))["current"]["receivers"]
+    wrapper_bytes = {name: path.read_bytes() for name, path in processes.paths.items()}
+    old_palette = processes.children["palette-example"]
+    old_incarnation = processes.identities["palette-example"]
+    counter = processes.children["counter-example"]
+    counter_material = compute.installed["counter-example"]
+    async with httpx.AsyncClient(timeout=3, trust_env=False) as socket:
+        before_count = await socket.get(processes.origins["counter-example"] + "/count")
+        assert before_count.status_code == 200
+        before_count = int(before_count.text)
+    palette = authored.node("palette-example")
+    changed = replace(palette, configuration_artifacts=tuple(
+        replace(item, content='{"colors":["teal","coral"]}', source_digest=None)
+        if item.artifact_id == "palette-data" else item for item in palette.configuration_artifacts))
+    desired = authored.update_node(changed)
+    source = processes.root / "retained-desired.json"
+    source.write_text(json.dumps(DEFAULT_GRAPH_CODEC.encode(desired)), encoding="utf-8")
+    source_bytes = source.read_bytes()
+    start_count, stop_count, effect_count = len(processes.starts), len(processes.stops), len(compute.calls)
+    planned = await asyncio.to_thread(client.plan, AuthoredDesiredGraph(source))
+    assert planned.status == "planned", planned.descriptor()
+    option = "approve_destructive_plan" if planned.destructive else "approve_plan"
+    updated = await asyncio.to_thread(client.apply, planned.operation_ref,
+        execute_plan=planned.plan_id, **{option: planned.plan_id})
+    if updated.status != "converged":
+        await diagnose_execution(client, transport, updated)
+    assert updated.status == "converged", updated.descriptor()
+    replacement, = (request for request in compute.calls[effect_count:]
+        if type(request.operation) is ReconcileNode)
+    assert replacement.operation.target.node_id == "palette-example"
+    assert len(processes.starts) == start_count + 1 and len(processes.stops) == stop_count + 1
+    assert old_palette.poll() is not None and processes.children["palette-example"].pid != old_palette.pid
+    assert processes.identities["palette-example"] != old_incarnation
+    assert compute.identities["palette-example"] == processes.identities["palette-example"]
+    assert processes.children["counter-example"] is counter and counter.poll() is None
+    assert compute.installed["counter-example"] == counter_material
+    assert all(processes.paths[name].read_bytes() == raw for name, raw in wrapper_bytes.items())
+    selected, = (item for item in changed.configuration_artifacts if item.artifact_id == "palette-data")
+    assert processes.application_paths["palette-example"].read_bytes() == selected.content.encode()
+    async with httpx.AsyncClient(timeout=3, trust_env=False) as socket:
+        response = await socket.get(processes.origins["palette-example"] + "/palette")
+        assert response.status_code == 200 and response.json() == {"colors": ["teal", "coral"]}
+        credential, protected_path = processes.tokens["palette-example"]
+        healthy = await socket.get(processes.origins["palette-example"] + protected_path,
+            headers={"Authorization": credential})
+        assert healthy.status_code == 200 and len(healthy.content) <= 16384
+        count = await socket.get(processes.origins["counter-example"] + "/count")
+        assert count.status_code == 200 and int(count.text) > before_count
+    assert health.installed_configuration("palette-example").target.receiver_id == health.configured_ids["palette-example"]
+    assert (await read("read.receiver-authoring-context"))["current"]["receivers"] == receivers
+    assert await history(initial) == original_history
+    update_history = await history(updated)
+    assert updated.plan_id != initial.plan_id and updated.run_id != initial.run_id
+    effects = (tuple(compute.calls), tuple(processes.starts), tuple(processes.stops))
+    def no_identity():
+        raise AssertionError("retained operation regenerated identity")
+    reconstructed = TopologyClient(host.profile, transport=transport, receiver_identity_factory=no_identity)
+    replay = await asyncio.to_thread(reconstructed.apply, updated.operation_ref, execute_plan=updated.plan_id)
+    assert replay.status == "converged", replay.descriptor()
+    noop = await asyncio.to_thread(reconstructed.plan, AuthoredDesiredGraph(source))
+    assert noop.status == "no-changes", noop.descriptor()
+    no_execution = await asyncio.to_thread(reconstructed.apply, noop.operation_ref, execute_plan=noop.plan_id)
+    assert no_execution.status == "no-changes"
+    assert (tuple(compute.calls), tuple(processes.starts), tuple(processes.stops)) == effects
+    assert await history(initial) == original_history and await history(updated) == update_history
+    assert source.read_bytes() == source_bytes
+    for credential_path in host.credential_files.values():
+        credential = credential_path.read_bytes()
+        assert credential not in source_bytes
+        assert credential not in json.dumps(reconstructed.journal.read(updated.operation_ref)).encode()
+    print("S1 retained app update: selected bytes, new process/business value, protected health, same receiver/wrapper/history, unchanged counter and replay/no-op without replacement passed", flush=True)
 
 
 async def witness():
@@ -555,7 +773,8 @@ async def witness():
                     authored = DEFAULT_GRAPH_CODEC.decode(json.loads(prepared_bytes))
                     for name, document in documents.items():
                         contract = document.product.runtime_contract
-                        declared, = contract.configuration_artifacts
+                        declared, = (item for item in contract.configuration_artifacts
+                            if item.target_path.endswith("/wrapper.json"))
                         node = authored.node(name)
                         selected = select_receiver_node_control_configuration_artifact(
                             artifacts=node.configuration_artifacts,
@@ -567,8 +786,10 @@ async def witness():
                             declared.media_type, declared.file_mode)
                         assert node.public_environment == contract.public_environment
                         assert selected.content != declared.content == "{}"
-                        assert not graph.node(name).configuration_artifacts
-                        assert not graph.node(name).public_environment
+                        assert graph.node(name).configuration_artifacts == tuple(
+                            item for item in contract.configuration_artifacts if item != declared)
+                        assert graph.node(name).public_environment == tuple(
+                            item for item in contract.public_environment if item.name != "CPK_WRAPPER_CONFIGURATION_FILE")
                     print("unlisted receiver: generated wrapper slots match declared product contracts", flush=True)
                     assert type(planned.destructive) is bool
                     assert planned.required_scope == (
@@ -626,6 +847,8 @@ async def witness():
                         unknown = await socket.get(processes.origins[second] + "/__control/health/ready",
                             headers={"Authorization": processes.tokens[second][0]})
                         assert unknown.status_code == 404
+                    await retained_application_update(host, transport, restarted, result, authored,
+                        processes, compute, health)
                     for credential_path in host.credential_files.values():
                         credential = credential_path.read_bytes()
                         assert credential not in prepared_bytes
