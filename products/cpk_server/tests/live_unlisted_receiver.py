@@ -660,7 +660,7 @@ async def retained_application_update(host, transport, client, initial, authored
         return plan["plan"], pages
 
     original_history = await history(initial)
-    receivers = (await read("read.receiver-authoring-context"))["current"]["receivers"]
+    receiver_source = (await read("read.receiver-authoring-context"))["current"]
     wrapper_bytes = {name: path.read_bytes() for name, path in processes.paths.items()}
     old_palette = processes.children["palette-example"]
     old_incarnation = processes.identities["palette-example"]
@@ -712,9 +712,24 @@ async def retained_application_update(host, transport, client, initial, authored
         count = await socket.get(processes.origins["counter-example"] + "/count")
         assert count.status_code == 200 and int(count.text) > before_count
     assert health.installed_configuration("palette-example").target.receiver_id == health.configured_ids["palette-example"]
-    assert (await read("read.receiver-authoring-context"))["current"]["receivers"] == receivers
-    assert await history(initial) == original_history
     update_history = await history(updated)
+    update_plan = update_history[0]
+    updated_source = (await read("read.receiver-authoring-context"))["current"]
+    for source, side in ((receiver_source, "base"), (updated_source, "desired")):
+        assert (source["graph_id"], source["realized_projection_id"]) == (
+            update_plan[side + "_graph_id"], update_plan[side + "_realized_projection_id"])
+        assert all((row["binding"]["graph_id"], row["binding"]["realized_projection_id"]) ==
+            (source["graph_id"], source["realized_projection_id"]) for row in source["receivers"])
+    assert (receiver_source["graph_id"], receiver_source["realized_projection_id"]) != (
+        updated_source["graph_id"], updated_source["realized_projection_id"])
+    # Selection coordinates advance with the public plan. Every other field,
+    # including wrapper bytes, receiver identity and original acceptance, stays exact.
+    expected_receivers = [{**row, "binding": {**row["binding"],
+        "graph_id": updated_source["graph_id"],
+        "realized_projection_id": updated_source["realized_projection_id"]}}
+        for row in receiver_source["receivers"]]
+    assert updated_source["receivers"] == expected_receivers
+    assert await history(initial) == original_history
     assert updated.plan_id != initial.plan_id and updated.run_id != initial.run_id
     effects = (tuple(compute.calls), tuple(processes.starts), tuple(processes.stops))
     def no_identity():

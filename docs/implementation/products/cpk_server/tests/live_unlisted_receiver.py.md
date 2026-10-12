@@ -194,8 +194,13 @@ Every created file and child remains tracked for exact test-world cleanup.
 
 `retained_application_update` enters through authenticated public client
 plan/approval/apply. It checks new palette bytes/PID/business response, protected
-health, identical receiver context/wrapper, unchanged counter handle/material and
-monotonic counter response. Public plan/run/event history for the initial and
+health, preserved receiver identity/origin/wrapper, unchanged counter handle/material and
+monotonic counter response. Before/after receiver sources must match the public
+update plan's exact base/desired graph and projection coordinates, and each row
+must belong to its corresponding source. Full ordered receiver rows remain equal
+after replacing only the two binding selection coordinates; scope, declaration,
+selected wrapper digest, artifact, introduction, first acceptance and lifecycle
+cannot change. Public plan/run/event history for the initial and
 updated runs is preserved. Reconstructed-client completed apply and an explicit
 no-changes plan/apply must cause no further process or compute effects. Bounded
 history reads do not query or patch private Operations stores. Preparation's
