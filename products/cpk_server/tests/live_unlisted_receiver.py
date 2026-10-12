@@ -715,11 +715,11 @@ async def retained_application_update(host, transport, client, initial, authored
     update_history = await history(updated)
     update_plan = update_history[0]
     updated_source = (await read("read.receiver-authoring-context"))["current"]
-    for source, side in ((receiver_source, "base"), (updated_source, "desired")):
-        assert (source["graph_id"], source["realized_projection_id"]) == (
+    for context, side in ((receiver_source, "base"), (updated_source, "desired")):
+        assert (context["graph_id"], context["realized_projection_id"]) == (
             update_plan[side + "_graph_id"], update_plan[side + "_realized_projection_id"])
         assert all((row["binding"]["graph_id"], row["binding"]["realized_projection_id"]) ==
-            (source["graph_id"], source["realized_projection_id"]) for row in source["receivers"])
+            (context["graph_id"], context["realized_projection_id"]) for row in context["receivers"])
     assert (receiver_source["graph_id"], receiver_source["realized_projection_id"]) != (
         updated_source["graph_id"], updated_source["realized_projection_id"])
     # Selection coordinates advance with the public plan. Every other field,

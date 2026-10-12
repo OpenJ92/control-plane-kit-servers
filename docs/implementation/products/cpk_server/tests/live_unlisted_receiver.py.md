@@ -229,3 +229,11 @@ also reports the actual install/replace process-port entry count for this update
 separately from requested next activity or compute-request recording. The original
 failure, scenario, assertions and owning runner remain unchanged. Kepler checks
 the exact diagnostic diff before the single ordinary reproduction gate.
+
+Run `38321340031` at `124e9c7` passed the retained replacement, full
+plan-correlated receiver continuity and original history checks, then stopped at
+completed client replay. Its cleanup markers passed. The subsequent client-owned
+regressions establish the replay/reporting defect separately. The receiver-context
+loop uses `context` so the authored `source` Path remains available to the unchanged
+no-op, source-byte and credential non-disclosure checks. Full joined acceptance
+still requires those remaining assertions in the normal owning gate.
