@@ -225,7 +225,7 @@ class ObservedEffectStart:
             try:
                 self.observer(error)
             except Exception:
-                pass  # Diagnostic failure must never replace the original error.
+                raise error  # Preserve the original owner error if diagnostics fail.
             raise
 
     def execute_health(self, command):
