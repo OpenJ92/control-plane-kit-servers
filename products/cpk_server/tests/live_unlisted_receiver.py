@@ -129,6 +129,7 @@ class ReceiverProcesses:
         self.application_paths, self.identities = {}, {}
         self.owned_files, self.replacement_started = set(), set()
         self.scope, self.generation = uuid4().hex, 0
+        self.port_calls = []
 
     def launch(self, name):
         assert name not in self.children and len(self.children) < 2
@@ -184,6 +185,7 @@ class ReceiverProcesses:
         return wrapper, application
 
     def install(self, name, material):
+        self.port_calls.append("install")
         wrapper, application = self.selected_files(name, material)
         assert name not in self.children and name not in self.paths
         directory = self.root / name
@@ -204,6 +206,7 @@ class ReceiverProcesses:
         return self.identities[name]
 
     def replace(self, name, material):
+        self.port_calls.append("replace")
         wrapper, application = self.selected_files(name, material)
         assert application is not None and name not in self.replacement_started
         assert self.children[name].poll() is None
@@ -434,6 +437,39 @@ def diagnostic_fields(value):
         and (type(item) is int or type(item) is str and len(item) <= 256)}
 
 
+class StartFailureDiagnostic:
+    """Bounded source coordinates only, before coordinator error sanitization."""
+    def __init__(self):
+        self.count = 0
+
+    def __call__(self, error):
+        if self.count >= 4:
+            return
+        self.count += 1
+        chain, visited = [], set()
+        while error is not None and id(error) not in visited and len(chain) < 4:
+            visited.add(id(error))
+            frames, trace = [], error.__traceback__
+            while trace is not None:
+                code = trace.tb_frame.f_code
+                module = trace.tb_frame.f_globals.get("__name__", "")
+                if (type(module) is str and len(module) <= 160
+                        and module.startswith(("control_plane_kit_", "receiver_acceptance_operations"))
+                        and all(part.isidentifier() for part in module.split("."))):
+                    frames.append({"module": module, "function": code.co_name
+                        if code.co_name.isidentifier() and len(code.co_name) <= 128 else "anonymous",
+                        "line": trace.tb_lineno})
+                    frames = frames[-8:]
+                trace = trace.tb_next
+            kind = type(error).__name__
+            chain.append({"kind": kind if kind in {"EffectAttemptStartConflict",
+                "EffectAttemptStartDenied", "EffectAttemptStartNotFound", "OperationsRecordError",
+                "ReceiverScopeUnavailable", "ReceiverScopeCapacity", "_Unavailable", "_Capacity",
+                "ValueError", "TypeError", "KeyError", "AttributeError"} else "other", "frames": frames})
+            error = error.__cause__ if error.__cause__ is not None else error.__context__
+        print(json.dumps({"unlisted_start_failure": chain}), flush=True)
+
+
 async def diagnose_execution(client, transport, result):
     journal = client.journal.read(result.operation_ref)
     pending = journal.get("pending_request") or {}
@@ -643,12 +679,15 @@ async def retained_application_update(host, transport, client, initial, authored
     source.write_text(json.dumps(DEFAULT_GRAPH_CODEC.encode(desired)), encoding="utf-8")
     source_bytes = source.read_bytes()
     start_count, stop_count, effect_count = len(processes.starts), len(processes.stops), len(compute.calls)
+    process_call_count = len(processes.port_calls)
     planned = await asyncio.to_thread(client.plan, AuthoredDesiredGraph(source))
     assert planned.status == "planned", planned.descriptor()
     option = "approve_destructive_plan" if planned.destructive else "approve_plan"
     updated = await asyncio.to_thread(client.apply, planned.operation_ref,
         execute_plan=planned.plan_id, **{option: planned.plan_id})
     if updated.status != "converged":
+        print(json.dumps({"retained_update_process_port_calls":
+            len(processes.port_calls) - process_call_count}), flush=True)
         await diagnose_execution(client, transport, updated)
     assert updated.status == "converged", updated.descriptor()
     replacement, = (request for request in compute.calls[effect_count:]
@@ -719,7 +758,8 @@ async def witness():
                 factory = OperationsApplicationFactory(schema.unit_of_work,
                     OperationsEffectPorts({RuntimeKind.DOCKER: compute},
                         {IngressAuthorityProviderKind.CLOUDFLARE: ingress}, health, material.decoders),
-                    id_factory=lambda: "unlisted-" + uuid4().hex)
+                    id_factory=lambda: "unlisted-" + uuid4().hex,
+                    start_failure_observer=StartFailureDiagnostic())
                 driver = PublicOperationsDriver(factory, workspace_id="workspace-a")
                 await driver.create_workspace()
                 await register_material(driver, material)

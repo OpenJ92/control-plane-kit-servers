@@ -14,6 +14,13 @@ composition. The sixth #237 run exposed this previously omitted optional service
 This is test application wiring, not a new production service or a change to #1912
 behavior, which does not call draft routes.
 
+S1 #249 can opt into `ObservedEffectStart` through `start_failure_observer`.
+The wrapper forwards the original command to the actual service, returns the
+identical result, and observes only a raised ordinary start error before the
+coordinator sanitizes it. It re-raises that same exception even if the diagnostic
+fails. Health-start calls pass through unchanged. Default #1912 composition has
+no observer. This is test-only visibility, not owner behavior or result repair.
+
 `register_material` admits only the authored witness material through public
 command routes: three product documents, local-Docker authority, health,
 Cloudflare and generated-secret providers, the Cloudflare API reference, two

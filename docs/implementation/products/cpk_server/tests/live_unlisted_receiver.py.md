@@ -207,3 +207,20 @@ on both fault cases. The authoring target passed. Those doubles prove reporting,
 not physical installation. Joined source-process execution remains pending the
 implementation gate. This changes no production protocol, shared schema,
 provider, published image, retained tunnel/DNS/token or downstream acceptance.
+
+Implementation run `38254387780` at `8f8bf14` passed all 555 package tests and
+initial process deployment/restarts, then failed the retained apply with HTTP 500
+at the coordinator's common conflict raise. Public update events contained only
+the preceding observation. Process replacement/convergence/replay/no-op were not
+proved. Existing controller/receiver/container absence markers passed; later
+full-gate phases were not reached.
+
+North released a diagnostic-only reproduction. `StartFailureDiagnostic` opts this
+witness into the test composition's error observer, before coordinator rewriting.
+It emits at most four records, four exception-chain links and eight trusted source
+coordinates per link, with strictly allowlisted error classes. No exception text,
+locals, arguments, payloads or credentials are emitted. The nonconverged branch
+also reports the actual install/replace process-port entry count for this update,
+separately from requested next activity or compute-request recording. The original
+failure, scenario, assertions and owning runner remain unchanged. Kepler checks
+the exact diagnostic diff before the single ordinary reproduction gate.

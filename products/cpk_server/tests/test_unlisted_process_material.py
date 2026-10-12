@@ -1,5 +1,8 @@
 """S1 process-port ordering/reporting; doubles are not physical-install proof."""
 from types import SimpleNamespace
+from contextlib import redirect_stdout
+from io import StringIO
+import json
 import unittest
 
 from control_plane_kit_core.configuration import ConfigurationArtifact, ConfigurationMediaType
@@ -120,3 +123,44 @@ class ProcessMaterialTests(unittest.TestCase):
         self.assertEqual(compute.configuration_refs, {})
         self.assertNotIn("configuration_installation_receipt", result.evidence)
         self.assertNotIn("test-private-diagnostic", repr(result))
+
+
+class StartDiagnosticTests(unittest.TestCase):
+    def test_observer_preserves_exact_command_result_and_original_error(self):
+        from receiver_acceptance_operations import ObservedEffectStart
+        command, result, seen = object(), object(), []
+        service = SimpleNamespace(execute=lambda value: seen.append(value) or result,
+            execute_health=lambda value: seen.append(value) or result)
+        observed = ObservedEffectStart(service, lambda error: self.fail("unexpected observation"))
+        self.assertIs(observed.execute(command), result)
+        self.assertIs(observed.execute_health(command), result)
+        self.assertEqual(seen, [command, command])
+        failure = ValueError("private-failure-text")
+        def fail(value):
+            self.assertIs(value, command)
+            raise failure
+        def broken_diagnostic(error):
+            self.assertIs(error, failure)
+            raise RuntimeError("private-observer-text")
+        service.execute = fail
+        observed = ObservedEffectStart(service, broken_diagnostic)
+        with self.assertRaises(ValueError) as raised:
+            observed.execute(command)
+        self.assertIs(raised.exception, failure)
+
+    def test_diagnostic_bounds_output_and_omits_exception_values(self):
+        from live_unlisted_receiver import StartFailureDiagnostic
+        diagnostic = StartFailureDiagnostic()
+        output = StringIO()
+        with redirect_stdout(output):
+            for _ in range(6):
+                try:
+                    raise ValueError("private-failure-text")
+                except ValueError as error:
+                    diagnostic(error)
+        lines = output.getvalue().splitlines()
+        self.assertEqual(len(lines), 4)
+        self.assertNotIn("private-failure-text", output.getvalue())
+        for line in lines:
+            chain = json.loads(line)["unlisted_start_failure"]
+            self.assertEqual(chain, [{"kind": "ValueError", "frames": []}])

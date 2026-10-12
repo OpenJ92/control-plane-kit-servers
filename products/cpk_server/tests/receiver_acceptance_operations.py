@@ -213,6 +213,25 @@ class _RefuseUnexpectedRecovery:
         raise AssertionError("receiver-acceptance witness entered recovery")
 
 
+class ObservedEffectStart:
+    """Test-only error observation; the real owner receives and returns exact values."""
+    def __init__(self, service, observer):
+        self.service, self.observer = service, observer
+
+    def execute(self, command):
+        try:
+            return self.service.execute(command)
+        except Exception as error:
+            try:
+                self.observer(error)
+            except Exception:
+                pass  # Diagnostic failure must never replace the original error.
+            raise
+
+    def execute_health(self, command):
+        return self.service.execute_health(command)
+
+
 @dataclass(frozen=True)
 class OperationsApplicationFactory:
     """Reconstruct all public Operations owners over one durable schema."""
@@ -221,6 +240,7 @@ class OperationsApplicationFactory:
     ports: OperationsEffectPorts
     id_factory: Callable[[], str]
     clock: Callable[[], str] = utc_now
+    start_failure_observer: Callable[[Exception], None] | None = None
 
     def __call__(self) -> CpkServerOperationsApplication:
         unit_of_work = self.unit_of_work_factory
@@ -251,6 +271,8 @@ class OperationsApplicationFactory:
             id_factory=self.id_factory,
             health_receiver_decoders=self.ports.health_receiver_decoders,
         )
+        if self.start_failure_observer is not None:
+            start = ObservedEffectStart(start, self.start_failure_observer)
         signing_authority = HealthSigningAuthorityReloadService(
             unit_of_work,
             health_receiver_decoders=self.ports.health_receiver_decoders,

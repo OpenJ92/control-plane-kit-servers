@@ -12,3 +12,8 @@ The joined owning smoke provides the separate actual file/process/business proof
 These targets precede implementation. The normal Docker-backed owning gate is
 the only executable validation; no collection/import/setup failure earns causal
 missing-behavior credit. No provider resources or credentials are used here.
+
+The released diagnostic addition tests exact command/result/error identity and
+preservation of the original failure when its observer fails. A separate bound
+checks at most four diagnostic records and absence of raw exception values.
+These cases add no successful replacement or recovery claim.
