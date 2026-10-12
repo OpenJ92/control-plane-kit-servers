@@ -2,13 +2,17 @@ Source: [coordinates/server-products.json](../../../coordinates/server-products.
 
 ## Current retained-update adoption (#249)
 
-The canonical dependency tuple selects accepted Core/Operations #1981
-`fe8d44fa`, SDK #51 `a35e3a50`, Secrets #49 `d1901723` and Interpreters
-#192 `6b8697f4`. Full immutable commits live in the canonical manifest;
-generated package subsets/extras and exact provenance checks stay aligned.
-Runtime source, published product source/image coordinates, descriptors,
-catalogue bytes and owning gate are unchanged. The normal hosted Servers gate
-must establish this tuple's composition before S1 source-process work begins.
+The canonical dependency tuple selects accepted Operations #1983 `8fb86473`,
+Core #1981 `fe8d44fa`, SDK #51 `a35e3a50`, Secrets #49 `d1901723` and
+Interpreters #192 `6b8697f4`. Operations now bounds retained receiver validation
+while preserving receiver-free capacity behavior. Core's selected tree is
+unchanged, and independently selected package coordinates require no other pin
+updates. Full immutable commits live in the canonical manifest; generated
+package subsets/extras and exact provenance checks stay aligned.
+This adoption changes no runtime source, published product source/image
+coordinates, descriptors, catalogue bytes or owning gate. The normal hosted
+Servers gate must establish compatibility and complete the held S1 assertions;
+the accepted owner correction alone does not prove source-process replacement.
 
 ## Historical declared-slot adoption (#237)
 

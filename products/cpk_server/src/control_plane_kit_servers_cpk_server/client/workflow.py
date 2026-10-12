@@ -362,6 +362,8 @@ class TopologyClient:
                 return self._attention(
                     journal,
                     execution="unverified",
+                    advancement=("unverified" if journal["phase"] in {"advanced", "converged"}
+                        else "not-attempted"),
                     next_public_read="read.plan-detail",
                 )
             if "session_id" not in coordinates:
@@ -383,6 +385,8 @@ class TopologyClient:
                     return self._attention(
                         journal,
                         execution="unverified",
+                        advancement=("unverified" if journal["phase"] in {"advanced", "converged"}
+                            else "not-attempted"),
                         next_public_read="read.approval-detail",
                     )
                 if approval.get("state") == "pending":
@@ -545,7 +549,7 @@ class TopologyClient:
                         next_public_read="read.run-events",
                     )
             coordinates = _coordinates(journal)
-            if journal["phase"] != "advanced":
+            if journal["phase"] not in {"advanced", "converged"}:
                 try:
                     current = _pointer(self._workspace(), "current")
                 except ClientAuthorizationError:
@@ -952,8 +956,9 @@ class TopologyClient:
     def _public_status(self, journal: Mapping[str, object]) -> ClientResult:
         coordinates = _coordinates(journal)
         pending = journal.get("pending_request")
-        execution = None
-        advancement = None
+        completed = journal["phase"] in {"advanced", "converged"}
+        execution = "unverified" if completed else None
+        advancement = "unverified" if completed else None
         approval_problem = False
         next_read = _next_read(journal)
         changes: tuple[Mapping[str, object], ...] = ()

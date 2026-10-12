@@ -30,3 +30,17 @@ The extraction stays inside the fresh-introductions branch. Retained-only,
 pending-only and gateway-route-only authoring keeps `verifier_configuration=None`
 and does not perform a verifier read. This preserves the existing optional-read
 boundary rather than referencing an unassigned response for zero introductions.
+
+Completed apply replay revalidates public plan, approval, run, events and current
+selection without repeating execution or graph advancement. Both `advanced`
+and `converged` phases bypass the pre-advancement block after public validation;
+the final desired-current comparison remains required.
+
+For those completed phases, public status starts execution and advancement as
+`unverified`. Fresh run evidence and exact current graph/projection evidence
+promote the observations independently. An unavailable early read cannot inherit
+historical success from the journal; unavailable or changed current selection
+after successful run verification reports succeeded execution with unverified
+advancement. Apply's initial plan/approval read failures likewise report
+unverified completed advancement. Other phase defaults, pending recovery, exact
+approval and execution confirmations, and authorization exceptions are unchanged.

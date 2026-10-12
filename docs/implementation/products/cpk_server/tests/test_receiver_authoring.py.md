@@ -50,3 +50,8 @@ introductions. A retained-only client case now verifies successful preparation
 with no verifier read or fresh identity allocation, unchanged selected artifact
 values, and unchanged source bytes. This complements the existing pure pending
 law by exercising the actual client branch. The faulty candidate was not executed.
+
+S1 #249 strengthens the retained-only client case with an ordinary public JSON
+application artifact. Preparation must preserve that desired application content
+alongside the exact retained wrapper, without a verifier read, identity allocation,
+or source-file rewrite. This exercises authoring only, not process replacement.

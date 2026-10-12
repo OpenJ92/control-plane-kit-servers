@@ -1,8 +1,9 @@
 Source: [live_receiver_acceptance.py](../../../../../products/cpk_server/tests/live_receiver_acceptance.py).
 
-The current #249 dependency alignment advances this witness's five installed
-provenance expectations to accepted Core/Operations #1981, SDK #51, Secrets #49
-and Interpreters #192. They must exactly match the canonical coordinate manifest.
+The current #249 dependency alignment selects accepted Operations #1983
+`8fb86473948c86a7376c0b3dc2f8da79266a37c2` in this witness's exact installed
+provenance expectation. Core #1981, SDK #51, Secrets #49 and Interpreters #192
+remain unchanged and must exactly match the canonical coordinate manifest.
 Scenario, substitutes, assertions and cleanup remain unchanged; new joined
 evidence must come from the normal owning Servers gate with this selected tuple.
 

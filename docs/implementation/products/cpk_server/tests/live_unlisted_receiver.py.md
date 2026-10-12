@@ -168,3 +168,72 @@ Before approval/execution, the witness compares generated slot coordinates and
 environment to the registered descriptor and proves the placeholder is not the
 selected content. Existing installed-byte/SDK-decode/restart checks remain.
 No runtime contract validation is relaxed or copied into a substitute owner.
+
+## S1 retained application update (#249)
+
+The palette product now declares a second public JSON file and its ordinary
+`PALETTE_CONFIGURATION_FILE` binding. Its raw graph carries that application
+material; the actual authoring client still supplies the selected wrapper. Only
+the application content changes on the retained update. The counter is unchanged.
+
+`ProcessCompute` owns real Start/Reconcile/Remove independently from the memory
+fixture, validating authority and Core's original request/full-selection
+correlation before effects. Other explicitly named fixture effects still use the
+existing substitute. Real installation publishes its local material/ref record
+and receipt only after the process port succeeds. Incarnations commit the private
+witness scope, actual owned PID and launch generation; replacement uses the actual
+current incarnation, including the earlier same-config health restart.
+
+`ReceiverProcesses.replace` validates the unchanged selected wrapper, stages the
+app bytes to a tracked private file, reads them back, stops/waits the exact old
+child, atomically publishes only the app file, launches and retains the new child,
+then checks bytes and business value. Failures before stop fail without replacing
+the old file/process. Once stop begins they remain uncertain. No automatic
+rollback, old-process launch, ambiguous retry or success receipt is synthesized.
+Every created file and child remains tracked for exact test-world cleanup.
+
+`retained_application_update` enters through authenticated public client
+plan/approval/apply. It checks new palette bytes/PID/business response, protected
+health, preserved receiver identity/origin/wrapper, unchanged counter handle/material and
+monotonic counter response. Before/after receiver sources must match the public
+update plan's exact base/desired graph and projection coordinates, and each row
+must belong to its corresponding source. Full ordered receiver rows remain equal
+after replacing only the two binding selection coordinates; scope, declaration,
+selected wrapper digest, artifact, introduction, first acceptance and lifecycle
+cannot change. Public plan/run/event history for the initial and
+updated runs is preserved. Reconstructed-client completed apply and an explicit
+no-changes plan/apply must cause no further process or compute effects. Bounded
+history reads do not query or patch private Operations stores. Preparation's
+existing transport wrapper now admits the actual no-changes response too.
+
+Four port-target failures at `cb0a6e2`, owning run `38253626921`, established
+premature material publication, absent process replacement and synthetic success
+on both fault cases. The authoring target passed. Those doubles prove reporting,
+not physical installation. Joined source-process execution remains pending the
+implementation gate. This changes no production protocol, shared schema,
+provider, published image, retained tunnel/DNS/token or downstream acceptance.
+
+Implementation run `38254387780` at `8f8bf14` passed all 555 package tests and
+initial process deployment/restarts, then failed the retained apply with HTTP 500
+at the coordinator's common conflict raise. Public update events contained only
+the preceding observation. Process replacement/convergence/replay/no-op were not
+proved. Existing controller/receiver/container absence markers passed; later
+full-gate phases were not reached.
+
+North released a diagnostic-only reproduction. `StartFailureDiagnostic` opts this
+witness into the test composition's error observer, before coordinator rewriting.
+It emits at most four records, four exception-chain links and eight trusted source
+coordinates per link, with strictly allowlisted error classes. No exception text,
+locals, arguments, payloads or credentials are emitted. The nonconverged branch
+also reports the actual install/replace process-port entry count for this update,
+separately from requested next activity or compute-request recording. The original
+failure, scenario, assertions and owning runner remain unchanged. Kepler checks
+the exact diagnostic diff before the single ordinary reproduction gate.
+
+Run `38321340031` at `124e9c7` passed the retained replacement, full
+plan-correlated receiver continuity and original history checks, then stopped at
+completed client replay. Its cleanup markers passed. The subsequent client-owned
+regressions establish the replay/reporting defect separately. The receiver-context
+loop uses `context` so the authored `source` Path remains available to the unchanged
+no-op, source-byte and credential non-disclosure checks. Full joined acceptance
+still requires those remaining assertions in the normal owning gate.

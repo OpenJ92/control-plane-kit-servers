@@ -1060,8 +1060,15 @@ assert "control_plane_kit_servers_cpk_server.client.authoring" not in sys.module
         from control_plane_kit_servers_cpk_server.client import TopologyClient
 
         codec = GraphDescriptorCodec()
+        from control_plane_kit_core.configuration import ConfigurationArtifact, ConfigurationMediaType
+        application = ConfigurationArtifact("palette-data", "/etc/app/colors.json",
+            ConfigurationMediaType.JSON, '{"colors":["teal","coral"]}')
+        nodes = dict(fixture["graph_a"].nodes)
+        nodes["hello-x"] = replace(nodes["hello-x"],
+            configuration_artifacts=(*nodes["hello-x"].configuration_artifacts, application))
+        desired = replace(fixture["graph_a"], nodes=nodes)
         source = self.root / "retained.json"
-        source.write_text(json.dumps(codec.encode(fixture["graph_a"])), encoding="utf-8")
+        source.write_text(json.dumps(codec.encode(desired)), encoding="utf-8")
         original = source.read_bytes()
         transport = self.authoring_transport(fixture, lose_prepare_once=False)
         generated = []
@@ -1078,7 +1085,7 @@ assert "control_plane_kit_servers_cpk_server.client.authoring" not in sys.module
         for name in ("gateway", "hello-x"):
             self.assertEqual(
                 {item.artifact_id: item for item in prepared.node(name).configuration_artifacts},
-                {item.artifact_id: item for item in fixture["graph_a"].node(name).configuration_artifacts})
+                {item.artifact_id: item for item in desired.node(name).configuration_artifacts})
         self.assertEqual(source.read_bytes(), original)
 
     def test_client_persists_before_send_and_restart_replays_exact_authored_graph(self):
