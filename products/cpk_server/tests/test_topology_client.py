@@ -364,6 +364,75 @@ class TopologyClientTests(unittest.TestCase):
             request.get_header("User-agent"), "control-plane-kit-cpk-client/0.1.0"
         )
 
+    def test_completed_apply_revalidates_without_mutation_after_reconstruction(self) -> None:
+        from control_plane_kit_servers_cpk_server.client import TopologyClient
+
+        for reconstructed in (False, True):
+            with self.subTest(reconstructed=reconstructed):
+                transport = ScriptedTransport()
+                client = self.client(transport, state=f"completed-{reconstructed}")
+                planned = client.plan(self.desired_path)
+                completed = client.apply(planned.operation_ref,
+                    execute_plan=planned.plan_id, approve_plan=planned.plan_id)
+                self.assertEqual(completed.status, "converged")
+                def no_identity():
+                    raise AssertionError("completed replay generated identity")
+                replay_client = (TopologyClient(client.profile, transport=transport,
+                    identity_factory=no_identity, receiver_identity_factory=no_identity)
+                    if reconstructed else client)
+                before = len(transport.calls)
+                replay = replay_client.apply(completed.operation_ref, execute_plan=completed.plan_id)
+                calls = transport.calls[before:]
+                self.assertFalse(any(call["route_id"].startswith("command.") for call in calls))
+                self.assertTrue({"read.workspace", "read.plan-detail", "read.approval-detail", "read.plan-runs",
+                    "read.run-events", "read.current-graph"}.issubset(
+                        {call["route_id"] for call in calls}))
+                self.assertEqual(replay.status, "converged")
+                self.assertEqual((replay.execution, replay.advancement), ("succeeded", "advanced"))
+                self.assertEqual((replay.operation_ref, replay.plan_id, replay.run_id),
+                    (completed.operation_ref, completed.plan_id, completed.run_id))
+
+    def test_completed_status_and_apply_refuse_changed_or_unavailable_public_evidence_without_mutation(self) -> None:
+        from control_plane_kit_servers_cpk_server.client import ClientTransportError, TopologyClient
+
+        class ChangedEvidenceTransport(ScriptedTransport):
+            fault = None
+
+            def call(self, route_id, **arguments):
+                result = super().call(route_id, **arguments)
+                if self.fault in ("read.workspace", "read.plan-detail", "read.approval-detail") and route_id == self.fault:
+                    raise ClientTransportError()
+                if route_id == "read.current-graph" and self.fault is not None:
+                    if self.fault == "unavailable":
+                        raise ClientTransportError()
+                    return {**result, self.fault: "different-current-selection"}
+                return result
+
+        for fault, action in ((fault, action)
+                for fault in ("graph_id", "realized_projection_id", "unavailable",
+                    "read.workspace", "read.plan-detail", "read.approval-detail")
+                for action in ("status", "apply")):
+            with self.subTest(fault=fault, action=action):
+                transport = ChangedEvidenceTransport()
+                client = self.client(transport, state=f"completed-{fault}-{action}")
+                planned = client.plan(self.desired_path)
+                completed = client.apply(planned.operation_ref,
+                    execute_plan=planned.plan_id, approve_plan=planned.plan_id)
+                self.assertEqual(completed.status, "converged")
+                transport.fault = fault
+                reconstructed = TopologyClient(client.profile, transport=transport)
+                before = len(transport.calls)
+                replay = (reconstructed.status(completed.operation_ref) if action == "status" else
+                    reconstructed.apply(completed.operation_ref, execute_plan=completed.plan_id))
+                calls = transport.calls[before:]
+                self.assertFalse(any(call["route_id"].startswith("command.") for call in calls))
+                self.assertIn(fault if fault.startswith("read.") else "read.current-graph",
+                    {call["route_id"] for call in calls})
+                self.assertEqual(replay.status, "attention-required")
+                self.assertEqual(replay.execution,
+                    "unverified" if fault.startswith("read.") else "succeeded")
+                self.assertEqual(replay.advancement, "unverified")
+
     def test_public_chain_uses_each_route_coordinate_and_own_replay_contract(self) -> None:
         transport = ScriptedTransport(progress_once=True)
         client = self.client(transport)
