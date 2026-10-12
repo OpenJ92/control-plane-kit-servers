@@ -1,6 +1,15 @@
 Source: [products/cpk_server/tests/test_current_cpk_server_composition.py](../../../../../products/cpk_server/tests/test_current_cpk_server_composition.py).
 
-## Current #237 declared-slot composition
+## Current #249 retained-update dependency composition
+
+Core and Operations select accepted #1981 merge
+`fe8d44fa09eed7d0d3df70f7782203f3045f9c15`; Interpreters selects #192 merge
+`6b8697f403ef34f36cc3f77756c719a5c0f45b3d`. Accepted SDK #51 and Secrets #49
+complete the same-Core tuple in the manifest. Only exact coordinates change;
+generated URL, ownership and composition assertions remain intact. The owning
+gate supplies new adoption evidence; published images remain unchanged.
+
+## Historical #237 declared-slot composition
 
 Core and Operations now select accepted #1969 merge
 `a3f212063b0eb83f08599fc729c05c473aa5a1ef`, and Interpreters selects accepted

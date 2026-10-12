@@ -1,6 +1,16 @@
 Source: [Dockerfile](../../../../products/hello_server/Dockerfile).
 
-## Current declared-slot adoption (#237)
+## Current retained-update adoption (#249)
+
+The canonical dependency tuple selects accepted Core/Operations #1981
+`fe8d44fa`, SDK #51 `a35e3a50`, Secrets #49 `d1901723` and Interpreters
+#192 `6b8697f4`. Full immutable commits live in the canonical manifest;
+generated package subsets/extras and exact provenance checks stay aligned.
+Runtime source, published product source/image coordinates, descriptors,
+catalogue bytes and owning gate are unchanged. The normal hosted Servers gate
+must establish this tuple's composition before S1 source-process work begins.
+
+## Historical declared-slot adoption (#237)
 
 The canonical tuple selects accepted Core/Operations #1969 `a3f21206`, SDK #50
 `f1bc730a`, Secrets #48 `fc018b09` and Interpreters #188 `7c52e678`.
