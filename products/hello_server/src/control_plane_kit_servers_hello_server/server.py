@@ -64,7 +64,7 @@ h1 {{ margin: 0; max-width: 100%; font-size: 48px; line-height: 1.2;
 </style>
 </head>
 <body>
-<main><div class="frame"><div class="frame greeting"><h1>{greeting}</h1></div></div></main>
+<main><div class="frame"><div class="frame greeting"><h1>{greeting}</h1><p>Served by Control Plane Kit Hello.</p></div></div></main>
 </body>
 </html>
 """.encode("utf-8")

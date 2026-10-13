@@ -30,6 +30,7 @@ from control_plane_kit_interpreters.secret_provider import (
     SecretProviderClientCode, SecretProviderClientError,
 )
 from products.cpk_server.tests.live_numeric_bootstrap import exercise_cpk_file
+from live_wrapper_artifacts import exercise_wrapper_artifacts
 
 
 def exercise_provider(token: str, application_value: str) -> None:
@@ -102,6 +103,11 @@ def exercise_control(authority, sensitive):
 
 
 def main() -> None:
+    # This fresh controller never receives the producer's registry configuration.
+    docker_config = Path(os.environ["DOCKER_CONFIG"])
+    docker_config.mkdir(mode=0o700)
+    (docker_config / "config.json").write_text("{}", encoding="ascii")
+    (docker_config / "config.json").chmod(0o600)
     engine = docker.from_env()
     run_id = os.environ["CPK_SECRET_TEST_RUN"]
     image_id = os.environ["CPK_SECRET_PRODUCT_IMAGE"]
@@ -146,6 +152,18 @@ def main() -> None:
         exercise_cpk_file(engine=engine, sdk=sdk, resources=resources, labels=labels,
                           image_id=os.environ["CPK_NUMERIC_PRODUCT_IMAGE"],
                           network_id=network_id)
+        exercise_wrapper_artifacts(engine=engine, sdk=sdk, resources=resources, labels=labels,
+            network_id=network_id, hello_reference=os.environ["CPK_WRAPPER_HELLO_IMAGE"],
+            gateway_reference=os.environ["CPK_WRAPPER_GATEWAY_IMAGE"],
+            mode="source-built", expected_attribution=True)
+        if os.environ["CPK_WRAPPER_ARTIFACT_MODE"] == "published-digest":
+            assert engine.images.get(os.environ["CPK_WRAPPER_HELLO_A"]).id != engine.images.get(
+                os.environ["CPK_WRAPPER_HELLO_B"]).id, "published Hello image identities must differ"
+            for version, expected in (("A", False), ("B", True)):
+                exercise_wrapper_artifacts(engine=engine, sdk=sdk, resources=resources, labels=labels,
+                    network_id=network_id, hello_reference=os.environ["CPK_WRAPPER_HELLO_" + version],
+                    gateway_reference=os.environ["CPK_WRAPPER_GATEWAY"],
+                    mode="published-digest", expected_attribution=expected)
         inspected = sdk.inspect_image(image_id)
         assert inspected is not None and inspected.image_id == image_id
         uid = inspected.secret_file_owner_uid()
@@ -301,6 +319,8 @@ for path in {list(material)!r}:
         expected_absent = {(type(manager).__name__, identity) for manager, identity in resources}
         expected_absent |= {(type(engine.containers).__name__, identity) for identity in helper_ids}
         engine.close()
+        (docker_config / "config.json").unlink()
+        docker_config.rmdir()
         if cleanup_failed or absent != expected_absent:
             raise RuntimeError("numeric bootstrap fixture cleanup incomplete")
     print(json.dumps({"status": "passed", "source_product": True, "both_bootstrap_files": True,

@@ -16,3 +16,8 @@ Run 36938230303 exposed the stale ThreadingHTTPServer patch target before
 main executed; changing the spy target preserves the law that invalid color
 fails before any listener is constructed. No production guard or listener
 behavior changes, and the unchanged whole gate owns executable validation.
+
+The #191 successor root-response assertion checks the visible attribution on the
+actual existing HTTP server. Existing escaping, dependencies, content type and
+length assertions remain. This is source evidence; published artifacts require
+the separate actual-socket qualification in the owning Docker gate.
