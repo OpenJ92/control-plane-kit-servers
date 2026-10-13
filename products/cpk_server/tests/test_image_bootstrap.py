@@ -1486,7 +1486,11 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             self.assertNotIn(forbidden, ready_source)
 
     def test_hosted_process_is_fastapi_over_operations_boundary(self) -> None:
-        source = SERVER_SOURCE.read_text(encoding="utf-8")
+        entrypoint = SERVER_SOURCE.read_text(encoding="utf-8")
+        assembly = SERVER_SOURCE.with_name("operations_application.py").read_text(encoding="utf-8")
+        source = entrypoint + "\n" + assembly
+
+        self.assertIn("OperationsApplicationFactory(", entrypoint)
 
         self.assertIn("from fastapi import FastAPI, Request", source)
         self.assertIn("uvicorn.run", source)
@@ -1517,7 +1521,8 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             source,
         )
         self.assertIn("GatewayProbeCommandService", source)
-        self.assertIn("gateway_probes=_gateway_probe_service", source)
+        self.assertIn("gateway_probe_factory=lambda uow, authorizer: _gateway_probe_service(", entrypoint)
+        self.assertIn("gateway_probes=probes", assembly)
         self.assertNotIn("_gateway_key_rotation_application", source)
         self.assertNotIn("gateway_key_rotations=", source)
         self.assertIn("control_plane_kit_interpreters.docker", source)

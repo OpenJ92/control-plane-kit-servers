@@ -21,6 +21,11 @@ from typing import Any
 
 import psycopg
 from psycopg import sql
+from control_plane_kit_servers_cpk_server.operations_application import (
+    OperationsApplicationFactory as SharedOperationsApplicationFactory,
+    OperationsEffectPorts as SharedOperationsEffectPorts,
+    OperationsIdFactories,
+)
 
 from control_plane_kit_core.identity import (
     AuthenticatedPrincipal,
@@ -234,8 +239,7 @@ class ObservedEffectStart:
 
 @dataclass(frozen=True)
 class OperationsApplicationFactory:
-    """Reconstruct all public Operations owners over one durable schema."""
-
+    """Test configuration of the shared production assembly; no copied owners."""
     unit_of_work_factory: Callable[[], PostgresUnitOfWork]
     ports: OperationsEffectPorts
     id_factory: Callable[[], str]
@@ -243,118 +247,16 @@ class OperationsApplicationFactory:
     start_failure_observer: Callable[[Exception], None] | None = None
 
     def __call__(self) -> CpkServerOperationsApplication:
-        unit_of_work = self.unit_of_work_factory
-        lifecycle = RunLifecycleCommandService(
-            unit_of_work,
-            clock=self.clock,
-            id_factory=self.id_factory,
-        )
-        fold = EffectAttemptFoldService(
-            unit_of_work,
-            id_factory=self.id_factory,
-        )
-        authorizer = SecretUseAuthorizationService(unit_of_work)
-        activity_adapter = ActivityExecutionDispatcher(
-            runtime=RuntimeInterpreterDispatcher(
-                self.ports.runtime_interpreters,
-                authorizer,
-            ),
-            ingress=IngressRealizationAdapter(
-                unit_of_work,
-                self.ports.ingress_interpreters,
-                self.clock,
-                authorizer,
-            ),
-        )
-        start = EffectAttemptStartService(
-            unit_of_work,
-            id_factory=self.id_factory,
-            health_receiver_decoders=self.ports.health_receiver_decoders,
-        )
+        ports = self.ports
+        decoration = None
         if self.start_failure_observer is not None:
-            start = ObservedEffectStart(start, self.start_failure_observer)
-        signing_authority = HealthSigningAuthorityReloadService(
-            unit_of_work,
-            health_receiver_decoders=self.ports.health_receiver_decoders,
-        )
-        execution = ExecutionCoordinator(
-            unit_of_work,
-            lifecycle=lifecycle,
-            adapter=activity_adapter,
-            start_service=start,
-            fold_service=fold,
-            reconciliation_service=EffectAttemptReconciliationService(
-                unit_of_work,
-                self.ports.runtime_observer or _RefuseUnexpectedRecovery(),
-                fold,
-            ),
-            clock=self.clock,
-            id_factory=self.id_factory,
-            managed_health=self.ports.managed_health,
-            health_signing_authority=signing_authority,
-        )
-        return CpkServerOperationsApplication(
-            cpk_server_services(
-                unit_of_work_factory=unit_of_work,
-                planning=ActivityPlanningCommandService(
-                    unit_of_work,
-                    clock=self.clock,
-                    id_factory=self.id_factory,
-                ),
-                workspaces=WorkspaceCommandService(
-                    unit_of_work,
-                    clock=self.clock,
-                    id_factory=self.id_factory,
-                ),
-                products=ProductRegistrationService(unit_of_work),
-                image_pull_authorities=ImagePullAuthorityRegistrationService(
-                    unit_of_work
-                ),
-                runtime_authorities=RuntimeAuthorityRegistrationService(
-                    unit_of_work
-                ),
-                ingress_authorities=IngressAuthorityRegistrationService(
-                    unit_of_work
-                ),
-                secret_providers=SecretProviderRegistrationService(unit_of_work),
-                delegation_signing_keys=DelegationSigningKeyRegistrationService(
-                    unit_of_work
-                ),
-                desired_graphs=DesiredGraphCommandService(
-                    unit_of_work,
-                    clock=self.clock,
-                    id_factory=self.id_factory,
-                ),
-                desired_topology_drafts=DesiredTopologyDraftCommandService(
-                    unit_of_work,
-                    clock=self.clock,
-                    id_factory=self.id_factory,
-                ),
-                approval=ApprovalCommandService(
-                    unit_of_work,
-                    clock=self.clock,
-                    id_factory=self.id_factory,
-                ),
-                admission=ExecutionAdmissionCommandService(
-                    unit_of_work,
-                    clock=self.clock,
-                    id_factory=self.id_factory,
-                ),
-                lifecycle=lifecycle,
-                operations=OperationCommandService(
-                    unit_of_work,
-                    clock=self.clock,
-                    id_factory=self.id_factory,
-                ),
-                execution=execution,
-                advancement=CurrentGraphAdvancementCommandService(
-                    unit_of_work,
-                    clock=self.clock,
-                    id_factory=self.id_factory,
-                ),
-                clock=lambda: datetime.now(timezone.utc),
-            )
-        )
+            decoration = lambda service: ObservedEffectStart(service, self.start_failure_observer)
+        return SharedOperationsApplicationFactory(self.unit_of_work_factory,
+            SharedOperationsEffectPorts(ports.runtime_interpreters, ports.ingress_interpreters,
+                ports.managed_health, ports.health_receiver_decoders,
+                ports.runtime_observer or _RefuseUnexpectedRecovery()),
+            OperationsIdFactories(*(self.id_factory for _ in range(5))),
+            clock=self.clock, start_service_decorator=decoration)()
 
 
 class OperationsSequenceError(RuntimeError):

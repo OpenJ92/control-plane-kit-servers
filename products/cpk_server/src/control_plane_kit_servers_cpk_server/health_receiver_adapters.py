@@ -173,6 +173,25 @@ def _binding(document, decoder_type, purpose, profile, slot):
     raise failure
 
 
+def select_gateway_health_route_binding(*, targets: HealthReceiverSelection,
+                                       configured: ReceiverNodeControlConfiguration,
+                                       gateway_configured: ReceiverNodeControlConfiguration):
+    """Select an exact declared route slot and common receiver identity."""
+    raw = _declared_selected_bytes(targets, _TARGETS_SLOT)
+    try:
+        routes = ReceiverManagementRoutesCodec().decode_bytes(raw)
+        require_matching_gateway_control(gateway_configured, routes)
+        bindings = tuple(value for value in routes.targets
+            if value.target == configured.target and value.declaration == configured.declaration)
+        if (len(bindings) != 1 or configured.target.workspace_id.value != targets.workspace_id
+                or configured.target.runtime_id.value != targets.runtime_id):
+            raise HealthReceiverTrustError(_UNAVAILABLE)
+        return bindings[0]
+    except (ReceiverManagementRoutesError, GatewayControlConfigurationError, TypeError, AttributeError, ValueError):
+        failure = HealthReceiverTrustError(_UNAVAILABLE)
+    raise failure
+
+
 def health_receiver_decoders(
     *, gateway_documents: tuple[ProductDescriptorDocument, ...] = (),
 ) -> HealthReceiverDecoders:
