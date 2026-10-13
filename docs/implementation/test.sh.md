@@ -54,3 +54,19 @@ empty Docker configuration. Existing host-side package-read login remains availa
 to unrelated established private-image phases. The socket grants daemon authority,
 not resource-scoped authority; fixture code must remain confined to the exact owned
 resource ledger. No provider credentials or original tunnel/DNS/token are involved.
+
+The existing `tests.yml` manual dispatch now exposes the explicit artifact mode
+and three digest inputs. PR/push validation always selects source-built mode.
+Published mode uses the existing host packages-read login, validates all inputs
+against exact product repositories/canonical digests before any pull, requires a
+Linux/amd64 daemon, pulls each reviewed digest once, and inspects platform,
+RepoDigests and image ID. Preload and the unchanged full gate share one job/daemon;
+this does not populate a later #251 job's daemon. Inputs enter shell through quoted
+environment variables, never expression interpolation into shell code.
+
+The published dispatch needs its own exact-commit/tuple release. Recheck private
+visibility and no active same-ref gate before dispatch because the existing
+concurrency policy cancels matching runs. Compare observed artifact IDs with the
+recorded publisher build IDs and correlate controller/preload daemon IDs. A failed
+pull, access check, platform/digest check or ambiguous result stops the run; no
+visibility change, credential expansion or automatic retry is authorized.
