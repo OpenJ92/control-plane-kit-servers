@@ -33,3 +33,24 @@ both modes use bounded private log capture, independent producer-status checking
 and exact file cleanup. The full release must include both complete custody/
 restart runs and source build, not merely package tests. Existing numeric, CPK,
 root and final residue stages remain. No new publication or public acceptance.
+
+#191 always builds current Hello and gateway images alongside the existing
+numeric-bootstrap source inputs. Their run-labelled IDs enter the same isolated
+controller and exact cleanup ledger for current V2 artifact socket qualification.
+No publication is required for this source gate and no new law is silently skipped.
+
+After separately authorized publication and producer-side preload on this SAME
+daemon, `CPK_WRAPPER_ARTIFACT_MODE=published-digest` additionally requires
+`CPK_WRAPPER_HELLO_A`, `CPK_WRAPPER_HELLO_B`, and `CPK_WRAPPER_GATEWAY`, each an exact
+private GHCR digest reference. The ordinary `./test.sh` still runs its source checks
+and all existing later phases; the identical artifact routine then qualifies A/B
+and the gateway with real RepoDigest/ID/linux-amd64 checks. Missing inputs/cache or
+an unsupported mode fail, with no login/pull fallback. This mode is required before
+#251 and is not a substitute for its CPK-driven scenario. Source-built platform
+observations alone are not the published linux/amd64 qualification.
+
+The controller never mounts host Docker credentials and creates its own private
+empty Docker configuration. Existing host-side package-read login remains available
+to unrelated established private-image phases. The socket grants daemon authority,
+not resource-scoped authority; fixture code must remain confined to the exact owned
+resource ledger. No provider credentials or original tunnel/DNS/token are involved.

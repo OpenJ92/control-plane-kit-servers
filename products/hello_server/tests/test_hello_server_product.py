@@ -71,6 +71,7 @@ class HelloServerProductTests(unittest.TestCase):
                             self.assertEqual(int(response.headers["Content-Length"]), len(body))
                             self.assertEqual(body, render_hello(message, color))
                             self.assertIn(f"<h1>{escaped}</h1>", body.decode("utf-8"))
+                            self.assertIn(b"<p>Served by Control Plane Kit Hello.</p>", body)
                             self.assertNotIn(b"<script>", body)
                         with urlopen(root + "/dependencies", timeout=2) as response:
                             self.assertEqual(response.status, 200)

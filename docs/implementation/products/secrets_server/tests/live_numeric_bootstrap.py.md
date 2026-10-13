@@ -31,3 +31,10 @@ implementation/dependency adoption. All original method identities remain. No
 source-live run, restart acceptance or new canonical green is credited before
 the unchanged whole owning gate. Existing accepted Secrets Z owns its service
 implementation; Servers merely packages/adapts that public configuration.
+
+#191 invokes the product-local Hello/gateway artifact routine using this existing
+controller's network, SDK and cleanup ledger. It creates an empty private Docker
+config before SDK construction and removes it on exit. Source checks are mandatory;
+explicit published-digest mode adds both reviewed Hello versions and requires their
+actual image IDs to differ. No input image is pulled or removed by this routine.
+Artifact assertions do not change Secrets/CPK bootstrap evidence or its cleanup laws.

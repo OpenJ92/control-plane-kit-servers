@@ -23,3 +23,9 @@ network budgets and bounded/redacted observations remain
 product-owned. No new persistence, external port, provider mutation, supervisor,
 command handler or replay store is added. Static source/target review does not
 qualify the historical image; the unchanged whole owner gate remains required.
+
+#191's successor adds a visible product attribution paragraph to the root HTML.
+This gives the image experiment a real body change while keeping message/color,
+configuration, runtime contract, wrapper and all control behavior unchanged.
+The previous accepted source lacks that paragraph. Tags or image timestamps are
+not evidence of this behavior; actual artifact sockets must serve the expected body.

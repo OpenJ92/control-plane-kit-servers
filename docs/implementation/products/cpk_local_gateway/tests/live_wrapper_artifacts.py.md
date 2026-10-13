@@ -1,0 +1,34 @@
+Source: [live_wrapper_artifacts.py](../../../../../products/cpk_local_gateway/tests/live_wrapper_artifacts.py).
+
+#191 reuses the existing numeric-bootstrap daemon/network/resource ledger and
+current gateway control fixtures for an actual Hello/gateway artifact pair. The
+ordinary package tests receive no Docker socket. This joined artifact check adds
+no topology orchestration, Operations service, registry or provider implementation.
+
+The same bounded socket routine always checks current source-built image IDs and,
+when the explicit published-digest tuple is selected, additionally checks A and B
+against the exact cached private GHCR references. Source mode checks run labels
+and records the actual native build platform; it does not claim RepoDigest proof.
+Published mode requires the exact existing product repositories, actual matching
+RepoDigests, IDs and linux/amd64. Cache misses never trigger a pull. The outer
+fixture verifies A/B have different actual IDs; A is expected to lack the visible
+attribution, B to contain it under the same configuration. Registry credentials
+stay in the authorized producer; the controller creates its own empty Docker
+config before constructing the SDK. The socket still grants daemon authority,
+so this remains only the existing isolated test composition.
+
+Existing product constructors and gateway fixture signing helpers generate
+receiver configuration, selected routes and current-time V2 requests. Actual
+containers use default image launch/user and read-only public configuration
+mounts, without host-port publication. Assertions cover the independent business
+response, exact capabilities, liveness/readiness, missing/wrong-purpose/wrong-
+receiver refusal, signed gateway-to-Hello readiness and unknown-target denial.
+Missing/malformed configuration must terminate startup; actual process UID is
+checked. Package-owned negative matrices remain in their existing tests.
+
+The caller's ledger records each public volume and container before dependent
+effects. Each pair retires its own exact containers to free aliases for the next
+pair; the outer existing cleanup verifies absence and removes all volumes/helper
+containers, including on failure. Shared/preloaded images are retained; only the
+outer run-labelled source tags are removed by the normal shell fixture. No CPK
+compensation, native connectivity, public ingress or #251 update is claimed.
