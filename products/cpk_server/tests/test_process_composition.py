@@ -3,6 +3,7 @@ import importlib
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 from control_plane_kit_core.operations import (
     ControlPlaneServiceRole,
@@ -126,7 +127,15 @@ class CpkServerProcessCompositionTests(unittest.TestCase):
         with self.assertRaisesRegex(UnknownTargetError, "unknown target"):
             state.switch_active_target("green")
 
+    @patch.dict(sys.modules)
     def test_root_catalogue_import_does_not_import_cpk_server_product(self) -> None:
+        # Isolate this import from products loaded by earlier composition tests.
+        # patch.dict restores their original module identities afterward.
+        for name in tuple(sys.modules):
+            if (name == "control_plane_kit_servers"
+                    or name.startswith("control_plane_kit_servers.")
+                    or name.startswith("control_plane_kit_servers_")):
+                sys.modules.pop(name)
         sys.path.insert(0, str(ROOT / "src"))
         try:
             import control_plane_kit_servers

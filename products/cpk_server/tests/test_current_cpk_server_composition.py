@@ -21,6 +21,7 @@ PRODUCT_SRC = ROOT / "products" / "cpk_server" / "src"
 SERVER_SOURCE = (
     PRODUCT_SRC / "control_plane_kit_servers_cpk_server" / "server.py"
 )
+ASSEMBLY_SOURCE = SERVER_SOURCE.with_name("operations_application.py")
 CORE_COMMIT = "fe8d44fa09eed7d0d3df70f7782203f3045f9c15"
 OPERATIONS_COMMIT = "8fb86473948c86a7376c0b3dc2f8da79266a37c2"
 INTERPRETERS_COMMIT = "af8fecc9441b5c325ee61f1f78a8299138ef50f6"
@@ -199,7 +200,7 @@ class CurrentCpkServerCompositionTests(unittest.TestCase):
 
     def test_one_operations_service_map_has_only_current_keywords(self) -> None:
         tree = ast.parse(
-            SERVER_SOURCE.read_text(encoding="utf-8"), filename=str(SERVER_SOURCE)
+            ASSEMBLY_SOURCE.read_text(encoding="utf-8"), filename=str(ASSEMBLY_SOURCE)
         )
         calls = [
             node
@@ -266,7 +267,7 @@ class CurrentCpkServerCompositionTests(unittest.TestCase):
         )
 
         tree = ast.parse(
-            SERVER_SOURCE.read_text(encoding="utf-8"), filename=str(SERVER_SOURCE)
+            ASSEMBLY_SOURCE.read_text(encoding="utf-8"), filename=str(ASSEMBLY_SOURCE)
         )
         calls = [
             node
