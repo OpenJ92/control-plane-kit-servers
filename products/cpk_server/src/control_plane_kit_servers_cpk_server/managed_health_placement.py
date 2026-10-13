@@ -133,7 +133,7 @@ class DockerGatewayEndpointReader:
                 LiteralEndpointMaterial(origin)),
                 ProbeAddressPolicy(runtime_private_authorities=frozenset({origin})))
         except Exception:
-            pass
+            selected = None
         if selected is None:
             # Raise outside the provider exception context; retain no provider data.
             raise GatewayPlacementUnavailable("gateway placement is unavailable")

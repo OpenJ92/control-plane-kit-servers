@@ -119,7 +119,7 @@ class ManagedHealthBridge:
                     return None
             selected = tuple(result)
         except (ValueError, TypeError, KeyError, AttributeError, OverflowError, RecursionError):
-            pass
+            selected = None
         return selected
 
     async def observe_connection(self, realization, request, authority):
@@ -192,7 +192,7 @@ class ManagedHealthBridge:
                     binding.target_id, GatewayTransitProtocol.RECEIVER_HEALTH_READ_V2)
             inputs = pair, selected_authority, gateway, socket_name, ports[0], context, local, destination
         except (ValueError, TypeError, KeyError, AttributeError, OverflowError, RecursionError):
-            pass
+            inputs = None
         if inputs is None:
             raise ManagedHealthUnavailable("managed health is unavailable")
         pair, selected_authority, gateway, socket_name, port, context, local, destination = inputs
