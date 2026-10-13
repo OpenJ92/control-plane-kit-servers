@@ -135,18 +135,20 @@ def exercise_wrapper_artifacts(*, engine, sdk, resources, labels, network_id,
         gateway_process = launch("gateway", gateway.artifacts, environment(gateway_contract), "wrapped-gateway")
         for process, origin in ((hello_process, "http://wrapped-db:8000"),
                                 (gateway_process, "http://wrapped-gateway:8000")):
+            readiness = "not-observed"
             for _ in range(30):
                 process.reload()
                 assert process.status == "running", "artifact exited before serving"
                 try:
                     # Read-only readiness polling; no mutation is retried.
-                    if _read("GET", origin, "/__control/capabilities")[0] == 401:
+                    readiness = str(_read("GET", origin, "/__control/capabilities")[0])
+                    if readiness == "401":
                         break
                 except httpx.TransportError:
-                    pass
+                    readiness = "transport-unavailable"
                 time.sleep(0.2)
             else:
-                raise AssertionError("artifact listener did not become available")
+                raise AssertionError("artifact listener did not become available: " + readiness)
         status, body = _read("GET", "http://wrapped-db:8000", "/")
         assert status == 200 and b"<h1>Hello, world!</h1>" in body
         assert (ATTRIBUTION in body) is expected_attribution, "artifact business response differs"
