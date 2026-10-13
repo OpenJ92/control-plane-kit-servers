@@ -81,6 +81,9 @@ from .control_configuration import (
     cpk_control_configuration_artifact, read_cpk_control_configuration,
 )
 from .http_host import install_operator_http_routes
+from control_plane_kit_operations.health_receiver_trust import HealthReceiverDecoders
+from .operations_application import OperationsApplicationFactory, OperationsEffectPorts, OperationsIdFactories
+from .managed_health import ManagedHealthBootstrap
 from control_plane_kit_core.receiver_configuration import ReceiverNodeControlConfiguration
 from control_plane_kit_server_sdk.fastapi import install_cpk_wrapper
 from .boundary import (
@@ -187,6 +190,7 @@ class CpkServerBootstrapConfiguration:
     control_auth_static_principals: tuple[
         StaticDevelopmentPrincipalCredential, ...
     ] = field(default=(), repr=False, compare=False, hash=False)
+    managed_health: ManagedHealthBootstrap | None = field(default=None, repr=False, compare=False)
 
     @classmethod
     def from_environment(
@@ -760,108 +764,30 @@ def _operations_application(
     def unit_of_work() -> PostgresUnitOfWork:
         return PostgresUnitOfWork(lambda: psycopg.connect(database_url))
 
-    lifecycle = RunLifecycleCommandService(
-        unit_of_work,
+    provider = _secret_provider_composition(config)
+    return OperationsApplicationFactory(unit_of_work, _operations_effect_ports(config, provider),
+        OperationsIdFactories(_id, _lifecycle_id, _start_id, _fold_id, _coordinator_id),
         clock=_clock,
-        id_factory=_lifecycle_id,
-    )
-    secret_use_authorizer = SecretUseAuthorizationService(unit_of_work)
-    secret_provider = _secret_provider_composition(config)
-    adapter = _activity_adapter(
-        config,
-        unit_of_work,
-        secret_use_authorizer,
-        secret_provider,
-    )
-    observer = _runtime_observer(
-        config,
-        secret_provider=secret_provider,
-    )
-    fold_service = EffectAttemptFoldService(
-        unit_of_work,
-        id_factory=_fold_id,
-    )
-    start_service = EffectAttemptStartService(
-        unit_of_work,
-        id_factory=_start_id,
-    )
-    reconciliation_service = EffectAttemptReconciliationService(
-        unit_of_work,
-        observer,
-        fold_service,
-    )
-    execution = ExecutionCoordinator(
-        unit_of_work,
-        lifecycle=lifecycle,
-        adapter=adapter,
-        start_service=start_service,
-        fold_service=fold_service,
-        reconciliation_service=reconciliation_service,
-        clock=_clock,
-        id_factory=_coordinator_id,
-    )
-    return CpkServerOperationsApplication(
-        cpk_server_services(
-            unit_of_work_factory=unit_of_work,
-            planning=ActivityPlanningCommandService(
-                unit_of_work,
-                clock=_clock,
-                id_factory=_id,
-            ),
-            workspaces=WorkspaceCommandService(
-                unit_of_work,
-                clock=_clock,
-                id_factory=_id,
-            ),
-            products=ProductRegistrationService(unit_of_work),
-            image_pull_authorities=ImagePullAuthorityRegistrationService(unit_of_work),
-            runtime_authorities=RuntimeAuthorityRegistrationService(unit_of_work),
-            ingress_authorities=IngressAuthorityRegistrationService(unit_of_work),
-            secret_providers=SecretProviderRegistrationService(unit_of_work),
-            delegation_signing_keys=DelegationSigningKeyRegistrationService(
-                unit_of_work
-            ),
-            desired_topology_drafts=DesiredTopologyDraftCommandService(
-                unit_of_work,
-                clock=_clock,
-                id_factory=_id,
-            ),
-            desired_graphs=DesiredGraphCommandService(
-                unit_of_work,
-                clock=_clock,
-                id_factory=_id,
-            ),
-            approval=ApprovalCommandService(
-                unit_of_work,
-                clock=_clock,
-                id_factory=_id,
-            ),
-            admission=ExecutionAdmissionCommandService(
-                unit_of_work,
-                clock=_clock,
-                id_factory=_id,
-            ),
-            lifecycle=lifecycle,
-            operations=OperationCommandService(
-                unit_of_work,
-                clock=_clock,
-                id_factory=_id,
-            ),
-            execution=execution,
-            advancement=CurrentGraphAdvancementCommandService(
-                unit_of_work,
-                clock=_clock,
-                id_factory=_id,
-            ),
-            gateway_probes=_gateway_probe_service(
-                config,
-                unit_of_work,
-                secret_use_authorizer,
-                secret_provider,
-            ),
-            clock=lambda: datetime.now(timezone.utc),
-        )
-    )
+        gateway_probe_factory=lambda uow, authorizer: _gateway_probe_service(
+            config, uow, authorizer, provider))()
+
+
+def _operations_effect_ports(config, provider):
+    runtimes = None
+    if config.runtime_dispatcher.enabled:
+        if config.runtime_dispatcher.runtime_kinds != (RuntimeKind.DOCKER,):
+            raise BootstrapConfigurationError("runtime effects require exactly one Docker provider")
+        runtimes = {RuntimeKind.DOCKER: _docker_runtime_interpreter(config, provider)}
+    ingress = (_ingress_interpreters(config, provider) if config.ingress_interpreters.enabled else None)
+    health = None
+    decoders = HealthReceiverDecoders(())
+    if config.managed_health is not None:
+        if type(config.managed_health) is not ManagedHealthBootstrap:
+            raise BootstrapConfigurationError("managed health composition is invalid")
+        health = config.managed_health.build(provider.authorized_resolver)
+        decoders = health.decoders
+    return OperationsEffectPorts(runtimes, ingress, health, decoders,
+        _runtime_observer(config, secret_provider=provider), _UnsupportedExecutionAdapter())
 
 
 def _gateway_probe_service(

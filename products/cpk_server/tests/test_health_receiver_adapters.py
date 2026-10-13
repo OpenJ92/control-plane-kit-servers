@@ -285,6 +285,18 @@ class GatewaySelfHealthAdapterTests(unittest.TestCase):
         change(raw)
         return replace(artifact, content=json.dumps(raw))
 
+    def test_route_selection_requires_exact_selected_gateway_identity(self):
+        configured = self.own()
+        selected = self.api.select_gateway_health_route_binding(targets=self.selection("targets"),
+            configured=configured, gateway_configured=configured)
+        self.assertEqual(selected, self.value.binding)
+        changed = replace(self.value.targets,
+            gateway_target=replace(self.value.targets.gateway_target, receiver_id="f" * 32))
+        artifact = self.value.relay.gateway_health_relay_configuration_artifact(changed)
+        with self.assertRaises(HealthReceiverTrustError):
+            self.api.select_gateway_health_route_binding(targets=self.selection("targets", artifact=artifact),
+                configured=configured, gateway_configured=configured)
+
     def test_actual_source_contract_dual_purpose_and_selected_keys(self):
         value = self.value
         reference = ProductReference.from_document(value.document)
