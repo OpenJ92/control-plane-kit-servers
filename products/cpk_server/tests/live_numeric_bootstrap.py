@@ -3,11 +3,48 @@
 from __future__ import annotations
 
 import hashlib
+from ipaddress import ip_address
+from itertools import islice
+import json
 import secrets
 from uuid import uuid4
 
 from control_plane_kit_core.secrets import SecretFileMode, SecretValue
 from control_plane_kit_interpreters.docker import DockerSdkSecretMount
+
+
+def _network_shape(attrs):
+    """Bounded flags from the existing adjacent inspect; never emit provider values."""
+    def field(parent, key):
+        present = type(parent) is dict and key in parent
+        value = parent.get(key) if present else None
+        kind = next((label for cls, label in (
+            (dict, "object"), (str, "string"), (list, "array"),
+            (bool, "boolean"), (int, "integer"), (float, "number"),
+            (type(None), "null")) if type(value) is cls), "other")
+        canonical_ip = False
+        if type(value) is str and 1 <= len(value) <= 45 and "%" not in value:
+            try:
+                canonical_ip = str(ip_address(value)) == value
+            except ValueError:
+                canonical_ip = False
+        return {"present": present, "type": kind,
+            "empty": type(value) is str and value == "",
+            "canonical_id": type(value) is str and len(value) == 64
+                and all(char in "0123456789abcdef" for char in value),
+            "canonical_ip": canonical_ip}
+
+    settings = attrs.get("NetworkSettings") if type(attrs) is dict else None
+    networks = settings.get("Networks") if type(settings) is dict else None
+    state = attrs.get("State") if type(attrs) is dict else None
+    running = state.get("Running") if type(state) is dict else None
+    entries = tuple(islice(networks.values(), 64)) if type(networks) is dict else ()
+    return {"running": running if type(running) is bool else None,
+        "settings": field(attrs, "NetworkSettings"), "networks": field(settings, "Networks"),
+        "entry_count_capped": min(len(networks), 65) if type(networks) is dict else None,
+        "entries": [{"object": type(entry) is dict,
+            "network_id": field(entry, "NetworkID"), "address": field(entry, "IPAddress")}
+            for entry in entries]}
 
 
 def exercise_cpk_file(*, engine, sdk, resources, labels, image_id, network_id):
@@ -56,6 +93,7 @@ else:
                          aliases=(name,), command=("python", "-B", "-c", probe))
     recipient = engine.containers.get(name)
     resources.append((engine.containers, recipient.id))
+    print(json.dumps({"cpk_prestart_network_shape": _network_shape(recipient.attrs)}), flush=True)
     observed = sdk.inspect_container(name)
     assert observed is not None and observed.image_id == image_id
     assert observed.configured_user == "10001"
