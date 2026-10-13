@@ -32,3 +32,8 @@ pair; the outer existing cleanup verifies absence and removes all volumes/helper
 containers, including on failure. Shared/preloaded images are retained; only the
 outer run-labelled source tags are removed by the normal shell fixture. No CPK
 compensation, native connectivity, public ingress or #251 update is claimed.
+
+The bounded result now includes the validated input image references and current
+daemon ID alongside actual image IDs/platforms. Published qualification evidence
+must compare these IDs with the publication records and the workflow preload
+engine ID. These fields add provenance, not a new health or image-admission rule.

@@ -185,6 +185,8 @@ def exercise_wrapper_artifacts(*, engine, sdk, resources, labels, network_id,
             assert len(output) <= 1024 * 1024
             assert not any(value.encode() in output for value in sensitive), "artifact logged credentials"
         print(json.dumps({"wrapper_artifacts": "passed", "mode": mode,
+            "hello_reference": hello_reference, "gateway_reference": gateway_reference,
+            "engine_id": engine.info().get("ID"),
             "hello_image_id": images["hello"][0], "gateway_image_id": images["gateway"][0],
             "hello_platform": "linux/" + images["hello"][1], "gateway_platform": "linux/" + images["gateway"][1],
             "hello_attribution": expected_attribution, "signed_v2_sockets": True}), flush=True)
