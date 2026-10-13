@@ -309,7 +309,7 @@ async def register_material(
     documents = getattr(material, "documents", None)
     public_keys = getattr(material, "public", None)
     if (
-        driver.workspace_id != "workspace-a"
+        driver.workspace_id != getattr(material, "workspace_id", "workspace-a")
         or not isinstance(documents, Mapping)
         or set(documents) != {"gateway", "api", "connector"}
         or not isinstance(public_keys, Mapping)

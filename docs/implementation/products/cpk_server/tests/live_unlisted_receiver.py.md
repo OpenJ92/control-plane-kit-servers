@@ -237,3 +237,7 @@ regressions establish the replay/reporting defect separately. The receiver-conte
 loop uses `context` so the authored `source` Path remains available to the unchanged
 no-op, source-byte and credential non-disclosure checks. Full joined acceptance
 still requires those remaining assertions in the normal owning gate.
+
+#251 reuses the existing public pending-selection and surface-key registration
+helpers with explicit workspace/scopes. Their defaults and S1 behavior remain
+unchanged; no S1 process-compute or ASGI health substitute enters the Docker run.

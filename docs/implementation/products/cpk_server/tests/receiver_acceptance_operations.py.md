@@ -71,3 +71,8 @@ The second owning run reached real schema bootstrap and workspace creation, then
 stopped at this helper's incorrect string guard. Core's `ProductDescriptorDocument`
 contract owns canonical `bytes`; registration now requires bytes and passes them
 to JSON decoding without a coercive fallback. No deployment plan/effect had started.
+
+#251 may supply an explicit unique material workspace to the same public
+registration helper. The legacy fixture default remains workspace-a. The helper
+still checks the material shape and all actual public registration responses;
+it does not write stores or fabricate admission records.

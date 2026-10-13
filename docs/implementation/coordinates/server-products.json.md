@@ -1,6 +1,6 @@
 Source: [coordinates/server-products.json](../../../coordinates/server-products.json).
 
-## Current retained-update adoption (#249)
+## Historical dependency adoption
 
 The canonical dependency tuple selects accepted Operations #1983 `8fb86473`,
 Core #1981 `fe8d44fa`, SDK #51 `a35e3a50`, Secrets #49 `d1901723` and
@@ -79,3 +79,14 @@ Servers #245 selects the accepted shared-contract tuple: Core and Operations
 all owned dependency destinations. Published product sources, image digests and
 catalogue bytes remain unchanged; dependency selection is not publication or
 live composition evidence. The initial target checkpoint is unvalidated.
+
+## Current #251 source adoption
+
+Core and Operations now select accepted O2 merge
+`05b5f28a624e6e03f1dadbe6ad77ece2bec09601`. Interpreters remains accepted
+`95548fa62409f0b5b708380dfa0b32abd31d91a2`, SDK remains `a35e3a50`, and
+Secrets remains `d1901723`. The canonical manifest, generated dependency URLs
+and exact installed-provenance expectations must agree. Historical published
+product descriptors/catalogue coordinates remain unchanged. This source
+checkpoint is unvalidated until the normal owning gate; the coordinate generator
+and its --check gate remain the authority for generated consistency.

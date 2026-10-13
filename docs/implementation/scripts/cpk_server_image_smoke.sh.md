@@ -57,3 +57,10 @@ and later rechecks the controller image's immutable ID, mounts independent examp
 files read-only after build, and permits only container-local loopback listeners
 and at most two tracked receiver children. No host ports or Docker socket are
 added. Existing exact container cleanup runs for success, failure and interruption.
+
+#251 adds a mandatory dedicated Docker witness after the socket-free receiver
+and S1 witnesses. It uses the existing built test image/Postgres/network, exact
+controller records and a local Unix daemon socket only in this controller. The
+owned record directory carries the unique managed workspace and absence marker;
+unverified cleanup preserves the records and fails. Fixed input preloading is
+an explicit workflow prerequisite, not a scenario repair step.

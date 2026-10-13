@@ -494,10 +494,10 @@ async def diagnose_execution(client, transport, result):
                 "error_type": type(error).__name__}), flush=True)
 
 
-async def select_pending_baseline(transport, material):
+async def select_pending_baseline(transport, material, *, workspace_id="workspace-a", scopes=None):
     """Public prerequisite for initial deployment, not high-level draft-save proof."""
     async def call(route, payload=None, draft_id=None):
-        path = {"workspace_id": "workspace-a"}
+        path = {"workspace_id": workspace_id}
         if draft_id is not None:
             path["draft_id"] = draft_id
         return await asyncio.to_thread(transport.call, route, path_parameters=path,
@@ -509,7 +509,7 @@ async def select_pending_baseline(transport, material):
     empty = DEFAULT_GRAPH_CODEC.decode(current["graph_descriptor"])
     assert not empty.nodes and not empty.runtimes
     assert not transport.preparations
-    session = await call("command.operation-session.start", {"workspace_id": "workspace-a",
+    session = await call("command.operation-session.start", {"workspace_id": workspace_id,
         "title": "Unlisted baseline pending draft", "metadata": {}, "idempotency_key": str(uuid4())})
     draft = await call("command.desired-topology-draft.create", {
         "session_id": session["session_id"], "graph": DEFAULT_GRAPH_CODEC.encode(material.a),
@@ -532,10 +532,10 @@ async def select_pending_baseline(transport, material):
     assert after["desired_graph_revision"] == selected["desired_graph_revision"]
     print("unlisted receiver: real pending baseline selected; current remains empty", flush=True)
     return PendingReceiverContinuation(draft["draft_id"], draft["revision"],
-        (ReceiverScope("gateway", "control"), ReceiverScope("api", "http")))
+        scopes if scopes is not None else (ReceiverScope("gateway", "control"), ReceiverScope("api", "http")))
 
 
-async def register_surface_verifier(transport, material):
+async def register_surface_verifier(transport, material, *, workspace_id="workspace-a"):
     """237-only public prerequisite; do not expand the 1912 health fixture.
 
     The selected owner maps surface-read registration to the existing legacy
@@ -553,7 +553,7 @@ async def register_surface_verifier(transport, material):
     purpose = "workload-node-control-surface-read"
     async def register(route, payload, *, path=None):
         return await asyncio.to_thread(transport.call, route,
-            path_parameters={"workspace_id": "workspace-a", **(path or {})}, payload=payload,
+            path_parameters={"workspace_id": workspace_id, **(path or {})}, payload=payload,
             credential_role="operator")
     provider = await register("command.secret-provider.register", {
         "provider_id": "unlisted-surface", "display_name": "Unlisted surface test key custody",

@@ -1,6 +1,6 @@
 Source: [products/cpk_server/tests/test_current_cpk_server_composition.py](../../../../../products/cpk_server/tests/test_current_cpk_server_composition.py).
 
-## Current #249 retained-update dependency composition
+## Historical #249 dependency composition
 
 Core selects accepted #1981 merge `fe8d44fa09eed7d0d3df70f7782203f3045f9c15`;
 Operations independently selects accepted #1983 merge
@@ -92,3 +92,14 @@ Related source and evidence: [products/cpk_server/src/control_plane_kit_servers_
 #221 advances only the independent expected Interpreter coordinate to accepted
 388282, matching the canonical diagnostic adoption. Existing assertions remain;
 this is installation/composition evidence, not publication or live readiness.
+
+## Current #251 source adoption
+
+Core and Operations now select accepted O2 merge
+`05b5f28a624e6e03f1dadbe6ad77ece2bec09601`. Interpreters remains accepted
+`95548fa62409f0b5b708380dfa0b32abd31d91a2`, SDK remains `a35e3a50`, and
+Secrets remains `d1901723`. The canonical manifest, generated dependency URLs
+and exact installed-provenance expectations must agree. Historical published
+product descriptors/catalogue coordinates remain unchanged. This source
+checkpoint is unvalidated until the normal owning gate; the coordinate generator
+and its --check gate remain the authority for generated consistency.
