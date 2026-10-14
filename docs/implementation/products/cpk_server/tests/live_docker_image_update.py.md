@@ -40,3 +40,10 @@ isolation helper's closed `cpk_1912_` namespace and 48-character suffix bound.
 The helper's validation, creation and exact teardown remain unchanged. The
 former `cpk_image_` caller was rejected before schema creation in the first run
 that reached this boundary.
+
+The fixture's public registration adapter translates the reused owner's flat
+delegation-key activation arguments into the existing HTTP contract: issuer and
+key ID are path coordinates, while purpose/time/idempotency stay in the body.
+The input is copied; workspace and operator authentication remain unchanged.
+Other registration payloads pass through unchanged. No public-route validation
+or registration-owner semantics are relaxed.

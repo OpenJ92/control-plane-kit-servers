@@ -60,8 +60,12 @@ class PublicRegistration:
         self.transport, self.workspace_id = transport, workspace_id
 
     async def register(self, route, payload):
+        path, body = {"workspace_id": self.workspace_id}, dict(payload)
+        if route == "command.delegation-key.activate":
+            for name in ("issuer", "key_id"):
+                path[name] = body.pop(name)
         return await asyncio.to_thread(self.transport.call, route,
-            path_parameters={"workspace_id": self.workspace_id}, payload=payload, credential_role="operator")
+            path_parameters=path, payload=body, credential_role="operator")
 
 
 def inspect_inputs(engine, sdk):
