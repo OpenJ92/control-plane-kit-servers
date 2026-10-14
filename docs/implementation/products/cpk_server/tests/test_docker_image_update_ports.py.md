@@ -32,3 +32,9 @@ failure returns an explicit false emission outcome; successful output returns
 true. These tests do not simulate or
 assert production execution/fold outcomes; the normal owning gate remains the
 real runtime witness.
+
+Secret-volume boundary tests prove the owner-derived identity is persisted before
+runtime dispatch and kept separate from configuration volumes. Exact recorded
+ownership permits selection; changed workspace/target/reference/kind or a missing
+prerecord prevents all disposal. No secret bytes or copied naming algorithm are
+used by these checks.

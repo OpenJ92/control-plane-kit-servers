@@ -10,11 +10,13 @@ from control_plane_kit_core.planning import StartRuntime, StartNode, ReconcileNo
 from control_plane_kit_core.products import ProductReference
 from control_plane_kit_core.runtime_authority import RuntimeAuthorityReference
 from control_plane_kit_core.runtime_effects import EffectResultKind
+from control_plane_kit_core.secrets import SecretFileDelivery
 from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC, validate_graph
 from control_plane_kit_core.types import RuntimeKind
 from control_plane_kit_interpreters.docker.configuration import (
     configuration_volume_name, require_configuration_owner,
 )
+from control_plane_kit_interpreters.docker.runtime import _node_labels, _secret_volume_name
 from control_plane_kit_operations.runtime_authorities import (
     RegisteredRuntimeAuthorityStatus, LocalDockerSocketAuthority,
 )
@@ -59,7 +61,8 @@ def dispose_fixture(placement):
         raise FixtureBoundaryFailure("owned Docker fixture residue remains")
     print(json.dumps({"docker_image_fixture_disposal": "absent",
         "containers": len(containers), "networks": len(networks),
-        "historical_configuration_volumes": len(volumes)}), flush=True)
+        "historical_configuration_volumes": sum(value.name in placement.record["volumes"] for value in volumes),
+        "secret_volumes": sum(value.name in placement.record["secret_volumes"] for value in volumes)}), flush=True)
 
 
 class OwnedControllerPlacement:
@@ -73,7 +76,7 @@ class OwnedControllerPlacement:
         self.record_path = record_path
         self.record = {"workspace": workspace, "controller_id": controller_id,
             "daemon_id": daemon_id, "run": run, "intents": [], "containers": {},
-            "networks": {}, "volumes": {}, "attachment": None}
+            "networks": {}, "volumes": {}, "secret_volumes": {}, "attachment": None}
         self.persist()
         self.reader = DockerGatewayEndpointReader((DockerControllerPlacement(workspace, "docker",
             RuntimeAuthorityReference("local-docker"), controller_id, sdk),), self.binding_for)
@@ -118,7 +121,24 @@ class OwnedControllerPlacement:
                 if name in self.record["volumes"] and self.record["volumes"][name] != encoded:
                     raise FixtureBoundaryFailure("configuration identity changed")
                 self.record["volumes"][name] = encoded
-        self.persist()  # Exact typed allocation references are durable before dispatch.
+        if type(request.operation) in (StartNode, ReconcileNode):
+            for material in request.products:
+                if material.node_id != request.operation.target.node_id:
+                    continue
+                if material.node_id not in {"gateway", "api", "api-y", "connector"}:
+                    raise FixtureBoundaryFailure("secret request node scope differs")
+                for delivery in material.product.runtime_contract.secret_deliveries:
+                    if type(delivery) is not SecretFileDelivery:
+                        continue
+                    name = _secret_volume_name(request, material.node_id, delivery)
+                    labels = {**_node_labels(request, material), PREFIX + "volume.kind": "secret-file",
+                        PREFIX + "secret.target": delivery.target_path,
+                        PREFIX + "secret.reference": delivery.reference.reference_id}
+                    if (name in self.record["volumes"] or name in self.record["secret_volumes"]
+                            and self.record["secret_volumes"][name] != labels):
+                        raise FixtureBoundaryFailure("secret volume identity changed")
+                    self.record["secret_volumes"][name] = labels
+        self.persist()  # Exact owner-derived allocation identities are durable before dispatch.
 
     def observed(self, record):
         self.same_daemon()
@@ -154,13 +174,18 @@ class OwnedControllerPlacement:
             "volumes": self.engine.volumes}
         found = {}
         for kind, manager in managers.items():
+            recorded = self.record[kind]
+            if kind == "volumes":
+                if recorded.keys() & self.record["secret_volumes"].keys():
+                    raise FixtureBoundaryFailure("fixture volume ownership classes overlap")
+                recorded = {**recorded, **self.record["secret_volumes"]}
             candidates = manager.list(**({"all": True} if kind == "containers" else {}),
                 filters={"label": PREFIX + "workspace=" + self.workspace})
             identities = {value.name if kind == "volumes" else value.id for value in candidates}
-            if not identities <= self.record[kind].keys():
+            if not identities <= recorded.keys():
                 raise FixtureBoundaryFailure("unrecorded workspace resource; preserve fixture")
             found[kind] = []
-            for identity, expected in self.record[kind].items():
+            for identity, expected in recorded.items():
                 try:
                     value = manager.get(identity)
                 except NotFound:
@@ -180,6 +205,12 @@ class OwnedControllerPlacement:
                         allowed.add(self.controller_id)
                     if not members <= allowed:
                         raise FixtureBoundaryFailure("recorded network has unexplained membership")
+                elif identity in self.record["secret_volumes"]:
+                    observed = self.sdk.inspect_volume(identity)
+                    if (observed is None or observed.name != identity
+                            or any(value.attrs["Labels"].get(key) != item for key, item in expected.items())
+                            or any(observed.labels.get(key) != item for key, item in expected.items())):
+                        raise FixtureBoundaryFailure("recorded secret volume ownership differs")
                 else:
                     reference = ConfigurationInstanceRefCodec().decode(expected)
                     if configuration_volume_name(reference) != identity:

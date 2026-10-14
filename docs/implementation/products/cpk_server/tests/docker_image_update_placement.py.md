@@ -29,3 +29,11 @@ The existing resource discovery and disposal functions now live beside this
 placement/ownership record. Their bodies are unchanged: validate all candidates
 before disposal, preserve unknown ownership/membership, and verify residue.
 Unit cleanup tests can exercise this owner without importing live composition.
+
+Secret-file volumes have a separate ownership map and disposal count. Before a
+StartNode/ReconcileNode dispatch, the fixture uses the selected Interpreter's
+_secret_volume_name and _node_labels helpers with the admitted material to record
+the exact name and expected labels, including file target and secret reference.
+No secret value/digest is read or stored. Disposal requires that prerecord and
+matching engine/SDK ownership before any deletion; same-workspace discovery,
+changed labels or overlap with configuration ownership cannot authorize cleanup.

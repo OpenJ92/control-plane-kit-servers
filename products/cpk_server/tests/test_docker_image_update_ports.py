@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 
 import httpx
 import control_plane_kit_core as core
-from control_plane_kit_core.planning import StartRuntime, RuntimeTarget, ActivityId, ReconcileNode, NodeTarget
+from control_plane_kit_core.planning import StartRuntime, StartNode, RuntimeTarget, ActivityId, ReconcileNode, NodeTarget
 from control_plane_kit_core.runtime_effects import (
     RuntimeEffectResult, RuntimeEffectRequest, RuntimeEffectSource, RuntimeEffectKind, RuntimeProductMaterial,
 )
@@ -29,11 +29,13 @@ from control_plane_kit_core.configuration_invocation import (
 from control_plane_kit_core.configuration_installation import (
     ConfigurationInstallationReceipt, ConfigurationInstallationDisposition,
 )
-from control_plane_kit_core.products import ProductReference
+from control_plane_kit_core.products import ProductReference, ProductDescriptorCodec
+from control_plane_kit_core.secrets import SecretFileDelivery, SecretFilePathBinding, SecretReference, SecretUseIntent
 from control_plane_kit_core.types import RuntimeKind
 from control_plane_kit_interpreters.docker.configuration import (
     _container_incarnation_fingerprint, configuration_volume_name,
 )
+from control_plane_kit_interpreters.docker.runtime import _secret_volume_name
 from control_plane_kit_core.topology import validate_graph
 from control_plane_kit_operations.runtime_authorities import LocalDockerSocketAuthority, RegisteredRuntimeAuthority
 from control_plane_kit_operations.products import InlineDescriptorSource, RegisteredProduct
@@ -88,6 +90,16 @@ def replacement_record():
         _container_incarnation_fingerprint("a" * 64), _container_incarnation_fingerprint("b" * 64))
     return CompletedRuntimeCall(request, RuntimeEffectResult.succeeded("effect-a",
         evidence={"configuration_installation_receipt": receipt.descriptor()}))
+
+
+def secret_file_request():
+    original = DockerImageMaterial("workspace-a").documents["connector"].product
+    delivery = SecretFileDelivery("/run/secrets/tunnel", SecretReference("secret://generated/ingress/fixture"),
+        SecretUseIntent.CLOUDFLARE_TUNNEL_TOKEN, path_binding=SecretFilePathBinding("TUNNEL_TOKEN_FILE"))
+    document = ProductDescriptorCodec().encode_document(replace(original,
+        runtime_contract=replace(original.runtime_contract, secret_deliveries=(delivery,))))
+    return replace(completed().request, operation=StartNode(NodeTarget("connector")),
+        products=(RuntimeProductMaterial("connector", "docker", ProductReference.from_document(document), document.product),))
 
 
 class DockerImageBoundaryTests(unittest.TestCase):
@@ -389,6 +401,56 @@ class OwnedAttachmentTests(unittest.TestCase):
                 RecordedDockerRuntime(runtime, resources=placement).execute(request)
             runtime.execute.assert_called_once_with(request)
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_secret_volume_identity_is_persisted_before_runtime_dispatch(self):
+        request = secret_file_request()
+        delivery, = request.products[0].product.runtime_contract.secret_deliveries
+        name = _secret_volume_name(request, "connector", delivery)
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "ownership.json"
+            placement = OwnedControllerPlacement(self.engine, self.sdk, "workspace-a", "b" * 64,
+                "daemon-a", record_path=path)
+            runtime = Mock()
+            def execute(actual):
+                self.assertIs(actual, request)
+                recorded = json.loads(path.read_text())
+                self.assertEqual(set(recorded["secret_volumes"]), {name})
+                self.assertEqual(recorded["secret_volumes"][name][PREFIX + "secret.reference"],
+                    delivery.reference.reference_id)
+                self.assertFalse(recorded["volumes"])
+                raise FixtureBoundaryFailure("simulated provider stop")
+            runtime.execute.side_effect = execute
+            with self.assertRaises(FixtureBoundaryFailure):
+                RecordedDockerRuntime(runtime, resources=placement).execute(request)
+            runtime.execute.assert_called_once_with(request)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_secret_volume_cleanup_requires_prerecord_and_unchanged_ownership(self):
+        from docker_image_update_placement import dispose_fixture
+        request = secret_file_request()
+        self.placement.starting(request)
+        name, = self.placement.record["secret_volumes"]
+        expected = self.placement.record["secret_volumes"][name]
+        volume = Mock()
+        volume.name = name
+        volume.attrs = {"Labels": dict(expected)}
+        self.engine.containers.list.return_value = []
+        self.engine.networks.list.return_value = []
+        self.engine.volumes.list.return_value = [volume]
+        self.engine.volumes.get.return_value = volume
+        self.sdk.inspect_volume.return_value = SimpleNamespace(name=name, labels=dict(expected))
+        self.assertEqual(self.placement.cleanup_candidates()["volumes"], [volume])
+        for key in ("workspace", "secret.target", "secret.reference", "volume.kind"):
+            with self.subTest(changed=key):
+                volume.attrs["Labels"][PREFIX + key] = "foreign"
+                with self.assertRaises(FixtureBoundaryFailure):
+                    dispose_fixture(self.placement)
+                volume.remove.assert_not_called()
+                volume.attrs["Labels"] = dict(expected)
+        self.placement.record["secret_volumes"].clear()
+        with self.assertRaises(FixtureBoundaryFailure):
+            dispose_fixture(self.placement)
+        volume.remove.assert_not_called()
 
 
 class NativeFixtureSelectionTests(unittest.TestCase):
