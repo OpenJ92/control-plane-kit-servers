@@ -111,7 +111,7 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
         transport=InstalledGatewaySocketTransport("cpk-1912.example.invalid", check_target, endpoint_for))
     health = ManagedHealthBootstrap((material.documents["gateway"],), placement.reader,
         native=native, public_client=public).build(provider.composition.authorized_resolver)
-    with IsolatedOperationsSchema(database_url, "cpk_image_" + uuid4().hex) as schema:
+    with IsolatedOperationsSchema(database_url, "cpk_1912_image_" + uuid4().hex) as schema:
         factory = OperationsApplicationFactory(schema.unit_of_work,
             OperationsEffectPorts({RuntimeKind.DOCKER: runtime},
                 {IngressAuthorityProviderKind.CLOUDFLARE: ingress}, health, material.decoders,

@@ -34,3 +34,9 @@ of #251, complete #191, production native connectivity or the grandparent run.
 Resource discovery and exact fixture disposal are imported from the existing
 placement component. This relocation preserves the cleanup algorithm and live
 call sites while letting unit cleanup tests avoid importing the full scenario.
+
+The schema caller uses `cpk_1912_image_` plus a fresh UUID, satisfying the reused
+isolation helper's closed `cpk_1912_` namespace and 48-character suffix bound.
+The helper's validation, creation and exact teardown remain unchanged. The
+former `cpk_image_` caller was rejected before schema creation in the first run
+that reached this boundary.
