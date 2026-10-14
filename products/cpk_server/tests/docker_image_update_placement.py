@@ -1,9 +1,24 @@
 """Owned controller membership and provider observations for #251, no scheduler."""
 from datetime import datetime, timezone
+import json
+import os
 
-from control_plane_kit_core.planning import StartRuntime
+from docker.errors import NotFound
+
+from control_plane_kit_core.configuration_instances import ConfigurationInstanceRefCodec
+from control_plane_kit_core.planning import StartRuntime, StartNode, ReconcileNode, resolve_management_observation
+from control_plane_kit_core.products import ProductReference
 from control_plane_kit_core.runtime_authority import RuntimeAuthorityReference
-from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC
+from control_plane_kit_core.runtime_effects import EffectResultKind
+from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC, validate_graph
+from control_plane_kit_core.types import RuntimeKind
+from control_plane_kit_interpreters.docker.configuration import (
+    configuration_volume_name, require_configuration_owner,
+)
+from control_plane_kit_operations.runtime_authorities import (
+    RegisteredRuntimeAuthorityStatus, LocalDockerSocketAuthority,
+)
+from control_plane_kit_operations.products import RegisteredProductStatus
 from control_plane_kit_operations.effect_outcome_evidence import NativeConnectionObservation, NativeConnectionOutcome
 from control_plane_kit_operations.runtime_management_targets import is_native_connection_operation
 from control_plane_kit_servers_cpk_server.managed_health_placement import (
@@ -18,14 +33,130 @@ PREFIX = "org.openj92.cpk."
 
 
 class OwnedControllerPlacement:
-    def __init__(self, engine, sdk, workspace, controller_id, daemon_id):
+    def __init__(self, engine, sdk, workspace, controller_id, daemon_id, *, record_path=None, run=None):
         self.engine, self.sdk, self.workspace = engine, sdk, workspace
         self.controller_id, self.daemon_id = controller_id, daemon_id
         self.network_id = None
         self.nodes, self.bindings = {}, {}
         self.attachment_attempted = False
+        self.failure = None
+        self.record_path = record_path
+        self.record = {"workspace": workspace, "controller_id": controller_id,
+            "daemon_id": daemon_id, "run": run, "intents": [], "containers": {},
+            "networks": {}, "volumes": {}, "attachment": None}
+        self.persist()
         self.reader = DockerGatewayEndpointReader((DockerControllerPlacement(workspace, "docker",
             RuntimeAuthorityReference("local-docker"), controller_id, sdk),), self.binding_for)
+
+    def persist(self):
+        if self.record_path is None:
+            return
+        encoded = json.dumps(self.record, sort_keys=True).encode("utf-8")
+        if len(encoded) > 262144:
+            raise FixtureBoundaryFailure("fixture resource record exceeded bound")
+        temporary = self.record_path.with_suffix(".pending")
+        with temporary.open("wb") as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, self.record_path)
+
+    def require_healthy(self):
+        if self.failure is not None:
+            raise FixtureBoundaryFailure("resource observation failed; preserve fixture")
+
+    def starting(self, request):
+        self.require_healthy()
+        self.same_daemon()
+        if (request.source.workspace_id != self.workspace
+                or request.authority_ref != RuntimeAuthorityReference("local-docker")
+                or request.runtime_kind is not RuntimeKind.DOCKER
+                or any(value.runtime_id != "docker" for value in request.products)
+                or (type(request.operation) is StartRuntime and request.operation.target.runtime_id != "docker")):
+            raise FixtureBoundaryFailure("runtime request ownership differs")
+        self.record["intents"].append({"effect_id": request.effect_id,
+            "activity_id": request.activity_id.value, "run_id": request.source.run_id.value,
+            "operation": type(request.operation).__name__})
+        if request.configuration_instances is not None:
+            for reference in request.configuration_instances.instances:
+                if (reference.workspace_id != self.workspace or reference.runtime_id != "docker"
+                        or reference.node_id not in {"gateway", "api", "api-y", "connector"}):
+                    raise FixtureBoundaryFailure("configuration request scope differs")
+                name = configuration_volume_name(reference)
+                encoded = ConfigurationInstanceRefCodec().encode(reference)
+                if name in self.record["volumes"] and self.record["volumes"][name] != encoded:
+                    raise FixtureBoundaryFailure("configuration identity changed")
+                self.record["volumes"][name] = encoded
+        self.persist()  # Exact typed allocation references are durable before dispatch.
+
+    def observed(self, record):
+        self.same_daemon()
+        request, result = record.request, record.result
+        if result.kind is not EffectResultKind.SUCCEEDED:
+            return  # Unrecorded partial effects are discovered and preserved by disposal.
+        operation = request.operation
+        if type(operation) is StartRuntime:
+            network = self.engine.networks.get(result.evidence["network"])
+            self.owned(network.attrs["Labels"], "runtime-network")
+            observed = self.sdk.inspect_network(network.id)
+            if observed is None or observed.network_id != network.id:
+                raise FixtureBoundaryFailure("returned network has no verified identity")
+            self.record["networks"][network.id] = "docker"
+        elif type(operation) in (StartNode, ReconcileNode):
+            node = operation.target.node_id
+            product, = [value.product for value in request.products if value.node_id == node
+                and value.runtime_id == "docker"]
+            role, = [key for key, value in IMAGES.items()
+                if value["reference"] == product.image.execution_reference]
+            container = self.engine.containers.get(result.evidence["container"])
+            self.owned(container.labels, "container", node)
+            self.nodes[node] = container.id
+            self.inspect_node(node, image_role=role)
+            self.record["containers"][container.id] = {"node": node, "image_role": role}
+        self.persist()
+
+    def cleanup_candidates(self):
+        """Discovery diagnoses; only independently recorded IDs/ref values authorize."""
+        self.require_healthy()
+        self.same_daemon()
+        managers = {"containers": self.engine.containers, "networks": self.engine.networks,
+            "volumes": self.engine.volumes}
+        found = {}
+        for kind, manager in managers.items():
+            candidates = manager.list(**({"all": True} if kind == "containers" else {}),
+                filters={"label": PREFIX + "workspace=" + self.workspace})
+            identities = {value.name if kind == "volumes" else value.id for value in candidates}
+            if not identities <= self.record[kind].keys():
+                raise FixtureBoundaryFailure("unrecorded workspace resource; preserve fixture")
+            found[kind] = []
+            for identity, expected in self.record[kind].items():
+                try:
+                    value = manager.get(identity)
+                except NotFound:
+                    continue
+                if (value.name if kind == "volumes" else value.id) != identity:
+                    raise FixtureBoundaryFailure("recorded resource identity differs")
+                if kind == "containers":
+                    self.owned(value.labels, "container", expected["node"])
+                    if value.attrs["Image"] != IMAGES[expected["image_role"]]["image_id"]:
+                        raise FixtureBoundaryFailure("recorded container image differs")
+                elif kind == "networks":
+                    self.owned(value.attrs["Labels"], "runtime-network")
+                    members = set(value.attrs.get("Containers", {}))
+                    allowed = set(self.record["containers"])
+                    if self.record["attachment"] == {"network_id": identity,
+                            "controller_id": self.controller_id}:
+                        allowed.add(self.controller_id)
+                    if not members <= allowed:
+                        raise FixtureBoundaryFailure("recorded network has unexplained membership")
+                else:
+                    reference = ConfigurationInstanceRefCodec().decode(expected)
+                    if configuration_volume_name(reference) != identity:
+                        raise FixtureBoundaryFailure("recorded configuration identity differs")
+                    require_configuration_owner(self.sdk.inspect_volume(identity), reference)
+                found[kind].append(value)
+        return found
 
     def same_daemon(self):
         if self.engine.info().get("ID") != self.daemon_id:
@@ -72,6 +203,8 @@ class OwnedControllerPlacement:
             if memberships:
                 raise FixtureBoundaryFailure("controller had an undeclared existing attachment")
             self.attachment_attempted = True
+            self.record["attachment"] = {"network_id": network.id, "controller_id": self.controller_id}
+            self.persist()
             network.connect(self.controller_id)
             fresh = self.sdk.inspect_container(self.controller_id)
             if fresh is None or sum(item.network_id == network.id for item in fresh.network_attachments) != 1:
@@ -119,33 +252,66 @@ class OwnedControllerPlacement:
 
 class SyntheticConnectorConnection:
     """Synthetic CONNECTED, correlated with an actual owned pause container."""
-    def __init__(self, placement, ingress):
-        self.placement, self.ingress = placement, ingress
+    def __init__(self, placement, ingress, material):
+        self.placement, self.ingress, self.material = placement, ingress, material
         self.reads = []
 
     def select(self, *, plan, current, desired, registered_products, runtime_authorities):
-        graph = desired if desired.nodes else current
-        connector = graph.node("connector")
-        if connector.metadata.get("oci_image") != IMAGES["connector"]["reference"]:
-            return None
         authorities = [value for value in runtime_authorities if value.workspace_id == self.placement.workspace
-            and value.authority_ref == RuntimeAuthorityReference("local-docker")]
+            and value.authority_ref == RuntimeAuthorityReference("local-docker")
+            and value.runtime_kind is RuntimeKind.DOCKER
+            and value.status is RegisteredRuntimeAuthorityStatus.ACTIVE
+            and type(value.authority) is LocalDockerSocketAuthority]
         if len(authorities) != 1:
             return None
-        required = tuple(value.activity_id for value in plan.activities
-            if is_native_connection_operation(value.operation))
-        return required
+        current, desired = validate_graph(current), validate_graph(desired)
+        required = []
+        for activity in plan.activities:
+            if not is_native_connection_operation(activity.operation):
+                continue
+            resolved = resolve_management_observation(activity.operation, current, desired,
+                expected_operation=plan.activity(activity.activity_id).operation)
+            graph = resolved.selected_graph.graph
+            runtime = graph.runtimes[activity.operation.target.runtime_id]
+            if (runtime.runtime_id != "docker" or runtime.kind is not RuntimeKind.DOCKER
+                    or runtime.authority_ref != authorities[0].authority_ref
+                    or resolved.ingress != self.material.a.public_ingresses[0]
+                    or resolved.gateway_node.node_id != "gateway"
+                    or resolved.connector_node.node_id != "connector"
+                    or resolved.gateway_readiness_socket != "control"
+                    or any(node.runtime_id != "docker" or node.metadata != self.material.a.node(name).metadata
+                        for node, name in ((resolved.gateway_node, "gateway"),
+                            (resolved.connector_node, "connector")))):
+                return None
+            for name in ("gateway", "connector"):
+                expected = self.material.documents[name]
+                products = [value for value in registered_products
+                    if value.workspace_id == self.placement.workspace
+                    and value.reference == ProductReference.from_document(expected)
+                    and value.status is RegisteredProductStatus.ACTIVE]
+                if len(products) != 1 or products[0].descriptor_document != expected:
+                    return None
+            required.append(activity.activity_id)
+        return tuple(required)
 
     async def observe_connection(self, realization, request, authority):
+        current = DEFAULT_GRAPH_CODEC.decode(realization.base_graph.graph_descriptor)
+        desired = DEFAULT_GRAPH_CODEC.decode(realization.desired_graph.graph_descriptor)
         selected = self.select(plan=realization.plan,
-            current=DEFAULT_GRAPH_CODEC.decode(realization.base_graph.graph_descriptor),
-            desired=DEFAULT_GRAPH_CODEC.decode(realization.desired_graph.graph_descriptor),
+            current=current, desired=desired,
             registered_products=realization.registered_products,
             runtime_authorities=realization.runtime_authorities)
-        if (selected is None or request.activity_id not in selected or not self.ingress.allocations
+        if (selected is None or request.activity_id not in selected or len(self.ingress.allocations) != 1
                 or authority.authority_ref != request.authority_ref
+                or authority.workspace_id != self.placement.workspace
+                or authority not in realization.runtime_authorities
                 or request.source.workspace_id != self.placement.workspace):
             raise FixtureBoundaryFailure("synthetic native scope differs")
+        resolve_management_observation(request.operation, validate_graph(current), validate_graph(desired),
+            expected_operation=realization.plan.activity(request.activity_id).operation)
+        allocation, = self.ingress.allocations.values()
+        if allocation.hostname != self.material.a.public_ingresses[0].hostname:
+            raise FixtureBoundaryFailure("synthetic allocation target differs")
         connector = self.placement.inspect_node("connector")
         instant = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         self.reads.append((request.effect_id, request.activity_id.value, connector.container_id))

@@ -9,34 +9,85 @@ import unittest
 from unittest.mock import Mock
 
 import httpx
-from control_plane_kit_core.planning import StartRuntime, RuntimeTarget
-from control_plane_kit_core.runtime_effects import RuntimeEffectResult
+import control_plane_kit_core as core
+from control_plane_kit_core.planning import StartRuntime, RuntimeTarget, ActivityId, ReconcileNode, NodeTarget
+from control_plane_kit_core.runtime_effects import (
+    RuntimeEffectResult, RuntimeEffectRequest, RuntimeEffectSource, RuntimeEffectKind, RuntimeProductMaterial,
+)
+from control_plane_kit_core.operations.run_identity import RunId
+from control_plane_kit_core.operations.recovery import (
+    EffectAttemptIdentity, EffectAttemptFence, EffectAttemptState, EffectAttemptStatus,
+)
+from control_plane_kit_core.runtime_effect_observation import (
+    runtime_effect_intent_for_request, runtime_effect_intent_fingerprint, runtime_effect_result_fingerprint,
+)
+from control_plane_kit_operations.effect_attempts import effect_attempt_state_fingerprint
+from control_plane_kit_core.configuration_instances import ConfigurationInstanceRef, ConfigurationInstanceSelection
+from control_plane_kit_core.configuration_invocation import (
+    configuration_invocation_correlation_for_request, configuration_invocation_selection_fingerprint,
+)
+from control_plane_kit_core.configuration_installation import (
+    ConfigurationInstallationReceipt, ConfigurationInstallationDisposition,
+)
+from control_plane_kit_core.products import ProductReference
+from control_plane_kit_core.types import RuntimeKind
+from control_plane_kit_interpreters.docker.configuration import (
+    _container_incarnation_fingerprint, configuration_volume_name,
+)
+from control_plane_kit_core.topology import validate_graph
+from control_plane_kit_operations.runtime_authorities import LocalDockerSocketAuthority, RegisteredRuntimeAuthority
+from control_plane_kit_operations.products import InlineDescriptorSource, RegisteredProduct
 from control_plane_kit_core.runtime_authority import RuntimeAuthorityReference
 from control_plane_kit_servers_cpk_server.client import ClientProfile, TopologyClient
 
 from docker_image_update_material import DockerImageMaterial
-from docker_image_update_placement import OwnedControllerPlacement, PREFIX
+from docker_image_update_placement import OwnedControllerPlacement, SyntheticConnectorConnection, PREFIX
 from docker_image_update_ports import (
     AttachedPublicTransport, CompletedRuntimeCall, FixtureBoundaryFailure,
     InstalledGatewaySocketTransport, RecordedDockerRuntime, SyntheticIngressAddressResolver,
-    require_committed_call,
+    require_committed_call, require_replacement_receipt,
 )
 from test_topology_client import ScriptedTransport, DeterministicIds
 
 
 def completed():
-    request = SimpleNamespace(source=SimpleNamespace(workspace_id="workspace-a",
-        run_id=SimpleNamespace(value="run-a"), intent_event_id="effect-a"),
-        effect_id="effect-a", activity_id=SimpleNamespace(value="completed-activity"),
-        operation=StartRuntime(RuntimeTarget("docker")))
+    request = RuntimeEffectRequest("effect-a", RuntimeEffectKind.REALIZE_ACTIVITY, RuntimeKind.DOCKER,
+        RuntimeEffectSource("workspace-a", "request-a", RunId("run-a"), "plan-a", "base-a", "desired-a", "effect-a"),
+        ActivityId("completed-activity"), StartRuntime(RuntimeTarget("docker")),
+        authority_ref=RuntimeAuthorityReference("local-docker"))
     return CompletedRuntimeCall(request, RuntimeEffectResult.succeeded("effect-a"))
 
 
-def events():
+def events(record=None, *, generation=1, worker="worker-a"):
+    record = record or completed()
+    state = EffectAttemptState(EffectAttemptIdentity(record.request.source.run_id,
+        record.request.activity_id.value, 1),
+        runtime_effect_intent_fingerprint(runtime_effect_intent_for_request(record.request)),
+        EffectAttemptFence(worker, generation), EffectAttemptStatus.STARTED)
+    succeeded = replace(state, status=EffectAttemptStatus.SUCCEEDED,
+        outcome_fingerprint=runtime_effect_result_fingerprint(record.result))
     return [{"event_id": identity, "run_id": "run-a", "ordinal": ordinal,
-        "activity_id": "completed-activity", "event_type": kind, "failure": None}
-        for identity, ordinal, kind in (("effect-a", 3, "step_started"),
-            ("success-a", 4, "step_succeeded"))]
+        "activity_id": "completed-activity", "event_type": kind, "failure": None,
+        "payload": {"effect_attempt": {"attempt": 1,
+            "state_fingerprint": effect_attempt_state_fingerprint(value)}}}
+        for identity, ordinal, kind, value in (("effect-a", 3, "step_started", state),
+            ("success-a", 4, "step_succeeded", succeeded))]
+
+
+def replacement_record():
+    document = DockerImageMaterial("workspace-a").successor
+    refs = tuple(ConfigurationInstanceRef("allocation-" + str(index), "workspace-a", "docker", "api",
+        value.artifact_id, value.target_path, value.media_type, value.file_mode, value.content_digest)
+        for index, value in enumerate(document.product.runtime_contract.configuration_artifacts))
+    request = replace(completed().request, kind=RuntimeEffectKind.CONFIGURATION_ACTIVITY_V1,
+        operation=ReconcileNode(NodeTarget("api")), configuration_instances=ConfigurationInstanceSelection(refs),
+        products=(RuntimeProductMaterial("api", "docker", ProductReference.from_document(document), document.product),))
+    context = configuration_invocation_correlation_for_request(request)
+    receipt = ConfigurationInstallationReceipt(context.request_fingerprint,
+        configuration_invocation_selection_fingerprint(context.selection), ConfigurationInstallationDisposition.REPLACED,
+        _container_incarnation_fingerprint("a" * 64), _container_incarnation_fingerprint("b" * 64))
+    return CompletedRuntimeCall(request, RuntimeEffectResult.succeeded("effect-a",
+        evidence={"configuration_installation_receipt": receipt.descriptor()}))
 
 
 class DockerImageBoundaryTests(unittest.TestCase):
@@ -67,16 +118,32 @@ class DockerImageBoundaryTests(unittest.TestCase):
             "payload": {"max_effects": 1, "claim_generation": 1}}
         response = {"run_id": "run-a", "run_status": "running", "effects_attempted": 1,
             "coordinator_status": "progressed", "activity_id": "next-not-completed"}
-        require_committed_call(completed(), response, arguments, events())
+        require_committed_call(completed(), response, arguments, events(), "worker-a")
         for changed in ([], events()[:1], [{**row, "run_id": "foreign"} for row in events()],
                 [events()[0], {**events()[1], "event_type": "step_uncertain"}],
-                [*events(), {**events()[0], "event_id": "retry", "ordinal": 5}]):
+                [*events(), {**events()[0], "event_id": "retry", "ordinal": 5}],
+                events(generation=2), events(worker="foreign-worker")):
             with self.subTest(events=changed), self.assertRaises(FixtureBoundaryFailure):
-                require_committed_call(completed(), response, arguments, changed)
+                require_committed_call(completed(), response, arguments, changed, "worker-a")
         for changed in ({**response, "coordinator_status": "uncertain"},
                 {**response, "run_id": "foreign"}, {**response, "effects_attempted": 0}):
             with self.subTest(response=changed), self.assertRaises(FixtureBoundaryFailure):
-                require_committed_call(completed(), changed, arguments, events())
+                require_committed_call(completed(), changed, arguments, events(), "worker-a")
+
+    def test_replacement_receipt_binds_provider_ids_and_committed_result(self):
+        record = replacement_record()
+        require_replacement_receipt(record, "a" * 64, "b" * 64)
+        for prior, current in (("c" * 64, "b" * 64), ("a" * 64, "c" * 64)):
+            with self.assertRaises(FixtureBoundaryFailure):
+                require_replacement_receipt(record, prior, current)
+        arguments = {"path_parameters": {"workspace_id": "workspace-a", "run_id": "run-a"},
+            "payload": {"max_effects": 1, "claim_generation": 1}}
+        response = {"run_id": "run-a", "run_status": "succeeded", "effects_attempted": 1,
+            "coordinator_status": "completed"}
+        require_committed_call(record, response, arguments, events(record), "worker-a")
+        changed = replace(record, result=replace(record.result, evidence={}))
+        with self.assertRaises(FixtureBoundaryFailure):
+            require_committed_call(changed, response, arguments, events(record), "worker-a")
 
     def test_hook_failure_journals_original_success_and_never_sends_next_mutation(self):
         recorder = SimpleNamespace(completed=[])
@@ -91,7 +158,7 @@ class DockerImageBoundaryTests(unittest.TestCase):
         inner = Transport(progress_once=True)
         placement = Mock()
         placement.completed.side_effect = FixtureBoundaryFailure("attachment failed")
-        transport = AttachedPublicTransport(inner, recorder, placement)
+        transport = AttachedPublicTransport(inner, recorder, placement, "worker-a")
         with TemporaryDirectory() as directory:
             root = Path(directory)
             profile = ClientProfile("https://fixture.example", "workspace-a",
@@ -173,7 +240,6 @@ class OwnedAttachmentTests(unittest.TestCase):
         self.network.connect.side_effect = connect
         self.placement = OwnedControllerPlacement(self.engine, self.sdk, "workspace-a", "b" * 64, "daemon-a")
         self.record = completed()
-        self.record.request.authority_ref = RuntimeAuthorityReference("local-docker")
         self.record = replace(self.record, result=RuntimeEffectResult.succeeded("effect-a",
             evidence={"runtime_id": "docker", "network": "returned-provider-name"}))
 
@@ -194,3 +260,75 @@ class OwnedAttachmentTests(unittest.TestCase):
         with self.assertRaises(FixtureBoundaryFailure):
             self.placement.completed(self.record)
         self.network.connect.assert_not_called()
+
+    def test_same_workspace_unrecorded_resource_prevents_all_disposal(self):
+        from live_docker_image_update import dispose_fixture
+        unknown = Mock(id="c" * 64)
+        unknown.labels = {PREFIX + "workspace": "workspace-a", PREFIX + "runtime": "docker",
+            PREFIX + "node": "api", PREFIX + "kind": "container"}
+        self.engine.containers.list.return_value = [unknown]
+        self.engine.networks.list.return_value = []
+        self.engine.volumes.list.return_value = []
+        with self.assertRaises(FixtureBoundaryFailure):
+            dispose_fixture(self.placement)
+        unknown.remove.assert_not_called()
+        self.network.disconnect.assert_not_called()
+        self.network.remove.assert_not_called()
+
+    def test_recorded_container_with_changed_labels_is_preserved_even_outside_discovery(self):
+        from live_docker_image_update import dispose_fixture
+        container = Mock(id="c" * 64)
+        container.labels = {PREFIX + "workspace": "foreign"}
+        self.placement.record["containers"][container.id] = {"node": "api", "image_role": "hello_a"}
+        self.engine.containers.get.return_value = container
+        for manager in (self.engine.containers, self.engine.networks, self.engine.volumes):
+            manager.list.return_value = []
+        with self.assertRaises(FixtureBoundaryFailure):
+            dispose_fixture(self.placement)
+        self.engine.containers.get.assert_called_once_with(container.id)
+        container.remove.assert_not_called()
+
+    def test_configuration_references_are_persisted_before_runtime_dispatch(self):
+        request = replacement_record().request
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "ownership.json"
+            placement = OwnedControllerPlacement(self.engine, self.sdk, "workspace-a", "b" * 64,
+                "daemon-a", record_path=path, run="fixture-run")
+            runtime = Mock()
+            def execute(actual):
+                self.assertIs(actual, request)
+                recorded = json.loads(path.read_text())
+                self.assertEqual(recorded["intents"][0]["effect_id"], request.effect_id)
+                self.assertEqual(set(recorded["volumes"]),
+                    {configuration_volume_name(ref) for ref in request.configuration_instances.instances})
+                raise FixtureBoundaryFailure("simulated provider stop")
+            runtime.execute.side_effect = execute
+            with self.assertRaises(FixtureBoundaryFailure):
+                RecordedDockerRuntime(runtime, resources=placement).execute(request)
+            runtime.execute.assert_called_once_with(request)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+
+class NativeFixtureSelectionTests(unittest.TestCase):
+    def test_every_native_operation_resolves_to_the_exact_fixture_tuple(self):
+        material = DockerImageMaterial("workspace-a")
+        placement = SimpleNamespace(workspace="workspace-a")
+        observer = SyntheticConnectorConnection(placement, SimpleNamespace(allocations={}), material)
+        authority = RegisteredRuntimeAuthority("registration", "workspace-a",
+            RuntimeAuthorityReference("local-docker"), RuntimeKind.DOCKER,
+            LocalDockerSocketAuthority(), "operator", "2026-10-13T00:00:00Z")
+        products = tuple(RegisteredProduct("product-" + name, "workspace-a",
+            ProductReference.from_document(document), document, InlineDescriptorSource(),
+            "operator", "2026-10-13T00:00:00Z") for name, document in material.documents.items())
+        def select(graph):
+            retained = {"gateway", "connector"}
+            current = replace(graph, nodes={key: value for key, value in graph.nodes.items() if key in retained},
+                runtimes={key: replace(value, children=tuple(node for node in value.children if node in retained))
+                    for key, value in graph.runtimes.items()})
+            plan = core.compile_graph_activity_plan(validate_graph(current), validate_graph(graph))
+            return observer.select(plan=plan, current=current, desired=graph,
+                registered_products=products, runtime_authorities=(authority,))
+        self.assertTrue(select(material.a))
+        foreign = replace(material.a, public_ingresses=(replace(material.a.public_ingresses[0],
+            hostname="foreign.example.invalid"),))
+        self.assertIsNone(select(foreign))

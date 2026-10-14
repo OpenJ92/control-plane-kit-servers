@@ -1,11 +1,23 @@
 """#251 fixture boundaries; CPK and Docker retain all execution semantics."""
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 
 import httpx
 
 from control_plane_kit_core.planning import StartNode, StartRuntime
 from control_plane_kit_core.runtime_effects import EffectResultKind
+from control_plane_kit_core.runtime_effect_observation import (
+    runtime_effect_intent_for_request, runtime_effect_intent_fingerprint, runtime_effect_result_fingerprint,
+)
+from control_plane_kit_core.operations.recovery import (
+    EffectAttemptIdentity, EffectAttemptFence, EffectAttemptState, EffectAttemptStatus,
+)
+from control_plane_kit_operations.effect_attempts import effect_attempt_state_fingerprint
+from control_plane_kit_core.configuration_invocation import configuration_invocation_correlation_for_request
+from control_plane_kit_core.configuration_installation import (
+    ConfigurationInstallationDisposition, configuration_installation_receipt_for_result,
+)
+from control_plane_kit_interpreters.docker.configuration import _container_incarnation_fingerprint
 
 
 class FixtureBoundaryFailure(RuntimeError):
@@ -20,18 +32,31 @@ class CompletedRuntimeCall:
 
 class RecordedDockerRuntime:
     """Delegate once, retain the genuine request/result; no effect interpretation."""
-    def __init__(self, runtime):
+    def __init__(self, runtime, resources=None):
         self.runtime = runtime
+        self.resources = resources
         self.completed = []
 
     def execute(self, request):
+        if self.resources is not None:
+            self.resources.starting(request)
         result = self.runtime.execute(request)
-        self.completed.append(CompletedRuntimeCall(request, result))
-        return result
+        return self._record(request, result)
 
     def execute_with_authority(self, request, authority):
+        if self.resources is not None:
+            self.resources.starting(request)
         result = self.runtime.execute_with_authority(request, authority)
-        self.completed.append(CompletedRuntimeCall(request, result))
+        return self._record(request, result)
+
+    def _record(self, request, result):
+        record = CompletedRuntimeCall(request, result)
+        self.completed.append(record)
+        if self.resources is not None:
+            try:
+                self.resources.observed(record)
+            except Exception as error:
+                self.resources.failure = type(error).__name__[:80]
         return result
 
 
@@ -52,7 +77,7 @@ def public_page(transport, route, workspace, **coordinates):
     raise FixtureBoundaryFailure("public history exceeded fixture bound")
 
 
-def require_committed_call(record, response, arguments, events):
+def require_committed_call(record, response, arguments, events, worker_id):
     """The response activity is NEXT ready; correlate completed public events."""
     request, result = record.request, record.result
     path, body = arguments["path_parameters"], arguments["payload"]
@@ -80,6 +105,28 @@ def require_committed_call(record, response, arguments, events):
     if (len(later) != 1 or later[0]["event_type"] != "step_succeeded"
             or later[0]["run_id"] != path["run_id"] or later[0].get("failure") is not None):
         raise FixtureBoundaryFailure("committed public success is ambiguous")
+    # Selected public events commit to the fence inside the typed state, rather
+    # than exposing claim_generation directly. Use owner values/hash, no fold.
+    state = EffectAttemptState(EffectAttemptIdentity(request.source.run_id, activity, 1),
+        runtime_effect_intent_fingerprint(runtime_effect_intent_for_request(request)),
+        EffectAttemptFence(worker_id, body["claim_generation"]), EffectAttemptStatus.STARTED)
+    succeeded = replace(state, status=EffectAttemptStatus.SUCCEEDED,
+        outcome_fingerprint=runtime_effect_result_fingerprint(result))
+    for event, expected in ((starts[0], state), (later[0], succeeded)):
+        if event.get("payload") != {"effect_attempt": {
+                "attempt": 1, "state_fingerprint": effect_attempt_state_fingerprint(expected)}}:
+            raise FixtureBoundaryFailure("public event fence or outcome commitment differs")
+    return starts[0], later[0]
+
+
+def require_replacement_receipt(record, prior_id, current_id):
+    receipt = configuration_installation_receipt_for_result(
+        configuration_invocation_correlation_for_request(record.request), record.result)
+    if (receipt is None or receipt.disposition is not ConfigurationInstallationDisposition.REPLACED
+            or receipt.prior_realization_fingerprint != _container_incarnation_fingerprint(prior_id)
+            or receipt.current_realization_fingerprint != _container_incarnation_fingerprint(current_id)):
+        raise FixtureBoundaryFailure("replacement receipt does not identify observed containers")
+    return receipt
 
 
 class AttachedPublicTransport:
@@ -89,12 +136,14 @@ class AttachedPublicTransport:
     normal client journal. The next mutation is refused before HTTP dispatch;
     the witness also calls require_healthy after apply returns.
     """
-    def __init__(self, inner, runtime, placement):
+    def __init__(self, inner, runtime, placement, worker_id):
         self.inner, self.runtime, self.placement = inner, runtime, placement
+        self.worker_id = worker_id
         self.failure = None
         self.unsent = []
         self.responses = []
         self.preparations = []
+        self.committed = {}
 
     def require_healthy(self):
         if self.failure is not None:
@@ -112,9 +161,7 @@ class AttachedPublicTransport:
             return response
         self.responses.append(response)
         completed = self.runtime.completed[before:]
-        trigger = any(type(value.request.operation) in (StartRuntime, StartNode)
-            for value in completed)
-        if not trigger:
+        if not completed or response.get("coordinator_status") not in {"progressed", "completed"}:
             return response
         try:
             if len(completed) != 1:
@@ -123,8 +170,11 @@ class AttachedPublicTransport:
             events = public_page(self.inner, "read.run-events",
                 arguments["path_parameters"]["workspace_id"],
                 run_id=arguments["path_parameters"]["run_id"])
-            require_committed_call(record, response, arguments, events)
-            self.placement.completed(record)
+            require_committed_call(record, response, arguments, events, self.worker_id)
+            self.committed[record.request.effect_id] = (arguments, response)
+            self.placement.require_healthy()
+            if type(record.request.operation) in (StartRuntime, StartNode):
+                self.placement.completed(record)
         except Exception as error:
             # Fixed bounded classification, never provider text/headers/secrets.
             self.failure = type(error).__name__[:80]

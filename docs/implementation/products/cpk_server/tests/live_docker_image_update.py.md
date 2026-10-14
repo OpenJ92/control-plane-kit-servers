@@ -20,5 +20,13 @@ which is reported separately and is not public compensation or historical
 material-retention acceptance. The outer trap preserves records when absence is
 unverified; no prune, shared reset, registry write or original tunnel change.
 
+The ownership record now grows only from genuine invocation references and
+verified returned identities. Workspace enumeration is diagnostic; an extra
+same-workspace resource stops all disposal. Configuration cleanup uses the exact
+recorded allocation references, and attachment intent is persisted before connect.
+The replacement assertion checks the actual REPLACED receipt against old/new
+container IDs and the matching public start/success commitments, including the
+worker fence and genuine result fingerprint.
+
 This source is pending the #251 concrete review and owning gate, not acceptance
 of #251, complete #191, production native connectivity or the grandparent run.

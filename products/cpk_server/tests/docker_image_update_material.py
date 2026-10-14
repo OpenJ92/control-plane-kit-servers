@@ -6,16 +6,16 @@ from pathlib import Path
 import control_plane_kit_core as core
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from control_plane_kit_core.algebra import BlockSockets
+from control_plane_kit_core.algebra import BlockSockets, BlockSpec
 from control_plane_kit_core.products import (
     ContainerServerProduct, OciImageReference, ProductDescriptorCodec, ProductIdentity, ProductReference,
     ProductRuntimeContract,
 )
 from control_plane_kit_core.public_ingress import IngressAuthorityReference, NamedPublicIngress, PublicIngressTarget
 from control_plane_kit_core.runtime_authority import RuntimeAuthorityReference
-from control_plane_kit_core.topology import DeploymentGraph, RuntimeRecord, validate_graph
+from control_plane_kit_core.topology import DeploymentGraph, Node, RuntimeRecord, validate_graph
 from control_plane_kit_core.topology.graph import Endpoint, LiteralAddress
-from control_plane_kit_core.types import Protocol, RuntimeKind
+from control_plane_kit_core.types import BlockFamily, Protocol, RuntimeKind
 from control_plane_kit_servers_cpk_local_gateway.control_configuration import gateway_control_configuration_artifact
 from control_plane_kit_servers_cpk_local_gateway.health_relay_configuration import gateway_health_source_runtime_contract
 from control_plane_kit_servers_cpk_local_gateway.health_transit_configuration import (
@@ -79,10 +79,7 @@ class DockerImageMaterial(AuthoredMaterial):
             identity=replace(original.product.identity, contract_revision=2),
             image=image_value(IMAGES["hello_b"]["reference"])))
         assert original.product.runtime_contract == self.successor.product.runtime_contract
-        self.updated = self.a.update_node(replace(self.a.node("api"),
-            metadata=selected_metadata(self.successor)))
-        for graph in (self.a, self.updated):
-            validate_graph(graph).require_valid()
+        validate_graph(self.a).require_valid()
 
     def configuration(self, name):
         configuration = super().configuration(name)
@@ -99,15 +96,16 @@ class DockerImageMaterial(AuthoredMaterial):
         return hello_control_configuration_artifact(self.configurations[name])
 
     def node(self, name, contract):
-        if name not in {"gateway", "connector"}:
-            contract = hello_source_runtime_contract(self.wrapper(name))
         role = name if name in {"gateway", "connector"} else "hello_a"
         document = ProductDescriptorCodec().encode_document(ContainerServerProduct(
             ProductIdentity("docker-image-witness", name, 1),
             image_value(IMAGES[role]["reference"]), contract))
-        node = super().node(name, contract)
         self.documents[name] = document
-        return replace(node, metadata=selected_metadata(document),
-            block_spec=replace(node.block_spec, verification=contract.verification),
+        return Node(name, BlockFamily.APPLICATION,
+            BlockSpec(name, capabilities=contract.capabilities, control_surfaces=contract.control_surfaces,
+                gateway_transit=contract.gateway_transit, verification=contract.verification),
+            "container-server", "docker", contract.sockets,
             endpoints={socket.name: Endpoint(LiteralAddress("http://" + name + ":8000"), Protocol.HTTP)
-                for socket in contract.sockets.providers})
+                for socket in contract.sockets.providers},
+            public_environment=contract.public_environment, configuration_artifacts=contract.configuration_artifacts,
+            metadata=selected_metadata(document))

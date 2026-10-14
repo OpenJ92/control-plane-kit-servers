@@ -34,6 +34,7 @@ from docker_image_update_placement import OwnedControllerPlacement, SyntheticCon
 from docker_image_update_ports import (
     AttachedPublicTransport, RecordedDockerRuntime, FixtureBoundaryFailure, public_page,
     SyntheticIngressAddressResolver, InstalledGatewaySocketTransport,
+    require_committed_call, require_replacement_receipt,
 )
 from docker_image_update_provider import SigningProviderProcess
 from live_receiver_acceptance import verify_provenance
@@ -87,11 +88,11 @@ def owned_resources(engine, workspace):
 def dispose_fixture(placement):
     """Exact unique test-world disposal; does not advance or compensate CPK."""
     placement.same_daemon()
-    containers, networks, volumes = owned_resources(placement.engine, placement.workspace)
+    selected = placement.cleanup_candidates()  # Validate the entire set before any disposal.
+    containers, networks, volumes = (selected[kind] for kind in ("containers", "networks", "volumes"))
     if placement.network_id is not None and any(value.id == placement.network_id for value in networks):
         placement.detach()
     for container in containers:
-        placement.owned(container.labels, "container", container.labels.get(PREFIX + "node"))
         container.remove(force=True)
     for network in networks:
         placement.owned(network.attrs["Labels"], "runtime-network")
@@ -100,8 +101,6 @@ def dispose_fixture(placement):
             raise FixtureBoundaryFailure("owned network has unexplained membership")
         network.remove()
     for volume in volumes:
-        placement.owned(volume.attrs["Labels"], "configuration-volume",
-            volume.attrs["Labels"].get(PREFIX + "node"))
         volume.remove()
     if any(owned_resources(placement.engine, placement.workspace)):
         raise FixtureBoundaryFailure("owned Docker fixture residue remains")
@@ -113,9 +112,9 @@ def dispose_fixture(placement):
 async def scenario(root, engine, sdk, placement, material, provider, database_url):
     workspace = material.workspace_id
     runtime = RecordedDockerRuntime(DockerRuntimeInterpreter(sdk,
-        authorized_secret_resolver=provider.composition.authorized_resolver))
+        authorized_secret_resolver=provider.composition.authorized_resolver), resources=placement)
     ingress = SyntheticIngressAllocation()
-    native = SyntheticConnectorConnection(placement, ingress)
+    native = SyntheticConnectorConnection(placement, ingress, material)
     registered_authority = None
 
     def check_target(target_id, raw):
@@ -149,7 +148,8 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
         bootstrap = PublicOperationsDriver(factory, workspace_id=workspace)
         await bootstrap.create_workspace()
         with ControllerHost(factory, bootstrap, root / "controller") as host:
-            transport = AttachedPublicTransport(PublicHttpTransport(host.profile), runtime, placement)
+            transport = AttachedPublicTransport(PublicHttpTransport(host.profile), runtime, placement,
+                bootstrap.worker.identity.subject_id)
             registration = PublicRegistration(transport, workspace)
             admitted = await register_material(registration, SimpleNamespace(workspace_id=workspace,
                 documents={name: material.documents[name] for name in ("gateway", "api", "connector")},
@@ -244,7 +244,7 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
                 if type(value.request.operation).__name__ == "ReconcileNode"]
             assert len(replacements) == 1 and replacements[0].request.operation.target.node_id == "api"
             replaced = engine.containers.get(replacements[0].result.evidence["container"])
-            placement.nodes["api"] = replaced.id
+            assert placement.nodes["api"] == replaced.id
             placement.inspect_node("api", image_role="hello_b")
             assert replaced.id != initial_nodes["api"]
             assert not engine.containers.list(all=True, filters={"id": initial_nodes["api"]})
@@ -260,6 +260,12 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
             assert current_receivers["receivers"] == expected
             assert await history(initial) == original_history
             update_history = await history(updated)
+            replacement = replacements[0]
+            assert replacement.request.source.run_id.value == updated.run_id
+            receipt = require_replacement_receipt(replacement, initial_nodes["api"], replaced.id)
+            arguments, response = transport.committed[replacement.request.effect_id]
+            require_committed_call(replacement, response, arguments, update_history[1],
+                bootstrap.worker.identity.subject_id)
             def no_identity():
                 raise FixtureBoundaryFailure("retained operation regenerated receiver identity")
             restarted = TopologyClient(host.profile, transport=transport, receiver_identity_factory=no_identity)
@@ -282,6 +288,7 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
                 "initial_run": initial.run_id, "replacement_run": updated.run_id,
                 "old_container": initial_nodes["api"], "new_container": replaced.id,
                 "peer_container": initial_nodes["api-y"], "native": "synthetic",
+                "replacement_receipt": receipt.disposition.value,
                 "ingress": "synthetic", "historical_configuration_volumes": len(volumes)}), flush=True)
 
 
@@ -301,13 +308,11 @@ async def witness():
     images = inspect_inputs(engine, sdk)
     workspace = "image-" + uuid4().hex
     assert not any(owned_resources(engine, workspace))
-    placement = OwnedControllerPlacement(engine, sdk, workspace, controller.id, daemon_id)
     records = Path(os.environ["CPK_DOCKER_WITNESS_RECORDS"])
     ownership = records / "ownership.json"
-    with ownership.open("x", encoding="utf-8") as record:
-        json.dump({"workspace": workspace, "controller_id": controller.id,
-            "daemon_id": daemon_id, "run": os.environ["CPK_DOCKER_WITNESS_RUN"]}, record)
-    ownership.chmod(0o600)
+    assert not ownership.exists()
+    placement = OwnedControllerPlacement(engine, sdk, workspace, controller.id, daemon_id,
+        record_path=ownership, run=os.environ["CPK_DOCKER_WITNESS_RUN"])
     print(json.dumps({"docker_image_inputs": images, "daemon_id": daemon_id,
         "controller_id": controller.id, "owned_workspace": workspace}), flush=True)
     database_url = os.environ["CPK_RECEIVER_ACCEPTANCE_DATABASE_URL"]
