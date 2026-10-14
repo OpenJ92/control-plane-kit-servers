@@ -38,21 +38,14 @@ from docker_image_update_ports import (
     SyntheticIngressAddressResolver, InstalledGatewaySocketTransport,
     require_committed_call, require_replacement_receipt, emit_failed_apply_evidence,
 )
-from docker_image_update_provider import SigningProviderProcess
+from docker_image_update_provider import SigningProviderProcess, SyntheticIngressAllocation
 from live_receiver_acceptance import verify_provenance
 from live_unlisted_receiver import select_pending_baseline, register_surface_verifier
 from receiver_acceptance_operations import (
     IsolatedOperationsSchema, OperationsApplicationFactory, OperationsEffectPorts,
     PublicOperationsDriver, register_material, utc_now,
 )
-from receiver_acceptance_ports import IngressSubstitute
 from unlisted_controller_host import ControllerHost
-
-
-class SyntheticIngressAllocation(IngressSubstitute):
-    """Reuse the named external allocation/custody substitute; no compute port."""
-    def __init__(self):
-        super().__init__(SimpleNamespace(order=[]))
 
 
 class PublicRegistration:
@@ -89,7 +82,7 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
     workspace = material.workspace_id
     runtime = RecordedDockerRuntime(DockerRuntimeInterpreter(sdk,
         authorized_secret_resolver=provider.composition.authorized_resolver), resources=placement)
-    ingress = SyntheticIngressAllocation()
+    ingress = SyntheticIngressAllocation(provider.composition.secret_custodian, workspace)
     native = SyntheticConnectorConnection(placement, ingress, material)
     registered_authority = None
 

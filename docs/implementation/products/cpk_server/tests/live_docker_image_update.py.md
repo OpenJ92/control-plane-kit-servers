@@ -55,3 +55,7 @@ classification and is re-raised unchanged. A returned failed result preserves
 its original assertion; diagnostic-read, serialization and output failures cannot
 replace it. Existing
 schema/controller/provider cleanup still runs. No failed run is resumed.
+
+The named synthetic ingress adapter receives the existing real provider
+custodian. Generated connector-token custody is real and scoped to the private
+fixture, while external allocation and native connection remain synthetic.

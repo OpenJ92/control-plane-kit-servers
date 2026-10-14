@@ -13,3 +13,12 @@ composition supplies the real authorized resolver to health/runtime ports.
 Secrets never enter command arguments or process output; stdout/stderr are
 discarded. Bounded readiness and exact terminate/wait/kill teardown precede
 private temporary-file disposal. No user/provider credential is used.
+
+The generated-secrets endpoint and bootstrap credential now map to the same
+private provider, with the connector's exact cloudflare.tunnel-token intent.
+SyntheticIngressAllocation keeps external tunnel/DNS identities synthetic but
+delegates storage/revocation of a random non-Cloudflare token to the existing
+ControlPlaneKitSecretsCustodian. Only the actual public writer's receipt enters
+the allocation; a failed write admits no synthetic allocation. Exact workspace,
+endpoint, bootstrap reference, intent and reference prefix guard this fixture
+boundary. No custody lifecycle, retry, protocol or provider state is reimplemented.

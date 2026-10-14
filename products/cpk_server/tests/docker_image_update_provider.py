@@ -1,5 +1,6 @@
 """Real pinned Secrets HTTP process for the owned #251 signing fixture."""
 import base64
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -22,6 +23,7 @@ from control_plane_kit_servers_secrets_server.configuration import secrets_contr
 from products.secrets_server.tests.secrets_control_fixtures import SourceControlAuthority
 
 from docker_image_update_ports import FixtureBoundaryFailure
+from receiver_acceptance_ports import IngressAllocation
 
 
 SIGNING = {
@@ -32,6 +34,51 @@ SIGNING = {
     "surface": ("unlisted-surface", "secret://unlisted-surface/keys/surface",
         "gateway.probe-signing-key"),
 }
+
+PROVIDER_ENDPOINTS = ("health-secrets", "unlisted-surface", "generated-secrets")
+
+
+class SyntheticIngressAllocation:
+    """Synthetic external ingress with real, isolated generated-token custody."""
+    def __init__(self, custodian, workspace_id):
+        self.custodian, self.workspace_id = custodian, workspace_id
+        self.allocations, self.calls = {}, []
+
+    def _require_grant(self, grant):
+        if (grant.workspace_id != self.workspace_id
+                or grant.endpoint_reference != SecretProviderEndpointReference("generated-secrets")
+                or grant.credential_reference != SecretReference("secret://bootstrap/generated-secrets/client-token")
+                or grant.intent != SecretUseIntent.CLOUDFLARE_TUNNEL_TOKEN
+                or not grant.reference.reference_id.startswith("secret://generated/ingress/")):
+            raise FixtureBoundaryFailure("synthetic ingress custody differs from fixture")
+
+    def create(self, ingress, *, authority, allocation_name, origin_service_url,
+               secret_resolution_grant, secret_custody_grant):
+        self._require_grant(secret_custody_grant)
+        if allocation_name in self.allocations:
+            raise FixtureBoundaryFailure("synthetic ingress allocation already exists")
+        receipt = self.custodian.store(secret_custody_grant, SecretValue(secrets.token_urlsafe(48)))
+        if not receipt.matches(secret_custody_grant):
+            raise FixtureBoundaryFailure("generated custody receipt differs")
+        identity = hashlib.sha256(allocation_name.encode()).hexdigest()[:24]
+        allocation = IngressAllocation(receipt, "tunnel-" + identity, allocation_name,
+            "dns-" + identity, ingress.hostname, "https://" + ingress.hostname)
+        self.allocations[allocation_name] = allocation
+        self.calls.append(("create", allocation_name))
+        return allocation
+
+    def teardown(self, *, authority, resources, secret_resolution_grant, secret_custody_grant):
+        self._require_grant(secret_custody_grant)
+        matches = [key for key, value in self.allocations.items()
+            if value.tunnel_id == resources.tunnel_id and value.dns_record_id == resources.dns_record_id
+            and value.secret_custody_receipt.reference == secret_custody_grant.reference
+            and value.secret_custody_receipt.provider_registration_id == secret_custody_grant.provider_registration_id]
+        if len(matches) != 1:
+            raise FixtureBoundaryFailure("synthetic ingress teardown custody differs")
+        key, = matches
+        self.custodian.revoke(secret_custody_grant)
+        self.allocations.pop(key)
+        self.calls.append(("remove", key))
 
 
 class SigningProviderProcess:
@@ -58,8 +105,9 @@ class SigningProviderProcess:
                 "subject": "docker-image-signing", "token": self.token,
                 "grants": [
                     {"action": "secret.write", "workspace_id": self.workspace_id},
+                    {"action": "secret.revoke", "workspace_id": self.workspace_id},
                     {"action": "secret.resolve", "workspace_id": self.workspace_id,
-                     "intents": [row[2] for row in SIGNING.values()]},
+                     "intents": [*[row[2] for row in SIGNING.values()], "cloudflare.tunnel-token"]},
                 ],
             }]))
             control = secrets_control_configuration_artifact(SourceControlAuthority(self.workspace_id).configuration())
@@ -99,10 +147,10 @@ class SigningProviderProcess:
                 "CPK_PORT": "8080", "CPK_RUNTIME_INTERPRETERS": "docker",
                 "CPK_PRODUCT_MATERIAL_RESOLVER": "provider",
                 "CPK_MATERIAL_PROVIDER_ROUTES_JSON": json.dumps({
-                    name: self.endpoint for name in ("health-secrets", "unlisted-surface")}),
+                    name: self.endpoint for name in PROVIDER_ENDPOINTS}),
                 "CPK_MATERIAL_PROVIDER_BOOTSTRAP_FILES_JSON": json.dumps({
                     "secret://bootstrap/" + name + "/client-token": str(token)
-                    for name in ("health-secrets", "unlisted-surface")}),
+                    for name in PROVIDER_ENDPOINTS}),
                 **{name: self.database_url for name in ("CPK_WORKPLACE_DATABASE_URL",
                     "CPK_ACTIVITY_HISTORY_DATABASE_URL", "CPK_OBSERVER_STATE_DATABASE_URL",
                     "CPK_GRAPH_TOPOLOGY_DATABASE_URL")},
