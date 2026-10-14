@@ -245,9 +245,21 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
                 raise FixtureBoundaryFailure("retained operation regenerated receiver identity")
             restarted = TopologyClient(host.profile, transport=transport, receiver_identity_factory=no_identity)
             effect_count = len(runtime.completed)
-            for result in (initial, updated):
+            for label, result, expected in (
+                    ("historical-initial", initial, ("attention-required", "succeeded", "unverified")),
+                    ("current-update", updated, ("converged", "succeeded", "advanced"))):
                 replay = await asyncio.to_thread(restarted.apply, result.operation_ref, execute_plan=result.plan_id)
-                assert replay.status == "converged"
+                actual = (replay.status, replay.execution, replay.advancement)
+                identity = (replay.operation_ref, replay.plan_id, replay.run_id)
+                if actual != expected or identity != (result.operation_ref, result.plan_id, result.run_id):
+                    await asyncio.to_thread(emit_failed_apply_evidence, transport, workspace, replay)
+                transport.require_healthy()
+                assert actual == expected, replay.descriptor()
+                assert identity == (result.operation_ref, result.plan_id, result.run_id), replay.descriptor()
+                assert len(runtime.completed) == effect_count
+                print(json.dumps({"docker_image_replay": label, "status": replay.status,
+                    "execution": replay.execution, "advancement": replay.advancement}), flush=True)
+            assert await history(initial) == original_history and await history(updated) == update_history
             noop = await asyncio.to_thread(restarted.plan, AuthoredDesiredGraph(updated_source))
             assert noop.status == "no-changes"
             no_execution = await asyncio.to_thread(restarted.apply, noop.operation_ref, execute_plan=noop.plan_id)

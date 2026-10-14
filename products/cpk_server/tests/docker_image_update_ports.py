@@ -96,8 +96,8 @@ def failed_apply_evidence(transport, workspace, result):
         evidence.update({"workspace_id": token(workspace), "run_id": token(result.run_id),
             "plan_id": token(result.plan_id),
             "client_status": domain(result.status, {"attention-required", "converged", "no-changes"}),
-            "execution": domain(result.execution, {"not-started", "running", "succeeded", "failed", "uncertain"}),
-            "advancement": domain(result.advancement, {"not-attempted", "advanced", "failed"})})
+            "execution": domain(result.execution, {"not-started", "running", "succeeded", "failed", "uncertain", "unverified"}),
+            "advancement": domain(result.advancement, {"not-attempted", "advanced", "failed", "unverified", "unchanged"})})
         if evidence["run_id"] is None or evidence["plan_id"] is None:
             return evidence
         events = public_page(transport, "read.run-events", workspace, run_id=result.run_id)

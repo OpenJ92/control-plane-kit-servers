@@ -59,3 +59,13 @@ schema/controller/provider cleanup still runs. No failed run is resumed.
 The named synthetic ingress adapter receives the existing real provider
 custodian. Generated connector-token custody is real and scoped to the private
 fixture, while external allocation and native connection remain synthetic.
+
+Reconstructed replay follows the existing client changed-current-graph law:
+historical initial A after B is current must return attention-required with
+execution succeeded and advancement unverified; current B must return converged,
+succeeded and advanced. Both retain exact operation/plan/run IDs and cause no new
+runtime effects or history changes. Unexpected classifications use bounded
+public reporting before assertion/cleanup. No production client rule changes.
+The preceding run reached this assertion after real replacement/continuity
+checks passed, but did not retain its returned descriptor; this correction is
+grounded in the existing source contract, not a claimed observed status value.

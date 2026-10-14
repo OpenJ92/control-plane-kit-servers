@@ -45,3 +45,8 @@ unavailable classification, with no silent exception handlers.
 A failed evidence read returns a fixed unavailable classification without
 raising or changing the original result. Missing client results are reported
 without guessing a run or issuing reads against a previous apply.
+
+The diagnostic domain includes unverified execution/advancement and unchanged
+advancement so unexpected reconstructed-replay classifications remain precise.
+The same bounded public reporter is reused; no additional observation protocol
+or secret-bearing fields are introduced.
