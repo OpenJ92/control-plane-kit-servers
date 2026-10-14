@@ -1,6 +1,6 @@
 Source: [tests/test_coordinates.py](../../../tests/test_coordinates.py).
 
-## Current retained-update adoption (#249)
+## Historical retained-update adoption (#249)
 
 The canonical dependency tuple selects accepted Core/Operations #1981
 `fe8d44fa`, SDK #51 `a35e3a50`, Secrets #49 `d1901723` and Interpreters
@@ -88,3 +88,16 @@ runtime stages; historical publication assertions remain green.
 #182 adds the selected SDK to the gateway source recipe. Its dependency-change
 expectation therefore includes both canonical Core and SDK replacements; exact
 whole-file output comparison and unchanged product/image assertions remain.
+
+## Current #251 compatible dependency adoption
+
+The accepted owner chain now selects SDK #53
+`9aa01ef7b2df6106f6ad87c1625a7feb93394b88`, Secrets #51
+`28c9045c5d0aecf7471c151cae90ebb9ac88a123`, and Interpreters #199
+`1b7997609d423d0b77b62e0c127a54d937a7da86`. Core and Operations retain
+`05b5f28a624e6e03f1dadbe6ad77ece2bec09601`. The canonical manifest and
+maintained generator supply dependency mirrors; existing exact installed
+provenance expectations advance without weakening assertions or changing extras.
+This supersedes the incompatible initial #251 selection. Owner gates passed;
+the joined Servers gate remains required. Runtime source, witness logic,
+qualified images, product publication coordinates and catalogue stay unchanged.

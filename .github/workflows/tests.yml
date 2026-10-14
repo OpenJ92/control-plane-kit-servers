@@ -48,25 +48,40 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Preload the reviewed private artifact tuple
-        if: github.event_name == 'workflow_dispatch' && inputs.wrapper_artifact_mode == 'published-digest'
+      - name: Preload fixed public image-update inputs and optional artifact tuple
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$CPK_WRAPPER_HELLO_A" =~ ^ghcr\.io/openj92/control-plane-kit-servers/hello-server@sha256:[0-9a-f]{64}$ ]]
-          [[ "$CPK_WRAPPER_HELLO_B" =~ ^ghcr\.io/openj92/control-plane-kit-servers/hello-server@sha256:[0-9a-f]{64}$ ]]
-          [[ "$CPK_WRAPPER_GATEWAY" =~ ^ghcr\.io/openj92/control-plane-kit-servers/cpk-local-gateway@sha256:[0-9a-f]{64}$ ]]
-          [[ "$CPK_WRAPPER_HELLO_A" != "$CPK_WRAPPER_HELLO_B" ]]
+          inputs=products/cpk_server/tests/docker_image_update_images.json
+          jq -e 'keys == ["connector","gateway","hello_a","hello_b"] and
+            all(.[]; (.reference | test("^[a-z0-9./-]+@sha256:[0-9a-f]{64}$")) and
+              (.image_id | test("^sha256:[0-9a-f]{64}$")))' "$inputs" >/dev/null
+          mapfile -t references < <(jq -r '.[].reference' "$inputs")
+          for reference in "${references[@]}"; do
+            [[ "$reference" =~ ^(ghcr\.io/openj92/control-plane-kit-servers/(hello-server|cpk-local-gateway)|registry\.k8s\.io/pause)@sha256:[0-9a-f]{64}$ ]]
+          done
+          if [ "$CPK_WRAPPER_ARTIFACT_MODE" = published-digest ]; then
+            [[ "$CPK_WRAPPER_HELLO_A" =~ ^ghcr\.io/openj92/control-plane-kit-servers/hello-server@sha256:[0-9a-f]{64}$ ]]
+            [[ "$CPK_WRAPPER_HELLO_B" =~ ^ghcr\.io/openj92/control-plane-kit-servers/hello-server@sha256:[0-9a-f]{64}$ ]]
+            [[ "$CPK_WRAPPER_GATEWAY" =~ ^ghcr\.io/openj92/control-plane-kit-servers/cpk-local-gateway@sha256:[0-9a-f]{64}$ ]]
+            [[ "$CPK_WRAPPER_HELLO_A" != "$CPK_WRAPPER_HELLO_B" ]]
+            references+=("$CPK_WRAPPER_HELLO_A" "$CPK_WRAPPER_HELLO_B" "$CPK_WRAPPER_GATEWAY")
+          fi
           case "$(docker info --format '{{.OSType}}/{{.Architecture}}')" in
             linux/x86_64|linux/amd64) ;;
             *) echo 'Artifact qualification requires the released Linux amd64 daemon' >&2; exit 1 ;;
           esac
           docker info --format 'wrapper_preload_engine_id={{.ID}}'
-          for reference in "$CPK_WRAPPER_HELLO_A" "$CPK_WRAPPER_HELLO_B" "$CPK_WRAPPER_GATEWAY"; do
+          mapfile -t references < <(printf '%s\n' "${references[@]}" | sort -u)
+          for reference in "${references[@]}"; do
             docker pull --platform linux/amd64 "$reference"
             [ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$reference")" = linux/amd64 ]
             docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$reference" | grep -Fx -- "$reference"
             docker image inspect --format 'wrapper_preload_image_id={{.Id}}' "$reference"
+            expected_id="$(jq -r --arg reference "$reference" '.[] | select(.reference == $reference) | .image_id' "$inputs")"
+            if [ -n "$expected_id" ]; then
+              [ "$(docker image inspect --format '{{.Id}}' "$reference")" = "$expected_id" ]
+            fi
           done
       - name: Run Docker-first tests
         run: ./test.sh

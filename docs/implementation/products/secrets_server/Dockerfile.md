@@ -1,6 +1,6 @@
 Source: [Dockerfile](../../../../products/secrets_server/Dockerfile).
 
-## Current retained-update adoption (#249)
+## Historical retained-update adoption (#249)
 
 The canonical dependency tuple selects accepted Core/Operations #1981
 `fe8d44fa`, SDK #51 `a35e3a50`, Secrets #49 `d1901723` and Interpreters
@@ -53,3 +53,16 @@ Maintain with the recipe and accepted service dependency.
 The Python3.12 recipe installs canonical Secrets source43b742d1, whose own dependency set supplies actual Core/SDK hosting. The existing Uvicorn process/module, numericUID10006/account, exec entrypoint, control8081, provider/database defaults, private0700 parent and retained data directory remain. No test authority or public document is baked in.
 
 Image ENV fixes CPK_SECRETS_CONTROL_CONFIGURATION_FILE=/etc/cpk/secrets-server/control.json and a separate0755 parent allows the read-only0444 public artifact to be mounted. Private master/credential defaults stay in the unchanged entrypoint and0400 delivery contract. The normal numeric witness inspects actual Config.Env without a fixture override and checks public file/mount/startup/signed reads alongside existing private laws. The source pin is separate from the retained historical published image coordinates; a successful build is not immutable publication/qualification.
+
+## Current #251 compatible dependency adoption
+
+The accepted owner chain now selects SDK #53
+`9aa01ef7b2df6106f6ad87c1625a7feb93394b88`, Secrets #51
+`28c9045c5d0aecf7471c151cae90ebb9ac88a123`, and Interpreters #199
+`1b7997609d423d0b77b62e0c127a54d937a7da86`. Core and Operations retain
+`05b5f28a624e6e03f1dadbe6ad77ece2bec09601`. The canonical manifest and
+maintained generator supply dependency mirrors; existing exact installed
+provenance expectations advance without weakening assertions or changing extras.
+This supersedes the incompatible initial #251 selection. Owner gates passed;
+the joined Servers gate remains required. Runtime source, witness logic,
+qualified images, product publication coordinates and catalogue stay unchanged.

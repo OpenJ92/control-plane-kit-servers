@@ -69,7 +69,11 @@ cleanup() {
 
 cleanup_receiver_fixture() {
   [ -n "$RECEIVER_RECORDS" ] || return 0
-  receiver_name="$NETWORK-receiver-acceptance"
+  receiver_name="${RECEIVER_NAME:-$NETWORK-receiver-acceptance}"
+  if [ -f "$RECEIVER_RECORDS/ownership.json" ] && [ ! -f "$RECEIVER_RECORDS/managed-resources-absent" ]; then
+    echo "Docker image fixture cleanup is uncertain; preserved records=$RECEIVER_RECORDS" >&2
+    return 1
+  fi
   receiver_id=""
   if [ -s "$RECEIVER_RECORDS/container" ]; then
     receiver_id="$(cat "$RECEIVER_RECORDS/container")" || return 1
@@ -90,7 +94,8 @@ cleanup_receiver_fixture() {
   fi
   observed="$(docker container ls -aq --filter "name=^/$receiver_name$")" || return 1
   [ -z "$observed" ] || return 1
-  rm -f "$RECEIVER_RECORDS/container" || return 1
+  rm -f "$RECEIVER_RECORDS/container" "$RECEIVER_RECORDS/ownership.json" \
+    "$RECEIVER_RECORDS/managed-resources-absent" || return 1
   rmdir "$RECEIVER_RECORDS" || return 1
   RECEIVER_RECORDS=""
   echo "receiver acceptance witness container absence verified"
@@ -587,6 +592,33 @@ exec python products/cpk_server/tests/live_unlisted_receiver.py')"
   [ "$(docker inspect --format '{{.State.ExitCode}}' "$receiver_id")" = 0 ]
   [ "$(docker inspect --format '{{.Image}}' "$receiver_id")" = "$frozen_controller" ]
   [ "$(docker image inspect --format '{{.Id}}' "$CPK_SERVERS_TEST_IMAGE")" = "$frozen_controller" ]
+  cleanup_receiver_fixture
+  phase "public Docker image replacement"
+  RECEIVER_NAME="$NETWORK-docker-image-update"
+  RECEIVER_RECORDS="$(mktemp -d)"
+  [ -z "$(docker container ls -aq --filter "name=^/$RECEIVER_NAME$")" ]
+  case "$(docker context inspect --format '{{.Endpoints.docker.Host}}')" in
+    unix:///var/run/docker.sock) ;;
+    *) echo 'Docker image witness requires the owning local Unix daemon' >&2; exit 1 ;;
+  esac
+  image_witness_daemon="$(docker info --format '{{.ID}}')"
+  receiver_id="$(docker create --name "$RECEIVER_NAME" \
+    --cidfile "$RECEIVER_RECORDS/container" --label "$LABEL" \
+    --label "org.openj92.cpk.test-run=$NETWORK" --network "$NETWORK" \
+    --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
+    --mount "type=bind,source=$RECEIVER_RECORDS,target=/witness" \
+    -e CPK_RECEIVER_ACCEPTANCE_DATABASE_URL=postgresql://cpk:cpk@cpk-postgres:5432/cpk \
+    -e "CPK_FROZEN_CONTROLLER_IMAGE=$frozen_controller" \
+    -e "CPK_DOCKER_WITNESS_DAEMON=$image_witness_daemon" \
+    -e "CPK_DOCKER_WITNESS_NAME=$RECEIVER_NAME" \
+    -e "CPK_DOCKER_WITNESS_RUN=$NETWORK" -e CPK_DOCKER_WITNESS_RECORDS=/witness \
+    -e PYTHONPATH=/app \
+    -e DOCKER_CONFIG=/tmp/cpk-image-empty-docker-config \
+    "$frozen_controller" python products/cpk_server/tests/live_docker_image_update.py)"
+  [ "$receiver_id" = "$(cat "$RECEIVER_RECORDS/container")" ]
+  docker start -a "$receiver_id"
+  [ "$(docker inspect --format '{{.State.ExitCode}}' "$receiver_id")" = 0 ]
+  [ "$(docker inspect --format '{{.Image}}' "$receiver_id")" = "$frozen_controller" ]
   cleanup_receiver_fixture
 fi
 

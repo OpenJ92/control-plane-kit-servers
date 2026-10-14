@@ -60,3 +60,31 @@ They compare the full accepted A binding map before/after the fault. Newly captu
 references must be attributable to actual requests delivered on the uncertain run;
 those references are labelled unaccepted with cleanup unproven. All historical
 protection reads must remain complete; schema disposal does not erase the report.
+
+## Historical initial #251 source adoption
+
+Core and Operations now select accepted O2 merge
+`05b5f28a624e6e03f1dadbe6ad77ece2bec09601`. Interpreters remains accepted
+`95548fa62409f0b5b708380dfa0b32abd31d91a2`, SDK remains `a35e3a50`, and
+Secrets remains `d1901723`. The canonical manifest, generated dependency URLs
+and exact installed-provenance expectations must agree. Historical published
+product descriptors/catalogue coordinates remain unchanged. This source
+checkpoint is unvalidated until the normal owning gate; the coordinate generator
+and its --check gate remain the authority for generated consistency.
+
+The opening #249 adoption paragraph is historical; the initial #251 tuple above
+supersedes its pin selection. The existing receiver scenario assertions are
+unchanged and must pass again with the new selection.
+
+## Current #251 compatible dependency adoption
+
+The accepted owner chain now selects SDK #53
+`9aa01ef7b2df6106f6ad87c1625a7feb93394b88`, Secrets #51
+`28c9045c5d0aecf7471c151cae90ebb9ac88a123`, and Interpreters #199
+`1b7997609d423d0b77b62e0c127a54d937a7da86`. Core and Operations retain
+`05b5f28a624e6e03f1dadbe6ad77ece2bec09601`. The canonical manifest and
+maintained generator supply dependency mirrors; existing exact installed
+provenance expectations advance without weakening assertions or changing extras.
+This supersedes the incompatible initial #251 selection. Owner gates passed;
+the joined Servers gate remains required. Runtime source, witness logic,
+qualified images, product publication coordinates and catalogue stay unchanged.
