@@ -22,9 +22,12 @@ live-scenario composition and stale production-class references when other
 tests unload product modules. Exact-resource cleanup refusals and the separate
 shared-factory identity assertion remain unchanged.
 
-Two failure-reporting boundary tests cover public read-only route use, bounded
-last32-event output, exclusion of payload/message/details/metadata/fixture error
-canaries, and evidence-read failure preserving the primary client result. A
-missing result triggers no guessed-run read. These tests do not simulate or
+Four failure-reporting boundary tests cover public read-only route use, bounded
+last-32-event output, exclusion of payload/message/details/metadata/fixture error
+canaries, and evidence-read failure preserving the primary client result. The
+owner-admitted runtime failure code survives while sibling details are excluded. A
+missing result triggers no guessed-run read. Partial-read failure preserves safe
+events; output overflow returns a fixed small fallback. Serialization/output
+failure cannot escape the best-effort emitter. These tests do not simulate or
 assert production execution/fold outcomes; the normal owning gate remains the
 real runtime witness.

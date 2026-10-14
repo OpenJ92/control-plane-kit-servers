@@ -111,7 +111,8 @@ def failed_apply_evidence(transport, workspace, result):
                 "ordinal": event["ordinal"] if type(event.get("ordinal")) is int and 0 <= event["ordinal"] < 10**9 else None,
                 "event_type": domain(event.get("event_type"), {item.value for item in ActivityEventKind}),
                 "failure_category": domain(failure.get("category"), {item.value for item in FailureCategory}),
-                "failure_code": token(failure.get("code"))})
+                "failure_code": token(failure.get("code")),
+                "runtime_failure_code": token((failure.get("details") or {}).get("effect_outcome", {}).get("runtime_failure_code"))})
         evidence.update({"events": rows, "events_truncated": len(events) > 32,
             "docker_image_apply_failure": "events-observed-run-unavailable"})
         runs = public_page(transport, "read.plan-runs", workspace, plan_id=result.plan_id)
@@ -120,13 +121,25 @@ def failed_apply_evidence(transport, workspace, result):
             raise FixtureBoundaryFailure("failure run summary differs")
         evidence.update({"run_status": domain(selected[0].get("status"), {item.value for item in ActivityRunStatus}),
             "docker_image_apply_failure": "observed"})
-        if len(json.dumps(evidence).encode("utf-8")) > 32768:
-            raise FixtureBoundaryFailure("failure evidence exceeds bound")
     except Exception:
         # Public read/projection failure must not mask the original result or
         # latched fixture failure. No exception/provider text is retained.
         evidence["docker_image_apply_failure"] = "evidence-unavailable"
-    return evidence
+    try:
+        if len(json.dumps(evidence).encode("utf-8")) <= 32768:
+            return evidence
+    except Exception:
+        pass
+    return {"docker_image_apply_failure": "evidence-unavailable"}
+
+
+def emit_failed_apply_evidence(transport, workspace, result):
+    """Best-effort diagnostics, including serialization and output failures."""
+    try:
+        print(json.dumps(failed_apply_evidence(transport, workspace, result), sort_keys=True), flush=True)
+    except Exception:
+        # Reporting must never replace the original failed apply or cleanup.
+        pass
 
 
 def require_committed_call(record, response, arguments, events, worker_id):

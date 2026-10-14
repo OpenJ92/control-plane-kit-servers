@@ -45,7 +45,7 @@ from docker_image_update_placement import OwnedControllerPlacement, SyntheticCon
 from docker_image_update_ports import (
     AttachedPublicTransport, CompletedRuntimeCall, FixtureBoundaryFailure,
     InstalledGatewaySocketTransport, RecordedDockerRuntime, SyntheticIngressAddressResolver,
-    require_committed_call, require_replacement_receipt, failed_apply_evidence,
+    require_committed_call, require_replacement_receipt, failed_apply_evidence, emit_failed_apply_evidence,
 )
 from test_topology_client import ScriptedTransport, DeterministicIds
 
@@ -97,8 +97,10 @@ class DockerImageBoundaryTests(unittest.TestCase):
         transport = Mock(failure="PRIVATE-FIXTURE-ERROR")
         event_rows = [{"run_id": "run-a", "event_id": f"event-{index}", "activity_id": "activity-a",
             "ordinal": index, "event_type": "step_failed", "payload": {"token": "PRIVATE-PAYLOAD"},
-            "failure": {"category": "terminal", "code": "verification_failed",
-                "message": "PRIVATE-MESSAGE", "details": {"key": "PRIVATE-DETAIL"}}}
+            "failure": {"category": "terminal", "code": "runtime.effect-failed",
+                "message": "PRIVATE-MESSAGE", "details": {"key": "PRIVATE-DETAIL",
+                    "effect_outcome": {"runtime_failure_code": "docker.container-start-failed",
+                        "private": "PRIVATE-EFFECT-DETAIL"}}}}
             for index in range(40)]
         transport.call.side_effect = [
             {"items": event_rows, "next_cursor": None},
@@ -110,7 +112,8 @@ class DockerImageBoundaryTests(unittest.TestCase):
         self.assertTrue(evidence["events_truncated"])
         self.assertEqual(len(evidence["events"]), 32)
         self.assertEqual(evidence["events"][-1]["ordinal"], 39)
-        self.assertEqual(evidence["events"][-1]["failure_code"], "verification_failed")
+        self.assertEqual(evidence["events"][-1]["failure_code"], "runtime.effect-failed")
+        self.assertEqual(evidence["events"][-1]["runtime_failure_code"], "docker.container-start-failed")
         self.assertEqual(evidence["run_status"], "failed")
         self.assertNotIn("PRIVATE", json.dumps(evidence))
         self.assertLessEqual(len(json.dumps(evidence).encode()), 32768)
@@ -135,6 +138,36 @@ class DockerImageBoundaryTests(unittest.TestCase):
         missing = failed_apply_evidence(transport, "workspace-a", None)
         self.assertTrue(missing["client_exception"])
         transport.call.assert_not_called()
+
+    def test_partial_failure_evidence_remains_bounded_when_run_read_fails(self):
+        result = SimpleNamespace(run_id="run-a", plan_id="plan-a", status="attention-required",
+            execution="failed", advancement="not-attempted")
+        transport = Mock(failure=None)
+        page = {"items": [{"run_id": "run-a", "event_id": "event-a", "activity_id": "activity-a",
+            "ordinal": 1, "event_type": "step_failed"}], "next_cursor": None}
+        transport.call.side_effect = [page, RuntimeError("PRIVATE-READ-ERROR")]
+        evidence = failed_apply_evidence(transport, "workspace-a", result)
+        self.assertEqual(evidence["docker_image_apply_failure"], "evidence-unavailable")
+        self.assertEqual(evidence["events"][0]["event_id"], "event-a")
+        self.assertNotIn("PRIVATE", json.dumps(evidence))
+        transport.call.side_effect = [page, RuntimeError("PRIVATE-READ-ERROR")]
+        with patch("docker_image_update_ports.json.dumps", return_value="x" * 32769):
+            bounded = failed_apply_evidence(transport, "workspace-a", result)
+        self.assertEqual(bounded, {"docker_image_apply_failure": "evidence-unavailable"})
+
+    def test_failure_evidence_output_failure_does_not_replace_primary_result(self):
+        result = SimpleNamespace(run_id="run-a", plan_id="plan-a", status="attention-required",
+            execution="failed", advancement="not-attempted")
+        original = dict(vars(result))
+        transport = Mock(failure=None)
+        transport.call.side_effect = RuntimeError("PRIVATE-READ-ERROR")
+        with patch("builtins.print", side_effect=OSError("PRIVATE-OUTPUT-ERROR")) as output:
+            emit_failed_apply_evidence(transport, "workspace-a", result)
+            emit_failed_apply_evidence(transport, "workspace-a", None)
+        self.assertEqual(output.call_count, 2)
+        self.assertEqual(vars(result), original)
+        with patch("docker_image_update_ports.json.dumps", side_effect=ValueError("PRIVATE-SERIALIZATION")):
+            emit_failed_apply_evidence(transport, "workspace-a", result)
 
     def test_material_uses_current_receivers_and_contract_equal_image_successor(self):
         material = DockerImageMaterial("image-test")

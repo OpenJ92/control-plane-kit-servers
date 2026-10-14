@@ -52,5 +52,6 @@ The shared apply path captures bounded public failure evidence before both the
 latched fixture-health check and convergence assertion, for initial/replacement
 and teardown applies alike. A client exception emits only an unavailable-result
 classification and is re-raised unchanged. A returned failed result preserves
-its original assertion; diagnostic-read failure cannot replace it. Existing
+its original assertion; diagnostic-read, serialization and output failures cannot
+replace it. Existing
 schema/controller/provider cleanup still runs. No failed run is resumed.

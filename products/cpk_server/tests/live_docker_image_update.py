@@ -36,7 +36,7 @@ from docker_image_update_placement import (
 from docker_image_update_ports import (
     AttachedPublicTransport, RecordedDockerRuntime, FixtureBoundaryFailure, public_page,
     SyntheticIngressAddressResolver, InstalledGatewaySocketTransport,
-    require_committed_call, require_replacement_receipt, failed_apply_evidence,
+    require_committed_call, require_replacement_receipt, emit_failed_apply_evidence,
 )
 from docker_image_update_provider import SigningProviderProcess
 from live_receiver_acceptance import verify_provenance
@@ -169,11 +169,10 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
                     result = await asyncio.to_thread(client.apply, planned.operation_ref,
                         execute_plan=planned.plan_id, **{option: planned.plan_id})
                 except Exception:
-                    print(json.dumps(failed_apply_evidence(transport, workspace, None)), flush=True)
+                    emit_failed_apply_evidence(transport, workspace, None)
                     raise
                 if result.status not in {"converged", "no-changes"} or transport.failure is not None:
-                    evidence = await asyncio.to_thread(failed_apply_evidence, transport, workspace, result)
-                    print(json.dumps(evidence, sort_keys=True), flush=True)
+                    await asyncio.to_thread(emit_failed_apply_evidence, transport, workspace, result)
                 transport.require_healthy()
                 assert result.status in {"converged", "no-changes"}, result.descriptor()
                 return result, source

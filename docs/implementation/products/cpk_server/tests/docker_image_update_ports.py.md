@@ -32,7 +32,14 @@ Failed apply diagnostics use only existing authenticated `read.run-events` and
 `read.plan-runs` through the bounded public pager. Output keeps at most the last
 32 events, bounded identifiers/failure codes, closed event/run/category values,
 and client/fixture-failure classifications. Payloads, failure messages/details,
-metadata, credentials and exception text are excluded; output is capped32KiB.
+metadata, credentials and exception text are excluded, except the exact public
+`failure.details.effect_outcome.runtime_failure_code` classification leaf.
+The selected Operations owner admits that leaf as a bounded symbolic code; no
+surrounding details or outcome semantics are copied. Output is capped at 32 KiB
+with a fixed small fallback, including after partial-read failure. Failure codes
+are owner-provided strings filtered to bounded tokens, not a closed enum or a
+general secret sanitizer. The emitter treats serialization/output as best-effort
+so reporting failure cannot replace the primary execution failure.
 A failed evidence read returns a fixed unavailable classification without
 raising or changing the original result. Missing client results are reported
 without guessing a run or issuing reads against a previous apply.
