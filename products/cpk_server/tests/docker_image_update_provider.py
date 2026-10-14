@@ -64,6 +64,7 @@ class SigningProviderProcess:
             }]))
             control = secrets_control_configuration_artifact(SourceControlAuthority(self.workspace_id).configuration())
             wrapper = self._private("control.json", control.content)
+            wrapper.chmod(0o444)  # Public receiver contract; secret bootstrap files stay 0400.
             self.listener = socket.socket()
             self.listener.bind(("127.0.0.1", 0))
             self.listener.listen(32)
