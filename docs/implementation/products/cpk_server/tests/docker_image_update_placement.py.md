@@ -24,3 +24,8 @@ connector, registered descriptors and active local authority. Observation checks
 the genuine request again and the sole synthetic allocation's hostname before
 reading the actual pause container. This remains a named substitution, not
 Cloudflare connection evidence or production qualification logic.
+
+The existing resource discovery and disposal functions now live beside this
+placement/ownership record. Their bodies are unchanged: validate all candidates
+before disposal, preserve unknown ownership/membership, and verify residue.
+Unit cleanup tests can exercise this owner without importing live composition.

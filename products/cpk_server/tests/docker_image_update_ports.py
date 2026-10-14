@@ -206,7 +206,7 @@ class InstalledGatewaySocketTransport(httpx.AsyncBaseTransport):
     async def handle_async_request(self, request):
         expected_paths = {"/cpk/health/liveness", "/cpk/health/readiness"}
         if (request.method != "POST" or request.url.scheme != "https"
-                or request.url.host != SYNTHETIC_PUBLIC_ADDRESS or request.url.port != 443
+                or request.url.host != SYNTHETIC_PUBLIC_ADDRESS or request.url.port not in (None, 443)
                 or request.url.path not in expected_paths or request.url.query
                 or request.headers.get("host") != self.hostname + ":443"
                 or request.extensions.get("sni_hostname") != self.hostname

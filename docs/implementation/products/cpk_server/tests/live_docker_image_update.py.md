@@ -30,3 +30,7 @@ worker fence and genuine result fingerprint.
 
 This source is pending the #251 concrete review and owning gate, not acceptance
 of #251, complete #191, production native connectivity or the grandparent run.
+
+Resource discovery and exact fixture disposal are imported from the existing
+placement component. This relocation preserves the cleanup algorithm and live
+call sites while letting unit cleanup tests avoid importing the full scenario.

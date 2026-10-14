@@ -181,10 +181,11 @@ class DockerImageBoundaryTests(unittest.TestCase):
 
 
 class DockerImageTransportTests(unittest.IsolatedAsyncioTestCase):
-    def request(self, *, host="cpk-1912.example.invalid:443", sni="cpk-1912.example.invalid"):
+    def request(self, *, port=None, host="cpk-1912.example.invalid:443", sni="cpk-1912.example.invalid"):
         body = {"profile": "cpk-gateway-health-relay-request.v2", "target_id": "api",
             "attempt_id": "attempt-a", "request": {"kind": "readiness"}, "workload_credential": "signed-workload"}
-        return httpx.Request("POST", "https://8.8.8.8/cpk/health/readiness",
+        authority = "8.8.8.8" if port is None else f"8.8.8.8:{port}"
+        return httpx.Request("POST", f"https://{authority}/cpk/health/readiness",
             headers={"Host": host, "Authorization": "Bearer signed-transit"},
             json=body, extensions={"sni_hostname": sni})
 
@@ -206,20 +207,21 @@ class DockerImageTransportTests(unittest.IsolatedAsyncioTestCase):
             return request
         transport = InstalledGatewaySocketTransport("cpk-1912.example.invalid", target, endpoint,
             transport_factory=lambda: httpx.MockTransport(handler))
-        original = self.request()
-        response = await transport.handle_async_request(original)
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(str(requests[0].url), "http://172.20.0.7:8000/cpk/health/readiness")
-        self.assertEqual(requests[0].content, original.content)
-        self.assertEqual(requests[0].headers["authorization"], original.headers["authorization"])
-        self.assertNotIn("sni_hostname", requests[0].extensions)
-        await transport.aclose()
-        for request in (self.request(host="foreign.invalid:443"), self.request(sni="foreign.invalid"),
+        for port in (None, 443):
+            original = self.request(port=port)
+            response = await transport.handle_async_request(original)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(str(requests[-1].url), "http://172.20.0.7:8000/cpk/health/readiness")
+            self.assertEqual(requests[-1].content, original.content)
+            self.assertEqual(requests[-1].headers["authorization"], original.headers["authorization"])
+            self.assertNotIn("sni_hostname", requests[-1].extensions)
+            await transport.aclose()
+        for request in (self.request(host="foreign.invalid:443"), self.request(sni="foreign.invalid"), self.request(port=8443),
                 httpx.Request("POST", "https://1.1.1.1/cpk/health/readiness")):
             with self.assertRaises(FixtureBoundaryFailure):
                 await transport.handle_async_request(request)
-        self.assertEqual(len(requests), 1)
-        endpoint.assert_called_once()
+        self.assertEqual(len(requests), 2)
+        self.assertEqual(endpoint.call_count, 2)
 
 
 class OwnedAttachmentTests(unittest.TestCase):
@@ -262,7 +264,7 @@ class OwnedAttachmentTests(unittest.TestCase):
         self.network.connect.assert_not_called()
 
     def test_same_workspace_unrecorded_resource_prevents_all_disposal(self):
-        from live_docker_image_update import dispose_fixture
+        from docker_image_update_placement import dispose_fixture
         unknown = Mock(id="c" * 64)
         unknown.labels = {PREFIX + "workspace": "workspace-a", PREFIX + "runtime": "docker",
             PREFIX + "node": "api", PREFIX + "kind": "container"}
@@ -276,7 +278,7 @@ class OwnedAttachmentTests(unittest.TestCase):
         self.network.remove.assert_not_called()
 
     def test_recorded_container_with_changed_labels_is_preserved_even_outside_discovery(self):
-        from live_docker_image_update import dispose_fixture
+        from docker_image_update_placement import dispose_fixture
         container = Mock(id="c" * 64)
         container.labels = {PREFIX + "workspace": "foreign"}
         self.placement.record["containers"][container.id] = {"node": "api", "image_role": "hello_a"}

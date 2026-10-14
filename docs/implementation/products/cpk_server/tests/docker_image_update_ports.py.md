@@ -21,3 +21,9 @@ Original numeric destination, Host, SNI, path and receiver envelope are checked
 before an actual bounded socket send to the fresh bound Gateway. No request can
 fall through to the synthetic public IP. Gateway/SDK signing and decoding remain
 real; LocalGatewayHealthClient is unchanged. This does not prove public TLS/DNS.
+
+The transport accepts HTTPX's normalized default HTTPS port (`None`) as 443,
+while retaining the separate HTTPS condition and all exact host, SNI, method,
+path and signed-target checks. Nondefault ports remain refused. The first
+package run exposed the former literal-443 check as a fixture defect before
+any live request was dispatched.

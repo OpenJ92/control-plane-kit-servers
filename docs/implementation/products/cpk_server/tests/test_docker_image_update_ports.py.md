@@ -14,3 +14,10 @@ same-workspace resource preventing disposal, changed labels outside discovery,
 private durable configuration references before dispatch, and a foreign native
 ingress tuple. These tests remain unexecuted until concrete source review passes;
 no target-red or green result is claimed.
+
+The transport's positive case covers implicit and explicit HTTPS 443; foreign
+8443 joins the existing host/SNI/address refusals. Cleanup tests import the
+unchanged disposal helper directly from the placement fixture, avoiding eager
+live-scenario composition and stale production-class references when other
+tests unload product modules. Exact-resource cleanup refusals and the separate
+shared-factory identity assertion remain unchanged.

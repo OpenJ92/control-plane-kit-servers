@@ -32,6 +32,36 @@ from docker_image_update_ports import FixtureBoundaryFailure
 PREFIX = "org.openj92.cpk."
 
 
+def owned_resources(engine, workspace):
+    selector = {"label": PREFIX + "workspace=" + workspace}
+    return (engine.containers.list(all=True, filters=selector),
+        engine.networks.list(filters=selector), engine.volumes.list(filters=selector))
+
+
+def dispose_fixture(placement):
+    """Exact unique test-world disposal; does not advance or compensate CPK."""
+    placement.same_daemon()
+    selected = placement.cleanup_candidates()  # Validate the entire set before any disposal.
+    containers, networks, volumes = (selected[kind] for kind in ("containers", "networks", "volumes"))
+    if placement.network_id is not None and any(value.id == placement.network_id for value in networks):
+        placement.detach()
+    for container in containers:
+        container.remove(force=True)
+    for network in networks:
+        placement.owned(network.attrs["Labels"], "runtime-network")
+        network.reload()
+        if network.attrs.get("Containers"):
+            raise FixtureBoundaryFailure("owned network has unexplained membership")
+        network.remove()
+    for volume in volumes:
+        volume.remove()
+    if any(owned_resources(placement.engine, placement.workspace)):
+        raise FixtureBoundaryFailure("owned Docker fixture residue remains")
+    print(json.dumps({"docker_image_fixture_disposal": "absent",
+        "containers": len(containers), "networks": len(networks),
+        "historical_configuration_volumes": len(volumes)}), flush=True)
+
+
 class OwnedControllerPlacement:
     def __init__(self, engine, sdk, workspace, controller_id, daemon_id, *, record_path=None, run=None):
         self.engine, self.sdk, self.workspace = engine, sdk, workspace
