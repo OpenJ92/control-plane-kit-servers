@@ -27,3 +27,12 @@ while retaining the separate HTTPS condition and all exact host, SNI, method,
 path and signed-target checks. Nondefault ports remain refused. The first
 package run exposed the former literal-443 check as a fixture defect before
 any live request was dispatched.
+
+Failed apply diagnostics use only existing authenticated `read.run-events` and
+`read.plan-runs` through the bounded public pager. Output keeps at most the last
+32 events, bounded identifiers/failure codes, closed event/run/category values,
+and client/fixture-failure classifications. Payloads, failure messages/details,
+metadata, credentials and exception text are excluded; output is capped32KiB.
+A failed evidence read returns a fixed unavailable classification without
+raising or changing the original result. Missing client results are reported
+without guessing a run or issuing reads against a previous apply.

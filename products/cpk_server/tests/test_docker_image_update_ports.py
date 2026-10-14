@@ -45,7 +45,7 @@ from docker_image_update_placement import OwnedControllerPlacement, SyntheticCon
 from docker_image_update_ports import (
     AttachedPublicTransport, CompletedRuntimeCall, FixtureBoundaryFailure,
     InstalledGatewaySocketTransport, RecordedDockerRuntime, SyntheticIngressAddressResolver,
-    require_committed_call, require_replacement_receipt,
+    require_committed_call, require_replacement_receipt, failed_apply_evidence,
 )
 from test_topology_client import ScriptedTransport, DeterministicIds
 
@@ -91,6 +91,51 @@ def replacement_record():
 
 
 class DockerImageBoundaryTests(unittest.TestCase):
+    def test_failure_evidence_retains_bounded_public_classifications_not_payloads(self):
+        result = SimpleNamespace(run_id="run-a", plan_id="plan-a", status="attention-required",
+            execution="failed", advancement="not-attempted")
+        transport = Mock(failure="PRIVATE-FIXTURE-ERROR")
+        event_rows = [{"run_id": "run-a", "event_id": f"event-{index}", "activity_id": "activity-a",
+            "ordinal": index, "event_type": "step_failed", "payload": {"token": "PRIVATE-PAYLOAD"},
+            "failure": {"category": "terminal", "code": "verification_failed",
+                "message": "PRIVATE-MESSAGE", "details": {"key": "PRIVATE-DETAIL"}}}
+            for index in range(40)]
+        transport.call.side_effect = [
+            {"items": event_rows, "next_cursor": None},
+            {"items": [{"run_id": "run-a", "plan_id": "plan-a", "status": "failed",
+                "metadata": {"secret": "PRIVATE-METADATA"}}], "next_cursor": None}]
+        evidence = failed_apply_evidence(transport, "workspace-a", result)
+        self.assertEqual(evidence["docker_image_apply_failure"], "observed")
+        self.assertTrue(evidence["fixture_boundary_failed"])
+        self.assertTrue(evidence["events_truncated"])
+        self.assertEqual(len(evidence["events"]), 32)
+        self.assertEqual(evidence["events"][-1]["ordinal"], 39)
+        self.assertEqual(evidence["events"][-1]["failure_code"], "verification_failed")
+        self.assertEqual(evidence["run_status"], "failed")
+        self.assertNotIn("PRIVATE", json.dumps(evidence))
+        self.assertLessEqual(len(json.dumps(evidence).encode()), 32768)
+        self.assertEqual([call.args[0] for call in transport.call.call_args_list],
+            ["read.run-events", "read.plan-runs"])
+        for call in transport.call.call_args_list:
+            self.assertEqual(call.kwargs["credential_role"], "operator")
+            self.assertEqual(call.kwargs["path_parameters"]["workspace_id"], "workspace-a")
+
+    def test_evidence_read_failure_does_not_raise_or_replace_primary_result(self):
+        result = SimpleNamespace(run_id="run-a", plan_id="plan-a", status="attention-required",
+            execution="failed", advancement="not-attempted")
+        original = dict(vars(result))
+        transport = Mock(failure=None)
+        transport.call.side_effect = RuntimeError("PRIVATE-READ-ERROR")
+        evidence = failed_apply_evidence(transport, "workspace-a", result)
+        self.assertEqual(evidence["docker_image_apply_failure"], "evidence-unavailable")
+        self.assertEqual(evidence["execution"], "failed")
+        self.assertEqual(vars(result), original)
+        self.assertNotIn("PRIVATE", json.dumps(evidence))
+        transport.call.reset_mock()
+        missing = failed_apply_evidence(transport, "workspace-a", None)
+        self.assertTrue(missing["client_exception"])
+        transport.call.assert_not_called()
+
     def test_material_uses_current_receivers_and_contract_equal_image_successor(self):
         material = DockerImageMaterial("image-test")
         old, new = material.documents["api"].product, material.successor.product

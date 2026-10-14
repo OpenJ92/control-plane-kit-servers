@@ -1,10 +1,12 @@
 """#251 fixture boundaries; CPK and Docker retain all execution semantics."""
 from dataclasses import dataclass, replace
 import json
+import re
 
 import httpx
 
 from control_plane_kit_core.planning import StartNode, StartRuntime
+from control_plane_kit_core.operations.lifecycle import ActivityEventKind, ActivityRunStatus, FailureCategory
 from control_plane_kit_core.runtime_effects import EffectResultKind
 from control_plane_kit_core.runtime_effect_observation import (
     runtime_effect_intent_for_request, runtime_effect_intent_fingerprint, runtime_effect_result_fingerprint,
@@ -75,6 +77,56 @@ def public_page(transport, route, workspace, **coordinates):
         if after is None:
             return items
     raise FixtureBoundaryFailure("public history exceeded fixture bound")
+
+
+def failed_apply_evidence(transport, workspace, result):
+    """Read-only bounded classifications; never replace the primary failure."""
+    def token(value):
+        return value if type(value) is str and re.fullmatch(r"[A-Za-z0-9_.:/-]{1,128}", value) else None
+
+    def domain(value, choices):
+        return value if value in choices else "unclassified"
+
+    evidence = {"docker_image_apply_failure": "evidence-unavailable",
+        "fixture_boundary_failed": transport.failure is not None,
+        "client_exception": result is None}
+    try:
+        if result is None:
+            return evidence
+        evidence.update({"workspace_id": token(workspace), "run_id": token(result.run_id),
+            "plan_id": token(result.plan_id),
+            "client_status": domain(result.status, {"attention-required", "converged", "no-changes"}),
+            "execution": domain(result.execution, {"not-started", "running", "succeeded", "failed", "uncertain"}),
+            "advancement": domain(result.advancement, {"not-attempted", "advanced", "failed"})})
+        if evidence["run_id"] is None or evidence["plan_id"] is None:
+            return evidence
+        events = public_page(transport, "read.run-events", workspace, run_id=result.run_id)
+        rows = []
+        for event in events[-32:]:
+            if event["run_id"] != result.run_id:
+                raise FixtureBoundaryFailure("failure history run differs")
+            failure = event.get("failure") or {}
+            rows.append({"event_id": token(event.get("event_id")),
+                "activity_id": token(event.get("activity_id")),
+                "ordinal": event["ordinal"] if type(event.get("ordinal")) is int and 0 <= event["ordinal"] < 10**9 else None,
+                "event_type": domain(event.get("event_type"), {item.value for item in ActivityEventKind}),
+                "failure_category": domain(failure.get("category"), {item.value for item in FailureCategory}),
+                "failure_code": token(failure.get("code"))})
+        evidence.update({"events": rows, "events_truncated": len(events) > 32,
+            "docker_image_apply_failure": "events-observed-run-unavailable"})
+        runs = public_page(transport, "read.plan-runs", workspace, plan_id=result.plan_id)
+        selected = [run for run in runs if run["run_id"] == result.run_id and run["plan_id"] == result.plan_id]
+        if len(selected) != 1:
+            raise FixtureBoundaryFailure("failure run summary differs")
+        evidence.update({"run_status": domain(selected[0].get("status"), {item.value for item in ActivityRunStatus}),
+            "docker_image_apply_failure": "observed"})
+        if len(json.dumps(evidence).encode("utf-8")) > 32768:
+            raise FixtureBoundaryFailure("failure evidence exceeds bound")
+    except Exception:
+        # Public read/projection failure must not mask the original result or
+        # latched fixture failure. No exception/provider text is retained.
+        evidence["docker_image_apply_failure"] = "evidence-unavailable"
+    return evidence
 
 
 def require_committed_call(record, response, arguments, events, worker_id):

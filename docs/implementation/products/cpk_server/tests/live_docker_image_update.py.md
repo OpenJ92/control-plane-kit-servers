@@ -47,3 +47,10 @@ key ID are path coordinates, while purpose/time/idempotency stay in the body.
 The input is copied; workspace and operator authentication remain unchanged.
 Other registration payloads pass through unchanged. No public-route validation
 or registration-owner semantics are relaxed.
+
+The shared apply path captures bounded public failure evidence before both the
+latched fixture-health check and convergence assertion, for initial/replacement
+and teardown applies alike. A client exception emits only an unavailable-result
+classification and is re-raised unchanged. A returned failed result preserves
+its original assertion; diagnostic-read failure cannot replace it. Existing
+schema/controller/provider cleanup still runs. No failed run is resumed.
