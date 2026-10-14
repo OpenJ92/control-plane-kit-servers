@@ -276,7 +276,9 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
                 "old_container": initial_nodes["api"], "new_container": replaced.id,
                 "peer_container": initial_nodes["api-y"], "native": "synthetic",
                 "replacement_receipt": receipt.disposition.value,
-                "ingress": "synthetic", "historical_configuration_volumes": len(volumes)}), flush=True)
+                "ingress": "synthetic",
+                "historical_configuration_volumes": sum(volume.name in placement.record["volumes"] for volume in volumes),
+                "secret_volumes": sum(volume.name in placement.record["secret_volumes"] for volume in volumes)}), flush=True)
 
 
 async def witness():

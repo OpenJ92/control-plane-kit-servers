@@ -69,3 +69,8 @@ public reporting before assertion/cleanup. No production client rule changes.
 The preceding run reached this assertion after real replacement/continuity
 checks passed, but did not retain its returned descriptor; this correction is
 grounded in the existing source contract, not a claimed observed status value.
+
+The success summary classifies remaining volumes through the existing ownership
+maps, separating historical configuration from secret volumes just as final
+fixture disposal does. Public desired-empty removes managed containers/network;
+remaining exact recorded volumes receive the separately approved fixture cleanup.
