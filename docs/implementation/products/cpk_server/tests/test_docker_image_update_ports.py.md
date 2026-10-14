@@ -28,6 +28,7 @@ canaries, and evidence-read failure preserving the primary client result. The
 owner-admitted runtime failure code survives while sibling details are excluded. A
 missing result triggers no guessed-run read. Partial-read failure preserves safe
 events; output overflow returns a fixed small fallback. Serialization/output
-failure cannot escape the best-effort emitter. These tests do not simulate or
+failure returns an explicit false emission outcome; successful output returns
+true. These tests do not simulate or
 assert production execution/fold outcomes; the normal owning gate remains the
 real runtime witness.

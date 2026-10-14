@@ -39,7 +39,9 @@ surrounding details or outcome semantics are copied. Output is capped at 32 KiB
 with a fixed small fallback, including after partial-read failure. Failure codes
 are owner-provided strings filtered to bounded tokens, not a closed enum or a
 general secret sanitizer. The emitter treats serialization/output as best-effort
-so reporting failure cannot replace the primary execution failure.
+so reporting failure cannot replace the primary execution failure. It returns
+an explicit boolean emission outcome; failed projection returns the fixed
+unavailable classification, with no silent exception handlers.
 A failed evidence read returns a fixed unavailable classification without
 raising or changing the original result. Missing client results are reported
 without guessing a run or issuing reads against a previous apply.

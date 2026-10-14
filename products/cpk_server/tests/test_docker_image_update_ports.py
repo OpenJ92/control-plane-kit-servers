@@ -162,12 +162,14 @@ class DockerImageBoundaryTests(unittest.TestCase):
         transport = Mock(failure=None)
         transport.call.side_effect = RuntimeError("PRIVATE-READ-ERROR")
         with patch("builtins.print", side_effect=OSError("PRIVATE-OUTPUT-ERROR")) as output:
-            emit_failed_apply_evidence(transport, "workspace-a", result)
-            emit_failed_apply_evidence(transport, "workspace-a", None)
+            self.assertFalse(emit_failed_apply_evidence(transport, "workspace-a", result))
+            self.assertFalse(emit_failed_apply_evidence(transport, "workspace-a", None))
         self.assertEqual(output.call_count, 2)
         self.assertEqual(vars(result), original)
         with patch("docker_image_update_ports.json.dumps", side_effect=ValueError("PRIVATE-SERIALIZATION")):
-            emit_failed_apply_evidence(transport, "workspace-a", result)
+            self.assertFalse(emit_failed_apply_evidence(transport, "workspace-a", result))
+        with patch("builtins.print"):
+            self.assertTrue(emit_failed_apply_evidence(transport, "workspace-a", result))
 
     def test_material_uses_current_receivers_and_contract_equal_image_successor(self):
         material = DockerImageMaterial("image-test")

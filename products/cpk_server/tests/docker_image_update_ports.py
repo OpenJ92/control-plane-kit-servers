@@ -129,7 +129,7 @@ def failed_apply_evidence(transport, workspace, result):
         if len(json.dumps(evidence).encode("utf-8")) <= 32768:
             return evidence
     except Exception:
-        pass
+        return {"docker_image_apply_failure": "evidence-unavailable"}
     return {"docker_image_apply_failure": "evidence-unavailable"}
 
 
@@ -137,9 +137,10 @@ def emit_failed_apply_evidence(transport, workspace, result):
     """Best-effort diagnostics, including serialization and output failures."""
     try:
         print(json.dumps(failed_apply_evidence(transport, workspace, result), sort_keys=True), flush=True)
+        return True
     except Exception:
         # Reporting must never replace the original failed apply or cleanup.
-        pass
+        return False
 
 
 def require_committed_call(record, response, arguments, events, worker_id):
