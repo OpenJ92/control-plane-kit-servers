@@ -183,6 +183,29 @@ recipient behavior is claimed. This corrected checkpoint is unvalidated; the
 unchanged full gate and actual selected Docker witness remain required.
 Production owners and dependency pins are unchanged.
 
+The corrected `0285ce8` local gate passed all 605 root/product and 26 support
+tests, receiver A/B/C/replay/teardown/negative cases, and unlisted process update,
+restart, history and replay/no-op checks. Process/file/private-directory and
+receiver-container absence were verified. It stopped before the Docker witness
+because the shell requires the exact default Unix socket path; the selected
+Docker Desktop context uses its aliased user socket. Both existing contexts
+report the same daemon, but no context change or local rerun was made.
+Local log SHA256: `78c3d7a13abc4787052d6239068df00c45da04c11d90316099298104c6265c2a`.
+
+Hosted exact-head run 38942088426/job117111977793 passed that prerequisite and
+entered Docker fixture setup, then failed with `already-exists`: our three
+`client.write` calls were creates, not version appends. Actual selected Secrets
+`b3e6d21` exposes public authenticated `/rotate`; selected Interpreter has no
+rotate client method. North released fixture-only correction to one create,
+two public rotations and the existing exact third-version revoke. The setup
+grant is limited to its isolated workspace/application intent, uses canonical
+path encoding, bounded response/timeout, no redirects/proxy or mutation retry,
+and checks returned identities through the existing explicit-version metadata
+reader. A real private-provider test checks distinct versions 1/2/3 and only
+third revoked. This checkpoint is unvalidated; the unchanged hosted owning gate
+must still prove actual Docker recipient behavior. No production client or
+consumer rotation feature is introduced.
+
 No new provider-live, image-publication, credential, original tunnel/DNS/token or
 shared-resource cleanup authority follows from this composition. Current provider
 observations do not establish installed material. Runtime verification and exact
