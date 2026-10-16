@@ -18,15 +18,17 @@ from control_plane_kit_core.runtime_effect_observation import runtime_effect_int
 from control_plane_kit_core.secret_installation import secret_material_selection_fingerprint, secret_installation_receipt_for_result
 from control_plane_kit_core.secret_selections import SecretVersionSelection
 from control_plane_kit_core.secret_version_grants import SecretVersionResolutionGrant
-from control_plane_kit_core.secrets import SecretEnvironmentDelivery, SecretDenied
+from control_plane_kit_core.secrets import SecretEnvironmentDelivery, SecretDenied, SecretFileDelivery, SecretFileMode, SecretFilePathBinding
 from control_plane_kit_core.types import RuntimeKind
 
 
-def request(custody, *, version="synthetic-version", node="connector", operation=StartNode):
+def request(custody, *, version="synthetic-version", node="connector", operation=StartNode, delivery=None):
     selection = SecretVersionSelection(custody.reference, custody.intent, version)
+    delivery = delivery or SecretFileDelivery("/run/secrets/cloudflare-tunnel-token", custody.reference,
+        custody.intent, SecretFileMode.OWNER_READ_ONLY, SecretFilePathBinding("TUNNEL_TOKEN_FILE"))
     product = ContainerServerProduct(ProductIdentity("fixture", "connector", 1),
         OciImageReference("example.invalid", "connector", "sha256:" + "a" * 64),
-        ProductRuntimeContract(secret_deliveries=(SecretEnvironmentDelivery("TUNNEL_TOKEN", custody.reference, custody.intent),)))
+        ProductRuntimeContract(secret_deliveries=(delivery,)))
     material = RuntimeProductMaterial(node, "docker", ProductReference.from_document(
         ProductDescriptorCodec().encode_document(product)), product, secret_selections=(selection,))
     effect = "effect-start" if operation is StartNode else "effect-reconcile"
@@ -58,6 +60,7 @@ class SelectedSubstituteTests(unittest.TestCase):
 
     def test_exact_resolution_recipient_receipts_and_allocation_lifetime(self):
         from receiver_acceptance_ports import synthetic_runtime_registration
+        from control_plane_kit_operations.ingress_authorities import require_cloudflared_tunnel_token_delivery
         compute, ingress, custody, allocation, authority = self.fixture()
         registration = synthetic_runtime_registration(compute)
         self.assertIs(registration.adapter, compute)
@@ -66,6 +69,7 @@ class SelectedSubstituteTests(unittest.TestCase):
         prior = None
         for operation, disposition in ((StartNode, "created"), (ReconcileNode, "replaced")):
             selected = request(custody, operation=operation)
+            delivery = require_cloudflared_tunnel_token_delivery(selected.products[0].product.runtime_contract.secret_deliveries)
             result = compute.execute_with_authority(selected, authority)
             self.assertIs(result.kind, EffectResultKind.SUCCEEDED)
             receipt = secret_installation_receipt_for_result(selected, result)
@@ -73,16 +77,19 @@ class SelectedSubstituteTests(unittest.TestCase):
             self.assertEqual(receipt.prior_realization_fingerprint, prior)
             self.assertEqual(receipt.current_realization_fingerprint, compute.identities["connector"])
             value = ingress.resolve(selected.secret_resolution_grants[0]).value.reveal()
-            incarnation, environment = compute._recipient_environment["connector"]
+            incarnation, environment, files = compute._recipient_material["connector"]
             self.assertEqual(incarnation, compute.identities["connector"])
-            self.assertTrue(environment["TUNNEL_TOKEN"] == value, "private synthetic recipient differs")
+            self.assertEqual(environment, {"TUNNEL_TOKEN_FILE": delivery.target_path})
+            content, mode, binding = files[delivery.target_path]
+            self.assertTrue(content == value, "private synthetic recipient differs")
+            self.assertEqual((mode, binding), (SecretFileMode.OWNER_READ_ONLY, "TUNNEL_TOKEN_FILE"))
             self.assertNotIn(value, json.dumps(result.descriptor()))
             self.assertEqual(result.evidence["secret_recipient_boundary"], "synthetic-in-memory")
             prior = compute.identities["connector"]
         compute.execute_with_authority(replace(selected, operation=RemoveNodeResource(NodeTarget("connector")),
             secret_resolution_grants=()), authority)
         ingress.teardown(authority=None, resources=allocation, secret_resolution_grant=None, secret_custody_grant=custody)
-        self.assertFalse(compute._recipient_environment or ingress._private_material or ingress.allocations)
+        self.assertFalse(compute._recipient_material or ingress._private_material or ingress.allocations)
         self.assertIsInstance(ingress.resolve(selected.secret_resolution_grants[0]), SecretDenied)
 
     def test_unavailable_exact_material_refuses_before_simulated_installation(self):
@@ -99,7 +106,7 @@ class SelectedSubstituteTests(unittest.TestCase):
                     selected = replace(selected, secret_resolution_grants=())
                 result = compute.execute_with_authority(selected, authority)
                 self.assertIs(result.kind, EffectResultKind.FAILED)
-                self.assertFalse(compute.installed or compute.identities or compute._recipient_environment or compute.configuration_refs)
+                self.assertFalse(compute.installed or compute.identities or compute._recipient_material or compute.configuration_refs)
                 self.assertNotIn("secret_installation_receipt", result.evidence)
 
     def test_named_process_selected_material_refuses_before_process_effects(self):
@@ -126,7 +133,11 @@ class SelectedSubstituteTests(unittest.TestCase):
             self.assertIs(refused.kind, EffectResultKind.UNSUPPORTED)
             resolve.assert_not_called()
         self.assertFalse(compute.installed or compute.identities)
-        compute._recipient_environment = LostRecipient()
+        unsupported = SecretEnvironmentDelivery("TUNNEL_TOKEN", custody.reference, custody.intent)
+        result = compute.execute_with_authority(request(custody, delivery=unsupported), authority)
+        self.assertIs(result.kind, EffectResultKind.UNSUPPORTED)
+        self.assertFalse(compute.installed or compute.identities)
+        compute._recipient_material = LostRecipient()
         result = compute.execute_with_authority(request(custody), authority)
         self.assertIs(result.kind, EffectResultKind.UNCERTAIN)
         self.assertNotIn("secret_installation_receipt", result.evidence)

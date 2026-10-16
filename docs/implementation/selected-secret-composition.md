@@ -151,7 +151,8 @@ was emitted. Log SHA256:
 `876d0a501f33b079331d9b09d0295c7873b539c1a31e4cf85962c891ca1259ec`.
 
 North released the bounded fixture correction in issue comment 6221044805.
-Only the existing synthetic connector environment delivery is implemented:
+The first implementation incorrectly modeled the connector as an environment
+value delivery:
 the ingress allocation privately owns exact custody-bound material until its
 teardown; Core admits each request before the accepted interpreter helpers
 resolve its exact grant. The simulated recipient stores and checks that value
@@ -161,8 +162,26 @@ named-process starts/reconciles refuse before recipient effects. These receipts
 are explicitly synthetic in-memory evidence, not provider admission or Docker
 recipient proof. Tests cover exact resolution, refusal before installation,
 recipient mismatch, incarnation receipts, qualification flags and owned cleanup.
-This checkpoint is unvalidated; the unchanged full gate and actual selected
-Docker witness remain required. Production owners and dependency pins are unchanged.
+At `43967cc`, all 605 root/product tests plus 26 support tests passed, but receiver
+A still returned unsupported. The connector now entered the qualified adapter,
+which refused its actual delivery shape. Receiver container absence was verified.
+Log SHA256: `2072aa3a88f968026931a228e3a4d52e43c4e79622e45ea0597e80278a9c0f65`.
+Our unit request repeated the mistaken environment assumption; this was not a
+production-owner defect. The actual selected Operations producer
+`cloudflare_tunnel_token_delivery_plan` emits a protected file, and its existing
+`require_cloudflared_tunnel_token_delivery` validator rejects environment values.
+
+North released correction to this exact file slot in the same fixture scope.
+The substitute now uses that owner validator, retaining the single-delivery and
+connector-only bounds. It privately simulates file content at
+`/run/secrets/cloudflare-tunnel-token`, OWNER_READ_ONLY mode and
+`TUNNEL_TOKEN_FILE` path binding, checking those values and the incarnation before
+returning canonical synthetic receipts. The test request exercises the owner
+validator; assertions preserve content, path, mode and binding, and explicitly
+reject the obsolete environment form. No actual filesystem, UID, volume or Docker
+recipient behavior is claimed. This corrected checkpoint is unvalidated; the
+unchanged full gate and actual selected Docker witness remain required.
+Production owners and dependency pins are unchanged.
 
 No new provider-live, image-publication, credential, original tunnel/DNS/token or
 shared-resource cleanup authority follows from this composition. Current provider

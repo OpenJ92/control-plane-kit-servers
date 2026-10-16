@@ -27,7 +27,7 @@ from control_plane_kit_core.planning import (
 from control_plane_kit_core.receiver_configuration import select_receiver_node_control_configuration_artifact
 from control_plane_kit_core.runtime_effects import RuntimeEffectRequest, RuntimeEffectResult, RuntimeEffectFailure
 from control_plane_kit_core.secrets import (
-    SecretCustodyReceipt, SecretResolved, SecretValue, SecretDenied, SecretEnvironmentDelivery, SecretUseIntent,
+    SecretCustodyReceipt, SecretResolved, SecretValue, SecretDenied,
 )
 from control_plane_kit_core.secret_version_grants import SecretVersionResolutionGrant
 from control_plane_kit_core.secret_installation import (
@@ -45,6 +45,7 @@ from control_plane_kit_interpreters.probes.health_transport import (
 )
 from control_plane_kit_operations.effect_outcome_evidence import NativeConnectionObservation, NativeConnectionOutcome
 from control_plane_kit_operations.runtime_adapter_registration import RuntimeAdapterRegistration
+from control_plane_kit_operations.ingress_authorities import require_cloudflared_tunnel_token_delivery
 from control_plane_kit_operations.runtime_management_targets import project_management_health_target
 from control_plane_kit_server_sdk.fastapi import install_cpk_wrapper
 from control_plane_kit_servers_cpk_local_gateway.health_relay import GatewayHealthRelay
@@ -69,7 +70,7 @@ class ComputeSubstitute:
         self.order = []
         self.receipt_mode = "valid"
         self.selected_resolver = None
-        self._recipient_environment = {}
+        self._recipient_material = {}
 
     def execute(self, request):
         raise AssertionError("compute dispatch requires registered runtime authority")
@@ -84,10 +85,11 @@ class ComputeSubstitute:
             RuntimeEffectRequest.__post_init__(request)
             material, = request.products
             deliveries = material.product.runtime_contract.secret_deliveries
-            if (material.node_id != "connector" or len(deliveries) != 1
-                    or type(deliveries[0]) is not SecretEnvironmentDelivery
-                    or deliveries[0].environment_name != "TUNNEL_TOKEN"
-                    or deliveries[0].intent is not SecretUseIntent.CLOUDFLARE_TUNNEL_TOKEN):
+            try:
+                if material.node_id != "connector" or len(deliveries) != 1:
+                    raise ValueError("unsupported synthetic recipient")
+                require_cloudflared_tunnel_token_delivery(deliveries)
+            except ValueError:
                 return RuntimeEffectResult.unsupported(request.effect_id,
                     RuntimeEffectFailure("fixture.selected-shape-unsupported", "synthetic selected shape is unsupported"))
             try:
@@ -126,8 +128,13 @@ class ComputeSubstitute:
                     selection if self.receipt_mode == "valid" else "0" * 64,
                     disposition, prior, identity).descriptor()
             if selected is not None:
-                self._recipient_environment[node] = (identity, dict(selected.environment))
-                if self._recipient_environment[node] != (self.identities[node], dict(selected.environment)):
+                # Private simulated file bytes, mode and path binding; no filesystem claim.
+                files = {value.target_path: (value.value.reveal(), value.file_mode, value.path_environment_name)
+                    for value in selected.files}
+                self._recipient_material[node] = (identity, dict(selected.environment), files)
+                expected_files = {value.target_path: (value.value.reveal(), value.file_mode, value.path_environment_name)
+                    for value in selected.files}
+                if self._recipient_material[node] != (self.identities[node], dict(selected.environment), expected_files):
                     return RuntimeEffectResult.uncertain(request.effect_id,
                         RuntimeEffectFailure("fixture.selected-recipient-unknown", "synthetic recipient check failed"))
                 context = secret_installation_correlation_for_request(request)
@@ -140,7 +147,7 @@ class ComputeSubstitute:
             node = request.operation.target.node_id
             self.installed.pop(node)
             self.identities.pop(node)
-            self._recipient_environment.pop(node, None)
+            self._recipient_material.pop(node, None)
         elif type(request.operation) is StartRuntime:
             assert request.operation.target.runtime_id not in self.runtimes
             self.runtimes.add(request.operation.target.runtime_id)
