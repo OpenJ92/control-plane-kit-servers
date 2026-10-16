@@ -209,6 +209,7 @@ class OperationsEffectPorts:
     managed_health: object
     health_receiver_decoders: object
     runtime_observer: object | None = None
+    secret_metadata_reader: object | None = None
 
 
 class _RefuseUnexpectedRecovery:
@@ -254,7 +255,8 @@ class OperationsApplicationFactory:
         return SharedOperationsApplicationFactory(self.unit_of_work_factory,
             SharedOperationsEffectPorts(ports.runtime_interpreters, ports.ingress_interpreters,
                 ports.managed_health, ports.health_receiver_decoders,
-                ports.runtime_observer or _RefuseUnexpectedRecovery()),
+                ports.runtime_observer or _RefuseUnexpectedRecovery(),
+                secret_metadata_reader=ports.secret_metadata_reader),
             OperationsIdFactories(*(self.id_factory for _ in range(5))),
             clock=self.clock, start_service_decorator=decoration)()
 

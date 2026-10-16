@@ -1,8 +1,10 @@
 # Selected secret composition — #252
 
-Current checkpoint implements the typed metadata bridge and shared-factory port;
-runtime witness extensions and complete installed-dependency validation remain
-pending. It does not claim final #252 or grandparent acceptance.
+Current checkpoint implements the typed metadata bridge, shared-factory port,
+and maintained witness extensions. Post-adoption execution and complete
+installed-dependency validation remain pending. It does not claim final #252 or
+grandparent acceptance. Kepler passed the bounded bridge/adoption source at
+`c3740e7dfc13f1a87d44af12e71617341e175520`; witness review remains pending.
 
 The accepted dependency tuple is deliberately package-specific: Core
 `87e231c661879e44816ba71ff9320c040c868d60`, Operations
@@ -30,6 +32,27 @@ into its approved graph rather than call that operation a pure read. Initial
 pending draft/revision receiver provenance and original retry coordinates remain
 unchanged. A demonstrated inability to preserve those laws is a stop, not license
 for private authoring, a new frontend API or another workflow/state machine.
+
+The unchanged pending baseline deploys first. The witness then imports two
+fixture product variants, publicly admits one application reference/provider,
+and explicitly selects an environment-delivered version for the existing api
+node. A second selection changes only the version. A final product edit changes
+the image and one independent application configuration artifact while retaining
+the exact selected version and receiver configuration. Genuine runtime receipts,
+actual container identity/old absence, public committed events, original action
+replay and client history are asserted; named-user Hello is not file-delivery
+coverage. The numeric-file fixture separately checks full selected volume identity,
+UID/version separation, first allocation label retention and fail-closed cleanup.
+
+Bounded effects: the existing isolated provider writes exactly three application
+versions and revokes the third during setup, separately from consumer execution.
+Missing/revoked choices must refuse before dispatch and without desired-pointer
+changes. Existing Docker scope remains four nodes and one owned runtime network;
+three api replacements extend the retained configuration-volume record. Every
+allocation is recorded before dispatch, with the existing record-size bound.
+Cleanup retains the owning gate's exact IDs, independent ownership checks,
+detachment checks and non-force volume deletion. No broad discovery-driven
+deletion is added. Provider plaintext is private and no secret digest is emitted.
 
 No new provider-live, image-publication, credential, original tunnel/DNS/token or
 shared-resource cleanup authority follows from this composition. Current provider

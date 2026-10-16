@@ -7,6 +7,8 @@ import control_plane_kit_core as core
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from control_plane_kit_core.algebra import BlockSockets, BlockSpec
+from control_plane_kit_core.configuration import ConfigurationArtifact, ConfigurationMediaType
+from control_plane_kit_core.secrets import SecretEnvironmentDelivery, SecretReference, SecretUseIntent
 from control_plane_kit_core.products import (
     ContainerServerProduct, OciImageReference, ProductDescriptorCodec, ProductIdentity, ProductReference,
     ProductRuntimeContract,
@@ -30,6 +32,8 @@ from receiver_acceptance_material import AuthoredMaterial
 
 
 IMAGES = json.loads(Path(__file__).with_name("docker_image_update_images.json").read_text())
+APPLICATION_REFERENCE = SecretReference("secret://application-secrets/api/token")
+APPLICATION_INTENT = SecretUseIntent.APPLICATION_CONTROL_TOKEN
 
 
 def image_value(reference):
@@ -79,6 +83,20 @@ class DockerImageMaterial(AuthoredMaterial):
             identity=replace(original.product.identity, contract_revision=2),
             image=image_value(IMAGES["hello_b"]["reference"])))
         assert original.product.runtime_contract == self.successor.product.runtime_contract
+        secret_contract = replace(original.product.runtime_contract,
+            secret_deliveries=(SecretEnvironmentDelivery("CPK_WITNESS_TOKEN",
+                APPLICATION_REFERENCE, APPLICATION_INTENT),),
+            configuration_artifacts=(*original.product.runtime_contract.configuration_artifacts,
+                ConfigurationArtifact("application-settings", "/etc/cpk/application-settings.json",
+                    ConfigurationMediaType.JSON, '{"revision":1}')))
+        self.secret_product = ProductDescriptorCodec().encode_document(replace(original.product,
+            identity=replace(original.product.identity, contract_revision=3), runtime_contract=secret_contract))
+        revised_artifacts = tuple(replace(value, content='{"revision":2}')
+            if value.artifact_id == "application-settings" else value
+            for value in secret_contract.configuration_artifacts)
+        self.secret_successor = ProductDescriptorCodec().encode_document(replace(self.successor.product,
+            identity=replace(original.product.identity, contract_revision=4),
+            runtime_contract=replace(secret_contract, configuration_artifacts=revised_artifacts)))
         validate_graph(self.a).require_valid()
 
     def configuration(self, name):

@@ -24,6 +24,7 @@ from products.secrets_server.tests.secrets_control_fixtures import SourceControl
 
 from docker_image_update_ports import FixtureBoundaryFailure
 from receiver_acceptance_ports import IngressAllocation
+from docker_image_update_material import APPLICATION_REFERENCE, APPLICATION_INTENT
 
 
 SIGNING = {
@@ -35,7 +36,7 @@ SIGNING = {
         "gateway.probe-signing-key"),
 }
 
-PROVIDER_ENDPOINTS = ("health-secrets", "unlisted-surface", "generated-secrets")
+PROVIDER_ENDPOINTS = ("health-secrets", "unlisted-surface", "generated-secrets", "application-secrets")
 
 
 class SyntheticIngressAllocation:
@@ -106,8 +107,10 @@ class SigningProviderProcess:
                 "grants": [
                     {"action": "secret.write", "workspace_id": self.workspace_id},
                     {"action": "secret.revoke", "workspace_id": self.workspace_id},
+                    {"action": "secret.metadata", "workspace_id": self.workspace_id},
                     {"action": "secret.resolve", "workspace_id": self.workspace_id,
-                     "intents": [*[row[2] for row in SIGNING.values()], "cloudflare.tunnel-token"]},
+                     "intents": [*[row[2] for row in SIGNING.values()], "cloudflare.tunnel-token",
+                         APPLICATION_INTENT.value]},
                 ],
             }]))
             control = secrets_control_configuration_artifact(SourceControlAuthority(self.workspace_id).configuration())
@@ -187,6 +190,22 @@ class SigningProviderProcess:
                 self.process.wait(timeout=5)
         if self.listener is not None:
             self.listener.close()
+
+    def seed_application_versions(self):
+        """Three explicit fixture writes and one revoke, never consumer execution."""
+        client = ControlPlaneKitSecretsClient(self.composition.bootstrap_registry.configuration_for(
+            endpoint_reference=SecretProviderEndpointReference("application-secrets"),
+            credential_reference=SecretReference("secret://bootstrap/application-secrets/client-token")))
+        versions = tuple(client.write(workspace_id=self.workspace_id, reference=APPLICATION_REFERENCE,
+            value=SecretValue(secrets.token_urlsafe(48)), intent=APPLICATION_INTENT,
+            caller_subject="docker-image-signing", correlation_id="application-write-" + str(index))
+            for index in range(3))
+        revoked = versions[2]
+        observed = client.revoke_version(workspace_id=self.workspace_id, reference=APPLICATION_REFERENCE,
+            version_id=revoked.version_id, version_number=revoked.version_number,
+            caller_subject="docker-image-signing", correlation_id="application-revoke")
+        assert observed.status == "revoked" and observed.version_id == revoked.version_id
+        return versions
 
     def __exit__(self, *_):
         self._stop()
