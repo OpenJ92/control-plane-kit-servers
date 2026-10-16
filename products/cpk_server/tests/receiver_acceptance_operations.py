@@ -274,6 +274,27 @@ class CoordinatorStopped(OperationsSequenceError):
         self.execution = dict(execution)
 
 
+def execution_failure_codes(events):
+    """Bounded public classifications only, never messages or event payloads."""
+    def code(value):
+        return value if type(value) is str and re.fullmatch(r"[a-z][a-z0-9.-]{0,95}", value) else None
+    rows = []
+    for event in events[-32:]:
+        if not isinstance(event, Mapping) or event.get("event_type") != "step_failed":
+            continue
+        failure = event.get("failure")
+        failure = failure if isinstance(failure, Mapping) else {}
+        details = failure.get("details")
+        details = details if isinstance(details, Mapping) else {}
+        outcome = details.get("effect_outcome")
+        outcome = outcome if isinstance(outcome, Mapping) else {}
+        rows.append({"event_type": "step_failed", "failure_category": code(failure.get("category")),
+            "failure_code": code(failure.get("code")),
+            "runtime_failure_code": code(outcome.get("runtime_failure_code"))})
+    return {"receiver_execution_failure": "observed", "events_truncated": len(events) > 32,
+        "failures": rows}
+
+
 def graph_descriptor(value: Mapping[str, object] | DeploymentGraph) -> dict[str, object]:
     """Copy an authored graph through Core's public descriptor boundary."""
 
@@ -951,6 +972,12 @@ class PublicOperationsDriver:
             if status == "completed":
                 break
             if status != "progressed":
+                try:
+                    events = await self._history_page("read.run-events",
+                        path={"workspace_id": self.workspace_id, "run_id": run_id})
+                    print(json.dumps(execution_failure_codes(events)), flush=True)
+                except Exception:
+                    print('{"receiver_execution_failure":"evidence-unavailable"}', flush=True)
                 raise CoordinatorStopped(label, run_id, execution)
         else:
             raise OperationsSequenceError(f"{label} exceeded its execution bound")

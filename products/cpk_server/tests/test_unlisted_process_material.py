@@ -126,6 +126,21 @@ class ProcessMaterialTests(unittest.TestCase):
 
 
 class StartDiagnosticTests(unittest.TestCase):
+    def test_public_failure_diagnostic_keeps_only_bounded_classifications(self):
+        from receiver_acceptance_operations import execution_failure_codes
+        event = {"event_type": "step_failed", "payload": {"secret": "PRIVATE-PAYLOAD"},
+            "failure": {"category": "terminal", "code": "runtime.effect-failed", "message": "PRIVATE-MESSAGE",
+                "details": {"secret": "PRIVATE-DETAIL", "effect_outcome": {
+                    "runtime_failure_code": "runtime.secret-version-unsupported", "token": "PRIVATE-TOKEN"}}}}
+        result = execution_failure_codes([event] * 40)
+        self.assertTrue(result["events_truncated"])
+        self.assertEqual(len(result["failures"]), 32)
+        self.assertEqual(result["failures"][0], {"event_type": "step_failed", "failure_category": "terminal",
+            "failure_code": "runtime.effect-failed", "runtime_failure_code": "runtime.secret-version-unsupported"})
+        self.assertNotIn("PRIVATE", json.dumps(result))
+        event["failure"]["code"] = "PRIVATE/" + "x" * 200
+        self.assertIsNone(execution_failure_codes([event])["failures"][0]["failure_code"])
+
     def test_observer_preserves_exact_command_result_and_original_error(self):
         from receiver_acceptance_operations import ObservedEffectStart
         command, result, seen = object(), object(), []

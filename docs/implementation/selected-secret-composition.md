@@ -93,6 +93,22 @@ compiled Node. The unsupported constructor argument is removed; the explicit
 Node selection and runtime-material equality assertion remain. This fixture
 error is not an owner defect or causal red, and no recipient witness ran.
 
+At `77bb7be`, all 599 root/product tests plus 26 support tests passed. Source
+wrapper/numeric bootstrap, Secrets source and published-baseline restart, and
+CPK authentication/revision-history smoke stages passed. The gate then stopped
+in the pre-existing receiver acceptance A execution with coordinator status
+failed, before the new Docker witness. Receiver witness container absence was
+verified. Log SHA256:
+`711fa907ef49e050b8834dd17d881c4f0326eb55693f6fd6854e5fc8fb848323`.
+
+Source review identifies a possible old synthetic-adapter qualification mismatch
+for the generated connector selection, but the actual failure code was not yet
+retained. North released diagnostics only: the existing driver now reads bounded
+public run-event classifications before propagating its original stop. It prints
+no messages, arbitrary payloads or secret values. Qualification and substitute
+receipts remain unchanged until the actual cause is established and the bounded
+fixture translation is reviewed. This is not evidence of an upstream defect.
+
 No new provider-live, image-publication, credential, original tunnel/DNS/token or
 shared-resource cleanup authority follows from this composition. Current provider
 observations do not establish installed material. Runtime verification and exact
