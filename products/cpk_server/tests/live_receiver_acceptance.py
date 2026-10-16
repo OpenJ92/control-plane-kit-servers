@@ -20,7 +20,7 @@ from receiver_acceptance_operations import (
     IsolatedOperationsSchema, OperationsApplicationFactory, OperationsEffectPorts,
     PublicOperationsDriver, CoordinatorStopped, register_material,
 )
-from receiver_acceptance_ports import ComputeSubstitute, IngressSubstitute, SignedHealthComposition
+from receiver_acceptance_ports import ComputeSubstitute, IngressSubstitute, SignedHealthComposition, synthetic_runtime_registration
 
 
 def verify_provenance():
@@ -89,7 +89,7 @@ async def accepted_history(database_url):
     schema_name = "cpk_1912_" + uuid4().hex
     with IsolatedOperationsSchema(database_url, schema_name) as schema:
         factory = OperationsApplicationFactory(schema.unit_of_work,
-            OperationsEffectPorts({RuntimeKind.DOCKER: compute},
+            OperationsEffectPorts({RuntimeKind.DOCKER: synthetic_runtime_registration(compute)},
                 {IngressAuthorityProviderKind.CLOUDFLARE: ingress}, health, material.decoders),
             id_factory=lambda: "receiver-" + uuid4().hex)
         driver = PublicOperationsDriver(factory, workspace_id="workspace-a", effect_snapshot=effects)
@@ -190,7 +190,8 @@ async def accepted_history(database_url):
             + ", current=0, complete historical protection=" + str(complete)
             + ", unavailable historical protection=" + str(len(allocation_history) - complete)
             + "; configuration cleanup is not asserted", flush=True)
-        print("receiver acceptance: accepted A/B/C, original X, restart replay and approved teardown passed", flush=True)
+        print("receiver acceptance: accepted A/B/C, original X, restart replay and approved teardown passed; "
+            "generated connector resolution/recipient is synthetic in-memory, not Docker proof", flush=True)
     print("receiver acceptance: isolated schema cleanup completed", flush=True)
 
 
@@ -202,7 +203,7 @@ async def failed_update(database_url, fault):
     health = SignedHealthComposition(material, compute, ingress)
     with IsolatedOperationsSchema(database_url, "cpk_1912_" + uuid4().hex) as schema:
         factory = OperationsApplicationFactory(schema.unit_of_work,
-            OperationsEffectPorts({RuntimeKind.DOCKER: compute},
+            OperationsEffectPorts({RuntimeKind.DOCKER: synthetic_runtime_registration(compute)},
                 {IngressAuthorityProviderKind.CLOUDFLARE: ingress}, health, material.decoders),
             id_factory=lambda: "receiver-" + uuid4().hex)
         driver = PublicOperationsDriver(factory, workspace_id="workspace-a")

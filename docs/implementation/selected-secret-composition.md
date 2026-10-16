@@ -142,6 +142,28 @@ drop and witness container cleanup. North released this bounded diagnostic;
 qualification and receipt changes still require the actual result and reviewed
 fixture scope.
 
+The `78947c4` gate passed 601 root/product tests plus 26 support tests, then
+reported `step_unsupported`, `operator_review`, `runtime.effect-unsupported` for
+`start-node:connector`. Compute recorded no connector entry. Together with the
+bare registration and generated `synthetic-version` custody, this establishes
+the source-correlated qualification mismatch; no private runtime reason code
+was emitted. Log SHA256:
+`876d0a501f33b079331d9b09d0295c7873b539c1a31e4cf85962c891ca1259ec`.
+
+North released the bounded fixture correction in issue comment 6221044805.
+Only the existing synthetic connector environment delivery is implemented:
+the ingress allocation privately owns exact custody-bound material until its
+teardown; Core admits each request before the accepted interpreter helpers
+resolve its exact grant. The simulated recipient stores and checks that value
+against its simulated incarnation before canonical receipts are returned.
+Only execute-with-authority is qualified. Other selected shapes and selected
+named-process starts/reconciles refuse before recipient effects. These receipts
+are explicitly synthetic in-memory evidence, not provider admission or Docker
+recipient proof. Tests cover exact resolution, refusal before installation,
+recipient mismatch, incarnation receipts, qualification flags and owned cleanup.
+This checkpoint is unvalidated; the unchanged full gate and actual selected
+Docker witness remain required. Production owners and dependency pins are unchanged.
+
 No new provider-live, image-publication, credential, original tunnel/DNS/token or
 shared-resource cleanup authority follows from this composition. Current provider
 observations do not establish installed material. Runtime verification and exact
