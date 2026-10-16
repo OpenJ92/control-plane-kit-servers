@@ -117,6 +117,16 @@ focused test exercising the actual caller against the public envelope and a
 failed read. No adapter behavior changed, and the interruption supplies no new
 runtime failure evidence.
 
+The `c61dc06` diagnostic run passed 601 root/product tests plus26 support and
+the preceding runtime stages, then stopped at the same receiver execution. Its
+formatter emitted no failure rows because it admitted only step_failed, while
+Core also represents unsupported/uncertain failures as distinct event kinds.
+That output does not establish a runtime cause. The formatter now preserves any
+closed ActivityEventKind carrying failure evidence, with the same 32-row and
+redaction bounds; caller/formatter tests include actual unsupported/uncertain
+enum values. Adapter behavior remains unchanged. Terminal log SHA256:
+`ec722a2060bc95dc94a3cee969d576f873aa8b6be3c93ecf9b2a5f0446a837ad`.
+
 No new provider-live, image-publication, credential, original tunnel/DNS/token or
 shared-resource cleanup authority follows from this composition. Current provider
 observations do not establish installed material. Runtime verification and exact

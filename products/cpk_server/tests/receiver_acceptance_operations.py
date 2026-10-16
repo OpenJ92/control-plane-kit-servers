@@ -21,6 +21,7 @@ from typing import Any
 
 import psycopg
 from psycopg import sql
+from control_plane_kit_core.operations.lifecycle import ActivityEventKind
 from control_plane_kit_servers_cpk_server.operations_application import (
     OperationsApplicationFactory as SharedOperationsApplicationFactory,
     OperationsEffectPorts as SharedOperationsEffectPorts,
@@ -280,18 +281,24 @@ def execution_failure_codes(events):
         return value if type(value) is str and re.fullmatch(r"[a-z][a-z0-9.-]{0,95}", value) else None
     rows = []
     for event in events[-32:]:
-        if not isinstance(event, Mapping) or event.get("event_type") != "step_failed":
+        if not isinstance(event, Mapping):
+            continue
+        try:
+            kind = ActivityEventKind(event.get("event_type"))
+        except (TypeError, ValueError):
             continue
         failure = event.get("failure")
-        failure = failure if isinstance(failure, Mapping) else {}
+        if not isinstance(failure, Mapping):
+            continue
         details = failure.get("details")
         details = details if isinstance(details, Mapping) else {}
         outcome = details.get("effect_outcome")
         outcome = outcome if isinstance(outcome, Mapping) else {}
-        rows.append({"event_type": "step_failed", "failure_category": code(failure.get("category")),
+        rows.append({"event_type": kind.value, "failure_category": code(failure.get("category")),
             "failure_code": code(failure.get("code")),
             "runtime_failure_code": code(outcome.get("runtime_failure_code"))})
-    return {"receiver_execution_failure": "observed", "events_truncated": len(events) > 32,
+    return {"receiver_execution_failure": "observed", "event_count": len(events),
+        "events_truncated": len(events) > 32,
         "failures": rows}
 
 

@@ -12,6 +12,7 @@ from control_plane_kit_core.configuration_instances import ConfigurationInstance
 from control_plane_kit_core.configuration_installation import configuration_installation_receipt_for_result
 from control_plane_kit_core.configuration_invocation import configuration_invocation_correlation_for_request
 from control_plane_kit_core.operations.run_identity import RunId
+from control_plane_kit_core.operations.lifecycle import ActivityEventKind
 from control_plane_kit_core.planning import ActivityId, NodeTarget, ReconcileNode, StartNode
 from control_plane_kit_core.products import (
     ContainerServerProduct, OciImageReference, ProductDescriptorCodec, ProductIdentity,
@@ -130,7 +131,7 @@ class ProcessMaterialTests(unittest.TestCase):
 class StartDiagnosticTests(unittest.TestCase):
     def test_failure_reader_consumes_public_history_page_items(self):
         from receiver_acceptance_operations import PublicOperationsDriver
-        event = {"event_type": "step_failed", "failure": {"category": "terminal",
+        event = {"event_type": ActivityEventKind.STEP_UNSUPPORTED.value, "failure": {"category": "terminal",
             "code": "runtime.effect-failed", "details": {"effect_outcome": {
                 "runtime_failure_code": "runtime.secret-version-unsupported"}}}}
         reader = AsyncMock(return_value={"items": [event], "pages": 1, "next_cursor": None})
@@ -141,6 +142,7 @@ class StartDiagnosticTests(unittest.TestCase):
         reader.assert_awaited_once_with("read.run-events", path={"workspace_id": "workspace-a", "run_id": "run-a"})
         actual = json.loads(output.getvalue())
         self.assertEqual(actual["receiver_execution_failure"], "observed")
+        self.assertEqual(actual["failures"][0]["event_type"], ActivityEventKind.STEP_UNSUPPORTED.value)
         self.assertEqual(actual["failures"][0]["runtime_failure_code"], "runtime.secret-version-unsupported")
         reader.side_effect = RuntimeError("PRIVATE-READ-FAILURE")
         output = StringIO()
@@ -160,6 +162,10 @@ class StartDiagnosticTests(unittest.TestCase):
         self.assertEqual(result["failures"][0], {"event_type": "step_failed", "failure_category": "terminal",
             "failure_code": "runtime.effect-failed", "runtime_failure_code": "runtime.secret-version-unsupported"})
         self.assertNotIn("PRIVATE", json.dumps(result))
+        for kind in (ActivityEventKind.STEP_UNSUPPORTED, ActivityEventKind.STEP_UNCERTAIN,
+                ActivityEventKind.STEP_COMPENSATION_FAILED):
+            event["event_type"] = kind.value
+            self.assertEqual(execution_failure_codes([event])["failures"][0]["event_type"], kind.value)
         event["failure"]["code"] = "PRIVATE/" + "x" * 200
         self.assertIsNone(execution_failure_codes([event])["failures"][0]["failure_code"])
 
