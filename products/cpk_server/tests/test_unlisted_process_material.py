@@ -187,6 +187,41 @@ class StartDiagnosticTests(unittest.TestCase):
         event["failure"]["code"] = "PRIVATE/" + "x" * 200
         self.assertIsNone(execution_failure_codes([event])["failures"][0]["failure_code"])
 
+    def test_host_diagnostic_preserves_suppressed_owner_context_with_bounds(self):
+        from unlisted_controller_host import DiagnosticApplicationBoundary
+        from control_plane_kit_operations.cpk_server import _prepare_deployment, CpkServerApplicationError
+        output = StringIO()
+        diagnostic = SimpleNamespace(diagnostic_count=0)
+        try:
+            _prepare_deployment(None, SimpleNamespace(payload={"desired_graph": {"PRIVATE": "VALUE"}},
+                path_parameters={}), None)
+        except CpkServerApplicationError as error:
+            self.assertTrue(error.__suppress_context__)
+            with redirect_stdout(output):
+                DiagnosticApplicationBoundary._diagnose(diagnostic, error, "command.deployment.prepare")
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["exception_chain"][0]["kind"], "CpkServerApplicationError")
+        self.assertEqual(result["exception_chain"][1]["kind"], "GraphDescriptorError")
+        self.assertTrue(result["exception_chain"][1]["frames"])
+        self.assertNotIn("PRIVATE", output.getvalue())
+        self.assertFalse(result["chain_truncated"])
+        errors = [ValueError("PRIVATE-MESSAGE") for _ in range(10)]
+        for left, right in zip(errors, errors[1:]):
+            left.__context__ = right
+        output = StringIO()
+        with redirect_stdout(output):
+            DiagnosticApplicationBoundary._diagnose(diagnostic, errors[0], "command.deployment.prepare")
+            errors[0].__context__ = errors[0]
+            DiagnosticApplicationBoundary._diagnose(diagnostic, errors[0], "command.deployment.prepare")
+            for _ in range(10):
+                DiagnosticApplicationBoundary._diagnose(diagnostic, errors[0], "command.deployment.prepare")
+        rows = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual(len(rows), 7)
+        self.assertEqual(len(rows[0]["exception_chain"]), 8)
+        self.assertEqual(len(rows[1]["exception_chain"]), 1)
+        self.assertTrue(all(row["chain_truncated"] for row in rows))
+        self.assertNotIn("PRIVATE", output.getvalue())
+
     def test_observer_preserves_exact_command_result_and_original_error(self):
         from receiver_acceptance_operations import ObservedEffectStart
         command, result, seen = object(), object(), []

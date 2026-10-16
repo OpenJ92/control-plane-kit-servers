@@ -206,6 +206,25 @@ third revoked. This checkpoint is unvalidated; the unchanged hosted owning gate
 must still prove actual Docker recipient behavior. No production client or
 consumer rotation feature is introduced.
 
+Hosted `9ec0f64` run 38944952145/job117121612474 passed 606 root/product and 26
+support tests, including real provider version setup, and deployed the four-node
+Docker baseline. The first selected consumer update stopped during client plan
+preparation with HTTP400/attention-required, before selected replacement. Exact
+failure disposal verified four containers, one network, five configuration volumes
+and one secret volume absent. Log SHA256:
+`71d0d4ccbdfe413dd0cb766a9161595e435ba05f70d24f9a06a5f7a110557dff`.
+The outer malformed-preparation catch conceals the original source frame; carry
+forward from desired already exists, so no owner defect is inferred from400.
+North released only bounded exception source-chain diagnostics in the existing
+test host, with closed type names, bounded frames/depth, cycle protection and no
+messages/args/locals/payloads. An actual malformed owner preparation tests the
+suppressed context path. This diagnostic checkpoint remains unvalidated.
+The negative missing/revoked choices caused real metadata refusal with no effects,
+but returned HTTP500 through the existing desired-command error mapping; this is
+a public error-classification limitation, not a satisfactory4xx contract. It is
+recorded separately from the unknown preparation refusal, without normalizing it
+or changing owner logic. Full Docker consumer acceptance remains pending.
+
 No new provider-live, image-publication, credential, original tunnel/DNS/token or
 shared-resource cleanup authority follows from this composition. Current provider
 observations do not establish installed material. Runtime verification and exact
