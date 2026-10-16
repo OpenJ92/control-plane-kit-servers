@@ -188,8 +188,7 @@ class DockerInstallationTests(unittest.TestCase):
                             "secret://configured/child-a/" + value.target_path.rsplit("/", 1)[1],
                         )) for value in reversed(defaults.secret_deliveries)
                     )
-                    configuration = replace(defaults, secret_deliveries=deliveries,
-                        secret_selections=author_secret_selections(deliveries))
+                    configuration = replace(defaults, secret_deliveries=deliveries)
                     selected = instantiate_product(
                         product, desired.secrets_node_id, configuration,
                     )

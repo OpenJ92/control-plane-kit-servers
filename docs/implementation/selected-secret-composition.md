@@ -86,6 +86,13 @@ fixture/import-boundary translation, not intended missing-behavior red; no real
 Docker recipient witness ran. Log SHA256:
 `0eac510c5570cc82fbcb105a0286b691bd6b4b395027833278245da4fa220b33`.
 
+The `b4d40db` rerun passed the other 391 cpk-server methods and exposed one
+mistake in the preceding fixture correction: ProductInstanceConfiguration has
+delivery fields but no secret_selections parameter. Selection belongs to the
+compiled Node. The unsupported constructor argument is removed; the explicit
+Node selection and runtime-material equality assertion remain. This fixture
+error is not an owner defect or causal red, and no recipient witness ran.
+
 No new provider-live, image-publication, credential, original tunnel/DNS/token or
 shared-resource cleanup authority follows from this composition. Current provider
 observations do not establish installed material. Runtime verification and exact
