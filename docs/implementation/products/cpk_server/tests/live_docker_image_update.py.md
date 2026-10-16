@@ -1,5 +1,11 @@
 Source: [live_docker_image_update.py](../../../../../products/cpk_server/tests/live_docker_image_update.py).
 
+Temporary #1993 observation scopes the installed Operations publication-budget
+method around this scenario only. It emits bounded numeric forecasts before the
+unchanged real preflight. The accepted dependency tuple, public sequence,
+runtime/receipt assertions and exact cleanup remain fixed. This diagnostic is
+for the observed third-update publication-capacity refusal, not a proposed fix.
+
 #252 continuation consumes the accepted #1991 dependency tuple documented in
 [selected-secret composition](../../../selected-secret-composition.md). The
 initial api already declares its delivery and application slot. Public revision 1
