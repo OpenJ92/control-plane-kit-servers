@@ -1,9 +1,11 @@
 """S1 process-port ordering/reporting; doubles are not physical-install proof."""
 from types import SimpleNamespace
+import asyncio
 from contextlib import redirect_stdout
 from io import StringIO
 import json
 import unittest
+from unittest.mock import AsyncMock
 
 from control_plane_kit_core.configuration import ConfigurationArtifact, ConfigurationMediaType
 from control_plane_kit_core.configuration_instances import ConfigurationInstanceRef, ConfigurationInstanceSelection
@@ -126,6 +128,26 @@ class ProcessMaterialTests(unittest.TestCase):
 
 
 class StartDiagnosticTests(unittest.TestCase):
+    def test_failure_reader_consumes_public_history_page_items(self):
+        from receiver_acceptance_operations import PublicOperationsDriver
+        event = {"event_type": "step_failed", "failure": {"category": "terminal",
+            "code": "runtime.effect-failed", "details": {"effect_outcome": {
+                "runtime_failure_code": "runtime.secret-version-unsupported"}}}}
+        reader = AsyncMock(return_value={"items": [event], "pages": 1, "next_cursor": None})
+        driver = SimpleNamespace(workspace_id="workspace-a", _history_page=reader)
+        output = StringIO()
+        with redirect_stdout(output):
+            asyncio.run(PublicOperationsDriver._emit_execution_failure(driver, "run-a"))
+        reader.assert_awaited_once_with("read.run-events", path={"workspace_id": "workspace-a", "run_id": "run-a"})
+        actual = json.loads(output.getvalue())
+        self.assertEqual(actual["receiver_execution_failure"], "observed")
+        self.assertEqual(actual["failures"][0]["runtime_failure_code"], "runtime.secret-version-unsupported")
+        reader.side_effect = RuntimeError("PRIVATE-READ-FAILURE")
+        output = StringIO()
+        with redirect_stdout(output):
+            asyncio.run(PublicOperationsDriver._emit_execution_failure(driver, "run-a"))
+        self.assertEqual(json.loads(output.getvalue()), {"receiver_execution_failure": "evidence-unavailable"})
+
     def test_public_failure_diagnostic_keeps_only_bounded_classifications(self):
         from receiver_acceptance_operations import execution_failure_codes
         event = {"event_type": "step_failed", "payload": {"secret": "PRIVATE-PAYLOAD"},

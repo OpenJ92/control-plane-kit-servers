@@ -109,6 +109,14 @@ no messages, arbitrary payloads or secret values. Qualification and substitute
 receipts remain unchanged until the actual cause is established and the bounded
 fixture translation is reviewed. This is not evidence of an upstream defect.
 
+Kepler caught a diagnostic caller mismatch at `5b40443`: the driver's history
+reader returns a page envelope, not the event list. That run was interrupted
+through its owned execution session during image build (exit130, build canceled),
+before any runtime witness. The diagnostic now consumes `page["items"]`, with a
+focused test exercising the actual caller against the public envelope and a
+failed read. No adapter behavior changed, and the interruption supplies no new
+runtime failure evidence.
+
 No new provider-live, image-publication, credential, original tunnel/DNS/token or
 shared-resource cleanup authority follows from this composition. Current provider
 observations do not establish installed material. Runtime verification and exact

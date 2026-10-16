@@ -818,6 +818,14 @@ class PublicOperationsDriver:
             raise OperationsSequenceError("workspace read did not return durable truth")
         return dict(workspace)
 
+    async def _emit_execution_failure(self, run_id):
+        try:
+            page = await self._history_page("read.run-events",
+                path={"workspace_id": self.workspace_id, "run_id": run_id})
+            print(json.dumps(execution_failure_codes(page["items"])), flush=True)
+        except Exception:
+            print('{"receiver_execution_failure":"evidence-unavailable"}', flush=True)
+
     async def accept(
         self,
         *,
@@ -972,12 +980,7 @@ class PublicOperationsDriver:
             if status == "completed":
                 break
             if status != "progressed":
-                try:
-                    events = await self._history_page("read.run-events",
-                        path={"workspace_id": self.workspace_id, "run_id": run_id})
-                    print(json.dumps(execution_failure_codes(events)), flush=True)
-                except Exception:
-                    print('{"receiver_execution_failure":"evidence-unavailable"}', flush=True)
+                await self._emit_execution_failure(run_id)
                 raise CoordinatorStopped(label, run_id, execution)
         else:
             raise OperationsSequenceError(f"{label} exceeded its execution bound")
