@@ -18,14 +18,18 @@ from docker_image_update_ports import FixtureBoundaryFailure
 def consumer_graph(graph, document):
     contract = document.product.runtime_contract
     node = graph.node("api")
-    # Receiver configuration remains authored by its existing owner. Only this
-    # fixture's independent application-settings slot comes from the new product.
-    artifacts = tuple(value for value in node.configuration_artifacts
-        if value.artifact_id != "application-settings") + tuple(
-        value for value in contract.configuration_artifacts if value.artifact_id == "application-settings")
+    # An image update carries all selected configuration and exact versions.
     return graph.update_node(replace(node, metadata=selected_metadata(document),
-        secret_deliveries=contract.secret_deliveries, configuration_artifacts=artifacts,
+        secret_deliveries=contract.secret_deliveries,
         secret_selections=author_secret_selections(contract.secret_deliveries, previous=node.secret_selections)))
+
+
+def application_content_graph(graph):
+    node = graph.node("api")
+    assert sum(value.artifact_id == "application-settings" for value in node.configuration_artifacts) == 1
+    return graph.update_node(replace(node, configuration_artifacts=tuple(
+        replace(value, content='{"revision":2}') if value.artifact_id == "application-settings" else value
+        for value in node.configuration_artifacts)))
 
 
 class ObservedMetadataReader:
@@ -52,9 +56,59 @@ class PublicSecretChoices:
     def effect_counts(self):
         return len(self.runtime.completed), len(self.runtime.resources.record["intents"])
 
-    async def call(self, route, payload=None):
+    async def call(self, route, payload=None, **coordinates):
         return await asyncio.to_thread(self.transport.call, route,
-            path_parameters={"workspace_id": self.workspace}, payload=payload or {}, credential_role="operator")
+            path_parameters={"workspace_id": self.workspace, **coordinates},
+            payload=payload or {}, credential_role="operator")
+
+    async def selected_baseline(self, graph, version, pending):
+        """Revise the genuine pending draft after public exact-version selection."""
+        assert pending.expected_head_revision == 1
+        calls = self.effect_counts()
+        path = {"draft_id": pending.draft_id, "revision": "1"}
+        first = await self.call("read.desired-topology-draft-revision", **path)
+        original = await self.call("read.receiver-authoring-context", {"pending_draft": {
+            "draft_id": pending.draft_id, "expected_head_revision": 1}})
+        selected = await self.select(graph, version)
+        session = await self.call("command.operation-session.start", {
+            "workspace_id": self.workspace, "title": "Select consumer-bearing initial draft",
+            "metadata": {}, "idempotency_key": str(uuid4())})
+        names = ("current_graph_id", "current_realized_projection_id", "desired_graph_id",
+            "desired_realized_projection_id", "desired_graph_revision")
+        fresh = (await self.call("read.workspace"))["workspace"]
+        second = await self.call("command.desired-topology-draft.revise", {
+            "session_id": session["session_id"], "graph": DEFAULT_GRAPH_CODEC.encode(selected),
+            "expected_head_revision": pending.expected_head_revision,
+            "receiver_lifecycle": {key: fresh[key] for key in names},
+            "idempotency_key": str(uuid4())}, draft_id=pending.draft_id)
+        assert second["draft_id"] == pending.draft_id and second["revision"] == 2
+        assert second["graph_id"] != first["graph_id"]
+        fresh = (await self.call("read.workspace"))["workspace"]
+        selection = await self.call("command.desired-topology-draft.select", {
+            "session_id": session["session_id"], "revision": second["revision"],
+            **{"expected_" + key: fresh[key] for key in names[2:]},
+            "receiver_lifecycle": {key: fresh[key] for key in names},
+            "idempotency_key": str(uuid4())}, draft_id=pending.draft_id)
+        assert all(selection[key] == second[key] for key in ("workspace_id", "draft_id", "revision", "graph_id"))
+        context = await self.call("read.receiver-authoring-context", {"pending_draft": {
+            "draft_id": pending.draft_id, "expected_head_revision": second["revision"]}})
+        assert context["current"] == original["current"]
+        assert context["pending_draft"]["graph_id"] == second["graph_id"]
+        after = (await self.call("read.workspace"))["workspace"]
+        assert after["desired_graph_id"] == second["graph_id"]
+        assert after["desired_realized_projection_id"] == selection["desired_realized_projection_id"]
+        assert after["desired_graph_revision"] == selection["desired_graph_revision"]
+        for before, current in zip(original["pending_draft"]["receivers"],
+                context["pending_draft"]["receivers"], strict=True):
+            assert current == {**before, "binding": {**before["binding"],
+                "graph_id": second["graph_id"],
+                "realized_projection_id": context["pending_draft"]["realized_projection_id"]}}
+            assert current["origin"]["introducing_graph_id"] == first["graph_id"]
+            assert current["origin"]["introducing_draft_id"] == pending.draft_id
+        assert await self.call("read.desired-topology-draft-revision", **path) == first
+        assert self.effect_counts() == calls and not self.transport.preparations
+        print("selected consumer: public draft revision 1 preserved; actual revision 2 selected", flush=True)
+        return selected, replace(pending, expected_head_revision=second["revision"])
 
     async def register(self):
         from receiver_acceptance_operations import utc_now
@@ -127,8 +181,9 @@ def require_selected_recipient(record, version, prior_id, current_id):
     receipt = secret_installation_receipt_for_result(record.request, record.result)
     if receipt is None:
         raise FixtureBoundaryFailure("actual recipient receipt is absent")
-    assert receipt.disposition.value == "replaced"
-    assert receipt.prior_realization_fingerprint == _container_incarnation_fingerprint(prior_id)
+    assert receipt.disposition.value == ("created" if prior_id is None else "replaced")
+    assert receipt.prior_realization_fingerprint == (
+        None if prior_id is None else _container_incarnation_fingerprint(prior_id))
     assert receipt.current_realization_fingerprint == _container_incarnation_fingerprint(current_id)
     # No fixture plaintext or plaintext digest is returned by this assertion.
     json.dumps(receipt.descriptor())

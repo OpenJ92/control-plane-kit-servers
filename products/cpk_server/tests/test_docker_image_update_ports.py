@@ -45,7 +45,7 @@ from control_plane_kit_core.runtime_authority import RuntimeAuthorityReference
 from control_plane_kit_servers_cpk_server.client import ClientProfile, TopologyClient
 
 from docker_image_update_material import DockerImageMaterial
-from docker_image_update_selection import consumer_graph
+from docker_image_update_selection import consumer_graph, application_content_graph
 from docker_image_update_placement import OwnedControllerPlacement, SyntheticConnectorConnection, PREFIX
 from docker_image_update_ports import (
     AttachedPublicTransport, CompletedRuntimeCall, FixtureBoundaryFailure,
@@ -81,12 +81,14 @@ def events(record=None, *, generation=1, worker="worker-a"):
 
 def replacement_record():
     document = DockerImageMaterial("workspace-a").successor
+    delivery, = document.product.runtime_contract.secret_deliveries
     refs = tuple(ConfigurationInstanceRef("allocation-" + str(index), "workspace-a", "docker", "api",
         value.artifact_id, value.target_path, value.media_type, value.file_mode, value.content_digest)
         for index, value in enumerate(document.product.runtime_contract.configuration_artifacts))
     request = replace(completed().request, kind=RuntimeEffectKind.CONFIGURATION_ACTIVITY_V1,
         operation=ReconcileNode(NodeTarget("api")), configuration_instances=ConfigurationInstanceSelection(refs),
-        products=(RuntimeProductMaterial("api", "docker", ProductReference.from_document(document), document.product),))
+        products=(RuntimeProductMaterial("api", "docker", ProductReference.from_document(document), document.product,
+            secret_selections=(SecretVersionSelection(delivery.reference, delivery.intent, "version-a"),)),))
     context = configuration_invocation_correlation_for_request(request)
     receipt = ConfigurationInstallationReceipt(context.request_fingerprint,
         configuration_invocation_selection_fingerprint(context.selection), ConfigurationInstallationDisposition.REPLACED,
@@ -107,19 +109,30 @@ def secret_file_request():
 
 
 class DockerImageBoundaryTests(unittest.TestCase):
-    def test_consumer_fixture_authors_new_use_and_retains_compatible_exact_choice(self):
+    def test_consumer_fixture_declares_initial_use_and_separates_image_and_content(self):
         material = DockerImageMaterial("workspace-a")
-        introduced = consumer_graph(material.a, material.secret_product)
+        introduced = material.a
         pending, = introduced.node("api").secret_selections
         self.assertIs(type(pending), UnselectedSecretUse)
+        self.assertEqual(introduced.node("api").secret_deliveries,
+            material.documents["api"].product.runtime_contract.secret_deliveries)
+        self.assertIn("application-settings", {value.artifact_id
+            for value in introduced.node("api").configuration_artifacts})
         selected = SecretVersionSelection(pending.reference, pending.intent, "version-a")
         introduced = introduced.update_node(replace(introduced.node("api"), secret_selections=(selected,)))
-        successor = consumer_graph(introduced, material.secret_successor)
+        successor = consumer_graph(introduced, material.successor)
         self.assertEqual(successor.node("api").secret_selections, (selected,))
         self.assertEqual(successor.node("api").secret_deliveries, introduced.node("api").secret_deliveries)
         self.assertNotEqual(successor.node("api").metadata, introduced.node("api").metadata)
-        self.assertNotEqual(successor.node("api").configuration_artifacts,
+        self.assertEqual(successor.node("api").configuration_artifacts,
             introduced.node("api").configuration_artifacts)
+        self.assertEqual(successor.update_node(replace(successor.node("api"),
+            metadata=introduced.node("api").metadata)), introduced)
+        content = application_content_graph(successor)
+        self.assertNotEqual(content.node("api").configuration_artifacts,
+            successor.node("api").configuration_artifacts)
+        self.assertEqual(content.update_node(replace(content.node("api"),
+            configuration_artifacts=successor.node("api").configuration_artifacts)), successor)
 
     def test_failure_evidence_retains_bounded_public_classifications_not_payloads(self):
         result = SimpleNamespace(run_id="run-a", plan_id="plan-a", status="attention-required",

@@ -4,7 +4,6 @@ Only ingress allocation/native connection/public routing are synthetic. Docker,
 signing provider, SDK health sockets, operation history and business bodies run.
 """
 import asyncio
-from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -30,7 +29,7 @@ from control_plane_kit_servers_cpk_server.client.authoring import AuthoredDesire
 from control_plane_kit_servers_cpk_server.client.transport import PublicHttpTransport
 from control_plane_kit_servers_cpk_server.managed_health import ManagedHealthBootstrap
 
-from docker_image_update_material import DockerImageMaterial, IMAGES, selected_metadata
+from docker_image_update_material import DockerImageMaterial, IMAGES
 from docker_image_update_placement import (
     OwnedControllerPlacement, SyntheticConnectorConnection, owned_resources, dispose_fixture,
 )
@@ -41,7 +40,8 @@ from docker_image_update_ports import (
 )
 from docker_image_update_provider import SigningProviderProcess, SyntheticIngressAllocation
 from docker_image_update_selection import (
-    PublicSecretChoices, ObservedMetadataReader, consumer_graph, require_selected_recipient,
+    PublicSecretChoices, ObservedMetadataReader, consumer_graph, application_content_graph,
+    require_selected_recipient,
 )
 from live_receiver_acceptance import verify_provenance
 from live_unlisted_receiver import select_pending_baseline, register_surface_verifier
@@ -135,8 +135,7 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
                 RuntimeAuthorityReference(row["authority_ref"]), RuntimeKind.DOCKER,
                 LocalDockerSocketAuthority(), row["admitted_by"], row["admitted_at"])
             assert registered_authority.descriptor() == row
-            for name, document in (("peer", material.documents["api-y"]), ("successor", material.successor),
-                    ("secret", material.secret_product), ("secret-successor", material.secret_successor)):
+            for name, document in (("peer", material.documents["api-y"]), ("successor", material.successor)):
                 result = await registration.register("command.product.import", {
                     "descriptor_document": json.loads(document.content), "imported_at": utc_now(),
                     "idempotency_key": "image-import-" + name})
@@ -149,6 +148,7 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
             baseline = await select_pending_baseline(transport, material, workspace_id=workspace,
                 scopes=(ReceiverScope("gateway", "control"), ReceiverScope("api", "internal"),
                     ReceiverScope("api-y", "internal")))
+            initial_graph, baseline = await choices.selected_baseline(material.a, versions[0].version_id, baseline)
             client = TopologyClient(host.profile, transport=transport)
 
             async def read(route, **coordinates):
@@ -181,7 +181,7 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
                 assert result.status in {"converged", "no-changes"}, result.descriptor()
                 return result, source
 
-            initial, initial_source = await apply(material.a, "initial", pending=baseline)
+            initial, initial_source = await apply(initial_graph, "initial", pending=baseline)
             original_history = await history(initial)
             original_receivers = (await read("read.receiver-authoring-context"))["current"]
             initial_nodes = dict(placement.nodes)
@@ -191,6 +191,14 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
             prepared = client.journal.read(initial.operation_ref)
             authored = DEFAULT_GRAPH_CODEC.decode(json.loads((client.journal.root /
                 prepared["preparation"]["name"]).read_bytes()))
+            assert authored.node("api").secret_selections == initial_graph.node("api").secret_selections
+            started, = [value for value in runtime.completed
+                if type(value.request.operation).__name__ == "StartNode"
+                and value.request.operation.target.node_id == "api"]
+            require_selected_recipient(started, versions[0].version_id, None, initial_nodes["api"])
+            arguments, response = transport.committed[started.request.effect_id]
+            require_committed_call(started, response, arguments, original_history[1],
+                bootstrap.worker.identity.subject_id)
 
             def installed_configuration(name, graph=None):
                 container = engine.containers.get(placement.nodes[name])
@@ -206,42 +214,11 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
 
             initial_configuration = {name: installed_configuration(name) for name in initial_nodes}
 
-            # The original pending receiver draft is already deployed. Fresh
-            # public selection now edits desired material without relabeling it.
-            secret_graph = consumer_graph(authored, material.secret_product)
             for unavailable in ("missing-version", versions[2].version_id):
-                await choices.select(secret_graph, unavailable, refused=True)
-            selected_runs = []
-            for label, version in (("secret-introduction", versions[0]), ("version-only", versions[1])):
-                selected = await choices.select(secret_graph, version.version_id)
-                prior = placement.nodes["api"]
-                before = len(runtime.completed)
-                result, source = await apply(selected, label)
-                changed = [value for value in runtime.completed[before:]
-                    if type(value.request.operation).__name__ == "ReconcileNode"]
-                assert len(changed) == 1 and changed[0].request.operation.target.node_id == "api"
-                current = placement.nodes["api"]
-                assert prior != current and not engine.containers.list(all=True, filters={"id": prior})
-                require_selected_recipient(changed[0], version.version_id, prior, current)
-                committed_history = await history(result)
-                arguments, response = transport.committed[changed[0].request.effect_id]
-                require_committed_call(changed[0], response, arguments, committed_history[1],
-                    bootstrap.worker.identity.subject_id)
-                selected_runs.append((result, committed_history))
-                prepared = client.journal.read(result.operation_ref)
-                secret_graph = DEFAULT_GRAPH_CODEC.decode(json.loads((client.journal.root /
-                    prepared["preparation"]["name"]).read_bytes()))
-                assert secret_graph.node("api").secret_selections == selected.node("api").secret_selections
-                assert all(placement.nodes[name] == initial_nodes[name]
-                    for name in ("gateway", "api-y", "connector"))
-            authored = secret_graph
-            initial_nodes["api"] = placement.nodes["api"]
-            initial_configuration = {name: installed_configuration(name) for name in initial_nodes}
-            await choices.replay()
+                await choices.select(authored, unavailable, refused=True)
 
-            async def business(name):
-                inspected = placement.inspect_node(name,
-                    image_role="hello_b" if name == "api" and placement.nodes[name] != initial_nodes[name] else None)
+            async def business(name, *, image_role=None):
+                inspected = placement.inspect_node(name, image_role=image_role)
                 member, = [value for value in inspected.network_attachments if value.network_id == placement.network_id]
                 async with httpx.AsyncClient(timeout=3, trust_env=False) as socket:
                     async with socket.stream("GET", "http://" + member.private_address + ":8000/") as response:
@@ -255,46 +232,60 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
             attribution = b"Served by Control Plane Kit Hello."
             assert attribution not in await business("api")
             peer_body = await business("api-y")
-            replacement_graph = consumer_graph(authored, material.secret_successor)
-            before = len(runtime.completed)
-            updated, updated_source = await apply(replacement_graph, "successor")
-            replacements = [value for value in runtime.completed[before:]
-                if type(value.request.operation).__name__ == "ReconcileNode"]
-            assert len(replacements) == 1 and replacements[0].request.operation.target.node_id == "api"
-            replaced = engine.containers.get(replacements[0].result.evidence["container"])
-            assert placement.nodes["api"] == replaced.id
-            placement.inspect_node("api", image_role="hello_b")
-            assert replaced.id != initial_nodes["api"]
-            assert not engine.containers.list(all=True, filters={"id": initial_nodes["api"]})
-            assert attribution in await business("api")
-            assert await business("api-y") == peer_body
-            assert all(placement.nodes[name] == initial_nodes[name] for name in ("gateway", "api-y", "connector"))
-            # The named application artifact changes; receiver artifacts and
-            # unchanged exact secret selection survive the image/config edit.
-            revised_configuration = {name: installed_configuration(name, replacement_graph)
-                for name in initial_nodes}
-            for name in initial_nodes:
-                expected_configuration = dict(initial_configuration[name])
-                if name == "api":
-                    artifact, = [value for value in replacement_graph.node(name).configuration_artifacts
-                        if value.artifact_id == "application-settings"]
-                    assert artifact.content_digest != expected_configuration[artifact.artifact_id]
-                    expected_configuration[artifact.artifact_id] = artifact.content_digest
-                assert revised_configuration[name] == expected_configuration
-            require_selected_recipient(replacements[0], versions[1].version_id, initial_nodes["api"], replaced.id)
-            current_receivers = (await read("read.receiver-authoring-context"))["current"]
-            expected = [{**row, "binding": {**row["binding"], "graph_id": current_receivers["graph_id"],
-                "realized_projection_id": current_receivers["realized_projection_id"]}}
-                for row in original_receivers["receivers"]]
-            assert current_receivers["receivers"] == expected
-            assert await history(initial) == original_history
-            update_history = await history(updated)
-            replacement = replacements[0]
-            assert replacement.request.source.run_id.value == updated.run_id
-            receipt = require_replacement_receipt(replacement, initial_nodes["api"], replaced.id)
-            arguments, response = transport.committed[replacement.request.effect_id]
-            require_committed_call(replacement, response, arguments, update_history[1],
-                bootstrap.worker.identity.subject_id)
+            selected_runs = []
+            for label in ("version-only", "image-only", "content-only"):
+                if label == "version-only":
+                    replacement_graph = await choices.select(authored, versions[1].version_id)
+                elif label == "image-only":
+                    replacement_graph = consumer_graph(authored, material.successor)
+                else:
+                    replacement_graph = application_content_graph(authored)
+                prior = placement.nodes["api"]
+                before = len(runtime.completed)
+                updated, updated_source = await apply(replacement_graph, label)
+                replacements = [value for value in runtime.completed[before:]
+                    if type(value.request.operation).__name__ == "ReconcileNode"]
+                assert len(replacements) == 1 and replacements[0].request.operation.target.node_id == "api"
+                replacement = replacements[0]
+                replaced = engine.containers.get(replacement.result.evidence["container"])
+                assert placement.nodes["api"] == replaced.id and replaced.id != prior
+                assert not engine.containers.list(all=True, filters={"id": prior})
+                role = "hello_a" if label == "version-only" else "hello_b"
+                assert (attribution in await business("api", image_role=role)) == (role == "hello_b")
+                assert await business("api-y") == peer_body
+                assert all(placement.nodes[name] == initial_nodes[name] for name in ("gateway", "api-y", "connector"))
+                revised_configuration = {name: installed_configuration(name, replacement_graph)
+                    for name in initial_nodes}
+                for name in initial_nodes:
+                    expected_configuration = dict(initial_configuration[name])
+                    if label == "content-only" and name == "api":
+                        artifact, = [value for value in replacement_graph.node(name).configuration_artifacts
+                            if value.artifact_id == "application-settings"]
+                        assert artifact.content_digest != expected_configuration[artifact.artifact_id]
+                        expected_configuration[artifact.artifact_id] = artifact.content_digest
+                    assert revised_configuration[name] == expected_configuration
+                require_selected_recipient(replacement, versions[1].version_id, prior, replaced.id)
+                receipt = require_replacement_receipt(replacement, prior, replaced.id)
+                current_receivers = (await read("read.receiver-authoring-context"))["current"]
+                expected = [{**row, "binding": {**row["binding"], "graph_id": current_receivers["graph_id"],
+                    "realized_projection_id": current_receivers["realized_projection_id"]}}
+                    for row in original_receivers["receivers"]]
+                assert current_receivers["receivers"] == expected
+                assert await history(initial) == original_history
+                update_history = await history(updated)
+                assert replacement.request.source.run_id.value == updated.run_id
+                arguments, response = transport.committed[replacement.request.effect_id]
+                require_committed_call(replacement, response, arguments, update_history[1],
+                    bootstrap.worker.identity.subject_id)
+                for historical, expected_history in selected_runs:
+                    assert await history(historical) == expected_history
+                selected_runs.append((updated, update_history))
+                prepared = client.journal.read(updated.operation_ref)
+                authored = DEFAULT_GRAPH_CODEC.decode(json.loads((client.journal.root /
+                    prepared["preparation"]["name"]).read_bytes()))
+                assert authored.node("api").secret_selections == replacement_graph.node("api").secret_selections
+                print(json.dumps({"selected_consumer_update": label, "run_id": updated.run_id,
+                    "receipt": receipt.disposition.value}), flush=True)
             def no_identity():
                 raise FixtureBoundaryFailure("retained operation regenerated receiver identity")
             restarted = TopologyClient(host.profile, transport=transport, receiver_identity_factory=no_identity)
@@ -317,7 +308,7 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
                     "execution": replay.execution, "advancement": replay.advancement}), flush=True)
             assert await history(initial) == original_history and await history(updated) == update_history
             await choices.replay()
-            for historical, expected_history in selected_runs:
+            for historical, expected_history in selected_runs[:-1]:
                 replay = await asyncio.to_thread(restarted.apply, historical.operation_ref,
                     execute_plan=historical.plan_id)
                 assert (replay.operation_ref, replay.plan_id, replay.run_id) == (
@@ -339,7 +330,8 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
             containers, networks, volumes = owned_resources(engine, workspace)
             assert not containers and not networks and not ingress.allocations
             print(json.dumps({"docker_public_image_update": "passed", "workspace": workspace,
-                "selected_secret_version_only": "passed", "selected_secret_image_configuration": "passed",
+                "selected_secret_version_only": "passed", "selected_secret_image_only": "passed",
+                "selected_secret_content_only": "passed",
                 "consumer_delivery": "environment", "unavailable_choices": "refused-before-dispatch",
                 "initial_run": initial.run_id, "replacement_run": updated.run_id,
                 "old_container": initial_nodes["api"], "new_container": replaced.id,

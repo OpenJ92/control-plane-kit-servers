@@ -1,5 +1,11 @@
 Source: [test_docker_image_update_ports.py](../../../../../products/cpk_server/tests/test_docker_image_update_ports.py).
 
+The #252 authored-material test now requires the delivery and application slot
+in the initial graph, an explicit unselected use, an image successor preserving
+all other graph fields, and a subsequent content edit preserving the latest
+image/product and exact secret choice. Whole-graph restoration checks protect
+fixture isolation; the closed managed-update admission matrix stays in Core.
+
 Proportional socket-free fixture laws protect actual result pass-through,
 completed-event correlation (including next-activity distinction), journaled
 success after an attachment fault, no subsequent HTTP mutation, exact ownership

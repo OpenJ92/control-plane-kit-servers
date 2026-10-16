@@ -1,21 +1,19 @@
 # Selected secret composition — #252
 
-Current checkpoint implements the typed metadata bridge, shared-factory port,
-and maintained witness extensions. Post-adoption execution and complete
-installed-dependency validation remain pending. It does not claim final #252 or
-grandparent acceptance. Kepler passed the bounded bridge/adoption source at
-`c3740e7dfc13f1a87d44af12e71617341e175520`; witness review remains pending.
+Current checkpoint adopts the accepted #1991 managed selected-consumer owners
+and corrects the maintained public witness. Execution of this Servers checkpoint
+remains pending; dependency-package green is not Servers or grandparent acceptance.
 
-The accepted dependency tuple is deliberately package-specific: Core
-`87e231c661879e44816ba71ff9320c040c868d60`, Operations
-`2bd0211798c55addab1fd3135ee72371791ff566`, Interpreters
-`0ef3c98f16382a56e4858aa822168978481b34de`, SDK
-`ad0582937d7e41f1e7a41295fa1de58c2ce4cba2`, Secrets
-`b3e6d21f1f53c3ad2fe9ec33900ddde0611e2b5a`. Core's complete subtree at both
-CPK commits is `a724448b4a63e3c3ba345333df2351cf0b247b5e`; #1989 changed only
-Operations. The existing Core URL matches all accepted external direct pins,
-while Operations' version requirement admits it. North and Kepler independently
-confirmed this split; no resolver override or pin relaxation is used.
+The coherent accepted tuple is Core and Operations
+`5b66dcac4bf2cf76219efaf05fa5ff06588bd16a`, Interpreters
+`f689773e2b19a56543dae9830a2b1c059bbb10a4`, SDK
+`d4cbbb16a4ce47bae0b791adab5de8940355ea99`, and Secrets
+`56e6d3211a847efd98434ba2dd4093d29bf4b375`. SDK #56, Secrets #54 and
+Interpreters #201 aligned their own direct dependencies and passed their owning
+gates before acceptance. Servers selects these actual merges in its manifest,
+coordinate document, all six affected product Dockerfiles and explicit installed
+provenance assertions. Extras and subdirectories are unchanged; no resolver
+override or split-pin equivalence is assumed.
 
 Tests-only checkpoint `a4f5af4` ran through unchanged `./test.sh` on old pins.
 Support26/root48/Cloudflare19/gateway59 passed. Cpk-server389 methods produced
@@ -33,12 +31,19 @@ pending draft/revision receiver provenance and original retry coordinates remain
 unchanged. A demonstrated inability to preserve those laws is a stop, not license
 for private authoring, a new frontend API or another workflow/state machine.
 
-The unchanged pending baseline deploys first. The witness then imports two
-fixture product variants, publicly admits one application reference/provider,
-and explicitly selects an environment-delivered version for the existing api
-node. A second selection changes only the version. A final product edit changes
-the image and one independent application configuration artifact while retaining
-the exact selected version and receiver configuration. Genuine runtime receipts,
+The initial registered api product and authored graph declare the environment
+delivery and application-settings slot from the outset. Public draft revision 1
+is unselected; authenticated desired-graph.set selects an existing version before
+the same draft is genuinely revised and selected at revision 2. The public
+revision-1 read remains immutable, introducing receiver origins remain exact,
+and the returned revision-2 continuation drives initial client preparation.
+Only our authored input is codec-normalized; redacted reads are never source.
+
+After initial deployment, three separate public plan/approval/apply operations
+change the version, the image, then existing application content. Every operation
+starts from the latest client-authored graph. Image-only preserves the full
+runtime contract and configuration; content-only preserves the selected product,
+image and exact secret version. Genuine initial and replacement runtime receipts,
 actual container identity/old absence, public committed events, original action
 replay and client history are asserted; named-user Hello is not file-delivery
 coverage. The numeric-file fixture separately checks full selected volume identity,
