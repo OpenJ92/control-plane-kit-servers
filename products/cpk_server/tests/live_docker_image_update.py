@@ -40,7 +40,9 @@ from docker_image_update_ports import (
     require_committed_call, require_replacement_receipt, emit_failed_apply_evidence,
 )
 from docker_image_update_provider import SigningProviderProcess, SyntheticIngressAllocation
-from docker_image_update_selection import PublicSecretChoices, consumer_graph, require_selected_recipient
+from docker_image_update_selection import (
+    PublicSecretChoices, ObservedMetadataReader, consumer_graph, require_selected_recipient,
+)
 from live_receiver_acceptance import verify_provenance
 from live_unlisted_receiver import select_pending_baseline, register_surface_verifier
 from receiver_acceptance_operations import (
@@ -84,6 +86,7 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
     workspace = material.workspace_id
     runtime = RecordedDockerRuntime(DockerRuntimeInterpreter(sdk,
         authorized_secret_resolver=provider.composition.authorized_resolver), resources=placement)
+    metadata = ObservedMetadataReader(provider.composition.metadata_reader)
     ingress = SyntheticIngressAllocation(provider.composition.secret_custodian, workspace)
     native = SyntheticConnectorConnection(placement, ingress, material)
     registered_authority = None
@@ -116,7 +119,7 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
                 exact_version_execute=True, exact_version_execute_with_authority=True)},
                 {IngressAuthorityProviderKind.CLOUDFLARE: ingress}, health, material.decoders,
                 DockerRuntimeEffectObserver(sdk, authorized_secret_resolver=provider.composition.authorized_resolver),
-                secret_metadata_reader=provider.composition.metadata_reader),
+                secret_metadata_reader=metadata),
             id_factory=lambda: "image-" + uuid4().hex)
         bootstrap = PublicOperationsDriver(factory, workspace_id=workspace)
         await bootstrap.create_workspace()
@@ -141,7 +144,7 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
             await register_surface_verifier(transport, material, workspace_id=workspace)
             await asyncio.to_thread(provider.seed, material)
             versions = await asyncio.to_thread(provider.seed_application_versions)
-            choices = PublicSecretChoices(transport, workspace, runtime)
+            choices = PublicSecretChoices(transport, workspace, runtime, metadata)
             await choices.register()
             baseline = await select_pending_baseline(transport, material, workspace_id=workspace,
                 scopes=(ReceiverScope("gateway", "control"), ReceiverScope("api", "internal"),
@@ -296,6 +299,7 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
                 raise FixtureBoundaryFailure("retained operation regenerated receiver identity")
             restarted = TopologyClient(host.profile, transport=transport, receiver_identity_factory=no_identity)
             effect_count = len(runtime.completed)
+            dispatch_count = len(placement.record["intents"])
             for label, result, expected in (
                     ("historical-initial", initial, ("attention-required", "succeeded", "unverified")),
                     ("current-update", updated, ("converged", "succeeded", "advanced"))):
@@ -308,6 +312,7 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
                 assert actual == expected, replay.descriptor()
                 assert identity == (result.operation_ref, result.plan_id, result.run_id), replay.descriptor()
                 assert len(runtime.completed) == effect_count
+                assert len(placement.record["intents"]) == dispatch_count
                 print(json.dumps({"docker_image_replay": label, "status": replay.status,
                     "execution": replay.execution, "advancement": replay.advancement}), flush=True)
             assert await history(initial) == original_history and await history(updated) == update_history
@@ -320,11 +325,13 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
                 assert replay.execution == "succeeded" and replay.advancement == "unverified"
                 assert await history(historical) == expected_history
                 assert len(runtime.completed) == effect_count
+                assert len(placement.record["intents"]) == dispatch_count
             noop = await asyncio.to_thread(restarted.plan, AuthoredDesiredGraph(updated_source))
             assert noop.status == "no-changes"
             no_execution = await asyncio.to_thread(restarted.apply, noop.operation_ref, execute_plan=noop.plan_id)
             assert no_execution.status == "no-changes"
             assert len(runtime.completed) == effect_count
+            assert len(placement.record["intents"]) == dispatch_count
             assert await history(initial) == original_history and await history(updated) == update_history
             assert native.reads and len(ingress.allocations) == 1
             placement.detach()

@@ -54,6 +54,25 @@ Cleanup retains the owning gate's exact IDs, independent ownership checks,
 detachment checks and non-force volume deletion. No broad discovery-driven
 deletion is added. Provider plaintext is private and no secret digest is emitted.
 
+The first post-adoption gate at `73689a1` installed the complete accepted tuple
+and passed 26 support checks, then stopped at root48/F1 before product/runtime
+tests. The retained application script changed deliveries without rebuilding
+Core's now-required total selection values. Both that script and the new consumer
+fixture now call canonical `author_secret_selections` in the same replacement:
+new uses remain explicitly unselected and compatible choices carry forward. North
+released this narrow adoption; Kepler confirmed it does not establish an owner
+gap. The old script's fake-route convergence test is orchestration-only; this
+change does not add fresh explicit-version preparation to its live workflow.
+
+Kepler identified an evidence weakness in catch-all client error assertions.
+The negative fixture now observes the actual forwarded metadata bridge refusal
+for exact requested coordinates, and verifies both completed effects and the
+pre-dispatch intent count remain unchanged. Original action replay requires no
+new metadata observation. Public graph descriptors are redacted projections:
+the fixture retains its original declared choice after checking fresh public
+coordinates, while the actual later request/receipt proves admission and carry-
+forward. No private graph read or reconstructed historical state is used.
+
 No new provider-live, image-publication, credential, original tunnel/DNS/token or
 shared-resource cleanup authority follows from this composition. Current provider
 observations do not establish installed material. Runtime verification and exact

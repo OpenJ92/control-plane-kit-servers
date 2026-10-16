@@ -5,7 +5,9 @@ import json
 from uuid import uuid4
 
 from control_plane_kit_core.secret_installation import secret_installation_receipt_for_result
+from control_plane_kit_core.secret_selections import author_secret_selections, SecretVersionSelection
 from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC
+from control_plane_kit_operations.graph_authoring import GraphAuthoringError
 from control_plane_kit_interpreters.docker.configuration import _container_incarnation_fingerprint
 from control_plane_kit_servers_cpk_server.client.transport import ClientTransportError
 
@@ -23,13 +25,33 @@ def consumer_graph(graph, document):
         if value.artifact_id != "application-settings") + tuple(
         value for value in contract.configuration_artifacts if value.artifact_id == "application-settings")
     return graph.update_node(replace(node, metadata=selected_metadata(document),
-        secret_deliveries=contract.secret_deliveries, configuration_artifacts=artifacts))
+        secret_deliveries=contract.secret_deliveries, configuration_artifacts=artifacts,
+        secret_selections=author_secret_selections(contract.secret_deliveries, previous=node.secret_selections)))
+
+
+class ObservedMetadataReader:
+    """Forward actual metadata IO; retain only requested coordinates and outcome."""
+    def __init__(self, reader):
+        self.reader, self.observations = reader, []
+
+    def read_version(self, request):
+        try:
+            result = self.reader.read_version(request)
+        except GraphAuthoringError:
+            self.observations.append((request.workspace_id, request.selection, "refused"))
+            raise
+        self.observations.append((request.workspace_id, request.selection, "returned"))
+        return result
 
 
 class PublicSecretChoices:
-    def __init__(self, transport, workspace, runtime):
+    def __init__(self, transport, workspace, runtime, metadata):
         self.transport, self.workspace, self.runtime = transport, workspace, runtime
+        self.metadata = metadata
         self.accepted = []
+
+    def effect_counts(self):
+        return len(self.runtime.completed), len(self.runtime.resources.record["intents"])
 
     async def call(self, route, payload=None):
         return await asyncio.to_thread(self.transport.call, route,
@@ -62,7 +84,9 @@ class PublicSecretChoices:
                 "intent": APPLICATION_INTENT.value, "version_id": version}]},
             "receiver_lifecycle": {key: before[key] for key in names},
             **{"expected_" + key: before[key] for key in names[2:]}, "idempotency_key": str(uuid4())}
-        calls = len(self.runtime.completed)
+        calls = self.effect_counts()
+        observations = len(self.metadata.observations)
+        selection = SecretVersionSelection(APPLICATION_REFERENCE, APPLICATION_INTENT, version)
         try:
             response = await self.call("command.desired-graph.set", payload)
         except ClientTransportError:
@@ -70,22 +94,30 @@ class PublicSecretChoices:
                 raise
             after = (await self.call("read.workspace"))["workspace"]
             assert all(after[key] == before[key] for key in names)
-            assert len(self.runtime.completed) == calls
+            assert self.effect_counts() == calls
+            assert self.metadata.observations[observations:] == [(self.workspace, selection, "refused")]
             return None
         assert not refused, "unavailable explicit version was accepted"
+        assert self.metadata.observations[observations:] == [(self.workspace, selection, "returned")]
         self.accepted.append((payload, response))
         current = await self.call("read.desired-graph")
-        selected = DEFAULT_GRAPH_CODEC.decode(current["graph_descriptor"])
-        selection, = selected.node("api").secret_selections
-        assert selection.version_id == version and selection.reference == APPLICATION_REFERENCE
-        assert len(self.runtime.completed) == calls
+        assert current["graph_id"] == response["desired_graph_id"]
+        # Public descriptors are redacted projections, not round-trip source.
+        # Retain our declared input choice; actual subsequent requests/receipts
+        # must independently prove that the public owner admitted and carried it.
+        node = graph.node("api")
+        selected = graph.update_node(replace(node, secret_selections=author_secret_selections(
+            node.secret_deliveries, previous=node.secret_selections, explicit=(selection,))))
+        assert self.effect_counts() == calls
         return selected
 
     async def replay(self):
-        calls = len(self.runtime.completed)
+        calls = self.effect_counts()
+        observations = len(self.metadata.observations)
         for payload, expected in self.accepted:
             assert await self.call("command.desired-graph.set", payload) == expected
-        assert len(self.runtime.completed) == calls
+        assert self.effect_counts() == calls
+        assert len(self.metadata.observations) == observations
 
 
 def require_selected_recipient(record, version, prior_id, current_id):
