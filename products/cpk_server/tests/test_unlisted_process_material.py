@@ -201,7 +201,7 @@ class StartDiagnosticTests(unittest.TestCase):
                 DiagnosticApplicationBoundary._diagnose(diagnostic, error, "command.deployment.prepare")
         result = json.loads(output.getvalue())
         self.assertEqual(result["exception_chain"][0]["kind"], "CpkServerApplicationError")
-        self.assertEqual(result["exception_chain"][1]["kind"], "GraphDescriptorError")
+        self.assertEqual(result["exception_chain"][1]["kind"], "MalformedGraphDescriptor")
         self.assertTrue(result["exception_chain"][1]["frames"])
         self.assertNotIn("PRIVATE", output.getvalue())
         self.assertFalse(result["chain_truncated"])

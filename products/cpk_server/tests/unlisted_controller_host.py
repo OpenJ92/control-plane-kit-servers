@@ -88,7 +88,7 @@ def _exception_source(error):
         trace = trace.tb_next
     kind = type(error).__name__
     return {"kind": kind if kind in {"InvalidOperationCommand", "InvalidEffectRecoveryContract",
-        "CpkServerApplicationError", "GraphDescriptorError", "InvalidDeploymentProgramContract",
+        "CpkServerApplicationError", "GraphDescriptorError", "MalformedGraphDescriptor", "InvalidDeploymentProgramContract",
         "DesiredGraphCommandError", "GraphAuthoringError", "TypeError", "ValueError"} else "other",
         "frames": frames}
 
