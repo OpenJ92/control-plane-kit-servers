@@ -13,7 +13,6 @@ from control_plane_kit_servers_cpk_server.client.transport import ClientTranspor
 
 from docker_image_update_material import APPLICATION_REFERENCE, APPLICATION_INTENT, selected_metadata
 from docker_image_update_ports import FixtureBoundaryFailure
-from receiver_acceptance_operations import utc_now
 
 
 def consumer_graph(graph, document):
@@ -58,6 +57,7 @@ class PublicSecretChoices:
             path_parameters={"workspace_id": self.workspace}, payload=payload or {}, credential_role="operator")
 
     async def register(self):
+        from receiver_acceptance_operations import utc_now
         provider = await self.call("command.secret-provider.register", {
             "provider_id": "application-secrets", "display_name": "Owned application fixture",
             "provider_kind": "control-plane-kit-secrets", "endpoint_reference": "application-secrets",

@@ -47,6 +47,7 @@ CONCRETE_PROVIDER_IMPORT_ROOTS = {
     "kubernetes",
 }
 APPROVED_PROVIDER_FUNCTIONS = {
+    "_SecretVersionMetadataBridge.read_version",
     "_GatewayRotationGenerationAdapter.generate",
     "_GatewayRotationRevocationAdapter.revoke_version",
     "_cloudflare_ingress_interpreter",

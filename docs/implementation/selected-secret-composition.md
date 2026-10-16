@@ -73,6 +73,19 @@ the fixture retains its original declared choice after checking fresh public
 coordinates, while the actual later request/receipt proves admission and carry-
 forward. No private graph read or reconstructed historical state is used.
 
+The `f52adcd` rerun passed support26/root48/Cloudflare19/gateway59 and reached
+cpk-server392, stopping with F2/E2 in three methods. The new metadata bridge,
+provider qualification, canonical consumer construction and selected-volume laws
+passed. Remaining adoption corrections supply exact versions to an existing
+runtime-material unit fixture (no provider-admission claim), explicitly list the
+new concrete metadata bridge alongside the existing approved provider adapter
+functions, and defer the new fixture's clock import so test collection does not
+retain a production-factory class across bootstrap tests' deliberate module
+unloading. The shared-factory identity assertion remains unchanged. This is
+fixture/import-boundary translation, not intended missing-behavior red; no real
+Docker recipient witness ran. Log SHA256:
+`0eac510c5570cc82fbcb105a0286b691bd6b4b395027833278245da4fa220b33`.
+
 No new provider-live, image-publication, credential, original tunnel/DNS/token or
 shared-resource cleanup authority follows from this composition. Current provider
 observations do not establish installed material. Runtime verification and exact
