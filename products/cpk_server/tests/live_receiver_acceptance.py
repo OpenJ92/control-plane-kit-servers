@@ -105,7 +105,23 @@ async def accepted_history(database_url):
         for label, graph in (("a", material.a), ("b", material.b), ("c", material.c)):
             start_calls = len(compute.calls)
             start_reads = len(health.signed_reads)
-            accepted.append(await driver.accept(label=label, desired_graph=graph, destructive=label == "c"))
+            try:
+                accepted.append(await driver.accept(label=label, desired_graph=graph, destructive=label == "c"))
+            except CoordinatorStopped:
+                # Fixture-side entry observations only; public event/plan
+                # correlation above supplies the actual rejected activity.
+                print(json.dumps({"receiver_compute_entries": [
+                    {"activity_id": value.activity_id.value[:256],
+                     "operation": type(value.operation).__name__,
+                     "node_id": (getattr(value.operation.target, "node_id", None) or "")[:256]}
+                    for value in compute.calls[-32:]],
+                    "entries_truncated": len(compute.calls) > 32,
+                    "bare_runtime_registration": factory.ports.runtime_interpreters[RuntimeKind.DOCKER] is compute,
+                    "generated_connectors": [value.connector_node_id[:256]
+                        for value in graph.public_ingresses[:32]],
+                    "custody_versions": [value.secret_custody_receipt.version_id[:256]
+                        for value in list(ingress.allocations.values())[:32]]}), flush=True)
+                raise
             bindings, _ = configuration_accounting(schema, compute, 5 if label == "b" else 4, label)
             route = bindings[("gateway", "gateway-health-targets")]
             assert route.allocation_id not in route_allocations

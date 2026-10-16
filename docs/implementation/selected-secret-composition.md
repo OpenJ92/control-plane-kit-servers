@@ -127,6 +127,21 @@ redaction bounds; caller/formatter tests include actual unsupported/uncertain
 enum values. Adapter behavior remains unchanged. Terminal log SHA256:
 `ec722a2060bc95dc94a3cee969d576f873aa8b6be3c93ecf9b2a5f0446a837ad`.
 
+The complete source trace additionally established that Operations publishes a
+specific runtime_failure_code only for FAILED results. Unsupported and uncertain
+events expose their generic public classification, with no such reason code;
+operator_review is a closed FailureCategory and must retain its underscore. The
+diagnostic tests now reflect these actual shapes, use the Core plan codec for
+activity correlation and cover the closed event/category vocabulary. The real
+public event activity_id is matched to its existing public plan operation/node.
+The pre-existing synthetic witness separately emits bounded entry summaries,
+bare-registration identity and generated custody version IDs. These observations
+may support a source-correlated diagnosis, never a claim that a hidden reason
+code was emitted. No saved public history survives the existing isolated schema
+drop and witness container cleanup. North released this bounded diagnostic;
+qualification and receipt changes still require the actual result and reviewed
+fixture scope.
+
 No new provider-live, image-publication, credential, original tunnel/DNS/token or
 shared-resource cleanup authority follows from this composition. Current provider
 observations do not establish installed material. Runtime verification and exact

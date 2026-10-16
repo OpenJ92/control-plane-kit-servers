@@ -12,8 +12,10 @@ from control_plane_kit_core.configuration_instances import ConfigurationInstance
 from control_plane_kit_core.configuration_installation import configuration_installation_receipt_for_result
 from control_plane_kit_core.configuration_invocation import configuration_invocation_correlation_for_request
 from control_plane_kit_core.operations.run_identity import RunId
-from control_plane_kit_core.operations.lifecycle import ActivityEventKind
-from control_plane_kit_core.planning import ActivityId, NodeTarget, ReconcileNode, StartNode
+from control_plane_kit_core.operations.lifecycle import ActivityEventKind, FailureCategory
+from control_plane_kit_core.planning import (
+    ActivityId, NodeTarget, ReconcileNode, StartNode, ActivityPlan, PlannedActivity, DEFAULT_ACTIVITY_PLAN_CODEC,
+)
 from control_plane_kit_core.products import (
     ContainerServerProduct, OciImageReference, ProductDescriptorCodec, ProductIdentity,
     ProductReference, ProductRuntimeContract,
@@ -131,23 +133,29 @@ class ProcessMaterialTests(unittest.TestCase):
 class StartDiagnosticTests(unittest.TestCase):
     def test_failure_reader_consumes_public_history_page_items(self):
         from receiver_acceptance_operations import PublicOperationsDriver
-        event = {"event_type": ActivityEventKind.STEP_UNSUPPORTED.value, "failure": {"category": "terminal",
-            "code": "runtime.effect-failed", "details": {"effect_outcome": {
-                "runtime_failure_code": "runtime.secret-version-unsupported"}}}}
+        event = {"event_type": ActivityEventKind.STEP_UNSUPPORTED.value, "activity_id": "start-connector",
+            "failure": {"category": FailureCategory.OPERATOR_REVIEW.value,
+                "code": "runtime.effect-unsupported", "details": {"effect_outcome": {"kind": "unsupported"}}}}
+        plan = {"payload": DEFAULT_ACTIVITY_PLAN_CODEC.encode(ActivityPlan((
+            PlannedActivity(ActivityId("start-connector"), StartNode(NodeTarget("connector"))),)))}
         reader = AsyncMock(return_value={"items": [event], "pages": 1, "next_cursor": None})
         driver = SimpleNamespace(workspace_id="workspace-a", _history_page=reader)
         output = StringIO()
         with redirect_stdout(output):
-            asyncio.run(PublicOperationsDriver._emit_execution_failure(driver, "run-a"))
+            asyncio.run(PublicOperationsDriver._emit_execution_failure(driver, "run-a", plan))
         reader.assert_awaited_once_with("read.run-events", path={"workspace_id": "workspace-a", "run_id": "run-a"})
         actual = json.loads(output.getvalue())
         self.assertEqual(actual["receiver_execution_failure"], "observed")
         self.assertEqual(actual["failures"][0]["event_type"], ActivityEventKind.STEP_UNSUPPORTED.value)
-        self.assertEqual(actual["failures"][0]["runtime_failure_code"], "runtime.secret-version-unsupported")
+        self.assertIsNone(actual["failures"][0]["runtime_failure_code"])
+        self.assertEqual(actual["failures"][0]["failure_category"], "operator_review")
+        self.assertEqual(actual["failures"][0]["activity_id"], "start-connector")
+        self.assertEqual(actual["failures"][0]["operation"], "start-node")
+        self.assertEqual(actual["failures"][0]["node_id"], "connector")
         reader.side_effect = RuntimeError("PRIVATE-READ-FAILURE")
         output = StringIO()
         with redirect_stdout(output):
-            asyncio.run(PublicOperationsDriver._emit_execution_failure(driver, "run-a"))
+            asyncio.run(PublicOperationsDriver._emit_execution_failure(driver, "run-a", plan))
         self.assertEqual(json.loads(output.getvalue()), {"receiver_execution_failure": "evidence-unavailable"})
 
     def test_public_failure_diagnostic_keeps_only_bounded_classifications(self):
@@ -160,12 +168,22 @@ class StartDiagnosticTests(unittest.TestCase):
         self.assertTrue(result["events_truncated"])
         self.assertEqual(len(result["failures"]), 32)
         self.assertEqual(result["failures"][0], {"event_type": "step_failed", "failure_category": "terminal",
+            "activity_id": None, "operation": None, "node_id": None,
             "failure_code": "runtime.effect-failed", "runtime_failure_code": "runtime.secret-version-unsupported"})
         self.assertNotIn("PRIVATE", json.dumps(result))
-        for kind in (ActivityEventKind.STEP_UNSUPPORTED, ActivityEventKind.STEP_UNCERTAIN,
-                ActivityEventKind.STEP_COMPENSATION_FAILED):
+        for kind in ActivityEventKind:
             event["event_type"] = kind.value
             self.assertEqual(execution_failure_codes([event])["failures"][0]["event_type"], kind.value)
+        for category in FailureCategory:
+            event["failure"]["category"] = category.value
+            self.assertEqual(execution_failure_codes([event])["failures"][0]["failure_category"], category.value)
+        for kind, category, code in ((ActivityEventKind.STEP_UNSUPPORTED, FailureCategory.OPERATOR_REVIEW,
+                "runtime.effect-unsupported"), (ActivityEventKind.STEP_UNCERTAIN, FailureCategory.UNCERTAIN,
+                "runtime.effect-uncertain")):
+            observed = execution_failure_codes([{"event_type": kind.value,
+                "failure": {"category": category.value, "code": code, "details": {"effect_outcome": {}}}}])
+            self.assertIsNone(observed["failures"][0]["runtime_failure_code"])
+            self.assertEqual(observed["failures"][0]["failure_code"], code)
         event["failure"]["code"] = "PRIVATE/" + "x" * 200
         self.assertIsNone(execution_failure_codes([event])["failures"][0]["failure_code"])
 
