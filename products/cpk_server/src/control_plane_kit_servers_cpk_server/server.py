@@ -777,7 +777,12 @@ def _operations_effect_ports(config, provider):
     if config.runtime_dispatcher.enabled:
         if config.runtime_dispatcher.runtime_kinds != (RuntimeKind.DOCKER,):
             raise BootstrapConfigurationError("runtime effects require exactly one Docker provider")
-        runtimes = {RuntimeKind.DOCKER: _docker_runtime_interpreter(config, provider)}
+        interpreter = _docker_runtime_interpreter(config, provider)
+        if provider.metadata_reader is not None:
+            from control_plane_kit_operations.runtime_adapter_registration import RuntimeAdapterRegistration
+            interpreter = RuntimeAdapterRegistration(interpreter,
+                exact_version_execute=True, exact_version_execute_with_authority=True)
+        runtimes = {RuntimeKind.DOCKER: interpreter}
     ingress = (_ingress_interpreters(config, provider) if config.ingress_interpreters.enabled else None)
     health = None
     decoders = HealthReceiverDecoders(())
@@ -787,7 +792,8 @@ def _operations_effect_ports(config, provider):
         health = config.managed_health.build(provider.authorized_resolver)
         decoders = health.decoders
     return OperationsEffectPorts(runtimes, ingress, health, decoders,
-        _runtime_observer(config, secret_provider=provider), _UnsupportedExecutionAdapter())
+        _runtime_observer(config, secret_provider=provider), _UnsupportedExecutionAdapter(),
+        secret_metadata_reader=provider.metadata_reader)
 
 
 def _gateway_probe_service(
@@ -1268,11 +1274,47 @@ def _cloudflare_ingress_interpreter(
 
 
 @dataclass(frozen=True, repr=False)
+class _SecretVersionMetadataBridge:
+    """Associate validated provider metadata with an Operations request, without authority."""
+    reader: object = field(repr=False)
+
+    def read_version(self, request):
+        from control_plane_kit_operations.graph_authoring import (
+            GraphAuthoringError, SecretVersionMetadataRequest, SecretVersionMetadata,
+        )
+        from control_plane_kit_interpreters.secret_provider import SecretProviderVersionMetadata
+        try:
+            if type(request) is not SecretVersionMetadataRequest:
+                raise ValueError
+            SecretVersionMetadataRequest.__post_init__(request)
+            selection = request.selection
+            observed = self.reader.read_version(workspace_id=request.workspace_id,
+                endpoint_reference=request.endpoint_reference,
+                credential_reference=request.credential_reference, reference=selection.reference,
+                version_id=selection.version_id, intent=selection.intent)
+            if (type(observed) is not SecretProviderVersionMetadata
+                    or observed.reference != selection.reference
+                    or observed.version_id != selection.version_id or observed.status != "active"
+                    or observed.labels.get("intent") != selection.intent.value):
+                raise ValueError
+            # Concrete IO checks workspace; its existing observation has no workspace field.
+            # These fields are local association, not provider-signed receipt evidence.
+            return SecretVersionMetadata(request.correlation_id, request.provider_registration_id,
+                request.reference_registration_id, selection, True)
+        except Exception:
+            raise GraphAuthoringError("secret metadata observation is unavailable") from None
+
+    def __repr__(self):
+        return "SecretVersionMetadataBridge(<redacted>)"
+
+
+@dataclass(frozen=True, repr=False)
 class _SecretProviderComposition:
     authorized_resolver: object | None = field(default=None, repr=False)
     secret_custodian: object | None = field(default=None, repr=False)
     bootstrap_registry: object | None = field(default=None, repr=False)
     transport: object | None = field(default=None, repr=False)
+    metadata_reader: object | None = field(default=None, repr=False)
 
     def __repr__(self) -> str:
         return (
@@ -1345,6 +1387,7 @@ def _secret_provider_composition(
         from control_plane_kit_interpreters.secret_provider import (
             ControlPlaneKitSecretsCustodian,
             ControlPlaneKitSecretsResolver,
+            ControlPlaneKitSecretsMetadataReader,
             SecretProviderBootstrapError,
             SecretProviderBootstrapRegistry,
         )
@@ -1387,6 +1430,8 @@ def _secret_provider_composition(
         ),
         bootstrap_registry=registry,
         transport=transport,
+        metadata_reader=_SecretVersionMetadataBridge(
+            ControlPlaneKitSecretsMetadataReader(registry, transport=transport)),
     )
 
 

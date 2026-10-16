@@ -66,6 +66,28 @@ class SecretProviderBootstrapTests(unittest.TestCase):
         self.assertEqual(calls[0].headers["authorization"], "Bearer metadata-bootstrap-token")
         self.assertNotIn("metadata-bootstrap-token", repr(bridge) + repr(composition) + repr(response))
 
+    def test_provider_composition_qualifies_both_actual_execute_entrances_only(self):
+        server = _server_module()
+        self.addCleanup(_unload_server)
+        composition, bridge, unused, calls = self._metadata_bridge_case()
+        from control_plane_kit_core.types import RuntimeKind
+        from control_plane_kit_interpreters.docker import DockerRuntimeInterpreter
+        from control_plane_kit_operations.runtime_adapter_registration import RuntimeAdapterRegistration
+        config = server.CpkServerBootstrapConfiguration.from_environment(_base_environment())
+        ports = server._operations_effect_ports(config, composition)
+        registration = ports.runtime_interpreters[RuntimeKind.DOCKER]
+        self.assertIs(type(registration), RuntimeAdapterRegistration)
+        self.assertIs(type(registration.adapter), DockerRuntimeInterpreter)
+        self.assertTrue(registration.exact_version_execute)
+        self.assertTrue(registration.exact_version_execute_with_authority)
+        self.assertFalse(registration.exact_version_observe)
+        self.assertIs(ports.secret_metadata_reader, bridge)
+        self.assertIs(bridge.reader.bootstrap_registry, composition.bootstrap_registry)
+        self.assertEqual(calls, [])
+        disabled = server._operations_effect_ports(config, server._SecretProviderComposition())
+        self.assertIs(type(disabled.runtime_interpreters[RuntimeKind.DOCKER]), DockerRuntimeInterpreter)
+        self.assertIsNone(disabled.secret_metadata_reader)
+
     def test_metadata_bridge_refuses_wrong_reference_version_status_intent_or_unavailable(self):
         for changes, status in (({"workspace_id": "foreign"}, 200),
                 ({"secret_id": "foreign"}, 200), ({"version_id": "other"}, 200),

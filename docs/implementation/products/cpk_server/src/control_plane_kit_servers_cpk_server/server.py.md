@@ -1,6 +1,21 @@
 Source: [server.py](../../../../../../products/cpk_server/src/control_plane_kit_servers_cpk_server/server.py).
 Maintain with the process composition and operational ownership boundary.
 
+Selected-version composition (#252) adds one typed metadata bridge over the
+Interpreter reader and existing provider bootstrap registry. The concrete IO
+validates requested workspace/reference/version; the bridge requires the existing
+observation's exact reference/version, active status and intended use before
+returning Operations metadata. Copied correlation/registration fields associate
+the request locally; they are not provider-signed receipts or execution authority.
+Errors and representations remain bounded/redacted. No plaintext resolution or
+selection registry is introduced.
+
+The shared Operations factory injects this port into DesiredGraphCommandService,
+whose accepted preparation/transaction/replay rules remain the owner. Provider
+mode explicitly registers the actual Docker execute and execute-with-authority
+entrances for selected versions. Passive exact-version observation remains false;
+no-provider/local development composition is not selected-consumer fallback.
+
 create_app requires keyword control:ReceiverNodeControlConfiguration. It revalidates the
 actual public artifact, builds pure composition and the unstarted standard host,
 registers literal public routes, and calls actual SDK install_cpk_wrapper with
