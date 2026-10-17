@@ -30,7 +30,6 @@ from control_plane_kit_servers_cpk_server.client.transport import PublicHttpTran
 from control_plane_kit_servers_cpk_server.managed_health import ManagedHealthBootstrap
 
 from docker_image_update_material import DockerImageMaterial, IMAGES
-from docker_image_update_capacity import observe_publication_budgets
 from docker_image_update_placement import (
     OwnedControllerPlacement, SyntheticConnectorConnection, owned_resources, dispose_fixture,
 )
@@ -114,7 +113,7 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
         transport=InstalledGatewaySocketTransport("cpk-1912.example.invalid", check_target, endpoint_for))
     health = ManagedHealthBootstrap((material.documents["gateway"],), placement.reader,
         native=native, public_client=public).build(provider.composition.authorized_resolver)
-    with observe_publication_budgets(), IsolatedOperationsSchema(database_url, "cpk_1912_image_" + uuid4().hex) as schema:
+    with IsolatedOperationsSchema(database_url, "cpk_1912_image_" + uuid4().hex) as schema:
         factory = OperationsApplicationFactory(schema.unit_of_work,
             OperationsEffectPorts({RuntimeKind.DOCKER: RuntimeAdapterRegistration(runtime,
                 exact_version_execute=True, exact_version_execute_with_authority=True)},

@@ -1,4 +1,24 @@
-Source: [docker_image_update_capacity.py](../../../../../products/cpk_server/tests/docker_image_update_capacity.py).
+# Archived publication-capacity diagnostic — #1993 / #252
+
+Historical source: [docker_image_update_capacity.py at 3e544bff](https://github.com/OpenJ92/control-plane-kit-servers/blob/3e544bff50f3ff6d179b8d000496b216f92a84cd/products/cpk_server/tests/docker_image_update_capacity.py).
+
+The temporary observer and its four observer-only tests are removed after the
+full maintained workload passed at `3e544bff50f3ff6d179b8d000496b216f92a84cd`.
+The scoped import/context is removed; every workload assertion remains. Final
+source still requires its normal owning gate before merge. This document retains
+historical evidence, not an active runtime hook.
+
+[Successful gate 39008332385](https://github.com/OpenJ92/control-plane-kit-servers/actions/runs/39008332385)
+recorded content at 4,228 settled / 4,229 peak records, within the accepted 8,192
+policy. Content pre-ID peak accounted bytes were 10,640,839 and snapshot 264,348;
+bound peak was 8,185,604. All initial/update/replay/no-op/public teardown assertions
+passed. Public teardown removed containers/network; exact fixture disposal then
+removed seven historical configuration volumes and one secret volume. Direct log
+SHA-256: `f93512a03b4ff6d61e0a829dcd5dda776ec673f6dd336e3ffb2f886d7b4b58e0`.
+Kepler independently verified the result. Native/ingress remain synthetic; this
+is not grandparent or production Cloudflare acceptance.
+
+Historical implementation and failed-checkpoint notes follow.
 
 Temporary #1993 diagnostic observes the actual accepted Operations owner's pure
 publication forecast during the unchanged #252 Docker scenario. It calls the
@@ -28,8 +48,8 @@ schema/count bounds, canary exclusion, untouched preflight, restoration and
 preservation of its actual capacity refusal when printing fails. These are
 diagnostic contracts, not acceptance-state or capacity-correctness simulations.
 The normal hosted owning gate provides the one released real-route measurement.
-Remove this temporary observer once diagnosis and the owner regression are
-captured. A measured excess does not authorize a cap increase or production fix.
+The observer was temporary until diagnosis and the owner regression were
+captured. A measured excess did not authorize a cap increase or production fix.
 
 The first Operations #1994 adoption gate at `46cba82` stopped in the socket-free
 package suite: two diagnostic tests still expected 4,097 records to refuse under

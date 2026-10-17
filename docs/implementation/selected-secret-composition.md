@@ -2,8 +2,10 @@
 
 Current checkpoint adopts Operations #1994's accepted bounded evidence policy
 after the maintained content update succeeded but graph advancement refused the
-old 4,096-record allowance. The unchanged full Servers gate remains pending;
-dependency-package green is not Servers or grandparent acceptance.
+old 4,096-record allowance. The unchanged full Servers gate passed at `3e544bff`,
+including all three replacement families, exact selection and client replay,
+history, no-op and public teardown. Temporary diagnostic removal now requires
+final-head validation; this is not grandparent acceptance.
 
 The selected accepted tuple is Core
 `5b66dcac4bf2cf76219efaf05fa5ff06588bd16a`, Operations
@@ -24,8 +26,12 @@ Operations #1994 passed 2,801 owner test executions, Core 1,035 package tests an
 the locked-family backend gate before independent review and merge. The shared
 record allowance is now 8,192; byte/snapshot/native limits and freshness laws are
 unchanged. The prior diagnostic measured content advancement at 4,228 settled /
-4,229 peak records. Keep the bounded observer for the causal rerun; remove it in
-downstream closure after the result is captured. No further capacity increase,
+4,229 peak records. The full causal rerun passed with those same record counts;
+the bounded observer and its four observer-only tests are now removed, with
+[historical evidence retained](products/cpk_server/tests/docker_image_update_capacity.py.md).
+No workload assertion, production source, pin or runner changes in this removal.
+Public teardown removed containers/network; exact fixture disposal separately
+removed seven retained configuration volumes and one secret volume. No further capacity increase,
 image publication, provider mutation or original tunnel/DNS/token change follows
 from this adoption. Extras, product image coordinates and the runner are unchanged.
 
