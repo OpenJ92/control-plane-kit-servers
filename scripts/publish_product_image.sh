@@ -39,6 +39,10 @@ case "$PRODUCT_ID" in
     DOCKERFILE="products/secrets_server/Dockerfile"
     IMAGE_NAME="secrets-server"
     ;;
+  counter-witness)
+    DOCKERFILE="products/cpk_server/examples/unlisted_sdk/Dockerfile.counter"
+    IMAGE_NAME="counter-witness"
+    ;;
   *)
     echo "unsupported product id: $PRODUCT_ID" >&2
     exit 2
@@ -53,8 +57,19 @@ docker run --rm \
   "$POLICY_IMAGE" \
   sh -c 'cd /source && PYTHONPATH=/source/src python scripts/apply_coordinates.py --check'
 
-docker build -f "$DOCKERFILE" -t "$IMAGE" .
+if [ "$PRODUCT_ID" = counter-witness ]; then
+  docker build --platform linux/amd64 -f "$DOCKERFILE" -t "$IMAGE" .
+  [ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$IMAGE")" = linux/amd64 ]
+  [ "$(docker image inspect --format '{{.Config.User}}' "$IMAGE")" = 10008 ]
+else
+  docker build -f "$DOCKERFILE" -t "$IMAGE" .
+fi
 docker push "$IMAGE"
 
 docker image inspect "$IMAGE" --format "{{index .RepoDigests 0}}"
-echo "Update coordinates/server-products.json with the verified published digest; regenerate coordinates in Docker and validate with ./test.sh." >&2
+if [ "$PRODUCT_ID" = counter-witness ]; then
+  docker image inspect "$IMAGE" --format 'counter-witness image_id={{.Id}} platform={{.Os}}/{{.Architecture}} user={{.Config.User}}'
+  echo "Record this witness digest on the governing issue; qualify the actual pulled-by-digest artifact before installed use. Earlier source startup evidence does not qualify this rebuilt image. No production catalogue coordinate is changed." >&2
+else
+  echo "Update coordinates/server-products.json with the verified published digest; regenerate coordinates in Docker and validate with ./test.sh." >&2
+fi
