@@ -4,6 +4,7 @@ Only ingress allocation/native connection/public routing are synthetic. Docker,
 signing provider, SDK health sockets, operation history and business bodies run.
 """
 import asyncio
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -108,9 +109,10 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
             graph_id=request.authority_context.authored_graph_id)
         return selected.endpoint.address.value
 
+    health_socket = InstalledGatewaySocketTransport("cpk-1912.example.invalid", check_target, endpoint_for)
     public = SignedGatewayHealthClient(clock=lambda: int(time.time()),
         public_resolver=SyntheticIngressAddressResolver("cpk-1912.example.invalid"),
-        transport=InstalledGatewaySocketTransport("cpk-1912.example.invalid", check_target, endpoint_for))
+        transport=health_socket)
     health = ManagedHealthBootstrap((material.documents["gateway"],), placement.reader,
         native=native, public_client=public).build(provider.composition.authorized_resolver)
     with IsolatedOperationsSchema(database_url, "cpk_1912_image_" + uuid4().hex) as schema:
@@ -129,7 +131,7 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
             registration = PublicRegistration(transport, workspace)
             admitted = await register_material(registration, SimpleNamespace(workspace_id=workspace,
                 documents={name: material.documents[name] for name in ("gateway", "api", "connector")},
-                public=material.public))
+                public={name: material.public[name] for name in ("transit", "workload")}))
             row = admitted["runtime"]
             registered_authority = RegisteredRuntimeAuthority(row["registration_id"], workspace,
                 RuntimeAuthorityReference(row["authority_ref"]), RuntimeKind.DOCKER,
@@ -163,10 +165,11 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
                     plan_id=result.plan_id)
                 return plan, events, runs
 
-            async def apply(graph, name, *, pending=None):
+            async def apply(graph, name, *, pending=None, refreshes=()):
                 source = root / (name + ".json")
                 source.write_text(json.dumps(DEFAULT_GRAPH_CODEC.encode(graph)), encoding="utf-8")
-                planned = await asyncio.to_thread(client.plan, AuthoredDesiredGraph(source, pending=pending))
+                planned = await asyncio.to_thread(client.plan, AuthoredDesiredGraph(source,
+                    pending=pending, verifier_refreshes=refreshes))
                 assert planned.status in {"planned", "no-changes"}, planned.descriptor()
                 option = "approve_destructive_plan" if planned.destructive else "approve_plan"
                 try:
@@ -233,16 +236,97 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
             assert attribution not in await business("api")
             peer_body = await business("api-y")
             selected_runs = []
-            for label in ("version-only", "image-only", "content-only"):
+            for label in ("version-only", "image-only", "content-only", "verifier-only"):
+                refreshes = ()
                 if label == "version-only":
                     replacement_graph = await choices.select(authored, versions[1].version_id)
                 elif label == "image-only":
                     replacement_graph = consumer_graph(authored, material.successor)
-                else:
+                elif label == "content-only":
                     replacement_graph = application_content_graph(authored)
+                else:
+                    # Distinct isolated overlap custody; the original signer stays ACTIVE.
+                    original_keys = await asyncio.to_thread(public_page, transport,
+                        "read.delegation-keys", workspace)
+                    overlap_reference = "secret://health-secrets/keys/workload-overlap"
+                    reference = await registration.register("command.secret-reference.register", {
+                        "reference": overlap_reference,
+                        "provider_registration_id": admitted["providers"]["health"]["registration_id"],
+                        "allowed_intents": ["workload.node-health-read-signing-key"],
+                        "admitted_at": utc_now(), "metadata": {"acceptance": "receiver-refresh-253"},
+                        "idempotency_key": "image-overlap-reference"})
+                    assert reference["status"] == "active" and reference["reference_id"] == overlap_reference
+                    assert reference["allowed_intents"] == ["workload.node-health-read-signing-key"]
+                    overlap = await registration.register("command.delegation-key.register", {
+                        "purpose": "workload-node-health-read", "issuer": "cpk-server",
+                        "key_id": "health-workload-overlap", "algorithm": "ed25519",
+                        "public_key_pem": material.public["workload-overlap"].public_key_pem,
+                        "private_key_reference": overlap_reference,
+                        "admitted_at": utc_now(), "idempotency_key": "image-verifier-overlap"})
+                    assert overlap["status"] == "verify-only"
+                    refreshed_keys = await asyncio.to_thread(public_page, transport,
+                        "read.delegation-keys", workspace)
+                    assert [row for row in refreshed_keys if row["key_id"] != "health-workload-overlap"] == original_keys
+                    active, = [row for row in refreshed_keys if row["key_id"] == "health-workload"]
+                    assert active["status"] == "active"
+                    verifier_snapshot = await read("read.workload-verifier-configuration", purposes=",".join((
+                        core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ.value,
+                        core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ.value)))
+                    assert verifier_snapshot["workspace_id"] == workspace
+                    assert verifier_snapshot["kind"] == "workload-verifier-configuration"
+                    unchanged_source = root / "ordinary-after-overlap.json"
+                    unchanged_source.write_text(json.dumps(DEFAULT_GRAPH_CODEC.encode(authored)), encoding="utf-8")
+                    unchanged = await asyncio.to_thread(client.plan, AuthoredDesiredGraph(unchanged_source))
+                    assert unchanged.status == "no-changes"
+                    replacement_graph = authored
+                    refreshes = (ReceiverScope("api", "internal"),)
                 prior = placement.nodes["api"]
                 before = len(runtime.completed)
-                updated, updated_source = await apply(replacement_graph, label)
+                before_health = len(health_socket.observations)
+                updated, updated_source = await apply(replacement_graph, label, refreshes=refreshes)
+                prepared = client.journal.read(updated.operation_ref)
+                journaled = DEFAULT_GRAPH_CODEC.decode(json.loads((client.journal.root /
+                    prepared["preparation"]["name"]).read_bytes()))
+                changed_wrapper = None
+                if refreshes:
+                    prior_row, = [row for row in original_receivers["receivers"]
+                        if row["binding"]["node_id"] == "api"]
+                    wrapper_id = prior_row["configuration_artifact"]["artifact_id"]
+                    old_wrapper, = [value for value in authored.node("api").configuration_artifacts
+                        if value.artifact_id == wrapper_id]
+                    changed_wrapper, = [value for value in journaled.node("api").configuration_artifacts
+                        if value.artifact_id == wrapper_id]
+                    codec = core.ReceiverNodeControlConfigurationCodec()
+                    old_configuration = codec.decode_bytes(old_wrapper.content.encode("utf-8"))
+                    new_configuration = codec.decode_bytes(changed_wrapper.content.encode("utf-8"))
+                    expected_wrapper = codec.decode({**codec.encode(old_configuration),
+                        "verifiers": verifier_snapshot["workload_verifier_configuration"]["verifiers"]})
+                    assert new_configuration == expected_wrapper
+                    assert new_configuration.target == old_configuration.target
+                    assert new_configuration.declaration == old_configuration.declaration
+                    assert changed_wrapper.content_digest != old_wrapper.content_digest
+                    assert replace(changed_wrapper, content=old_wrapper.content,
+                        source_digest=old_wrapper.source_digest) == old_wrapper
+                    old_families = {value.purpose: value for value in old_configuration.verifiers}
+                    assert {value.purpose for value in new_configuration.verifiers} == set(old_families)
+                    for family in new_configuration.verifiers:
+                        previous = old_families[family.purpose]
+                        if family.purpose is core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ:
+                            assert family.issuer == previous.issuer
+                            assert {key.key_id for key in family.public_keys} == {
+                                "health-workload", "health-workload-overlap"}
+                            assert set(family.public_keys) == {
+                                material.public["workload"], material.public["workload-overlap"]}
+                        else:
+                            assert family.purpose is core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ
+                            assert tuple(key.key_id for key in family.public_keys) == ("unlisted-surface",)
+                            assert family != previous
+                    restored = replace(journaled.node("api"), configuration_artifacts=tuple(
+                        old_wrapper if value.artifact_id == wrapper_id else value
+                        for value in journaled.node("api").configuration_artifacts))
+                    assert replace(journaled, nodes={**journaled.nodes, "api": restored}) == authored
+                else:
+                    assert journaled == replacement_graph
                 replacements = [value for value in runtime.completed[before:]
                     if type(value.request.operation).__name__ == "ReconcileNode"]
                 assert len(replacements) == 1 and replacements[0].request.operation.target.node_id == "api"
@@ -254,7 +338,7 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
                 assert (attribution in await business("api", image_role=role)) == (role == "hello_b")
                 assert await business("api-y") == peer_body
                 assert all(placement.nodes[name] == initial_nodes[name] for name in ("gateway", "api-y", "connector"))
-                revised_configuration = {name: installed_configuration(name, replacement_graph)
+                revised_configuration = {name: installed_configuration(name, journaled)
                     for name in initial_nodes}
                 for name in initial_nodes:
                     expected_configuration = dict(initial_configuration[name])
@@ -263,13 +347,23 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
                             if value.artifact_id == "application-settings"]
                         assert artifact.content_digest != expected_configuration[artifact.artifact_id]
                         expected_configuration[artifact.artifact_id] = artifact.content_digest
+                    if changed_wrapper is not None and name == "api":
+                        expected_configuration[changed_wrapper.artifact_id] = changed_wrapper.content_digest
                     assert revised_configuration[name] == expected_configuration
+                initial_configuration = revised_configuration
+                assert ("api", "readiness", 200) in health_socket.observations[before_health:]
                 require_selected_recipient(replacement, versions[1].version_id, prior, replaced.id)
                 receipt = require_replacement_receipt(replacement, prior, replaced.id)
                 current_receivers = (await read("read.receiver-authoring-context"))["current"]
                 expected = [{**row, "binding": {**row["binding"], "graph_id": current_receivers["graph_id"],
                     "realized_projection_id": current_receivers["realized_projection_id"]}}
                     for row in original_receivers["receivers"]]
+                if changed_wrapper is not None:
+                    selected, = [row for row in expected if row["binding"]["node_id"] == "api"]
+                    selected["configuration_artifact"] = changed_wrapper.descriptor()
+                    selected["binding"]["selected_configuration_digest"] = changed_wrapper.content_digest
+                    assert await asyncio.to_thread(public_page, transport,
+                        "read.delegation-keys", workspace) == refreshed_keys
                 assert current_receivers["receivers"] == expected
                 assert await history(initial) == original_history
                 update_history = await history(updated)
@@ -280,9 +374,7 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
                 for historical, expected_history in selected_runs:
                     assert await history(historical) == expected_history
                 selected_runs.append((updated, update_history))
-                prepared = client.journal.read(updated.operation_ref)
-                authored = DEFAULT_GRAPH_CODEC.decode(json.loads((client.journal.root /
-                    prepared["preparation"]["name"]).read_bytes()))
+                authored = journaled
                 assert authored.node("api").secret_selections == replacement_graph.node("api").secret_selections
                 print(json.dumps({"selected_consumer_update": label, "run_id": updated.run_id,
                     "receipt": receipt.disposition.value}), flush=True)
@@ -291,6 +383,11 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
             restarted = TopologyClient(host.profile, transport=transport, receiver_identity_factory=no_identity)
             effect_count = len(runtime.completed)
             dispatch_count = len(placement.record["intents"])
+            same_client = await asyncio.to_thread(client.apply, updated.operation_ref, execute_plan=updated.plan_id)
+            assert (same_client.status, same_client.operation_ref, same_client.plan_id, same_client.run_id) == (
+                "converged", updated.operation_ref, updated.plan_id, updated.run_id)
+            assert len(runtime.completed) == effect_count and len(placement.record["intents"]) == dispatch_count
+            assert await history(updated) == update_history
             for label, result, expected in (
                     ("historical-initial", initial, ("attention-required", "succeeded", "unverified")),
                     ("current-update", updated, ("converged", "succeeded", "advanced"))):
@@ -319,6 +416,9 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
                 assert len(placement.record["intents"]) == dispatch_count
             noop = await asyncio.to_thread(restarted.plan, AuthoredDesiredGraph(updated_source))
             assert noop.status == "no-changes"
+            refresh_noop = await asyncio.to_thread(restarted.plan, AuthoredDesiredGraph(updated_source,
+                verifier_refreshes=(ReceiverScope("api", "internal"),)))
+            assert refresh_noop.status == "no-changes"
             no_execution = await asyncio.to_thread(restarted.apply, noop.operation_ref, execute_plan=noop.plan_id)
             assert no_execution.status == "no-changes"
             assert len(runtime.completed) == effect_count
@@ -332,6 +432,7 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
             print(json.dumps({"docker_public_image_update": "passed", "workspace": workspace,
                 "selected_secret_version_only": "passed", "selected_secret_image_only": "passed",
                 "selected_secret_content_only": "passed",
+                "retained_receiver_verifier_only": "passed", "active_signer": "unchanged",
                 "consumer_delivery": "environment", "unavailable_choices": "refused-before-dispatch",
                 "initial_run": initial.run_id, "replacement_run": updated.run_id,
                 "old_container": initial_nodes["api"], "new_container": replaced.id,

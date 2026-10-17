@@ -55,7 +55,7 @@ class DockerImageMaterial(AuthoredMaterial):
     def __init__(self, workspace_id):
         self.workspace_id = workspace_id
         self.private, self.public, self.documents = {}, {}, {}
-        for family in ("transit", "workload"):
+        for family in ("transit", "workload", "workload-overlap"):
             key = Ed25519PrivateKey.generate()
             self.private[family] = key.private_bytes(serialization.Encoding.PEM,
                 serialization.PrivateFormat.PKCS8, serialization.NoEncryption())

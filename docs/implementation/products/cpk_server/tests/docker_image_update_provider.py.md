@@ -22,3 +22,9 @@ ControlPlaneKitSecretsCustodian. Only the actual public writer's receipt enters
 the allocation; a failed write admits no synthetic allocation. Exact workspace,
 endpoint, bootstrap reference, intent and reference prefix guard this fixture
 boundary. No custody lifecycle, retry, protocol or provider state is reimplemented.
+#253 seeds the distinct workload-overlap private material at its matching
+`secret://health-secrets/keys/workload-overlap` reference using the same public
+write/resolve path. The existing provider endpoint, bootstrap credential and
+workload-health intent remain unchanged; the signing intent grant list is not
+expanded. The overlap is never activated or selected for signing. Existing
+private fixture process/store teardown disposes of this additional custody.

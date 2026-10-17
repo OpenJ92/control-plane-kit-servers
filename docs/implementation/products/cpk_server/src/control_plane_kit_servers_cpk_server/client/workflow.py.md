@@ -26,10 +26,14 @@ field or accept a nested compatibility shape. Missing/non-mapping fields refuse
 before fresh receiver identity generation or prepare dispatch; the pure authoring
 owner retains all verifier family, purpose, key and declaration checks.
 
-The extraction stays inside the fresh-introductions branch. Retained-only,
-pending-only and gateway-route-only authoring keeps `verifier_configuration=None`
-and does not perform a verifier read. This preserves the existing optional-read
-boundary rather than referencing an unassigned response for zero introductions.
+The extraction runs only for fresh introductions or explicit current-receiver
+verifier refreshes. One authenticated read requests the union of purposes needed
+by those declarations; the pure transform selects each declaration's families.
+Retained-only without refresh, pending-only and gateway-route-only authoring keep
+`verifier_configuration=None` and do not perform a verifier read. Refresh uses the
+existing immutable preparation journal and restart path without new state or
+retry semantics. The mixed introduction/refresh test proves purpose selection at
+the authoring boundary, not mixed-change planner acceptance.
 
 Completed apply replay revalidates public plan, approval, run, events and current
 selection without repeating execution or graph advancement. Both `advanced`

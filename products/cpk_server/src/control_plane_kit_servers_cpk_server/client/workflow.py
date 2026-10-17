@@ -236,9 +236,13 @@ class TopologyClient:
                         "receiver authoring context expectation is invalid"
                     )
                 verifier_configuration = None
-                if desired_path.introductions:
+                verifier_scopes = (
+                    *(item.scope for item in desired_path.introductions),
+                    *desired_path.verifier_refreshes,
+                )
+                if verifier_scopes:
                     purposes = _receiver_verifier_purposes(
-                        graph, desired_path.introductions
+                        graph, verifier_scopes
                     )
                     verifier_response = self._read(
                         "read.workload-verifier-configuration",
@@ -267,6 +271,7 @@ class TopologyClient:
                     context=context,
                     verifier_configuration=verifier_configuration,
                     introductions=desired_path.introductions,
+                    verifier_refreshes=desired_path.verifier_refreshes,
                     pending=desired_path.pending,
                     gateway_health_replacements=(
                         desired_path.gateway_health_replacements
@@ -1344,19 +1349,19 @@ def _receiver_expectation(workspace: Mapping[str, object]) -> dict[str, object]:
     }
 
 
-def _receiver_verifier_purposes(graph, introductions) -> tuple[str, ...]:
+def _receiver_verifier_purposes(graph, scopes) -> tuple[str, ...]:
     import control_plane_kit_core as core
 
     purposes = {
         core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ.value
     }
-    for introduction in introductions:
-        node = graph.node(introduction.scope.node_id)
+    for scope in scopes:
+        node = graph.node(scope.node_id)
         surfaces = tuple(
             surface
             for surface in node.block_spec.control_surfaces
             if surface.provider_socket_name.value
-            == introduction.scope.provider_socket_name
+            == scope.provider_socket_name
         )
         if len(surfaces) != 1:
             raise ClientInputError("receiver graph could not be authored")

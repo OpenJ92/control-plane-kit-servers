@@ -254,3 +254,22 @@ No new provider-live, image-publication, credential, original tunnel/DNS/token o
 shared-resource cleanup authority follows from this composition. Current provider
 observations do not establish installed material. Runtime verification and exact
 owned cleanup must supply their own maintained witness evidence.
+
+## Current #253 verifier-refresh dependency adoption
+
+The accepted producer closure now selects Core and Operations
+`012a7b8b7cc153cbf17b1a62513fab747eaad782`, SDK
+`e289d6939b7e6432ffa5181789b0600bf8e3ffe2`, Secrets
+`08076140178d59b91d585099136b7d8b6f51866b`, and Interpreters
+`5f4e2b521a91f57289a19b0f1488db0d850f2f71`. All producer owning gates and
+independent reviews passed before their actual merge outputs were selected.
+Unlike the prior Operations-only adoption, Core now changes its managed-update
+compiler to admit the closed retained-verifier refresh relation. Operations
+checks the current authoritative public family at fresh planning and locked
+first start. SDK/Secrets/Interpreter runtime source is unchanged.
+Canonical coordinates, generated dependency mirrors and exact installed
+provenance expectations move together; the unchanged owning gate checks their
+consistency and actual installed family. Published product source/image and
+catalogue coordinates are unchanged. This source checkpoint is unvalidated;
+installed refresh and full #237/#225 acceptance are separate evidence.
+Earlier coordinate accounts in this document are historical.

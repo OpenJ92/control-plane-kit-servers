@@ -224,6 +224,11 @@ class DockerImageBoundaryTests(unittest.TestCase):
         self.assertEqual(material.a.node("api").sockets.providers[0].name, "internal")
         self.assertNotEqual(material.configurations["api"].target, material.configurations["api-y"].target)
         self.assertEqual(material.configurations["api"].target.workspace_id.value, "image-test")
+        self.assertNotEqual(material.public["workload"].fingerprint_sha256,
+            material.public["workload-overlap"].fingerprint_sha256)
+        self.assertTrue(all(key.key_id != "health-workload-overlap"
+            for configured in material.configurations.values()
+            for family in configured.verifiers for key in family.public_keys))
 
     def test_recorder_returns_the_actual_result_and_calls_the_real_port_once(self):
         inner = Mock()
@@ -345,6 +350,7 @@ class DockerImageTransportTests(unittest.IsolatedAsyncioTestCase):
                 await transport.handle_async_request(request)
         self.assertEqual(len(requests), 2)
         self.assertEqual(endpoint.call_count, 2)
+        self.assertEqual(transport.observations, [("api", "readiness", 200)] * 2)
 
 
 class OwnedAttachmentTests(unittest.TestCase):

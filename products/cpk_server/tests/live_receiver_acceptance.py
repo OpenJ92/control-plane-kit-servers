@@ -26,11 +26,11 @@ from receiver_acceptance_ports import ComputeSubstitute, IngressSubstitute, Sign
 def verify_provenance():
     """Apparatus check; no behavioral claim can precede normal installed pins."""
     pins = {
-        "control-plane-kit-core": "5b66dcac4bf2cf76219efaf05fa5ff06588bd16a",
-        "control-plane-kit-operations": "6e8ba28ef03e0eedbeafe9f3448d259750a6203f",
-        "control-plane-kit-server-sdk": "d4cbbb16a4ce47bae0b791adab5de8940355ea99",
-        "control-plane-kit-secrets": "56e6d3211a847efd98434ba2dd4093d29bf4b375",
-        "control-plane-kit-interpreters": "f689773e2b19a56543dae9830a2b1c059bbb10a4",
+        "control-plane-kit-core": "012a7b8b7cc153cbf17b1a62513fab747eaad782",
+        "control-plane-kit-operations": "012a7b8b7cc153cbf17b1a62513fab747eaad782",
+        "control-plane-kit-server-sdk": "e289d6939b7e6432ffa5181789b0600bf8e3ffe2",
+        "control-plane-kit-secrets": "08076140178d59b91d585099136b7d8b6f51866b",
+        "control-plane-kit-interpreters": "5f4e2b521a91f57289a19b0f1488db0d850f2f71",
     }
     for name, commit in pins.items():
         direct = json.loads(importlib.metadata.distribution(name).read_text("direct_url.json"))

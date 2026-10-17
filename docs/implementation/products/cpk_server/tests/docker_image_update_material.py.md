@@ -15,3 +15,8 @@ The successor changes only the registered product revision and immutable image;
 the complete runtime contract and selected receiver/configuration bytes remain
 fixed. A distinct peer uses A unchanged. Existing authored receiver/key helpers
 are reused without importing their compute, signing-material or HTTP substitutes.
+#253 adds one distinct ephemeral workload-overlap pair to this fixture's existing
+key-generation setup. It is excluded from initial wrappers and initial key
+registration. A later exact VERIFY_ONLY registration may expose its public key;
+the original workload key remains ACTIVE. Core's per-family fingerprint
+uniqueness is preserved. No product generation, activation or signing is added.

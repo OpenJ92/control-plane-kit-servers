@@ -1,5 +1,47 @@
 Source: [live_docker_image_update.py](../../../../../products/cpk_server/tests/live_docker_image_update.py).
 
+#253 extends the same sequence with a fourth, verifier-only replacement of api.
+One authenticated VERIFY_ONLY registration uses a distinct isolated workload
+overlap pair and matching reference, seeded through the existing provider custody
+path under its existing workload-health intent. No permission on an existing
+reference is widened. Public key rows prove the original ACTIVE
+signer is unchanged. Ordinary authoring remains a no-op after registration;
+explicit refresh journals a changed wrapper while preserving target, declaration,
+artifact slot, every other graph value, receiver origin and peer incarnation.
+Mounted volume digests must equal the exact journaled artifacts. Actual signed
+readiness reaches the replacement container through the existing gateway path;
+the original active signing key remains in use. No added-member signing exercise
+or product key lifecycle is claimed.
+
+Original-client and reconstructed-client replay preserve operation/plan/run
+identity without effects or history mutation. Repeating refresh with equal
+families is a no-op. Resource allocation/disposal is derived from the existing
+exact ownership record, including the additional historical wrapper volume;
+public desired-empty teardown and later fixture disposal remain distinct.
+The receiver OCI images stay at their fixed qualified digests. The controller
+uses the source-built installed dependency tuple checked by `verify_provenance`.
+Ingress/native routing remains synthetic; this is not the live grandparent test.
+This addition awaits the normal owning gate and final review.
+
+Run39039828977 passed all package tests and the existing version/image/content
+Docker phases, then failed a fixture expectation that the surface-read family
+would remain unchanged. The initial wrapper uses the workload key for both
+families; the separately registered surface authority is `unlisted-surface`.
+Explicit refresh selects both required current families. The witness now captures
+the authenticated public snapshot for exactly surface-read and health-read before
+apply, and compares the complete normalized successor against that independent
+snapshot with the old target/declaration. Exact health overlap membership and all
+single-wrapper, mounted, origin, history, replay and cleanup assertions remain.
+Both families change within the one selected wrapper; no authority or production
+behavior changes. The failed run did not reach those later assertions or public
+desired-empty teardown; exact failure-path fixture disposal alone was verified.
+
+The original same-PEM alias proposal was rejected in pre-execution review because
+Core requires unique verifier fingerprints. North's
+[bounded fixture amendment](https://github.com/OpenJ92/control-plane-kit-servers/issues/253#issuecomment-6234746932)
+authorizes the distinct pair/reference. This corrects fixture material without
+changing Core uniqueness, production key lifecycle or the signed-health path.
+
 The temporary #1993 publication-budget observer is removed after the full #252
 workload passed at `3e544bff`. Its measured result and prior failures remain in
 the [archived diagnostic companion](docker_image_update_capacity.py.md).
@@ -18,7 +60,7 @@ Configuration digests remain fixed until the content-only step; peer identities,
 receiver origins and all earlier public histories remain unchanged throughout.
 Historical operation replay and current replay retain their distinct existing
 classifications; exact selection replay dispatches neither metadata nor effects.
-The ordinary owning gate passed the complete sequence at `3e544bff`. Three replacements,
+The ordinary owning gate passed that earlier sequence at `3e544bff`. Three replacements,
 four nodes, one network and exact recorded fixture cleanup remain the scope.
 
 #251's owning scenario enters the maintained authenticated public client and

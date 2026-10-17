@@ -55,3 +55,36 @@ S1 #249 strengthens the retained-only client case with an ordinary public JSON
 application artifact. Preparation must preserve that desired application content
 alongside the exact retained wrapper, without a verifier read, identity allocation,
 or source-file rewrite. This exercises authoring only, not process replacement.
+
+Servers #253 target checkpoint adds six owner tests for explicit current-receiver
+verifier refresh: only the selected wrapper changes; normalized equality retains
+valid noncanonical bytes and original source digest; unresolved/pending/conflicting
+scopes and foreign bindings/missing verifier families refuse; the client publishes
+private exact preparation before dispatch and reconstructed retry does not reread
+keys/context or regenerate receiver identity; corrupt preparation refuses; CLI
+selection is explicit and rejects duplicates. Existing ordinary-retention and
+other authoring laws remain unchanged. These tests use the same real Core values,
+owner-shaped public read fixture and journal as the established suite. The initial
+public-intent assertion makes absent functionality an explicit test failure rather
+than a collection error. This source checkpoint precedes implementation and is
+unvalidated until the unchanged owning gate; it is not runtime installation proof.
+
+Kepler's target review adds one mixed authoring law before workflow implementation:
+a current health receiver refresh plus a disjoint variable receiver introduction
+must request the union of all three public purposes, then install only each
+receiver declaration's families. Only the introduced identity is allocated.
+This uses the existing graph_variable and public transport fixture and proves
+client authoring composition, not Core acceptance of a mixed deployment.
+It is a review-strengthened target; no separate executed red is claimed for it.
+#253 pre-execution review found that duplicate PEM material under a new key ID
+violates Core's within-family fingerprint uniqueness law. The positive overlap
+fixture now generates a distinct isolated public key using its existing
+cryptography setup. This corrects deeper target setup; it does not change the
+recorded missing-interface causal red or claim those deeper assertions ran red.
+#253 implementation run39038829926 reached all 407 CPK tests with two failures
+in the new whole-graph assertions: their raw fixture artifact tuple order differed
+from Core's canonical graph-file order. The two input graphs now pass through
+the public Core codec before authoring, as the client graph-file boundary does.
+Whole-graph equality and exact wrapper bytes/descriptor/source-digest assertions
+remain unchanged; noncanonical wrapper JSON remains embedded verbatim. Five
+other refresh targets passed. No later installed Docker stage ran in that failure.

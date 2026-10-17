@@ -268,6 +268,7 @@ class InstalledGatewaySocketTransport(httpx.AsyncBaseTransport):
         self.transport_factory = transport_factory or (
             lambda: httpx.AsyncHTTPTransport(retries=0, trust_env=False))
         self._transport = None
+        self.observations = []
 
     async def handle_async_request(self, request):
         expected_paths = {"/cpk/health/liveness", "/cpk/health/readiness"}
@@ -296,7 +297,9 @@ class InstalledGatewaySocketTransport(httpx.AsyncBaseTransport):
             headers=request.headers, content=body,
             extensions={key: value for key, value in request.extensions.items() if key != "sni_hostname"})
         self._transport = self.transport_factory()
-        return await self._transport.handle_async_request(forwarded)
+        response = await self._transport.handle_async_request(forwarded)
+        self.observations.append((value["target_id"], value["request"]["kind"], response.status_code))
+        return response
 
     async def aclose(self):
         if self._transport is not None:

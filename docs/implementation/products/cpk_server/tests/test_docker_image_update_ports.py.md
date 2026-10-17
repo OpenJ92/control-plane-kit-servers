@@ -44,3 +44,9 @@ runtime dispatch and kept separate from configuration volumes. Exact recorded
 ownership permits selection; changed workspace/target/reference/kind or a missing
 prerecord prevents all disposal. No secret bytes or copied naming algorithm are
 used by these checks.
+#253's existing forwarding test also checks the minimal target/kind/status
+observations consumed by the retained-receiver refresh witness. These contain no
+credentials, request or response bodies.
+#253's material test also requires distinct overlap/workload public fingerprints
+and absence of the overlap member from every initial wrapper. The installed
+witness supplies custody/registration/refresh evidence through the owning gate.

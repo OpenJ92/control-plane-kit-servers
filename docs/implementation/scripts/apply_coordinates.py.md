@@ -63,3 +63,22 @@ installed provenance and composition. Only Operations dependency mirrors and
 exact expected provenance advance. Scenario, assertions, cleanup, runner, extras
 and published product coordinates remain unchanged. The full Servers workload
 is pending; owner-package green alone does not establish its acceptance.
+
+## Current #253 verifier-refresh dependency adoption
+
+The accepted producer closure now selects Core and Operations
+`012a7b8b7cc153cbf17b1a62513fab747eaad782`, SDK
+`e289d6939b7e6432ffa5181789b0600bf8e3ffe2`, Secrets
+`08076140178d59b91d585099136b7d8b6f51866b`, and Interpreters
+`5f4e2b521a91f57289a19b0f1488db0d850f2f71`. All producer owning gates and
+independent reviews passed before their actual merge outputs were selected.
+Unlike the prior Operations-only adoption, Core now changes its managed-update
+compiler to admit the closed retained-verifier refresh relation. Operations
+checks the current authoritative public family at fresh planning and locked
+first start. SDK/Secrets/Interpreter runtime source is unchanged.
+Canonical coordinates, generated dependency mirrors and exact installed
+provenance expectations move together; the unchanged owning gate checks their
+consistency and actual installed family. Published product source/image and
+catalogue coordinates are unchanged. This source checkpoint is unvalidated;
+installed refresh and full #237/#225 acceptance are separate evidence.
+Earlier coordinate accounts in this document are historical.
