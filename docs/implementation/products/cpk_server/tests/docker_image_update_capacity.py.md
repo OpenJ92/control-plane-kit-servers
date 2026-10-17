@@ -13,6 +13,15 @@ Each record is limited to 16 KiB; integers are nonnegative signed-64-bit values.
 The phase is pre-id or bound. No identifiers, graph/history contents, SQL,
 credentials or secret material are read for output. Output errors cannot replace
 the original owner's return or refusal; the method patch always restores.
+Emission returns an explicit success/failure boolean, retained in the context's
+bounded outcome list. Owner exceptions never enter that diagnostic handler.
+
+The first diagnostic checkpoint `91eef9b` stopped in package integrity before
+build or behavioral execution: its bare exception-swallowing branch violated the
+test-source scanner. The corrected emitter follows the existing failure-evidence
+helper's explicit outcome convention, with strengthened outcome assertions. No
+scanner exemption or weakening is used; that failed gate collected no capacity
+measurements and dispatched no scenario effects.
 
 Socket-free tests prove tuple/exception identity, exact once invocation, numeric
 schema/count bounds, canary exclusion, untouched preflight, restoration and

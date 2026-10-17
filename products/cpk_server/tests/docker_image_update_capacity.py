@@ -4,7 +4,7 @@ import json
 from unittest.mock import patch
 
 
-def _emit(prepared, result, ordinal):
+def _record(prepared, result, ordinal):
     from control_plane_kit_operations.configuration_preparation import configuration_evidence_capacity
 
     def numbers(value):
@@ -29,7 +29,16 @@ def _emit(prepared, result, ordinal):
     encoded = json.dumps(record, sort_keys=True)
     if len(encoded.encode("utf-8")) > 16384:
         raise ValueError("diagnostic output exceeds its bound")
-    print(encoded, flush=True)
+    return encoded
+
+
+def _emit(prepared, result, ordinal):
+    """An explicit emission outcome; never handles an owner-method exception."""
+    try:
+        print(_record(prepared, result, ordinal), flush=True)
+    except Exception:
+        return False
+    return True
 
 
 @contextmanager
@@ -38,18 +47,13 @@ def observe_publication_budgets():
     from control_plane_kit_operations.postgres.configuration_acceptance_store import ConfigurationAcceptanceStore
 
     original = ConfigurationAcceptanceStore._publication_budgets
-    count = 0
+    emissions = []
 
     def observed(store, prepared):
-        nonlocal count
         result = original(store, prepared)
-        if count < 8:
-            count += 1
-            try:
-                _emit(prepared, result, count)
-            except Exception:
-                pass  # Diagnostic output cannot change the original owner's outcome.
+        if len(emissions) < 8:
+            emissions.append(_emit(prepared, result, len(emissions) + 1))
         return result
 
     with patch.object(ConfigurationAcceptanceStore, "_publication_budgets", observed):
-        yield
+        yield emissions

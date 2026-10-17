@@ -22,12 +22,13 @@ class PublicationBudgetDiagnosticTests(unittest.TestCase):
         prepared, result = self.fixture()
         original, preflight = ConfigurationAcceptanceStore._publication_budgets, ConfigurationAcceptanceStore._preflight
         with patch.object(ConfigurationAcceptanceStore, "_publication_budgets", Mock(return_value=result)) as owner:
-            with patch("builtins.print") as output, diagnostic.observe_publication_budgets():
+            with patch("builtins.print") as output, diagnostic.observe_publication_budgets() as emissions:
                 store = ConfigurationAcceptanceStore(None)
                 for index in range(10):
                     prepared.event = None if index % 2 == 0 else object()
                     self.assertIs(store._publication_budgets(prepared), result)
                 self.assertIs(ConfigurationAcceptanceStore._preflight, preflight)
+                self.assertEqual(emissions, [True] * 8)
             self.assertIs(ConfigurationAcceptanceStore._publication_budgets, owner)
             self.assertEqual(owner.call_count, 10)
             self.assertTrue(all(call.args == (store, prepared) for call in owner.call_args_list))
@@ -55,9 +56,10 @@ class PublicationBudgetDiagnosticTests(unittest.TestCase):
         with patch.object(ConfigurationAcceptanceStore, "_publication_budgets", Mock(side_effect=error)) as owner:
             with patch("builtins.print") as output:
                 with self.assertRaises(ValueError) as caught:
-                    with diagnostic.observe_publication_budgets():
+                    with diagnostic.observe_publication_budgets() as emissions:
                         ConfigurationAcceptanceStore(None)._publication_budgets(prepared)
                 self.assertIs(caught.exception, error)
+                self.assertEqual(emissions, [])
                 owner.assert_called_once()
                 output.assert_not_called()
             self.assertIs(ConfigurationAcceptanceStore._publication_budgets, owner)
@@ -70,8 +72,9 @@ class PublicationBudgetDiagnosticTests(unittest.TestCase):
         with patch.object(ConfigurationAcceptanceStore, "_publication_budgets", Mock(return_value=result)) as owner:
             with patch("builtins.print", side_effect=OSError("PRIVATE-OUTPUT-FAILURE")) as output:
                 with self.assertRaises(_Capacity):
-                    with diagnostic.observe_publication_budgets():
+                    with diagnostic.observe_publication_budgets() as emissions:
                         ConfigurationAcceptanceStore(None)._preflight(prepared)
+                self.assertEqual(emissions, [False])
                 output.assert_called_once()
                 owner.assert_called_once()
         self.assertIs(ConfigurationAcceptanceStore._publication_budgets, original)
@@ -87,7 +90,8 @@ class PublicationBudgetDiagnosticTests(unittest.TestCase):
                     "return_value": "x" * 16385}
                 with patch.object(ConfigurationAcceptanceStore, "_publication_budgets", Mock(return_value=result)) as owner:
                     with patch.object(diagnostic.json, "dumps", **options), patch("builtins.print") as output:
-                        with diagnostic.observe_publication_budgets():
+                        with diagnostic.observe_publication_budgets() as emissions:
                             self.assertIs(ConfigurationAcceptanceStore(None)._publication_budgets(prepared), result)
+                        self.assertEqual(emissions, [False])
                         owner.assert_called_once()
                         output.assert_not_called()
