@@ -31,11 +31,13 @@ from control_plane_kit_core.configuration_installation import (
 )
 from control_plane_kit_core.products import ProductReference, ProductDescriptorCodec
 from control_plane_kit_core.secrets import SecretFileDelivery, SecretFilePathBinding, SecretReference, SecretUseIntent
+from control_plane_kit_core.secret_selections import SecretVersionSelection, UnselectedSecretUse
 from control_plane_kit_core.types import RuntimeKind
 from control_plane_kit_interpreters.docker.configuration import (
     _container_incarnation_fingerprint, configuration_volume_name,
 )
 from control_plane_kit_interpreters.docker.runtime import _secret_volume_name
+from control_plane_kit_interpreters.docker.sdk import DockerSdkImageInspection
 from control_plane_kit_core.topology import validate_graph
 from control_plane_kit_operations.runtime_authorities import LocalDockerSocketAuthority, RegisteredRuntimeAuthority
 from control_plane_kit_operations.products import InlineDescriptorSource, RegisteredProduct
@@ -43,6 +45,7 @@ from control_plane_kit_core.runtime_authority import RuntimeAuthorityReference
 from control_plane_kit_servers_cpk_server.client import ClientProfile, TopologyClient
 
 from docker_image_update_material import DockerImageMaterial
+from docker_image_update_selection import consumer_graph, application_content_graph
 from docker_image_update_placement import OwnedControllerPlacement, SyntheticConnectorConnection, PREFIX
 from docker_image_update_ports import (
     AttachedPublicTransport, CompletedRuntimeCall, FixtureBoundaryFailure,
@@ -78,12 +81,14 @@ def events(record=None, *, generation=1, worker="worker-a"):
 
 def replacement_record():
     document = DockerImageMaterial("workspace-a").successor
+    delivery, = document.product.runtime_contract.secret_deliveries
     refs = tuple(ConfigurationInstanceRef("allocation-" + str(index), "workspace-a", "docker", "api",
         value.artifact_id, value.target_path, value.media_type, value.file_mode, value.content_digest)
         for index, value in enumerate(document.product.runtime_contract.configuration_artifacts))
     request = replace(completed().request, kind=RuntimeEffectKind.CONFIGURATION_ACTIVITY_V1,
         operation=ReconcileNode(NodeTarget("api")), configuration_instances=ConfigurationInstanceSelection(refs),
-        products=(RuntimeProductMaterial("api", "docker", ProductReference.from_document(document), document.product),))
+        products=(RuntimeProductMaterial("api", "docker", ProductReference.from_document(document), document.product,
+            secret_selections=(SecretVersionSelection(delivery.reference, delivery.intent, "version-a"),)),))
     context = configuration_invocation_correlation_for_request(request)
     receipt = ConfigurationInstallationReceipt(context.request_fingerprint,
         configuration_invocation_selection_fingerprint(context.selection), ConfigurationInstallationDisposition.REPLACED,
@@ -99,10 +104,36 @@ def secret_file_request():
     document = ProductDescriptorCodec().encode_document(replace(original,
         runtime_contract=replace(original.runtime_contract, secret_deliveries=(delivery,))))
     return replace(completed().request, operation=StartNode(NodeTarget("connector")),
-        products=(RuntimeProductMaterial("connector", "docker", ProductReference.from_document(document), document.product),))
+        products=(RuntimeProductMaterial("connector", "docker", ProductReference.from_document(document), document.product,
+            secret_selections=(SecretVersionSelection(delivery.reference, delivery.intent, "version-a"),)),))
 
 
 class DockerImageBoundaryTests(unittest.TestCase):
+    def test_consumer_fixture_declares_initial_use_and_separates_image_and_content(self):
+        material = DockerImageMaterial("workspace-a")
+        introduced = material.a
+        pending, = introduced.node("api").secret_selections
+        self.assertIs(type(pending), UnselectedSecretUse)
+        self.assertEqual(introduced.node("api").secret_deliveries,
+            material.documents["api"].product.runtime_contract.secret_deliveries)
+        self.assertIn("application-settings", {value.artifact_id
+            for value in introduced.node("api").configuration_artifacts})
+        selected = SecretVersionSelection(pending.reference, pending.intent, "version-a")
+        introduced = introduced.update_node(replace(introduced.node("api"), secret_selections=(selected,)))
+        successor = consumer_graph(introduced, material.successor)
+        self.assertEqual(successor.node("api").secret_selections, (selected,))
+        self.assertEqual(successor.node("api").secret_deliveries, introduced.node("api").secret_deliveries)
+        self.assertNotEqual(successor.node("api").metadata, introduced.node("api").metadata)
+        self.assertEqual(successor.node("api").configuration_artifacts,
+            introduced.node("api").configuration_artifacts)
+        self.assertEqual(successor.update_node(replace(successor.node("api"),
+            metadata=introduced.node("api").metadata)), introduced)
+        content = application_content_graph(successor)
+        self.assertNotEqual(content.node("api").configuration_artifacts,
+            successor.node("api").configuration_artifacts)
+        self.assertEqual(content.update_node(replace(content.node("api"),
+            configuration_artifacts=successor.node("api").configuration_artifacts)), successor)
+
     def test_failure_evidence_retains_bounded_public_classifications_not_payloads(self):
         result = SimpleNamespace(run_id="run-a", plan_id="plan-a", status="attention-required",
             execution="failed", advancement="not-attempted")
@@ -405,7 +436,9 @@ class OwnedAttachmentTests(unittest.TestCase):
     def test_secret_volume_identity_is_persisted_before_runtime_dispatch(self):
         request = secret_file_request()
         delivery, = request.products[0].product.runtime_contract.secret_deliveries
-        name = _secret_volume_name(request, "connector", delivery)
+        self.sdk.inspect_image.return_value = DockerSdkImageInspection("sha256:" + "a" * 64,
+            (request.products[0].product.image.execution_reference,), "65535:65535")
+        name = _secret_volume_name(request, "connector", delivery, owner_uid=65535)
         with TemporaryDirectory() as directory:
             path = Path(directory) / "ownership.json"
             placement = OwnedControllerPlacement(self.engine, self.sdk, "workspace-a", "b" * 64,
@@ -417,6 +450,7 @@ class OwnedAttachmentTests(unittest.TestCase):
                 self.assertEqual(set(recorded["secret_volumes"]), {name})
                 self.assertEqual(recorded["secret_volumes"][name][PREFIX + "secret.reference"],
                     delivery.reference.reference_id)
+                self.assertEqual(len(recorded["secret_volumes"][name][PREFIX + "secret.identity"]), 64)
                 self.assertFalse(recorded["volumes"])
                 raise FixtureBoundaryFailure("simulated provider stop")
             runtime.execute.side_effect = execute
@@ -425,9 +459,30 @@ class OwnedAttachmentTests(unittest.TestCase):
             runtime.execute.assert_called_once_with(request)
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
+    def test_selected_volume_reuse_retains_original_labels_and_separates_version_and_uid(self):
+        request = secret_file_request()
+        self.sdk.inspect_image.return_value = DockerSdkImageInspection("sha256:" + "a" * 64,
+            (request.products[0].product.image.execution_reference,), "65535:65535")
+        self.placement.starting(request)
+        original = dict(self.placement.record["secret_volumes"])
+        self.placement.starting(replace(request, source=replace(request.source, plan_id="later-plan")))
+        self.assertEqual(self.placement.record["secret_volumes"], original)
+        material, = request.products
+        selection, = material.secret_selections
+        self.placement.starting(replace(request, products=(replace(material,
+            secret_selections=(replace(selection, version_id="version-b"),)),)))
+        self.sdk.inspect_image.return_value = DockerSdkImageInspection("sha256:" + "a" * 64,
+            (material.product.image.execution_reference,), "10001")
+        self.placement.starting(request)
+        self.assertEqual(len(self.placement.record["secret_volumes"]), 3)
+        self.assertEqual(len({row[PREFIX + "secret.identity"]
+            for row in self.placement.record["secret_volumes"].values()}), 3)
+
     def test_secret_volume_cleanup_requires_prerecord_and_unchanged_ownership(self):
         from docker_image_update_placement import dispose_fixture
         request = secret_file_request()
+        self.sdk.inspect_image.return_value = DockerSdkImageInspection("sha256:" + "a" * 64,
+            (request.products[0].product.image.execution_reference,), "65535:65535")
         self.placement.starting(request)
         name, = self.placement.record["secret_volumes"]
         expected = self.placement.record["secret_volumes"][name]
@@ -440,7 +495,7 @@ class OwnedAttachmentTests(unittest.TestCase):
         self.engine.volumes.get.return_value = volume
         self.sdk.inspect_volume.return_value = SimpleNamespace(name=name, labels=dict(expected))
         self.assertEqual(self.placement.cleanup_candidates()["volumes"], [volume])
-        for key in ("workspace", "secret.target", "secret.reference", "volume.kind"):
+        for key in ("workspace", "secret.target", "secret.reference", "volume.kind", "secret.identity"):
             with self.subTest(changed=key):
                 volume.attrs["Labels"][PREFIX + key] = "foreign"
                 with self.assertRaises(FixtureBoundaryFailure):

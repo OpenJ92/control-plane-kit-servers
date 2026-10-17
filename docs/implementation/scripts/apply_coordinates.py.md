@@ -51,3 +51,15 @@ with unchanged Core/SDK/Secrets/Interpreters. The generator changes root depende
 metadata and CPK's Docker recipe, the destinations that install Operations.
 Published descriptors and catalogue bytes remain unchanged. Installation and
 source witness provenance are required before any behavioral claim.
+
+## Current #252 Operations-only evidence-policy adoption
+
+Operations selects accepted #1994 merge
+`6e8ba28ef03e0eedbeafe9f3448d259750a6203f`; Core retains
+`5b66dcac4bf2cf76219efaf05fa5ff06588bd16a`, SDK `d4cbbb16`, Secrets
+`56e6d321`, and Interpreters `f689773e`. Actual accepted Core subtrees match
+`71885273e30f4489c102d2a7559eb23c247a3c2c`; the ordinary gate must still prove
+installed provenance and composition. Only Operations dependency mirrors and
+exact expected provenance advance. Scenario, assertions, cleanup, runner, extras
+and published product coordinates remain unchanged. The full Servers workload
+is pending; owner-package green alone does not establish its acceptance.

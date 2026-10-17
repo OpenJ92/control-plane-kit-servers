@@ -16,7 +16,10 @@ from control_plane_kit_core.types import RuntimeKind
 from control_plane_kit_interpreters.docker.configuration import (
     configuration_volume_name, require_configuration_owner,
 )
-from control_plane_kit_interpreters.docker.runtime import _node_labels, _secret_volume_name
+from control_plane_kit_interpreters.docker.runtime import (
+    _node_labels, _secret_volume_name, _selected_secret_identity,
+)
+from control_plane_kit_interpreters.docker.sdk import matches_image_reference
 from control_plane_kit_operations.runtime_authorities import (
     RegisteredRuntimeAuthorityStatus, LocalDockerSocketAuthority,
 )
@@ -130,14 +133,29 @@ class OwnedControllerPlacement:
                 for delivery in material.product.runtime_contract.secret_deliveries:
                     if type(delivery) is not SecretFileDelivery:
                         continue
-                    name = _secret_volume_name(request, material.node_id, delivery)
+                    image = self.sdk.inspect_image(material.product.image.execution_reference)
+                    if image is None or not matches_image_reference(
+                            material.product.image.execution_reference, image.repo_digests):
+                        raise FixtureBoundaryFailure("secret recipient image is not admitted")
+                    owner_uid = image.secret_file_owner_uid()
+                    selection, = (value for value in material.secret_selections
+                        if value.reference == delivery.reference and value.intent is delivery.intent)
+                    name = _secret_volume_name(request, material.node_id, delivery, owner_uid=owner_uid)
                     labels = {**_node_labels(request, material), PREFIX + "volume.kind": "secret-file",
                         PREFIX + "secret.target": delivery.target_path,
-                        PREFIX + "secret.reference": delivery.reference.reference_id}
-                    if (name in self.record["volumes"] or name in self.record["secret_volumes"]
-                            and self.record["secret_volumes"][name] != labels):
+                        PREFIX + "secret.reference": delivery.reference.reference_id,
+                        PREFIX + "secret.identity": _selected_secret_identity(
+                            request, material.node_id, delivery, selection, owner_uid)}
+                    prior = self.record["secret_volumes"].get(name)
+                    stable = ("workspace", "runtime", "node", "kind", "volume.kind",
+                        "secret.target", "secret.reference", "secret.identity")
+                    if (name in self.record["volumes"] or prior is not None
+                            and any(prior.get(PREFIX + key) != labels.get(PREFIX + key) for key in stable)):
                         raise FixtureBoundaryFailure("secret volume identity changed")
-                    self.record["secret_volumes"][name] = labels
+                    # Reuse retains the first allocation's ownership labels;
+                    # plan/image coordinates are not selected file identity.
+                    if prior is None:
+                        self.record["secret_volumes"][name] = labels
         self.persist()  # Exact owner-derived allocation identities are durable before dispatch.
 
     def observed(self, record):

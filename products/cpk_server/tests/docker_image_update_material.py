@@ -7,13 +7,16 @@ import control_plane_kit_core as core
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from control_plane_kit_core.algebra import BlockSockets, BlockSpec
+from control_plane_kit_core.configuration import ConfigurationArtifact, ConfigurationMediaType
+from control_plane_kit_core.secrets import SecretEnvironmentDelivery, SecretReference, SecretUseIntent
+from control_plane_kit_core.secret_selections import author_secret_selections
 from control_plane_kit_core.products import (
     ContainerServerProduct, OciImageReference, ProductDescriptorCodec, ProductIdentity, ProductReference,
     ProductRuntimeContract,
 )
 from control_plane_kit_core.public_ingress import IngressAuthorityReference, NamedPublicIngress, PublicIngressTarget
 from control_plane_kit_core.runtime_authority import RuntimeAuthorityReference
-from control_plane_kit_core.topology import DeploymentGraph, Node, RuntimeRecord, validate_graph
+from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC, DeploymentGraph, Node, RuntimeRecord, validate_graph
 from control_plane_kit_core.topology.graph import Endpoint, LiteralAddress
 from control_plane_kit_core.types import BlockFamily, Protocol, RuntimeKind
 from control_plane_kit_servers_cpk_local_gateway.control_configuration import gateway_control_configuration_artifact
@@ -30,6 +33,8 @@ from receiver_acceptance_material import AuthoredMaterial
 
 
 IMAGES = json.loads(Path(__file__).with_name("docker_image_update_images.json").read_text())
+APPLICATION_REFERENCE = SecretReference("secret://application-secrets/api/token")
+APPLICATION_INTENT = SecretUseIntent.APPLICATION_CONTROL_TOKEN
 
 
 def image_value(reference):
@@ -63,8 +68,13 @@ class DockerImageMaterial(AuthoredMaterial):
             core.DelegationKeyPurpose.GATEWAY_NODE_HEALTH_READ_TRANSIT, (self.public["transit"],)))
         gateway = gateway_health_source_runtime_contract(trust, self.routes(("gateway", "api", "api-y")),
             gateway_control_configuration_artifact(self.configurations["gateway"]))
+        api = hello_source_runtime_contract(self.wrapper("api"))
+        api = replace(api, secret_deliveries=(SecretEnvironmentDelivery("CPK_WITNESS_TOKEN",
+            APPLICATION_REFERENCE, APPLICATION_INTENT),), configuration_artifacts=(
+                *api.configuration_artifacts, ConfigurationArtifact("application-settings",
+                    "/etc/cpk/application-settings.json", ConfigurationMediaType.JSON, '{"revision":1}')))
         nodes = {name: self.node(name, contract) for name, contract in (
-            ("gateway", gateway), ("api", hello_source_runtime_contract(self.wrapper("api"))),
+            ("gateway", gateway), ("api", api),
             ("api-y", hello_source_runtime_contract(self.wrapper("api-y"))),
             ("connector", ProductRuntimeContract(sockets=BlockSockets())))}
         self.a = DeploymentGraph("docker-image-update", nodes=nodes,
@@ -73,6 +83,7 @@ class DockerImageMaterial(AuthoredMaterial):
                 management=core.RuntimeManagement("gateway", "management"))},
             public_ingresses=(NamedPublicIngress("management", IngressAuthorityReference("zone"),
                 PublicIngressTarget("gateway", "control"), "connector", "cpk-1912.example.invalid"),))
+        self.a = DEFAULT_GRAPH_CODEC.decode(DEFAULT_GRAPH_CODEC.encode(self.a))
         self.decoders = health_receiver_decoders(gateway_documents=(self.documents["gateway"],))
         original = self.documents["api"]
         self.successor = ProductDescriptorCodec().encode_document(replace(original.product,
@@ -108,4 +119,6 @@ class DockerImageMaterial(AuthoredMaterial):
             endpoints={socket.name: Endpoint(LiteralAddress("http://" + name + ":8000"), Protocol.HTTP)
                 for socket in contract.sockets.providers},
             public_environment=contract.public_environment, configuration_artifacts=contract.configuration_artifacts,
+            secret_deliveries=contract.secret_deliveries,
+            secret_selections=author_secret_selections(contract.secret_deliveries),
             metadata=selected_metadata(document))

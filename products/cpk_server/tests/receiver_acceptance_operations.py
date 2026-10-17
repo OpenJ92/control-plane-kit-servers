@@ -21,6 +21,7 @@ from typing import Any
 
 import psycopg
 from psycopg import sql
+from control_plane_kit_core.operations.lifecycle import ActivityEventKind, FailureCategory
 from control_plane_kit_servers_cpk_server.operations_application import (
     OperationsApplicationFactory as SharedOperationsApplicationFactory,
     OperationsEffectPorts as SharedOperationsEffectPorts,
@@ -209,6 +210,7 @@ class OperationsEffectPorts:
     managed_health: object
     health_receiver_decoders: object
     runtime_observer: object | None = None
+    secret_metadata_reader: object | None = None
 
 
 class _RefuseUnexpectedRecovery:
@@ -254,7 +256,8 @@ class OperationsApplicationFactory:
         return SharedOperationsApplicationFactory(self.unit_of_work_factory,
             SharedOperationsEffectPorts(ports.runtime_interpreters, ports.ingress_interpreters,
                 ports.managed_health, ports.health_receiver_decoders,
-                ports.runtime_observer or _RefuseUnexpectedRecovery()),
+                ports.runtime_observer or _RefuseUnexpectedRecovery(),
+                secret_metadata_reader=ports.secret_metadata_reader),
             OperationsIdFactories(*(self.id_factory for _ in range(5))),
             clock=self.clock, start_service_decorator=decoration)()
 
@@ -270,6 +273,45 @@ class CoordinatorStopped(OperationsSequenceError):
         super().__init__(f"{label} stopped with coordinator status {execution.get('coordinator_status')!r}")
         self.run_id = run_id
         self.execution = dict(execution)
+
+
+def execution_failure_codes(events, plan=None):
+    """Bounded public classifications only, never messages or event payloads."""
+    def code(value):
+        return value if type(value) is str and re.fullmatch(r"[a-z][a-z0-9.-]{0,95}", value) else None
+    def identity(value):
+        return value if type(value) is str and re.fullmatch(r"[A-Za-z0-9_.:/-]{1,256}", value) else None
+    activities = (plan or {}).get("payload", {}).get("activities", [])
+    rows = []
+    for event in events[-32:]:
+        if not isinstance(event, Mapping):
+            continue
+        try:
+            kind = ActivityEventKind(event.get("event_type"))
+        except (TypeError, ValueError):
+            continue
+        failure = event.get("failure")
+        if not isinstance(failure, Mapping):
+            continue
+        try:
+            category = FailureCategory(failure.get("category")).value
+        except (TypeError, ValueError):
+            category = None
+        matches = [value for value in activities if value.get("activity_id") == event.get("activity_id")]
+        operation = matches[0].get("operation", {}) if len(matches) == 1 else {}
+        target = operation.get("target", {})
+        details = failure.get("details")
+        details = details if isinstance(details, Mapping) else {}
+        outcome = details.get("effect_outcome")
+        outcome = outcome if isinstance(outcome, Mapping) else {}
+        rows.append({"event_type": kind.value, "activity_id": identity(event.get("activity_id")),
+            "operation": code(operation.get("kind")), "node_id": identity(target.get("node_id")),
+            "failure_category": category,
+            "failure_code": code(failure.get("code")),
+            "runtime_failure_code": code(outcome.get("runtime_failure_code"))})
+    return {"receiver_execution_failure": "observed", "event_count": len(events),
+        "events_truncated": len(events) > 32,
+        "failures": rows}
 
 
 def graph_descriptor(value: Mapping[str, object] | DeploymentGraph) -> dict[str, object]:
@@ -795,6 +837,14 @@ class PublicOperationsDriver:
             raise OperationsSequenceError("workspace read did not return durable truth")
         return dict(workspace)
 
+    async def _emit_execution_failure(self, run_id, plan):
+        try:
+            page = await self._history_page("read.run-events",
+                path={"workspace_id": self.workspace_id, "run_id": run_id})
+            print(json.dumps(execution_failure_codes(page["items"], plan)), flush=True)
+        except Exception:
+            print('{"receiver_execution_failure":"evidence-unavailable"}', flush=True)
+
     async def accept(
         self,
         *,
@@ -949,6 +999,7 @@ class PublicOperationsDriver:
             if status == "completed":
                 break
             if status != "progressed":
+                await self._emit_execution_failure(run_id, plan_descriptor)
                 raise CoordinatorStopped(label, run_id, execution)
         else:
             raise OperationsSequenceError(f"{label} exceeded its execution bound")

@@ -9,7 +9,7 @@ ENV CPK_WRAPPER_CONFIGURATION_FILE=/etc/cpk/router/control.json
 WORKDIR /app
 
 RUN python -m pip install --no-cache-dir \
-    "control-plane-kit-server-sdk[verification] @ https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/9aa01ef7b2df6106f6ad87c1625a7feb93394b88.zip"
+    "control-plane-kit-server-sdk[verification] @ https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/d4cbbb16a4ce47bae0b791adab5de8940355ea99.zip"
 
 RUN useradd --create-home --uid 10003 router
 

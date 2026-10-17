@@ -22,9 +22,9 @@ SERVER_SOURCE = (
     PRODUCT_SRC / "control_plane_kit_servers_cpk_server" / "server.py"
 )
 ASSEMBLY_SOURCE = SERVER_SOURCE.with_name("operations_application.py")
-CORE_COMMIT = "05b5f28a624e6e03f1dadbe6ad77ece2bec09601"
-OPERATIONS_COMMIT = "05b5f28a624e6e03f1dadbe6ad77ece2bec09601"
-INTERPRETERS_COMMIT = "1b7997609d423d0b77b62e0c127a54d937a7da86"
+CORE_COMMIT = "5b66dcac4bf2cf76219efaf05fa5ff06588bd16a"
+OPERATIONS_COMMIT = "6e8ba28ef03e0eedbeafe9f3448d259750a6203f"
+INTERPRETERS_COMMIT = "f689773e2b19a56543dae9830a2b1c059bbb10a4"
 PUBLIC_DEPLOYMENT_COMMAND_ROUTES = frozenset(
     {
         "command.deployment.prepare",

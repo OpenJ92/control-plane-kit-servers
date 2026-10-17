@@ -17,6 +17,7 @@ from control_plane_kit_operations import (
 from control_plane_kit_operations.desired_topology_drafts import DesiredTopologyDraftCommandService
 from control_plane_kit_operations.health_signing_authority import HealthSigningAuthorityReloadService
 from control_plane_kit_operations.health_receiver_trust import HealthReceiverDecoders
+from control_plane_kit_operations.graph_authoring import SecretVersionMetadataReader
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,7 @@ class OperationsEffectPorts:
     health_receiver_decoders: HealthReceiverDecoders
     runtime_observer: object
     disabled_runtime_adapter: object | None = None
+    secret_metadata_reader: SecretVersionMetadataReader | None = None
 
 
 def _utc_now():
@@ -97,7 +99,8 @@ class OperationsApplicationFactory:
             secret_providers=SecretProviderRegistrationService(unit_of_work),
             delegation_signing_keys=DelegationSigningKeyRegistrationService(unit_of_work),
             desired_topology_drafts=DesiredTopologyDraftCommandService(unit_of_work, clock=clock, id_factory=ids.service),
-            desired_graphs=DesiredGraphCommandService(unit_of_work, clock=clock, id_factory=ids.service),
+            desired_graphs=DesiredGraphCommandService(unit_of_work, clock=clock, id_factory=ids.service,
+                secret_metadata_reader=ports.secret_metadata_reader),
             approval=ApprovalCommandService(unit_of_work, clock=clock, id_factory=ids.service),
             admission=ExecutionAdmissionCommandService(unit_of_work, clock=clock, id_factory=ids.service),
             lifecycle=lifecycle,

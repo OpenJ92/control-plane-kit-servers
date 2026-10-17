@@ -191,7 +191,7 @@ class CpkServerProcessCompositionTests(unittest.TestCase):
         from unittest.mock import Mock, patch
         from control_plane_kit_core.types import RuntimeKind
         from control_plane_kit_servers_cpk_server import server
-        config, provider = Mock(), object()
+        config, provider = Mock(), server._SecretProviderComposition()
         config.runtime_dispatcher.runtime_kinds = (RuntimeKind.DOCKER,)
         config.runtime_dispatcher.enabled = True
         config.ingress_interpreters.enabled = True

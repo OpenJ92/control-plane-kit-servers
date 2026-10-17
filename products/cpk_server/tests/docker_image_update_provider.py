@@ -9,13 +9,14 @@ import socket
 import subprocess
 import sys
 import time
+from urllib.parse import quote
 
 import httpx
 
 from control_plane_kit_core.secrets import (
     SecretProviderEndpointReference, SecretReference, SecretUseIntent, SecretValue,
 )
-from control_plane_kit_interpreters.secret_provider import ControlPlaneKitSecretsClient
+from control_plane_kit_interpreters.secret_provider import ControlPlaneKitSecretsClient, canonical_provider_secret_id
 from control_plane_kit_servers_cpk_server.server import (
     CpkServerBootstrapConfiguration, _secret_provider_composition,
 )
@@ -24,6 +25,7 @@ from products.secrets_server.tests.secrets_control_fixtures import SourceControl
 
 from docker_image_update_ports import FixtureBoundaryFailure
 from receiver_acceptance_ports import IngressAllocation
+from docker_image_update_material import APPLICATION_REFERENCE, APPLICATION_INTENT
 
 
 SIGNING = {
@@ -35,7 +37,7 @@ SIGNING = {
         "gateway.probe-signing-key"),
 }
 
-PROVIDER_ENDPOINTS = ("health-secrets", "unlisted-surface", "generated-secrets")
+PROVIDER_ENDPOINTS = ("health-secrets", "unlisted-surface", "generated-secrets", "application-secrets")
 
 
 class SyntheticIngressAllocation:
@@ -105,9 +107,13 @@ class SigningProviderProcess:
                 "subject": "docker-image-signing", "token": self.token,
                 "grants": [
                     {"action": "secret.write", "workspace_id": self.workspace_id},
+                    {"action": "secret.rotate", "workspace_id": self.workspace_id,
+                     "intents": [APPLICATION_INTENT.value]},
                     {"action": "secret.revoke", "workspace_id": self.workspace_id},
+                    {"action": "secret.metadata", "workspace_id": self.workspace_id},
                     {"action": "secret.resolve", "workspace_id": self.workspace_id,
-                     "intents": [*[row[2] for row in SIGNING.values()], "cloudflare.tunnel-token"]},
+                     "intents": [*[row[2] for row in SIGNING.values()], "cloudflare.tunnel-token",
+                         APPLICATION_INTENT.value]},
                 ],
             }]))
             control = secrets_control_configuration_artifact(SourceControlAuthority(self.workspace_id).configuration())
@@ -187,6 +193,62 @@ class SigningProviderProcess:
                 self.process.wait(timeout=5)
         if self.listener is not None:
             self.listener.close()
+
+    def seed_application_versions(self):
+        """One create, two public rotations and one revoke; fixture setup only."""
+        client = ControlPlaneKitSecretsClient(self.composition.bootstrap_registry.configuration_for(
+            endpoint_reference=SecretProviderEndpointReference("application-secrets"),
+            credential_reference=SecretReference("secret://bootstrap/application-secrets/client-token")))
+        first = client.write(workspace_id=self.workspace_id, reference=APPLICATION_REFERENCE,
+            value=SecretValue(secrets.token_urlsafe(48)), intent=APPLICATION_INTENT,
+            caller_subject="docker-image-signing", correlation_id="application-write-0")
+        assert first.reference == APPLICATION_REFERENCE and first.status == "active" and first.version_number == 1
+        assert first.labels.get("intent") == APPLICATION_INTENT.value
+        versions = [first]
+        for number in (2, 3):
+            observed = self._rotate_application_version(client, number)
+            assert observed.version_id not in {value.version_id for value in versions}
+            versions.append(observed)
+        revoked = versions[2]
+        observed = client.revoke_version(workspace_id=self.workspace_id, reference=APPLICATION_REFERENCE,
+            version_id=revoked.version_id, version_number=revoked.version_number,
+            caller_subject="docker-image-signing", correlation_id="application-revoke")
+        assert observed.status == "revoked" and observed.version_id == revoked.version_id
+        return tuple(versions)
+
+    def _rotate_application_version(self, client, number):
+        # The selected client has no rotate method. Use the provider's public
+        # setup endpoint once, then its existing exact-version metadata reader.
+        secret_id = canonical_provider_secret_id(APPLICATION_REFERENCE)
+        path = f"/v1/workspaces/{quote(self.workspace_id, safe='')}/secrets/{quote(secret_id, safe='')}/rotate"
+        try:
+            with httpx.Client(timeout=5, trust_env=False, follow_redirects=False) as transport:
+                with transport.stream("POST", self.endpoint + path,
+                        headers={"Authorization": "Bearer " + self.token}, json={
+                            "value_base64": base64.b64encode(secrets.token_urlsafe(48).encode()).decode(),
+                            "intent": APPLICATION_INTENT.value, "labels": {},
+                            "caller_subject": "docker-image-signing", "correlation_id": f"application-rotate-{number}"}) as response:
+                    if response.status_code != 200:
+                        raise ValueError("rotation refused")
+                    payload = bytearray()
+                    for chunk in response.iter_bytes(chunk_size=4096):
+                        payload.extend(chunk)
+                        if len(payload) > 65536:
+                            raise ValueError("rotation response exceeds bound")
+            document = json.loads(payload)
+            assert set(document) == {"outcome", "metadata"} and document["outcome"] == "rotated"
+            metadata = document["metadata"]
+            assert metadata["workspace_id"] == self.workspace_id and metadata["secret_id"] == secret_id
+            assert metadata["status"] == "active" and metadata["labels"] == {"intent": APPLICATION_INTENT.value}
+            assert type(metadata["version_number"]) is int and metadata["version_number"] == number
+            observed = client.read_metadata(workspace_id=self.workspace_id, reference=APPLICATION_REFERENCE,
+                version_id=metadata["version_id"])
+            assert observed.version_number == number and observed.status == "active"
+            assert observed.labels.get("intent") == APPLICATION_INTENT.value
+            return observed
+        except Exception:
+            # A response failure may follow a committed rotation. Never retry.
+            raise FixtureBoundaryFailure("application version setup unconfirmed; no retry") from None
 
     def __exit__(self, *_):
         self._stop()

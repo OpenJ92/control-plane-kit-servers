@@ -7,6 +7,7 @@ from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
+import secrets
 import time
 
 import httpx
@@ -24,8 +25,16 @@ from control_plane_kit_core.planning import (
     StartNode, StartRuntime, StopNode, StopRuntime,
 )
 from control_plane_kit_core.receiver_configuration import select_receiver_node_control_configuration_artifact
-from control_plane_kit_core.runtime_effects import RuntimeEffectResult
-from control_plane_kit_core.secrets import SecretCustodyReceipt, SecretResolved, SecretValue
+from control_plane_kit_core.runtime_effects import RuntimeEffectRequest, RuntimeEffectResult, RuntimeEffectFailure
+from control_plane_kit_core.secrets import (
+    SecretCustodyReceipt, SecretResolved, SecretValue, SecretDenied,
+)
+from control_plane_kit_core.secret_version_grants import SecretVersionResolutionGrant
+from control_plane_kit_core.secret_installation import (
+    SecretResolutionReceipt, SecretInstallationReceipt, secret_installation_correlation_for_request,
+    secret_material_selection_fingerprint,
+)
+from control_plane_kit_interpreters.secrets import validate_selected_secret_grants, resolve_selected_secret_deliveries
 from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC, validate_graph
 from control_plane_kit_interpreters.docker.management_health import DockerManagedHealthObserver
 from control_plane_kit_interpreters.probes.health_signing import (
@@ -35,6 +44,8 @@ from control_plane_kit_interpreters.probes.health_transport import (
     GatewayHealthTransportCode, SelectedManagementGateway, SignedGatewayHealthClient,
 )
 from control_plane_kit_operations.effect_outcome_evidence import NativeConnectionObservation, NativeConnectionOutcome
+from control_plane_kit_operations.runtime_adapter_registration import RuntimeAdapterRegistration
+from control_plane_kit_operations.ingress_authorities import require_cloudflared_tunnel_token_delivery
 from control_plane_kit_operations.runtime_management_targets import project_management_health_target
 from control_plane_kit_server_sdk.fastapi import install_cpk_wrapper
 from control_plane_kit_servers_cpk_local_gateway.health_relay import GatewayHealthRelay
@@ -46,6 +57,10 @@ def stamp():
     return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
+def synthetic_runtime_registration(compute):
+    return RuntimeAdapterRegistration(compute, exact_version_execute_with_authority=True)
+
+
 class ComputeSubstitute:
     """In-memory allocation/install boundary; never a Docker replacement claim."""
     def __init__(self):
@@ -54,6 +69,8 @@ class ComputeSubstitute:
         self.configuration_refs = {}
         self.order = []
         self.receipt_mode = "valid"
+        self.selected_resolver = None
+        self._recipient_material = {}
 
     def execute(self, request):
         raise AssertionError("compute dispatch requires registered runtime authority")
@@ -63,6 +80,25 @@ class ComputeSubstitute:
         assert type(request.operation) in (StartRuntime, ReconcileRuntime, StopRuntime,
             RemoveRuntimeResource, StartNode, ReconcileNode, StopNode, RemoveNodeResource)
         self.calls.append(request)
+        selected = None
+        if type(request.operation) in (StartNode, ReconcileNode) and request.products[0].secret_selections:
+            RuntimeEffectRequest.__post_init__(request)
+            material, = request.products
+            deliveries = material.product.runtime_contract.secret_deliveries
+            try:
+                if material.node_id != "connector" or len(deliveries) != 1:
+                    raise ValueError("unsupported synthetic recipient")
+                require_cloudflared_tunnel_token_delivery(deliveries)
+            except ValueError:
+                return RuntimeEffectResult.unsupported(request.effect_id,
+                    RuntimeEffectFailure("fixture.selected-shape-unsupported", "synthetic selected shape is unsupported"))
+            try:
+                validate_selected_secret_grants(request, self.selected_resolver)
+                selected = resolve_selected_secret_deliveries(deliveries, selections=material.secret_selections,
+                    grants=request.secret_resolution_grants, resolver=self.selected_resolver)
+            except Exception:
+                return RuntimeEffectResult.failed(request.effect_id,
+                    RuntimeEffectFailure("fixture.selected-resolution-refused", "synthetic exact resolution refused"))
         if request.configuration_instances is not None:
             for ref in request.configuration_instances.instances:
                 previous = self.configuration_refs.setdefault(ref.allocation_id, ref)
@@ -81,17 +117,37 @@ class ComputeSubstitute:
             # Capture the exact request material, not an independently selected desired graph.
             self.installed[node] = material
             self.identities[node] = identity
-            if type(request.operation) is ReconcileNode and self.receipt_mode != "missing":
+            disposition = (ConfigurationInstallationDisposition.CREATED if prior is None
+                else ConfigurationInstallationDisposition.REPLACED)
+            if (type(request.operation) is ReconcileNode or selected is not None) and (
+                    request.configuration_instances is not None and self.receipt_mode != "missing"):
                 correlation = configuration_invocation_correlation_for_request(request)
                 selection = configuration_invocation_selection_fingerprint(correlation.selection)
                 evidence["configuration_installation_receipt"] = ConfigurationInstallationReceipt(
                     correlation.request_fingerprint,
                     selection if self.receipt_mode == "valid" else "0" * 64,
-                    ConfigurationInstallationDisposition.REPLACED, prior, identity).descriptor()
+                    disposition, prior, identity).descriptor()
+            if selected is not None:
+                # Private simulated file bytes, mode and path binding; no filesystem claim.
+                files = {value.target_path: (value.value.reveal(), value.file_mode, value.path_environment_name)
+                    for value in selected.files}
+                self._recipient_material[node] = (identity, dict(selected.environment), files)
+                expected_files = {value.target_path: (value.value.reveal(), value.file_mode, value.path_environment_name)
+                    for value in selected.files}
+                if self._recipient_material[node] != (self.identities[node], dict(selected.environment), expected_files):
+                    return RuntimeEffectResult.uncertain(request.effect_id,
+                        RuntimeEffectFailure("fixture.selected-recipient-unknown", "synthetic recipient check failed"))
+                context = secret_installation_correlation_for_request(request)
+                commitment = secret_material_selection_fingerprint(request)
+                evidence.update(secret_recipient_boundary="synthetic-in-memory",
+                    secret_resolution_receipt=SecretResolutionReceipt(context.request_fingerprint, commitment).descriptor(),
+                    secret_installation_receipt=SecretInstallationReceipt(context.request_fingerprint,
+                        commitment, disposition, prior, identity).descriptor())
         elif type(request.operation) is RemoveNodeResource:
             node = request.operation.target.node_id
             self.installed.pop(node)
             self.identities.pop(node)
+            self._recipient_material.pop(node, None)
         elif type(request.operation) is StartRuntime:
             assert request.operation.target.runtime_id not in self.runtimes
             self.runtimes.add(request.operation.target.runtime_id)
@@ -116,6 +172,8 @@ class IngressSubstitute:
     def __init__(self, compute):
         self.compute = compute
         self.allocations, self.calls = {}, []
+        self._private_material = {}
+        compute.selected_resolver = self
 
     def create(self, ingress, *, authority, allocation_name, origin_service_url,
                secret_resolution_grant, secret_custody_grant):
@@ -129,13 +187,27 @@ class IngressSubstitute:
         allocation = IngressAllocation(receipt, "tunnel-" + identity, allocation_name,
             "dns-" + identity, ingress.hostname, "https://" + ingress.hostname)
         self.allocations[allocation_name] = allocation
+        self._private_material[allocation_name] = (secret_custody_grant, SecretValue(secrets.token_urlsafe(32)))
         return allocation
+
+    def resolve(self, grant):
+        if type(grant) is not SecretVersionResolutionGrant:
+            raise ValueError("synthetic resolution requires an exact version grant")
+        for name, allocation in self.allocations.items():
+            custody, value = self._private_material[name]
+            receipt = allocation.secret_custody_receipt
+            if (grant.selection.reference == receipt.reference and grant.selection.version_id == receipt.version_id
+                    and grant.selection.intent is custody.intent and all(getattr(grant, field) == getattr(custody, field)
+                        for field in ("workspace_id", "provider_registration_id", "endpoint_reference", "credential_reference"))):
+                return SecretResolved(receipt.reference, value)
+        return SecretDenied(grant.selection.reference)
 
     def teardown(self, *, authority, resources, secret_resolution_grant, secret_custody_grant):
         key, = (key for key, value in self.allocations.items()
             if value.tunnel_id == resources.tunnel_id and value.dns_record_id == resources.dns_record_id)
         self.calls.append(("remove", key))
         self.allocations.pop(key)
+        self._private_material.pop(key)
 
 
 class KeyMaterialSubstitute:

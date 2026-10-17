@@ -24,6 +24,26 @@ def custody_grant():
 
 
 class DockerImageProviderTests(unittest.TestCase):
+    def test_application_setup_creates_three_distinct_versions_and_revokes_only_third(self):
+        from docker_image_update_provider import SigningProviderProcess, APPLICATION_REFERENCE, APPLICATION_INTENT
+        from control_plane_kit_interpreters.secret_provider import ControlPlaneKitSecretsClient
+        with TemporaryDirectory() as root:
+            with SigningProviderProcess(Path(root) / "provider", "application-setup-test",
+                    "postgresql://fixture:fixture@127.0.0.1/fixture") as provider:
+                versions = provider.seed_application_versions()
+                self.assertEqual(tuple(value.version_number for value in versions), (1, 2, 3))
+                self.assertEqual(len({value.version_id for value in versions}), 3)
+                client = ControlPlaneKitSecretsClient(provider.composition.bootstrap_registry.configuration_for(
+                    endpoint_reference=SecretProviderEndpointReference("application-secrets"),
+                    credential_reference=SecretReference("secret://bootstrap/application-secrets/client-token")))
+                for version, status in zip(versions, ("active", "active", "revoked")):
+                    observed = client.read_metadata(workspace_id=provider.workspace_id,
+                        reference=APPLICATION_REFERENCE, version_id=version.version_id)
+                    self.assertEqual(observed.status, status)
+                    self.assertEqual(observed.reference, APPLICATION_REFERENCE)
+                    self.assertEqual(observed.labels["intent"], APPLICATION_INTENT.value)
+                    self.assertEqual(observed.version_number, version.version_number)
+
     def test_generated_route_writes_resolves_and_revokes_through_existing_provider(self):
         from docker_image_update_provider import SigningProviderProcess, SyntheticIngressAllocation
         grant = custody_grant()

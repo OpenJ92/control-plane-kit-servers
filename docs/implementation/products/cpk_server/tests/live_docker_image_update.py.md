@@ -1,5 +1,26 @@
 Source: [live_docker_image_update.py](../../../../../products/cpk_server/tests/live_docker_image_update.py).
 
+The temporary #1993 publication-budget observer is removed after the full #252
+workload passed at `3e544bff`. Its measured result and prior failures remain in
+the [archived diagnostic companion](docker_image_update_capacity.py.md).
+Every deployment/update/replay/no-op/public teardown assertion is preserved;
+the final source requires its normal owning gate after this hook removal.
+
+#252 continuation consumes the accepted #1991 dependency tuple documented in
+[selected-secret composition](../../../selected-secret-composition.md). The
+initial api already declares its delivery and application slot. Public revision 1
+is selected unselected, exact-version admission precedes actual revision 2 of the
+same draft, and the returned pending continuation drives initial preparation.
+Initial creation and each later version-only, image-only and content-only
+replacement require actual selected-installation receipts and public committed
+events. Each update starts from the latest client journal's authored graph.
+Configuration digests remain fixed until the content-only step; peer identities,
+receiver origins and all earlier public histories remain unchanged throughout.
+Historical operation replay and current replay retain their distinct existing
+classifications; exact selection replay dispatches neither metadata nor effects.
+The ordinary owning gate passed the complete sequence at `3e544bff`. Three replacements,
+four nodes, one network and exact recorded fixture cleanup remain the scope.
+
 #251's owning scenario enters the maintained authenticated public client and
 shared production Operations factory. An isolated schema and bootstrap principals
 precede public registration, pending selection, plan/approval/apply, image update,

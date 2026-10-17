@@ -2,6 +2,7 @@
 import importlib
 import importlib.util
 import unittest
+from dataclasses import fields
 from unittest.mock import Mock, patch
 
 
@@ -20,7 +21,11 @@ class OperationsApplicationFactoryTests(unittest.TestCase):
         decoders, health, observer = object(), object(), object()
         runtime, ingress = {}, {}
         probes = Mock(name="gateway-probe-builder", return_value=object())
-        ports = composition.OperationsEffectPorts(runtime, ingress, health, decoders, observer)
+        self.assertIn("secret_metadata_reader", {item.name for item in fields(composition.OperationsEffectPorts)},
+            "shared production factory must admit the existing Operations metadata port")
+        metadata = object()
+        ports = composition.OperationsEffectPorts(runtime, ingress, health, decoders, observer,
+            secret_metadata_reader=metadata)
         with patch.multiple(composition,
                 RunLifecycleCommandService=Mock(), EffectAttemptStartService=Mock(),
                 EffectAttemptFoldService=Mock(), EffectAttemptReconciliationService=Mock(),
@@ -64,11 +69,13 @@ class OperationsApplicationFactoryTests(unittest.TestCase):
                 health_signing_authority=reload.return_value)
             probes.assert_called_once_with(unit_of_work, authorizer.return_value)
             for service in ("ActivityPlanningCommandService", "WorkspaceCommandService",
-                    "DesiredTopologyDraftCommandService", "DesiredGraphCommandService",
+                    "DesiredTopologyDraftCommandService",
                     "ApprovalCommandService", "ExecutionAdmissionCommandService",
                     "OperationCommandService", "CurrentGraphAdvancementCommandService"):
                 getattr(composition, service).assert_called_once_with(unit_of_work,
                     clock=clock, id_factory=ids.service)
+            composition.DesiredGraphCommandService.assert_called_once_with(unit_of_work,
+                clock=clock, id_factory=ids.service, secret_metadata_reader=metadata)
             services = composition.cpk_server_services.call_args.kwargs
             self.assertIs(services["gateway_probes"], probes.return_value)
             self.assertIs(services["lifecycle"], lifecycle.return_value)

@@ -20,17 +20,17 @@ from receiver_acceptance_operations import (
     IsolatedOperationsSchema, OperationsApplicationFactory, OperationsEffectPorts,
     PublicOperationsDriver, CoordinatorStopped, register_material,
 )
-from receiver_acceptance_ports import ComputeSubstitute, IngressSubstitute, SignedHealthComposition
+from receiver_acceptance_ports import ComputeSubstitute, IngressSubstitute, SignedHealthComposition, synthetic_runtime_registration
 
 
 def verify_provenance():
     """Apparatus check; no behavioral claim can precede normal installed pins."""
     pins = {
-        "control-plane-kit-core": "05b5f28a624e6e03f1dadbe6ad77ece2bec09601",
-        "control-plane-kit-operations": "05b5f28a624e6e03f1dadbe6ad77ece2bec09601",
-        "control-plane-kit-server-sdk": "9aa01ef7b2df6106f6ad87c1625a7feb93394b88",
-        "control-plane-kit-secrets": "28c9045c5d0aecf7471c151cae90ebb9ac88a123",
-        "control-plane-kit-interpreters": "1b7997609d423d0b77b62e0c127a54d937a7da86",
+        "control-plane-kit-core": "5b66dcac4bf2cf76219efaf05fa5ff06588bd16a",
+        "control-plane-kit-operations": "6e8ba28ef03e0eedbeafe9f3448d259750a6203f",
+        "control-plane-kit-server-sdk": "d4cbbb16a4ce47bae0b791adab5de8940355ea99",
+        "control-plane-kit-secrets": "56e6d3211a847efd98434ba2dd4093d29bf4b375",
+        "control-plane-kit-interpreters": "f689773e2b19a56543dae9830a2b1c059bbb10a4",
     }
     for name, commit in pins.items():
         direct = json.loads(importlib.metadata.distribution(name).read_text("direct_url.json"))
@@ -89,7 +89,7 @@ async def accepted_history(database_url):
     schema_name = "cpk_1912_" + uuid4().hex
     with IsolatedOperationsSchema(database_url, schema_name) as schema:
         factory = OperationsApplicationFactory(schema.unit_of_work,
-            OperationsEffectPorts({RuntimeKind.DOCKER: compute},
+            OperationsEffectPorts({RuntimeKind.DOCKER: synthetic_runtime_registration(compute)},
                 {IngressAuthorityProviderKind.CLOUDFLARE: ingress}, health, material.decoders),
             id_factory=lambda: "receiver-" + uuid4().hex)
         driver = PublicOperationsDriver(factory, workspace_id="workspace-a", effect_snapshot=effects)
@@ -105,7 +105,23 @@ async def accepted_history(database_url):
         for label, graph in (("a", material.a), ("b", material.b), ("c", material.c)):
             start_calls = len(compute.calls)
             start_reads = len(health.signed_reads)
-            accepted.append(await driver.accept(label=label, desired_graph=graph, destructive=label == "c"))
+            try:
+                accepted.append(await driver.accept(label=label, desired_graph=graph, destructive=label == "c"))
+            except CoordinatorStopped:
+                # Fixture-side entry observations only; public event/plan
+                # correlation above supplies the actual rejected activity.
+                print(json.dumps({"receiver_compute_entries": [
+                    {"activity_id": value.activity_id.value[:256],
+                     "operation": type(value.operation).__name__,
+                     "node_id": (getattr(value.operation.target, "node_id", None) or "")[:256]}
+                    for value in compute.calls[-32:]],
+                    "entries_truncated": len(compute.calls) > 32,
+                    "bare_runtime_registration": factory.ports.runtime_interpreters[RuntimeKind.DOCKER] is compute,
+                    "generated_connectors": [value.connector_node_id[:256]
+                        for value in graph.public_ingresses[:32]],
+                    "custody_versions": [value.secret_custody_receipt.version_id[:256]
+                        for value in list(ingress.allocations.values())[:32]]}), flush=True)
+                raise
             bindings, _ = configuration_accounting(schema, compute, 5 if label == "b" else 4, label)
             route = bindings[("gateway", "gateway-health-targets")]
             assert route.allocation_id not in route_allocations
@@ -174,7 +190,8 @@ async def accepted_history(database_url):
             + ", current=0, complete historical protection=" + str(complete)
             + ", unavailable historical protection=" + str(len(allocation_history) - complete)
             + "; configuration cleanup is not asserted", flush=True)
-        print("receiver acceptance: accepted A/B/C, original X, restart replay and approved teardown passed", flush=True)
+        print("receiver acceptance: accepted A/B/C, original X, restart replay and approved teardown passed; "
+            "generated connector resolution/recipient is synthetic in-memory, not Docker proof", flush=True)
     print("receiver acceptance: isolated schema cleanup completed", flush=True)
 
 
@@ -186,7 +203,7 @@ async def failed_update(database_url, fault):
     health = SignedHealthComposition(material, compute, ingress)
     with IsolatedOperationsSchema(database_url, "cpk_1912_" + uuid4().hex) as schema:
         factory = OperationsApplicationFactory(schema.unit_of_work,
-            OperationsEffectPorts({RuntimeKind.DOCKER: compute},
+            OperationsEffectPorts({RuntimeKind.DOCKER: synthetic_runtime_registration(compute)},
                 {IngressAuthorityProviderKind.CLOUDFLARE: ingress}, health, material.decoders),
             id_factory=lambda: "receiver-" + uuid4().hex)
         driver = PublicOperationsDriver(factory, workspace_id="workspace-a")
