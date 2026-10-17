@@ -10,7 +10,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN python -m pip install --no-cache-dir \
-    "control-plane-kit-server-sdk[verification] @ https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/d4cbbb16a4ce47bae0b791adab5de8940355ea99.zip"
+    "control-plane-kit-server-sdk[verification] @ https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/e289d6939b7e6432ffa5181789b0600bf8e3ffe2.zip"
 
 COPY products/hello_server/src ./products/hello_server/src
 
