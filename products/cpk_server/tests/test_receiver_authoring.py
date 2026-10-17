@@ -57,10 +57,12 @@ class ReceiverAuthoringTests(unittest.TestCase):
 
     def declaration_fixture(self):
         api, fixture = self.api(), self.fixture()
+        from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC
         core = fixture["core"]
         scope = api.ReceiverScope("hello-x", "internal")
         gateway = api.ReceiverScope("gateway", "control")
-        current = fixture["graph_a"]
+        current = DEFAULT_GRAPH_CODEC.decode(DEFAULT_GRAPH_CODEC.encode(fixture["graph_a"]))
+        fixture["graph_a"] = current
         node = current.node("hello-x")
         surface, = node.block_spec.control_surfaces
         desired = current.update_node(replace(node, block_spec=replace(node.block_spec,
@@ -85,7 +87,8 @@ class ReceiverAuthoringTests(unittest.TestCase):
         self.assertEqual((new.target, new.verifiers), (old.target, old.verifiers))
         self.assertEqual(new.declaration.surface.health_reads, (core.NodeHealthReadKind.READINESS,))
         self.assertNotEqual(new.declaration, old.declaration)
-        self.assertIsNone(after.source_digest)
+        self.assertEqual(after.source_digest, after.content_digest)
+        self.assertNotEqual(after.source_digest, before.source_digest)
         self.assertEqual(replace(after, content=before.content, source_digest=before.source_digest), before)
         old_routes = core.ReceiverManagementRoutesCodec().decode_bytes(fixture["routes"].content.encode())
         route_artifact, = (item for item in authored.node("gateway").configuration_artifacts

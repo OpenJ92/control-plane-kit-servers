@@ -100,3 +100,12 @@ drift and corrupted preparation stop redispatch. These are client laws, not
 installed Docker or public admission evidence. Existing Core/O5 tests own full
 peer-route/alias/origin preservation and supported product-pair admission.
 Normal owning gate evidence is pending for this source checkpoint.
+
+The first #254 owning run39074052519 reached413 CPK tests and failed four
+assertions: two stale composition coordinates, no-op fixture ordering, and the
+new changed-source assertion. Input graphs are now codec-normalized before
+transformation, preserving exact output comparisons. Core's artifact constructor
+immediately derives source_digest from changed content when given None; the test
+checks that fresh digest and its difference from original provenance. No source
+behavior changed; these are fixture premises, not target-red proof. Later runtime
+phases were unreached and corrected-head owning evidence remains pending.
