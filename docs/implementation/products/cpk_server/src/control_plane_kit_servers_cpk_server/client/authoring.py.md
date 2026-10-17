@@ -43,7 +43,8 @@ and selected digest before the desired surface is considered. Both declarations
 must be V2, health-only and retain readiness; only health reads may differ.
 Receiver identity, verifier families and slot remain fixed. Semantic equality
 preserves exact bytes/provenance; a change rewrites declaration content and
-clears the source digest. Ordinary retained authoring remains strict.
+resets source provenance to the new content digest through Core's artifact
+constructor. Ordinary retained authoring remains strict.
 Pending/introduction/refresh overlap, duplicate and missing-current updates
 refuse. Changed declarations require one explicit route group containing the
 workload and gateway self. The client context does not contain the current route

@@ -1,6 +1,7 @@
 """#238 complete receiver graph authoring and exact local preparation laws."""
 
 from dataclasses import replace
+import hashlib
 import importlib
 import importlib.util
 import json
@@ -87,7 +88,10 @@ class ReceiverAuthoringTests(unittest.TestCase):
         self.assertEqual((new.target, new.verifiers), (old.target, old.verifiers))
         self.assertEqual(new.declaration.surface.health_reads, (core.NodeHealthReadKind.READINESS,))
         self.assertNotEqual(new.declaration, old.declaration)
+        expected_bytes = codec.encode_bytes(replace(old, declaration=new.declaration))
+        self.assertEqual(after.content.encode(), expected_bytes)
         self.assertEqual(after.source_digest, after.content_digest)
+        self.assertEqual(after.source_digest, hashlib.sha256(expected_bytes).hexdigest())
         self.assertNotEqual(after.source_digest, before.source_digest)
         self.assertEqual(replace(after, content=before.content, source_digest=before.source_digest), before)
         old_routes = core.ReceiverManagementRoutesCodec().decode_bytes(fixture["routes"].content.encode())

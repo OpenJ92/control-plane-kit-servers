@@ -154,8 +154,9 @@ when the current group has more targets. Python callers use
 The client validates the original installed binding before rewriting the desired
 declaration. Both declarations must be health-only V2 and retain readiness.
 Identity, verifier families and configuration slot stay fixed; unchanged
-declarations preserve exact bytes and source digest. An actual change clears the
-old source digest and requires a route group containing the affected workload
+declarations preserve exact bytes and source digest. An actual change resets
+source provenance to the newly authored content digest and requires a route group
+containing the affected workload
 and gateway self. Gateway-own updates, pending/fresh scopes and same-scope
 verifier refresh refuse. The client does not register a product or refresh keys.
 Core and Operations enforce the supported same-image successor pair, complete
