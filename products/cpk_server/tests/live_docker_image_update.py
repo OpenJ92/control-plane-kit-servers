@@ -269,6 +269,11 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
                     assert [row for row in refreshed_keys if row["key_id"] != "health-workload-overlap"] == original_keys
                     active, = [row for row in refreshed_keys if row["key_id"] == "health-workload"]
                     assert active["status"] == "active"
+                    verifier_snapshot = await read("read.workload-verifier-configuration", purposes=",".join((
+                        core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ.value,
+                        core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ.value)))
+                    assert verifier_snapshot["workspace_id"] == workspace
+                    assert verifier_snapshot["kind"] == "workload-verifier-configuration"
                     unchanged_source = root / "ordinary-after-overlap.json"
                     unchanged_source.write_text(json.dumps(DEFAULT_GRAPH_CODEC.encode(authored)), encoding="utf-8")
                     unchanged = await asyncio.to_thread(client.plan, AuthoredDesiredGraph(unchanged_source))
@@ -294,6 +299,9 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
                     codec = core.ReceiverNodeControlConfigurationCodec()
                     old_configuration = codec.decode_bytes(old_wrapper.content.encode("utf-8"))
                     new_configuration = codec.decode_bytes(changed_wrapper.content.encode("utf-8"))
+                    expected_wrapper = codec.decode({**codec.encode(old_configuration),
+                        "verifiers": verifier_snapshot["workload_verifier_configuration"]["verifiers"]})
+                    assert new_configuration == expected_wrapper
                     assert new_configuration.target == old_configuration.target
                     assert new_configuration.declaration == old_configuration.declaration
                     assert changed_wrapper.content_digest != old_wrapper.content_digest
@@ -310,7 +318,9 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
                             assert set(family.public_keys) == {
                                 material.public["workload"], material.public["workload-overlap"]}
                         else:
-                            assert family == previous
+                            assert family.purpose is core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ
+                            assert tuple(key.key_id for key in family.public_keys) == ("unlisted-surface",)
+                            assert family != previous
                     restored = replace(journaled.node("api"), configuration_artifacts=tuple(
                         old_wrapper if value.artifact_id == wrapper_id else value
                         for value in journaled.node("api").configuration_artifacts))
