@@ -28,6 +28,15 @@ The transform handles public verifier keys and public route origins only. It
 does not persist, approve, dispatch, inspect installed state, or hold private key
 or credential material.
 
+Servers #253 adds explicit `verifier_refreshes` for qualified current scopes.
+The existing target/declaration/artifact binding checks run before refresh.
+Duplicate, missing-current, pending and introduction conflicts refuse. Existing
+declaration-derived verifier selection and Core normalization compare semantic
+families; equality returns the original artifact, including noncanonical bytes
+and source digest. A changed family replaces only content and clears its stale
+source digest. The artifact slot, target, declaration and other graph values stay
+fixed. An omitted refresh retains exact current bytes without key selection.
+
 Servers #245 constructs Core `ReceiverManagementRouteBinding` and
 `ReceiverManagementRoutes` directly, then invokes the existing product artifact
 factory. Complete examples explicitly include gateway self-health plus X in A/C

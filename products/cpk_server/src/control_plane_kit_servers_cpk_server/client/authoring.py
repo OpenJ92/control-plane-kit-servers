@@ -161,6 +161,7 @@ class AuthoredDesiredGraph:
     introductions: tuple[ReceiverIntroduction, ...] = ()
     pending: PendingReceiverContinuation | None = None
     gateway_health_replacements: tuple[GatewayHealthRoutes, ...] = ()
+    verifier_refreshes: tuple[ReceiverScope, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -178,6 +179,11 @@ class AuthoredDesiredGraph:
                 {value.gateway_scope for value in self.gateway_health_replacements}
             )
             != len(self.gateway_health_replacements)
+            or type(self.verifier_refreshes) is not tuple
+            or not all(type(scope) is ReceiverScope for scope in self.verifier_refreshes)
+            or len(set(self.verifier_refreshes)) != len(self.verifier_refreshes)
+            or set(self.verifier_refreshes) & {value.scope for value in self.introductions}
+            or self.pending is not None and set(self.verifier_refreshes) & set(self.pending.scopes)
         ):
             raise ValueError
 
@@ -548,6 +554,7 @@ def author_receiver_graph(
     introductions: tuple[ReceiverIntroduction, ...] = (),
     pending: PendingReceiverContinuation | None = None,
     gateway_health_replacements: tuple[GatewayHealthRoutes, ...] = (),
+    verifier_refreshes: tuple[ReceiverScope, ...] = (),
     receiver_identity_factory: Callable[[], str] = lambda: uuid4().hex,
 ) -> DeploymentGraph:
     """Return one fully materialized graph or a fixed, candidate-free refusal."""
@@ -564,6 +571,9 @@ def author_receiver_graph(
             or not all(type(item) is GatewayHealthRoutes for item in gateway_health_replacements)
             or len({item.gateway_scope for item in gateway_health_replacements})
             != len(gateway_health_replacements)
+            or type(verifier_refreshes) is not tuple
+            or not all(type(scope) is ReceiverScope for scope in verifier_refreshes)
+            or len(set(verifier_refreshes)) != len(verifier_refreshes)
             or not callable(receiver_identity_factory)
         ):
             raise ValueError
@@ -572,9 +582,12 @@ def author_receiver_graph(
         current = _current_receivers(context)
         pending_entries = _pending_receivers(context, pending)
         introduced_scopes = {item.scope for item in introductions}
+        refresh_scopes = set(verifier_refreshes)
         if (
             introduced_scopes & (set(current) | set(pending_entries))
             or set(current) & set(pending_entries)
+            or not refresh_scopes <= set(current)
+            or refresh_scopes & (introduced_scopes | set(pending_entries))
         ):
             raise ValueError
 
@@ -588,6 +601,7 @@ def author_receiver_graph(
         }
         required |= introduced_scopes
         required |= set(pending_entries)
+        required |= refresh_scopes
         required |= {
             ReceiverScope(node.node_id, surface.provider_socket_name.value)
             for node in graph.nodes.values()
@@ -602,6 +616,17 @@ def author_receiver_graph(
             target, declaration, artifact = _selected_existing(
                 graph, workspace_id, scope, entry
             )
+            if scope in refresh_scopes:
+                codec = ReceiverNodeControlConfigurationCodec()
+                original = codec.decode_bytes(artifact.content.encode("utf-8"))
+                successor = ReceiverNodeControlConfiguration(
+                    target, declaration, _verifiers(verifier_configuration, declaration)
+                )
+                # Semantic equality preserves exact original bytes and provenance.
+                if successor.verifiers != original.verifiers:
+                    artifact = replace(artifact,
+                        content=codec.encode_bytes(successor).decode("utf-8"),
+                        source_digest=None)
             assignments[scope] = (target, declaration)
             selected_artifacts[scope] = artifact
 

@@ -50,3 +50,8 @@ The diagnostic domain includes unverified execution/advancement and unchanged
 advancement so unexpected reconstructed-replay classifications remain precise.
 The same bounded public reporter is reused; no additional observation protocol
 or secret-bearing fields are introduced.
+#253 retains only `(target_id, health_kind, HTTP status)` from the real forwarded
+health response so the existing witness can correlate signed readiness with its
+replacement phase. Credentials, request bodies and response bodies are never
+recorded. The existing transport test checks these observations alongside host,
+SNI, path and forwarded-byte preservation.

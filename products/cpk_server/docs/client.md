@@ -102,9 +102,36 @@ reads. V1 variable-only and V2 health-bearing declarations retain their exact
 profile. Fresh gateway
 receivers refuse because the existing gateway transit trust also embeds the
 receiver target and this command has no trust-authoring input. Retained and
-pending scopes use the owner-returned exact wrapper artifact. Explicit gateway
+pending scopes use the owner-returned exact wrapper artifact by default. Explicit gateway
 route intent is interpreted only through the gateway product's typed
 constructors; the client defines no competing route format.
+
+To refresh the public verifier families of one current receiver, select its
+scope explicitly:
+
+```bash
+cpk --profile PROFILE plan desired-graph.json \
+  --refresh-receiver-verifiers hello-x internal
+```
+
+The Python equivalent is `AuthoredDesiredGraph(path,
+verifier_refreshes=(ReceiverScope("hello-x", "internal"),))`. The client reads
+the registered public verifier families required by that receiver's declaration.
+It preserves the receiver identity, declaration, artifact slot and unrelated
+graph values. Equal families preserve the exact original artifact bytes and
+source digest, even when their JSON formatting differs from canonical output.
+Changed families replace only the wrapper content and clear its old source
+digest. Ordinary authoring does not refresh keys implicitly.
+
+Only qualified current scopes are eligible. Duplicate selections and overlap
+with introductions or pending continuations refuse locally. The repeatable flag
+and tuple describe authoring intent; they do not promise simultaneous runtime
+acceptance of multiple refreshes or mixed changes. The supported runtime witness
+refreshes one retained workload receiver. Core and Operations still decide plan
+eligibility and current authority; the resulting plan needs the usual explicit
+approval and apply. This command does not generate, activate, retire or revoke
+keys. Preparation replay uses the same immutable journaled graph described below,
+without selecting keys again.
 
 Before the first prepare request, the client writes the complete canonical graph
 as an immutable `0600` `<operation>.graph.json` file, fsyncs it, then creates the

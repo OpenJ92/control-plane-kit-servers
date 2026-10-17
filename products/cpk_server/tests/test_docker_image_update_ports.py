@@ -345,6 +345,7 @@ class DockerImageTransportTests(unittest.IsolatedAsyncioTestCase):
                 await transport.handle_async_request(request)
         self.assertEqual(len(requests), 2)
         self.assertEqual(endpoint.call_count, 2)
+        self.assertEqual(transport.observations, [("api", "readiness", 200)] * 2)
 
 
 class OwnedAttachmentTests(unittest.TestCase):
