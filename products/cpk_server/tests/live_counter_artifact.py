@@ -58,17 +58,19 @@ def exercise_counter_artifact(*, engine, sdk, resources, labels, network_id, ima
             containers.append(process)
             process.start()
             origin = "http://" + alias + ":8000"
+            readiness = "not-observed"
             for _ in range(30):
                 process.reload()
                 assert process.status == "running", "counter exited before serving"
                 try:
-                    if _read("GET", origin, "/__control/capabilities")[0] == 401:
+                    readiness = str(_read("GET", origin, "/__control/capabilities")[0])
+                    if readiness == "401":
                         break
                 except httpx.TransportError:
-                    pass
+                    readiness = "transport-unavailable"
                 time.sleep(0.2)
             else:
-                raise AssertionError("counter listener did not become available")
+                raise AssertionError("counter listener did not become available: " + readiness)
             assert process.attrs["Image"] == image_id
             assert not process.attrs["HostConfig"]["PortBindings"]
             actual, = process.attrs["Mounts"]

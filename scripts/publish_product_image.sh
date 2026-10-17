@@ -61,15 +61,20 @@ if [ "$PRODUCT_ID" = counter-witness ]; then
   docker build --platform linux/amd64 -f "$DOCKERFILE" -t "$IMAGE" .
   [ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$IMAGE")" = linux/amd64 ]
   [ "$(docker image inspect --format '{{.Config.User}}' "$IMAGE")" = 10008 ]
+  COUNTER_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
 else
   docker build -f "$DOCKERFILE" -t "$IMAGE" .
 fi
 docker push "$IMAGE"
 
-docker image inspect "$IMAGE" --format "{{index .RepoDigests 0}}"
 if [ "$PRODUCT_ID" = counter-witness ]; then
-  docker image inspect "$IMAGE" --format 'counter-witness image_id={{.Id}} platform={{.Os}}/{{.Architecture}} user={{.Config.User}}'
+  [ "$(docker image inspect --format '{{.Id}}' "$IMAGE")" = "$COUNTER_IMAGE_ID" ]
+  REPOSITORY="${IMAGE%:*}"
+  REFERENCE="$(docker image inspect "$COUNTER_IMAGE_ID" --format '{{range .RepoDigests}}{{println .}}{{end}}' |
+    sh scripts/select_repository_digest.sh "$REPOSITORY")"
+  printf 'counter-witness reference=%s image_id=%s platform=linux/amd64 user=10008\n' "$REFERENCE" "$COUNTER_IMAGE_ID"
   echo "Record this witness digest on the governing issue; qualify the actual pulled-by-digest artifact before installed use. Earlier source startup evidence does not qualify this rebuilt image. No production catalogue coordinate is changed." >&2
 else
+  docker image inspect "$IMAGE" --format "{{index .RepoDigests 0}}"
   echo "Update coordinates/server-products.json with the verified published digest; regenerate coordinates in Docker and validate with ./test.sh." >&2
 fi

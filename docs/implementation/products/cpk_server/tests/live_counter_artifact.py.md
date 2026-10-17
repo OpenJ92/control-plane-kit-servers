@@ -16,3 +16,9 @@ after checking their owner label; the outer ledger verifies absence and removes
 the exact owned volumes. No new network, registry, cleanup engine, runtime
 interpreter, Ops state machine or published identity adapter is introduced.
 Source startup does not prove a registry artifact or coupled declaration update.
+
+The first owning run stopped at integrity before package/startup because the
+initial readiness poll silently passed a transport exception. The corrected poll
+records only a bounded categorical availability status and reports it on timeout,
+matching the existing wrapper routine. No exception text or token is exposed;
+there is no skip, alternate runner or retry of a mutating call.
