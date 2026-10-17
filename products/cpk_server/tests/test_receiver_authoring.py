@@ -46,8 +46,13 @@ class ReceiverAuthoringTests(unittest.TestCase):
             "explicit current-receiver verifier refresh intent is missing")
         fixture = self.fixture()
         selected = json.loads(json.dumps(fixture["verifiers"]))
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        overlap = Ed25519PrivateKey.generate().public_key().public_bytes(
+            serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo).decode("ascii")
         for family in selected["workload_verifier_configuration"]["verifiers"]:
-            family["public_keys"].append({**family["public_keys"][0], "key_id": "public-overlap"})
+            family["public_keys"].append({**family["public_keys"][0],
+                "key_id": "public-overlap", "public_key_pem": overlap})
         return api, fixture, selected, api.ReceiverScope("hello-x", "internal")
 
     def test_refresh_changes_only_selected_current_wrapper(self):

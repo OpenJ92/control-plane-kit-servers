@@ -76,3 +76,8 @@ receiver declaration's families. Only the introduced identity is allocated.
 This uses the existing graph_variable and public transport fixture and proves
 client authoring composition, not Core acceptance of a mixed deployment.
 It is a review-strengthened target; no separate executed red is claimed for it.
+#253 pre-execution review found that duplicate PEM material under a new key ID
+violates Core's within-family fingerprint uniqueness law. The positive overlap
+fixture now generates a distinct isolated public key using its existing
+cryptography setup. This corrects deeper target setup; it does not change the
+recorded missing-interface causal red or claim those deeper assertions ran red.
