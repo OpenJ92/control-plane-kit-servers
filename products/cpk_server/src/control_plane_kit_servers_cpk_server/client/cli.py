@@ -119,6 +119,13 @@ def _parser() -> argparse.ArgumentParser:
     )
     plan.add_argument("--pending-authoring-head", type=_catalogue_integer, metavar="REVISION")
     plan.add_argument(
+        "--update-receiver-declaration",
+        nargs=2,
+        action="append",
+        default=[],
+        metavar=("NODE", "SOCKET"),
+    )
+    plan.add_argument(
         "--continue-pending-receiver",
         nargs=2,
         action="append",
@@ -259,6 +266,8 @@ def _authored_plan_input(arguments):
             gateway_health_replacements=routes,
             verifier_refreshes=tuple(ReceiverScope(node, socket)
                 for node, socket in arguments.refresh_receiver_verifiers),
+            declaration_updates=tuple(ReceiverScope(node, socket)
+                for node, socket in arguments.update_receiver_declaration),
         )
     except (ValueError, TypeError):
         raise ClientInputError("receiver authoring arguments are invalid") from None
@@ -268,6 +277,7 @@ def _has_authoring_arguments(arguments):
     return bool(
         arguments.introduce_receiver
         or arguments.refresh_receiver_verifiers
+        or arguments.update_receiver_declaration
         or arguments.pending_authoring_draft is not None
         or arguments.pending_authoring_head is not None
         or arguments.continue_pending_receiver

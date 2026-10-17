@@ -15,3 +15,9 @@ current scopes on `AuthoredDesiredGraph`. The existing graph-file-only exclusion
 also covers this flag. Typed input validation rejects duplicate scopes and
 overlap with introduction/pending intent. Repeatability is authoring syntax;
 Core/Operations remain authoritative for supported plan compositions.
+
+`--update-receiver-declaration NODE SOCKET` selects `declaration_updates` on
+the same graph-file-only input. Duplicates and overlap with refresh,
+introduction or pending continuation refuse. The graph supplies the desired
+registered successor and declaration; separate complete gateway route flags
+supply explicit aliases/origins. No registration, approval or apply is implied.

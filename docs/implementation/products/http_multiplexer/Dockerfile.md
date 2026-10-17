@@ -68,3 +68,18 @@ provenance expectations advance without weakening assertions or changing extras.
 This supersedes the incompatible initial #251 selection. Owner gates passed;
 the joined Servers gate remains required. Runtime source, witness logic,
 qualified images, product publication coordinates and catalogue stay unchanged.
+
+## Current declaration-update dependency adoption (#254)
+
+The canonical manifest now selects actual accepted Core/Operations #1998
+`9861e536e79314005499ae07379f627bfb1599a2`, SDK #61
+`d4e7c4d91c054f139e2971774ae5e37fc741262d`, Secrets #59
+`165a7dc7abd75e1ba50b9494d0f0aabf0aa3c33c`, and Interpreters #206
+`2b33ab15dc8f20cc85a458f95781a227a57bae49`. Ordered predecessor gates and
+independent reviews passed. The maintained Docker coordinate generator updates
+each consumer's existing package subset/extras; the exact Secrets expectation
+moves with the manifest. Existing published product source/image descriptors
+and catalogue bytes remain unchanged. No new image or installed declaration
+cutover is claimed. The normal Servers gate must establish this selected tuple's
+composition; client declaration authoring is separately described by its source
+companions. Earlier dependency accounts in this document are historical.

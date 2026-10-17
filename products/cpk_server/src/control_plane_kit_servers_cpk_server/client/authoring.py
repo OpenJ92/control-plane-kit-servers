@@ -162,6 +162,7 @@ class AuthoredDesiredGraph:
     pending: PendingReceiverContinuation | None = None
     gateway_health_replacements: tuple[GatewayHealthRoutes, ...] = ()
     verifier_refreshes: tuple[ReceiverScope, ...] = ()
+    declaration_updates: tuple[ReceiverScope, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -184,6 +185,12 @@ class AuthoredDesiredGraph:
             or len(set(self.verifier_refreshes)) != len(self.verifier_refreshes)
             or set(self.verifier_refreshes) & {value.scope for value in self.introductions}
             or self.pending is not None and set(self.verifier_refreshes) & set(self.pending.scopes)
+            or type(self.declaration_updates) is not tuple
+            or not all(type(scope) is ReceiverScope for scope in self.declaration_updates)
+            or len(set(self.declaration_updates)) != len(self.declaration_updates)
+            or set(self.declaration_updates) & set(self.verifier_refreshes)
+            or set(self.declaration_updates) & {value.scope for value in self.introductions}
+            or self.pending is not None and set(self.declaration_updates) & set(self.pending.scopes)
         ):
             raise ValueError
 
@@ -310,6 +317,8 @@ def _selected_existing(
     workspace_id: str,
     scope: ReceiverScope,
     entry: dict,
+    *,
+    declaration_update: bool = False,
 ) -> tuple[
     core.NodeControlReceiverTarget,
     core.WorkloadNodeControlSurfaceDeclaration,
@@ -322,7 +331,6 @@ def _selected_existing(
         or binding.get("runtime_id") != node.runtime_id
         or binding.get("node_id") != scope.node_id
         or binding.get("provider_socket_name") != scope.provider_socket_name
-        or binding.get("declaration_identity") != declaration.identity().value
     ):
         raise ValueError
     artifact = ConfigurationArtifact.from_descriptor(entry["configuration_artifact"])
@@ -337,8 +345,28 @@ def _selected_existing(
         scope=scope,
         receiver_id=binding["receiver_id"],
     )
-    if configured.target != expected or configured.declaration != declaration:
+    if (
+        configured.target != expected
+        or binding.get("declaration_identity") != configured.declaration.identity().value
+        or not declaration_update and configured.declaration != declaration
+    ):
         raise ValueError
+    if declaration_update:
+        original = configured.declaration
+        if (
+            node.block_spec.gateway_transit is not None
+            or any(value.profile is not core.WorkloadNodeControlSurfaceDeclarationProfile.V2
+                or value.surface.variables
+                or core.NodeHealthReadKind.READINESS not in value.surface.health_reads
+                for value in (original, declaration))
+            or replace(declaration.surface, health_reads=original.surface.health_reads) != original.surface
+        ):
+            raise ValueError
+        if declaration != original:
+            artifact = replace(artifact,
+                content=ReceiverNodeControlConfigurationCodec().encode_bytes(
+                    replace(configured, declaration=declaration)).decode("utf-8"),
+                source_digest=None)
     return expected, declaration, artifact
 
 
@@ -555,6 +583,7 @@ def author_receiver_graph(
     pending: PendingReceiverContinuation | None = None,
     gateway_health_replacements: tuple[GatewayHealthRoutes, ...] = (),
     verifier_refreshes: tuple[ReceiverScope, ...] = (),
+    declaration_updates: tuple[ReceiverScope, ...] = (),
     receiver_identity_factory: Callable[[], str] = lambda: uuid4().hex,
 ) -> DeploymentGraph:
     """Return one fully materialized graph or a fixed, candidate-free refusal."""
@@ -574,6 +603,9 @@ def author_receiver_graph(
             or type(verifier_refreshes) is not tuple
             or not all(type(scope) is ReceiverScope for scope in verifier_refreshes)
             or len(set(verifier_refreshes)) != len(verifier_refreshes)
+            or type(declaration_updates) is not tuple
+            or not all(type(scope) is ReceiverScope for scope in declaration_updates)
+            or len(set(declaration_updates)) != len(declaration_updates)
             or not callable(receiver_identity_factory)
         ):
             raise ValueError
@@ -583,11 +615,14 @@ def author_receiver_graph(
         pending_entries = _pending_receivers(context, pending)
         introduced_scopes = {item.scope for item in introductions}
         refresh_scopes = set(verifier_refreshes)
+        update_scopes = set(declaration_updates)
         if (
             introduced_scopes & (set(current) | set(pending_entries))
             or set(current) & set(pending_entries)
             or not refresh_scopes <= set(current)
             or refresh_scopes & (introduced_scopes | set(pending_entries))
+            or not update_scopes <= set(current)
+            or update_scopes & (introduced_scopes | set(pending_entries) | refresh_scopes)
         ):
             raise ValueError
 
@@ -602,6 +637,7 @@ def author_receiver_graph(
         required |= introduced_scopes
         required |= set(pending_entries)
         required |= refresh_scopes
+        required |= update_scopes
         required |= {
             ReceiverScope(node.node_id, surface.provider_socket_name.value)
             for node in graph.nodes.values()
@@ -614,8 +650,17 @@ def author_receiver_graph(
             if entry is None:
                 raise ValueError
             target, declaration, artifact = _selected_existing(
-                graph, workspace_id, scope, entry
+                graph, workspace_id, scope, entry, declaration_update=scope in update_scopes
             )
+            if scope in update_scopes and artifact.content_digest != entry["binding"]["selected_configuration_digest"]:
+                # The caller supplies complete route intent. Core/Operations compare
+                # it with current graph truth, including opaque peer aliases.
+                routes = tuple(value for value in gateway_health_replacements
+                    if any(target.target_scope == scope for target in value.targets))
+                if len(routes) != 1 or not any(
+                    target.target_scope == routes[0].gateway_scope for target in routes[0].targets
+                ):
+                    raise ValueError
             if scope in refresh_scopes:
                 codec = ReceiverNodeControlConfigurationCodec()
                 original = codec.decode_bytes(artifact.content.encode("utf-8"))

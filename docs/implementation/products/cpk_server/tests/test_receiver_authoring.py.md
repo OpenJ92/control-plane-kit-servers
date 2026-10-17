@@ -88,3 +88,15 @@ the public Core codec before authoring, as the client graph-file boundary does.
 Whole-graph equality and exact wrapper bytes/descriptor/source-digest assertions
 remain unchanged; noncanonical wrapper JSON remains embedded verbatim. Five
 other refresh targets passed. No later installed Docker stage ran in that failure.
+# Servers #254 client declaration authoring
+
+Six new owner tests cover changed declaration plus explicit route composition,
+exact identity/verifier/slot preservation, strict ordinary-retained refusal,
+semantic no-op bytes/provenance, missing workload/self-route groups, conflicting
+or noncurrent scopes, forged current bindings, health-only/readiness limits,
+CLI input and immutable preparation before send. Lost-response reconstruction
+reuses exact coupled bytes without identity generation or verifier reads; source
+drift and corrupted preparation stop redispatch. These are client laws, not
+installed Docker or public admission evidence. Existing Core/O5 tests own full
+peer-route/alias/origin preservation and supported product-pair admission.
+Normal owning gate evidence is pending for this source checkpoint.
