@@ -81,3 +81,10 @@ violates Core's within-family fingerprint uniqueness law. The positive overlap
 fixture now generates a distinct isolated public key using its existing
 cryptography setup. This corrects deeper target setup; it does not change the
 recorded missing-interface causal red or claim those deeper assertions ran red.
+#253 implementation run39038829926 reached all 407 CPK tests with two failures
+in the new whole-graph assertions: their raw fixture artifact tuple order differed
+from Core's canonical graph-file order. The two input graphs now pass through
+the public Core codec before authoring, as the client graph-file boundary does.
+Whole-graph equality and exact wrapper bytes/descriptor/source-digest assertions
+remain unchanged; noncanonical wrapper JSON remains embedded verbatim. Five
+other refresh targets passed. No later installed Docker stage ran in that failure.

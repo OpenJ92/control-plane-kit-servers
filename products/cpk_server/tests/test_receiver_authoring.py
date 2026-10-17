@@ -59,11 +59,13 @@ class ReceiverAuthoringTests(unittest.TestCase):
         api, fixture, selected, scope = self.refresh_fixture()
         core = fixture["core"]
         from control_plane_kit_core.configuration import ConfigurationArtifact, ConfigurationMediaType
+        from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC
         application = ConfigurationArtifact("application", "/etc/app/settings.json",
             ConfigurationMediaType.JSON, '{"revision":1}')
         graph = fixture["graph_a"]
         graph = graph.update_node(replace(graph.node("hello-x"),
             configuration_artifacts=(fixture["x_wrapper"], application)))
+        graph = DEFAULT_GRAPH_CODEC.decode(DEFAULT_GRAPH_CODEC.encode(graph))
         authored = api.author_receiver_graph(graph, workspace_id="workspace-a",
             context=fixture["context"], verifier_configuration=selected,
             verifier_refreshes=(scope,), receiver_identity_factory=lambda: self.fail("identity regenerated"))
@@ -86,11 +88,13 @@ class ReceiverAuthoringTests(unittest.TestCase):
 
     def test_refresh_equal_families_preserve_noncanonical_bytes_and_source_digest(self):
         api, fixture, _, scope = self.refresh_fixture()
+        from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC
         original = fixture["x_wrapper"]
         content = json.dumps(json.loads(original.content), indent=3) + "\n"
         artifact = replace(original, content=content, source_digest="f" * 64)
         graph = fixture["graph_a"].update_node(replace(fixture["graph_a"].node("hello-x"),
             configuration_artifacts=(artifact,)))
+        graph = DEFAULT_GRAPH_CODEC.decode(DEFAULT_GRAPH_CODEC.encode(graph))
         row = fixture["context"]["current"]["receivers"][1]
         row["configuration_artifact"] = artifact.descriptor()
         row["binding"]["selected_configuration_digest"] = artifact.content_digest
