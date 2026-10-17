@@ -169,7 +169,10 @@ class PublicSecretChoices:
         calls = self.effect_counts()
         observations = len(self.metadata.observations)
         for payload, expected in self.accepted:
-            assert await self.call("command.desired-graph.set", payload) == expected
+            assert expected["replayed"] is False
+            actual = await self.call("command.desired-graph.set", payload)
+            assert actual["replayed"] is True
+            assert actual == {**expected, "replayed": True}
         assert self.effect_counts() == calls
         assert len(self.metadata.observations) == observations
 
