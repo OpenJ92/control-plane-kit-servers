@@ -1,0 +1,18 @@
+FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    CPK_WRAPPER_CONFIGURATION_FILE=/etc/cpk/counter/control.json
+
+WORKDIR /app
+
+RUN python -m pip install --no-cache-dir \
+    "control-plane-kit-server-sdk[verification] @ https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/d4e7c4d91c054f139e2971774ae5e37fc741262d.zip"
+
+COPY products/cpk_server/examples/unlisted_sdk/counter.py ./counter.py
+COPY products/cpk_server/examples/unlisted_sdk/counter_container.py ./counter_container.py
+
+RUN adduser --disabled-password --gecos "" --uid 10008 counter
+
+USER 10008
+EXPOSE 8000
+CMD ["python", "counter_container.py"]

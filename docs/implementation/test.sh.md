@@ -70,3 +70,10 @@ concurrency policy cancels matching runs. Compare observed artifact IDs with the
 recorded publisher build IDs and correlate controller/preload daemon IDs. A failed
 pull, access check, platform/digest check or ambiguous result stops the run; no
 visibility change, credential expansion or automatic retry is authorized.
+
+#264 adds one explicit Linux/amd64 counter example source build to the existing
+numeric-bootstrap block. Its run-labelled image ID enters the same controller;
+the exact image tag joins the existing record cleanup after its ID/owner checks.
+The counter routine uses the existing network/volume/container/helper ledger.
+Normal and optional published-wrapper modes both run this source check; no
+counter pull, publication or production catalogue coordinate is introduced.

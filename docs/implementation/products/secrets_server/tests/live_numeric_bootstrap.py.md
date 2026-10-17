@@ -38,3 +38,10 @@ config before SDK construction and removes it on exit. Source checks are mandato
 explicit published-digest mode adds both reviewed Hello versions and requires their
 actual image IDs to differ. No input image is pulled or removed by this routine.
 Artifact assertions do not change Secrets/CPK bootstrap evidence or its cleanup laws.
+
+#264 also calls the counter artifact routine with this same engine, SDK, internal
+network and resources ledger. Two public volumes and two workload containers
+exercise one source-built image under two declarations. Existing tracked SDK
+helpers and outer exact-absence cleanup remain authoritative. The new workload
+receives no private credentials/socket; this adds no topology orchestration or
+publication claim and leaves all existing wrapper/Secrets checks intact.
