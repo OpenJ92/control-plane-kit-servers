@@ -213,6 +213,39 @@ class ReceiverAuthoringTests(unittest.TestCase):
         with self.assertRaises(ClientInputError):
             cli._authored_plan_input(arguments)
 
+    def test_mixed_refresh_and_introduction_select_union_then_each_declaration(self):
+        api, fixture, selected, scope = self.refresh_fixture()
+        core = fixture["core"]
+        from control_plane_kit_core.topology import GraphDescriptorCodec
+        from control_plane_kit_servers_cpk_server.client import TopologyClient
+        codec = GraphDescriptorCodec()
+        source = self.root / "mixed.json"
+        source.write_text(json.dumps(codec.encode(fixture["graph_variable"])), encoding="utf-8")
+        fixture["verifiers"] = selected
+        transport = self.authoring_transport(fixture, lose_prepare_once=False)
+        identities = []
+        client = TopologyClient(self.client_profile(), transport=transport,
+            receiver_identity_factory=lambda: identities.append("c" * 32) or "c" * 32)
+        client.plan(api.AuthoredDesiredGraph(source, verifier_refreshes=(scope,),
+            introductions=(api.ReceiverIntroduction(api.ReceiverScope("hello-y", "internal"),
+                "hello-control", "/etc/cpk/hello/control.json"),)))
+        read, = [call for call in transport.calls
+            if call["route_id"] == "read.workload-verifier-configuration"]
+        purpose = core.DelegationKeyPurpose
+        surface, health, control = (purpose.WORKLOAD_NODE_CONTROL_SURFACE_READ,
+            purpose.WORKLOAD_NODE_HEALTH_READ, purpose.WORKLOAD_NODE_CONTROL)
+        self.assertEqual(set(read["path_parameters"]["purposes"].split(",")),
+            {surface.value, health.value, control.value})
+        self.assertEqual(read["credential_role"], "operator")
+        prepare, = [call for call in transport.calls if call["route_id"] == "command.deployment.prepare"]
+        authored = codec.decode(prepare["payload"]["desired_graph"])
+        for name, expected in (("hello-x", {surface, health}), ("hello-y", {surface, control})):
+            artifact, = authored.node(name).configuration_artifacts
+            configured = core.ReceiverNodeControlConfigurationCodec().decode_bytes(artifact.content.encode())
+            self.assertEqual({family.purpose for family in configured.verifiers}, expected)
+        self.assertEqual(identities, ["c" * 32])
+        # This scripted client test asserts authoring, not mixed deployment eligibility.
+
     def test_profile_import_does_not_require_receiver_authoring_dependencies(self):
         script = """
 import sys

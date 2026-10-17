@@ -68,3 +68,11 @@ owner-shaped public read fixture and journal as the established suite. The initi
 public-intent assertion makes absent functionality an explicit test failure rather
 than a collection error. This source checkpoint precedes implementation and is
 unvalidated until the unchanged owning gate; it is not runtime installation proof.
+
+Kepler's target review adds one mixed authoring law before workflow implementation:
+a current health receiver refresh plus a disjoint variable receiver introduction
+must request the union of all three public purposes, then install only each
+receiver declaration's families. Only the introduced identity is allocated.
+This uses the existing graph_variable and public transport fixture and proves
+client authoring composition, not Core acceptance of a mixed deployment.
+It is a review-strengthened target; no separate executed red is claimed for it.
