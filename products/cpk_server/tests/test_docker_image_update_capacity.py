@@ -13,7 +13,7 @@ class PublicationBudgetDiagnosticTests(unittest.TestCase):
     def fixture(self):
         prior, snapshot = Footprint(1, 2, 3, 4), Footprint(5, 6, 7, 8)
         future = SimpleNamespace(settled=Footprint(9, 10, 11, 12), peak=Footprint(13, 14, 15, 16))
-        publication = SimpleNamespace(settled=Footprint(17, 18, 19, 20), peak=Footprint(4096, 22, 23, 24))
+        publication = SimpleNamespace(settled=Footprint(17, 18, 19, 20), peak=Footprint(8192, 22, 23, 24))
         prepared = SimpleNamespace(evidence_read=SimpleNamespace(used=prior), event=None,
             payload="PRIVATE-PAYLOAD", history="PRIVATE-HISTORY", secret="PRIVATE-SECRET")
         return prepared, (snapshot, future, publication)
@@ -44,7 +44,7 @@ class PublicationBudgetDiagnosticTests(unittest.TestCase):
             for name in names:
                 self.assertEqual(set(row[name]), {"records", "value_octets", "scalar_markers",
                     "statements", "accounted_bytes", "decision"})
-            self.assertEqual(row["combined_peak"]["records"], 4097)
+            self.assertEqual(row["combined_peak"]["records"], 8193)
             self.assertEqual(row["combined_peak"]["decision"], "record-limit")
         self.assertNotIn("PRIVATE", json.dumps(rows))
         self.assertEqual(prepared.evidence_read.used, Footprint(1, 2, 3, 4))

@@ -30,3 +30,12 @@ diagnostic contracts, not acceptance-state or capacity-correctness simulations.
 The normal hosted owning gate provides the one released real-route measurement.
 Remove this temporary observer once diagnosis and the owner regression are
 captured. A measured excess does not authorize a cap increase or production fix.
+
+The first Operations #1994 adoption gate at `46cba82` stopped in the socket-free
+package suite: two diagnostic tests still expected 4,097 records to refuse under
+the former policy. No runtime witness or capacity measurement ran. The fixture
+now uses the literal approved 8,192-record publication peak plus prior 1, and
+asserts exactly 8,193 combined records. Both the `record-limit` decision and the
+actual owner's `_Capacity` refusal remain required, along with all diagnostic
+identity, restoration, output and redaction laws. Observer and production source
+are unchanged. The corrected checkpoint still requires the normal full gate.
