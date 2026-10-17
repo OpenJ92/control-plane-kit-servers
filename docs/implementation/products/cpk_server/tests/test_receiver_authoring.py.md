@@ -55,3 +55,16 @@ S1 #249 strengthens the retained-only client case with an ordinary public JSON
 application artifact. Preparation must preserve that desired application content
 alongside the exact retained wrapper, without a verifier read, identity allocation,
 or source-file rewrite. This exercises authoring only, not process replacement.
+
+Servers #253 target checkpoint adds six owner tests for explicit current-receiver
+verifier refresh: only the selected wrapper changes; normalized equality retains
+valid noncanonical bytes and original source digest; unresolved/pending/conflicting
+scopes and foreign bindings/missing verifier families refuse; the client publishes
+private exact preparation before dispatch and reconstructed retry does not reread
+keys/context or regenerate receiver identity; corrupt preparation refuses; CLI
+selection is explicit and rejects duplicates. Existing ordinary-retention and
+other authoring laws remain unchanged. These tests use the same real Core values,
+owner-shaped public read fixture and journal as the established suite. The initial
+public-intent assertion makes absent functionality an explicit test failure rather
+than a collection error. This source checkpoint precedes implementation and is
+unvalidated until the unchanged owning gate; it is not runtime installation proof.

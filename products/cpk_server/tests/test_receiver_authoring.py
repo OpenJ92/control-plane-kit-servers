@@ -40,6 +40,179 @@ class ReceiverAuthoringTests(unittest.TestCase):
         )
         return importlib.import_module(AUTHORING_MODULE)
 
+    def refresh_fixture(self):
+        api = self.api()
+        self.assertIn("verifier_refreshes", api.AuthoredDesiredGraph.__dataclass_fields__,
+            "explicit current-receiver verifier refresh intent is missing")
+        fixture = self.fixture()
+        selected = json.loads(json.dumps(fixture["verifiers"]))
+        for family in selected["workload_verifier_configuration"]["verifiers"]:
+            family["public_keys"].append({**family["public_keys"][0], "key_id": "public-overlap"})
+        return api, fixture, selected, api.ReceiverScope("hello-x", "internal")
+
+    def test_refresh_changes_only_selected_current_wrapper(self):
+        api, fixture, selected, scope = self.refresh_fixture()
+        core = fixture["core"]
+        from control_plane_kit_core.configuration import ConfigurationArtifact, ConfigurationMediaType
+        application = ConfigurationArtifact("application", "/etc/app/settings.json",
+            ConfigurationMediaType.JSON, '{"revision":1}')
+        graph = fixture["graph_a"]
+        graph = graph.update_node(replace(graph.node("hello-x"),
+            configuration_artifacts=(fixture["x_wrapper"], application)))
+        authored = api.author_receiver_graph(graph, workspace_id="workspace-a",
+            context=fixture["context"], verifier_configuration=selected,
+            verifier_refreshes=(scope,), receiver_identity_factory=lambda: self.fail("identity regenerated"))
+        before = fixture["x_wrapper"]
+        after, = [item for item in authored.node("hello-x").configuration_artifacts
+            if item.artifact_id == before.artifact_id]
+        codec = core.ReceiverNodeControlConfigurationCodec()
+        old, new = (codec.decode_bytes(item.content.encode()) for item in (before, after))
+        self.assertEqual((new.target, new.declaration), (old.target, old.declaration))
+        self.assertNotEqual(new.verifiers, old.verifiers)
+        self.assertTrue(all({key.key_id for key in family.public_keys} ==
+            {"public-a", "public-overlap"} for family in new.verifiers))
+        self.assertEqual(replace(after, content=before.content, source_digest=before.source_digest), before)
+        restored = authored.update_node(replace(authored.node("hello-x"),
+            configuration_artifacts=graph.node("hello-x").configuration_artifacts))
+        self.assertEqual(restored, graph)
+        ordinary = api.author_receiver_graph(graph, workspace_id="workspace-a",
+            context=fixture["context"], verifier_configuration=selected)
+        self.assertEqual(ordinary, graph)
+
+    def test_refresh_equal_families_preserve_noncanonical_bytes_and_source_digest(self):
+        api, fixture, _, scope = self.refresh_fixture()
+        original = fixture["x_wrapper"]
+        content = json.dumps(json.loads(original.content), indent=3) + "\n"
+        artifact = replace(original, content=content, source_digest="f" * 64)
+        graph = fixture["graph_a"].update_node(replace(fixture["graph_a"].node("hello-x"),
+            configuration_artifacts=(artifact,)))
+        row = fixture["context"]["current"]["receivers"][1]
+        row["configuration_artifact"] = artifact.descriptor()
+        row["binding"]["selected_configuration_digest"] = artifact.content_digest
+        # The owner response may order families differently from the installed bytes.
+        fixture["verifiers"]["workload_verifier_configuration"]["verifiers"].reverse()
+        authored = api.author_receiver_graph(graph, workspace_id="workspace-a",
+            context=fixture["context"], verifier_configuration=fixture["verifiers"],
+            verifier_refreshes=(scope,), receiver_identity_factory=lambda: self.fail("identity regenerated"))
+        actual, = authored.node("hello-x").configuration_artifacts
+        self.assertEqual(actual.descriptor(), artifact.descriptor())
+        self.assertEqual(actual.content, content)
+        self.assertEqual(authored, graph)
+
+    def test_refresh_refuses_noncurrent_duplicate_and_conflicting_scopes(self):
+        api, fixture, selected, scope = self.refresh_fixture()
+        with self.assertRaises(ValueError):
+            api.AuthoredDesiredGraph(self.root / "graph.json", verifier_refreshes=(scope, scope))
+        with self.assertRaises(ValueError):
+            api.AuthoredDesiredGraph(self.root / "graph.json", verifier_refreshes=("hello-x",))
+        for scopes, introductions, pending in (
+            ((api.ReceiverScope("missing", "internal"),), (), None),
+            ((scope, scope), (), None),
+            ((scope,), (api.ReceiverIntroduction(scope, "new", "/etc/new.json"),), None),
+            ((scope,), (), api.PendingReceiverContinuation("draft-a", 1, (scope,))),
+        ):
+            with self.subTest(scopes=scopes, pending=bool(pending)):
+                with self.assertRaises(api.ReceiverAuthoringError):
+                    api.author_receiver_graph(fixture["graph_a"], workspace_id="workspace-a",
+                        context=fixture["context"], verifier_configuration=selected,
+                        verifier_refreshes=scopes, introductions=introductions, pending=pending,
+                        receiver_identity_factory=lambda: self.fail("identity regenerated"))
+        # A valid pending-only receiver is still not a current refresh target.
+        row = fixture["context"]["current"]["receivers"].pop()
+        row["lifecycle"] = "pending"
+        fixture["context"]["pending_draft"] = {"draft_id": "draft-a", "head_revision": 1,
+            "graph_id": "graph-current", "realized_projection_id": "projection-current",
+            "receivers": [row]}
+        with self.assertRaises(api.ReceiverAuthoringError):
+            api.author_receiver_graph(fixture["graph_a"], workspace_id="workspace-a",
+                context=fixture["context"], verifier_configuration=selected,
+                verifier_refreshes=(scope,))
+
+    def test_refresh_refuses_foreign_current_binding_and_invalid_families(self):
+        api, fixture, selected, scope = self.refresh_fixture()
+        mutations = (
+            ("workspace_id", "foreign"), ("runtime_id", "foreign"),
+            ("declaration_identity", "f" * 64), ("selected_configuration_digest", "0" * 64),
+        )
+        for field, value in mutations:
+            context = json.loads(json.dumps(fixture["context"]))
+            context["current"]["receivers"][1]["binding"][field] = value
+            with self.subTest(field=field), self.assertRaises(api.ReceiverAuthoringError):
+                api.author_receiver_graph(fixture["graph_a"], workspace_id="workspace-a",
+                    context=context, verifier_configuration=selected, verifier_refreshes=(scope,))
+        for material in (None, {"workload_verifier_configuration": {"verifiers": []}},
+                {"workload_verifier_configuration": {"verifiers":
+                    selected["workload_verifier_configuration"]["verifiers"][:1]}}):
+            with self.subTest(material=bool(material)), self.assertRaises(api.ReceiverAuthoringError):
+                api.author_receiver_graph(fixture["graph_a"], workspace_id="workspace-a",
+                    context=fixture["context"], verifier_configuration=material,
+                    verifier_refreshes=(scope,))
+
+    def test_client_refresh_journals_exact_bytes_and_restarts_without_reselection(self):
+        api, fixture, selected, scope = self.refresh_fixture()
+        from control_plane_kit_core.topology import GraphDescriptorCodec
+        from control_plane_kit_servers_cpk_server.client import TopologyClient, JournalError
+        from test_topology_client import DeterministicIds
+        codec = GraphDescriptorCodec()
+        source = self.root / "refresh.json"
+        source.write_text(json.dumps(codec.encode(fixture["graph_a"])), encoding="utf-8")
+        original = source.read_bytes()
+        fixture["verifiers"] = selected
+        transport = self.authoring_transport(fixture)
+        no_identity = lambda: self.fail("refresh allocated receiver identity")
+        client = TopologyClient(self.client_profile(), transport=transport,
+            identity_factory=DeterministicIds(), receiver_identity_factory=no_identity)
+        operation_ref = "00000000-0000-4000-8000-000000000001"
+        def before_prepare(payload):
+            journal = client.journal.read(operation_ref)
+            artifact = client.journal.root / journal["preparation"]["name"]
+            self.assertEqual(json.loads(artifact.read_bytes()), payload["desired_graph"])
+            self.assertEqual(os.stat(artifact).st_mode & 0o777, 0o600)
+        transport.before_prepare = before_prepare
+        result = client.plan(api.AuthoredDesiredGraph(source, verifier_refreshes=(scope,)))
+        self.assertEqual(result.status, "attention-required")
+        first, = [call for call in transport.calls if call["route_id"] == "command.deployment.prepare"]
+        prepared = codec.decode(first["payload"]["desired_graph"])
+        self.assertNotEqual(prepared.node("hello-x").configuration_artifacts,
+            fixture["graph_a"].node("hello-x").configuration_artifacts)
+        verifier_read, = [call for call in transport.calls
+            if call["route_id"] == "read.workload-verifier-configuration"]
+        self.assertEqual(verifier_read["credential_role"], "operator")
+        self.assertEqual(set(verifier_read["path_parameters"]["purposes"].split(",")),
+            {fixture["core"].DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ.value,
+             fixture["core"].DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ.value})
+        journal = client.journal.read(result.operation_ref)
+        artifact = client.journal.root / journal["preparation"]["name"]
+        saved_bytes = artifact.read_bytes()
+        restarted = TopologyClient(self.client_profile(), transport=transport,
+            receiver_identity_factory=no_identity)
+        artifact.write_bytes(b"{}")
+        with self.assertRaises(JournalError):
+            restarted.resume_prepare(result.operation_ref)
+        self.assertEqual(sum(call["route_id"] == "command.deployment.prepare" for call in transport.calls), 1)
+        artifact.write_bytes(saved_bytes)
+        fixture["verifiers"] = {"workload_verifier_configuration": {"verifiers": []}}
+        resumed = restarted.resume_prepare(result.operation_ref)
+        self.assertEqual(resumed.status, "planned")
+        prepares = [call for call in transport.calls if call["route_id"] == "command.deployment.prepare"]
+        self.assertEqual(prepares, [first, first])
+        for route in ("read.receiver-authoring-context", "read.workload-verifier-configuration"):
+            self.assertEqual(sum(call["route_id"] == route for call in transport.calls), 1)
+        self.assertEqual(artifact.read_bytes(), saved_bytes)
+        self.assertEqual(source.read_bytes(), original)
+
+    def test_refresh_cli_selects_explicit_scopes_and_refuses_duplicates(self):
+        api, _, _, scope = self.refresh_fixture()
+        from control_plane_kit_servers_cpk_server.client import cli, ClientInputError
+        arguments = cli._parser().parse_args(["--profile", "local", "plan", "graph.json",
+            "--refresh-receiver-verifiers", "hello-x", "internal"])
+        selected = cli._authored_plan_input(arguments)
+        self.assertEqual(selected.verifier_refreshes, (scope,))
+        self.assertEqual(selected.introductions, ())
+        arguments.refresh_receiver_verifiers.append(("hello-x", "internal"))
+        with self.assertRaises(ClientInputError):
+            cli._authored_plan_input(arguments)
+
     def test_profile_import_does_not_require_receiver_authoring_dependencies(self):
         script = """
 import sys
