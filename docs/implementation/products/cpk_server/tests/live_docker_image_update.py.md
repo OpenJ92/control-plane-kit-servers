@@ -1,8 +1,10 @@
 Source: [live_docker_image_update.py](../../../../../products/cpk_server/tests/live_docker_image_update.py).
 
 #253 extends the same sequence with a fourth, verifier-only replacement of api.
-One authenticated VERIFY_ONLY registration reuses the fixture's existing workload
-public material and secret reference. Public key rows prove the original ACTIVE
+One authenticated VERIFY_ONLY registration uses a distinct isolated workload
+overlap pair and matching reference, seeded through the existing provider custody
+path under its existing workload-health intent. No permission on an existing
+reference is widened. Public key rows prove the original ACTIVE
 signer is unchanged. Ordinary authoring remains a no-op after registration;
 explicit refresh journals a changed wrapper while preserving target, declaration,
 artifact slot, every other graph value, receiver origin and peer incarnation.
@@ -20,6 +22,12 @@ The receiver OCI images stay at their fixed qualified digests. The controller
 uses the source-built installed dependency tuple checked by `verify_provenance`.
 Ingress/native routing remains synthetic; this is not the live grandparent test.
 This addition awaits the normal owning gate and final review.
+
+The original same-PEM alias proposal was rejected in pre-execution review because
+Core requires unique verifier fingerprints. North's
+[bounded fixture amendment](https://github.com/OpenJ92/control-plane-kit-servers/issues/253#issuecomment-6234746932)
+authorizes the distinct pair/reference. This corrects fixture material without
+changing Core uniqueness, production key lifecycle or the signed-health path.
 
 The temporary #1993 publication-budget observer is removed after the full #252
 workload passed at `3e544bff`. Its measured result and prior failures remain in

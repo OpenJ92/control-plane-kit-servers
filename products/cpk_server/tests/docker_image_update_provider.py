@@ -169,7 +169,10 @@ class SigningProviderProcess:
             raise
 
     def seed(self, material):
-        for family, (provider, reference, intent) in SIGNING.items():
+        # Separate fixture custody only; no new intent, activation or signing path.
+        seeds = {**SIGNING, "workload-overlap": ("health-secrets",
+            "secret://health-secrets/keys/workload-overlap", "workload.node-health-read-signing-key")}
+        for family, (provider, reference, intent) in seeds.items():
             if family not in material.private:
                 continue
             client = ControlPlaneKitSecretsClient(self.composition.bootstrap_registry.configuration_for(

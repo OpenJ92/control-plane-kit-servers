@@ -47,3 +47,6 @@ used by these checks.
 #253's existing forwarding test also checks the minimal target/kind/status
 observations consumed by the retained-receiver refresh witness. These contain no
 credentials, request or response bodies.
+#253's material test also requires distinct overlap/workload public fingerprints
+and absence of the overlap member from every initial wrapper. The installed
+witness supplies custody/registration/refresh evidence through the owning gate.

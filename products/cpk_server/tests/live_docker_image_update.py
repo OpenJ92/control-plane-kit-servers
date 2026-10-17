@@ -131,7 +131,7 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
             registration = PublicRegistration(transport, workspace)
             admitted = await register_material(registration, SimpleNamespace(workspace_id=workspace,
                 documents={name: material.documents[name] for name in ("gateway", "api", "connector")},
-                public=material.public))
+                public={name: material.public[name] for name in ("transit", "workload")}))
             row = admitted["runtime"]
             registered_authority = RegisteredRuntimeAuthority(row["registration_id"], workspace,
                 RuntimeAuthorityReference(row["authority_ref"]), RuntimeKind.DOCKER,
@@ -245,14 +245,23 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
                 elif label == "content-only":
                     replacement_graph = application_content_graph(authored)
                 else:
-                    # Reuse existing fixture material/reference; the original signer stays ACTIVE.
+                    # Distinct isolated overlap custody; the original signer stays ACTIVE.
                     original_keys = await asyncio.to_thread(public_page, transport,
                         "read.delegation-keys", workspace)
+                    overlap_reference = "secret://health-secrets/keys/workload-overlap"
+                    reference = await registration.register("command.secret-reference.register", {
+                        "reference": overlap_reference,
+                        "provider_registration_id": admitted["providers"]["health"]["registration_id"],
+                        "allowed_intents": ["workload.node-health-read-signing-key"],
+                        "admitted_at": utc_now(), "metadata": {"acceptance": "receiver-refresh-253"},
+                        "idempotency_key": "image-overlap-reference"})
+                    assert reference["status"] == "active" and reference["reference_id"] == overlap_reference
+                    assert reference["allowed_intents"] == ["workload.node-health-read-signing-key"]
                     overlap = await registration.register("command.delegation-key.register", {
                         "purpose": "workload-node-health-read", "issuer": "cpk-server",
                         "key_id": "health-workload-overlap", "algorithm": "ed25519",
-                        "public_key_pem": material.public["workload"].public_key_pem,
-                        "private_key_reference": "secret://health-secrets/keys/workload",
+                        "public_key_pem": material.public["workload-overlap"].public_key_pem,
+                        "private_key_reference": overlap_reference,
                         "admitted_at": utc_now(), "idempotency_key": "image-verifier-overlap"})
                     assert overlap["status"] == "verify-only"
                     refreshed_keys = await asyncio.to_thread(public_page, transport,
@@ -298,8 +307,8 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
                             assert family.issuer == previous.issuer
                             assert {key.key_id for key in family.public_keys} == {
                                 "health-workload", "health-workload-overlap"}
-                            assert all(key.public_key_pem == material.public["workload"].public_key_pem
-                                for key in family.public_keys)
+                            assert set(family.public_keys) == {
+                                material.public["workload"], material.public["workload-overlap"]}
                         else:
                             assert family == previous
                     restored = replace(journaled.node("api"), configuration_artifacts=tuple(
