@@ -116,3 +116,15 @@ provenance expectations advance without weakening assertions or changing extras.
 This supersedes the incompatible initial #251 selection. Owner gates passed;
 the joined Servers gate remains required. Runtime source, witness logic,
 qualified images, product publication coordinates and catalogue stay unchanged.
+
+## Current #252 Operations-only evidence-policy adoption
+
+Operations selects accepted #1994 merge
+`6e8ba28ef03e0eedbeafe9f3448d259750a6203f`; Core retains
+`5b66dcac4bf2cf76219efaf05fa5ff06588bd16a`, SDK `d4cbbb16`, Secrets
+`56e6d321`, and Interpreters `f689773e`. Actual accepted Core subtrees match
+`71885273e30f4489c102d2a7559eb23c247a3c2c`; the ordinary gate must still prove
+installed provenance and composition. Only Operations dependency mirrors and
+exact expected provenance advance. Scenario, assertions, cleanup, runner, extras
+and published product coordinates remain unchanged. The full Servers workload
+is pending; owner-package green alone does not establish its acceptance.

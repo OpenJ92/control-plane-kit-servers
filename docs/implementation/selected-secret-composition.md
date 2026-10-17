@@ -1,19 +1,33 @@
 # Selected secret composition — #252
 
-Current checkpoint adopts the accepted #1991 managed selected-consumer owners
-and corrects the maintained public witness. Execution of this Servers checkpoint
-remains pending; dependency-package green is not Servers or grandparent acceptance.
+Current checkpoint adopts Operations #1994's accepted bounded evidence policy
+after the maintained content update succeeded but graph advancement refused the
+old 4,096-record allowance. The unchanged full Servers gate remains pending;
+dependency-package green is not Servers or grandparent acceptance.
 
-The coherent accepted tuple is Core and Operations
-`5b66dcac4bf2cf76219efaf05fa5ff06588bd16a`, Interpreters
+The selected accepted tuple is Core
+`5b66dcac4bf2cf76219efaf05fa5ff06588bd16a`, Operations
+`6e8ba28ef03e0eedbeafe9f3448d259750a6203f`, Interpreters
 `f689773e2b19a56543dae9830a2b1c059bbb10a4`, SDK
 `d4cbbb16a4ce47bae0b791adab5de8940355ea99`, and Secrets
 `56e6d3211a847efd98434ba2dd4093d29bf4b375`. SDK #56, Secrets #54 and
 Interpreters #201 aligned their own direct dependencies and passed their owning
-gates before acceptance. Servers selects these actual merges in its manifest,
-coordinate document, all six affected product Dockerfiles and explicit installed
-provenance assertions. Extras and subdirectories are unchanged; no resolver
-override or split-pin equivalence is assumed.
+gates before acceptance. The latest Operations-only adoption updates the canonical
+manifest, root dependency, CPK Dockerfile and exact installed provenance assertions.
+The accepted Operations merge and retained Core coordinate have identical Core
+subtree `71885273e30f4489c102d2a7559eb23c247a3c2c`; Operations' Core dependency
+remains `>=0.1.0`. Existing independent archive subdirectories preserve the retained
+SDK, Secrets and Interpreters Core pins. This source compatibility evidence does
+not replace installed provenance and the unchanged full composition gate.
+
+Operations #1994 passed 2,801 owner test executions, Core 1,035 package tests and
+the locked-family backend gate before independent review and merge. The shared
+record allowance is now 8,192; byte/snapshot/native limits and freshness laws are
+unchanged. The prior diagnostic measured content advancement at 4,228 settled /
+4,229 peak records. Keep the bounded observer for the causal rerun; remove it in
+downstream closure after the result is captured. No further capacity increase,
+image publication, provider mutation or original tunnel/DNS/token change follows
+from this adoption. Extras, product image coordinates and the runner are unchanged.
 
 Tests-only checkpoint `a4f5af4` ran through unchanged `./test.sh` on old pins.
 Support26/root48/Cloudflare19/gateway59 passed. Cpk-server389 methods produced
