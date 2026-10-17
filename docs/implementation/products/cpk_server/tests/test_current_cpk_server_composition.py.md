@@ -147,3 +147,11 @@ consistency and actual installed family. Published product source/image and
 catalogue coordinates are unchanged. This source checkpoint is unvalidated;
 installed refresh and full #237/#225 acceptance are separate evidence.
 Earlier coordinate accounts in this document are historical.
+
+## Current #254 dependency expectation correction
+
+Exact Core/Operations constants now select accepted9861e536e79314005499ae07379f627bfb1599a2
+and Interpreters2b33ab15dc8f20cc85a458f95781a227a57bae49. The first #254
+owning run caught the old constants in two assertions. Only immutable expected
+coordinates change; exact metadata/generated-URL checks remain intact. Canonical
+manifest and generated dependencies already selected these accepted commits.

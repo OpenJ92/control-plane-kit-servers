@@ -272,6 +272,7 @@ class TopologyClient:
                     verifier_configuration=verifier_configuration,
                     introductions=desired_path.introductions,
                     verifier_refreshes=desired_path.verifier_refreshes,
+                    declaration_updates=desired_path.declaration_updates,
                     pending=desired_path.pending,
                     gateway_health_replacements=(
                         desired_path.gateway_health_replacements

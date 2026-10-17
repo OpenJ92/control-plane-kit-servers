@@ -87,3 +87,14 @@ provenance expectations advance without weakening assertions or changing extras.
 This supersedes the incompatible initial #251 selection. Owner gates passed;
 the joined Servers gate remains required. Runtime source, witness logic,
 qualified images, product publication coordinates and catalogue stay unchanged.
+
+## Current #254 selected dependency expectations
+
+Active expected coordinates now match the accepted canonical tuple: Core/Ops
+9861e536e79314005499ae07379f627bfb1599a2, SDK
+d4e7c4d91c054f139e2971774ae5e37fc741262d, Secrets
+165a7dc7abd75e1ba50b9494d0f0aabf0aa3c33c and Interpreters
+2b33ab15dc8f20cc85a458f95781a227a57bae49. Exact installed provenance and
+source composition assertions remain unchanged. Historical published Secrets
+source/image assertions remain intact. Earlier dependency descriptions are
+historical; selected compatibility requires the normal whole owning gate.

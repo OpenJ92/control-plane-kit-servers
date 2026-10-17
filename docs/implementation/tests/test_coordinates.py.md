@@ -132,3 +132,18 @@ consistency and actual installed family. Published product source/image and
 catalogue coordinates are unchanged. This source checkpoint is unvalidated;
 installed refresh and full #237/#225 acceptance are separate evidence.
 Earlier coordinate accounts in this document are historical.
+
+## Current declaration-update dependency adoption (#254)
+
+The canonical manifest now selects actual accepted Core/Operations #1998
+`9861e536e79314005499ae07379f627bfb1599a2`, SDK #61
+`d4e7c4d91c054f139e2971774ae5e37fc741262d`, Secrets #59
+`165a7dc7abd75e1ba50b9494d0f0aabf0aa3c33c`, and Interpreters #206
+`2b33ab15dc8f20cc85a458f95781a227a57bae49`. Ordered predecessor gates and
+independent reviews passed. The maintained Docker coordinate generator updates
+each consumer's existing package subset/extras; the exact Secrets expectation
+moves with the manifest. Existing published product source/image descriptors
+and catalogue bytes remain unchanged. No new image or installed declaration
+cutover is claimed. The normal Servers gate must establish this selected tuple's
+composition; client declaration authoring is separately described by its source
+companions. Earlier dependency accounts in this document are historical.

@@ -37,6 +37,20 @@ and source digest. A changed family replaces only content and clears its stale
 source digest. The artifact slot, target, declaration and other graph values stay
 fixed. An omitted refresh retains exact current bytes without key selection.
 
+Servers #254 adds explicit `declaration_updates` for current non-gateway scopes.
+Original bytes must match their own current declaration identity, full target
+and selected digest before the desired surface is considered. Both declarations
+must be V2, health-only and retain readiness; only health reads may differ.
+Receiver identity, verifier families and slot remain fixed. Semantic equality
+preserves exact bytes/provenance; a change rewrites declaration content and
+resets source provenance to the new content digest through Core's artifact
+constructor. Ordinary retained authoring remains strict.
+Pending/introduction/refresh overlap, duplicate and missing-current updates
+refuse. Changed declarations require one explicit route group containing the
+workload and gateway self. The client context does not contain the current route
+table: Core/Operations own peer, alias, origin and product-pair preservation.
+This transform neither fetches more graph truth nor implements another planner.
+
 Servers #245 constructs Core `ReceiverManagementRouteBinding` and
 `ReceiverManagementRoutes` directly, then invokes the existing product artifact
 factory. Complete examples explicitly include gateway self-health plus X in A/C
