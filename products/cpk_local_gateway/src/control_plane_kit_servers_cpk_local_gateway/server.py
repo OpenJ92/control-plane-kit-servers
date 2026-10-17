@@ -1,12 +1,14 @@
-"""Local runtime-island gateway for closed CPK probes."""
+"""Local management gateway with authenticated relay and SDK self-health."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import asynccontextmanager
 import json
 import os
 import re
 import sys
+import time
 from typing import Mapping
 from urllib import error, parse, request
 
@@ -141,20 +143,44 @@ def create_app(
     configuration: GatewayConfiguration | None = None,
     *,
     verifier: GatewayProbeVerifier | None = None,
+    health_relay=None,
+    control_configuration=None,
+    clock=lambda:int(time.time()),
 ) -> FastAPI:
+    from .control import GatewayLocalHealth, install_gateway_control
+    from control_plane_kit_core import NodeHealthReadOutcome
     gateway = configuration or GatewayConfiguration.from_environment()
-    probe_verifier = verifier or _verifier_from_environment()
-    app = FastAPI(title="cpk-local-gateway")
+    probe_verifier = verifier
+    health = GatewayLocalHealth()
+    @asynccontextmanager
+    async def lifespan(app):
+        health.serving = True
+        try:
+            yield
+        finally:
+            health.serving = False
+    app = FastAPI(title="cpk-local-gateway", redirect_slashes=False, lifespan=lifespan)
+    app.state.gateway_local_health = health
+
+    if health_relay is not None:
+        from .health_relay import GatewayHealthRelay
+        if type(health_relay) is not GatewayHealthRelay:
+            raise ValueError("gateway health relay composition is invalid")
+        app.add_api_route("/cpk/health/{health_kind}", health_relay.handle, methods=["POST"],
+                          include_in_schema=False)
+    if control_configuration is not None:
+        install_gateway_control(app, control_configuration, health_relay, health, clock)
 
     @app.get("/health/live")
     def live() -> dict[str, str]:
         return {"status": "live"}
 
     @app.get("/health/ready")
-    def ready() -> dict[str, str]:
-        return {"status": "ready"}
+    def ready() -> JSONResponse:
+        ready = health.readiness() is NodeHealthReadOutcome.HEALTHY
+        return JSONResponse(status_code=200 if ready else 503,
+                            content={"status":"ready" if ready else "not-ready"})
 
-    @app.post("/cpk/probes")
     async def probe(inbound: Request) -> JSONResponse:
         try:
             body = await inbound.body()
@@ -185,6 +211,8 @@ def create_app(
             )
         return JSONResponse(status_code=200, content=result)
 
+    if probe_verifier is not None:
+        app.add_api_route("/cpk/probes", probe, methods=["POST"])
     return app
 
 
@@ -208,18 +236,25 @@ def execute_probe(
 
 def main() -> int:
     try:
+        from .health_relay_startup import load_health_relay
+        from .control_configuration import read_gateway_control_configuration
         configuration = GatewayConfiguration.from_environment()
-        verifier = _verifier_from_environment()
-    except GatewayConfigurationError as exc:
-        print(str(exc), file=sys.stderr)
-        return 2
-    except ValueError as exc:
-        print(str(exc), file=sys.stderr)
+        if configuration.port != 8000:
+            raise ValueError
+        health_relay = load_health_relay()
+        control = read_gateway_control_configuration()
+        fields = ("CPK_GATEWAY_PROBE_VERIFIER", "CPK_GATEWAY_PROBE_VERIFICATION_KEYS_JSON",
+                  "CPK_GATEWAY_PROBE_ISSUER", "CPK_GATEWAY_PROBE_AUDIENCE", "CPK_GATEWAY_PROBE_NODE_ID")
+        verifier = _verifier_from_environment() if any(name in os.environ for name in fields) else None
+        app = create_app(configuration, verifier=verifier, health_relay=health_relay, control_configuration=control)
+    except (ValueError, OSError):
+        print("gateway startup configuration is invalid", file=sys.stderr)
         return 2
     uvicorn.run(
-        create_app(configuration, verifier=verifier),
+        app,
         host="0.0.0.0",
-        port=configuration.port,
+        port=8000,
+        access_log=False,
     )
     return 0
 

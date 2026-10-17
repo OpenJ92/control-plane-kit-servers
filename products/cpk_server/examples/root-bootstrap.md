@@ -80,6 +80,18 @@ and verifies `0400` delivery into read-only mounts. The driver image uses UID0 f
 the existing SDK archive helper. Public setup instead uses the inspected CPK UID,
 shares the exact CPK container's network namespace, and receives no Docker socket.
 
+Compiled public configuration artifacts appear in each node's
+`configuration_files` plan entries, with their complete descriptor, target path,
+content digest and deterministic owned volume name. Apply delivers those exact
+artifacts through the existing SDK, verifies their bytes, and checks the complete
+secret/configuration read-only mount set before starting each recipient. The SDK
+creates root-owned configuration files: `0444` supports numeric nonroot readers;
+`0400` requires a root image user and is refused for nonroot recipients before
+network or volume acquisition. Bootstrap never broadens the declared mode.
+Configuration volumes remain in the acquisition receipt on success or HOLD.
+Changed saved projections must be regenerated and reviewed; apply never upgrades
+an old saved plan silently.
+
 The private receipt records intent before nontransactional Docker or public-setup
 stages and observations afterward. Any previous receipt stops apply; it is not
 an idempotent repair command. Pending work, conflicting resources, permission

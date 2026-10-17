@@ -5,6 +5,25 @@ IMAGE="${CPK_SECRETS_IMAGE:-control-plane-kit-secrets-server:local}"
 BUILD_IMAGE="${CPK_SECRETS_BUILD_IMAGE:-1}"
 CONTROLLER_IMAGE="${CPK_SERVERS_TEST_IMAGE:-control-plane-kit-servers-test:local}"
 BUILD_CONTROLLER="${CPK_SECRETS_BUILD_CONTROLLER:-1}"
+PROFILE="${CPK_SECRETS_SMOKE_PROFILE:-}"
+invalid_inputs() {
+  echo 'secrets-server image smoke: invalid profile or build inputs' >&2
+  exit 2
+}
+case "$BUILD_IMAGE:$BUILD_CONTROLLER" in 0:0|0:1|1:0|1:1) ;; *) invalid_inputs ;; esac
+if [ -z "$PROFILE" ]; then
+  case "$BUILD_IMAGE" in 1) PROFILE=wrapped-source ;; 0) PROFILE=published-baseline ;; esac
+fi
+case "$PROFILE:$BUILD_IMAGE" in
+  wrapped-source:1) ;;
+  published-baseline:0)
+    printf '%s\n' "$IMAGE" | grep -Eq '@sha256:[0-9a-f]{64}$' || invalid_inputs
+    ;;
+  *) invalid_inputs ;;
+esac
+
+CONTROL_RECORDS=""
+CONTROL_PHASE=""
 RUN_ID="cpk-secrets-image-smoke-$$"
 LABEL_KEY="cpk.test-run"
 NETWORK="$RUN_ID-network"
@@ -12,6 +31,21 @@ PROVIDER_BOOTSTRAP="$RUN_ID-provider-bootstrap"
 CLIENT_BOOTSTRAP="$RUN_ID-client-bootstrap"
 DATA_VOLUME="$RUN_ID-data"
 PROVIDER="$RUN_ID-provider"
+
+cleanup_records() {
+  [ -n "$CONTROL_RECORDS" ] || return 0
+  rm -f "$CONTROL_RECORDS/provider.log" "$CONTROL_RECORDS/log.status" || return 1
+  for phase in initial restart; do
+    rm -f "$CONTROL_RECORDS/$phase/control.json" \
+      "$CONTROL_RECORDS/$phase/surface.headers" "$CONTROL_RECORDS/$phase/health.headers" || return 1
+    if [ -d "$CONTROL_RECORDS/$phase" ]; then
+      rmdir "$CONTROL_RECORDS/$phase" || return 1
+    fi
+  done
+  rmdir "$CONTROL_RECORDS" || return 1
+  [ ! -e "$CONTROL_RECORDS" ] || return 1
+  CONTROL_RECORDS=""
+}
 
 cleanup_owned() {
   docker ps -aq --filter "label=$LABEL_KEY=$RUN_ID" \
@@ -44,6 +78,7 @@ finish() {
     echo "secrets-server image smoke left owned Docker resources" >&2
     status=1
   fi
+  cleanup_records || { echo 'secrets-server fixture cleanup incomplete' >&2; status=1; }
   exit "$status"
 }
 trap finish EXIT
@@ -51,13 +86,13 @@ trap 'exit 130' INT TERM
 
 if [ "$BUILD_IMAGE" = "1" ]; then
   docker build -f products/secrets_server/Dockerfile -t "$IMAGE" .
-elif ! printf '%s\n' "$IMAGE" | grep -Eq '@sha256:[0-9a-f]{64}$'; then
-  echo "published secrets-server smoke requires an immutable sha256 image" >&2
-  exit 1
 fi
 if [ "$BUILD_CONTROLLER" = "1" ]; then
   docker build -f Dockerfile.test -t "$CONTROLLER_IMAGE" .
 fi
+
+CONTROL_RECORDS="$(mktemp -d)"
+chmod 700 "$CONTROL_RECORDS"
 
 docker network create --label "$LABEL_KEY=$RUN_ID" "$NETWORK" >/dev/null
 docker volume create --label "$LABEL_KEY=$RUN_ID" "$PROVIDER_BOOTSTRAP" >/dev/null
@@ -139,14 +174,37 @@ os.chown("/provider-data", 10006, 10006)
 PY
 
 start_provider() {
-  docker run -d \
+  set -- \
     --name "$PROVIDER" \
     --label "$LABEL_KEY=$RUN_ID" \
     --network "$NETWORK" \
     --network-alias secrets-provider \
     --mount "type=volume,src=$PROVIDER_BOOTSTRAP,dst=/run/secrets/cpk-secrets,readonly" \
-    --mount "type=volume,src=$DATA_VOLUME,dst=/var/lib/cpk-secrets" \
-    "$IMAGE" >/dev/null
+    --mount "type=volume,src=$DATA_VOLUME,dst=/var/lib/cpk-secrets"
+  if [ "$PROFILE" = wrapped-source ]; then
+    set -- "$@" --mount "type=bind,source=$CONTROL_RECORDS/$CONTROL_PHASE/control.json,target=/etc/cpk/secrets-server/control.json,readonly"
+  fi
+  docker create "$@" "$IMAGE" >/dev/null
+  docker start "$PROVIDER" >/dev/null
+}
+
+prepare_control() {
+  [ "$PROFILE" = wrapped-source ] || return 0
+  CONTROL_PHASE="$1"
+  mkdir -m 700 "$CONTROL_RECORDS/$CONTROL_PHASE"
+  docker run --rm --label "$LABEL_KEY=$RUN_ID" --network none \
+    --user "$(id -u):$(id -g)" -e PYTHONDONTWRITEBYTECODE=1 \
+    --mount "type=bind,source=$CONTROL_RECORDS/$CONTROL_PHASE,target=/fixture" \
+    "$CONTROLLER_IMAGE" python products/secrets_server/tests/source_control_fixture.py \
+    generate /fixture "$RUN_ID"
+}
+
+check_control() {
+  [ "$PROFILE" = wrapped-source ] || return 0
+  docker run --rm --label "$LABEL_KEY=$RUN_ID" --user 0:0 --network "$NETWORK" \
+    --mount "type=bind,source=$CONTROL_RECORDS/$CONTROL_PHASE,target=/fixture,readonly" \
+    "$CONTROLLER_IMAGE" python products/secrets_server/tests/source_control_fixture.py check /fixture
+  echo "secrets-server $CONTROL_PHASE signed source control passed"
 }
 
 wait_ready() {
@@ -173,25 +231,34 @@ PY
 }
 
 assert_logs_redacted() {
-  if docker logs "$PROVIDER" 2>&1 | grep -E 'Bearer |PRIVATE KEY|provider-token'; then
-    echo "secrets-server logs contain forbidden custody material" >&2
-    exit 1
+  (umask 077; : > "$CONTROL_RECORDS/provider.log"; : > "$CONTROL_RECORDS/log.status")
+  # The limiter's success cannot hide failed retrieval. The producer records its
+  # own exit status, which the checker requires independently of the byte bound.
+  if (
+    set +e
+    docker logs "$PROVIDER" 2>&1
+    log_status=$?
+    printf '%s\n' "$log_status" > "$CONTROL_RECORDS/log.status"
+  ) | head -c 1048577 > "$CONTROL_RECORDS/provider.log"; then
+    :
+  else
+    echo 'Secrets smoke fixture failed' >&2
+    return 1
   fi
-  for secret_name in provider-token application-value; do
-    secret="$(docker run --rm \
-      --user 0:0 \
-      --mount "type=volume,src=$CLIENT_BOOTSTRAP,dst=/client,readonly" \
-      --entrypoint cat \
-      "$IMAGE" "/client/$secret_name")"
-    if docker logs "$PROVIDER" 2>&1 | grep -F -- "$secret"; then
-      echo "secrets-server logs contain exact secret material" >&2
-      exit 1
-    fi
-  done
+  set -- logs /fixture /client
+  if [ "$PROFILE" = wrapped-source ]; then
+    set -- "$@" "/fixture/$CONTROL_PHASE"
+  fi
+  docker run --rm --label "$LABEL_KEY=$RUN_ID" --user 0:0 --network none \
+    --mount "type=bind,source=$CONTROL_RECORDS,target=/fixture,readonly" \
+    --mount "type=volume,src=$CLIENT_BOOTSTRAP,dst=/client,readonly" \
+    "$CONTROLLER_IMAGE" python products/secrets_server/tests/source_control_fixture.py "$@"
 }
 
+prepare_control initial
 start_provider
 wait_ready
+check_control
 
 docker run --rm -i \
   --label "$LABEL_KEY=$RUN_ID" \
@@ -316,8 +383,10 @@ PY
 assert_logs_redacted
 docker rm -f "$PROVIDER" >/dev/null
 
+prepare_control restart
 start_provider
 wait_ready
+check_control
 
 docker run --rm -i \
   --label "$LABEL_KEY=$RUN_ID" \
@@ -367,4 +436,4 @@ print("secrets-server restart contract passed")
 PY
 
 assert_logs_redacted
-echo "secrets-server image smoke passed"
+echo "secrets-server image smoke passed ($PROFILE)"

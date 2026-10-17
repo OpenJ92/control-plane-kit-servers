@@ -39,13 +39,33 @@ docker run --rm "$IMAGE"
 docker run --rm "$IMAGE" \
   sh -c 'cd /tmp && python -c "import control_plane_kit_servers; print(\"control-plane-kit-servers import ok\")"'
 
-# Source-built Secrets and CPK file witnesses. Only this bounded controller receives
+# Source-built file and wrapper witnesses. Only this isolated controller receives
 # local daemon authority; the ordinary package suite above remains socket-free.
 (
+  WRAPPER_MODE="${CPK_WRAPPER_ARTIFACT_MODE:-source-built}"
+  case "$WRAPPER_MODE" in
+    source-built) ;;
+    published-digest)
+      for reference in "${CPK_WRAPPER_HELLO_A:?select exact Hello A digest}" \
+          "${CPK_WRAPPER_HELLO_B:?select exact Hello B digest}" \
+          "${CPK_WRAPPER_GATEWAY:?select exact gateway digest}"; do
+        case "$reference" in ghcr.io/openj92/control-plane-kit-servers/*@sha256:*) ;;
+          *) echo 'wrapper qualification requires the reviewed GHCR digest tuple' >&2; exit 1 ;;
+        esac
+        # Preload is a separate authorized producer action on this same daemon.
+        docker image inspect "$reference" >/dev/null
+      done
+      [ "$CPK_WRAPPER_HELLO_A" != "$CPK_WRAPPER_HELLO_B" ] || exit 1
+      ;;
+    *) echo 'unsupported wrapper artifact qualification mode' >&2; exit 1 ;;
+  esac
   RECORDS="$(mktemp -d)"
   RUN="cpk-numeric-$(basename "$RECORDS")"
   TAG="control-plane-kit-secrets-numeric:$RUN"
   CPK_TAG="control-plane-kit-cpk-numeric:$RUN"
+  HELLO_TAG="control-plane-kit-hello-wrapper:$RUN"
+  GATEWAY_TAG="control-plane-kit-gateway-wrapper:$RUN"
+  COUNTER_TAG="control-plane-kit-counter-wrapper:$RUN"
   cleanup_numeric_bootstrap() {
     failed=0
     if [ -s "$RECORDS/controller" ]; then
@@ -72,9 +92,11 @@ docker run --rm "$IMAGE" \
         [ -z "$observed" ] || failed=1
       fi
     fi
-    for record in image cpk-image; do
+    for record in image cpk-image hello-image gateway-image counter-image; do
       if [ -s "$RECORDS/$record" ]; then
-        case "$record" in image) image_tag="$TAG" ;; cpk-image) image_tag="$CPK_TAG" ;; esac
+        case "$record" in image) image_tag="$TAG" ;; cpk-image) image_tag="$CPK_TAG" ;;
+          hello-image) image_tag="$HELLO_TAG" ;; gateway-image) image_tag="$GATEWAY_TAG" ;;
+          counter-image) image_tag="$COUNTER_TAG" ;; esac
         identity="$(cat "$RECORDS/$record")" || return 1
         observed="$(docker image inspect --format '{{.Id}}' "$image_tag")" || return 1
         owner="$(docker image inspect --format '{{index .Config.Labels "org.openj92.cpk.test-run"}}' "$identity")" || return 1
@@ -85,7 +107,8 @@ docker run --rm "$IMAGE" \
       fi
     done
     [ "$failed" = 0 ] || return 1
-    rm -f "$RECORDS/controller" "$RECORDS/network" "$RECORDS/image" "$RECORDS/cpk-image"
+    rm -f "$RECORDS/controller" "$RECORDS/network" "$RECORDS/image" "$RECORDS/cpk-image" \
+      "$RECORDS/hello-image" "$RECORDS/gateway-image" "$RECORDS/counter-image"
     rmdir "$RECORDS"
   }
   trap 'result=$?; trap - 0; cleanup_numeric_bootstrap || { echo "numeric bootstrap cleanup incomplete; records=$RECORDS" >&2; result=1; }; exit "$result"' 0
@@ -108,6 +131,10 @@ docker run --rm "$IMAGE" \
   [ -z "$EXISTING" ] || { echo 'numeric bootstrap image tag already exists' >&2; exit 1; }
   EXISTING="$(docker image ls -q --no-trunc --filter "reference=$CPK_TAG")"
   [ -z "$EXISTING" ] || { echo 'numeric CPK image tag already exists' >&2; exit 1; }
+  for image_tag in "$HELLO_TAG" "$GATEWAY_TAG" "$COUNTER_TAG"; do
+    EXISTING="$(docker image ls -q --no-trunc --filter "reference=$image_tag")"
+    [ -z "$EXISTING" ] || { echo 'wrapper source image tag already exists' >&2; exit 1; }
+  done
   docker build -f products/secrets_server/Dockerfile \
     --label "org.openj92.cpk.test-run=$RUN" \
     --iidfile "$RECORDS/image" -t "$TAG" .
@@ -116,6 +143,18 @@ docker run --rm "$IMAGE" \
     --label "org.openj92.cpk.test-run=$RUN" \
     --iidfile "$RECORDS/cpk-image" -t "$CPK_TAG" .
   CPK_PRODUCT_IMAGE_ID="$(cat "$RECORDS/cpk-image")"
+  docker build -f products/hello_server/Dockerfile \
+    --label "org.openj92.cpk.test-run=$RUN" \
+    --iidfile "$RECORDS/hello-image" -t "$HELLO_TAG" .
+  HELLO_IMAGE_ID="$(cat "$RECORDS/hello-image")"
+  docker build -f products/cpk_local_gateway/Dockerfile \
+    --label "org.openj92.cpk.test-run=$RUN" \
+    --iidfile "$RECORDS/gateway-image" -t "$GATEWAY_TAG" .
+  GATEWAY_IMAGE_ID="$(cat "$RECORDS/gateway-image")"
+  docker build --platform linux/amd64 -f products/cpk_server/examples/unlisted_sdk/Dockerfile.counter \
+    --label "org.openj92.cpk.test-run=$RUN" \
+    --iidfile "$RECORDS/counter-image" -t "$COUNTER_TAG" .
+  COUNTER_IMAGE_ID="$(cat "$RECORDS/counter-image")"
   HELPER_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
   docker network create --internal \
     --label "org.openj92.cpk.test-run=$RUN" \
@@ -127,22 +166,37 @@ docker run --rm "$IMAGE" \
     --network "$NETWORK_ID" \
     --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
     -e DOCKER_HOST=unix:///var/run/docker.sock \
-    -e PYTHONPATH=/app \
+    -e PYTHONPATH=/app:/app/products/cpk_local_gateway/tests \
+    -e DOCKER_CONFIG=/tmp/cpk-wrapper-empty-docker-config \
     -e "CPK_SECRET_TEST_RUN=$RUN" \
     -e "CPK_SECRET_PRODUCT_IMAGE=$PRODUCT_IMAGE_ID" \
     -e "CPK_NUMERIC_PRODUCT_IMAGE=$CPK_PRODUCT_IMAGE_ID" \
+    -e "CPK_WRAPPER_HELLO_IMAGE=$HELLO_IMAGE_ID" \
+    -e "CPK_WRAPPER_GATEWAY_IMAGE=$GATEWAY_IMAGE_ID" \
+    -e "CPK_WRAPPER_COUNTER_IMAGE=$COUNTER_IMAGE_ID" \
+    -e "CPK_WRAPPER_ARTIFACT_MODE=$WRAPPER_MODE" \
+    -e "CPK_WRAPPER_HELLO_A=${CPK_WRAPPER_HELLO_A:-}" \
+    -e "CPK_WRAPPER_HELLO_B=${CPK_WRAPPER_HELLO_B:-}" \
+    -e "CPK_WRAPPER_GATEWAY=${CPK_WRAPPER_GATEWAY:-}" \
     -e "CPK_SECRET_HELPER_IMAGE=$HELPER_IMAGE_ID" \
     -e "CPK_SECRET_ENGINE_ID=$ENGINE_ID" \
     -e "CPK_SECRET_NETWORK=$NETWORK_ID" \
     "$HELPER_IMAGE_ID" python products/secrets_server/tests/live_numeric_bootstrap.py
 )
 
+CPK_SECRETS_SMOKE_PROFILE=wrapped-source \
+CPK_SECRETS_BUILD_CONTROLLER=0 \
+CPK_SERVERS_TEST_IMAGE="$IMAGE" \
+CPK_SECRETS_IMAGE="${CPK_SECRETS_SOURCE_IMAGE:-localhost/control-plane-kit-servers/secrets-server:local}" \
+CPK_SECRETS_BUILD_IMAGE=1 sh scripts/secrets_server_image_smoke.sh
 SECRETS_IMAGE="$(docker run --rm "$IMAGE" python scripts/product_image_coordinate.py secrets-server)"
+CPK_SECRETS_SMOKE_PROFILE=published-baseline \
 CPK_SECRETS_BUILD_IMAGE=0 \
 CPK_SECRETS_BUILD_CONTROLLER=0 \
 CPK_SERVERS_TEST_IMAGE="$IMAGE" \
 CPK_SECRETS_IMAGE="$SECRETS_IMAGE" \
   sh scripts/secrets_server_image_smoke.sh
+CPK_SERVER_SMOKE_PROFILE=wrapped-source CPK_SERVERS_TEST_IMAGE="$IMAGE" \
 CPK_SERVER_BUILD_IMAGE=1 sh scripts/cpk_server_image_smoke.sh
 CPK_IMAGE="$(docker run --rm "$IMAGE" python scripts/product_image_coordinate.py cpk-server)"
 CPK_SERVER_IMAGE="$CPK_IMAGE" sh scripts/cpk_server_published_image_smoke.sh
@@ -200,4 +254,5 @@ CPK_SERVER_IMAGE="$CPK_IMAGE" sh scripts/cpk_server_published_image_smoke.sh
     -e PYTHONPATH=/source:/app/products/cpk_server/src "$DRIVER" \
     python /source/products/cpk_server/tests/live_root_bootstrap.py unchanged "$RUN"
 )
+sh scripts/cloudflared_connection_witness.sh
 sh scripts/docker_residue_audit.sh
