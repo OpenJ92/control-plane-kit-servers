@@ -83,7 +83,7 @@ if [ "$PRODUCT_ID" = hello-server ]; then
   REPO_DIGESTS="$(docker image inspect "$HELLO_IMAGE_ID" --format '{{range .RepoDigests}}{{println .}}{{end}}')"
   REFERENCE="$(printf '%s\n' "$REPO_DIGESTS" | sh scripts/select_repository_digest.sh "$REPOSITORY")"
   sh scripts/check_hello_package.sh published "$SOURCE_COMMIT" "$REFERENCE"
-  printf 'hello-server reference=%s image_id=%s source=%s platform=linux/amd64 user=hello(uid10002)\n' "$REFERENCE" "$HELLO_IMAGE_ID" "$SOURCE_COMMIT"
+  printf 'hello-server reference=%s image_id=%s source=%s platform=linux/amd64 configured_user=hello recipe_uid=10002\n' "$REFERENCE" "$HELLO_IMAGE_ID" "$SOURCE_COMMIT"
   echo "Qualify this actual pulled-by-digest Hello artifact with both declarations before installed use. Source startup evidence does not qualify this rebuilt image. Historical catalogue coordinates remain unchanged." >&2
 else
   docker image inspect "$IMAGE" --format "{{index .RepoDigests 0}}"
