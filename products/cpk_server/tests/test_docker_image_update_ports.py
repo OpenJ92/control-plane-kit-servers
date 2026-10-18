@@ -274,6 +274,12 @@ class DockerImageBoundaryTests(unittest.TestCase):
             require_committed_call(changed, response, arguments, events(record), "worker-a")
 
     def test_hook_failure_journals_original_success_and_never_sends_next_mutation(self):
+        self.assert_post_response_failure_journaled(observer=False)
+
+    def test_committed_observer_failure_preserves_response_and_blocks_next_mutation(self):
+        self.assert_post_response_failure_journaled(observer=True)
+
+    def assert_post_response_failure_journaled(self, *, observer):
         recorder = SimpleNamespace(completed=[])
         class Transport(ScriptedTransport):
             def call(inner, route, **arguments):
@@ -285,8 +291,19 @@ class DockerImageBoundaryTests(unittest.TestCase):
                 return response
         inner = Transport(progress_once=True)
         placement = Mock()
-        placement.completed.side_effect = FixtureBoundaryFailure("attachment failed")
+        if not observer:
+            placement.completed.side_effect = FixtureBoundaryFailure("attachment failed")
         transport = AttachedPublicTransport(inner, recorder, placement, "worker-a")
+        observed = []
+        if observer:
+            def observe(record, response):
+                self.assertIs(record, recorder.completed[0])
+                self.assertIs(response, transport.responses[0])
+                self.assertEqual(transport.committed[record.request.effect_id][1], response)
+                placement.completed.assert_called_once_with(record)
+                observed.append(record.request.effect_id)
+                raise FixtureBoundaryFailure("observation failed")
+            transport.committed_observer = observe
         with TemporaryDirectory() as directory:
             root = Path(directory)
             profile = ClientProfile("https://fixture.example", "workspace-a",
@@ -306,6 +323,7 @@ class DockerImageBoundaryTests(unittest.TestCase):
             self.assertEqual(sum(row["route_id"] == "command.deployment.execute" for row in inner.calls), 1)
             self.assertEqual(transport.unsent, ["command.deployment.execute"])
             placement.completed.assert_called_once()
+            self.assertEqual(observed, [recorder.completed[0].request.effect_id] if observer else [])
 
 
 class DockerImageTransportTests(unittest.IsolatedAsyncioTestCase):

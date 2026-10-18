@@ -1,5 +1,12 @@
 Source: [test_docker_image_update_ports.py](../../../../../products/cpk_server/tests/test_docker_image_update_ports.py).
 
+#254 extends the existing post-response failure law to the committed observer.
+The observer receives the exact recorded result/response only after commit
+correlation and attachment. A failure preserves the first successful response
+in the normal client journal and prevents a second execute dispatch. The original
+attachment-failure case remains separately exercised. These fixture-boundary
+tests do not establish live deployment or partial-failure recovery evidence.
+
 The #252 authored-material test now requires the delivery and application slot
 in the initial graph, an explicit unselected use, an image successor preserving
 all other graph fields, and a subsequent content edit preserving the latest

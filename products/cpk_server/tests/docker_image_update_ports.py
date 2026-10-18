@@ -210,6 +210,7 @@ class AttachedPublicTransport:
         self.responses = []
         self.preparations = []
         self.committed = {}
+        self.committed_observer = None
 
     def require_healthy(self):
         if self.failure is not None:
@@ -241,6 +242,8 @@ class AttachedPublicTransport:
             self.placement.require_healthy()
             if type(record.request.operation) in (StartRuntime, StartNode):
                 self.placement.completed(record)
+            if self.committed_observer is not None:
+                self.committed_observer(record, response)
         except Exception as error:
             # Fixed bounded classification, never provider text/headers/secrets.
             self.failure = type(error).__name__[:80]
