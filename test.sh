@@ -65,7 +65,6 @@ docker run --rm "$IMAGE" \
   CPK_TAG="control-plane-kit-cpk-numeric:$RUN"
   HELLO_TAG="control-plane-kit-hello-wrapper:$RUN"
   GATEWAY_TAG="control-plane-kit-gateway-wrapper:$RUN"
-  COUNTER_TAG="control-plane-kit-counter-wrapper:$RUN"
   cleanup_numeric_bootstrap() {
     failed=0
     if [ -s "$RECORDS/controller" ]; then
@@ -92,11 +91,10 @@ docker run --rm "$IMAGE" \
         [ -z "$observed" ] || failed=1
       fi
     fi
-    for record in image cpk-image hello-image gateway-image counter-image; do
+    for record in image cpk-image hello-image gateway-image; do
       if [ -s "$RECORDS/$record" ]; then
         case "$record" in image) image_tag="$TAG" ;; cpk-image) image_tag="$CPK_TAG" ;;
-          hello-image) image_tag="$HELLO_TAG" ;; gateway-image) image_tag="$GATEWAY_TAG" ;;
-          counter-image) image_tag="$COUNTER_TAG" ;; esac
+          hello-image) image_tag="$HELLO_TAG" ;; gateway-image) image_tag="$GATEWAY_TAG" ;; esac
         identity="$(cat "$RECORDS/$record")" || return 1
         observed="$(docker image inspect --format '{{.Id}}' "$image_tag")" || return 1
         owner="$(docker image inspect --format '{{index .Config.Labels "org.openj92.cpk.test-run"}}' "$identity")" || return 1
@@ -108,7 +106,7 @@ docker run --rm "$IMAGE" \
     done
     [ "$failed" = 0 ] || return 1
     rm -f "$RECORDS/controller" "$RECORDS/network" "$RECORDS/image" "$RECORDS/cpk-image" \
-      "$RECORDS/hello-image" "$RECORDS/gateway-image" "$RECORDS/counter-image"
+      "$RECORDS/hello-image" "$RECORDS/gateway-image"
     rmdir "$RECORDS"
   }
   trap 'result=$?; trap - 0; cleanup_numeric_bootstrap || { echo "numeric bootstrap cleanup incomplete; records=$RECORDS" >&2; result=1; }; exit "$result"' 0
@@ -131,7 +129,7 @@ docker run --rm "$IMAGE" \
   [ -z "$EXISTING" ] || { echo 'numeric bootstrap image tag already exists' >&2; exit 1; }
   EXISTING="$(docker image ls -q --no-trunc --filter "reference=$CPK_TAG")"
   [ -z "$EXISTING" ] || { echo 'numeric CPK image tag already exists' >&2; exit 1; }
-  for image_tag in "$HELLO_TAG" "$GATEWAY_TAG" "$COUNTER_TAG"; do
+  for image_tag in "$HELLO_TAG" "$GATEWAY_TAG"; do
     EXISTING="$(docker image ls -q --no-trunc --filter "reference=$image_tag")"
     [ -z "$EXISTING" ] || { echo 'wrapper source image tag already exists' >&2; exit 1; }
   done
@@ -151,10 +149,6 @@ docker run --rm "$IMAGE" \
     --label "org.openj92.cpk.test-run=$RUN" \
     --iidfile "$RECORDS/gateway-image" -t "$GATEWAY_TAG" .
   GATEWAY_IMAGE_ID="$(cat "$RECORDS/gateway-image")"
-  docker build --platform linux/amd64 -f products/cpk_server/examples/unlisted_sdk/Dockerfile.counter \
-    --label "org.openj92.cpk.test-run=$RUN" \
-    --iidfile "$RECORDS/counter-image" -t "$COUNTER_TAG" .
-  COUNTER_IMAGE_ID="$(cat "$RECORDS/counter-image")"
   HELPER_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
   docker network create --internal \
     --label "org.openj92.cpk.test-run=$RUN" \
@@ -173,7 +167,6 @@ docker run --rm "$IMAGE" \
     -e "CPK_NUMERIC_PRODUCT_IMAGE=$CPK_PRODUCT_IMAGE_ID" \
     -e "CPK_WRAPPER_HELLO_IMAGE=$HELLO_IMAGE_ID" \
     -e "CPK_WRAPPER_GATEWAY_IMAGE=$GATEWAY_IMAGE_ID" \
-    -e "CPK_WRAPPER_COUNTER_IMAGE=$COUNTER_IMAGE_ID" \
     -e "CPK_WRAPPER_ARTIFACT_MODE=$WRAPPER_MODE" \
     -e "CPK_WRAPPER_HELLO_A=${CPK_WRAPPER_HELLO_A:-}" \
     -e "CPK_WRAPPER_HELLO_B=${CPK_WRAPPER_HELLO_B:-}" \

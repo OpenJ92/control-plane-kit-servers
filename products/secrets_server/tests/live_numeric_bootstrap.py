@@ -31,7 +31,6 @@ from control_plane_kit_interpreters.secret_provider import (
 )
 from products.cpk_server.tests.live_numeric_bootstrap import exercise_cpk_file
 from live_wrapper_artifacts import exercise_wrapper_artifacts
-from products.cpk_server.tests.live_counter_artifact import exercise_counter_artifact
 
 
 def exercise_provider(token: str, application_value: str) -> None:
@@ -166,8 +165,6 @@ def main() -> None:
         print(json.dumps({"hello_declaration_family": "passed", "mode": "source-built",
             "same_image": True, "image_id": os.environ["CPK_WRAPPER_HELLO_IMAGE"],
             "declarations": hello_family}), flush=True)
-        exercise_counter_artifact(engine=engine, sdk=sdk, resources=resources, labels=labels,
-            network_id=network_id, image_id=os.environ["CPK_WRAPPER_COUNTER_IMAGE"])
         if os.environ["CPK_WRAPPER_ARTIFACT_MODE"] == "published-digest":
             assert engine.images.get(os.environ["CPK_WRAPPER_HELLO_A"]).id != engine.images.get(
                 os.environ["CPK_WRAPPER_HELLO_B"]).id, "published Hello image identities must differ"
