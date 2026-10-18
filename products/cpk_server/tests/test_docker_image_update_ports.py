@@ -462,7 +462,7 @@ class OwnedAttachmentTests(unittest.TestCase):
         transport, response, container, dispatches = self.gateway_reconcile_transport()
         observed = []
         transport.committed_observer = lambda record, response: observed.append(
-            self.placement.bindings["gateway"].container_id)
+            self.placement.bindings["gateway"].gateway_container_id)
         returned = self.gateway_execute(transport)
         transport.require_healthy()
         self.assertIs(returned, response)
