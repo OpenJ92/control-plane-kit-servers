@@ -140,15 +140,15 @@ every retained peer, with their existing aliases and origins:
 
 ```bash
 cpk --profile PROFILE plan desired-graph.json \
-  --update-receiver-declaration counter internal \
+  --update-receiver-declaration hello-x internal \
   --replace-gateway-health-routes gateway control \
   --gateway-health-target gateway control gateway-self gateway control http://gateway:8000 \
-  --gateway-health-target gateway control counter counter internal http://counter:8000
+  --gateway-health-target gateway control hello-x hello-x internal http://hello-x:8000
 ```
 
-This example assumes the group contains only self and counter. Add every peer
+This example assumes the group contains only self and hello-x. Add every peer
 when the current group has more targets. Python callers use
-`declaration_updates=(ReceiverScope("counter", "internal"),)` with explicit
+`declaration_updates=(ReceiverScope("hello-x", "internal"),)` with explicit
 `gateway_health_replacements` on `AuthoredDesiredGraph`.
 
 The client validates the original installed binding before rewriting the desired
@@ -162,8 +162,8 @@ verifier refresh refuse. The client does not register a product or refresh keys.
 Core and Operations enforce the supported same-image successor pair, complete
 route preservation and current authority through normal plan/approval/apply.
 This client feature alone does not prove an installed image supports both
-declarations; the separate counter artifact and coupled runtime witness provide
-that evidence when accepted.
+declarations; the qualified Hello declaration-family artifact and coupled public
+Docker witness provide that evidence when accepted.
 
 Before the first prepare request, the client writes the complete canonical graph
 as an immutable `0600` `<operation>.graph.json` file, fsyncs it, then creates the
