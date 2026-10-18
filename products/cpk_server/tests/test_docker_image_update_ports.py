@@ -43,8 +43,9 @@ from control_plane_kit_operations.runtime_authorities import LocalDockerSocketAu
 from control_plane_kit_operations.products import InlineDescriptorSource, RegisteredProduct
 from control_plane_kit_core.runtime_authority import RuntimeAuthorityReference
 from control_plane_kit_servers_cpk_server.client import ClientProfile, TopologyClient
+from control_plane_kit_servers_cpk_server.managed_health_placement import DockerGatewayBinding
 
-from docker_image_update_material import DockerImageMaterial
+from docker_image_update_material import DockerImageMaterial, IMAGES
 from docker_image_update_selection import consumer_graph, application_content_graph
 from docker_image_update_placement import OwnedControllerPlacement, SyntheticConnectorConnection, PREFIX
 from docker_image_update_ports import (
@@ -79,20 +80,21 @@ def events(record=None, *, generation=1, worker="worker-a"):
             ("success-a", 4, "step_succeeded", succeeded))]
 
 
-def replacement_record():
-    document = DockerImageMaterial("workspace-a").successor
-    delivery, = document.product.runtime_contract.secret_deliveries
-    refs = tuple(ConfigurationInstanceRef("allocation-" + str(index), "workspace-a", "docker", "api",
+def replacement_record(node="api", *, prior_id="a" * 64, current_id="b" * 64):
+    material = DockerImageMaterial("workspace-a")
+    document = material.successor if node == "api" else material.documents[node]
+    refs = tuple(ConfigurationInstanceRef("allocation-" + str(index), "workspace-a", "docker", node,
         value.artifact_id, value.target_path, value.media_type, value.file_mode, value.content_digest)
         for index, value in enumerate(document.product.runtime_contract.configuration_artifacts))
     request = replace(completed().request, kind=RuntimeEffectKind.CONFIGURATION_ACTIVITY_V1,
-        operation=ReconcileNode(NodeTarget("api")), configuration_instances=ConfigurationInstanceSelection(refs),
-        products=(RuntimeProductMaterial("api", "docker", ProductReference.from_document(document), document.product,
-            secret_selections=(SecretVersionSelection(delivery.reference, delivery.intent, "version-a"),)),))
+        operation=ReconcileNode(NodeTarget(node)), configuration_instances=ConfigurationInstanceSelection(refs),
+        products=(RuntimeProductMaterial(node, "docker", ProductReference.from_document(document), document.product,
+            secret_selections=tuple(SecretVersionSelection(delivery.reference, delivery.intent, "version-a")
+                for delivery in document.product.runtime_contract.secret_deliveries)),))
     context = configuration_invocation_correlation_for_request(request)
     receipt = ConfigurationInstallationReceipt(context.request_fingerprint,
         configuration_invocation_selection_fingerprint(context.selection), ConfigurationInstallationDisposition.REPLACED,
-        _container_incarnation_fingerprint("a" * 64), _container_incarnation_fingerprint("b" * 64))
+        _container_incarnation_fingerprint(prior_id), _container_incarnation_fingerprint(current_id))
     return CompletedRuntimeCall(request, RuntimeEffectResult.succeeded("effect-a",
         evidence={"configuration_installation_receipt": receipt.descriptor()}))
 
@@ -274,6 +276,12 @@ class DockerImageBoundaryTests(unittest.TestCase):
             require_committed_call(changed, response, arguments, events(record), "worker-a")
 
     def test_hook_failure_journals_original_success_and_never_sends_next_mutation(self):
+        self.assert_post_response_failure_journaled(observer=False)
+
+    def test_committed_observer_failure_preserves_response_and_blocks_next_mutation(self):
+        self.assert_post_response_failure_journaled(observer=True)
+
+    def assert_post_response_failure_journaled(self, *, observer):
         recorder = SimpleNamespace(completed=[])
         class Transport(ScriptedTransport):
             def call(inner, route, **arguments):
@@ -285,8 +293,19 @@ class DockerImageBoundaryTests(unittest.TestCase):
                 return response
         inner = Transport(progress_once=True)
         placement = Mock()
-        placement.completed.side_effect = FixtureBoundaryFailure("attachment failed")
+        if not observer:
+            placement.completed.side_effect = FixtureBoundaryFailure("attachment failed")
         transport = AttachedPublicTransport(inner, recorder, placement, "worker-a")
+        observed = []
+        if observer:
+            def observe(record, response):
+                self.assertIs(record, recorder.completed[0])
+                self.assertIs(response, transport.responses[0])
+                self.assertEqual(transport.committed[record.request.effect_id][1], response)
+                placement.completed.assert_called_once_with(record)
+                observed.append(record.request.effect_id)
+                raise FixtureBoundaryFailure("observation failed")
+            transport.committed_observer = observe
         with TemporaryDirectory() as directory:
             root = Path(directory)
             profile = ClientProfile("https://fixture.example", "workspace-a",
@@ -306,6 +325,7 @@ class DockerImageBoundaryTests(unittest.TestCase):
             self.assertEqual(sum(row["route_id"] == "command.deployment.execute" for row in inner.calls), 1)
             self.assertEqual(transport.unsent, ["command.deployment.execute"])
             placement.completed.assert_called_once()
+            self.assertEqual(observed, [recorder.completed[0].request.effect_id] if observer else [])
 
 
 class DockerImageTransportTests(unittest.IsolatedAsyncioTestCase):
@@ -391,6 +411,94 @@ class OwnedAttachmentTests(unittest.TestCase):
         with self.assertRaises(FixtureBoundaryFailure):
             self.placement.completed(self.record)
         self.network.connect.assert_not_called()
+
+    def gateway_reconcile_transport(self, *, node="gateway", invalid=None):
+        self.placement.network_id = self.network.id
+        self.placement.nodes["gateway"] = "c" * 64
+        self.placement.bindings["gateway"] = DockerGatewayBinding("workspace-a", "docker",
+            RuntimeAuthorityReference("local-docker"), "gateway", self.network.id, "c" * 64)
+        container = SimpleNamespace(id="d" * 64, labels={PREFIX + "workspace": "workspace-a",
+            PREFIX + "runtime": "docker", PREFIX + "kind": "container", PREFIX + "node": "gateway"},
+            attrs={"Image": IMAGES["gateway"]["image_id"], "Config": {"User": "gateway"}})
+        self.engine.containers.get.return_value = container
+        inspected = SimpleNamespace(container_id=container.id, running=True,
+            network_attachments=(SimpleNamespace(network_id=self.network.id),))
+        if invalid == "owner":
+            container.labels[PREFIX + "workspace"] = "foreign"
+        elif invalid == "image":
+            container.attrs["Image"] = "sha256:" + "e" * 64
+        elif invalid == "user":
+            container.attrs["Config"]["User"] = "root"
+        elif invalid == "network":
+            inspected.network_attachments = ()
+        elif invalid == "running":
+            inspected.running = False
+        self.sdk.inspect_container.return_value = inspected
+        record = replacement_record(node, prior_id="c" * 64, current_id=container.id)
+        record = replace(record, result=replace(record.result,
+            evidence={**record.result.evidence, "runtime_id": "docker", "container": container.id}))
+        recorder = SimpleNamespace(completed=[])
+        response = {"run_id": "run-a", "run_status": "succeeded", "effects_attempted": 1,
+            "coordinator_status": "completed"}
+        dispatches = []
+        class Transport:
+            def call(inner, route, **arguments):
+                if route == "read.run-events":
+                    return {"items": events(record), "next_cursor": None}
+                if route != "command.deployment.execute":
+                    raise AssertionError("unexpected fixture request")
+                dispatches.append(route)
+                recorder.completed.append(record)
+                return response
+        transport = AttachedPublicTransport(Transport(), recorder, self.placement, "worker-a")
+        return transport, response, container, dispatches
+
+    def gateway_execute(self, transport):
+        return transport.call("command.deployment.execute",
+            path_parameters={"workspace_id": "workspace-a", "run_id": "run-a"},
+            payload={"max_effects": 1, "claim_generation": 1})
+
+    def test_committed_gateway_replacement_refreshes_exact_binding_without_attachment(self):
+        transport, response, container, dispatches = self.gateway_reconcile_transport()
+        observed = []
+        transport.committed_observer = lambda record, response: observed.append(
+            self.placement.bindings["gateway"].gateway_container_id)
+        returned = self.gateway_execute(transport)
+        transport.require_healthy()
+        self.assertIs(returned, response)
+        self.assertEqual(observed, [container.id])
+        self.assertEqual(self.placement.nodes["gateway"], container.id)
+        self.assertEqual(self.placement.bindings["gateway"].network_id, self.network.id)
+        self.assertEqual(dispatches, ["command.deployment.execute"])
+        self.network.connect.assert_not_called()
+        self.network.disconnect.assert_not_called()
+        self.engine.containers.create.assert_not_called()
+
+    def test_invalid_gateway_observation_preserves_binding_response_and_blocks_next_dispatch(self):
+        for invalid in ("owner", "image", "user", "network", "running"):
+            with self.subTest(invalid=invalid):
+                transport, response, _, dispatches = self.gateway_reconcile_transport(invalid=invalid)
+                original_binding = self.placement.bindings["gateway"]
+                self.assertIs(self.gateway_execute(transport), response)
+                self.assertIs(self.placement.bindings["gateway"], original_binding)
+                with self.assertRaises(FixtureBoundaryFailure):
+                    self.gateway_execute(transport)
+                self.assertEqual(dispatches, ["command.deployment.execute"])
+                self.assertEqual(transport.unsent, ["command.deployment.execute"])
+                self.network.connect.assert_not_called()
+                self.network.disconnect.assert_not_called()
+                self.engine.containers.create.assert_not_called()
+
+    def test_non_gateway_reconcile_does_not_enter_default_gateway_observation(self):
+        transport, response, _, _ = self.gateway_reconcile_transport(node="api", invalid="image")
+        original_binding = self.placement.bindings["gateway"]
+        self.assertIs(self.gateway_execute(transport), response)
+        transport.require_healthy()
+        self.assertIs(self.placement.bindings["gateway"], original_binding)
+        self.engine.containers.get.assert_not_called()
+        self.network.connect.assert_not_called()
+        self.network.disconnect.assert_not_called()
+        self.engine.containers.create.assert_not_called()
 
     def test_same_workspace_unrecorded_resource_prevents_all_disposal(self):
         from docker_image_update_placement import dispose_fixture

@@ -53,7 +53,7 @@ jobs:
         run: |
           set -euo pipefail
           inputs=products/cpk_server/tests/docker_image_update_images.json
-          jq -e 'keys == ["connector","gateway","hello_a","hello_b"] and
+          jq -e 'keys == ["connector","gateway","hello_a","hello_b","hello_family"] and
             all(.[]; (.reference | test("^[a-z0-9./-]+@sha256:[0-9a-f]{64}$")) and
               (.image_id | test("^sha256:[0-9a-f]{64}$")))' "$inputs" >/dev/null
           mapfile -t references < <(jq -r '.[].reference' "$inputs")

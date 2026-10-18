@@ -133,6 +133,38 @@ approval and apply. This command does not generate, activate, retire or revoke
 keys. Preparation replay uses the same immutable journaled graph described below,
 without selecting keys again.
 
+To author a health declaration change for a current workload, put the registered
+successor reference and desired control surface in the graph and select the
+scope explicitly. Supply the complete gateway route group, including self and
+every retained peer, with their existing aliases and origins:
+
+```bash
+cpk --profile PROFILE plan desired-graph.json \
+  --update-receiver-declaration hello-x internal \
+  --replace-gateway-health-routes gateway control \
+  --gateway-health-target gateway control gateway-self gateway control http://gateway:8000 \
+  --gateway-health-target gateway control hello-x hello-x internal http://hello-x:8000
+```
+
+This example assumes the group contains only self and hello-x. Add every peer
+when the current group has more targets. Python callers use
+`declaration_updates=(ReceiverScope("hello-x", "internal"),)` with explicit
+`gateway_health_replacements` on `AuthoredDesiredGraph`.
+
+The client validates the original installed binding before rewriting the desired
+declaration. Both declarations must be health-only V2 and retain readiness.
+Identity, verifier families and configuration slot stay fixed; unchanged
+declarations preserve exact bytes and source digest. An actual change resets
+source provenance to the newly authored content digest and requires a route group
+containing the affected workload
+and gateway self. Gateway-own updates, pending/fresh scopes and same-scope
+verifier refresh refuse. The client does not register a product or refresh keys.
+Core and Operations enforce the supported same-image successor pair, complete
+route preservation and current authority through normal plan/approval/apply.
+This client feature alone does not prove an installed image supports both
+declarations; the qualified Hello declaration-family artifact and coupled public
+Docker witness provide that evidence when accepted.
+
 Before the first prepare request, the client writes the complete canonical graph
 as an immutable `0600` `<operation>.graph.json` file, fsyncs it, then creates the
 `topology-client-preparation.v1` journal and records the pending request. A lost

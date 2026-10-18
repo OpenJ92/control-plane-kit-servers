@@ -7,6 +7,22 @@ A post-response hook fault returns the original success to the normal client
 journal, latches a terminal fixture error, and refuses any next mutation before
 HTTP dispatch. No production scheduling, retry or owner-state changes occur.
 
+#254 adds an optional fixture observer after genuine public event correlation,
+commit recording and required startup attachment. It shares the same fault
+latch: the original response reaches the client journal even if observation
+fails, and subsequent mutation is blocked. The observer receives the actual
+runtime record and public response; it does not manufacture receipts or advance
+owner state. The later coupled witness will use it only for bounded reads between
+the committed workload effect and the next gateway effect.
+
+The coupled source dry run identified one missing fixture connection: a gateway
+replacement must refresh the reader's exact observed binding after its public
+commit, just as a gateway start does. The existing checked `placement.completed`
+path now also receives gateway `ReconcileNode`; other replacements do not enter
+its startup-image path. This only observes the returned container and updates
+the fixture reader binding. It does not attach a network, replace a resource,
+alter execution evidence or advance the graph.
+
 Both public event commitments must match the owner-defined STARTED/SUCCEEDED
 values for the genuine request's run/activity, attempt one, actual worker and
 public claim generation. The existing intent/result/state fingerprint helpers

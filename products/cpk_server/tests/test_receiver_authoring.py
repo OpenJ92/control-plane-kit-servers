@@ -1,6 +1,7 @@
 """#238 complete receiver graph authoring and exact local preparation laws."""
 
 from dataclasses import replace
+import hashlib
 import importlib
 import importlib.util
 import json
@@ -54,6 +55,186 @@ class ReceiverAuthoringTests(unittest.TestCase):
             family["public_keys"].append({**family["public_keys"][0],
                 "key_id": "public-overlap", "public_key_pem": overlap})
         return api, fixture, selected, api.ReceiverScope("hello-x", "internal")
+
+    def declaration_fixture(self):
+        api, fixture = self.api(), self.fixture()
+        from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC
+        core = fixture["core"]
+        scope = api.ReceiverScope("hello-x", "internal")
+        gateway = api.ReceiverScope("gateway", "control")
+        current = DEFAULT_GRAPH_CODEC.decode(DEFAULT_GRAPH_CODEC.encode(fixture["graph_a"]))
+        fixture["graph_a"] = current
+        node = current.node("hello-x")
+        surface, = node.block_spec.control_surfaces
+        desired = current.update_node(replace(node, block_spec=replace(node.block_spec,
+            control_surfaces=(replace(surface, health_reads=(core.NodeHealthReadKind.READINESS,)),))))
+        routes = api.GatewayHealthRoutes(gateway, (
+            api.GatewayHealthTargetIntent("gateway-self", gateway, "http://gateway:8000"),
+            api.GatewayHealthTargetIntent("hello-x", scope, "http://hello-x:8000"),
+        ))
+        return api, fixture, scope, desired, routes
+
+    def test_declaration_update_changes_only_declaration_and_explicit_route(self):
+        api, fixture, scope, desired, routes = self.declaration_fixture()
+        core = fixture["core"]
+        authored = api.author_receiver_graph(desired, workspace_id="workspace-a",
+            context=fixture["context"], verifier_configuration=None,
+            declaration_updates=(scope,), gateway_health_replacements=(routes,),
+            receiver_identity_factory=lambda: self.fail("identity regenerated"))
+        before = fixture["x_wrapper"]
+        after, = authored.node("hello-x").configuration_artifacts
+        codec = core.ReceiverNodeControlConfigurationCodec()
+        old, new = (codec.decode_bytes(item.content.encode()) for item in (before, after))
+        self.assertEqual((new.target, new.verifiers), (old.target, old.verifiers))
+        self.assertEqual(new.declaration.surface.health_reads, (core.NodeHealthReadKind.READINESS,))
+        self.assertNotEqual(new.declaration, old.declaration)
+        expected_bytes = codec.encode_bytes(replace(old, declaration=new.declaration))
+        self.assertEqual(after.content.encode(), expected_bytes)
+        self.assertEqual(after.source_digest, after.content_digest)
+        self.assertEqual(after.source_digest, hashlib.sha256(expected_bytes).hexdigest())
+        self.assertNotEqual(after.source_digest, before.source_digest)
+        self.assertEqual(replace(after, content=before.content, source_digest=before.source_digest), before)
+        old_routes = core.ReceiverManagementRoutesCodec().decode_bytes(fixture["routes"].content.encode())
+        route_artifact, = (item for item in authored.node("gateway").configuration_artifacts
+            if item.artifact_id == fixture["routes"].artifact_id)
+        new_routes = core.ReceiverManagementRoutesCodec().decode_bytes(route_artifact.content.encode())
+        self.assertEqual(new_routes.gateway_target, old_routes.gateway_target)
+        expected = replace(old_routes, targets=tuple(replace(item, declaration=new.declaration)
+            if item.target == old.target else item for item in old_routes.targets))
+        self.assertEqual(new_routes, expected)
+        self.assertEqual(authored.node("gateway").configuration_artifacts,
+            tuple(route_artifact if item == fixture["routes"] else item
+                for item in desired.node("gateway").configuration_artifacts))
+        # Omission retains the strict path; a changed desired surface is not intent.
+        with self.assertRaises(api.ReceiverAuthoringError):
+            api.author_receiver_graph(desired, workspace_id="workspace-a",
+                context=fixture["context"], verifier_configuration=None,
+                gateway_health_replacements=(routes,))
+
+    def test_declaration_noop_preserves_exact_bytes_without_route_or_key_read(self):
+        api, fixture, scope, _, _ = self.declaration_fixture()
+        before = replace(fixture["x_wrapper"],
+            content=json.dumps(json.loads(fixture["x_wrapper"].content), indent=3) + "\n",
+            source_digest="f" * 64)
+        graph = fixture["graph_a"].update_node(replace(fixture["graph_a"].node("hello-x"),
+            configuration_artifacts=(before,)))
+        row = fixture["context"]["current"]["receivers"][1]
+        row["configuration_artifact"] = before.descriptor()
+        row["binding"]["selected_configuration_digest"] = before.content_digest
+        authored = api.author_receiver_graph(graph, workspace_id="workspace-a",
+            context=fixture["context"], verifier_configuration=None, declaration_updates=(scope,))
+        self.assertEqual(authored, graph)
+        self.assertEqual(authored.node("hello-x").configuration_artifacts[0].descriptor(), before.descriptor())
+
+    def test_declaration_update_refuses_missing_routes_and_conflicting_scopes(self):
+        api, fixture, scope, desired, routes = self.declaration_fixture()
+        for replacements in ((), (replace(routes, targets=()),),
+                (replace(routes, targets=routes.targets[:1]),),
+                (replace(routes, targets=routes.targets[1:]),)):
+            with self.subTest(routes=replacements), self.assertRaises(api.ReceiverAuthoringError):
+                api.author_receiver_graph(desired, workspace_id="workspace-a",
+                    context=fixture["context"], verifier_configuration=None,
+                    declaration_updates=(scope,), gateway_health_replacements=replacements)
+        for updates, other in (
+            ((scope, scope), {}), ((api.ReceiverScope("missing", "internal"),), {}),
+            ((routes.gateway_scope,), {}), ((scope,), {"verifier_refreshes": (scope,)}),
+            ((scope,), {"introductions": (api.ReceiverIntroduction(scope, "new", "/etc/new.json"),)}),
+            ((scope,), {"pending": api.PendingReceiverContinuation("draft-a", 1, (scope,))}),
+        ):
+            with self.subTest(updates=updates, other=other), self.assertRaises(api.ReceiverAuthoringError):
+                api.author_receiver_graph(desired, workspace_id="workspace-a",
+                    context=fixture["context"], verifier_configuration=None,
+                    declaration_updates=updates, gateway_health_replacements=(routes,), **other)
+        for other in ({"declaration_updates": (scope, scope)},
+                {"declaration_updates": ("hello-x",)},
+                {"declaration_updates": (scope,), "verifier_refreshes": (scope,)},
+                {"declaration_updates": (scope,), "pending": api.PendingReceiverContinuation("draft-a", 1, (scope,))}):
+            with self.subTest(other=other), self.assertRaises(ValueError):
+                api.AuthoredDesiredGraph(self.root / "graph.json", **other)
+
+    def test_declaration_update_validates_current_binding_and_health_only_boundary(self):
+        api, fixture, scope, desired, routes = self.declaration_fixture()
+        core = fixture["core"]
+        desired_declaration = core.WorkloadNodeControlSurfaceDeclaration(
+            desired.node("hello-x").block_spec.control_surfaces[0],
+            profile=core.WorkloadNodeControlSurfaceDeclarationProfile.V2)
+        for field, value in (("workspace_id", "foreign"), ("runtime_id", "foreign"),
+                ("receiver_id", "f" * 32), ("declaration_identity", desired_declaration.identity().value),
+                ("selected_configuration_digest", "0" * 64)):
+            context = json.loads(json.dumps(fixture["context"]))
+            context["current"]["receivers"][1]["binding"][field] = value
+            with self.subTest(field=field), self.assertRaises(api.ReceiverAuthoringError):
+                api.author_receiver_graph(desired, workspace_id="workspace-a", context=context,
+                    verifier_configuration=None, declaration_updates=(scope,), gateway_health_replacements=(routes,))
+        node = desired.node("hello-x")
+        surface, = node.block_spec.control_surfaces
+        variable_surface = fixture["graph_variable"].node("hello-y").block_spec.control_surfaces[0]
+        for changed in (replace(surface, health_reads=(core.NodeHealthReadKind.LIVENESS,)),
+                replace(surface, variables=variable_surface.variables)):
+            graph = desired.update_node(replace(node,
+                block_spec=replace(node.block_spec, control_surfaces=(changed,))))
+            with self.subTest(changed=changed), self.assertRaises(api.ReceiverAuthoringError):
+                api.author_receiver_graph(graph, workspace_id="workspace-a", context=fixture["context"],
+                    verifier_configuration=None, declaration_updates=(scope,), gateway_health_replacements=(routes,))
+
+    def test_declaration_cli_selects_intent_and_refuses_duplicates(self):
+        api, _, scope, _, _ = self.declaration_fixture()
+        from control_plane_kit_servers_cpk_server.client import cli, ClientInputError
+        arguments = cli._parser().parse_args(["--profile", "local", "plan", "graph.json",
+            "--update-receiver-declaration", "hello-x", "internal"])
+        self.assertTrue(cli._has_authoring_arguments(arguments))
+        self.assertEqual(cli._authored_plan_input(arguments).declaration_updates, (scope,))
+        arguments.update_receiver_declaration.append(("hello-x", "internal"))
+        with self.assertRaises(ClientInputError):
+            cli._authored_plan_input(arguments)
+
+    def test_declaration_client_journals_coupled_bytes_and_retries_without_reauthoring(self):
+        api, fixture, scope, desired, routes = self.declaration_fixture()
+        from control_plane_kit_core.topology import GraphDescriptorCodec
+        from control_plane_kit_servers_cpk_server.client import TopologyClient, JournalError
+        from test_topology_client import DeterministicIds
+        codec = GraphDescriptorCodec()
+        source = self.root / "declaration.json"
+        source.write_text(json.dumps(codec.encode(desired)), encoding="utf-8")
+        source_bytes = source.read_bytes()
+        transport = self.authoring_transport(fixture)
+        no_identity = lambda: self.fail("declaration update allocated an identity")
+        client = TopologyClient(self.client_profile(), transport=transport,
+            identity_factory=DeterministicIds(), receiver_identity_factory=no_identity)
+        operation_ref = "00000000-0000-4000-8000-000000000001"
+        def before_prepare(payload):
+            journal = client.journal.read(operation_ref)
+            artifact = client.journal.root / journal["preparation"]["name"]
+            self.assertEqual(json.loads(artifact.read_bytes()), payload["desired_graph"])
+            self.assertEqual(os.stat(artifact).st_mode & 0o777, 0o600)
+            material = codec.decode(payload["desired_graph"])
+            for node in ("hello-x", "gateway"):
+                self.assertNotEqual(material.node(node).configuration_artifacts,
+                    fixture["graph_a"].node(node).configuration_artifacts)
+        transport.before_prepare = before_prepare
+        result = client.plan(api.AuthoredDesiredGraph(source, declaration_updates=(scope,),
+            gateway_health_replacements=(routes,)))
+        self.assertEqual(result.status, "attention-required")
+        first, = [call for call in transport.calls if call["route_id"] == "command.deployment.prepare"]
+        self.assertFalse(any(call["route_id"] == "read.workload-verifier-configuration" for call in transport.calls))
+        journal = client.journal.read(result.operation_ref)
+        artifact = client.journal.root / journal["preparation"]["name"]
+        prepared_bytes = artifact.read_bytes()
+        restarted = TopologyClient(self.client_profile(), transport=transport, receiver_identity_factory=no_identity)
+        source.write_text("{}", encoding="utf-8")
+        self.assertEqual(restarted.resume_prepare(result.operation_ref).status, "attention-required")
+        source.write_bytes(source_bytes)
+        artifact.write_bytes(b"{}")
+        with self.assertRaises(JournalError):
+            restarted.resume_prepare(result.operation_ref)
+        self.assertEqual(sum(call["route_id"] == "command.deployment.prepare" for call in transport.calls), 1)
+        artifact.write_bytes(prepared_bytes)
+        fixture["context"]["current"]["receivers"] = []
+        self.assertEqual(restarted.resume_prepare(result.operation_ref).status, "planned")
+        self.assertEqual([call for call in transport.calls if call["route_id"] == "command.deployment.prepare"],
+            [first, first])
+        self.assertEqual(sum(call["route_id"] == "read.receiver-authoring-context" for call in transport.calls), 1)
+        self.assertEqual(artifact.read_bytes(), prepared_bytes)
 
     def test_refresh_changes_only_selected_current_wrapper(self):
         api, fixture, selected, scope = self.refresh_fixture()

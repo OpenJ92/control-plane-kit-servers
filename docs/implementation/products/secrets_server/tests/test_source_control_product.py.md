@@ -88,7 +88,7 @@ This supersedes the incompatible initial #251 selection. Owner gates passed;
 the joined Servers gate remains required. Runtime source, witness logic,
 qualified images, product publication coordinates and catalogue stay unchanged.
 
-## Current #254 selected dependency expectations
+## Historical initial #254 selected dependency expectations
 
 Active expected coordinates now match the accepted canonical tuple: Core/Ops
 9861e536e79314005499ae07379f627bfb1599a2, SDK
@@ -98,3 +98,18 @@ d4e7c4d91c054f139e2971774ae5e37fc741262d, Secrets
 source composition assertions remain unchanged. Historical published Secrets
 source/image assertions remain intact. Earlier dependency descriptions are
 historical; selected compatibility requires the normal whole owning gate.
+
+## Current retained-selection correction adoption (#254)
+
+The canonical upstream tuple now selects accepted Core/Operations #2005 merge
+`73d87e99`, SDK #63 merge `1657cb91`, Secrets #61 merge `7ff1e771`, and
+Interpreters #208 merge `fdba5f27`; full commits are in
+`coordinates/server-products.json`. The maintained generator renders existing
+package subsets/extras, and exact current installed-provenance expectations
+advance together. Core preserves admitted selected versions through the supported
+same-image declaration successor; Operations production and downstream runtime
+source are unchanged. The earlier #254 planning failure remains historical;
+this source adoption still requires the original coupled public Docker gate.
+No scenario/assertion/runner change or new image publication is included.
+Qualified Hello retains its immutable digest and actual installed Core `9861e536`
+and SDK `d4e7c4d` provenance; source Dockerfile pins do not rewrite that artifact.

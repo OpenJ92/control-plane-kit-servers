@@ -148,10 +148,25 @@ catalogue coordinates are unchanged. This source checkpoint is unvalidated;
 installed refresh and full #237/#225 acceptance are separate evidence.
 Earlier coordinate accounts in this document are historical.
 
-## Current #254 dependency expectation correction
+## Historical initial #254 dependency expectation correction
 
 Exact Core/Operations constants now select accepted9861e536e79314005499ae07379f627bfb1599a2
 and Interpreters2b33ab15dc8f20cc85a458f95781a227a57bae49. The first #254
 owning run caught the old constants in two assertions. Only immutable expected
 coordinates change; exact metadata/generated-URL checks remain intact. Canonical
 manifest and generated dependencies already selected these accepted commits.
+
+## Current retained-selection correction adoption (#254)
+
+The canonical upstream tuple now selects accepted Core/Operations #2005 merge
+`73d87e99`, SDK #63 merge `1657cb91`, Secrets #61 merge `7ff1e771`, and
+Interpreters #208 merge `fdba5f27`; full commits are in
+`coordinates/server-products.json`. The maintained generator renders existing
+package subsets/extras, and exact current installed-provenance expectations
+advance together. Core preserves admitted selected versions through the supported
+same-image declaration successor; Operations production and downstream runtime
+source are unchanged. The earlier #254 planning failure remains historical;
+this source adoption still requires the original coupled public Docker gate.
+No scenario/assertion/runner change or new image publication is included.
+Qualified Hello retains its immutable digest and actual installed Core `9861e536`
+and SDK `d4e7c4d` provenance; source Dockerfile pins do not rewrite that artifact.

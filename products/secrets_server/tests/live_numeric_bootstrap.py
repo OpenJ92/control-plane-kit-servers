@@ -165,6 +165,28 @@ def main() -> None:
         print(json.dumps({"hello_declaration_family": "passed", "mode": "source-built",
             "same_image": True, "image_id": os.environ["CPK_WRAPPER_HELLO_IMAGE"],
             "declarations": hello_family}), flush=True)
+        # Mandatory #254 prerequisite: qualify the actual published artifact,
+        # separately from the source-built pair and historical optional A/B.
+        inputs = json.loads((Path(__file__).parents[2] /
+            "cpk_server/tests/docker_image_update_images.json").read_text())
+        family, gateway = inputs["hello_family"], inputs["gateway"]
+        for selected in (family, gateway):
+            image = engine.images.get(selected["reference"])
+            assert image.id == selected["image_id"]
+            assert image.attrs["Config"]["User"] == selected["user"]
+        published_family = []
+        for kinds in ((core.NodeHealthReadKind.LIVENESS, core.NodeHealthReadKind.READINESS),
+                      (core.NodeHealthReadKind.READINESS,)):
+            published_family.append(exercise_wrapper_artifacts(
+                engine=engine, sdk=sdk, resources=resources, labels=labels,
+                network_id=network_id, hello_reference=family["reference"],
+                gateway_reference=gateway["reference"], mode="published-digest",
+                expected_attribution=True, expected_source=family["source_revision"], hello_health_reads=kinds))
+        assert {value["hello_image_id"] for value in published_family} == {family["image_id"]}
+        assert len({value["hello_configuration_digest"] for value in published_family}) == 2
+        print(json.dumps({"hello_declaration_family": "passed", "mode": "published-digest",
+            "same_image": True, "reference": family["reference"], "image_id": family["image_id"],
+            "declarations": published_family}), flush=True)
         if os.environ["CPK_WRAPPER_ARTIFACT_MODE"] == "published-digest":
             assert engine.images.get(os.environ["CPK_WRAPPER_HELLO_A"]).id != engine.images.get(
                 os.environ["CPK_WRAPPER_HELLO_B"]).id, "published Hello image identities must differ"

@@ -9,7 +9,7 @@ ENV CPK_WRAPPER_CONFIGURATION_FILE=/etc/cpk/multiplexer/control.json
 WORKDIR /app
 
 RUN python -m pip install --no-cache-dir \
-    "control-plane-kit-server-sdk[verification] @ https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/d4e7c4d91c054f139e2971774ae5e37fc741262d.zip"
+    "control-plane-kit-server-sdk[verification] @ https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/1657cb91b143931bafcdb32108950d2bbbb66d95.zip"
 
 RUN useradd --create-home --uid 10004 multiplexer
 

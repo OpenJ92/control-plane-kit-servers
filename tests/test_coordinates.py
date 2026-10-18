@@ -320,7 +320,7 @@ class CoordinateGenerationTests(unittest.TestCase):
         )
         self.assertEqual(
             document["upstreams"]["control_plane_kit_secrets_commit"],
-            "165a7dc7abd75e1ba50b9494d0f0aabf0aa3c33c",
+            "7ff1e771874e5963ee840d7148d2d4052278baa1",
         )
         self.assertEqual(
             secrets_server["image"]["digest"],

@@ -1,5 +1,44 @@
 Source: [live_docker_image_update.py](../../../../../products/cpk_server/tests/live_docker_image_update.py).
 
+#254 appends a coupled proof after the unchanged four-family history/replay/no-op
+assertions. An ordinary public planned/approved replacement selects the qualified
+Hello family image with both health reads. A second registered revision shares
+that exact image but declares readiness-only. Explicit receiver-declaration and
+complete gateway-route intent drives the existing public client; the reconstructed
+client's identity factory refuses any attempt to allocate a replacement receiver.
+
+The preparation callback reads the client's integrity-checked immutable journal
+artifact. Only that actual selected configuration adds an expected signed request
+identity; the initial fixture configuration is never relabeled. At most one public
+health request per admitted target/declaration is retained in memory, without
+credentials, for subsequent read-only endpoint checks.
+
+The synchronous committed observer runs inside the previously reviewed fault
+latch, after genuine interpreter result/public event correlation. It reads through
+the inner public transport and existing SDK configuration-digest observation
+helper, with the existing helper-resource tracking. It does not dispatch CPK
+effects, alter a result/response, or write owner state. The checkpoint binds exact
+plan/run/effect/activity/node and proves X's new container/artifacts alongside
+G's old container/routes before a G effect has occurred; the public current graph
+has not prematurely advanced. This successful-run observation is not a crash,
+retry, compensation or partial-failure recovery claim.
+
+Final evidence requires X then G as separate genuine replacements, correlated
+public history and installation receipts, exact installed wrapper/route digests,
+same workload image, retained target/verifiers/application selections, unchanged
+peer/routes/origins, and the current public receiver context. Real public signed
+readiness passes. Supplemental direct SDK GETs use the same active fixture key
+and an actual public request context to distinguish a refused prior declaration
+from accepted current readiness; bounded logs must exclude the credentials.
+Those diagnostic reads neither deploy nor manufacture operation evidence.
+
+All historical operations retain their history and historical replay meaning;
+the final reconstructed current replay and explicit declaration/route no-op must
+dispatch no effects. Public desired-empty teardown and exact fixture disposal
+remain separate and unchanged. Mandatory pulled-image qualification precedes
+this scenario in the owning gate. Source preparation alone is not executed #254
+acceptance, production native/public ingress proof or a live grandparent result.
+
 #253 extends the same sequence with a fourth, verifier-only replacement of api.
 One authenticated VERIFY_ONLY registration uses a distinct isolated workload
 overlap pair and matching reference, seeded through the existing provider custody

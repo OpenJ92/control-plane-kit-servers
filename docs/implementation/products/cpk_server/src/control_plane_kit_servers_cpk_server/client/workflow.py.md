@@ -35,6 +35,12 @@ existing immutable preparation journal and restart path without new state or
 retry semantics. The mixed introduction/refresh test proves purpose selection at
 the authoring boundary, not mixed-change planner acceptance.
 
+Explicit declaration updates pass through the same pure transform and exact
+preparation journal. They preserve installed verifier families and do not add a
+public-key read. The coupled wrapper/routes graph is persisted before prepare;
+lost-response replay reads those exact bytes without reauthoring or reselection.
+Existing source-drift and preparation-integrity checks remain authoritative.
+
 Completed apply replay revalidates public plan, approval, run, events and current
 selection without repeating execution or graph advancement. Both `advanced`
 and `converged` phases bypass the pre-advancement block after public validation;
