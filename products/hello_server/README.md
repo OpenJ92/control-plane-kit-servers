@@ -44,7 +44,7 @@ are retired from this source contract, not relabeled as SDK evidence.
 Startup now requires `/etc/cpk/hello/control.json`, read once from an opened regular
 file with final-component symlinks rejected and a 65536-byte ceiling. The file
 contains public, integrity-sensitive material: exact local target/runtime,
-Hello's fixed health-only V2 declaration, distinct static/health issuers and
+Hello's selected health-only V2 declaration, distinct static/health issuers and
 nominal public-key snapshots. It contains no private signing keys or dependency
 URLs. Missing, unconfigured or invalid material prevents socket creation with a
 fixed redacted error. No fallback identity, keys or unwrapped mode is generated.
@@ -60,6 +60,19 @@ values, never runnable dummy keys or an invented future graph identity:
 artifact = hello_control_configuration_artifact(admitted_configuration)
 source_contract = hello_source_runtime_contract(artifact)
 ```
+
+Hello supports exactly two declarations on `internal`: readiness-only, or
+liveness plus readiness. Both require V2 and contain no variables or commands.
+`hello_control_declaration()` keeps its both-health default. The source contract
+preserves the declaration decoded from the selected artifact, so its registered
+surface, capabilities and signed request identity agree. Liveness-only, foreign
+socket/profile and arbitrary control expansion are rejected. A readiness-only
+instance rejects liveness requests and credentials for the previous declaration
+before dependency work; its readiness still evaluates actual dependencies.
+
+The ordinary source-startup gate runs both configurations against the same
+source-built Hello image using the existing owned wrapper fixture. This does
+not change historical image behavior or prove a published same-image cutover.
 
 This creates the required `hello-control` JSON slot at the fixed path with 0444
 mode and Core-computed digests. A later producer must supply the actual authority

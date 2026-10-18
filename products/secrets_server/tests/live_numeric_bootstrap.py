@@ -153,10 +153,19 @@ def main() -> None:
         exercise_cpk_file(engine=engine, sdk=sdk, resources=resources, labels=labels,
                           image_id=os.environ["CPK_NUMERIC_PRODUCT_IMAGE"],
                           network_id=network_id)
-        exercise_wrapper_artifacts(engine=engine, sdk=sdk, resources=resources, labels=labels,
-            network_id=network_id, hello_reference=os.environ["CPK_WRAPPER_HELLO_IMAGE"],
-            gateway_reference=os.environ["CPK_WRAPPER_GATEWAY_IMAGE"],
-            mode="source-built", expected_attribution=True)
+        hello_family = []
+        for kinds in ((core.NodeHealthReadKind.LIVENESS, core.NodeHealthReadKind.READINESS),
+                      (core.NodeHealthReadKind.READINESS,)):
+            hello_family.append(exercise_wrapper_artifacts(
+                engine=engine, sdk=sdk, resources=resources, labels=labels,
+                network_id=network_id, hello_reference=os.environ["CPK_WRAPPER_HELLO_IMAGE"],
+                gateway_reference=os.environ["CPK_WRAPPER_GATEWAY_IMAGE"],
+                mode="source-built", expected_attribution=True, hello_health_reads=kinds))
+        assert {value["hello_image_id"] for value in hello_family} == {os.environ["CPK_WRAPPER_HELLO_IMAGE"]}
+        assert len({value["hello_configuration_digest"] for value in hello_family}) == 2
+        print(json.dumps({"hello_declaration_family": "passed", "mode": "source-built",
+            "same_image": True, "image_id": os.environ["CPK_WRAPPER_HELLO_IMAGE"],
+            "declarations": hello_family}), flush=True)
         exercise_counter_artifact(engine=engine, sdk=sdk, resources=resources, labels=labels,
             network_id=network_id, image_id=os.environ["CPK_WRAPPER_COUNTER_IMAGE"])
         if os.environ["CPK_WRAPPER_ARTIFACT_MODE"] == "published-digest":
