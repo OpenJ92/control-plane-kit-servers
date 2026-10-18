@@ -1,4 +1,4 @@
-"""Pure authored inputs for the pending real same-image Hello cutover.
+"""Pure authored inputs for the real same-image Hello cutover.
 
 An image reference here is data, not qualification. The live caller must supply
 the actually approved/pulled Hello artifact; no future coordinate is embedded.

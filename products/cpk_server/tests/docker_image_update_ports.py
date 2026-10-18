@@ -5,7 +5,7 @@ import re
 
 import httpx
 
-from control_plane_kit_core.planning import StartNode, StartRuntime
+from control_plane_kit_core.planning import StartNode, StartRuntime, ReconcileNode
 from control_plane_kit_core.operations.lifecycle import ActivityEventKind, ActivityRunStatus, FailureCategory
 from control_plane_kit_core.runtime_effects import EffectResultKind
 from control_plane_kit_core.runtime_effect_observation import (
@@ -240,7 +240,9 @@ class AttachedPublicTransport:
             require_committed_call(record, response, arguments, events, self.worker_id)
             self.committed[record.request.effect_id] = (arguments, response)
             self.placement.require_healthy()
-            if type(record.request.operation) in (StartRuntime, StartNode):
+            if (type(record.request.operation) in (StartRuntime, StartNode)
+                    or type(record.request.operation) is ReconcileNode
+                    and record.request.operation.target.node_id == "gateway"):
                 self.placement.completed(record)
             if self.committed_observer is not None:
                 self.committed_observer(record, response)

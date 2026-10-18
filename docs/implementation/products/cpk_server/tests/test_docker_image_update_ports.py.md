@@ -7,6 +7,16 @@ in the normal client journal and prevents a second execute dispatch. The origina
 attachment-failure case remains separately exercised. These fixture-boundary
 tests do not establish live deployment or partial-failure recovery evidence.
 
+The gateway-replacement boundary test passes a coherent typed fixture request,
+result and public events through the real transport/placement observation path.
+It requires the exact new container binding before the observer runs and proves
+no network attachment occurs. This checks fixture routing only; actual replacement
+and public commit evidence remain the separate live coupled scenario's job.
+Owner/image/user/network/running failures preserve the prior valid binding and
+original response while blocking another dispatch. API reconciliation is excluded
+from this gateway observation path. No connect/disconnect/container creation is
+allowed by these fixture observation cases.
+
 The #252 authored-material test now requires the delivery and application slot
 in the initial graph, an explicit unselected use, an image successor preserving
 all other graph fields, and a subsequent content edit preserving the latest

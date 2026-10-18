@@ -2,9 +2,10 @@ Source: [docker_declaration_update.py](../../../../../products/cpk_server/tests/
 
 #254 prepares authored values for the appended coupled Hello declaration proof.
 The caller supplies an exact Hello repository digest; accepting its syntax does
-not qualify the image. Live wiring remains pending the genuine approved artifact
-from #271. There is no skip, replacement image, provider call or qualification
-claim in this helper.
+not qualify the image. The appended public Docker scenario supplies the genuine
+artifact from #271 after its separate mandatory pulled-image qualification.
+There is no skip, replacement image, provider call or qualification claim in
+this pure helper.
 
 The two descriptors extend the existing revision2 material into revisions3/4.
 They share one image and preserve the application configuration/secret-delivery

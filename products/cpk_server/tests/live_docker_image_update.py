@@ -15,7 +15,9 @@ from uuid import uuid4
 
 import docker
 import httpx
+import jwt
 import control_plane_kit_core as core
+from control_plane_kit_core.planning import ReconcileNode
 from control_plane_kit_core.runtime_authority import RuntimeAuthorityReference
 from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC, DeploymentGraph
 from control_plane_kit_core.types import RuntimeKind
@@ -31,6 +33,7 @@ from control_plane_kit_servers_cpk_server.client.transport import PublicHttpTran
 from control_plane_kit_servers_cpk_server.managed_health import ManagedHealthBootstrap
 
 from docker_image_update_material import DockerImageMaterial, IMAGES
+from docker_declaration_update import declaration_documents, declaration_graph, current_route_intent
 from docker_image_update_placement import (
     OwnedControllerPlacement, SyntheticConnectorConnection, owned_resources, dispose_fixture,
 )
@@ -91,15 +94,19 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
     ingress = SyntheticIngressAllocation(provider.composition.secret_custodian, workspace)
     native = SyntheticConnectorConnection(placement, ingress, material)
     registered_authority = None
+    authored_configurations = {name: [value] for name, value in material.configurations.items()}
+    health_requests = {}
 
     def check_target(target_id, raw):
         name = "gateway" if target_id == "self" else target_id
         if name not in material.configurations:
             raise FixtureBoundaryFailure("unselected signed relay target")
         request = core.ReceiverHealthReadRequestCodec().decode(raw)
-        configured = material.configurations[name]
-        if request.target != configured.target or request.declaration_identity != configured.declaration.identity():
+        if not any(request.target == configured.target
+                and request.declaration_identity == configured.declaration.identity()
+                for configured in authored_configurations[name]):
             raise FixtureBoundaryFailure("signed receiver context differs")
+        health_requests[target_id, request.declaration_identity.value] = request
         return raw
 
     def endpoint_for(raw):
@@ -165,12 +172,19 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
                     plan_id=result.plan_id)
                 return plan, events, runs
 
-            async def apply(graph, name, *, pending=None, refreshes=()):
+            async def apply(graph, name, *, pending=None, refreshes=(), declarations=(), routes=(),
+                            prepared_observer=None):
                 source = root / (name + ".json")
                 source.write_text(json.dumps(DEFAULT_GRAPH_CODEC.encode(graph)), encoding="utf-8")
                 planned = await asyncio.to_thread(client.plan, AuthoredDesiredGraph(source,
-                    pending=pending, verifier_refreshes=refreshes))
+                    pending=pending, verifier_refreshes=refreshes, declaration_updates=declarations,
+                    gateway_health_replacements=routes))
                 assert planned.status in {"planned", "no-changes"}, planned.descriptor()
+                if prepared_observer is not None:
+                    journal = client.journal.read(planned.operation_ref)
+                    prepared_graph = DEFAULT_GRAPH_CODEC.decode(json.loads(client.journal.read_preparation(
+                        planned.operation_ref, journal["preparation"])))
+                    prepared_observer(planned, prepared_graph)
                 option = "approve_destructive_plan" if planned.destructive else "approve_plan"
                 try:
                     result = await asyncio.to_thread(client.apply, planned.operation_ref,
@@ -425,6 +439,238 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
             assert len(placement.record["intents"]) == dispatch_count
             assert await history(initial) == original_history and await history(updated) == update_history
             assert native.reads and len(ingress.allocations) == 1
+
+            # All four original families/replay/no-op laws above retain their
+            # original meaning. The coupled proof starts from that retained state.
+            client = restarted
+            retained_history = [(initial, original_history), *selected_runs]
+            retained_keys = await asyncio.to_thread(public_page, transport, "read.delegation-keys", workspace)
+            both_document, ready_document = declaration_documents(material, IMAGES["hello_family"]["reference"])
+            for name, document in (("both", both_document), ("readiness", ready_document)):
+                registered = await registration.register("command.product.import", {
+                    "descriptor_document": json.loads(document.content), "imported_at": utc_now(),
+                    "idempotency_key": "declaration-import-" + name})
+                assert registered["status"] == "active"
+
+            # An ordinary planned image replacement selects the qualified family
+            # image; it is not adoption of an externally created resource.
+            prior_nodes = dict(placement.nodes)
+            before = len(runtime.completed)
+            adopted, _ = await apply(consumer_graph(authored, both_document), "family-image")
+            journal = client.journal.read(adopted.operation_ref)
+            family_graph = DEFAULT_GRAPH_CODEC.decode(json.loads(client.journal.read_preparation(
+                adopted.operation_ref, journal["preparation"])))
+            assert family_graph == consumer_graph(authored, both_document)
+            image_replacement, = [value for value in runtime.completed[before:]
+                if type(value.request.operation) is ReconcileNode]
+            assert image_replacement.request.operation.target.node_id == "api"
+            assert all(placement.nodes[name] == prior_nodes[name] for name in ("gateway", "api-y", "connector"))
+            require_selected_recipient(image_replacement, versions[1].version_id,
+                prior_nodes["api"], placement.nodes["api"])
+            require_replacement_receipt(image_replacement, prior_nodes["api"], placement.nodes["api"])
+            assert attribution in await business("api", image_role="hello_family")
+            assert {name: installed_configuration(name, family_graph) for name in initial_nodes} == initial_configuration
+            family_history = await history(adopted)
+            assert image_replacement.request.source.run_id.value == adopted.run_id
+            arguments, response = transport.committed[image_replacement.request.effect_id]
+            require_committed_call(image_replacement, response, arguments, family_history[1],
+                bootstrap.worker.identity.subject_id)
+            retained_history.append((adopted, family_history))
+
+            scope = ReceiverScope("api", "internal")
+            route_intent = current_route_intent(family_graph)
+            codec = core.ReceiverNodeControlConfigurationCodec()
+            def artifact(graph, name, identity):
+                selected, = [value for value in graph.node(name).configuration_artifacts
+                    if value.artifact_id == identity]
+                return selected
+
+            old_wrapper = artifact(family_graph, "api", "hello-control")
+            old_configuration = codec.decode_bytes(old_wrapper.content.encode())
+            old_routes_artifact = artifact(family_graph, "gateway", "gateway-health-targets")
+            route_codec = core.ReceiverManagementRoutesCodec()
+            old_routes = route_codec.decode_bytes(old_routes_artifact.content.encode())
+            cutover_nodes = dict(placement.nodes)
+            cutover_before = len(runtime.completed)
+            cutover_health_before = len(health_socket.observations)
+            old_workspace = (await read("read.workspace"))["workspace"]
+            retained_receivers = (await read("read.receiver-authoring-context"))["current"]
+            selected_cutover, intermediate = {}, []
+
+            def prepared_cutover(planned, graph):
+                selected_cutover.update(plan_id=planned.plan_id, graph=graph)
+                selected = codec.decode_bytes(artifact(graph, "api", "hello-control").content.encode())
+                assert replace(selected, declaration=old_configuration.declaration) == old_configuration
+                assert selected.declaration.surface.health_reads == (core.NodeHealthReadKind.READINESS,)
+                # Expectations come from the client's immutable authored artifact,
+                # never from changing the fixture's initial configuration in place.
+                authored_configurations["api"].append(selected)
+
+            def observe_cutover(record, response):
+                if type(record.request.operation) is not ReconcileNode:
+                    return
+                assert record.request.source.workspace_id == workspace
+                assert record.request.source.plan_id == selected_cutover["plan_id"]
+                node = record.request.operation.target.node_id
+                assert node in {"api", "gateway"}
+                records = [value for value in runtime.completed[cutover_before:]
+                    if type(value.request.operation) is ReconcileNode]
+                assert [value.request.operation.target.node_id for value in records] == (
+                    ["api"] if node == "api" else ["api", "gateway"])
+                if node != "api":
+                    return
+                assert len(intermediate) == 0
+                assert placement.nodes["api"] != cutover_nodes["api"]
+                assert all(placement.nodes[name] == cutover_nodes[name]
+                    for name in ("gateway", "api-y", "connector"))
+                api_digests = installed_configuration("api", selected_cutover["graph"])
+                gateway_digests = installed_configuration("gateway", family_graph)
+                assert gateway_digests == initial_configuration["gateway"]
+                events = public_page(transport.inner, "read.run-events", workspace,
+                    run_id=record.request.source.run_id.value)
+                arguments, committed_response = transport.committed[record.request.effect_id]
+                assert committed_response is response
+                require_committed_call(record, response, arguments, events, bootstrap.worker.identity.subject_id)
+                current = transport.inner.call("read.workspace", path_parameters={"workspace_id": workspace},
+                    payload={}, credential_role="operator")["workspace"]
+                assert current["current_graph_id"] == old_workspace["current_graph_id"]
+                intermediate.append({"run_id": record.request.source.run_id.value,
+                    "effect_id": record.request.effect_id, "activity_id": record.request.activity_id.value,
+                    "api_container": placement.nodes["api"], "gateway_container": placement.nodes["gateway"],
+                    "api_configuration_digests": api_digests, "gateway_configuration_digests": gateway_digests})
+
+            transport.committed_observer = observe_cutover
+            try:
+                cutover, cutover_source = await apply(declaration_graph(family_graph, ready_document),
+                    "declaration-cutover", declarations=(scope,), routes=(route_intent,),
+                    prepared_observer=prepared_cutover)
+            finally:
+                transport.committed_observer = None
+            final_graph = selected_cutover["graph"]
+            cutover_history = await history(cutover)
+            assert len(intermediate) == 1 and intermediate[0]["run_id"] == cutover.run_id
+            coupled = [value for value in runtime.completed[cutover_before:]
+                if type(value.request.operation) is ReconcileNode]
+            assert [value.request.operation.target.node_id for value in coupled] == ["api", "gateway"]
+            receipts = []
+            for record in coupled:
+                name = record.request.operation.target.node_id
+                assert record.request.source.run_id.value == cutover.run_id
+                assert placement.nodes[name] != cutover_nodes[name]
+                assert not engine.containers.list(all=True, filters={"id": cutover_nodes[name]})
+                receipts.append(require_replacement_receipt(record, cutover_nodes[name], placement.nodes[name]))
+                arguments, response = transport.committed[record.request.effect_id]
+                require_committed_call(record, response, arguments, cutover_history[1],
+                    bootstrap.worker.identity.subject_id)
+            assert coupled[0].request.effect_id != coupled[1].request.effect_id
+            require_selected_recipient(coupled[0], versions[1].version_id,
+                cutover_nodes["api"], placement.nodes["api"])
+            assert family_graph.node("api").metadata["oci_image"] == final_graph.node("api").metadata["oci_image"]
+            assert attribution in await business("api", image_role="hello_family")
+            assert await business("api-y") == peer_body
+            assert all(placement.nodes[name] == cutover_nodes[name] for name in ("api-y", "connector"))
+            new_wrapper = artifact(final_graph, "api", "hello-control")
+            new_configuration = codec.decode_bytes(new_wrapper.content.encode())
+            assert replace(new_configuration, declaration=old_configuration.declaration) == old_configuration
+            assert new_wrapper.content_digest != old_wrapper.content_digest
+            new_routes_artifact = artifact(final_graph, "gateway", "gateway-health-targets")
+            new_routes = route_codec.decode_bytes(new_routes_artifact.content.encode())
+            assert new_routes_artifact.content_digest != old_routes_artifact.content_digest
+            assert replace(new_routes, targets=tuple(replace(value, declaration=old_configuration.declaration)
+                if value.target == old_configuration.target else value for value in new_routes.targets)) == old_routes
+            restored = {**final_graph.nodes,
+                "api": replace(final_graph.node("api"), block_spec=family_graph.node("api").block_spec,
+                    metadata=family_graph.node("api").metadata,
+                    configuration_artifacts=family_graph.node("api").configuration_artifacts),
+                "gateway": replace(final_graph.node("gateway"),
+                    configuration_artifacts=family_graph.node("gateway").configuration_artifacts)}
+            assert replace(final_graph, nodes=restored) == family_graph
+            for name in initial_nodes:
+                expected = dict(initial_configuration[name])
+                if name == "api":
+                    expected[new_wrapper.artifact_id] = new_wrapper.content_digest
+                elif name == "gateway":
+                    expected[new_routes_artifact.artifact_id] = new_routes_artifact.content_digest
+                assert installed_configuration(name, final_graph) == expected
+            assert await asyncio.to_thread(public_page, transport, "read.delegation-keys", workspace) == retained_keys
+            current_receivers = (await read("read.receiver-authoring-context"))["current"]
+            expected_receivers = [{**row, "binding": {**row["binding"],
+                "graph_id": current_receivers["graph_id"],
+                "realized_projection_id": current_receivers["realized_projection_id"]}}
+                for row in retained_receivers["receivers"]]
+            selected, = [row for row in expected_receivers if row["binding"]["node_id"] == "api"]
+            selected["binding"]["declaration_identity"] = new_configuration.declaration.identity().value
+            selected["binding"]["selected_configuration_digest"] = new_wrapper.content_digest
+            selected["configuration_artifact"] = new_wrapper.descriptor()
+            assert current_receivers["receivers"] == expected_receivers
+            assert ("api", "readiness", 200) in health_socket.observations[cutover_health_before:]
+
+            # Read-only SDK refusal check with the same active fixture signing
+            # key and an actual public request's authority context. No CPK effect
+            # or durable state is fabricated by these supplemental socket reads.
+            current_request = health_requests["api", new_configuration.declaration.identity().value]
+            assert current_request.target == new_configuration.target
+            assert current_request.kind is core.NodeHealthReadKind.READINESS
+            family, = [value for value in new_configuration.verifiers
+                if value.purpose is core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ]
+            assert material.public["workload"] in family.public_keys
+            inspected = placement.inspect_node("api", image_role="hello_family")
+            member, = [value for value in inspected.network_attachments if value.network_id == placement.network_id]
+            async with httpx.AsyncClient(timeout=3, trust_env=False) as socket:
+                for declaration, expected_status in ((old_configuration.declaration, 401),
+                        (new_configuration.declaration, 200)):
+                    request = replace(current_request, declaration_identity=declaration.identity(),
+                        request_id="declaration-check-" + uuid4().hex)
+                    now = int(time.time())
+                    grant = core.DelegatedWorkloadReceiverHealthReadGrant(
+                        profile=core.DelegatedWorkloadReceiverHealthReadGrantProfile.V2,
+                        canonicalization=core.NodeControlCanonicalization.JCS_RFC8785_V1,
+                        purpose=family.purpose, issuer=family.issuer, key_id=material.public["workload"].key_id,
+                        audience=core.receiver_node_control_audience(request.target), target=request.target,
+                        kind=request.kind, declaration_identity=request.declaration_identity,
+                        request_id=request.request_id, request_digest=request.canonical_digest(),
+                        issued_at=now - 1, not_before=now - 1, expires_at=now + 60,
+                        jti="declaration-check-" + uuid4().hex, authority_context=request.authority_context)
+                    token = jwt.encode(dict(iss=grant.issuer, aud=grant.audience, iat=grant.issued_at,
+                        nbf=grant.not_before, exp=grant.expires_at, jti=grant.jti,
+                        workload_node_health_read=grant.descriptor()), material.private["workload"],
+                        algorithm="EdDSA", headers={"kid": grant.key_id, "typ": "CPK-WORKLOAD-NODE-HEALTH-READ+JWT"})
+                    async with socket.stream("GET", "http://" + member.private_address +
+                            ":8000/__control/health/readiness", headers={"Authorization": "Bearer " + token}) as response:
+                        body = bytearray()
+                        async for chunk in response.aiter_bytes():
+                            assert len(body) + len(chunk) <= 65536
+                            body.extend(chunk)
+                        assert response.status_code == expected_status
+                        if expected_status == 200:
+                            result = core.ReceiverHealthReadResultCodec(request, declaration).decode(json.loads(body))
+                            assert result.outcome is core.NodeHealthReadOutcome.HEALTHY
+                    output = engine.containers.get(placement.nodes["api"]).logs(tail=100)
+                    assert len(output) <= 1024 * 1024 and token.encode() not in output
+
+            reconstructed = TopologyClient(host.profile, transport=transport, receiver_identity_factory=no_identity)
+            effect_count, dispatch_count = len(runtime.completed), len(placement.record["intents"])
+            for previous, expected_history in retained_history:
+                replay = await asyncio.to_thread(reconstructed.apply, previous.operation_ref, execute_plan=previous.plan_id)
+                assert (replay.operation_ref, replay.plan_id, replay.run_id) == (
+                    previous.operation_ref, previous.plan_id, previous.run_id)
+                assert replay.execution == "succeeded" and replay.advancement == "unverified"
+                assert await history(previous) == expected_history
+            replay = await asyncio.to_thread(reconstructed.apply, cutover.operation_ref, execute_plan=cutover.plan_id)
+            assert (replay.status, replay.execution, replay.advancement) == ("converged", "succeeded", "advanced")
+            assert (replay.operation_ref, replay.plan_id, replay.run_id) == (
+                cutover.operation_ref, cutover.plan_id, cutover.run_id)
+            noop = await asyncio.to_thread(reconstructed.plan, AuthoredDesiredGraph(cutover_source,
+                declaration_updates=(scope,), gateway_health_replacements=(route_intent,)))
+            assert noop.status == "no-changes"
+            assert (await asyncio.to_thread(reconstructed.apply, noop.operation_ref, execute_plan=noop.plan_id)).status == "no-changes"
+            assert len(runtime.completed) == effect_count and len(placement.record["intents"]) == dispatch_count
+            assert await history(cutover) == cutover_history
+            print(json.dumps({"coupled_declaration_update": "passed", "run_id": cutover.run_id,
+                "same_image": IMAGES["hello_family"]["reference"], "replacement_order": ["api", "gateway"],
+                "receipts": [value.disposition.value for value in receipts], "intermediate": intermediate[0],
+                "stale_declaration": "refused", "retained_keys_targets_secrets": "unchanged",
+                "reconstructed_replay": "passed", "explicit_declaration_route_noop": "passed"}), flush=True)
             placement.detach()
             await apply(DeploymentGraph("image-teardown"), "teardown")
             containers, networks, volumes = owned_resources(engine, workspace)
