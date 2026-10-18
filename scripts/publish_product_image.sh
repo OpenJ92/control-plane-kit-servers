@@ -39,10 +39,6 @@ case "$PRODUCT_ID" in
     DOCKERFILE="products/secrets_server/Dockerfile"
     IMAGE_NAME="secrets-server"
     ;;
-  counter-witness)
-    DOCKERFILE="products/cpk_server/examples/unlisted_sdk/Dockerfile.counter"
-    IMAGE_NAME="counter-witness"
-    ;;
   *)
     echo "unsupported product id: $PRODUCT_ID" >&2
     exit 2
@@ -51,29 +47,44 @@ esac
 
 IMAGE="ghcr.io/$OWNER/$PACKAGE/$IMAGE_NAME:$TAG"
 
+if [ "$PRODUCT_ID" = hello-server ]; then
+  [ "$OWNER" = openj92 ] && [ "$PACKAGE" = control-plane-kit-servers ]
+  SOURCE_COMMIT="$(git rev-parse HEAD)"
+  [ "$TAG" = "hello-271-$SOURCE_COMMIT" ]
+  [ -z "$(git status --porcelain)" ]
+  sh scripts/check_hello_package.sh before-push "$SOURCE_COMMIT"
+fi
+
 docker run --rm \
   -v "$ROOT:/source:ro" \
   -e PYTHONDONTWRITEBYTECODE=1 \
   "$POLICY_IMAGE" \
   sh -c 'cd /source && PYTHONPATH=/source/src python scripts/apply_coordinates.py --check'
 
-if [ "$PRODUCT_ID" = counter-witness ]; then
-  docker build --platform linux/amd64 -f "$DOCKERFILE" -t "$IMAGE" .
+if [ "$PRODUCT_ID" = hello-server ]; then
+  docker build --platform linux/amd64 \
+    --label "org.opencontainers.image.revision=$SOURCE_COMMIT" \
+    -f "$DOCKERFILE" -t "$IMAGE" .
   [ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$IMAGE")" = linux/amd64 ]
-  [ "$(docker image inspect --format '{{.Config.User}}' "$IMAGE")" = 10008 ]
-  COUNTER_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+  [ "$(docker image inspect --format '{{.Config.User}}' "$IMAGE")" = hello ]
+  HELLO_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+  [ "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMAGE")" = "$SOURCE_COMMIT" ]
+  # Recheck immediately before the consequential step; no retry on ambiguity.
+  sh scripts/check_hello_package.sh before-push "$SOURCE_COMMIT"
 else
   docker build -f "$DOCKERFILE" -t "$IMAGE" .
 fi
 docker push "$IMAGE"
 
-if [ "$PRODUCT_ID" = counter-witness ]; then
-  [ "$(docker image inspect --format '{{.Id}}' "$IMAGE")" = "$COUNTER_IMAGE_ID" ]
+if [ "$PRODUCT_ID" = hello-server ]; then
+  [ "$(docker image inspect --format '{{.Id}}' "$IMAGE")" = "$HELLO_IMAGE_ID" ]
   REPOSITORY="${IMAGE%:*}"
-  REFERENCE="$(docker image inspect "$COUNTER_IMAGE_ID" --format '{{range .RepoDigests}}{{println .}}{{end}}' |
-    sh scripts/select_repository_digest.sh "$REPOSITORY")"
-  printf 'counter-witness reference=%s image_id=%s platform=linux/amd64 user=10008\n' "$REFERENCE" "$COUNTER_IMAGE_ID"
-  echo "Record this witness digest on the governing issue; qualify the actual pulled-by-digest artifact before installed use. Earlier source startup evidence does not qualify this rebuilt image. No production catalogue coordinate is changed." >&2
+  # Capture inspection first so a pipe cannot hide an inspection failure.
+  REPO_DIGESTS="$(docker image inspect "$HELLO_IMAGE_ID" --format '{{range .RepoDigests}}{{println .}}{{end}}')"
+  REFERENCE="$(printf '%s\n' "$REPO_DIGESTS" | sh scripts/select_repository_digest.sh "$REPOSITORY")"
+  sh scripts/check_hello_package.sh published "$SOURCE_COMMIT" "$REFERENCE"
+  printf 'hello-server reference=%s image_id=%s source=%s platform=linux/amd64 user=hello(uid10002)\n' "$REFERENCE" "$HELLO_IMAGE_ID" "$SOURCE_COMMIT"
+  echo "Qualify this actual pulled-by-digest Hello artifact with both declarations before installed use. Source startup evidence does not qualify this rebuilt image. Historical catalogue coordinates remain unchanged." >&2
 else
   docker image inspect "$IMAGE" --format "{{index .RepoDigests 0}}"
   echo "Update coordinates/server-products.json with the verified published digest; regenerate coordinates in Docker and validate with ./test.sh." >&2

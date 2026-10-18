@@ -1,26 +1,39 @@
-Source: [publish_product_image.sh](../../../scripts/publish_product_image.sh).
+Please update alongside [publish_product_image.sh](../../../scripts/publish_product_image.sh).
 
-The existing closed producer cases retain their build/push/catalogue guidance.
-The additional counter-witness case selects only the example Dockerfile, builds
-explicit Linux/amd64, checks platform/UID10008 before push and reports genuine
-post-push digest/image metadata. Its guidance records a witness on the governing
-issue rather than updating production catalogue coordinates. Existing manual
-workflow dispatch and package-write authority are unchanged; adding a case does
-not authorize dispatch or upload.
+## Hello declaration-family publication (#271)
 
-For counter, capture the inspected built image ID before push and require the
-tag still names it afterward. Select RepoDigests by the exact requested
-repository prefix and require one canonical SHA256 reference. Missing or multiple
-matches refuse; array ordering is not repository identity. The output associates
-that exact reference with the captured image ID. This is producer metadata, not
-a substitute for actual pulled-by-digest qualification.
+The Hello branch accepts only the existing repository
+`ghcr.io/openj92/control-plane-kit-servers/hello-server`, private package13951244,
+and tag `hello-271-<full source commit>`. Dirty source refuses. The guard reads
+package identity, repository association, visibility and all version pages before
+build and again immediately before push. An existing source tag refuses rather
+than overwriting or treating an ambiguous earlier attempt as permission to retry.
 
-The selection itself is delegated to `select_repository_digest.sh`, a pure
-stdin-data helper exercised by the existing owning package suite. Image
-inspection, push and built-ID correlation remain in this producer.
+The Docker build explicitly selects Linux/amd64 and records the full source
+commit as an OCI label. The producer checks platform, configured user `hello`
+(Dockerfile creates numeric UID10002), source label, and captures the image ID.
+After push the tag must still identify that same image. Inspect output is captured
+before the exact-repository selector; missing, malformed or ambiguous RepoDigests
+refuse. The provider guard then verifies the exact published digest and unique tag
+association while the existing package is still private. Output is evidence of
+the publication attempt, not actual pulled-image qualification.
 
-The producer rebuilds from selected source, so an earlier local/CI startup image
-ID cannot identify its output. Publication approval must name reviewed source,
-SDK/Core/base/dependencies, startup evidence, platform, exact destination/tag and
-verified access/visibility, with actual pulled-digest qualification afterward.
-No manifest digest is claimed before push. No credentials enter image/evidence.
+This is not an atomic registry transaction. Concurrent visibility/tag changes
+can race these reads; a post-push failure leaves the external outcome uncertain
+and stops without retry, deletion, visibility repair or credential changes.
+GitHub CLI/page failures must not be masked by a pipe. GH_TOKEN is the existing
+workflow token, stays outside Docker and is not a build input. Metadata verification
+with that token is unproven until an explicitly authorized producer run.
+
+The obsolete counter-witness producer case is removed. Other existing product
+branches remain unchanged; this does not claim equivalent publication safeguards
+for every product. Historical Hello descriptor/image coordinates stay immutable.
+The generic selector retains its negative laws and is now exercised with Hello.
+
+Any dispatch still needs the concrete approved source/build/tag/destination
+packet. Its manifest digest cannot be invented before publication. Qualify the
+actual pulled artifact with both accepted declarations, installed dependency
+provenance, authentication and cleanup before #254 consumes it. SDK/Core source
+commits and Python base are pinned; transitive third-party Python requirements
+are not a complete reproducible dependency lock. A rebuild can differ; the final
+digest, installed distributions and observed provenance identify its actual output.

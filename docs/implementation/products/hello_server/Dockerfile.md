@@ -1,5 +1,17 @@
 Source: [Dockerfile](../../../../products/hello_server/Dockerfile).
 
+Please update alongside source. For #271 the Python3.12 slim base is pinned to
+index `sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1`.
+Its Linux/amd64 manifest is
+`sha256:2b4f19dae3a777dfc3b76730bda1e82e1f66ab2a2686fa93ca78edbfb4f04ffe`.
+Publication explicitly builds that platform; the existing `hello` account remains
+UID10002. SDK source d4e7c4d and its selected Core9861e536 remain unchanged.
+This pins source/base material, not all transitive third-party pip resolutions.
+No control configuration, signing credentials or default authority is baked in.
+The one new artifact supports both accepted Hello declarations; historical
+published Hello variants remain unchanged. Qualification belongs to the actual
+later pulled digest, not earlier source image IDs.
+
 ## Historical retained-update adoption (#249)
 
 The canonical dependency tuple selects accepted Core/Operations #1981

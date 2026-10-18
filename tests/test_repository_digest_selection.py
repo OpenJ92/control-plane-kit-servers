@@ -5,7 +5,7 @@ import unittest
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "select_repository_digest.sh"
-REPOSITORY = "ghcr.io/openj92/control-plane-kit-servers/counter-witness"
+REPOSITORY = "ghcr.io/openj92/control-plane-kit-servers/hello-server"
 
 
 class RepositoryDigestSelectionTests(unittest.TestCase):
