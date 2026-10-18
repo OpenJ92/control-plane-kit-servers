@@ -54,16 +54,3 @@ earlier source image ID is not proof of the uploaded artifact. After authorized
 push, record the genuine registry digest and qualify the actual pulled artifact
 before using it for #254's two registered revisions. No registry digest or
 destination visibility is asserted by this source change.
-
-Private publication uses a dedicated `counter-witness-264-<source-prefix>` tag
-inside the existing private `cpk-server` package. This is a storage exception:
-the image is still Counter, not a controller product or catalogue variant.
-Provider checks require the exact existing package to be private before and
-after push; publication refuses an existing tag. Use the real resulting digest
-with the explicit counter fixture role, never a production cpk-server tag or the
-package's newest version. Never delete the shared package; separately approved
-version cleanup must refuse unrelated tags or ambiguous ownership.
-
-The preload accepts a future exact `counter` record only after actual approved
-publication. No such record is invented here. Existing four-image checks remain
-their existing evidence; they do not prove the counter's required coupled update.

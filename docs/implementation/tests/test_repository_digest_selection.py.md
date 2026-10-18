@@ -5,7 +5,3 @@ with text input. Exact requested repository selection must be order-independent;
 absent, wrong repository, duplicate/multiple, malformed length/algorithm/case
 inputs must exit nonzero without emitting a witness. Tests do not stub Docker,
 perform a push, access credentials or assert private package visibility.
-
-The private-storage case also proves that a cpk-server repository digest is
-selected over the old counter-witness repository, and the old reference alone
-cannot satisfy that exact destination.

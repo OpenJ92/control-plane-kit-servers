@@ -50,26 +50,16 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Preload fixed public image-update inputs and optional artifact tuple
         shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           inputs=products/cpk_server/tests/docker_image_update_images.json
-          jq -e '(keys == ["connector","gateway","hello_a","hello_b"] or
-              keys == ["connector","counter","gateway","hello_a","hello_b"]) and
+          jq -e 'keys == ["connector","gateway","hello_a","hello_b"] and
             all(.[]; (.reference | test("^[a-z0-9./-]+@sha256:[0-9a-f]{64}$")) and
               (.image_id | test("^sha256:[0-9a-f]{64}$")))' "$inputs" >/dev/null
-          mapfile -t references < <(jq -r 'del(.counter)[].reference' "$inputs")
+          mapfile -t references < <(jq -r '.[].reference' "$inputs")
           for reference in "${references[@]}"; do
             [[ "$reference" =~ ^(ghcr\.io/openj92/control-plane-kit-servers/(hello-server|cpk-local-gateway)|registry\.k8s\.io/pause)@sha256:[0-9a-f]{64}$ ]]
           done
-          counter_reference="$(jq -r '.counter.reference // empty' "$inputs")"
-          if [ -n "$counter_reference" ]; then
-            [[ "$counter_reference" =~ ^ghcr\.io/openj92/control-plane-kit-servers/cpk-server@sha256:[0-9a-f]{64}$ ]]
-            [ "$(jq -r '.counter.user' "$inputs")" = 10008 ]
-            sh scripts/check_counter_package.sh read
-            references+=("$counter_reference")
-          fi
           if [ "$CPK_WRAPPER_ARTIFACT_MODE" = published-digest ]; then
             [[ "$CPK_WRAPPER_HELLO_A" =~ ^ghcr\.io/openj92/control-plane-kit-servers/hello-server@sha256:[0-9a-f]{64}$ ]]
             [[ "$CPK_WRAPPER_HELLO_B" =~ ^ghcr\.io/openj92/control-plane-kit-servers/hello-server@sha256:[0-9a-f]{64}$ ]]
@@ -84,9 +74,6 @@ jobs:
           docker info --format 'wrapper_preload_engine_id={{.ID}}'
           mapfile -t references < <(printf '%s\n' "${references[@]}" | sort -u)
           for reference in "${references[@]}"; do
-            if [ -n "$counter_reference" ] && [ "$reference" = "$counter_reference" ]; then
-              sh scripts/check_counter_package.sh read
-            fi
             docker pull --platform linux/amd64 "$reference"
             [ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$reference")" = linux/amd64 ]
             docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$reference" | grep -Fx -- "$reference"
@@ -94,10 +81,6 @@ jobs:
             expected_id="$(jq -r --arg reference "$reference" '.[] | select(.reference == $reference) | .image_id' "$inputs")"
             if [ -n "$expected_id" ]; then
               [ "$(docker image inspect --format '{{.Id}}' "$reference")" = "$expected_id" ]
-            fi
-            if [ -n "$counter_reference" ] && [ "$reference" = "$counter_reference" ]; then
-              [ "$(docker image inspect --format '{{.Config.User}}' "$reference")" = 10008 ]
-              sh scripts/check_counter_package.sh read
             fi
           done
       - name: Run Docker-first tests

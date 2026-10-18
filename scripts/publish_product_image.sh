@@ -50,13 +50,6 @@ case "$PRODUCT_ID" in
 esac
 
 IMAGE="ghcr.io/$OWNER/$PACKAGE/$IMAGE_NAME:$TAG"
-if [ "$PRODUCT_ID" = counter-witness ]; then
-  IMAGE="$(sh scripts/counter_witness_destination.sh "$OWNER" "$PACKAGE" "$TAG")"
-  SOURCE_COMMIT="$(git rev-parse HEAD)"
-  SOURCE_PREFIX="${TAG#counter-witness-264-}"
-  case "$SOURCE_COMMIT" in "$SOURCE_PREFIX"*) ;; *) exit 1 ;; esac
-  sh scripts/check_counter_package.sh before-push "$TAG"
-fi
 
 docker run --rm \
   -v "$ROOT:/source:ro" \
@@ -69,7 +62,6 @@ if [ "$PRODUCT_ID" = counter-witness ]; then
   [ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$IMAGE")" = linux/amd64 ]
   [ "$(docker image inspect --format '{{.Config.User}}' "$IMAGE")" = 10008 ]
   COUNTER_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
-  sh scripts/check_counter_package.sh before-push "$TAG"
 else
   docker build -f "$DOCKERFILE" -t "$IMAGE" .
 fi
@@ -80,8 +72,7 @@ if [ "$PRODUCT_ID" = counter-witness ]; then
   REPOSITORY="${IMAGE%:*}"
   REFERENCE="$(docker image inspect "$COUNTER_IMAGE_ID" --format '{{range .RepoDigests}}{{println .}}{{end}}' |
     sh scripts/select_repository_digest.sh "$REPOSITORY")"
-  sh scripts/check_counter_package.sh published "$TAG" "$REFERENCE"
-  printf 'counter-witness source_commit=%s tag=%s reference=%s image_id=%s platform=linux/amd64 user=10008\n' "$SOURCE_COMMIT" "$TAG" "$REFERENCE" "$COUNTER_IMAGE_ID"
+  printf 'counter-witness reference=%s image_id=%s platform=linux/amd64 user=10008\n' "$REFERENCE" "$COUNTER_IMAGE_ID"
   echo "Record this witness digest on the governing issue; qualify the actual pulled-by-digest artifact before installed use. Earlier source startup evidence does not qualify this rebuilt image. No production catalogue coordinate is changed." >&2
 else
   docker image inspect "$IMAGE" --format "{{index .RepoDigests 0}}"
