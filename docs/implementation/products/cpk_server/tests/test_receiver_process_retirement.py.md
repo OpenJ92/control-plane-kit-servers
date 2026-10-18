@@ -18,3 +18,13 @@ the established process-port tests. No production reload, test ordering or
 factory identity assertion is changed. Corrected gate evidence is recorded on
 PR #275; neither the first intended failure nor this source correction alone
 proves the full suite green.
+
+The corrected checkpoint `e6841fd` reached exactly the intended retained-file
+failure in run `39177329237`, while the original factory identity law passed.
+Independent terminal review and North's release cleared the implementation hold.
+The same install/remove/install assertions remain unchanged during repair.
+Additional bounded safety cases preserve an unowned file, refuse a symlinked
+installed file before touching its target, and simulate a file appearing during
+child stop: partial retirement stays uncertain, retains incarnation bookkeeping
+and blocks reinstallation. They exercise only the process/file boundary, not
+Operations state-machine behavior or recovery.

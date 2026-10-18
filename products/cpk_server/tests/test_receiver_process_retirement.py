@@ -83,3 +83,82 @@ class ReceiverProcessRetirementTests(unittest.TestCase):
             self.assertTrue(all(path.exists() for path in paths))
             port.close()
             self.assertEqual(foreign.read_bytes(), b"keep")
+
+    def test_unowned_file_blocks_retirement_without_deleting_or_freeing_instance(self):
+        from live_unlisted_receiver import ProcessCompute
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            port = recorded_processes(root)
+            compute = ProcessCompute(port)
+            selected = request(StartNode)
+            self.assertEqual(compute.execute_with_authority(selected,
+                SimpleNamespace(authority_ref=None)).kind, EffectResultKind.SUCCEEDED)
+            child, wrapper = port.children[NAME], port.paths[NAME]
+            foreign = wrapper.parent / "unowned.txt"
+            foreign.write_bytes(b"preserve")
+            removed = compute.execute_with_authority(replace(selected,
+                operation=RemoveNodeResource(NodeTarget(NAME)), kind=RuntimeEffectKind.REALIZE_ACTIVITY,
+                configuration_instances=None, products=()), SimpleNamespace(authority_ref=None))
+            self.assertEqual(removed.kind, EffectResultKind.UNCERTAIN)
+            self.assertIsNone(child.poll())
+            self.assertTrue(wrapper.exists())
+            self.assertEqual(foreign.read_bytes(), b"preserve")
+            self.assertIn(NAME, port.paths)
+            self.assertIn(NAME, compute.installed)
+            with self.assertRaises(AssertionError):
+                port.install(NAME, selected.products[0])
+            port.close()
+            self.assertEqual(foreign.read_bytes(), b"preserve")
+
+    def test_partial_retirement_retains_bookkeeping_and_blocks_reinstallation(self):
+        from live_unlisted_receiver import ProcessCompute
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            port = recorded_processes(root)
+            compute = ProcessCompute(port)
+            selected = request(StartNode)
+            self.assertEqual(compute.execute_with_authority(selected,
+                SimpleNamespace(authority_ref=None)).kind, EffectResultKind.SUCCEEDED)
+            child = port.children[NAME]
+            foreign = port.paths[NAME].parent / "appeared-during-stop.txt"
+            def stop_with_new_file():
+                child.returncode = 0
+                foreign.write_bytes(b"preserve")
+            child.terminate = stop_with_new_file
+            removed = compute.execute_with_authority(replace(selected,
+                operation=RemoveNodeResource(NodeTarget(NAME)), kind=RuntimeEffectKind.REALIZE_ACTIVITY,
+                configuration_instances=None, products=()), SimpleNamespace(authority_ref=None))
+            self.assertEqual(removed.kind, EffectResultKind.UNCERTAIN)
+            self.assertIsNotNone(child.poll())
+            self.assertFalse(port.paths[NAME].exists())
+            self.assertIn(NAME, port.paths)
+            self.assertIn(NAME, compute.installed)
+            with self.assertRaises(AssertionError):
+                port.install(NAME, selected.products[0])
+            port.close()
+            self.assertEqual(foreign.read_bytes(), b"preserve")
+
+    def test_symlinked_installed_file_refuses_before_touching_foreign_target(self):
+        from live_unlisted_receiver import ProcessCompute
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            port = recorded_processes(root)
+            compute = ProcessCompute(port)
+            selected = request(StartNode)
+            self.assertEqual(compute.execute_with_authority(selected,
+                SimpleNamespace(authority_ref=None)).kind, EffectResultKind.SUCCEEDED)
+            wrapper = port.paths[NAME]
+            foreign = root / "foreign.json"
+            foreign.write_bytes(b"preserve")
+            wrapper.unlink()
+            wrapper.symlink_to(foreign)
+            removed = compute.execute_with_authority(replace(selected,
+                operation=RemoveNodeResource(NodeTarget(NAME)), kind=RuntimeEffectKind.REALIZE_ACTIVITY,
+                configuration_instances=None, products=()), SimpleNamespace(authority_ref=None))
+            self.assertEqual(removed.kind, EffectResultKind.UNCERTAIN)
+            self.assertIsNone(port.children[NAME].poll())
+            self.assertTrue(wrapper.is_symlink())
+            self.assertEqual(foreign.read_bytes(), b"preserve")
+            self.assertIn(NAME, compute.installed)
+            port.close()
+            self.assertEqual(foreign.read_bytes(), b"preserve")

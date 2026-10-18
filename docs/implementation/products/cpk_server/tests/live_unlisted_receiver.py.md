@@ -1,5 +1,23 @@
 Source: [live_unlisted_receiver.py](../../../../../products/cpk_server/tests/live_unlisted_receiver.py).
 
+Servers #255 retains this distinct-product/update sequence and appends the
+same-product removal/reintroduction sequence in `live_receiver_reintroduction`.
+The existing process owner accepts a finite, at-most-two-instance mapping of
+known example scripts/business paths and admitted logical wrapper paths. The
+default mapping is unchanged; the new same-product composition projects one
+shared logical path into separate private per-instance wrapper files. It neither
+changes product descriptors per instance nor interprets control-plane lifecycle.
+
+`ProcessCompute` removal now invokes exact `ReceiverProcesses.retire`: validate
+the owned file set and non-symlinked private directory, stop/wait the tracked
+child, unlink exact files, remove the empty directory, then clear only that
+incarnation's bookkeeping. Unknown files or incomplete retirement refuse and
+retain state that blocks a new installation; no success is published. The
+existing compute boundary preserves uncertainty once removal was entered.
+Final close refuses symlinked parent paths and retains the existing owned-file
+absence audit. The focused regression's causal red and terminal implementation
+evidence are recorded on PR #275; source description alone is not acceptance.
+
 The #237 witness joins already implemented #238 authoring/journal and #1912
 Operations/installed-health owners. The witness changes no production contracts
 or dependency coordinates; this PR separately repairs the real client verifier
