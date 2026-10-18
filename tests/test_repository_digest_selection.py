@@ -36,3 +36,14 @@ class RepositoryDigestSelectionTests(unittest.TestCase):
                 result = self.select(content)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(result.stdout, "")
+
+    def test_private_storage_reference_does_not_select_old_counter_repository(self):
+        repository = "ghcr.io/openj92/control-plane-kit-servers/cpk-server"
+        expected = repository + "@sha256:" + "c" * 64
+        old = REPOSITORY + "@sha256:" + "d" * 64
+        for content, success in ((old + "\n" + expected, True), (old, False)):
+            with self.subTest(content=content):
+                result = subprocess.run(["sh", str(SCRIPT), repository], input=content,
+                    capture_output=True, text=True, timeout=5, check=False)
+                self.assertEqual(result.returncode == 0, success)
+                self.assertEqual(result.stdout, expected + "\n" if success else "")

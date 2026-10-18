@@ -27,4 +27,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Publish product image
-        run: sh scripts/publish_product_image.sh "${{ inputs.product_id }}" "${{ inputs.tag }}"
+        env:
+          PRODUCT_ID: ${{ inputs.product_id }}
+          IMAGE_TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: sh scripts/publish_product_image.sh "$PRODUCT_ID" "$IMAGE_TAG"
