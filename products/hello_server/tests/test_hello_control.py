@@ -94,6 +94,69 @@ class HelloControlTests(unittest.TestCase):
             self.rejected(lambda: hello.create_hello_server(None, {}))
             listener.assert_not_called()
 
+    def test_health_family_preserves_selected_artifact_contract_and_default(self):
+        default = config.hello_control_declaration()
+        self.assertEqual(default.surface.health_reads,
+            (core.NodeHealthReadKind.LIVENESS, core.NodeHealthReadKind.READINESS))
+        for kinds in ((core.NodeHealthReadKind.READINESS,), default.surface.health_reads):
+            with self.subTest(kinds=kinds):
+                declaration = replace(default, surface=replace(default.surface, health_reads=kinds))
+                selected = replace(self.config, declaration=declaration)
+                artifact = config.hello_control_configuration_artifact(selected)
+                self.assertEqual(config.decode_hello_control_configuration(artifact.content.encode()), selected)
+                contract = config.hello_source_runtime_contract(artifact)
+                self.assertEqual(contract.control_surfaces, (declaration.surface,))
+                self.assertEqual(contract.configuration_artifacts, (artifact,))
+                self.assertEqual(ProductRuntimeContractCodec().decode(contract.descriptor()), contract)
+                self.assertEqual(contract.verification.checks, ())
+        self.assertEqual(config.hello_control_declaration(), default)
+
+    def test_readiness_only_auth_precedes_real_dependency_observation(self):
+        value = fixture()
+        original = value.config.declaration
+        value.config = replace(value.config, declaration=replace(original,
+            surface=replace(original.surface, health_reads=(core.NodeHealthReadKind.READINESS,))))
+        for environment, expected in (({}, "healthy"),
+                ({"HELLO_DEPENDENCIES_JSON": '[{"name":"orders"}]'}, "unhealthy")):
+            calls = []
+            def observation_clock():
+                calls.append("dependency-observation")
+                return 1.0
+            with self.subTest(expected=expected), running(self, value, environment,
+                    observation_clock=observation_clock) as host:
+                static = request(host, "/__control/capabilities", token(value, static=True))
+                self.assertEqual(static[0], 200)
+                self.assertEqual(json.loads(static[1])["declaration"], value.config.declaration.descriptor())
+                for path, credential in (
+                    ("/__control/health/readiness", None),
+                    ("/__control/health/readiness", token(value, static=True)),
+                    ("/__control/health/readiness", token(value, request_changes={
+                        "target": replace(value.config.target, receiver_id="f" * 32)})),
+                    ("/__control/health/readiness", token(value, request_changes={
+                        "declaration_identity": original.identity()})),
+                    ("/__control/health/liveness", token(value, kind=core.NodeHealthReadKind.LIVENESS)),
+                ):
+                    self.assertEqual(request(host, path, credential)[0], 401)
+                self.assertEqual(calls, [])
+                self.assertEqual(host.hello_observations.payload()["count"], 0)
+                status, body, _ = request(host, "/__control/health/readiness", token(value))
+                self.assertEqual(status, 200)
+                self.assertEqual(json.loads(body)["outcome"], expected)
+                self.assertGreater(len(calls), 0)
+
+    def test_hello_family_refuses_liveness_only_and_foreign_socket_before_bind(self):
+        declaration = self.config.declaration
+        foreign = core.NodeControlGraphReference(core.NodeControlGraphReferenceRole.PROVIDER_SOCKET, "foreign")
+        for selected in (
+            replace(self.config, declaration=replace(declaration,
+                surface=replace(declaration.surface, health_reads=(core.NodeHealthReadKind.LIVENESS,)))),
+            replace(self.config, target=replace(self.config.target, provider_socket_name=foreign),
+                declaration=replace(declaration, surface=replace(declaration.surface, provider_socket_name=foreign))),
+        ):
+            self.rejected(lambda: config.hello_control_configuration_artifact(selected))
+            # A bind attempt would fail DNS resolution, not the fixed product error.
+            self.rejected(lambda: hello.create_hello_server(selected, {}, address=("invalid host", 0)))
+
     def test_fixed_file_checks_opened_regularity_symlinks_and_exact_byte_boundary(self):
         raw = self.artifact.content.encode()
         with TemporaryDirectory() as directory:
