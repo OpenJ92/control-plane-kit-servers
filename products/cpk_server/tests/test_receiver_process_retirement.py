@@ -9,7 +9,6 @@ import unittest
 from control_plane_kit_core.configuration import ConfigurationArtifact, ConfigurationMediaType
 from control_plane_kit_core.planning import NodeTarget, RemoveNodeResource, StartNode
 from control_plane_kit_core.runtime_effects import EffectResultKind, RuntimeEffectKind
-from live_unlisted_receiver import ProcessCompute, ReceiverProcesses
 from test_unlisted_process_material import NAME, request
 
 
@@ -29,25 +28,33 @@ class RecordedChild:
         return self.returncode
 
 
-class RecordedProcesses(ReceiverProcesses):
-    def selected_files(self, name, material):
-        return tuple(ConfigurationArtifact(identity, str(self.root / name / filename),
-            ConfigurationMediaType.JSON, '{}') for identity, filename in
-            (("wrapper", "wrapper.json"), ("application", "colors.json")))
+def recorded_processes(root):
+    # Match the existing process-port tests: importing the live composition
+    # during discovery would retain owners across import-isolation tests.
+    from live_unlisted_receiver import ReceiverProcesses
 
-    def launch(self, name):
-        self.generation += 1
-        self.children[name] = RecordedChild(self.generation)
-        self.identities[name] = str(self.generation) * 64
-        self.origins[name] = "http://owned.invalid"
-        self.tokens[name] = ("private-test-token", "/health")
+    class RecordedProcesses(ReceiverProcesses):
+        def selected_files(self, name, material):
+            return tuple(ConfigurationArtifact(identity, str(self.root / name / filename),
+                ConfigurationMediaType.JSON, '{}') for identity, filename in
+                (("wrapper", "wrapper.json"), ("application", "colors.json")))
+
+        def launch(self, name):
+            self.generation += 1
+            self.children[name] = RecordedChild(self.generation)
+            self.identities[name] = str(self.generation) * 64
+            self.origins[name] = "http://owned.invalid"
+            self.tokens[name] = ("private-test-token", "/health")
+
+    return RecordedProcesses(root, root)
 
 
 class ReceiverProcessRetirementTests(unittest.TestCase):
     def test_remove_retires_exact_files_and_allows_fresh_install_without_touching_peer(self):
+        from live_unlisted_receiver import ProcessCompute
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
-            port = RecordedProcesses(root, root)
+            port = recorded_processes(root)
             compute = ProcessCompute(port)
             selected = request(StartNode)
             first = compute.execute_with_authority(selected, SimpleNamespace(authority_ref=None))
