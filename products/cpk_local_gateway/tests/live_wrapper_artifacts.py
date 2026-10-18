@@ -42,8 +42,8 @@ def _controls(origin, value, sensitive):
     static_token = None
     for static, kind, path in (
             (True, core.NodeHealthReadKind.READINESS, "/__control/capabilities"),
-            (False, core.NodeHealthReadKind.LIVENESS, "/__control/health/liveness"),
-            (False, core.NodeHealthReadKind.READINESS, "/__control/health/readiness")):
+            *((False, kind, "/__control/health/" + kind.value)
+              for kind in value.config.declaration.surface.health_reads)):
         now = int(time.time())
         request, token = credential(value, static=static, kind=kind, issued=now - 1, expires=now + 60)
         sensitive.append(token)
@@ -56,18 +56,27 @@ def _controls(origin, value, sensitive):
         else:
             result = core.ReceiverHealthReadResultCodec(request, value.config.declaration).decode(json.loads(body))
             assert result.outcome is core.NodeHealthReadOutcome.HEALTHY
+            assert _read("GET", origin, path, token=static_token)[0] == 401
         assert _read("GET", origin, path)[0] == 401, "artifact accepted missing credential"
     assert _read("GET", origin, "/__control/health/readiness", token=static_token)[0] == 401
     wrong = replace(value.config.target, receiver_id="f" * 32)
     _, denied = credential(value, request_changes={"target": wrong}, issued=now - 1, expires=now + 60)
     sensitive.append(denied)
     assert _read("GET", origin, "/__control/health/readiness", token=denied)[0] == 401
+    if core.NodeHealthReadKind.LIVENESS not in value.config.declaration.surface.health_reads:
+        _, undeclared = credential(value, kind=core.NodeHealthReadKind.LIVENESS,
+            issued=now - 1, expires=now + 60)
+        sensitive.append(undeclared)
+        assert _read("GET", origin, "/__control/health/liveness", token=undeclared)[0] == 401
 
 
 def exercise_wrapper_artifacts(*, engine, sdk, resources, labels, network_id,
-                               hello_reference, gateway_reference, mode, expected_attribution):
+                               hello_reference, gateway_reference, mode, expected_attribution,
+                               hello_health_reads=(core.NodeHealthReadKind.LIVENESS, core.NodeHealthReadKind.READINESS)):
     """Caller owns the existing exact cleanup ledger, daemon and internal network."""
     assert mode in ("source-built", "published-digest")
+    assert hello_health_reads in ((core.NodeHealthReadKind.READINESS,),
+        (core.NodeHealthReadKind.LIVENESS, core.NodeHealthReadKind.READINESS))
     images = {}
     for name, reference in (("hello", hello_reference), ("gateway", gateway_reference)):
         # Read only: missing/evicted cache is a failed prerequisite, never a pull.
@@ -89,7 +98,8 @@ def exercise_wrapper_artifacts(*, engine, sdk, resources, labels, network_id,
     world = World()
     world.target = replace(world.target, provider_socket_name=core.NodeControlGraphReference(
         core.NodeControlGraphReferenceRole.PROVIDER_SOCKET, "internal"))
-    world.declaration = hello_control_declaration()
+    default = hello_control_declaration()
+    world.declaration = replace(default, surface=replace(default.surface, health_reads=hello_health_reads))
     hello_config = core.ReceiverNodeControlConfiguration(world.target, world.declaration, (
         NodeControlVerificationConfiguration(core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ,
             "surface-issuer", (world.static_key,)),
@@ -155,6 +165,11 @@ def exercise_wrapper_artifacts(*, engine, sdk, resources, labels, network_id,
         _controls("http://wrapped-db:8000", hello, sensitive)
         _controls("http://wrapped-gateway:8000", gateway, sensitive)
         now = int(time.time())
+        if world.declaration != default:
+            _, prior = credential(hello, request_changes={"declaration_identity": default.identity()},
+                issued=now - 1, expires=now + 60)
+            sensitive.append(prior)
+            assert _read("GET", "http://wrapped-db:8000", "/__control/health/readiness", token=prior)[0] == 401
         request, workload_token = credential(hello, issued=now - 1, expires=now + 60)
         transit = world.transit.token(world.transit.grant(request, issued_at=now - 1,
             not_before=now - 1, expires_at=now + 60)).decode()
@@ -180,16 +195,28 @@ def exercise_wrapper_artifacts(*, engine, sdk, resources, labels, network_id,
         for process, uid in ((hello_process, 10002), (gateway_process, 10005)):
             observed = process.exec_run(["python", "-B", "-c", "import os; print(os.getuid())"])
             assert observed.exit_code == 0 and observed.output.strip() == str(uid).encode()
+        if mode == "source-built":
+            provenance = hello_process.exec_run(["python", "-B", "-c",
+                "import importlib.metadata as m,json; print(json.dumps({n:json.loads(m.distribution(n).read_text('direct_url.json'))['url'] for n in ('control-plane-kit-core','control-plane-kit-server-sdk')},sort_keys=True))"])
+            assert provenance.exit_code == 0
+            assert json.loads(provenance.output) == {
+                "control-plane-kit-core": "https://github.com/OpenJ92/control-plane-kit/archive/9861e536e79314005499ae07379f627bfb1599a2.zip",
+                "control-plane-kit-server-sdk": "https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/d4e7c4d91c054f139e2971774ae5e37fc741262d.zip",
+            }
         for container in containers:
             output = container.logs(tail=100)
             assert len(output) <= 1024 * 1024
             assert not any(value.encode() in output for value in sensitive), "artifact logged credentials"
-        print(json.dumps({"wrapper_artifacts": "passed", "mode": mode,
+        observation = {"wrapper_artifacts": "passed", "mode": mode,
             "hello_reference": hello_reference, "gateway_reference": gateway_reference,
             "engine_id": engine.info().get("ID"),
             "hello_image_id": images["hello"][0], "gateway_image_id": images["gateway"][0],
             "hello_platform": "linux/" + images["hello"][1], "gateway_platform": "linux/" + images["gateway"][1],
-            "hello_attribution": expected_attribution, "signed_v2_sockets": True}), flush=True)
+            "hello_health_reads": [kind.value for kind in hello_health_reads],
+            "hello_configuration_digest": hello_artifact.content_digest,
+            "hello_attribution": expected_attribution, "signed_v2_sockets": True}
+        print(json.dumps(observation), flush=True)
+        return observation
     finally:
         # Retire aliases before another pair; the outer ledger verifies exact absence
         # and removes all recorded public volumes even if this cleanup is interrupted.

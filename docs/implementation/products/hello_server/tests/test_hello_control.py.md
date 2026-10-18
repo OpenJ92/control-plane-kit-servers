@@ -52,3 +52,5 @@ An injected observation clock proves missing/wrong-purpose/wrong-target/prior-
 declaration and undeclared-liveness refusals occur before dependency work.
 Liveness-only and foreign-socket values refuse before bind; existing malformed,
 file, verifier, budget/redaction and default both-health laws remain.
+An independently Core-valid variable/read/command expansion with the required
+verifier family also refuses at Hello's product boundary before bind.

@@ -45,3 +45,12 @@ exercise one source-built image under two declarations. Existing tracked SDK
 helpers and outer exact-absence cleanup remain authoritative. The new workload
 receives no private credentials/socket; this adds no topology orchestration or
 publication claim and leaves all existing wrapper/Secrets checks intact.
+
+#269 runs the maintained Hello/gateway source pair twice, once per supported
+Hello declaration. The results must report the exact same input Hello image ID
+and two distinct installed configuration digests. Each pass retains gateway
+health/transit, real signed selected-kind and negative reads, process identity,
+mount/provenance and exact container retirement. The outer ledger still owns
+final volume/helper cleanup and absence checks. Historical published A/B calls
+retain their both-health default. Counter OCI removal is a later dependent
+change, not part of this Hello foundation.

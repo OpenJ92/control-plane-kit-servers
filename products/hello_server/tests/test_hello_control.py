@@ -157,6 +157,24 @@ class HelloControlTests(unittest.TestCase):
             # A bind attempt would fail DNS resolution, not the fixed product error.
             self.rejected(lambda: hello.create_hello_server(selected, {}, address=("invalid host", 0)))
 
+    def test_hello_family_refuses_valid_variable_and_command_expansion(self):
+        variable = core.ControlPlaneVariableDescriptor(
+            core.NodeControlGraphReference(core.NodeControlGraphReferenceRole.VARIABLE, "mode"),
+            core.ControlPlaneVariableKind.SCALAR, core.ControlPlaneStateCodec.SCALAR_V1,
+            (core.ControlPlaneVariableOperationContract(core.NodeControlOperation.READ_STATE,
+                None, core.ControlPlaneResultCodec.STATE_V1),
+             core.ControlPlaneVariableOperationContract(core.NodeControlOperation.APPLY_COMMAND,
+                core.ControlPlaneCommandCodec.REPLACE_SCALAR_V1, core.ControlPlaneResultCodec.TRANSITION_V1)))
+        declaration = self.config.declaration
+        selected = replace(self.config, declaration=replace(declaration,
+            surface=replace(declaration.surface, variables=(variable,))),
+            verifiers=(*self.config.verifiers, replace(self.config.verifiers[0],
+                purpose=core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL, issuer="variable-issuer")))
+        codec = core.ReceiverNodeControlConfigurationCodec()
+        self.assertEqual(codec.decode_bytes(codec.encode_bytes(selected)), selected)
+        self.rejected(lambda: config.hello_control_configuration_artifact(selected))
+        self.rejected(lambda: hello.create_hello_server(selected, {}, address=("invalid host", 0)))
+
     def test_fixed_file_checks_opened_regularity_symlinks_and_exact_byte_boundary(self):
         raw = self.artifact.content.encode()
         with TemporaryDirectory() as directory:
