@@ -5,6 +5,7 @@ No registry login/pull, CPK orchestration, provider mutation or synthetic health
 """
 from dataclasses import replace
 import json
+from pathlib import Path
 import time
 from types import SimpleNamespace
 from uuid import uuid4
@@ -25,6 +26,23 @@ from health_relay_fixtures import World
 
 
 ATTRIBUTION = b"<p>Served by Control Plane Kit Hello.</p>"
+
+
+def _require_hello_provenance(installed, *, mode):
+    """Source builds follow canonical inputs; the published family stays fixed."""
+    assert mode in ("source-built", "published-digest")
+    if mode == "source-built":
+        upstreams = json.loads((Path(__file__).resolve().parents[3] /
+            "coordinates/server-products.json").read_text())["upstreams"]
+        core_commit = upstreams["control_plane_kit_core_commit"]
+        sdk_commit = upstreams["control_plane_kit_server_sdk_commit"]
+    else:
+        core_commit = "9861e536e79314005499ae07379f627bfb1599a2"
+        sdk_commit = "d4e7c4d91c054f139e2971774ae5e37fc741262d"
+    assert installed == {
+        "control-plane-kit-core": f"https://github.com/OpenJ92/control-plane-kit/archive/{core_commit}.zip",
+        "control-plane-kit-server-sdk": f"https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/{sdk_commit}.zip",
+    }, "Hello installed provenance differs from its artifact mode"
 
 
 def _read(method, origin, path, *, token=None, body=None):
@@ -203,10 +221,7 @@ def exercise_wrapper_artifacts(*, engine, sdk, resources, labels, network_id,
                 "import importlib.metadata as m,json; print(json.dumps({n:json.loads(m.distribution(n).read_text('direct_url.json'))['url'] for n in ('control-plane-kit-core','control-plane-kit-server-sdk')},sort_keys=True))"])
             assert provenance.exit_code == 0
             installed_provenance = json.loads(provenance.output)
-            assert installed_provenance == {
-                "control-plane-kit-core": "https://github.com/OpenJ92/control-plane-kit/archive/9861e536e79314005499ae07379f627bfb1599a2.zip",
-                "control-plane-kit-server-sdk": "https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/d4e7c4d91c054f139e2971774ae5e37fc741262d.zip",
-            }
+            _require_hello_provenance(installed_provenance, mode=mode)
         for container in containers:
             output = container.logs(tail=100)
             assert len(output) <= 1024 * 1024

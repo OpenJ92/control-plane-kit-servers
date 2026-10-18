@@ -50,9 +50,21 @@ effect occurs in this fixture.
 
 #254 permits an explicit expected Hello source revision for the newly published
 family artifact. The actual image label must match, and its actual installed
-Core/SDK archive provenance is checked as for the current source image. Historical
+Core/SDK archive provenance is checked against its fixed publication tuple. Historical
 published A/B calls retain their existing provenance behavior. Bounded observation
 now includes the observed source label, checked runtime UID and installed package
 URLs (or null when that historical check is not selected). Actual RepoDigest,
 image/platform, default startup, public mounts and signed controls remain required;
 the caller also compares the image ID to the independently verified producer.
+
+The #254 accepted dependency adoption exposed a shared-expectation defect before
+published qualification: source-built and published-family paths previously
+required the same historical tuple. `_require_hello_provenance` now selects the
+current canonical build coordinates for source-built mode and fixed Core9861/SDKd4e7
+for the immutable published family. Both retain exact dictionary equality;
+expectations are never inferred from observed container metadata. Existing
+optional historical A/B calls still omit this check as before. The two mode
+regression tests reject cross-use, partial/extra/substituted entries and unknown
+mode. They prove selection/refusal; the original owning Docker gate must still
+prove actual installed provenance, sockets and cleanup. No coupled scenario,
+image/source identity, UID, runtime or authority changes accompany the repair.
