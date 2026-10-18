@@ -48,9 +48,8 @@ esac
 IMAGE="ghcr.io/$OWNER/$PACKAGE/$IMAGE_NAME:$TAG"
 
 if [ "$PRODUCT_ID" = hello-server ]; then
-  [ "$OWNER" = openj92 ] && [ "$PACKAGE" = control-plane-kit-servers ]
   SOURCE_COMMIT="$(git rev-parse HEAD)"
-  [ "$TAG" = "hello-271-$SOURCE_COMMIT" ]
+  IMAGE="$(sh scripts/hello_publication_destination.sh "$OWNER" "$PACKAGE" "$TAG" "$SOURCE_COMMIT")"
   [ -z "$(git status --porcelain)" ]
   sh scripts/check_hello_package.sh before-push "$SOURCE_COMMIT"
 fi

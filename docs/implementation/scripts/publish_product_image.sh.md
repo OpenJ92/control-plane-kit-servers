@@ -4,7 +4,9 @@ Please update alongside [publish_product_image.sh](../../../scripts/publish_prod
 
 The Hello branch accepts only the existing repository
 `ghcr.io/openj92/control-plane-kit-servers/hello-server`, private package13951244,
-and tag `hello-271-<full source commit>`. Dirty source refuses. The guard reads
+and tag `hello-271-<full source commit>`. The pure destination helper requires
+owner and package separately before any provider or Docker call. Dirty source
+refuses. The metadata guard reads
 package identity, repository association, visibility and all version pages before
 build and again immediately before push. An existing source tag refuses rather
 than overwriting or treating an ambiguous earlier attempt as permission to retry.

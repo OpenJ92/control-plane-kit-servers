@@ -9,6 +9,7 @@ import unittest
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "hello_publication_metadata.py"
+DESTINATION = SCRIPT.with_name("hello_publication_destination.sh")
 validate = runpy.run_path(str(SCRIPT))["validate"]
 SOURCE = "a" * 40
 TAG = "hello-271-" + SOURCE
@@ -27,6 +28,27 @@ def version(identity=1, tags=None, digest=None):
 
 
 class HelloPublicationMetadataTests(unittest.TestCase):
+    def test_pure_destination_accepts_only_the_exact_source_bound_hello_target(self):
+        result = subprocess.run(["sh", str(DESTINATION), "openj92", "control-plane-kit-servers", TAG, SOURCE],
+            capture_output=True, text=True, timeout=5, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout,
+            "ghcr.io/openj92/control-plane-kit-servers/hello-server:" + TAG + "\n")
+
+    def test_pure_destination_refuses_owner_package_tag_and_source_overrides(self):
+        valid = ["openj92", "control-plane-kit-servers", TAG, SOURCE]
+        for index, value in ((0, "another-owner"), (0, "OpenJ92"),
+                (1, "another-package"), (1, "control-plane-kit-servers/../elsewhere"),
+                (2, "latest"), (2, TAG + "\n"), (2, "$(unsafe)"),
+                (3, "a" * 7), (3, "a" * 41), (3, "A" * 40), (3, "a" * 39 + "g")):
+            arguments = valid.copy()
+            arguments[index] = value
+            with self.subTest(arguments=arguments):
+                result = subprocess.run(["sh", str(DESTINATION), *arguments],
+                    capture_output=True, text=True, timeout=5, check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+
     def test_unused_tag_requires_the_exact_private_package_and_all_pages(self):
         evidence = validate(package(), [[version(tags=["historical"])], []], SOURCE)
         self.assertEqual(evidence, {"package_id": 13951244,
