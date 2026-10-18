@@ -80,7 +80,7 @@ def events(record=None, *, generation=1, worker="worker-a"):
             ("success-a", 4, "step_succeeded", succeeded))]
 
 
-def replacement_record(node="api"):
+def replacement_record(node="api", *, prior_id="a" * 64, current_id="b" * 64):
     material = DockerImageMaterial("workspace-a")
     document = material.successor if node == "api" else material.documents[node]
     refs = tuple(ConfigurationInstanceRef("allocation-" + str(index), "workspace-a", "docker", node,
@@ -94,7 +94,7 @@ def replacement_record(node="api"):
     context = configuration_invocation_correlation_for_request(request)
     receipt = ConfigurationInstallationReceipt(context.request_fingerprint,
         configuration_invocation_selection_fingerprint(context.selection), ConfigurationInstallationDisposition.REPLACED,
-        _container_incarnation_fingerprint("a" * 64), _container_incarnation_fingerprint("b" * 64))
+        _container_incarnation_fingerprint(prior_id), _container_incarnation_fingerprint(current_id))
     return CompletedRuntimeCall(request, RuntimeEffectResult.succeeded("effect-a",
         evidence={"configuration_installation_receipt": receipt.descriptor()}))
 
@@ -434,7 +434,7 @@ class OwnedAttachmentTests(unittest.TestCase):
         elif invalid == "running":
             inspected.running = False
         self.sdk.inspect_container.return_value = inspected
-        record = replacement_record(node)
+        record = replacement_record(node, prior_id="c" * 64, current_id=container.id)
         record = replace(record, result=replace(record.result,
             evidence={**record.result.evidence, "runtime_id": "docker", "container": container.id}))
         recorder = SimpleNamespace(completed=[])
