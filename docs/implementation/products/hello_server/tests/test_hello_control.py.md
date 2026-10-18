@@ -43,3 +43,14 @@ real signed SDK cases retain healthy, unhealthy, callback-error and independent
 instance/authority laws. Legacy HTTP-only assertions are removed; the second
 instance now explicitly requires typed HEALTHY, not merely HTTP200. SDK owns
 not-serving lifecycle semantics; the product still uses its real host wrapper.
+
+#269 adds target tests for the bounded both-health/readiness-only family. Exact
+artifact/contract roundtrips preserve the selected declaration and default.
+Readiness-only uses the real host and dependency snapshot, producing HEALTHY
+without dependencies and UNHEALTHY for declared but unconfigured dependencies.
+An injected observation clock proves missing/wrong-purpose/wrong-target/prior-
+declaration and undeclared-liveness refusals occur before dependency work.
+Liveness-only and foreign-socket values refuse before bind; existing malformed,
+file, verifier, budget/redaction and default both-health laws remain.
+An independently Core-valid variable/read/command expansion with the required
+verifier family also refuses at Hello's product boundary before bind.

@@ -1,6 +1,8 @@
 """Hello's public, integrity-sensitive configuration and source contract."""
 from __future__ import annotations
 
+from dataclasses import replace
+
 import control_plane_kit_core as core
 from control_plane_kit_core.algebra import BlockSockets, ProviderSocket
 from control_plane_kit_core.capabilities import CapabilityName
@@ -32,8 +34,11 @@ def hello_control_declaration() -> core.WorkloadNodeControlSurfaceDeclaration:
 
 
 def _require_hello_configuration(configuration: ReceiverNodeControlConfiguration) -> ReceiverNodeControlConfiguration:
+    default = hello_control_declaration()
+    readiness_only = replace(default, surface=replace(default.surface,
+        health_reads=(core.NodeHealthReadKind.READINESS,)))
     if (type(configuration) is not ReceiverNodeControlConfiguration
-            or configuration.declaration != hello_control_declaration()):
+            or configuration.declaration not in (default, readiness_only)):
         raise ValueError
     return configuration
 
@@ -74,7 +79,7 @@ def hello_source_runtime_contract(artifact: ConfigurationArtifact) -> ProductRun
                 or artifact.target_path != CONTROL_PATH or artifact.media_type is not ConfigurationMediaType.JSON
                 or artifact.file_mode is not ConfigurationFileMode.READ_ONLY):
             raise ValueError
-        decode_hello_control_configuration(artifact.content.encode("utf-8"))
+        configuration = decode_hello_control_configuration(artifact.content.encode("utf-8"))
         return ProductRuntimeContract(
             sockets=BlockSockets(providers=(ProviderSocket("internal", Protocol.HTTP),)),
             provider_ports=(ProviderRuntimePort("internal", 8000),),
@@ -84,7 +89,7 @@ def hello_source_runtime_contract(artifact: ConfigurationArtifact) -> ProductRun
                                 PublicStaticEnvironmentBinding("HELLO_COLOR", "blue"),
                                 PublicStaticEnvironmentBinding("HELLO_DEPENDENCIES_JSON", "[]")),
             capabilities=(CapabilityName.HEALTH_CHECKABLE, CapabilityName.NODE_CONTROLLABLE),
-            control_surfaces=(hello_control_declaration().surface,),
+            control_surfaces=(configuration.declaration.surface,),
             verification=VerificationContract(),
         )
     except Exception:

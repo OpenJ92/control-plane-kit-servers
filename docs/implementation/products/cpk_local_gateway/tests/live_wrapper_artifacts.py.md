@@ -37,3 +37,13 @@ The bounded result now includes the validated input image references and current
 daemon ID alongside actual image IDs/platforms. Published qualification evidence
 must compare these IDs with the publication records and the workflow preload
 engine ID. These fields add provenance, not a new health or image-admission rule.
+
+#269 takes an explicit selected Hello health tuple, defaulting to both health
+kinds for unchanged historical A/B calls. Every selected kind is actually read;
+readiness-only additionally requires undeclared liveness and prior-declaration
+credential refusal. Gateway both-health and signed readiness-transit assertions
+remain. Each result includes the selected Hello declaration kinds and installed
+configuration digest alongside actual image identity. Current source Hello
+also verifies its actual installed SDK/Core archive provenance; historical
+published images retain their original provenance meaning. No pull or producer
+effect occurs in this fixture.

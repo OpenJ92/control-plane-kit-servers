@@ -5,7 +5,9 @@ closed workload-node-control-configuration.v2 codec. Installed identity contains
 workspace, runtime, node, socket and receiver ID; caller authored/projection
 context belongs to requests. There is no product configuration DTO, old-profile
 fallback, private wire parser or issuer inferred from a request. Product policy
-still requires exactly hello_control_declaration(). Core validates the full
+accepts exactly hello_control_declaration() or its readiness-only counterpart,
+with V2/internal/no variables unchanged and readiness always declared. The
+default factory remains both-health. Core validates the full
 configuration, required purpose-indexed verifier families and bounded public keys.
 
 Decode, artifact and startup failures retain the existing fixed, detached product
@@ -24,6 +26,12 @@ the declared SDK liveness/readiness surface remains the health obligation.
 Historical published descriptors and images are unchanged. CPK's three variants
 retain their existing complete database requirements and process settings; Hello
 keeps dependency defaults/readiness; router and multiplexer declare liveness only.
+
+#269 derives control_surfaces from the validated artifact's selected declaration,
+not the default factory. Thus artifact, contract, capabilities and credential
+declaration identity stay aligned for both supported values. The host and actual
+dependency-readiness callback are unchanged. No generic policy framework or
+SDK protocol is added.
 
 Reviewed target tests retain malformed/duplicate/foreign-scope and detached-error
 laws, opened-file bounds/refusals, full source-contract comparisons and pure import.
