@@ -1,6 +1,8 @@
 Source: [select_repository_digest.sh](../../../scripts/select_repository_digest.sh).
 
-Pure metadata helper used only by the counter producer. It reads RepoDigest
+Please update alongside its source file.
+
+Pure metadata helper used by the Hello producer. It reads RepoDigest
 lines from stdin and selects exactly one canonical lowercase SHA256 entry for
 the explicit requested repository. Separate mandatory prefix/length checks fail
 closed under set-e. There is no Docker, network, registry, credential or cleanup
