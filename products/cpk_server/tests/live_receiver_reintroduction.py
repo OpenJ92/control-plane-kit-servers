@@ -266,7 +266,8 @@ async def scenario(host, transport, material, processes, compute, ingress, healt
     await apply(client, transport, teardown_plan)
     assert not compute.installed and not compute.runtimes and not ingress.allocations
     assert not processes.children and not processes.paths
-    assert all(not path.exists() for path in processes.owned_files)
+    assert not processes.owned_files and processes.retired_files
+    assert all(not path.exists() for path in processes.retired_files)
     for result, expected in ((initial, initial_history), (removal, removal_history), (fresh, fresh_history)):
         assert await history(transport, result) == expected
     print(json.dumps({"receiver_reintroduction": "passed", "same_product": True,

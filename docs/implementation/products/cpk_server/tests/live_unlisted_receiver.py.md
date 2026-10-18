@@ -14,6 +14,11 @@ child, unlink exact files, remove the empty directory, then clear only that
 incarnation's bookkeeping. Unknown files or incomplete retirement refuse and
 retain state that blocks a new installation; no success is published. The
 existing compute boundary preserves uncertainty once removal was entered.
+Each successful unlink immediately releases that path from active cleanup
+ownership, even if a later retirement step fails. Retired paths form a separate
+observation history and never authorize later cleanup: a foreign replacement at
+the same path is preserved. This resolves Kepler's exact-source ownership HOLD
+on checkpoint `738bdab`; both full and partial retirement have regression cases.
 Final close refuses symlinked parent paths and retains the existing owned-file
 absence audit. The focused regression's causal red and terminal implementation
 evidence are recorded on PR #275; source description alone is not acceptance.

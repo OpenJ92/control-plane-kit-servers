@@ -136,6 +136,7 @@ class ReceiverProcesses:
         self.starts, self.stops, self.tokens = [], [], {}
         self.application_paths, self.identities = {}, {}
         self.owned_files, self.replacement_started = set(), set()
+        self.retired_files = set()  # Observation history, never cleanup authority.
         self.scope, self.generation = uuid4().hex, 0
         self.port_calls = []
 
@@ -242,6 +243,8 @@ class ReceiverProcesses:
         self.replacement_started.add(name)
         self.stop(name)
         os.replace(staged, app_path)
+        self.owned_files.remove(staged)
+        self.retired_files.add(staged)
         self.launch(name)
         assert app_path.read_bytes() == raw and wrapper_path.read_bytes() == wrapper_bytes
         return prior, self.identities[name]
@@ -277,6 +280,10 @@ class ReceiverProcesses:
         self.stop(name)
         for path in expected:
             path.unlink()
+            # The deleted incarnation no longer grants cleanup authority at
+            # this pathname, even when a later step of retirement fails.
+            self.owned_files.remove(path)
+            self.retired_files.add(path)
         assert all(not path.exists() for path in expected)
         directory.rmdir()
         assert not directory.exists()
@@ -302,11 +309,14 @@ class ReceiverProcesses:
                 self.stop(name)
             except Exception as error:
                 failures.append(type(error).__name__)
-        for path in self.owned_files:
+        cleanup_paths = tuple(self.owned_files)
+        for path in cleanup_paths:
             assert not self.root.is_symlink() and not path.parent.is_symlink()
             path.unlink(missing_ok=True)
+            self.owned_files.remove(path)
+            self.retired_files.add(path)
         assert not failures and not self.children, "owned receiver process cleanup incomplete"
-        assert all(not path.exists() for path in self.owned_files)
+        assert not self.owned_files and all(not path.exists() for path in cleanup_paths)
         print("unlisted receiver process/file absence verified", flush=True)
 
 

@@ -135,8 +135,34 @@ class ReceiverProcessRetirementTests(unittest.TestCase):
             self.assertIn(NAME, compute.installed)
             with self.assertRaises(AssertionError):
                 port.install(NAME, selected.products[0])
+            # Successful file deletion released ownership even though directory
+            # retirement failed; a later occupant is not fixture cleanup input.
+            replacement = port.paths[NAME]
+            replacement.write_bytes(b"foreign replacement")
             port.close()
             self.assertEqual(foreign.read_bytes(), b"preserve")
+            self.assertEqual(replacement.read_bytes(), b"foreign replacement")
+
+    def test_close_preserves_foreign_file_at_successfully_retired_path(self):
+        from live_unlisted_receiver import ProcessCompute
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            port = recorded_processes(root)
+            compute = ProcessCompute(port)
+            selected = request(StartNode)
+            self.assertEqual(compute.execute_with_authority(selected,
+                SimpleNamespace(authority_ref=None)).kind, EffectResultKind.SUCCEEDED)
+            old_path = port.paths[NAME]
+            removed = compute.execute_with_authority(replace(selected,
+                operation=RemoveNodeResource(NodeTarget(NAME)), kind=RuntimeEffectKind.REALIZE_ACTIVITY,
+                configuration_instances=None, products=()), SimpleNamespace(authority_ref=None))
+            self.assertEqual(removed.kind, EffectResultKind.SUCCEEDED)
+            self.assertFalse(old_path.exists())
+            old_path.parent.mkdir()
+            old_path.write_bytes(b"foreign incarnation")
+            port.close()
+            port.close()
+            self.assertEqual(old_path.read_bytes(), b"foreign incarnation")
 
     def test_symlinked_installed_file_refuses_before_touching_foreign_target(self):
         from live_unlisted_receiver import ProcessCompute

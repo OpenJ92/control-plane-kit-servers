@@ -28,3 +28,10 @@ installed file before touching its target, and simulate a file appearing during
 child stop: partial retirement stays uncertain, retains incarnation bookkeeping
 and blocks reinstallation. They exercise only the process/file boundary, not
 Operations state-machine behavior or recovery.
+
+Kepler found that retaining deleted paths as cleanup authority could delete a
+later foreign incarnation. Successful and partial retirement cases now create
+a foreign file at a deleted path and require repeated/final close to preserve
+it. Active ownership is released per successful unlink; retired-path evidence
+is separate and cannot grant destructive authority. These are focused ownership
+regressions, not additional control-plane state-machine tests.
