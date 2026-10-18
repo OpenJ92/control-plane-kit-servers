@@ -39,18 +39,16 @@ explicit published-digest mode adds both reviewed Hello versions and requires th
 actual image IDs to differ. No input image is pulled or removed by this routine.
 Artifact assertions do not change Secrets/CPK bootstrap evidence or its cleanup laws.
 
-#264 also calls the counter artifact routine with this same engine, SDK, internal
-network and resources ledger. Two public volumes and two workload containers
-exercise one source-built image under two declarations. Existing tracked SDK
-helpers and outer exact-absence cleanup remain authoritative. The new workload
-receives no private credentials/socket; this adds no topology orchestration or
-publication claim and leaves all existing wrapper/Secrets checks intact.
-
 #269 runs the maintained Hello/gateway source pair twice, once per supported
 Hello declaration. The results must report the exact same input Hello image ID
 and two distinct installed configuration digests. Each pass retains gateway
 health/transit, real signed selected-kind and negative reads, process identity,
 mount/provenance and exact container retirement. The outer ledger still owns
 final volume/helper cleanup and absence checks. Historical published A/B calls
-retain their both-health default. Counter OCI removal is a later dependent
-change, not part of this Hello foundation.
+retain their both-health default.
+
+#272 removes only the added counter OCI routine import/call and its source
+image input. The mandatory dual-Hello loop, SDK tracking, gateway/controller
+checks and exact outer cleanup remain unchanged. Original generic counter and
+palette process examples remain in the CPK smoke. Source removal does not
+resolve the separate registry containment incident or prove #254 acceptance.

@@ -71,9 +71,10 @@ recorded publisher build IDs and correlate controller/preload daemon IDs. A fail
 pull, access check, platform/digest check or ambiguous result stops the run; no
 visibility change, credential expansion or automatic retry is authorized.
 
-#264 adds one explicit Linux/amd64 counter example source build to the existing
-numeric-bootstrap block. Its run-labelled image ID enters the same controller;
-the exact image tag joins the existing record cleanup after its ID/owner checks.
-The counter routine uses the existing network/volume/container/helper ledger.
-Normal and optional published-wrapper modes both run this source check; no
-counter pull, publication or production catalogue coordinate is introduced.
+#272 removes the added #264 counter OCI build, tag, image ID, controller input
+and matching cleanup record. The required Hello/gateway source builds and
+#269's two declarations on the same Hello image remain in the ordinary gate.
+Their exact identity/owner checks, SDK helper ledger and final residue checks
+are unchanged. Original generic SDK process examples remain covered by the
+existing CPK smoke. This source cleanup neither removes a published image nor
+proves the coupled #254 update; publisher retirement belongs to #271.
