@@ -47,3 +47,12 @@ configuration digest alongside actual image identity. Current source Hello
 also verifies its actual installed SDK/Core archive provenance; historical
 published images retain their original provenance meaning. No pull or producer
 effect occurs in this fixture.
+
+#254 permits an explicit expected Hello source revision for the newly published
+family artifact. The actual image label must match, and its actual installed
+Core/SDK archive provenance is checked as for the current source image. Historical
+published A/B calls retain their existing provenance behavior. Bounded observation
+now includes the observed source label, checked runtime UID and installed package
+URLs (or null when that historical check is not selected). Actual RepoDigest,
+image/platform, default startup, public mounts and signed controls remain required;
+the caller also compares the image ID to the independently verified producer.

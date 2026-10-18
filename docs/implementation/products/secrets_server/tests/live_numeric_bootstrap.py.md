@@ -52,3 +52,15 @@ image input. The mandatory dual-Hello loop, SDK tracking, gateway/controller
 checks and exact outer cleanup remain unchanged. Original generic counter and
 palette process examples remain in the CPK smoke. Source removal does not
 resolve the separate registry containment incident or prove #254 acceptance.
+
+#254 additionally requires the genuine `hello_family` digest from the fixed image
+manifest, using its independently reviewed publication/image/source coordinates.
+The normal workflow preloads it; this controller never pulls or rebuilds it.
+Both declarations execute against that same actual image and the fixed published
+gateway, with two different mounted configuration digests. Exact image IDs/users,
+RepoDigests/platform/source label, actual runtime UID and installed Core/SDK
+provenance are checked. Existing signed reads, stale/undeclared denial, mounts,
+logs and cleanup remain mandatory. This phase precedes the public Docker scenario
+and cannot silently skip a missing artifact. Source dual-Hello and optional
+historical A/B checks keep their original meanings. It qualifies the artifact;
+it does not yet prove the coupled declaration transition.
