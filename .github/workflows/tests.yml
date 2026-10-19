@@ -8,6 +8,10 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      postgres_recovery_diagnostic:
+        description: Run only the bounded issue 187 recovery diagnostic
+        type: boolean
+        default: false
       wrapper_artifact_mode:
         description: Source artifacts or additionally qualify the reviewed private digest tuple
         type: choice
@@ -33,6 +37,7 @@ concurrency:
 
 jobs:
   docker-tests:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.postgres_recovery_diagnostic }}
     name: control-plane-kit-servers
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -85,3 +90,35 @@ jobs:
           done
       - name: Run Docker-first tests
         run: ./test.sh
+
+  postgres-recovery-diagnostic:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.postgres_recovery_diagnostic }}
+    name: issue-187-postgres-recovery-diagnostic
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout temporary diagnostic packaging
+        uses: actions/checkout@v4
+        with:
+          path: diagnostic
+      - name: Checkout exact reviewed product and witness source
+        uses: actions/checkout@v4
+        with:
+          ref: 282aba5ff1266aa59d9a5882619036c94e5022c5
+          path: source
+      - name: Run bounded recovery diagnostic
+        env:
+          EXPECTED_HEAD: 282aba5ff1266aa59d9a5882619036c94e5022c5
+          SOURCE_ROOT: ${{ github.workspace }}/source
+        run: diagnostic/scripts/postgres_recovery_diagnostic.sh
+      - name: Retain bounded structured summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue-187-postgres-recovery-${{ github.run_id }}
+          path: ${{ runner.temp }}/cpk-postgres-recovery-summary.jsonl
+          if-no-files-found: error
+          retention-days: 7
