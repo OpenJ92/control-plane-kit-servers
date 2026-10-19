@@ -53,7 +53,6 @@ class PostgresControlContractTests(unittest.TestCase):
             {
                 "POSTGRES_DB": "cpk",
                 "POSTGRES_USER": "cpk",
-                "POSTGRES_PASSWORD_FILE": config.PASSWORD_PATH,
             },
         )
         (delivery,) = contract.secret_deliveries

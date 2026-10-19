@@ -91,7 +91,6 @@ def postgres_source_runtime_contract(artifact: ConfigurationArtifact) -> Product
                 PublicStaticEnvironmentBinding(WORKLOAD_NODE_CONTROL_CONFIGURATION_ENVIRONMENT, CONTROL_PATH),
                 PublicStaticEnvironmentBinding("POSTGRES_DB", "cpk"),
                 PublicStaticEnvironmentBinding("POSTGRES_USER", "cpk"),
-                PublicStaticEnvironmentBinding("POSTGRES_PASSWORD_FILE", PASSWORD_PATH),
                 PublicStaticEnvironmentBinding("PGDATA", PGDATA),
             ),
             secret_deliveries=(SecretFileDelivery(PASSWORD_PATH,

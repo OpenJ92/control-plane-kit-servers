@@ -1,0 +1,197 @@
+"""Non-root PID1 coordinator for PostgreSQL and its protected management host."""
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import signal
+import stat
+import subprocess
+import sys
+from threading import Event, Lock, Thread
+import time
+from typing import Callable
+
+from .configuration import PGDATA, PASSWORD_PATH, PostgresConfigurationError, read_postgres_control_configuration
+from .readiness import PasswordFileError, ProductState, ReadinessController, read_password
+from .server import create_management_server
+
+STOP_SECONDS = 8.0
+FINAL_REAP_SECONDS = 1.0
+START_SECONDS = 3.0
+ENTRYPOINT = "/usr/local/bin/docker-entrypoint.sh"
+
+
+class PostgresProcessError(RuntimeError):
+    """Bounded process startup/lifecycle failure."""
+
+
+def _owner_uid(status: os.stat_result) -> int:
+    return status.st_uid
+
+
+def validate_pgdata(path: str | Path = PGDATA, *, expected_uid: int = 70) -> None:
+    try:
+        status = os.lstat(path)
+        if not stat.S_ISDIR(status.st_mode) or _owner_uid(status) != expected_uid:
+            raise ValueError
+    except (OSError, ValueError):
+        raise PostgresProcessError("PostgreSQL data directory is invalid") from None
+
+
+def _spawn_native(argv: tuple[str, ...], **kwargs):
+    return subprocess.Popen(argv, **kwargs)
+
+
+class PostgresCoordinator:
+    def __init__(self, host, readiness: ReadinessController, *, spawn: Callable = _spawn_native):
+        self.host = host
+        self.readiness = readiness
+        self._spawn = spawn
+        self._native = None
+        self._serve_thread = None
+        self._serve_failed = Event()
+        self._stop_requested = Event()
+        self._stop_lock = Lock()
+        self._stopped = False
+        self._management_live = False
+
+    def start_native(self) -> None:
+        if self._native is not None:
+            raise PostgresProcessError("PostgreSQL native child already started")
+        self._native = self._spawn((ENTRYPOINT, "postgres"), start_new_session=True)
+
+    def start_management(self) -> None:
+        if self._native is None:
+            raise PostgresProcessError("PostgreSQL native child is not started")
+
+        def serve() -> None:
+            try:
+                self.host.serve_forever(poll_interval=0.05)
+            except BaseException:
+                self._serve_failed.set()
+
+        thread = Thread(target=serve, name="cpk-postgres-management", daemon=True)
+        self._serve_thread = thread
+        thread.start()
+        deadline = time.monotonic() + START_SECONDS
+        while not self.host.cpk_is_serving:
+            if self._serve_failed.is_set() or not thread.is_alive() or time.monotonic() >= deadline:
+                raise PostgresProcessError("PostgreSQL management host failed to start")
+            time.sleep(0.005)
+        self._management_live = True
+        self.readiness.set_state(ProductState.RUNNING)
+
+    def request_stop(self) -> None:
+        self._stop_requested.set()
+        if self.readiness.state is not ProductState.EXITED:
+            self.readiness.set_state(ProductState.STOPPING)
+
+    def wait(self, *, poll_seconds: float = 0.05) -> int:
+        if self._native is None:
+            return 1
+        while True:
+            returncode = self._native.poll()
+            if returncode is not None:
+                self.readiness.set_state(ProductState.EXITED)
+                self._close_management(time.monotonic() + STOP_SECONDS)
+                return 1
+            if self._serve_failed.is_set() or self.readiness.state is ProductState.FATAL:
+                return self.stop(failure=True)
+            if self._stop_requested.wait(poll_seconds):
+                return self.stop()
+
+    def stop(self, *, failure: bool = False) -> int:
+        with self._stop_lock:
+            if self._stopped:
+                return 1 if failure else 0
+            self._stopped = True
+        self.request_stop()
+        deadline = time.monotonic() + STOP_SECONDS
+        clean_probe = self.readiness.stop_active()
+        clean_management = self._close_management(deadline)
+        clean_native = self._stop_native(deadline)
+        self.readiness.set_state(ProductState.EXITED)
+        return 0 if not failure and clean_probe and clean_management and clean_native else 1
+
+    def _close_management(self, deadline: float) -> bool:
+        result = True
+        if self._management_live and getattr(self.host, "cpk_is_serving", False):
+            completed = Event()
+
+            def shutdown() -> None:
+                try:
+                    self.host.shutdown()
+                except BaseException:
+                    nonlocal result
+                    result = False
+                finally:
+                    completed.set()
+
+            worker = Thread(target=shutdown, name="cpk-postgres-management-stop", daemon=True)
+            worker.start()
+            completed.wait(max(0.0, deadline - time.monotonic()))
+            if not completed.is_set():
+                result = False
+        try:
+            self.host.server_close()
+        except BaseException:
+            result = False
+        thread = self._serve_thread
+        if thread is not None:
+            thread.join(max(0.0, deadline - time.monotonic()))
+            if thread.is_alive():
+                result = False
+        self._management_live = False
+        return result
+
+    def _stop_native(self, deadline: float) -> bool:
+        child = self._native
+        if child is None or child.poll() is not None:
+            return True
+        try:
+            os.killpg(child.pid, signal.SIGINT)
+            child.wait(timeout=max(0.0, deadline - time.monotonic()))
+            return True
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(child.pid, signal.SIGKILL)
+                child.wait(timeout=FINAL_REAP_SECONDS)
+                return False
+            except BaseException:
+                return False
+        except BaseException:
+            return False
+
+
+def main() -> int:
+    coordinator = None
+    try:
+        if os.getuid() != 70 or os.getgid() != 70:
+            raise PostgresProcessError("PostgreSQL wrapper requires uid and gid 70")
+        validate_pgdata()
+        password_path = os.environ.get("POSTGRES_PASSWORD_FILE", PASSWORD_PATH)
+        if password_path != PASSWORD_PATH:
+            raise PostgresProcessError("PostgreSQL password path is invalid")
+        password = read_password(password_path)
+        configuration = read_postgres_control_configuration()
+        readiness = ReadinessController(password=password)
+        host = create_management_server(configuration, readiness)
+        coordinator = PostgresCoordinator(host, readiness)
+
+        def stop_signal(signum, frame) -> None:  # noqa: ANN001
+            coordinator.request_stop()
+
+        signal.signal(signal.SIGINT, stop_signal)
+        signal.signal(signal.SIGTERM, stop_signal)
+        coordinator.start_native()
+        coordinator.start_management()
+        return coordinator.wait()
+    except (PostgresConfigurationError, PasswordFileError, PostgresProcessError, OSError):
+        if coordinator is not None:
+            coordinator.stop(failure=True)
+        print("postgres-server startup or lifecycle failure", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
