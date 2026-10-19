@@ -137,12 +137,12 @@ class ReadinessController:
                 self._active = None
             self._slot.release()
 
-    def stop_active(self) -> bool:
+    def stop_active(self, *, deadline: float | None = None) -> bool:
         with self._lock:
             process = self._active
         if process is None or process.poll() is not None:
             return True
-        return self._terminate(process)
+        return self._terminate(process, deadline=deadline)
 
     def _observe(self, process) -> NodeHealthReadOutcome:
         output = bytearray()
@@ -181,15 +181,20 @@ class ReadinessController:
         finally:
             selector.close()
 
-    def _terminate(self, process) -> bool:
+    def _terminate(self, process, *, deadline: float | None = None) -> bool:
+        def timeout() -> float:
+            if deadline is None:
+                return REAP_SECONDS
+            return min(REAP_SECONDS, max(0.0, deadline - time.monotonic()))
+
         try:
             os.killpg(process.pid, signal.SIGTERM)
-            process.wait(timeout=REAP_SECONDS)
+            process.wait(timeout=timeout())
             return True
         except subprocess.TimeoutExpired:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
-                process.wait(timeout=REAP_SECONDS)
+                process.wait(timeout=timeout())
                 return True
             except Exception:
                 self.set_state(ProductState.FATAL)

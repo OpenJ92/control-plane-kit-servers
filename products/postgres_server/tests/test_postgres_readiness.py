@@ -129,7 +129,7 @@ class ReadinessProbeTests(unittest.TestCase):
             self.assertFalse(inspection.is_alive())
             self.assertEqual(stopped, [True])
             self.assertEqual(result, [core.NodeHealthReadOutcome.UNHEALTHY])
-            stop_probe.assert_called_once_with(process)
+            stop_probe.assert_called_once_with(process, deadline=None)
 
 
 if __name__ == "__main__":

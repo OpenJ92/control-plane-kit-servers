@@ -67,7 +67,7 @@ class PostgresCoordinator:
         def serve() -> None:
             try:
                 self.host.serve_forever(poll_interval=0.05)
-            except BaseException:
+            finally:
                 self._serve_failed.set()
 
         thread = Thread(target=serve, name="cpk-postgres-management", daemon=True)
@@ -83,8 +83,6 @@ class PostgresCoordinator:
 
     def request_stop(self) -> None:
         self._stop_requested.set()
-        if self.readiness.state is not ProductState.EXITED:
-            self.readiness.set_state(ProductState.STOPPING)
 
     def wait(self, *, poll_seconds: float = 0.05) -> int:
         if self._native is None:
@@ -92,10 +90,11 @@ class PostgresCoordinator:
         while True:
             returncode = self._native.poll()
             if returncode is not None:
+                deadline = time.monotonic() + STOP_SECONDS
                 self.readiness.set_state(ProductState.STOPPING)
-                self.readiness.stop_active()
+                self.readiness.stop_active(deadline=deadline)
+                self._close_management(deadline)
                 self.readiness.set_state(ProductState.EXITED)
-                self._close_management(time.monotonic() + STOP_SECONDS)
                 return 1
             if self._serve_failed.is_set() or self.readiness.state is ProductState.FATAL:
                 return self.stop(failure=True)
@@ -107,9 +106,10 @@ class PostgresCoordinator:
             if self._stopped:
                 return 1 if failure else 0
             self._stopped = True
-        self.request_stop()
         deadline = time.monotonic() + STOP_SECONDS
-        clean_probe = self.readiness.stop_active()
+        self.request_stop()
+        self.readiness.set_state(ProductState.STOPPING)
+        clean_probe = self.readiness.stop_active(deadline=deadline)
         clean_management = self._close_management(deadline)
         clean_native = self._stop_native(deadline)
         self.readiness.set_state(ProductState.EXITED)

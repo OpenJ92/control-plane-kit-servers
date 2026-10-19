@@ -166,9 +166,63 @@ class CoordinatorTests(unittest.TestCase):
             self.host(), controller, spawn=Mock(return_value=native)
         )
         coordinator.start_native()
-        with patch.object(controller, "_terminate", return_value=True) as terminate:
+        with patch.object(process.time, "monotonic", return_value=10.0), \
+                patch.object(controller, "_terminate", return_value=True) as terminate:
             self.assertEqual(coordinator.wait(poll_seconds=0), 1)
-        terminate.assert_called_once_with(probe)
+        terminate.assert_called_once_with(probe, deadline=18.0)
+        self.assertEqual(controller.state, ProductState.EXITED)
+
+    def test_normal_management_return_is_failure_and_stops_native(self):
+        child = self.native()
+        host = self.host()
+        coordinator = process.PostgresCoordinator(
+            host, ReadinessController(password=b"secret"), spawn=Mock(return_value=child)
+        )
+        coordinator.start_native()
+        coordinator.start_management()
+        coordinator._serve_thread.join(2)
+        self.assertFalse(coordinator._serve_thread.is_alive())
+
+        with patch.object(process.os, "killpg") as kill:
+            self.assertEqual(coordinator.wait(poll_seconds=0), 1)
+
+        kill.assert_called_once_with(child.pid, process.signal.SIGINT)
+        self.assertEqual(coordinator.readiness.state, ProductState.EXITED)
+
+    def test_stop_request_is_flag_only_while_readiness_spawn_lock_is_held(self):
+        controller = ReadinessController(password=b"secret")
+        controller.set_state(ProductState.RUNNING)
+        coordinator = process.PostgresCoordinator(self.host(), controller)
+        returned = Event()
+        controller._lock.acquire()
+        try:
+            requester = Thread(target=lambda: (coordinator.request_stop(), returned.set()))
+            requester.start()
+            self.assertTrue(returned.wait(0.2), "signal callback waited on readiness state")
+            self.assertTrue(coordinator._stop_requested.is_set())
+        finally:
+            controller._lock.release()
+            requester.join(2)
+        self.assertEqual(controller.state, ProductState.RUNNING)
+
+    def test_stop_uses_one_deadline_for_probe_management_and_native(self):
+        child = self.native()
+        controller = ReadinessController(password=b"secret")
+        controller.set_state(ProductState.RUNNING)
+        coordinator = process.PostgresCoordinator(
+            self.host(), controller, spawn=Mock(return_value=child)
+        )
+        coordinator.start_native()
+
+        with patch.object(process.time, "monotonic", return_value=10.0), \
+                patch.object(controller, "stop_active", return_value=True) as stop_probe, \
+                patch.object(coordinator, "_close_management", return_value=True) as close, \
+                patch.object(coordinator, "_stop_native", return_value=True) as stop_native:
+            self.assertEqual(coordinator.stop(), 0)
+
+        stop_probe.assert_called_once_with(deadline=18.0)
+        close.assert_called_once_with(18.0)
+        stop_native.assert_called_once_with(18.0)
         self.assertEqual(controller.state, ProductState.EXITED)
 
 
