@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from threading import Event, Thread
 import unittest
 from unittest.mock import Mock, patch
 
@@ -80,6 +81,55 @@ class ReadinessProbeTests(unittest.TestCase):
             with self.subTest(state=state):
                 self.assertIs(controller.inspect(), core.NodeHealthReadOutcome.UNHEALTHY)
                 controller._spawn.assert_not_called()
+
+    def test_stop_during_spawn_publishes_then_terminates_and_reaps_probe(self):
+        spawn_entered = Event()
+        release_spawn = Event()
+        terminated = Event()
+        process = Mock()
+        process.poll.return_value = None
+
+        def spawn(invocation):
+            spawn_entered.set()
+            self.assertTrue(release_spawn.wait(2))
+            return process
+
+        controller = readiness.ReadinessController(password=b"secret", spawn=spawn)
+        controller.set_state(readiness.ProductState.RUNNING)
+
+        def observe(active):
+            self.assertIs(active, process)
+            self.assertTrue(terminated.wait(2))
+            return core.NodeHealthReadOutcome.UNKNOWN
+
+        def terminate(active):
+            self.assertIs(active, process)
+            terminated.set()
+            return True
+
+        result = []
+        inspection = Thread(target=lambda: result.append(controller.inspect()))
+        with patch.object(controller, "_observe", side_effect=observe), \
+                patch.object(controller, "_terminate", side_effect=terminate) as stop_probe:
+            inspection.start()
+            self.assertTrue(spawn_entered.wait(2))
+            stopped = []
+
+            def stop():
+                controller.set_state(readiness.ProductState.STOPPING)
+                stopped.append(controller.stop_active())
+
+            stopping = Thread(target=stop)
+            stopping.start()
+            self.assertTrue(stopping.is_alive(), "stop crossed an unpublished probe spawn")
+            release_spawn.set()
+            stopping.join(2)
+            inspection.join(2)
+            self.assertFalse(stopping.is_alive())
+            self.assertFalse(inspection.is_alive())
+            self.assertEqual(stopped, [True])
+            self.assertEqual(result, [core.NodeHealthReadOutcome.UNHEALTHY])
+            stop_probe.assert_called_once_with(process)
 
 
 if __name__ == "__main__":

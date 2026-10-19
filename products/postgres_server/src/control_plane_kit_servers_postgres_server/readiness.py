@@ -118,10 +118,10 @@ class ReadinessController:
         if not self._slot.acquire(blocking=False):
             return NodeHealthReadOutcome.UNKNOWN
         try:
-            if self.state is not ProductState.RUNNING:
-                return NodeHealthReadOutcome.UNHEALTHY
-            process = self._spawn(psql_invocation(self._password))
             with self._lock:
+                if self._state is not ProductState.RUNNING:
+                    return NodeHealthReadOutcome.UNHEALTHY
+                process = self._spawn(psql_invocation(self._password))
                 self._active = process
             outcome = self._observe(process)
             after = self.state

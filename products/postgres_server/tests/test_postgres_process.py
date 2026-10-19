@@ -1,13 +1,18 @@
+from dataclasses import replace
+from http.client import HTTPConnection
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from threading import Event
+from threading import Event, Thread
+import time
 import unittest
 from unittest.mock import Mock, patch
 
+import control_plane_kit_core as core
 from control_plane_kit_server_sdk.stdlib import CpkThreadingHTTPServer
 from control_plane_kit_servers_postgres_server import process, server
 from control_plane_kit_servers_postgres_server.readiness import ProductState, ReadinessController
-from postgres_control_fixtures import fixture, readiness_only
+from postgres_control_fixtures import fixture, health_token, readiness_only
 
 
 class PgdataAdmissionTests(unittest.TestCase):
@@ -47,6 +52,48 @@ class ManagementServerTests(unittest.TestCase):
             self.assertEqual(host.server_address[0], "127.0.0.1")
         finally:
             host.server_close()
+
+    def test_authentication_denial_precedes_readiness_callback(self):
+        value = fixture()
+        value.config = readiness_only(value.config)
+        controller = Mock()
+        controller.inspect.return_value = core.NodeHealthReadOutcome.HEALTHY
+        host = server.create_management_server(
+            value.config, controller, address=("127.0.0.1", 0), clock=lambda: 150,
+        )
+        host.daemon_threads = False
+        thread = Thread(target=host.serve_forever, kwargs={"poll_interval": 0.01})
+        thread.start()
+
+        def request(token):
+            connection = HTTPConnection(*host.server_address, timeout=2)
+            try:
+                connection.request("GET", "/__control/health/readiness",
+                    headers={"Authorization": "Bearer " + token})
+                response = connection.getresponse()
+                return response.status, response.read(65537)
+            finally:
+                connection.close()
+
+        try:
+            deadline = time.monotonic() + 2
+            while not host.cpk_is_serving:
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(0.001)
+            wrong = replace(value.config.target, receiver_id="f" * 32)
+            for denied in ("invalid", health_token(value, issued_at=100,
+                    request_changes={"target": wrong})[1]):
+                self.assertNotEqual(request(denied)[0], 200)
+            controller.inspect.assert_not_called()
+            status, body = request(health_token(value, issued_at=100)[1])
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body)["outcome"], "healthy")
+            controller.inspect.assert_called_once_with()
+        finally:
+            host.shutdown()
+            host.server_close()
+            thread.join(2)
+            self.assertFalse(thread.is_alive())
 
     def test_bind_failure_closes_listener_without_spawning_native(self):
         controller = ReadinessController(password=b"secret")
@@ -107,6 +154,22 @@ class CoordinatorTests(unittest.TestCase):
         self.assertEqual(coordinator.wait(poll_seconds=0), 1)
         self.assertEqual(spawned.call_count, 1)
         self.assertEqual(coordinator.readiness.state, ProductState.EXITED)
+
+    def test_unexpected_native_exit_terminates_active_probe(self):
+        native = self.native(returncode=7)
+        probe = Mock()
+        probe.poll.return_value = None
+        controller = ReadinessController(password=b"secret")
+        controller.set_state(ProductState.RUNNING)
+        controller._active = probe
+        coordinator = process.PostgresCoordinator(
+            self.host(), controller, spawn=Mock(return_value=native)
+        )
+        coordinator.start_native()
+        with patch.object(controller, "_terminate", return_value=True) as terminate:
+            self.assertEqual(coordinator.wait(poll_seconds=0), 1)
+        terminate.assert_called_once_with(probe)
+        self.assertEqual(controller.state, ProductState.EXITED)
 
 
 class ImageDefinitionTests(unittest.TestCase):

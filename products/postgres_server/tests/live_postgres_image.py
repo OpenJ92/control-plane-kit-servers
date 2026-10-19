@@ -1,13 +1,16 @@
 """One-shot source-image witness; invoked only by the repository Docker gate."""
 from __future__ import annotations
 
+from dataclasses import replace
+from http.client import HTTPConnection
+import json
 import os
 from pathlib import Path
 import time
 
 import docker
 
-from postgres_control_fixtures import fixture, readiness_only
+from postgres_control_fixtures import fixture, health_token, readiness_only
 from control_plane_kit_servers_postgres_server.configuration import postgres_control_configuration_artifact
 
 
@@ -23,8 +26,10 @@ def require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
-def prepare_files() -> None:
-    artifact = postgres_control_configuration_artifact(readiness_only(fixture().config))
+def prepare_files():
+    value = fixture()
+    value.config = readiness_only(value.config)
+    artifact = postgres_control_configuration_artifact(value.config)
     control = RECORDS / "control.json"
     secret = RECORDS / "password"
     init = RECORDS / "10-witness.sql"
@@ -39,6 +44,7 @@ def prepare_files() -> None:
         encoding="utf-8",
     )
     init.chmod(0o444)
+    return value
 
 
 def wait_running(container, seconds: float = 30.0) -> None:
@@ -68,6 +74,47 @@ def wait_query(container, seconds: float = 45.0) -> None:
             return
         time.sleep(0.25)
     raise AssertionError("PostgreSQL retained row was not queryable")
+
+
+def health(container, token: str | None) -> tuple[int, dict]:
+    connection = HTTPConnection(container.name, 8000, timeout=2)
+    try:
+        headers = {} if token is None else {"Authorization": "Bearer " + token}
+        connection.request("GET", "/__control/health/readiness", headers=headers)
+        response = connection.getresponse()
+        body = response.read(65537)
+        require(len(body) <= 65536, "management response exceeded bound")
+        return response.status, {} if not body else json.loads(body)
+    finally:
+        connection.close()
+
+
+def wait_listener_denial(container, seconds: float = 10.0) -> None:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        try:
+            status, _ = health(container, None)
+            require(status == 401, "management accepted missing credential")
+            return
+        except OSError:
+            time.sleep(0.05)
+    raise AssertionError("PostgreSQL management listener did not become available")
+
+
+def wait_health(container, token: str, expected: str, seconds: float = 45.0) -> None:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        try:
+            status, body = health(container, token)
+            require(status == 200, "signed readiness request was refused")
+            outcome = body.get("outcome")
+            require(outcome in {"healthy", "unhealthy", "unknown"}, "readiness outcome is invalid")
+            if outcome == expected:
+                return
+        except OSError:
+            pass
+        time.sleep(0.1)
+    raise AssertionError("PostgreSQL readiness did not become " + expected)
 
 
 def wait_exit(container, expected: int, seconds: float = 15.0) -> None:
@@ -108,11 +155,13 @@ def main() -> int:
     client = docker.from_env()
     image = None
     network = None
+    controller = None
+    controller_connected = False
     volumes = []
     containers = []
     tag = f"control-plane-kit-postgres-source:{RUN}"
     try:
-        prepare_files()
+        value = prepare_files()
         image, _ = client.images.build(
             path="/source", dockerfile="products/postgres_server/Dockerfile", tag=tag,
             labels=LABELS, rm=True,
@@ -124,14 +173,26 @@ def main() -> int:
         require("8000/tcp" in image.attrs["Config"]["ExposedPorts"], "management port missing")
 
         network = client.networks.create(f"{RUN}-network", internal=True, labels=LABELS)
+        controller = client.containers.get(os.environ["HOSTNAME"])
+        network.connect(controller)
+        controller_connected = True
         data = client.volumes.create(name=f"{RUN}-data", labels=LABELS)
         volumes.append(data)
+
+        issued = int(time.time()) - 1
+        _, valid = health_token(value, issued_at=issued)
+        wrong_target = replace(value.config.target, receiver_id="f" * 32)
+        _, wrong = health_token(value, issued_at=issued, request_changes={"target": wrong_target})
 
         first = create(client, image.id, network.name, data.name, "first", init=True)
         containers.append(first)
         first.start()
         wait_running(first)
+        wait_listener_denial(first)
+        require(health(first, wrong)[0] == 401, "management accepted mismatched credential")
+        wait_health(first, valid, "unknown")
         wait_query(first)
+        wait_health(first, valid, "healthy")
         require(first.attrs["HostConfig"]["Binds"] is not None, "expected fixed mounts")
         require("docker.sock" not in repr(first.attrs["Mounts"]), "Docker socket reached product")
         first.stop(timeout=10)
@@ -194,6 +255,8 @@ def main() -> int:
             require(volume.attrs["Labels"].get("org.openj92.cpk.test-run") == RUN, "foreign volume cleanup refused")
             volume.remove(force=True)
         if network is not None:
+            if controller_connected and controller is not None:
+                network.disconnect(controller, force=True)
             network.reload()
             require(network.attrs["Labels"].get("org.openj92.cpk.test-run") == RUN, "foreign network cleanup refused")
             network.remove()

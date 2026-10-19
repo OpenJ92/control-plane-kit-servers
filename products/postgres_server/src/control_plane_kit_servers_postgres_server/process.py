@@ -92,6 +92,8 @@ class PostgresCoordinator:
         while True:
             returncode = self._native.poll()
             if returncode is not None:
+                self.readiness.set_state(ProductState.STOPPING)
+                self.readiness.stop_active()
                 self.readiness.set_state(ProductState.EXITED)
                 self._close_management(time.monotonic() + STOP_SECONDS)
                 return 1
