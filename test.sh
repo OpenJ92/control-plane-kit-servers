@@ -248,4 +248,25 @@ CPK_SERVER_IMAGE="$CPK_IMAGE" sh scripts/cpk_server_published_image_smoke.sh
     python /source/products/cpk_server/tests/live_root_bootstrap.py unchanged "$RUN"
 )
 sh scripts/cloudflared_connection_witness.sh
+
+# PostgreSQL source image: exact non-root wrapper, retained native data and
+# bounded failure/stop behavior. The controller owns only its labeled resources.
+(
+  RECORDS="$(mktemp -d)"
+  RUN="cpk-postgres-$(basename "$RECORDS")"
+  cleanup_postgres_records() {
+    rm -f "$RECORDS/control.json" "$RECORDS/password" "$RECORDS/10-witness.sql"
+    rmdir "$RECORDS/wrong-owner-data"
+    rmdir "$RECORDS"
+  }
+  trap 'result=$?; trap - 0; cleanup_postgres_records || result=1; exit "$result"' 0
+  docker run --rm \
+    --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
+    --mount "type=bind,source=$ROOT,target=/source,readonly" \
+    --mount "type=bind,source=$RECORDS,target=/witness" \
+    -e PYTHONPATH=/source/products/postgres_server/src:/source/products/postgres_server/tests \
+    -e "CPK_POSTGRES_TEST_RUN=$RUN" \
+    -e "CPK_POSTGRES_HOST_RECORDS=$RECORDS" \
+    "$IMAGE" python /source/products/postgres_server/tests/live_postgres_image.py
+)
 sh scripts/docker_residue_audit.sh
