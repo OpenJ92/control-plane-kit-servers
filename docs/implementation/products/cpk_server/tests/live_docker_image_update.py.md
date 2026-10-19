@@ -1,5 +1,15 @@
 Source: [live_docker_image_update.py](../../../../../products/cpk_server/tests/live_docker_image_update.py).
 
+#255 selects a separate receiver-reintroduction scenario through the same runtime,
+provider, public host/transport, signed-health setup, apply helper and exact final
+disposal. The image-update mode retains the accepted #251–254 sequence. The new
+mode omits unrelated peer-product imports and application-secret rotations, uses
+one qualified Hello template and explicit introductions, and supplies reviewed
+expected-start image roles. The preparation callback observes actual immutable
+CPK output before execution; bounded diagnostics correlate only the new prepare
+exchanges and never print payloads. A scenario gets a fresh workspace/schema and
+resource record; the shell controls separation and prior cleanup completion.
+
 #254 appends a coupled proof after the unchanged four-family history/replay/no-op
 assertions. An ordinary public planned/approved replacement selects the qualified
 Hello family image with both health reads. A second registered revision shares

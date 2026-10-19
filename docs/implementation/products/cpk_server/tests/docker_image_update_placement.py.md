@@ -1,9 +1,13 @@
 Source: [docker_image_update_placement.py](../../../../../products/cpk_server/tests/docker_image_update_placement.py).
 
-The #255 target-red checkpoint adds only an optional constructor seam retaining
-reviewed per-node expected start roles. Propagation and selected-product
-admission remain intentionally unimplemented until the focused tests establish
-their actual failure. Existing defaults and effect behavior are unchanged.
+#255 optionally binds finite immutable expected start-image roles at composition.
+Before recording an intent, StartNode's selected product must match the reviewed
+immutable image reference for its node. Default committed inspection uses that
+expectation; explicit role inspection and existing caller defaults retain their
+prior meaning. Image ID/user, container ID, ownership and network checks remain
+strict. The mapping is copied/read-only and cannot authorize itself from observed
+image IDs. Target-red39182257870 proved the missing admission and propagation;
+green and actual OCI acceptance still require the owning gate.
 
 #251 observes actual returned provider names into verified full identities. Only
 committed public StartRuntime success permits one declared controller attachment;

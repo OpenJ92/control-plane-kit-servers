@@ -593,8 +593,11 @@ exec python products/cpk_server/tests/live_unlisted_receiver.py')"
   [ "$(docker inspect --format '{{.Image}}' "$receiver_id")" = "$frozen_controller" ]
   [ "$(docker image inspect --format '{{.Id}}' "$CPK_SERVERS_TEST_IMAGE")" = "$frozen_controller" ]
   cleanup_receiver_fixture
-  phase "public Docker image replacement"
-  RECEIVER_NAME="$NETWORK-docker-image-update"
+  for docker_scenario in image-update receiver-reintroduction; do
+  phase "public Docker $docker_scenario"
+  # The previous phase's cleanup must finish before allocating another record.
+  [ -z "$RECEIVER_RECORDS" ]
+  RECEIVER_NAME="$NETWORK-docker-$docker_scenario"
   RECEIVER_RECORDS="$(mktemp -d)"
   [ -z "$(docker container ls -aq --filter "name=^/$RECEIVER_NAME$")" ]
   case "$(docker context inspect --format '{{.Endpoints.docker.Host}}')" in
@@ -614,12 +617,13 @@ exec python products/cpk_server/tests/live_unlisted_receiver.py')"
     -e "CPK_DOCKER_WITNESS_RUN=$NETWORK" -e CPK_DOCKER_WITNESS_RECORDS=/witness \
     -e PYTHONPATH=/app \
     -e DOCKER_CONFIG=/tmp/cpk-image-empty-docker-config \
-    "$frozen_controller" python products/cpk_server/tests/live_docker_image_update.py)"
+    "$frozen_controller" python products/cpk_server/tests/live_docker_image_update.py "$docker_scenario")"
   [ "$receiver_id" = "$(cat "$RECEIVER_RECORDS/container")" ]
   docker start -a "$receiver_id"
   [ "$(docker inspect --format '{{.State.ExitCode}}' "$receiver_id")" = 0 ]
   [ "$(docker inspect --format '{{.Image}}' "$receiver_id")" = "$frozen_controller" ]
   cleanup_receiver_fixture
+  done
 fi
 
 phase "clean owned smoke resources"

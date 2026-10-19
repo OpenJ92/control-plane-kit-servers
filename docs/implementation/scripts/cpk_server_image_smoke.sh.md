@@ -1,6 +1,15 @@
 Source: [cpk_server_image_smoke.sh](../../../scripts/cpk_server_image_smoke.sh).
 Maintain with the owning smoke profiles and local synthetic effect plan.
 
+#255 runs the accepted image-update scenario followed by a separate
+receiver-reintroduction scenario through the same finite Docker launch procedure.
+Each controller has an exact distinct name and fresh record directory. Previous
+cleanup must clear RECEIVER_RECORDS before another directory is allocated; each
+ownership.json requires its own managed-resources-absent marker. Failure exits
+through the existing preservation/cleanup path, never overwrites uncertain
+records, and never advances to the next scenario. Image/dependency prerequisites,
+Unix daemon check, controller image identity and final residue audit remain.
+
 wrapped-source requires the existing test/controller image and the new source
 receiver. published-baseline explicitly retains historical inputs and checks;
 there is no runtime health-disable or fallback after source admission failure.

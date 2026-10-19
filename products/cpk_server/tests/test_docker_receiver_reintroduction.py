@@ -12,7 +12,7 @@ from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC
 from docker_image_update_material import DockerImageMaterial, IMAGES, image_value
 from docker_image_update_placement import OwnedControllerPlacement, PREFIX
 from docker_image_update_ports import CompletedRuntimeCall, FixtureBoundaryFailure
-from docker_receiver_reintroduction import with_nodes
+from docker_receiver_reintroduction import DockerReintroductionMaterial, route_intent, with_nodes
 from test_docker_image_update_ports import completed
 
 
@@ -37,6 +37,24 @@ class ContainmentTests(unittest.TestCase):
         without = DEFAULT_GRAPH_CODEC.decode(DEFAULT_GRAPH_CODEC.encode(without))
         changed = with_nodes(without, {**without.nodes, "api-y": self.graph.node("api-y")})
         self.assertEqual(changed.runtimes["docker"].children, (*retained, "api-y"))
+
+    def test_one_immutable_product_supplies_two_unauthored_instances(self):
+        material = DockerReintroductionMaterial("workspace-a")
+        x, y = material.graph.node("api"), material.graph.node("api-y")
+        self.assertEqual(material.documents["api"], material.documents["api-y"])
+        self.assertEqual(x.metadata, y.metadata)
+        self.assertEqual(x.block_spec.control_surfaces, y.block_spec.control_surfaces)
+        self.assertFalse(x.configuration_artifacts or y.configuration_artifacts)
+        self.assertEqual(x.public_environment, y.public_environment)
+        self.assertNotEqual(x.endpoints, y.endpoints)
+        self.assertEqual(material.a.runtimes["docker"].children, ("gateway", "connector"))
+        self.assertEqual(material.graph.runtimes["docker"].children, ("gateway", "connector", "api", "api-y"))
+        self.assertEqual(material.expected_start_roles["api"], "hello_family")
+        self.assertEqual(material.expected_start_roles["api-y"], "hello_family")
+        self.assertEqual(material.documents["api"].product.image.execution_reference,
+            IMAGES["hello_family"]["reference"])
+        self.assertNotEqual(material.introductions[0].scope, material.introductions[1].scope)
+        self.assertEqual(len(route_intent(material.graph).targets), 3)
 
 
 class SelectedStartImageTests(unittest.TestCase):
@@ -94,3 +112,10 @@ class SelectedStartImageTests(unittest.TestCase):
                     placement.sdk.inspect_container.return_value.network_attachments = ()
                 with self.assertRaises(FixtureBoundaryFailure):
                     placement.observed(record)
+
+    def test_unknown_roles_refuse_and_expected_roles_cannot_drift(self):
+        placement, _, _ = self.fixture(expected_role="hello_family")
+        with self.assertRaises(TypeError):
+            placement.expected_start_roles["api"] = "hello_a"
+        with self.assertRaises(FixtureBoundaryFailure):
+            self.fixture(expected_role="unreviewed-image")
