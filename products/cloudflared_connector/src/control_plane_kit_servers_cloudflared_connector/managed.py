@@ -60,8 +60,8 @@ def control_configuration_artifact(configuration):
         return ConfigurationArtifact(_ARTIFACT_ID, _CONTROL_PATH, ConfigurationMediaType.JSON,
             content, ConfigurationFileMode.READ_ONLY)
     except Exception:
-        pass
-    raise ConnectorConfigurationError(_ERROR)
+        failure = ConnectorConfigurationError(_ERROR)
+    raise failure
 
 
 def source_runtime_contract(artifact, token_delivery):
@@ -89,8 +89,8 @@ def source_runtime_contract(artifact, token_delivery):
             capabilities=(CapabilityName.HEALTH_CHECKABLE, CapabilityName.NODE_CONTROLLABLE),
             control_surfaces=(value.declaration.surface,), verification=VerificationContract())
     except Exception:
-        pass
-    raise ConnectorConfigurationError(_ERROR)
+        failure = ConnectorConfigurationError(_ERROR)
+    raise failure
 
 
 class ConnectorHealth:
@@ -140,7 +140,7 @@ class ConnectorHealth:
                         'unknown': core.NodeHealthReadOutcome.UNKNOWN,
                     }.get(sample.outcome, core.NodeHealthReadOutcome.UNKNOWN)
             except Exception:
-                pass
+                outcome = core.NodeHealthReadOutcome.UNKNOWN
             with self._state:
                 current = self._liveness_locked()
                 return outcome if current is core.NodeHealthReadOutcome.HEALTHY else current
