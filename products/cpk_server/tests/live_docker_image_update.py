@@ -5,9 +5,11 @@ signing provider, SDK health sockets, operation history and business bodies run.
 """
 import asyncio
 from dataclasses import replace
+import hashlib
 import json
 import os
 from pathlib import Path
+import sys
 import tempfile
 import time
 from types import SimpleNamespace
@@ -86,7 +88,7 @@ def inspect_inputs(engine, sdk):
     return observed
 
 
-async def scenario(root, engine, sdk, placement, material, provider, database_url):
+async def scenario(root, engine, sdk, placement, material, provider, database_url, *, reintroduction=False):
     workspace = material.workspace_id
     runtime = RecordedDockerRuntime(DockerRuntimeInterpreter(sdk,
         authorized_secret_resolver=provider.composition.authorized_resolver), resources=placement)
@@ -144,20 +146,23 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
                 RuntimeAuthorityReference(row["authority_ref"]), RuntimeKind.DOCKER,
                 LocalDockerSocketAuthority(), row["admitted_by"], row["admitted_at"])
             assert registered_authority.descriptor() == row
-            for name, document in (("peer", material.documents["api-y"]), ("successor", material.successor)):
+            additional_products = () if reintroduction else (
+                ("peer", material.documents["api-y"]), ("successor", material.successor))
+            for name, document in additional_products:
                 result = await registration.register("command.product.import", {
                     "descriptor_document": json.loads(document.content), "imported_at": utc_now(),
                     "idempotency_key": "image-import-" + name})
                 assert result["status"] == "active"
             await register_surface_verifier(transport, material, workspace_id=workspace)
             await asyncio.to_thread(provider.seed, material)
-            versions = await asyncio.to_thread(provider.seed_application_versions)
-            choices = PublicSecretChoices(transport, workspace, runtime, metadata)
-            await choices.register()
-            baseline = await select_pending_baseline(transport, material, workspace_id=workspace,
-                scopes=(ReceiverScope("gateway", "control"), ReceiverScope("api", "internal"),
-                    ReceiverScope("api-y", "internal")))
-            initial_graph, baseline = await choices.selected_baseline(material.a, versions[0].version_id, baseline)
+            if not reintroduction:
+                versions = await asyncio.to_thread(provider.seed_application_versions)
+                choices = PublicSecretChoices(transport, workspace, runtime, metadata)
+                await choices.register()
+                baseline = await select_pending_baseline(transport, material, workspace_id=workspace,
+                    scopes=(ReceiverScope("gateway", "control"), ReceiverScope("api", "internal"),
+                        ReceiverScope("api-y", "internal")))
+                initial_graph, baseline = await choices.selected_baseline(material.a, versions[0].version_id, baseline)
             client = TopologyClient(host.profile, transport=transport)
 
             async def read(route, **coordinates):
@@ -173,12 +178,29 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
                 return plan, events, runs
 
             async def apply(graph, name, *, pending=None, refreshes=(), declarations=(), routes=(),
-                            prepared_observer=None):
+                            introductions=(), prepared_observer=None):
                 source = root / (name + ".json")
                 source.write_text(json.dumps(DEFAULT_GRAPH_CODEC.encode(graph)), encoding="utf-8")
+                before_prepares = len(host.prepare_exchanges)
                 planned = await asyncio.to_thread(client.plan, AuthoredDesiredGraph(source,
                     pending=pending, verifier_refreshes=refreshes, declaration_updates=declarations,
+                    introductions=introductions,
                     gateway_health_replacements=routes))
+                if reintroduction and planned.status not in {"planned", "no-changes"}:
+                    exchanges = host.prepare_exchanges[before_prepares:]
+                    diagnostic = {"docker_reintroduction_prepare_failure": name}
+                    if len(exchanges) == 1:
+                        exchange = exchanges[0]
+                        error = exchange.response_body.get("error", {})
+                        message = error.get("message") if isinstance(error, dict) else None
+                        categories = {"deployment preparation request is malformed": "request-malformed",
+                            "deployment preparation state is unavailable": "state-conflict"}
+                        diagnostic.update(http_status=exchange.response_status,
+                            category=categories.get(message, "unclassified") if isinstance(message, str) else "unclassified",
+                            request_sha256=hashlib.sha256(exchange.request_body).hexdigest())
+                    else:
+                        diagnostic["exchange"] = "none" if not exchanges else "multiple"
+                    print(json.dumps(diagnostic), flush=True)
                 assert planned.status in {"planned", "no-changes"}, planned.descriptor()
                 if prepared_observer is not None:
                     journal = client.journal.read(planned.operation_ref)
@@ -197,6 +219,13 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
                 transport.require_healthy()
                 assert result.status in {"converged", "no-changes"}, result.descriptor()
                 return result, source
+
+            if reintroduction:
+                from live_docker_receiver_reintroduction import reintroduction_scenario
+                await reintroduction_scenario(root, engine, sdk, placement, material, host, transport,
+                    client, runtime, ingress, health_socket, authored_configurations, apply, read, history,
+                    bootstrap.worker.identity.subject_id)
+                return
 
             initial, initial_source = await apply(initial_graph, "initial", pending=baseline)
             original_history = await history(initial)
@@ -689,7 +718,7 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
                 "secret_volumes": sum(volume.name in placement.record["secret_volumes"] for volume in volumes)}), flush=True)
 
 
-async def witness():
+async def witness(*, reintroduction=False):
     verify_provenance()
     config = Path(os.environ["DOCKER_CONFIG"])
     config.mkdir(mode=0o700)
@@ -703,22 +732,28 @@ async def witness():
     assert controller.attrs["Image"] == os.environ["CPK_FROZEN_CONTROLLER_IMAGE"]
     assert controller.labels["org.openj92.cpk.test-run"] == os.environ["CPK_DOCKER_WITNESS_RUN"]
     images = inspect_inputs(engine, sdk)
-    workspace = "image-" + uuid4().hex
+    workspace = ("reintroduction-" if reintroduction else "image-") + uuid4().hex
     assert not any(owned_resources(engine, workspace))
     records = Path(os.environ["CPK_DOCKER_WITNESS_RECORDS"])
     ownership = records / "ownership.json"
     assert not ownership.exists()
+    if reintroduction:
+        from docker_receiver_reintroduction import DockerReintroductionMaterial
+        material = DockerReintroductionMaterial(workspace)
+    else:
+        material = DockerImageMaterial(workspace)
     placement = OwnedControllerPlacement(engine, sdk, workspace, controller.id, daemon_id,
-        record_path=ownership, run=os.environ["CPK_DOCKER_WITNESS_RUN"])
+        record_path=ownership, run=os.environ["CPK_DOCKER_WITNESS_RUN"],
+        expected_start_roles=material.expected_start_roles if reintroduction else None)
     print(json.dumps({"docker_image_inputs": images, "daemon_id": daemon_id,
         "controller_id": controller.id, "owned_workspace": workspace}), flush=True)
     database_url = os.environ["CPK_RECEIVER_ACCEPTANCE_DATABASE_URL"]
     try:
         with tempfile.TemporaryDirectory(prefix="cpk-image-") as directory:
             root = Path(directory)
-            material = DockerImageMaterial(workspace)
             with SigningProviderProcess(root / "provider", workspace, database_url) as provider:
-                await scenario(root, engine, sdk, placement, material, provider, database_url)
+                await scenario(root, engine, sdk, placement, material, provider, database_url,
+                    reintroduction=reintroduction)
     finally:
         dispose_fixture(placement)
         (records / "managed-resources-absent").write_text("verified\n", encoding="ascii")
@@ -726,4 +761,7 @@ async def witness():
 
 
 if __name__ == "__main__":
-    asyncio.run(witness())
+    mode = sys.argv[1:] or ["image-update"]
+    if mode not in (["image-update"], ["receiver-reintroduction"]):
+        raise ValueError("unknown Docker witness scenario")
+    asyncio.run(witness(reintroduction=mode == ["receiver-reintroduction"]))

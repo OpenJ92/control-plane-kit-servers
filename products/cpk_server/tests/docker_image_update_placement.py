@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 import json
 import os
+from types import MappingProxyType
 
 from docker.errors import NotFound
 
@@ -69,13 +70,19 @@ def dispose_fixture(placement):
 
 
 class OwnedControllerPlacement:
-    def __init__(self, engine, sdk, workspace, controller_id, daemon_id, *, record_path=None, run=None):
+    def __init__(self, engine, sdk, workspace, controller_id, daemon_id, *, record_path=None, run=None,
+                 expected_start_roles=None):
         self.engine, self.sdk, self.workspace = engine, sdk, workspace
         self.controller_id, self.daemon_id = controller_id, daemon_id
         self.network_id = None
         self.nodes, self.bindings = {}, {}
         self.attachment_attempted = False
         self.failure = None
+        roles = dict(expected_start_roles or {})
+        if (set(roles) - {"gateway", "api", "api-y", "connector"}
+                or any(type(role) is not str or role not in IMAGES for role in roles.values())):
+            raise FixtureBoundaryFailure("unknown expected start image role")
+        self.expected_start_roles = MappingProxyType(roles)
         self.record_path = record_path
         self.record = {"workspace": workspace, "controller_id": controller_id,
             "daemon_id": daemon_id, "run": run, "intents": [], "containers": {},
@@ -111,6 +118,15 @@ class OwnedControllerPlacement:
                 or any(value.runtime_id != "docker" for value in request.products)
                 or (type(request.operation) is StartRuntime and request.operation.target.runtime_id != "docker")):
             raise FixtureBoundaryFailure("runtime request ownership differs")
+        if type(request.operation) is StartNode:
+            node = request.operation.target.node_id
+            role = self.expected_start_roles.get(node)
+            if role is not None:
+                selected = [value for value in request.products if value.node_id == node
+                    and value.runtime_id == "docker"]
+                if (len(selected) != 1
+                        or selected[0].product.image.execution_reference != IMAGES[role]["reference"]):
+                    raise FixtureBoundaryFailure("selected product differs from expected start image")
         self.record["intents"].append({"effect_id": request.effect_id,
             "activity_id": request.activity_id.value, "run_id": request.source.run_id.value,
             "operation": type(request.operation).__name__})
@@ -303,7 +319,8 @@ class OwnedControllerPlacement:
         container = self.engine.containers.get(self.nodes[name])
         self.owned(container.labels, "container", name)
         observed = self.sdk.inspect_container(container.id)
-        role = image_role or (name if name in {"gateway", "connector"} else "hello_a")
+        role = image_role or self.expected_start_roles.get(name) or (
+            name if name in {"gateway", "connector"} else "hello_a")
         if (observed is None or observed.container_id != container.id or not observed.running
                 or container.attrs["Image"] != IMAGES[role]["image_id"]
                 or container.attrs["Config"]["User"] != IMAGES[role]["user"]
