@@ -1,5 +1,15 @@
 Source: [pyproject.toml](../../pyproject.toml).
 
+## Current #181 native-installation dependency adoption
+
+The generated requirements select Operations `2d10a61c` and Interpreters
+`2274d974`, retaining Core `73d87e99`, SDK `1657cb91` and Secrets `7ff1e771`.
+Package subsets and extras are unchanged. See the
+[canonical coordinate account](coordinates/server-products.json.md) for exact
+commits, preserved product provenance and the full-gate hold. This dependency
+availability does not implement native adapter selection or dispatch. Earlier
+selected-coordinate accounts below are historical.
+
 ## Historical dependency adoption
 
 The canonical dependency tuple selects accepted Operations #1983 `8fb86473`,

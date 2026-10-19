@@ -1,5 +1,28 @@
 Source: [coordinates/server-products.json](../../../coordinates/server-products.json).
 
+## Current #181 native-installation dependency adoption
+
+Operations selects accepted #2010 merge
+`2d10a61c7951cd253e2dd33f537ba1087392a6c0`; Interpreters selects accepted
+#209 merge `2274d974c7f18ca61f39683fb78154a63c20490b`. Core remains
+`73d87e99`, SDK `1657cb91`, and Secrets `7ff1e771`. The unchanged generator
+renders only the root metadata and CPK recipe's two selected dependencies;
+current host provenance expectations advance with them. Published product
+source/image coordinates, descriptors and catalogue bytes remain fixed.
+
+This makes the accepted installation-proof and retained-observation APIs
+available to the process package. It does not wire or activate a native adapter:
+pre-allocation shape qualification and compatible product/profile selection
+remain separate decisions. Existing exact-coordinate, generator and composition
+tests remain the owning laws; no assertion or gate stage is weakened.
+
+This source checkpoint has not passed the full owning gate. The unchanged gate
+unconditionally runs the PostgreSQL source-image witness before its terminal
+residue audit; the known PostgreSQL failure must be resolved through its owning
+lane before a complete PASS can be claimed. Earlier dependency selections below
+are historical. No provider, credential, data or network mutation is introduced
+by this source adoption; selected-package composition remains unverified.
+
 ## Historical dependency adoption
 
 The canonical dependency tuple selects accepted Operations #1983 `8fb86473`,

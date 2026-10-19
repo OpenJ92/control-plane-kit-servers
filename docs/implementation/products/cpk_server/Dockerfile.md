@@ -1,5 +1,15 @@
 Source: [products/cpk_server/Dockerfile](../../../../products/cpk_server/Dockerfile).
 
+## Current #181 native-installation dependency adoption
+
+The existing generator advances only Operations to `2d10a61c` and Interpreters
+to `2274d974`. Core/SDK pins, extras, process entrypoint and image hardening
+remain unchanged. This recipe has not yet passed the complete owning gate and
+does not change any published image. See the
+[canonical coordinate account](../../coordinates/server-products.json.md) for
+the gate dependency and separate semantic adapter work. Earlier selections below
+are historical.
+
 ## Historical dependency adoption
 
 The canonical dependency tuple selects accepted Operations #1983 `8fb86473`,
