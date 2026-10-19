@@ -26,9 +26,11 @@ targets remain predecessor coverage, not duplicated coordinator state machines.
   non-inheritable pipe duplicate, no flag mutation, unsupported/setup/full/broken/
   partial diagnostic destinations and close failure. No output queue or thread.
 
-The intended causal red is NotImplementedError at collected callable/helper
-scaffolds, not import, fixture or Docker failure. No red has been run yet. The
-owning unmodified Docker ./test.sh remains the only execution gate; push the candid
-target checkpoint before that run. A returned integer is not actual process-exit
+At0e909260 the owning Docker gate collected54 connector methods:30 predecessor
+passes and24 new methods yielding44 intentional NotImplementedError records.
+Both reviewers accepted causal red; no import/fixture/Docker failure was credited.
+Log866e80061d20e6f04dc883710f6c604d3a03b013517e19db4d733d6fe5bb3243 records it.
+Downstream assertions still require green. The unmodified Docker ./test.sh is the
+only executable gate. A returned integer is not actual process-exit
 evidence. Managed-image, undrained pipe, selected Docker stop/profile, active SDK
 request, native offline behavior and exact residue remain separately staged.
