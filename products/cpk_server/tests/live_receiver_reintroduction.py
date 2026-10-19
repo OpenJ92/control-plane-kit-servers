@@ -23,7 +23,7 @@ from control_plane_kit_servers_cpk_server.client.authoring import (
 from control_plane_kit_servers_cpk_server.client.transport import ClientTransportError
 from live_unlisted_receiver import (
     ReceiverProcesses, ProcessCompute, ProcessHealth, LoseCompletedPreparation,
-    controller_identity, diagnose_execution, register_surface_verifier,
+    controller_identity, diagnose_execution, digest, register_surface_verifier,
     select_pending_baseline, unlisted_graph,
 )
 from receiver_acceptance_material import AuthoredMaterial
@@ -44,7 +44,7 @@ def nodes(graph, values):
 
 
 def routes(graph, include_y):
-    scopes = (("self", "gateway", "control"), ("api", "api", "http"), (X, X, "http"))
+    scopes = (("self", "gateway", "control"), (X, X, "http"))
     if include_y:
         scopes += ((Y, Y, "http"),)
     return (GatewayHealthRoutes(ReceiverScope("gateway", "control"), tuple(
@@ -96,6 +96,19 @@ async def apply(client, transport, planned):
     return result
 
 
+def require_removal_plan(host, result):
+    if result.status != "planned":
+        exchange = host.prepare_exchanges[-1]
+        error = exchange.response_body.get("error", {})
+        message = error.get("message") if isinstance(error, dict) else None
+        category = {"deployment preparation request is malformed": "request-malformed",
+            "deployment preparation state is unavailable": "state-conflict"}.get(message, "unclassified")
+        print(json.dumps({"receiver_reintroduction_prepare_failure": "remove-y",
+            "http_status": exchange.response_status, "category": category,
+            "request_sha256": digest(exchange.request_body)}), flush=True)
+    assert result.status == "planned", result.descriptor()
+
+
 def write_graph(path, graph):
     path.write_text(json.dumps(DEFAULT_GRAPH_CODEC.encode(graph)), encoding="utf-8")
     return path
@@ -115,7 +128,9 @@ async def healthy(processes, name):
 async def scenario(host, transport, material, processes, compute, ingress, health, graph, introduction,
         product_reference):
     root = processes.root
-    baseline = await select_pending_baseline(transport, material)
+    assert set(graph.nodes) == {"gateway", "connector", X, Y}
+    baseline = await select_pending_baseline(transport, material,
+        scopes=(ReceiverScope("gateway", "control"),))
     source = write_graph(root / "original-unauthored.json", graph)
     original_source = source.read_bytes()
     saved_y = graph.node(Y)
@@ -147,10 +162,12 @@ async def scenario(host, transport, material, processes, compute, ingress, healt
     await healthy(processes, Y)
 
     without_y = nodes(authored, {name: node for name, node in authored.nodes.items() if name != Y})
+    assert set(without_y.nodes) == {"gateway", "connector", X}
     remove_source = write_graph(root / "remove-y.json", without_y)
     effect_offset = len(compute.calls)
     removal_plan = await asyncio.to_thread(client.plan, AuthoredDesiredGraph(remove_source,
         gateway_health_replacements=routes(without_y, False)))
+    require_removal_plan(host, removal_plan)
     assert removal_plan.destructive is True
     removal = await apply(client, transport, removal_plan)
     removal_history = await history(transport, removal)
@@ -280,6 +297,13 @@ async def scenario(host, transport, material, processes, compute, ingress, healt
 async def witness():
     frozen = controller_identity()
     material = AuthoredMaterial()
+    # Pure pending input: the accepted add/remove relation has exactly X/Y as
+    # workloads. The older witness keeps its independent bootstrap api node.
+    gateway = material.a.node("gateway")
+    gateway = replace(gateway, configuration_artifacts=tuple(
+        material.routes(("gateway",)) if item.artifact_id == "gateway-health-targets" else item
+        for item in gateway.configuration_artifacts))
+    material.a = nodes(material.a, {"gateway": gateway, "connector": material.a.node("connector")})
     with tempfile.TemporaryDirectory(prefix="cpk-reintroduction-") as temporary:
         root = Path(temporary)
         base, documents, _, _ = unlisted_graph(material, root)
