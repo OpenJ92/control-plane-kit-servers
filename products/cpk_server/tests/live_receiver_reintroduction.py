@@ -96,16 +96,23 @@ async def apply(client, transport, planned):
     return result
 
 
-def require_removal_plan(host, result):
+def require_removal_plan(host, result, before_exchange_count):
     if result.status != "planned":
-        exchange = host.prepare_exchanges[-1]
-        error = exchange.response_body.get("error", {})
-        message = error.get("message") if isinstance(error, dict) else None
-        category = {"deployment preparation request is malformed": "request-malformed",
-            "deployment preparation state is unavailable": "state-conflict"}.get(message, "unclassified")
-        print(json.dumps({"receiver_reintroduction_prepare_failure": "remove-y",
-            "http_status": exchange.response_status, "category": category,
-            "request_sha256": digest(exchange.request_body)}), flush=True)
+        exchanges = host.prepare_exchanges[before_exchange_count:]
+        evidence = {"receiver_reintroduction_prepare_failure": "remove-y"}
+        if len(exchanges) == 1:
+            exchange = exchanges[0]
+            error = exchange.response_body.get("error", {})
+            message = error.get("message") if isinstance(error, dict) else None
+            categories = {"deployment preparation request is malformed": "request-malformed",
+                "deployment preparation state is unavailable": "state-conflict"}
+            evidence.update(http_status=exchange.response_status,
+                category=categories.get(message, "unclassified") if isinstance(message, str) else "unclassified",
+                request_sha256=digest(exchange.request_body))
+        else:
+            evidence["exchange"] = ("no prepare exchange observed" if not exchanges
+                else "multiple prepare exchanges observed")
+        print(json.dumps(evidence), flush=True)
     assert result.status == "planned", result.descriptor()
 
 
@@ -165,9 +172,10 @@ async def scenario(host, transport, material, processes, compute, ingress, healt
     assert set(without_y.nodes) == {"gateway", "connector", X}
     remove_source = write_graph(root / "remove-y.json", without_y)
     effect_offset = len(compute.calls)
+    before_exchange_count = len(host.prepare_exchanges)
     removal_plan = await asyncio.to_thread(client.plan, AuthoredDesiredGraph(remove_source,
         gateway_health_replacements=routes(without_y, False)))
-    require_removal_plan(host, removal_plan)
+    require_removal_plan(host, removal_plan, before_exchange_count)
     assert removal_plan.destructive is True
     removal = await apply(client, transport, removal_plan)
     removal_history = await history(transport, removal)

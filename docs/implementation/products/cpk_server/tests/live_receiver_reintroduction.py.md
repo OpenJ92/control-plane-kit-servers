@@ -59,4 +59,8 @@ does not establish updates with arbitrary unrelated retained workloads. Earlier
 distinct-product/update witnesses and all retirement/fresh-origin/replay laws
 remain unchanged. Failed removal preparation emits only the actual exchange's
 HTTP status, allowlisted category and request digest before the unchanged
-destructive-approval assertion. Uncaptured prior response bytes are not invented.
+destructive-approval assertion. An exchange-count boundary captured immediately
+before planning prevents an earlier response being attributed to a local
+pre-send failure; absent or multiple new exchanges are reported explicitly
+without borrowing historical response details. Uncaptured prior response bytes
+are not invented.
