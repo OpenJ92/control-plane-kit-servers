@@ -102,8 +102,9 @@ class ReadinessProbeTests(unittest.TestCase):
             self.assertTrue(terminated.wait(2))
             return core.NodeHealthReadOutcome.UNKNOWN
 
-        def terminate(active):
+        def terminate(active, *, deadline=None):
             self.assertIs(active, process)
+            self.assertIsNone(deadline)
             terminated.set()
             return True
 
