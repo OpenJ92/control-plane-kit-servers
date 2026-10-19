@@ -217,6 +217,7 @@ async def reintroduction_scenario(root, engine, sdk, placement, material, host, 
             assert credential not in json.dumps(client.journal.read(value.operation_ref)).encode()
         assert credential not in original_bytes and credential not in fresh_bytes
 
+    placement.detach()
     await apply(DeploymentGraph("reintroduction-teardown"), "reintroduction-teardown",
         prepared_observer=observe_prepared("empty", destructive=True))
     containers, networks, volumes = owned_resources(engine, workspace)

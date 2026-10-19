@@ -27,3 +27,14 @@ removal. No provider cleanup, compensation or public historical-volume reclamati
 is claimed. Ingress/native connection remain named substitutes. Private credentials
 must remain absent from preparations and client journals. Source alone is not
 executed OCI lifecycle or grandparent acceptance; the normal owning gate is required.
+
+Before public desired-empty, the existing placement.detach() verifies and removes
+only this fixture controller's recorded attachment, exactly as the accepted
+image-update scenario does. Run39182987065 passed support26/package650 and reached
+this final teardown after the new lifecycle/replay assertions, but omission of
+that detach left network removal uncertain. The log does not expose the raw
+Docker error; the omission is source-confirmed. Separate failure disposal verified
+0 containers,1 network,8 historical configuration volumes and1 secret volume
+absent; the final whole-gate audit was unreached. Reusing the existing detach is
+a fixture correction, not a retry/compensation of that uncertain run. A fresh
+normal owning gate must prove public convergence and final residue.
