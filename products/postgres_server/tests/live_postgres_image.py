@@ -101,7 +101,6 @@ def create(client, image_id: str, network_name: str, volume_name: str, suffix: s
         labels=LABELS,
         network=network_name,
         volumes=mounts(volume_name, init=init),
-        stop_timeout=10,
     )
 
 
