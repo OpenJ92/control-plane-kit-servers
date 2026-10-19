@@ -256,6 +256,7 @@ sh scripts/cloudflared_connection_witness.sh
   RUN="cpk-postgres-$(basename "$RECORDS")"
   cleanup_postgres_records() {
     rm -f "$RECORDS/control.json" "$RECORDS/password" "$RECORDS/10-witness.sql"
+    rmdir "$RECORDS/wrong-owner-data"
     rmdir "$RECORDS"
   }
   trap 'result=$?; trap - 0; cleanup_postgres_records || result=1; exit "$result"' 0

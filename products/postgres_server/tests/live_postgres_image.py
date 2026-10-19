@@ -33,6 +33,7 @@ def prepare_files():
     control = RECORDS / "control.json"
     secret = RECORDS / "password"
     init = RECORDS / "10-witness.sql"
+    wrong_owner_data = RECORDS / "wrong-owner-data"
     control.write_text(artifact.content, encoding="utf-8")
     control.chmod(0o444)
     secret.write_text(PASSWORD + "\n", encoding="utf-8")
@@ -44,6 +45,10 @@ def prepare_files():
         encoding="utf-8",
     )
     init.chmod(0o444)
+    wrong_owner_data.mkdir()
+    wrong_owner_data.chmod(0o755)
+    os.chown(wrong_owner_data, 0, 0)
+    require(wrong_owner_data.stat().st_uid == 0, "wrong-owner bind setup was not root-owned")
     return value
 
 
@@ -129,9 +134,9 @@ def wait_exit(container, expected: int, seconds: float = 15.0) -> None:
     raise AssertionError("PostgreSQL source container did not exit")
 
 
-def mounts(volume_name: str, *, init: bool) -> dict[str, dict[str, str]]:
+def mounts(data_source: str, *, init: bool) -> dict[str, dict[str, str]]:
     values = {
-        volume_name: {"bind": "/var/lib/postgresql/data", "mode": "rw"},
+        data_source: {"bind": "/var/lib/postgresql/data", "mode": "rw"},
         str(HOST_RECORDS / "control.json"): {"bind": "/etc/cpk/postgres/control.json", "mode": "ro"},
         str(HOST_RECORDS / "password"): {"bind": "/run/secrets/postgres/password", "mode": "ro"},
     }
@@ -233,14 +238,8 @@ def main() -> int:
         recovered.remove()
         containers.remove(recovered)
 
-        wrong = client.volumes.create(name=f"{RUN}-wrong-owner", labels=LABELS)
-        volumes.append(wrong)
-        owner = client.containers.run(
-            image.id, ("sh", "-c", "chown 0:0 /var/lib/postgresql/data"), user="0:0",
-            volumes={wrong.name: {"bind": "/var/lib/postgresql/data", "mode": "rw"}}, remove=True,
-        )
-        require(owner == b"", "owner setup returned output")
-        refused = create(client, image.id, network.name, wrong.name, "wrong-owner")
+        refused = create(client, image.id, network.name,
+                         str(HOST_RECORDS / "wrong-owner-data"), "wrong-owner")
         containers.append(refused)
         refused.start()
         wait_exit(refused, 1)
