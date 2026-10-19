@@ -104,15 +104,16 @@ def wait_listener_denial(container, seconds: float = 10.0) -> None:
 def wait_health(container, token: str, expected: str, seconds: float = 45.0) -> None:
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
+        outcome = "transport-unavailable"
         try:
             status, body = health(container, token)
             require(status == 200, "signed readiness request was refused")
             outcome = body.get("outcome")
             require(outcome in {"healthy", "unhealthy", "unknown"}, "readiness outcome is invalid")
-            if outcome == expected:
-                return
         except OSError:
-            pass
+            outcome = "transport-unavailable"
+        if outcome == expected:
+            return
         time.sleep(0.1)
     raise AssertionError("PostgreSQL readiness did not become " + expected)
 
