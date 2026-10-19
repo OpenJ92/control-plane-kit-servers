@@ -73,7 +73,8 @@ def psql_invocation(password: bytes) -> PsqlInvocation:
         raise PasswordFileError("PostgreSQL password file is invalid") from None
     return PsqlInvocation((
         "/usr/local/bin/psql", "-X", "--no-psqlrc", "-h", "127.0.0.1", "-p", "5432",
-        "-U", "cpk", "-d", "cpk", "-tA", "-c", "SET statement_timeout = '2s'; SELECT 1;",
+        "-U", "cpk", "-d", "cpk", "-tA", "--quiet", "-c",
+        "SET statement_timeout = '2s'; SELECT 1;",
     ), {"PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8",
         "PGPASSWORD": secret, "PGCONNECT_TIMEOUT": "2"})
 

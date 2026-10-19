@@ -45,7 +45,8 @@ class ReadinessProbeTests(unittest.TestCase):
         invocation = readiness.psql_invocation(b"SECRET_SENTINEL")
         self.assertEqual(invocation.argv, (
             "/usr/local/bin/psql", "-X", "--no-psqlrc", "-h", "127.0.0.1", "-p", "5432",
-            "-U", "cpk", "-d", "cpk", "-tA", "-c", "SET statement_timeout = '2s'; SELECT 1;",
+            "-U", "cpk", "-d", "cpk", "-tA", "--quiet", "-c",
+            "SET statement_timeout = '2s'; SELECT 1;",
         ))
         self.assertEqual(set(invocation.environ), {"PATH", "LANG", "LC_ALL", "PGPASSWORD", "PGCONNECT_TIMEOUT"})
         self.assertEqual(invocation.environ["PGPASSWORD"], "SECRET_SENTINEL")
@@ -55,7 +56,7 @@ class ReadinessProbeTests(unittest.TestCase):
 
     def test_result_classification_preserves_truth_boundaries(self):
         self.assertIs(readiness.classify_psql(0, b"1\n"), core.NodeHealthReadOutcome.HEALTHY)
-        for output in (b"", b"0\n", b"1\nextra\n", b"x" * 65):
+        for output in (b"", b"0\n", b"SET\n1\n", b"1\nextra\n", b"x" * 65):
             with self.subTest(output=output[:10]):
                 self.assertIs(readiness.classify_psql(0, output), core.NodeHealthReadOutcome.UNHEALTHY)
         self.assertIs(readiness.classify_psql(2, b""), core.NodeHealthReadOutcome.UNKNOWN)
