@@ -69,13 +69,15 @@ def dispose_fixture(placement):
 
 
 class OwnedControllerPlacement:
-    def __init__(self, engine, sdk, workspace, controller_id, daemon_id, *, record_path=None, run=None):
+    def __init__(self, engine, sdk, workspace, controller_id, daemon_id, *, record_path=None, run=None,
+                 expected_start_roles=None):
         self.engine, self.sdk, self.workspace = engine, sdk, workspace
         self.controller_id, self.daemon_id = controller_id, daemon_id
         self.network_id = None
         self.nodes, self.bindings = {}, {}
         self.attachment_attempted = False
         self.failure = None
+        self.expected_start_roles = dict(expected_start_roles or {})
         self.record_path = record_path
         self.record = {"workspace": workspace, "controller_id": controller_id,
             "daemon_id": daemon_id, "run": run, "intents": [], "containers": {},

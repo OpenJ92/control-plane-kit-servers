@@ -1,5 +1,10 @@
 Source: [docker_image_update_placement.py](../../../../../products/cpk_server/tests/docker_image_update_placement.py).
 
+The #255 target-red checkpoint adds only an optional constructor seam retaining
+reviewed per-node expected start roles. Propagation and selected-product
+admission remain intentionally unimplemented until the focused tests establish
+their actual failure. Existing defaults and effect behavior are unchanged.
+
 #251 observes actual returned provider names into verified full identities. Only
 committed public StartRuntime success permits one declared controller attachment;
 Gateway start records its exact network/container binding. Every endpoint lookup

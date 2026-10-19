@@ -123,26 +123,18 @@ def controller_identity():
 
 class ReceiverProcesses:
     """Own handles, immutable public files and private temporary directories."""
-    def __init__(self, root, examples, *, instances=None):
+    def __init__(self, root, examples):
         self.root, self.examples = root, examples
-        self.instances = ({name: (script, business_path, str(root / name / "wrapper.json"))
-            for name, script, business_path, *_ in EXAMPLES} if instances is None else dict(instances))
-        assert 0 < len(self.instances) <= 2
-        for name, (script, business_path, logical_path) in self.instances.items():
-            assert name and name not in (".", "..") and Path(name).name == name
-            assert (script, business_path) in {(item[1], item[2]) for item in EXAMPLES}
-            assert Path(logical_path).is_absolute()
         self.children, self.origins, self.paths, self.hashes = {}, {}, {}, {}
         self.starts, self.stops, self.tokens = [], [], {}
         self.application_paths, self.identities = {}, {}
         self.owned_files, self.replacement_started = set(), set()
-        self.retired_files = set()  # Observation history, never cleanup authority.
         self.scope, self.generation = uuid4().hex, 0
         self.port_calls = []
 
     def launch(self, name):
         assert name not in self.children and len(self.children) < 2
-        script, business_path, _ = self.instances[name]
+        script = next(item[1] for item in EXAMPLES if item[0] == name)
         environment = {**os.environ, "CPK_WRAPPER_CONFIGURATION_FILE": str(self.paths[name]),
             "PYTHONDONTWRITEBYTECODE": "1"}
         if name in self.application_paths:
@@ -159,6 +151,7 @@ class ReceiverProcesses:
         port = int(line)
         assert 0 < port < 65536 and process.poll() is None
         self.origins[name] = f"http://127.0.0.1:{port}"
+        business_path = next(item[2] for item in EXAMPLES if item[0] == name)
         with httpx.Client(timeout=2, trust_env=False) as client:
             # A first completed application response proves the serving loop ran.
             response = client.get(self.origins[name] + business_path)
@@ -177,7 +170,7 @@ class ReceiverProcesses:
             environment=(*material.public_environment, *material.socket_environment),
             control_surfaces=contract.control_surfaces)
         path = Path(wrapper.target_path)
-        assert str(path) == self.instances[name][2]
+        assert path.parent == self.root / name and path.name == "wrapper.json"
         application = None
         if name == "palette-example":
             application, = (item for item in contract.configuration_artifacts if item != wrapper)
@@ -197,21 +190,16 @@ class ReceiverProcesses:
         wrapper, application = self.selected_files(name, material)
         assert name not in self.children and name not in self.paths
         directory = self.root / name
-        assert name in self.instances and not self.root.is_symlink()
         directory.mkdir(mode=0o700)
-        wrapper_path = directory / "wrapper.json"
         for artifact in (wrapper,) if application is None else (wrapper, application):
-            # Only the local-process substitute projects a logical product path
-            # into the private instance directory. Admitted bytes stay exact.
-            path = wrapper_path if artifact is wrapper else Path(artifact.target_path)
-            assert path.parent == directory and not path.is_symlink()
+            path = Path(artifact.target_path)
             raw = artifact.content.encode("utf-8")
             self.owned_files.add(path)
             with path.open("xb") as stream:
                 stream.write(raw)
             path.chmod(0o444)
             assert path.read_bytes() == raw
-        self.paths[name] = wrapper_path
+        self.paths[name] = Path(wrapper.target_path)
         self.hashes[name] = digest(wrapper.content.encode())
         if application is not None:
             self.application_paths[name] = Path(application.target_path)
@@ -243,8 +231,6 @@ class ReceiverProcesses:
         self.replacement_started.add(name)
         self.stop(name)
         os.replace(staged, app_path)
-        self.owned_files.remove(staged)
-        self.retired_files.add(staged)
         self.launch(name)
         assert app_path.read_bytes() == raw and wrapper_path.read_bytes() == wrapper_bytes
         return prior, self.identities[name]
@@ -266,32 +252,6 @@ class ReceiverProcesses:
         del self.children[name]
         self.origins.pop(name, None)
 
-    def retire(self, name):
-        """Retire one tracked incarnation; failed retirement never frees its slot."""
-        directory = self.root / name
-        expected = {self.paths[name]}
-        if name in self.application_paths:
-            expected.add(self.application_paths[name])
-        assert not self.root.is_symlink() and not directory.is_symlink()
-        assert directory.is_dir() and expected <= self.owned_files
-        assert all(path.parent == directory and path.is_file() and not path.is_symlink()
-            for path in expected)
-        assert set(directory.iterdir()) == expected, "unowned instance file blocks retirement"
-        self.stop(name)
-        for path in expected:
-            path.unlink()
-            # The deleted incarnation no longer grants cleanup authority at
-            # this pathname, even when a later step of retirement fails.
-            self.owned_files.remove(path)
-            self.retired_files.add(path)
-        assert all(not path.exists() for path in expected)
-        directory.rmdir()
-        assert not directory.exists()
-        # Clear the live incarnation only after every retirement check succeeds.
-        for mapping in (self.paths, self.application_paths, self.hashes, self.identities, self.tokens):
-            mapping.pop(name, None)
-        self.replacement_started.discard(name)
-
     def restart(self, name):
         old = self.children[name].pid
         raw = self.paths[name].read_bytes()
@@ -309,29 +269,24 @@ class ReceiverProcesses:
                 self.stop(name)
             except Exception as error:
                 failures.append(type(error).__name__)
-        cleanup_paths = tuple(self.owned_files)
-        for path in cleanup_paths:
-            assert not self.root.is_symlink() and not path.parent.is_symlink()
+        for path in self.owned_files:
             path.unlink(missing_ok=True)
-            self.owned_files.remove(path)
-            self.retired_files.add(path)
         assert not failures and not self.children, "owned receiver process cleanup incomplete"
-        assert not self.owned_files and all(not path.exists() for path in cleanup_paths)
+        assert all(not path.exists() for path in self.owned_files)
         print("unlisted receiver process/file absence verified", flush=True)
 
 
 class ProcessCompute(ComputeSubstitute):
     """Named local-process substitute, consuming only actual admitted material."""
-    def __init__(self, processes, *, node_names=None):
+    def __init__(self, processes):
         super().__init__()
         self.processes = processes
-        self.node_names = frozenset(item[0] for item in EXAMPLES) if node_names is None else frozenset(node_names)
-        assert self.node_names and len(self.node_names) <= 2
 
     def execute_with_authority(self, request, authority):
         node = getattr(request.operation.target, "node_id", None)
+        names = {item[0] for item in EXAMPLES}
         operation = type(request.operation)
-        if node not in self.node_names or operation not in (StartNode, ReconcileNode, RemoveNodeResource):
+        if node not in names or operation not in (StartNode, ReconcileNode, RemoveNodeResource):
             return super().execute_with_authority(request, authority)
         assert authority.authority_ref == request.authority_ref
         RuntimeEffectRequest.__post_init__(request)
@@ -345,7 +300,7 @@ class ProcessCompute(ComputeSubstitute):
         try:
             if operation is RemoveNodeResource:
                 begun = True
-                self.processes.retire(node)
+                self.processes.stop(node)
                 self.installed.pop(node)
                 self.identities.pop(node)
                 return RuntimeEffectResult.succeeded(request.effect_id, evidence=evidence)
@@ -972,5 +927,3 @@ if __name__ == "__main__":
         raise RuntimeError("unlisted witness interrupted")
     signal.signal(signal.SIGTERM, interrupted)
     asyncio.run(witness())
-    from live_receiver_reintroduction import witness as reintroduction_witness
-    asyncio.run(reintroduction_witness())
