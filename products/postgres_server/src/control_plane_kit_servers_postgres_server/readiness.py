@@ -46,7 +46,9 @@ def _owner_uid(status: os.stat_result) -> int:
 def read_password(path: str | Path, *, expected_uid: int = 70) -> bytes:
     descriptor = -1
     try:
-        descriptor = os.open(os.fspath(path), os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+        descriptor = os.open(
+            os.fspath(path), os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK
+        )
         status = os.fstat(descriptor)
         if (not stat.S_ISREG(status.st_mode) or stat.S_IMODE(status.st_mode) != 0o400
                 or _owner_uid(status) != expected_uid or status.st_size > MAX_PASSWORD_BYTES):
@@ -82,7 +84,9 @@ def psql_invocation(password: bytes) -> PsqlInvocation:
 def classify_psql(returncode: int, output: bytes) -> NodeHealthReadOutcome:
     if returncode != 0:
         return NodeHealthReadOutcome.UNKNOWN
-    if len(output) <= MAX_OUTPUT_BYTES and output == b"1\n":
+    if len(output) > MAX_OUTPUT_BYTES:
+        return NodeHealthReadOutcome.UNKNOWN
+    if output == b"1\n":
         return NodeHealthReadOutcome.HEALTHY
     return NodeHealthReadOutcome.UNHEALTHY
 
@@ -98,6 +102,7 @@ class ReadinessController:
         self._spawn = spawn
         self._slot = Semaphore(1)
         self._lock = Lock()
+        self._terminate_lock = Lock()
         self._state = ProductState.NOT_STARTED
         self._active = None
 
@@ -118,6 +123,8 @@ class ReadinessController:
             return NodeHealthReadOutcome.UNKNOWN
         if not self._slot.acquire(blocking=False):
             return NodeHealthReadOutcome.UNKNOWN
+        process = None
+        release_slot = True
         try:
             with self._lock:
                 if self._state is not ProductState.RUNNING:
@@ -134,9 +141,20 @@ class ReadinessController:
         except Exception:
             return NodeHealthReadOutcome.UNKNOWN
         finally:
-            with self._lock:
-                self._active = None
-            self._slot.release()
+            if process is not None:
+                try:
+                    reaped = process.poll() is not None
+                except Exception:
+                    reaped = False
+                if not reaped:
+                    reaped = self._terminate(process)
+                if not reaped:
+                    release_slot = False
+            if release_slot:
+                with self._lock:
+                    if self._active is process:
+                        self._active = None
+                self._slot.release()
 
     def stop_active(self, *, deadline: float | None = None) -> bool:
         with self._lock:
@@ -151,8 +169,8 @@ class ReadinessController:
         if process.stdout is None:
             return NodeHealthReadOutcome.UNKNOWN
         selector = selectors.DefaultSelector()
-        selector.register(process.stdout, selectors.EVENT_READ)
         try:
+            selector.register(process.stdout, selectors.EVENT_READ)
             while process.poll() is None:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -188,20 +206,23 @@ class ReadinessController:
                 return REAP_SECONDS
             return min(REAP_SECONDS, max(0.0, deadline - time.monotonic()))
 
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-            process.wait(timeout=timeout())
-            return True
-        except subprocess.TimeoutExpired:
+        with self._terminate_lock:
             try:
-                os.killpg(process.pid, signal.SIGKILL)
+                if process.poll() is not None:
+                    return True
+                os.killpg(process.pid, signal.SIGTERM)
                 process.wait(timeout=timeout())
                 return True
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait(timeout=timeout())
+                    return True
+                except Exception:
+                    self.set_state(ProductState.FATAL)
+                    return False
+            except ProcessLookupError:
+                return process.poll() is not None
             except Exception:
                 self.set_state(ProductState.FATAL)
                 return False
-        except ProcessLookupError:
-            return process.poll() is not None
-        except Exception:
-            self.set_state(ProductState.FATAL)
-            return False

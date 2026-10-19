@@ -52,7 +52,9 @@ class PostgresCoordinator:
         self._serve_failed = Event()
         self._stop_requested = Event()
         self._stop_lock = Lock()
+        self._stop_complete = Event()
         self._stopped = False
+        self._stop_result = 1
         self._management_live = False
 
     def start_native(self) -> None:
@@ -104,16 +106,39 @@ class PostgresCoordinator:
     def stop(self, *, failure: bool = False) -> int:
         with self._stop_lock:
             if self._stopped:
-                return 1 if failure else 0
-            self._stopped = True
+                first = False
+            else:
+                first = True
+                self._stopped = True
+        if not first:
+            self._stop_complete.wait(STOP_SECONDS + FINAL_REAP_SECONDS)
+            return self._stop_result
         deadline = time.monotonic() + STOP_SECONDS
         self.request_stop()
         self.readiness.set_state(ProductState.STOPPING)
-        clean_probe = self.readiness.stop_active(deadline=deadline)
-        clean_management = self._close_management(deadline)
-        clean_native = self._stop_native(deadline)
+        results = {"probe": False, "management": False, "native": False}
+
+        def cleanup(name: str, operation: Callable[[], bool]) -> None:
+            try:
+                results[name] = bool(operation())
+            except BaseException:
+                results[name] = False
+
+        workers = (
+            Thread(target=cleanup, args=("native", lambda: self._stop_native(deadline)), daemon=True),
+            Thread(target=cleanup, args=("probe", lambda: self.readiness.stop_active(deadline=deadline)), daemon=True),
+            Thread(target=cleanup, args=("management", lambda: self._close_management(deadline)), daemon=True),
+        )
+        for worker in workers:
+            worker.start()
+        completion_deadline = deadline + FINAL_REAP_SECONDS
+        for worker in workers:
+            worker.join(max(0.0, completion_deadline - time.monotonic()))
+        clean = all(results.values()) and all(not worker.is_alive() for worker in workers)
         self.readiness.set_state(ProductState.EXITED)
-        return 0 if not failure and clean_probe and clean_management and clean_native else 1
+        self._stop_result = 0 if not failure and clean else 1
+        self._stop_complete.set()
+        return self._stop_result
 
     def _close_management(self, deadline: float) -> bool:
         result = True
@@ -148,12 +173,14 @@ class PostgresCoordinator:
 
     def _stop_native(self, deadline: float) -> bool:
         child = self._native
-        if child is None or child.poll() is not None:
+        if child is None:
             return True
+        returncode = child.poll()
+        if returncode is not None:
+            return returncode == 0
         try:
             os.killpg(child.pid, signal.SIGINT)
-            child.wait(timeout=max(0.0, deadline - time.monotonic()))
-            return True
+            return child.wait(timeout=max(0.0, deadline - time.monotonic())) == 0
         except subprocess.TimeoutExpired:
             try:
                 os.killpg(child.pid, signal.SIGKILL)
