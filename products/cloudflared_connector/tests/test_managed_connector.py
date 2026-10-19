@@ -6,7 +6,7 @@ from pathlib import Path
 from threading import Event, Thread
 import time
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import control_plane_kit_core as core
 from control_plane_kit_core.products import ProductRuntimeContractCodec, ProductDescriptorCodec
@@ -47,7 +47,7 @@ class ManagedContractTests(unittest.TestCase):
 
     def test_foreign_surface_and_missing_readiness_are_refused(self):
         value = fixture().config
-        for kinds in ((core.NodeHealthReadKind.LIVENESS,),):
+        for kinds in ((core.NodeHealthReadKind.LIVENESS,), (core.NodeHealthReadKind.READINESS,)):
             with self.subTest(kinds=kinds), self.assertRaises(managed.ConnectorConfigurationError):
                 managed.control_configuration_artifact(replace(value, declaration=replace(value.declaration,
                     surface=replace(value.declaration.surface, health_reads=kinds))))
@@ -61,10 +61,26 @@ class ManagedContractTests(unittest.TestCase):
         artifact = managed.control_configuration_artifact(fixture().config)
         correct = SecretFileDelivery('/run/secrets/tunnel', SecretReference('secret://generated/ingress/test'),
             SecretUseIntent.CLOUDFLARE_TUNNEL_TOKEN, path_binding=SecretFilePathBinding('TUNNEL_TOKEN_FILE'))
-        for delivery in (None, replace(correct, path_binding=None),
+        for delivery in (None, replace(correct, intent=SecretUseIntent.POSTGRES_PASSWORD),
+                         replace(correct, path_binding=None),
                          replace(correct, path_binding=SecretFilePathBinding('TUNNEL_TOKEN'))):
             with self.subTest(delivery=type(delivery)), self.assertRaises(managed.ConnectorConfigurationError):
                 managed.source_runtime_contract(artifact, delivery)
+
+    def test_contract_revalidates_foreign_or_malformed_artifact_content(self):
+        value = fixture().config
+        artifact = managed.control_configuration_artifact(value)
+        delivery = SecretFileDelivery('/run/secrets/tunnel', SecretReference('secret://generated/ingress/test'),
+            SecretUseIntent.CLOUDFLARE_TUNNEL_TOKEN, path_binding=SecretFilePathBinding('TUNNEL_TOKEN_FILE'))
+        foreign = core.NodeControlGraphReference(core.NodeControlGraphReferenceRole.PROVIDER_SOCKET, 'elsewhere')
+        foreign_value = replace(value, target=replace(value.target, provider_socket_name=foreign),
+            declaration=replace(value.declaration, surface=replace(value.declaration.surface, provider_socket_name=foreign)))
+        foreign_content = core.ReceiverNodeControlConfigurationCodec().encode_bytes(foreign_value).decode()
+        for content in ('{', foreign_content):
+            with self.subTest(content_kind='malformed' if content == '{' else 'foreign'):
+                candidate = replace(artifact, content=content)
+                with self.assertRaises(managed.ConnectorConfigurationError):
+                    managed.source_runtime_contract(candidate, delivery)
 
 
 class ManagedHealthTests(unittest.TestCase):
@@ -87,18 +103,22 @@ class ManagedHealthTests(unittest.TestCase):
                 self.assertEqual(health.readiness().value, 'unhealthy')
                 probe.assert_not_called()
 
-    def test_stop_or_native_death_during_probe_cannot_return_healthy(self):
+    def test_stop_or_native_death_overrides_late_success_or_exception(self):
         for stopping in (False, True):
-            alive = [True]
-            def probe():
-                if stopping:
-                    health.stop()
-                else:
-                    alive[0] = False
-                return ConnectionSample('connected', ready_connections=1,
-                    connector_id='77a0325c-ff03-4be4-8064-d940252751c3')
-            health = managed.ConnectorHealth(native_alive=lambda: alive[0], read_connection=probe)
-            self.assertEqual(health.readiness().value, 'unhealthy')
+            for raises in (False, True):
+                with self.subTest(stopping=stopping, raises=raises):
+                    alive = [True]
+                    def probe():
+                        if stopping:
+                            health.stop()
+                        else:
+                            alive[0] = False
+                        if raises:
+                            raise ValueError('secret late error')
+                        return ConnectionSample('connected', ready_connections=1,
+                            connector_id='77a0325c-ff03-4be4-8064-d940252751c3')
+                    health = managed.ConnectorHealth(native_alive=lambda: alive[0], read_connection=probe)
+                    self.assertEqual(health.readiness().value, 'unhealthy')
 
     def test_concurrent_probe_returns_unknown_without_second_native_read(self):
         entered, release = Event(), Event()
@@ -142,10 +162,16 @@ def running(test, configuration, health):
             time.sleep(0.001)
         yield server
     finally:
-        server.shutdown()
-        server.server_close()
+        # shutdown() can block if serve_forever never entered. Always close.
+        cleanup = Thread(target=server.shutdown, daemon=True)
+        cleanup.start()
+        try:
+            cleanup.join(2)
+        finally:
+            server.server_close()
         thread.join(2)
         test.assertFalse(thread.is_alive())
+        test.assertFalse(cleanup.is_alive())
 
 
 class ManagedSdkBoundaryTests(unittest.TestCase):
@@ -176,3 +202,13 @@ class ManagedSdkBoundaryTests(unittest.TestCase):
         self.assertNotIn('invalid host', str(caught.exception))
         self.assertIsNone(caught.exception.__cause__)
         self.assertIsNone(caught.exception.__context__)
+
+    def test_well_typed_foreign_surface_is_refused_before_bind(self):
+        value = fixture().config
+        foreign = core.NodeControlGraphReference(core.NodeControlGraphReferenceRole.PROVIDER_SOCKET, 'elsewhere')
+        value = replace(value, target=replace(value.target, provider_socket_name=foreign),
+            declaration=replace(value.declaration, surface=replace(value.declaration.surface, provider_socket_name=foreign)))
+        with patch('control_plane_kit_server_sdk.stdlib.CpkThreadingHTTPServer.server_bind') as bind:
+            with self.assertRaises(managed.ConnectorConfigurationError):
+                managed.create_control_server(value, Mock(), address=('127.0.0.1', 0))
+            bind.assert_not_called()

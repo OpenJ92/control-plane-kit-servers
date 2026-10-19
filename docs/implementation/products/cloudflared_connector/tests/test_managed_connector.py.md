@@ -14,3 +14,10 @@ mapping; native death/stop overrides late success; single active native read;
 unknown on unexpected read failure; SDK denial before native I/O and correlated
 results. The real SDK host test does not substitute for process/image evidence.
 Lifecycle and image tests remain required before implementation completion.
+
+Kepler target review strengthened exact declaration negatives in both directions,
+well-typed foreign declaration refusal before bind, an actual alternate secret
+purpose, independent artifact revalidation, and late reader exceptions overridden
+by stop/native death. SDK fixture shutdown is bounded through a daemon helper and
+unconditionally closes the listener; stalled cleanup fails rather than hanging
+this owning suite. These extend the same new laws, not SDK internals.
