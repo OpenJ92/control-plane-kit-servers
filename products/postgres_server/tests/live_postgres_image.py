@@ -13,6 +13,7 @@ import docker
 
 from postgres_control_fixtures import fixture, health_token, readiness_only
 from control_plane_kit_servers_postgres_server.configuration import postgres_control_configuration_artifact
+from control_plane_kit_servers_postgres_server.process import LIFECYCLE_PREFIX
 
 
 RUN = os.environ["CPK_POSTGRES_TEST_RUN"]
@@ -30,6 +31,7 @@ FAILURE_LOG_MARKERS = {
     "native_fatal": b"FATAL:",
     "native_panic": b"PANIC:",
 }
+LIFECYCLE_REASONS = {"native_exit", "management_exit", "readiness_fatal", "startup_failure"}
 
 
 def require(condition: bool, message: str) -> None:
@@ -37,9 +39,66 @@ def require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+def scan_lifecycle_record(logs: bytes) -> dict[str, object]:
+    result = {
+        "lifecycle_record_present": False,
+        "lifecycle_record_valid": False,
+        "lifecycle_record_ambiguous": False,
+        "lifecycle_reason": None,
+        "native_exit_code": None,
+    }
+    prefix = LIFECYCLE_PREFIX.encode("ascii")
+    records = tuple(line[len(prefix):] for line in logs.splitlines() if line.startswith(prefix))
+    if not records:
+        return result
+    result["lifecycle_record_present"] = True
+    if len(records) != 1:
+        result["lifecycle_record_ambiguous"] = True
+        return result
+
+    def reject_duplicates(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("duplicate lifecycle key")
+            value[key] = item
+        return value
+
+    try:
+        value = json.loads(records[0], object_pairs_hook=reject_duplicates)
+        if type(value) is not dict or set(value) != {"reason", "native_exit_code"}:
+            raise ValueError
+        reason = value["reason"]
+        code = value["native_exit_code"]
+        if type(reason) is not str or reason not in LIFECYCLE_REASONS:
+            raise ValueError
+        if reason == "native_exit":
+            if type(code) is not int:
+                raise ValueError
+        elif code is not None:
+            raise ValueError
+    except (TypeError, ValueError, json.JSONDecodeError, UnicodeDecodeError):
+        result["lifecycle_record_ambiguous"] = True
+        return result
+    result.update({
+        "lifecycle_record_valid": True,
+        "lifecycle_reason": reason,
+        "native_exit_code": code,
+    })
+    return result
+
+
 def raise_container_failure(container, message: str) -> None:
-    container.reload()
-    state = container.attrs.get("State", {})
+    state_refresh_available = False
+    state = {}
+    try:
+        container.reload()
+        observed = container.attrs.get("State", {})
+        state = observed if isinstance(observed, dict) else {}
+        state_refresh_available = True
+    except Exception:
+        state = {}
+        state_refresh_available = False
     logs_unavailable = False
     try:
         logs = container.logs(stdout=True, stderr=True, tail=128)
@@ -52,14 +111,28 @@ def raise_container_failure(container, message: str) -> None:
         logs_unavailable = True
     logs_truncated = len(logs) > MAX_FAILURE_LOG_BYTES
     logs = logs[-MAX_FAILURE_LOG_BYTES:]
-    error = str(state.get("Error", "")).encode("utf-8", errors="replace")
-    print(json.dumps({"postgres_source_failure": {
+    if state_refresh_available:
+        error = str(state.get("Error", "")).encode("utf-8", errors="replace")
+        state_values = {
+            "status": str(state.get("Status", "unknown"))[:64],
+            "exit_code": state.get("ExitCode"),
+            "oom_killed": state.get("OOMKilled") is True,
+            "daemon_error_present": bool(error),
+            "daemon_error_sha256": hashlib.sha256(error).hexdigest(),
+        }
+    else:
+        state_values = {
+            "status": None,
+            "exit_code": None,
+            "oom_killed": None,
+            "daemon_error_present": None,
+            "daemon_error_sha256": None,
+        }
+    lifecycle = scan_lifecycle_record(logs)
+    event = {"postgres_source_failure": {
         "message": message,
-        "status": str(state.get("Status", "unknown"))[:64],
-        "exit_code": state.get("ExitCode"),
-        "oom_killed": state.get("OOMKilled") is True,
-        "daemon_error_present": bool(error),
-        "daemon_error_sha256": hashlib.sha256(error).hexdigest(),
+        "state_refresh_available": state_refresh_available,
+        **state_values,
         "log_tail_lines_requested": 128,
         "log_tail_bytes_retained": len(logs),
         "log_tail_bytes_truncated": logs_truncated,
@@ -69,7 +142,12 @@ def raise_container_failure(container, message: str) -> None:
         "markers_in_retained_tail": {
             name: marker in logs for name, marker in FAILURE_LOG_MARKERS.items()
         },
-    }}, sort_keys=True), flush=True)
+        **lifecycle,
+    }}
+    try:
+        print(json.dumps(event, sort_keys=True), flush=True)
+    except Exception:
+        raise AssertionError(message) from None
     raise AssertionError(message)
 
 

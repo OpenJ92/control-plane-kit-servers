@@ -1,6 +1,9 @@
 from dataclasses import replace
+from contextlib import redirect_stdout
 from http.client import HTTPConnection
+import io
 import json
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event, Thread
@@ -13,6 +16,12 @@ from control_plane_kit_server_sdk.stdlib import CpkThreadingHTTPServer
 from control_plane_kit_servers_postgres_server import process, server
 from control_plane_kit_servers_postgres_server.readiness import ProductState, ReadinessController
 from postgres_control_fixtures import fixture, health_token, readiness_only
+
+with patch.dict(os.environ, {
+    "CPK_POSTGRES_TEST_RUN": "cpk-postgres-unit",
+    "CPK_POSTGRES_HOST_RECORDS": "/tmp/cpk-postgres-unit",
+}):
+    import live_postgres_image as live_witness
 
 
 class PgdataAdmissionTests(unittest.TestCase):
@@ -154,6 +163,10 @@ class CoordinatorTests(unittest.TestCase):
         self.assertEqual(coordinator.wait(poll_seconds=0), 1)
         self.assertEqual(spawned.call_count, 1)
         self.assertEqual(coordinator.readiness.state, ProductState.EXITED)
+        self.assertEqual(
+            coordinator.lifecycle_record,
+            process.LifecycleRecord(process.LifecycleReason.NATIVE_EXIT, 7),
+        )
 
     def test_unexpected_native_exit_terminates_active_probe(self):
         native = self.native(returncode=7)
@@ -188,6 +201,43 @@ class CoordinatorTests(unittest.TestCase):
 
         kill.assert_called_once_with(child.pid, process.signal.SIGINT)
         self.assertEqual(coordinator.readiness.state, ProductState.EXITED)
+        self.assertEqual(
+            coordinator.lifecycle_record,
+            process.LifecycleRecord(process.LifecycleReason.MANAGEMENT_EXIT),
+        )
+
+    def test_readiness_fatal_records_first_observed_branch_and_stops(self):
+        child = self.native()
+        controller = ReadinessController(password=b"secret")
+        controller.set_state(ProductState.FATAL)
+        coordinator = process.PostgresCoordinator(
+            self.host(), controller, spawn=Mock(return_value=child)
+        )
+        coordinator.start_native()
+
+        with patch.object(process.os, "killpg"):
+            self.assertEqual(coordinator.wait(poll_seconds=0), 1)
+
+        self.assertEqual(
+            coordinator.lifecycle_record,
+            process.LifecycleRecord(process.LifecycleReason.READINESS_FATAL),
+        )
+
+    def test_native_exit_wins_existing_wait_precedence(self):
+        child = self.native(returncode=9)
+        controller = ReadinessController(password=b"secret")
+        controller.set_state(ProductState.FATAL)
+        coordinator = process.PostgresCoordinator(
+            self.host(), controller, spawn=Mock(return_value=child)
+        )
+        coordinator._serve_failed.set()
+        coordinator.start_native()
+
+        self.assertEqual(coordinator.wait(poll_seconds=0), 1)
+        self.assertEqual(
+            coordinator.lifecycle_record,
+            process.LifecycleRecord(process.LifecycleReason.NATIVE_EXIT, 9),
+        )
 
     def test_stop_request_is_flag_only_while_readiness_spawn_lock_is_held(self):
         controller = ReadinessController(password=b"secret")
@@ -266,6 +316,7 @@ class CoordinatorTests(unittest.TestCase):
         with patch.object(process.os, "killpg"):
             self.assertEqual(coordinator.stop(), 1)
             self.assertEqual(coordinator.stop(), 1)
+        self.assertIsNone(coordinator.lifecycle_record)
 
     def test_native_stop_rejects_already_failed_and_signal_terminated_children(self):
         already_failed = self.native(returncode=7)
@@ -287,6 +338,158 @@ class CoordinatorTests(unittest.TestCase):
         coordinator.start_native()
         with patch.object(process.os, "killpg"):
             self.assertFalse(coordinator._stop_native(time.monotonic() + 1))
+
+
+class LifecycleRecordTests(unittest.TestCase):
+    def runtime(self, coordinator):
+        return (
+            patch.object(process.os, "getuid", return_value=70),
+            patch.object(process.os, "getgid", return_value=70),
+            patch.object(process, "validate_pgdata"),
+            patch.object(process, "read_password", return_value=b"secret"),
+            patch.object(process, "read_postgres_control_configuration", return_value=Mock()),
+            patch.object(process, "create_management_server", return_value=Mock()),
+            patch.object(process, "PostgresCoordinator", return_value=coordinator),
+        )
+
+    def test_startup_failure_is_phase_bounded_and_redacted(self):
+        coordinator = Mock()
+        coordinator.start_native.side_effect = OSError("RAW_STARTUP_SENTINEL")
+        coordinator.lifecycle_record = None
+        stderr = io.StringIO()
+        patches = self.runtime(coordinator)
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], \
+                patch.object(process.sys, "stderr", stderr):
+            self.assertEqual(process.main(), 1)
+
+        output = stderr.getvalue()
+        self.assertIn(process.LIFECYCLE_PREFIX, output)
+        self.assertIn('"reason":"startup_failure"', output)
+        self.assertNotIn("RAW_STARTUP_SENTINEL", output)
+        coordinator.stop.assert_called_once_with(failure=True)
+
+    def test_post_start_failure_remains_unclassified(self):
+        coordinator = Mock()
+        coordinator.lifecycle_record = None
+        coordinator.wait.side_effect = OSError("RAW_POST_START_SENTINEL")
+        stderr = io.StringIO()
+        patches = self.runtime(coordinator)
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], \
+                patch.object(process.sys, "stderr", stderr):
+            self.assertEqual(process.main(), 1)
+
+        output = stderr.getvalue()
+        self.assertNotIn(process.LIFECYCLE_PREFIX, output)
+        self.assertNotIn("RAW_POST_START_SENTINEL", output)
+        coordinator.stop.assert_called_once_with(failure=True)
+
+    def test_lifecycle_emission_is_best_effort(self):
+        stream = Mock()
+        stream.write.side_effect = OSError("closed")
+        process.emit_lifecycle_record(
+            process.LifecycleRecord(process.LifecycleReason.NATIVE_EXIT, 7), stream=stream
+        )
+
+    def test_lifecycle_record_rejects_non_closed_shapes(self):
+        with self.assertRaises(ValueError):
+            process.LifecycleRecord(process.LifecycleReason.NATIVE_EXIT)
+        with self.assertRaises(ValueError):
+            process.LifecycleRecord(process.LifecycleReason.NATIVE_EXIT, True)
+        with self.assertRaises(ValueError):
+            process.LifecycleRecord(process.LifecycleReason.MANAGEMENT_EXIT, 1)
+
+
+class WitnessFailureRecordTests(unittest.TestCase):
+    def record(self, reason="management_exit", code=None):
+        return (process.LIFECYCLE_PREFIX + json.dumps({
+            "reason": reason,
+            "native_exit_code": code,
+        }, separators=(",", ":"), sort_keys=True)).encode()
+
+    def test_scanner_accepts_only_closed_records(self):
+        cases = (
+            ("native_exit", 7),
+            ("management_exit", None),
+            ("readiness_fatal", None),
+            ("startup_failure", None),
+        )
+        for reason, code in cases:
+            with self.subTest(reason=reason):
+                observed = live_witness.scan_lifecycle_record(self.record(reason, code))
+                self.assertEqual(observed, {
+                    "lifecycle_record_present": True,
+                    "lifecycle_record_valid": True,
+                    "lifecycle_record_ambiguous": False,
+                    "lifecycle_reason": reason,
+                    "native_exit_code": code,
+                })
+
+    def test_scanner_rejects_malformed_ambiguous_and_duplicate_records(self):
+        prefix = process.LIFECYCLE_PREFIX.encode()
+        invalid = (
+            prefix + b'{"reason":"management_exit"',
+            prefix + b'{"reason":"management_exit"}',
+            prefix + b'{"reason":"unknown","native_exit_code":null}',
+            prefix + b'{"reason":"management_exit","native_exit_code":null,"extra":1}',
+            prefix + b'{"reason":"native_exit","native_exit_code":true}',
+            prefix + b'{"reason":"native_exit","native_exit_code":null}',
+            prefix + b'{"reason":"management_exit","native_exit_code":7}',
+            prefix + b'{"reason":"management_exit","reason":"management_exit","native_exit_code":null}',
+            prefix + b'{"reason":"management_exit","reason":"native_exit","native_exit_code":7}',
+            self.record() + b"\n" + self.record("readiness_fatal"),
+        )
+        for raw in invalid:
+            with self.subTest(raw=raw):
+                observed = live_witness.scan_lifecycle_record(raw)
+                self.assertTrue(observed["lifecycle_record_present"])
+                self.assertFalse(observed["lifecycle_record_valid"])
+                self.assertTrue(observed["lifecycle_record_ambiguous"])
+                self.assertIsNone(observed["lifecycle_reason"])
+                self.assertIsNone(observed["native_exit_code"])
+                self.assertNotIn("unknown", repr(observed))
+
+        self.assertEqual(live_witness.scan_lifecycle_record(b"ordinary log"), {
+            "lifecycle_record_present": False,
+            "lifecycle_record_valid": False,
+            "lifecycle_record_ambiguous": False,
+            "lifecycle_reason": None,
+            "native_exit_code": None,
+        })
+
+    def test_refresh_failure_preserves_logs_redaction_and_original_assertion(self):
+        class Container:
+            attrs = {"State": {"Status": "cached", "ExitCode": 99, "OOMKilled": True}}
+
+            def __init__(self):
+                self.logs_called = False
+
+            def reload(self):
+                raise RuntimeError("RAW_REFRESH_SENTINEL")
+
+            def logs(self, **kwargs):
+                self.logs_called = True
+                return self_record
+
+        self_record = self.record("native_exit", 6)
+        container = Container()
+        output = io.StringIO()
+        with redirect_stdout(output), self.assertRaisesRegex(AssertionError, "original failure"):
+            live_witness.raise_container_failure(container, "original failure")
+
+        event_text = output.getvalue()
+        event = json.loads(event_text)["postgres_source_failure"]
+        self.assertTrue(container.logs_called)
+        self.assertFalse(event["state_refresh_available"])
+        self.assertIsNone(event["status"])
+        self.assertIsNone(event["exit_code"])
+        self.assertIsNone(event["oom_killed"])
+        self.assertIsNone(event["daemon_error_present"])
+        self.assertIsNone(event["daemon_error_sha256"])
+        self.assertTrue(event["lifecycle_record_valid"])
+        self.assertEqual(event["lifecycle_reason"], "native_exit")
+        self.assertEqual(event["native_exit_code"], 6)
+        self.assertNotIn("RAW_REFRESH_SENTINEL", event_text)
+        self.assertNotIn(process.LIFECYCLE_PREFIX, event_text)
 
 
 class ImageDefinitionTests(unittest.TestCase):
