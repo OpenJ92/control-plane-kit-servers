@@ -225,6 +225,69 @@ class CoordinatorTests(unittest.TestCase):
         stop_native.assert_called_once_with(18.0)
         self.assertEqual(controller.state, ProductState.EXITED)
 
+    def test_stop_signals_native_while_probe_and_management_cleanup_are_blocked(self):
+        child = self.native()
+        controller = ReadinessController(password=b"secret")
+        coordinator = process.PostgresCoordinator(
+            self.host(), controller, spawn=Mock(return_value=child)
+        )
+        coordinator.start_native()
+        release = Event()
+        native_started = Event()
+
+        def blocked(*args, **kwargs):
+            self.assertTrue(release.wait(2))
+            return True
+
+        def stop_native(deadline):
+            native_started.set()
+            return True
+
+        with patch.object(controller, "stop_active", side_effect=blocked), \
+                patch.object(coordinator, "_close_management", side_effect=blocked), \
+                patch.object(coordinator, "_stop_native", side_effect=stop_native):
+            result = []
+            stopping = Thread(target=lambda: result.append(coordinator.stop()))
+            stopping.start()
+            self.assertTrue(native_started.wait(1), "native stop waited behind other cleanup")
+            release.set()
+            stopping.join(2)
+
+        self.assertEqual(result, [0])
+
+    def test_nonzero_native_exit_during_stop_is_failure_and_remains_idempotent(self):
+        child = self.native()
+        child.wait.return_value = 7
+        coordinator = process.PostgresCoordinator(
+            self.host(), ReadinessController(password=b"secret"), spawn=Mock(return_value=child)
+        )
+        coordinator.start_native()
+
+        with patch.object(process.os, "killpg"):
+            self.assertEqual(coordinator.stop(), 1)
+            self.assertEqual(coordinator.stop(), 1)
+
+    def test_native_stop_rejects_already_failed_and_signal_terminated_children(self):
+        already_failed = self.native(returncode=7)
+        coordinator = process.PostgresCoordinator(
+            self.host(), ReadinessController(password=b"secret"),
+            spawn=Mock(return_value=already_failed),
+        )
+        coordinator.start_native()
+        with patch.object(process.os, "killpg") as kill:
+            self.assertFalse(coordinator._stop_native(time.monotonic() + 1))
+        kill.assert_not_called()
+
+        signaled = self.native()
+        signaled.wait.return_value = -process.signal.SIGINT
+        coordinator = process.PostgresCoordinator(
+            self.host(), ReadinessController(password=b"secret"),
+            spawn=Mock(return_value=signaled),
+        )
+        coordinator.start_native()
+        with patch.object(process.os, "killpg"):
+            self.assertFalse(coordinator._stop_native(time.monotonic() + 1))
+
 
 class ImageDefinitionTests(unittest.TestCase):
     def test_image_is_exact_official_postgres_nonroot_pid1_wrapper(self):
