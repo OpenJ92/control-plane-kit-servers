@@ -9,13 +9,19 @@ reviewers' interface details. Existing managed-configuration/auth/health mapping
 targets remain predecessor coverage, not duplicated coordinator state machines.
 
 - Partial startup: invalid configuration/path/NUL before effects, no-child early
-  cancellation, stop during spawn/bind, cleanup after failed spawn/bind.
+  cancellation, stop during spawn/bind, cleanup after failed spawn/bind or serving
+  thread start. A never-started host must not create a blocking shutdown wait.
 - Failure: native0/nonzero/signal mapping, host return/exception, failure surviving
-  later child0, native nonzero on requested stop and forced124 precedence.
-- Signals: TERM/INT once, expected host completion versus failure, handler restore,
+  later child0, native nonzero on requested stop and forced124 precedence. Joined
+  host completion plus native exit proves competing available observations;
+  a requested signal delivered during cleanup cannot erase unexpected native0.
+- Signals: TERM/INT once, expected host completion versus failure, nondefault handler restore,
   repeated signals preserving the first clock and one separate KILL.
 - Deadlines/ownership: stalled host shutdown concurrent with native cleanup,
   leader exit not group absence, group observation uncertainty and unreaped child.
+  Measure deadlines from the actual first handler delivery, not the fixture's
+  scheduled timestamp. Observe actual supplied health and listener closure while
+  native/helper cleanup is still pending, not only after run returns.
 - Custody: actual Popen fixed argv/one-key environment/group/DEVNULL; owned
   non-inheritable pipe duplicate, no flag mutation, unsupported/setup/full/broken/
   partial diagnostic destinations and close failure. No output queue or thread.

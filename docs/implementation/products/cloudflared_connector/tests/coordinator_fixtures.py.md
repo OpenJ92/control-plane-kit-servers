@@ -10,6 +10,12 @@ captured real sleep yields to those threads while the controlled clock advances.
 The fixture releases and joins its host threads in finally and restores patched
 signal/environment/effect boundaries. No real process group is signalled.
 
+Record the first actual requested-handler delivery for deadline assertions;
+scheduled actions may be delivered later by a valid polling interval. Nondefault
+prior handlers expose restoration defects. A group signal changes only a still
+running leader's returncode; group cleanup cannot rewrite an already-exited leader.
+Joining a controlled finished host makes competing-observation tests deterministic.
+
 These controls cannot establish PID1/process exit, real native connection/drain,
 kernel timing or Docker stop behavior. Those belong to the later source-image
 witness. Current coordinator scaffold fails deliberately before these effects.

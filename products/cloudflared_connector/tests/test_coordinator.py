@@ -5,9 +5,11 @@ import signal
 import stat
 import subprocess
 from types import SimpleNamespace
+from threading import Thread
 import unittest
 from unittest.mock import Mock, patch
 
+import control_plane_kit_core as core
 from control_plane_kit_servers_cloudflared_connector import coordinator
 from coordinator_fixtures import Harness
 
@@ -53,6 +55,24 @@ class StartupTests(unittest.TestCase):
                     self.assertTrue(h.child.reaped)
                     self.assertEqual(h.child.code, 0)
 
+    def test_serving_thread_start_failure_closes_bound_host_and_reaps_child(self):
+        real_start = Thread.start
+        calls = []
+        def start(thread):
+            calls.append(thread)
+            if len(calls) == 1:
+                raise RuntimeError('PRIVATE_THREAD_START')
+            return real_start(thread)
+        with Harness() as h, patch.object(Thread, 'start', new=start):
+            h.host.allow_shutdown.clear()
+            self.assertEqual(h.run(), 1)
+            self.assertEqual((h.spawned, h.bound), (1, 1))
+            self.assertTrue(h.host.closed)
+            self.assertFalse(h.host.started.is_set())
+            self.assertTrue(h.child.reaped)
+            self.assertLess(h.now, 1)
+            self.assertEqual(h.handlers, h.original_handlers)
+
 
 class FailureTests(unittest.TestCase):
     def test_unexpected_native_exit_maps_zero_nonzero_and_signal(self):
@@ -88,6 +108,24 @@ class FailureTests(unittest.TestCase):
             self.assertEqual(h.run(), 124)
             self.assertIn(signal.SIGKILL, [sig for _, sig in h.signals])
 
+    def test_available_host_failure_wins_over_simultaneous_native_exit(self):
+        with Harness() as h:
+            def fail_both():
+                h.host.finish_and_join()
+                h.native_exit(7)
+            h.at(0.1, fail_both)
+            self.assertEqual(h.run(), 1)
+            self.assertTrue(h.host.closed)
+            self.assertTrue(h.child.reaped)
+
+    def test_later_requested_stop_does_not_erase_observed_unexpected_native_zero(self):
+        with Harness() as h:
+            h.host.before_shutdown = h.stop
+            h.at(0.1, lambda: h.native_exit(0))
+            self.assertEqual(h.run(), 1)
+            self.assertIsNotNone(h.first_stop_at)
+            self.assertTrue(h.host.closed)
+
 
 class SignalDeadlineTests(unittest.TestCase):
     def test_term_and_int_forward_once_and_expected_host_return_is_clean(self):
@@ -98,8 +136,7 @@ class SignalDeadlineTests(unittest.TestCase):
                 self.assertEqual([sig for _, sig in h.signals], [selected])
                 self.assertTrue(h.host.closed)
                 self.assertTrue(h.child.reaped)
-                self.assertEqual(h.handlers[signal.SIGTERM], signal.SIG_DFL)
-                self.assertEqual(h.handlers[signal.SIGINT], signal.SIG_DFL)
+                self.assertEqual(h.handlers, h.original_handlers)
 
     def test_repeated_signals_share_first_clock_and_one_escalation(self):
         with Harness() as h:
@@ -110,8 +147,8 @@ class SignalDeadlineTests(unittest.TestCase):
             h.at(6, h.stop)
             self.assertEqual(h.run(), 124)
             self.assertEqual([sig for _, sig in h.signals], [signal.SIGTERM, signal.SIGKILL])
-            self.assertAlmostEqual(h.signals[1][0] - 0.1, 7, delta=0.15)
-            self.assertLessEqual(h.now, 8.25)
+            self.assertAlmostEqual(h.signals[1][0] - h.first_stop_at, 7, delta=0.15)
+            self.assertLessEqual(h.now - h.first_stop_at, 8.15)
             self.assertFalse(h.child.reaped)
 
     def test_stalled_shutdown_helper_does_not_extend_native_deadline(self):
@@ -122,8 +159,19 @@ class SignalDeadlineTests(unittest.TestCase):
             self.assertEqual(h.run(), 124)
             self.assertTrue(h.host.closed)
             self.assertTrue(h.child.reaped)
-            self.assertLessEqual(h.now, 8.25)
-            self.assertAlmostEqual(h.signals[1][0] - 0.1, 7, delta=0.15)
+            self.assertLessEqual(h.now - h.first_stop_at, 8.15)
+            self.assertAlmostEqual(h.signals[1][0] - h.first_stop_at, 7, delta=0.15)
+
+    def test_health_and_listener_stop_while_native_and_host_cleanup_are_pending(self):
+        with Harness() as h:
+            observed = []
+            h.ignore_term = True
+            h.host.allow_shutdown.clear()
+            h.at(0.1, h.stop)
+            h.at(1.0, lambda: observed.append((h.host.closed, h.health.liveness(), h.child.code)))
+            self.assertEqual(h.run(), 124)
+            self.assertEqual(observed, [(True, core.NodeHealthReadOutcome.UNHEALTHY, None)])
+            self.assertLessEqual(h.now - h.first_stop_at, 8.15)
 
     def test_leader_exit_does_not_establish_group_absence(self):
         with Harness() as h:
@@ -131,13 +179,14 @@ class SignalDeadlineTests(unittest.TestCase):
             h.at(0.1, lambda: h.native_exit(0, group_alive=True))
             self.assertEqual(h.run(), 124)
             self.assertEqual([sig for _, sig in h.signals], [signal.SIGTERM, signal.SIGKILL])
+            self.assertEqual(h.child.code, 0)
 
     def test_group_observation_uncertainty_is_incomplete_not_absence(self):
         with Harness() as h:
             h.group_unknown = True
             h.at(0.1, h.stop)
             self.assertEqual(h.run(), 124)
-            self.assertLessEqual(h.now, 8.25)
+            self.assertLessEqual(h.now - h.first_stop_at, 8.15)
 
 
 class CustodyTests(unittest.TestCase):

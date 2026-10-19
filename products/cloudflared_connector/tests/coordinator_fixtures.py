@@ -41,12 +41,15 @@ class Host:
         self.closed = False
         self.failure = None
         self.threads = []
+        self.serve_thread = None
+        self.before_shutdown = None
 
     @property
     def cpk_is_serving(self):
         return self.started.is_set() and not self.finish.is_set()
 
     def serve_forever(self, poll_interval=0.05):
+        self.serve_thread = current_thread()
         self.threads.append(current_thread())
         self.started.set()
         self.finish.wait()
@@ -55,8 +58,18 @@ class Host:
 
     def shutdown(self):
         self.threads.append(current_thread())
+        if self.before_shutdown is not None:
+            self.before_shutdown()
         self.allow_shutdown.wait()
         self.finish.set()
+
+    def finish_and_join(self):
+        if not self.started.wait(1):
+            raise AssertionError('controlled host never started')
+        self.finish.set()
+        self.serve_thread.join(1)
+        if self.serve_thread.is_alive():
+            raise AssertionError('controlled host completion was not observed')
 
     def server_close(self):
         self.closed = True
@@ -69,8 +82,8 @@ class Harness:
         self.host = Host()
         self.now = 0.0
         self.actions = []
-        self.handlers = {}
-        self.original_handlers = {}
+        self.original_handlers = {signal.SIGTERM: lambda sig, frame: None, signal.SIGINT: signal.SIG_IGN}
+        self.handlers = dict(self.original_handlers)
         self.group_alive = False
         self.group_unknown = False
         self.ignore_term = False
@@ -85,6 +98,7 @@ class Harness:
         self.after_bind = None
         self.on_install = None
         self.health = None
+        self.first_stop_at = None
         self.stack = ExitStack()
 
     def at(self, when, action):
@@ -92,6 +106,8 @@ class Harness:
         self.actions.sort(key=lambda item: item[0])
 
     def stop(self, signum=signal.SIGTERM):
+        if self.first_stop_at is None:
+            self.first_stop_at = self.now
         self.handlers[signum](signum, None)
 
     def native_exit(self, code, *, group_alive=False):
@@ -112,7 +128,8 @@ class Harness:
     def install(self, signum, handler):
         old = self.handlers.get(signum, signal.SIG_DFL)
         self.handlers[signum] = handler
-        if self.on_install is not None and callable(handler):
+        if (self.on_install is not None and callable(handler)
+                and handler not in self.original_handlers.values()):
             self.on_install(signum, handler)
         return old
 
@@ -148,9 +165,13 @@ class Harness:
             raise ProcessLookupError
         if signum == signal.SIGKILL:
             if not self.ignore_kill:
-                self.native_exit(-signal.SIGKILL)
+                self.group_alive = False
+                if self.child.code is None:
+                    self.child.code = -signal.SIGKILL
         elif not self.ignore_term:
-            self.native_exit(self.native_stop_code)
+            self.group_alive = False
+            if self.child.code is None:
+                self.child.code = self.native_stop_code
 
     def __enter__(self):
         self.stack.enter_context(patch.object(coordinator.time, 'monotonic', side_effect=lambda: self.now))
