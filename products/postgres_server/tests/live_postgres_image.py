@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import hashlib
 from http.client import HTTPConnection
 import json
 import os
@@ -19,11 +20,57 @@ HOST_RECORDS = Path(os.environ["CPK_POSTGRES_HOST_RECORDS"])
 RECORDS = Path("/witness")
 LABELS = {"org.openj92.cpk.test-run": RUN, "org.openj92.project": "control-plane-kit-servers"}
 PASSWORD = "postgres-source-witness-password"
+MAX_FAILURE_LOG_BYTES = 65536
+
+FAILURE_LOG_MARKERS = {
+    "wrapper_failure": b"postgres-server startup or lifecycle failure",
+    "native_lock_refusal": b"lock file \"postmaster.pid\" already exists",
+    "native_interrupted": b"database system was interrupted",
+    "native_ready": b"database system is ready to accept connections",
+    "native_fatal": b"FATAL:",
+    "native_panic": b"PANIC:",
+}
 
 
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise AssertionError(message)
+
+
+def raise_container_failure(container, message: str) -> None:
+    container.reload()
+    state = container.attrs.get("State", {})
+    logs_unavailable = False
+    try:
+        logs = container.logs(stdout=True, stderr=True, tail=128)
+        if isinstance(logs, str):
+            logs = logs.encode("utf-8", errors="replace")
+        elif not isinstance(logs, bytes):
+            logs = bytes(logs)
+    except Exception:
+        logs = b""
+        logs_unavailable = True
+    logs_truncated = len(logs) > MAX_FAILURE_LOG_BYTES
+    logs = logs[-MAX_FAILURE_LOG_BYTES:]
+    error = str(state.get("Error", "")).encode("utf-8", errors="replace")
+    print(json.dumps({"postgres_source_failure": {
+        "message": message,
+        "status": str(state.get("Status", "unknown"))[:64],
+        "exit_code": state.get("ExitCode"),
+        "oom_killed": state.get("OOMKilled") is True,
+        "daemon_error_present": bool(error),
+        "daemon_error_sha256": hashlib.sha256(error).hexdigest(),
+        "log_tail_lines_requested": 128,
+        "log_tail_bytes_retained": len(logs),
+        "log_tail_bytes_truncated": logs_truncated,
+        "log_tail_unavailable": logs_unavailable,
+        "log_tail_sha256": hashlib.sha256(logs).hexdigest(),
+        "password_present_in_retained_tail": PASSWORD.encode() in logs,
+        "markers_in_retained_tail": {
+            name: marker in logs for name, marker in FAILURE_LOG_MARKERS.items()
+        },
+    }}, sort_keys=True), flush=True)
+    raise AssertionError(message)
 
 
 def prepare_files():
@@ -71,7 +118,7 @@ def wait_query(container, seconds: float = 45.0) -> None:
     while time.monotonic() < deadline:
         container.reload()
         if container.status != "running":
-            raise AssertionError("PostgreSQL source container exited before readiness")
+            raise_container_failure(container, "PostgreSQL source container exited before readiness")
         result = container.exec_run(command, stdin=False, demux=True)
         stdout, stderr = result.output
         if result.exit_code == 0 and stdout == b"retained-row\n":
