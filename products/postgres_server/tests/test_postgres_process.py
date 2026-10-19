@@ -239,6 +239,17 @@ class CoordinatorTests(unittest.TestCase):
             process.LifecycleRecord(process.LifecycleReason.NATIVE_EXIT, 9),
         )
 
+    def test_first_lifecycle_record_is_retained(self):
+        coordinator = process.PostgresCoordinator(
+            self.host(), ReadinessController(password=b"secret")
+        )
+        first = process.LifecycleRecord(process.LifecycleReason.MANAGEMENT_EXIT)
+        coordinator._record_lifecycle(first)
+        coordinator._record_lifecycle(
+            process.LifecycleRecord(process.LifecycleReason.READINESS_FATAL)
+        )
+        self.assertEqual(coordinator.lifecycle_record, first)
+
     def test_stop_request_is_flag_only_while_readiness_spawn_lock_is_held(self):
         controller = ReadinessController(password=b"secret")
         controller.set_state(ProductState.RUNNING)
@@ -350,6 +361,7 @@ class LifecycleRecordTests(unittest.TestCase):
             patch.object(process, "read_postgres_control_configuration", return_value=Mock()),
             patch.object(process, "create_management_server", return_value=Mock()),
             patch.object(process, "PostgresCoordinator", return_value=coordinator),
+            patch.object(process.signal, "signal"),
         )
 
     def test_startup_failure_is_phase_bounded_and_redacted(self):
@@ -359,6 +371,7 @@ class LifecycleRecordTests(unittest.TestCase):
         stderr = io.StringIO()
         patches = self.runtime(coordinator)
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], \
+                patches[7], \
                 patch.object(process.sys, "stderr", stderr):
             self.assertEqual(process.main(), 1)
 
@@ -375,6 +388,7 @@ class LifecycleRecordTests(unittest.TestCase):
         stderr = io.StringIO()
         patches = self.runtime(coordinator)
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], \
+                patches[7], \
                 patch.object(process.sys, "stderr", stderr):
             self.assertEqual(process.main(), 1)
 
@@ -389,6 +403,21 @@ class LifecycleRecordTests(unittest.TestCase):
         process.emit_lifecycle_record(
             process.LifecycleRecord(process.LifecycleReason.NATIVE_EXIT, 7), stream=stream
         )
+
+    def test_main_failure_result_survives_lifecycle_output_sink_failure(self):
+        coordinator = Mock()
+        coordinator.wait.return_value = 1
+        coordinator.lifecycle_record = process.LifecycleRecord(
+            process.LifecycleReason.NATIVE_EXIT, 7
+        )
+        stream = Mock()
+        stream.write.side_effect = OSError("RAW_SINK_SENTINEL")
+        patches = self.runtime(coordinator)
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], \
+                patches[7], patch.object(process.sys, "stderr", stream):
+            self.assertEqual(process.main(), 1)
+        coordinator.wait.assert_called_once_with()
+        coordinator.stop.assert_not_called()
 
     def test_lifecycle_record_rejects_non_closed_shapes(self):
         with self.assertRaises(ValueError):
@@ -455,6 +484,50 @@ class WitnessFailureRecordTests(unittest.TestCase):
             "lifecycle_reason": None,
             "native_exit_code": None,
         })
+
+    def test_scanner_rejects_bounded_recursive_json(self):
+        prefix = process.LIFECYCLE_PREFIX.encode()
+        nested = prefix + (b"[" * 2000) + b"0" + (b"]" * 2000)
+        self.assertLess(len(nested), live_witness.MAX_FAILURE_LOG_BYTES)
+        observed = live_witness.scan_lifecycle_record(nested)
+        self.assertEqual(observed, {
+            "lifecycle_record_present": True,
+            "lifecycle_record_valid": False,
+            "lifecycle_record_ambiguous": True,
+            "lifecycle_reason": None,
+            "native_exit_code": None,
+        })
+
+    def test_recursive_or_unexpected_scanner_failure_preserves_original_assertion(self):
+        prefix = process.LIFECYCLE_PREFIX.encode()
+        nested = prefix + (b"[" * 2000) + b"0" + (b"]" * 2000) + b"RAW_LOG_SENTINEL"
+        container = Mock()
+        container.attrs = {"State": {"Status": "exited", "ExitCode": 1}}
+        container.logs.return_value = nested
+        output = io.StringIO()
+        with redirect_stdout(output), self.assertRaisesRegex(AssertionError, "original failure"):
+            live_witness.raise_container_failure(container, "original failure")
+        event_text = output.getvalue()
+        event = json.loads(event_text)["postgres_source_failure"]
+        self.assertTrue(event["lifecycle_record_present"])
+        self.assertFalse(event["lifecycle_record_valid"])
+        self.assertTrue(event["lifecycle_record_ambiguous"])
+        self.assertNotIn("RAW_LOG_SENTINEL", event_text)
+
+        with patch.object(
+            live_witness, "scan_lifecycle_record", side_effect=RuntimeError("RAW_SCAN_SENTINEL")
+        ), redirect_stdout(io.StringIO()), self.assertRaisesRegex(
+            AssertionError, "original failure"
+        ):
+            live_witness.raise_container_failure(container, "original failure")
+
+    def test_failure_summary_sink_error_preserves_original_assertion(self):
+        container = Mock()
+        container.attrs = {"State": {"Status": "exited", "ExitCode": 1}}
+        container.logs.return_value = b""
+        with patch("builtins.print", side_effect=OSError("RAW_SINK_SENTINEL")), \
+                self.assertRaisesRegex(AssertionError, "original failure"):
+            live_witness.raise_container_failure(container, "original failure")
 
     def test_refresh_failure_preserves_logs_redaction_and_original_assertion(self):
         class Container:

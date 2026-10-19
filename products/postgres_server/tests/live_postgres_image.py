@@ -77,7 +77,7 @@ def scan_lifecycle_record(logs: bytes) -> dict[str, object]:
                 raise ValueError
         elif code is not None:
             raise ValueError
-    except (TypeError, ValueError, json.JSONDecodeError, UnicodeDecodeError):
+    except (TypeError, ValueError, json.JSONDecodeError, UnicodeDecodeError, RecursionError):
         result["lifecycle_record_ambiguous"] = True
         return result
     result.update({
@@ -128,7 +128,19 @@ def raise_container_failure(container, message: str) -> None:
             "daemon_error_present": None,
             "daemon_error_sha256": None,
         }
-    lifecycle = scan_lifecycle_record(logs)
+    try:
+        lifecycle = scan_lifecycle_record(logs)
+    except Exception:
+        present = any(
+            line.startswith(LIFECYCLE_PREFIX.encode("ascii")) for line in logs.splitlines()
+        )
+        lifecycle = {
+            "lifecycle_record_present": present,
+            "lifecycle_record_valid": False,
+            "lifecycle_record_ambiguous": present,
+            "lifecycle_reason": None,
+            "native_exit_code": None,
+        }
     event = {"postgres_source_failure": {
         "message": message,
         "state_refresh_available": state_refresh_available,
