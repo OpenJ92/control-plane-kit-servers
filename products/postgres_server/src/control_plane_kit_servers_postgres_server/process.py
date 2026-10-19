@@ -1,6 +1,9 @@
 """Non-root PID1 coordinator for PostgreSQL and its protected management host."""
 from __future__ import annotations
 
+from dataclasses import dataclass
+from enum import Enum
+import json
 import os
 from pathlib import Path
 import signal
@@ -19,10 +22,45 @@ STOP_SECONDS = 8.0
 FINAL_REAP_SECONDS = 1.0
 START_SECONDS = 3.0
 ENTRYPOINT = "/usr/local/bin/docker-entrypoint.sh"
+LIFECYCLE_PREFIX = "postgres-server lifecycle "
 
 
 class PostgresProcessError(RuntimeError):
     """Bounded process startup/lifecycle failure."""
+
+
+class LifecycleReason(Enum):
+    NATIVE_EXIT = "native_exit"
+    MANAGEMENT_EXIT = "management_exit"
+    READINESS_FATAL = "readiness_fatal"
+    STARTUP_FAILURE = "startup_failure"
+
+
+@dataclass(frozen=True, slots=True)
+class LifecycleRecord:
+    reason: LifecycleReason
+    native_exit_code: int | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.reason, LifecycleReason):
+            raise ValueError("PostgreSQL lifecycle reason is invalid")
+        if self.reason is LifecycleReason.NATIVE_EXIT:
+            if type(self.native_exit_code) is not int:
+                raise ValueError("PostgreSQL native exit code is invalid")
+        elif self.native_exit_code is not None:
+            raise ValueError("PostgreSQL lifecycle record is invalid")
+
+    def payload(self) -> dict[str, str | int | None]:
+        return {"reason": self.reason.value, "native_exit_code": self.native_exit_code}
+
+
+def emit_lifecycle_record(record: LifecycleRecord, *, stream=None) -> None:
+    try:
+        target = sys.stderr if stream is None else stream
+        encoded = json.dumps(record.payload(), separators=(",", ":"), sort_keys=True)
+        print(LIFECYCLE_PREFIX + encoded, file=target, flush=True)
+    except Exception:
+        return
 
 
 def _owner_uid(status: os.stat_result) -> int:
@@ -52,8 +90,22 @@ class PostgresCoordinator:
         self._serve_failed = Event()
         self._stop_requested = Event()
         self._stop_lock = Lock()
+        self._stop_complete = Event()
+        self._lifecycle_lock = Lock()
+        self._lifecycle_record = None
         self._stopped = False
+        self._stop_result = 1
         self._management_live = False
+
+    @property
+    def lifecycle_record(self) -> LifecycleRecord | None:
+        with self._lifecycle_lock:
+            return self._lifecycle_record
+
+    def _record_lifecycle(self, record: LifecycleRecord) -> None:
+        with self._lifecycle_lock:
+            if self._lifecycle_record is None:
+                self._lifecycle_record = record
 
     def start_native(self) -> None:
         if self._native is not None:
@@ -90,13 +142,18 @@ class PostgresCoordinator:
         while True:
             returncode = self._native.poll()
             if returncode is not None:
+                self._record_lifecycle(LifecycleRecord(LifecycleReason.NATIVE_EXIT, returncode))
                 deadline = time.monotonic() + STOP_SECONDS
                 self.readiness.set_state(ProductState.STOPPING)
                 self.readiness.stop_active(deadline=deadline)
                 self._close_management(deadline)
                 self.readiness.set_state(ProductState.EXITED)
                 return 1
-            if self._serve_failed.is_set() or self.readiness.state is ProductState.FATAL:
+            if self._serve_failed.is_set():
+                self._record_lifecycle(LifecycleRecord(LifecycleReason.MANAGEMENT_EXIT))
+                return self.stop(failure=True)
+            if self.readiness.state is ProductState.FATAL:
+                self._record_lifecycle(LifecycleRecord(LifecycleReason.READINESS_FATAL))
                 return self.stop(failure=True)
             if self._stop_requested.wait(poll_seconds):
                 return self.stop()
@@ -104,16 +161,39 @@ class PostgresCoordinator:
     def stop(self, *, failure: bool = False) -> int:
         with self._stop_lock:
             if self._stopped:
-                return 1 if failure else 0
-            self._stopped = True
+                first = False
+            else:
+                first = True
+                self._stopped = True
+        if not first:
+            self._stop_complete.wait(STOP_SECONDS + FINAL_REAP_SECONDS)
+            return self._stop_result
         deadline = time.monotonic() + STOP_SECONDS
         self.request_stop()
         self.readiness.set_state(ProductState.STOPPING)
-        clean_probe = self.readiness.stop_active(deadline=deadline)
-        clean_management = self._close_management(deadline)
-        clean_native = self._stop_native(deadline)
+        results = {"probe": False, "management": False, "native": False}
+
+        def cleanup(name: str, operation: Callable[[], bool]) -> None:
+            try:
+                results[name] = bool(operation())
+            except BaseException:
+                results[name] = False
+
+        workers = (
+            Thread(target=cleanup, args=("native", lambda: self._stop_native(deadline)), daemon=True),
+            Thread(target=cleanup, args=("probe", lambda: self.readiness.stop_active(deadline=deadline)), daemon=True),
+            Thread(target=cleanup, args=("management", lambda: self._close_management(deadline)), daemon=True),
+        )
+        for worker in workers:
+            worker.start()
+        completion_deadline = deadline + FINAL_REAP_SECONDS
+        for worker in workers:
+            worker.join(max(0.0, completion_deadline - time.monotonic()))
+        clean = all(results.values()) and all(not worker.is_alive() for worker in workers)
         self.readiness.set_state(ProductState.EXITED)
-        return 0 if not failure and clean_probe and clean_management and clean_native else 1
+        self._stop_result = 0 if not failure and clean else 1
+        self._stop_complete.set()
+        return self._stop_result
 
     def _close_management(self, deadline: float) -> bool:
         result = True
@@ -148,12 +228,14 @@ class PostgresCoordinator:
 
     def _stop_native(self, deadline: float) -> bool:
         child = self._native
-        if child is None or child.poll() is not None:
+        if child is None:
             return True
+        returncode = child.poll()
+        if returncode is not None:
+            return returncode == 0
         try:
             os.killpg(child.pid, signal.SIGINT)
-            child.wait(timeout=max(0.0, deadline - time.monotonic()))
-            return True
+            return child.wait(timeout=max(0.0, deadline - time.monotonic())) == 0
         except subprocess.TimeoutExpired:
             try:
                 os.killpg(child.pid, signal.SIGKILL)
@@ -167,6 +249,7 @@ class PostgresCoordinator:
 
 def main() -> int:
     coordinator = None
+    startup_complete = False
     try:
         if os.getuid() != 70 or os.getgid() != 70:
             raise PostgresProcessError("PostgreSQL wrapper requires uid and gid 70")
@@ -187,8 +270,20 @@ def main() -> int:
         signal.signal(signal.SIGTERM, stop_signal)
         coordinator.start_native()
         coordinator.start_management()
-        return coordinator.wait()
+        startup_complete = True
+        result = coordinator.wait()
+        record = coordinator.lifecycle_record
+        if result != 0 and record is not None:
+            emit_lifecycle_record(record)
+        return result
     except (PostgresConfigurationError, PasswordFileError, PostgresProcessError, OSError):
+        record = None
+        if not startup_complete:
+            record = LifecycleRecord(LifecycleReason.STARTUP_FAILURE)
+        elif coordinator is not None:
+            record = coordinator.lifecycle_record
+        if record is not None:
+            emit_lifecycle_record(record)
         if coordinator is not None:
             coordinator.stop(failure=True)
         print("postgres-server startup or lifecycle failure", file=sys.stderr)
