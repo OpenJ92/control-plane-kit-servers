@@ -10,10 +10,17 @@ HELPER_ID=""
 CURRENT_RUN=""
 CURRENT_RECORDS=""
 COMMAND_PID=""
+CLEANUP_MODE=0
 ATTEMPT_TIMEOUT=480
 BUILD_TIMEOUT=480
+EXECUTION_BUDGET=1800
+CLEANUP_RESERVE=300
+UPLOAD_RESERVE=300
 HELPER_BASE='python:3.12-slim'
 POSTGRES_BASE='postgres@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777'
+DIAGNOSTIC_STARTED="$(date +%s)"
+EXECUTION_DEADLINE="$((DIAGNOSTIC_STARTED + EXECUTION_BUDGET))"
+SCRIPT_DEADLINE="$((EXECUTION_DEADLINE + CLEANUP_RESERVE))"
 
 : > "$SUMMARY"
 cd "$ROOT"
@@ -25,12 +32,30 @@ record() {
 terminal_failure() {
   local class="$1" stage="$2"
   record --arg type result --arg status "$class" --arg stage "$stage" \
-    '{type:$type,status:$status,stage:$stage,acceptance:false}'
+    '{type:$type,status:$status,stage:$stage,cleanup_verified:false,acceptance:false}'
   exit 1
 }
 
+on_interrupt() {
+  terminal_failure interrupted signal
+}
+
+set_phase_timeout() {
+  local cap="$1" stage="$2" remaining
+  remaining="$((EXECUTION_DEADLINE - $(date +%s)))"
+  if [ "$remaining" -le 0 ]; then
+    terminal_failure timeout "$stage-aggregate-deadline"
+  fi
+  if [ "$remaining" -lt "$cap" ]; then PHASE_TIMEOUT="$remaining"; else PHASE_TIMEOUT="$cap"; fi
+}
+
 docker_bounded() {
-  timeout --signal=TERM --kill-after=5s 30s docker "$@"
+  local deadline="$EXECUTION_DEADLINE" remaining timeout_seconds=30
+  if [ "$CLEANUP_MODE" = 1 ]; then deadline="$SCRIPT_DEADLINE"; fi
+  remaining="$((deadline - $(date +%s)))"
+  [ "$remaining" -gt 0 ] || return 124
+  if [ "$remaining" -lt "$timeout_seconds" ]; then timeout_seconds="$remaining"; fi
+  timeout --signal=TERM --kill-after=5s "$timeout_seconds" docker "$@"
 }
 
 owned_container_ids() {
@@ -118,7 +143,7 @@ cleanup_attempt() {
 }
 
 cleanup_helper() {
-  local identity owner identities failed=0
+  local identity owner observed identities failed=0 image_eligible=1
   if ! identities="$(helper_metadata_container_ids)"; then failed=1; identities=""; fi
   while read -r identity; do
     [ -n "$identity" ] || continue
@@ -131,16 +156,26 @@ cleanup_helper() {
   done <<< "$identities"
   if ! identities="$(helper_metadata_container_ids)"; then failed=1; identities=unknown; fi
   [ -z "$identities" ] || failed=1
-  if ! identities="$(image_ids_for_tag "$HELPER_TAG")"; then failed=1; identities=""; fi
+  if ! identities="$(image_ids_for_tag "$HELPER_TAG")"; then
+    failed=1; image_eligible=0; identities=""
+  fi
   if [ -z "$identities" ]; then
     [ -z "$HELPER_ID" ] || failed=1
   else
-    observed="$(docker_bounded image inspect --format '{{.Id}}' "$HELPER_TAG")" || failed=1
-    [ -z "$HELPER_ID" ] || [ "$observed" = "$HELPER_ID" ] || failed=1
-    [ "$(docker_bounded image inspect --format \
-      '{{index .Config.Labels "org.openj92.cpk.diagnostic"}}' "$HELPER_TAG")" = \
-      "${GITHUB_RUN_ID}" ] || failed=1
-    [ "$failed" != 0 ] || docker_bounded image rm "$HELPER_TAG" >/dev/null || failed=1
+    if ! observed="$(docker_bounded image inspect --format '{{.Id}}' "$HELPER_TAG")"; then
+      failed=1; image_eligible=0
+    elif [ -n "$HELPER_ID" ] && [ "$observed" != "$HELPER_ID" ]; then
+      failed=1; image_eligible=0
+    fi
+    if ! owner="$(docker_bounded image inspect --format \
+      '{{index .Config.Labels "org.openj92.cpk.diagnostic"}}' "$HELPER_TAG")"; then
+      failed=1; image_eligible=0
+    elif [ "$owner" != "${GITHUB_RUN_ID}" ]; then
+      failed=1; image_eligible=0
+    fi
+    if [ "$image_eligible" = 1 ]; then
+      docker_bounded image rm "$HELPER_TAG" >/dev/null || failed=1
+    fi
   fi
   if ! identities="$(image_ids_for_tag "$HELPER_TAG")"; then failed=1; identities=unknown; fi
   [ -z "$identities" ] || failed=1
@@ -153,6 +188,7 @@ cleanup_helper() {
 outer_cleanup() {
   local result=$?
   trap - EXIT
+  CLEANUP_MODE=1
   if [ -n "$COMMAND_PID" ] && kill -0 "$COMMAND_PID" 2>/dev/null; then
     kill "$COMMAND_PID" 2>/dev/null || true
     for _ in $(seq 1 150); do
@@ -169,6 +205,7 @@ outer_cleanup() {
   exit "$result"
 }
 trap outer_cleanup EXIT
+trap on_interrupt INT TERM HUP
 
 if ! HEAD_ID="$(git rev-parse HEAD)"; then terminal_failure evidence-failure source-head; fi
 if [ "$HEAD_ID" != "${EXPECTED_HEAD:?}" ]; then terminal_failure evidence-failure source-head; fi
@@ -213,22 +250,40 @@ record --arg type environment --arg head "$HEAD_ID" \
   --arg docker_server "$DOCKER_SERVER" --arg docker_api "$DOCKER_API" \
   --arg docker_os "$DOCKER_OS" --arg docker_arch "$DOCKER_ARCH" \
   --arg storage_driver "$STORAGE_DRIVER" --arg cgroup_driver "$CGROUP_DRIVER" \
+  --argjson execution_budget "$EXECUTION_BUDGET" \
+  --argjson cleanup_reserve "$CLEANUP_RESERVE" --argjson upload_reserve "$UPLOAD_RESERVE" \
   '{type:$type,head:$head,diagnostic_script_sha256:$diagnostic_script_sha256,
     runner_os:$runner_os,runner_arch:$runner_arch,
     runner_image_os:$runner_image_os,runner_image_version:$runner_image_version,
     docker_server:$docker_server,docker_api:$docker_api,docker_os:$docker_os,
-    docker_arch:$docker_arch,storage_driver:$storage_driver,cgroup_driver:$cgroup_driver}'
+    docker_arch:$docker_arch,storage_driver:$storage_driver,cgroup_driver:$cgroup_driver,
+    execution_budget_seconds:$execution_budget,cleanup_reserve_seconds:$cleanup_reserve,
+    upload_reserve_seconds:$upload_reserve}'
 
-if ! timeout --signal=TERM --kill-after=15s "$BUILD_TIMEOUT" docker pull "$HELPER_BASE"; then
+set_phase_timeout "$BUILD_TIMEOUT" helper-base-pull
+set +e
+timeout --signal=TERM --kill-after=15s "$PHASE_TIMEOUT" docker pull "$HELPER_BASE"
+PHASE_STATUS=$?
+set -e
+if [ "$PHASE_STATUS" = 124 ] || [ "$PHASE_STATUS" = 137 ]; then
+  terminal_failure timeout helper-base-pull
+elif [ "$PHASE_STATUS" != 0 ]; then
   terminal_failure command-failure helper-base-pull
 fi
 if ! HELPER_BASE_ID="$(docker_bounded image inspect --format '{{.Id}}' "$HELPER_BASE")"; then
   terminal_failure evidence-failure helper-base
 fi
-if ! timeout --signal=TERM --kill-after=15s "$BUILD_TIMEOUT" \
+set_phase_timeout "$BUILD_TIMEOUT" helper-build
+set +e
+timeout --signal=TERM --kill-after=15s "$PHASE_TIMEOUT" \
   docker build -f Dockerfile.test \
     --label "org.openj92.cpk.diagnostic=${GITHUB_RUN_ID}" \
-    -t "$HELPER_TAG" .; then
+    -t "$HELPER_TAG" .
+PHASE_STATUS=$?
+set -e
+if [ "$PHASE_STATUS" = 124 ] || [ "$PHASE_STATUS" = 137 ]; then
+  terminal_failure timeout helper-build
+elif [ "$PHASE_STATUS" != 0 ]; then
   terminal_failure command-failure helper-build
 fi
 if ! HELPER_ID="$(docker_bounded image inspect --format '{{.Id}}' "$HELPER_TAG")"; then
@@ -265,13 +320,14 @@ record --arg type helper --arg image_id "$HELPER_ID" --arg version "$HELPER_VERS
     dockerfile_sha256:$dockerfile_sha256,pyproject_sha256:$pyproject_sha256}'
 
 for attempt in 1 2 3; do
+  set_phase_timeout "$ATTEMPT_TIMEOUT" "attempt-$attempt"
   CURRENT_RECORDS="$(mktemp -d "${RUNNER_TEMP}/cpk-postgres-recovery.XXXXXX")"
   CURRENT_RUN="cpk-postgres-recovery-${GITHUB_RUN_ID}-${attempt}"
   OUTPUT="$CURRENT_RECORDS/witness-output"
   SOURCE_TAG="control-plane-kit-postgres-source:$CURRENT_RUN"
   STARTED="$(date +%s)"
   set +e
-  timeout --signal=TERM --kill-after=15s "$ATTEMPT_TIMEOUT" \
+  timeout --signal=TERM --kill-after=15s "$PHASE_TIMEOUT" \
     docker run --rm --name "$CURRENT_RUN-controller" \
       --label "org.openj92.cpk.test-run=$CURRENT_RUN" \
       --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
@@ -329,5 +385,11 @@ for attempt in 1 2 3; do
   [ "$CLASS" = success ] || exit 1
 done
 
+CLEANUP_MODE=1
+cleanup_helper
+HELPER_ID=""
+if [ "$(date +%s)" -gt "$SCRIPT_DEADLINE" ]; then
+  terminal_failure timeout cleanup-reserve
+fi
 record --arg type result --arg status non_reproduction \
-  '{type:$type,status:$status,acceptance:false}'
+  '{type:$type,status:$status,cleanup_verified:true,acceptance:false}'
