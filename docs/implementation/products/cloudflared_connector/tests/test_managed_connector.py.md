@@ -21,3 +21,13 @@ purpose, independent artifact revalidation, and late reader exceptions overridde
 by stop/native death. SDK fixture shutdown is bounded through a daemon helper and
 unconditionally closes the listener; stalled cleanup fails rather than hanging
 this owning suite. These extend the same new laws, not SDK internals.
+
+The first implementation gate exposed a target-fixture defect: syntactically
+invalid JSON is rejected by Core ConfigurationArtifact before reaching this
+product factory. At selected Core73d87e99, test_configuration_artifacts.py's
+`test_paths_parser_shapes_and_secret_shaped_content_fail_closed` owns that parser
+law (malformed-media cases at105–120). The product target instead uses valid JSON
+`{}` with invalid receiver schema, retaining its exact ConnectorConfigurationError
+assertion and the well-typed foreign declaration case. Initial red placeholders
+had prevented this downstream fixture branch from running; that red did not
+prove the branch was correctly constructed.

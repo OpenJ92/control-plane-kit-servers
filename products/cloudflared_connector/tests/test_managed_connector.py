@@ -76,8 +76,8 @@ class ManagedContractTests(unittest.TestCase):
         foreign_value = replace(value, target=replace(value.target, provider_socket_name=foreign),
             declaration=replace(value.declaration, surface=replace(value.declaration.surface, provider_socket_name=foreign)))
         foreign_content = core.ReceiverNodeControlConfigurationCodec().encode_bytes(foreign_value).decode()
-        for content in ('{', foreign_content):
-            with self.subTest(content_kind='malformed' if content == '{' else 'foreign'):
+        for content in ('{}', foreign_content):
+            with self.subTest(content_kind='malformed-schema' if content == '{}' else 'foreign'):
                 candidate = replace(artifact, content=content)
                 with self.assertRaises(managed.ConnectorConfigurationError):
                     managed.source_runtime_contract(candidate, delivery)
