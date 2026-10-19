@@ -5,7 +5,7 @@ import signal
 import stat
 import subprocess
 import time
-from threading import Event, Thread, current_thread, main_thread
+from threading import Event, Lock, Thread, current_thread, main_thread
 
 from . import managed
 from .readiness import read_connection
@@ -78,13 +78,15 @@ class _Coordinator:
         self.child = None
         self.host = None
         self.health = managed.ConnectorHealth(native_alive=self._native_alive, read_connection=read_connection)
-        self.stop_intent = None
-        self.requested = False
+        self._stop = {}
         self.startup_failed = False
         self.host_failed = Event()
         self.serve_done = Event()
         self.shutdown_done = Event()
         self.serve_started = False
+        self.serve_gate = Lock()
+        self.serve_entered = False
+        self.serve_cancelled = False
         self.unexpected_native = None
         self.cleanup_incomplete = False
         self.escalated = False
@@ -93,18 +95,28 @@ class _Coordinator:
     def _native_alive(self):
         return self.child is not None and self.child.poll() is None
 
+    @property
+    def stop_intent(self):
+        return self._stop.get('first')
+
     def _request_stop(self, signum, frame):
         # Signal handler records intent only; no locks, logging, cleanup or waits.
         if self.stop_intent is None:
-            self.stop_intent = (time.monotonic(), signum)
-            self.requested = True
+            # CPython's atomic setdefault publishes the whole fact once, even if
+            # another signal interrupts candidate timestamp construction.
+            self._stop.setdefault('first', (time.monotonic(), signum, True))
 
     def _begin_stop(self):
         if self.stop_intent is None:
-            self.stop_intent = (time.monotonic(), signal.SIGTERM)
+            self._stop.setdefault('first', (time.monotonic(), signal.SIGTERM, False))
 
     def _serve(self):
         try:
+            with self.serve_gate:
+                if self.serve_cancelled or self.stop_intent is not None:
+                    self.serve_cancelled = True
+                    return
+                self.serve_entered = True
             self.host.serve_forever(poll_interval=0.05)
         except BaseException:
             self.host_failed.set()
@@ -138,11 +150,14 @@ class _Coordinator:
         while True:
             # Collect available failure facts before selecting a terminal cause.
             host_failure = self.host_failed.is_set()
+            stop_before_observation = self.stop_intent
             code = self.child.poll() if self.child is not None else None
             if host_failure:
                 self._begin_stop()
                 return
-            if code is not None and self.stop_intent is None:
+            # An exit observed by a poll begun before stop is not made successful
+            # by a handler running between poll return and classification.
+            if code is not None and stop_before_observation is None:
                 self.unexpected_native = code
                 self._begin_stop()
                 return
@@ -182,29 +197,43 @@ class _Coordinator:
 
     def _cleanup(self):
         self._begin_stop()
-        started, signum = self.stop_intent
+        started, signum, requested = self.stop_intent
         kill_at, finish_at = started + 7.0, started + 8.0
         self.health.stop()
-        if self.host is not None:
-            if self.serve_started and not self.serve_done.is_set():
-                try:
-                    Thread(target=self._shutdown, name='cloudflared-shutdown', daemon=True).start()
-                except Exception:
-                    self.cleanup_incomplete = True
-            else:
-                self.shutdown_done.set()
-            try:
-                self.host.server_close()
-            except Exception:
-                self.cleanup_incomplete = True
-        else:
+        with self.serve_gate:
+            if not self.serve_entered:
+                self.serve_cancelled = True
+        host_closed = self.host is None
+        if host_closed:
             self.shutdown_done.set()
         self._signal_group(signum)
         while True:
             now = time.monotonic()
+            if not host_closed:
+                # Do not close between Thread.start and SDK selector registration.
+                # A cancelled entry never calls serve_forever. An admitted entry
+                # must report actual SDK serving (or completion) before closure.
+                ready = (not self.serve_started or self.serve_cancelled
+                         or self.serve_done.is_set() or self.host.cpk_is_serving)
+                if ready or now >= finish_at:
+                    if not ready:
+                        self.cleanup_incomplete = True
+                    if self.serve_started and not self.serve_cancelled and not self.serve_done.is_set():
+                        try:
+                            Thread(target=self._shutdown, name='cloudflared-shutdown', daemon=True).start()
+                        except Exception:
+                            self.cleanup_incomplete = True
+                    else:
+                        self.shutdown_done.set()
+                    try:
+                        self.host.server_close()
+                    except Exception:
+                        self.cleanup_incomplete = True
+                    host_closed = True
             reaped, code = self._child_completion()
             absent = self._group_absent()
-            host_done = (not self.serve_started or self.serve_done.is_set()) and self.shutdown_done.is_set()
+            host_done = (host_closed and (not self.serve_started or self.serve_done.is_set())
+                         and self.shutdown_done.is_set())
             if reaped and absent and host_done:
                 if now > finish_at:
                     self.cleanup_incomplete = True
@@ -226,7 +255,7 @@ class _Coordinator:
         if self.unexpected_native is not None:
             return _exit_code(self.unexpected_native, unexpected=True), 'native_exit'
         if self.child is None:
-            return (0 if self.requested else 1), 'stopping'
+            return (0 if requested else 1), 'stopping'
         return _exit_code(code, unexpected=False), 'stopping'
 
     def run(self):

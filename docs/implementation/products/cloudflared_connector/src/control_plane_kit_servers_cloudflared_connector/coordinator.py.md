@@ -19,10 +19,18 @@ Token values, candidate paths and raw thread errors are excluded from records.
 
 The coordinator retains first-stop timestamp/signal, sticky startup/host failure,
 unexpected native exit and incomplete/escalated cleanup. Handlers record intent
-only. Actual health is invalidated before concurrent SDK/native cleanup. Serving
+only. CPython atomic dict.setdefault publishes the entire first time/signal/origin
+fact once; a reentrant handler or interrupted internal stop cannot overwrite it.
+The stop snapshot before native poll preserves observed-exit classification against
+a signal delivered between poll return and classification. Actual health is invalidated before concurrent SDK/native cleanup. Serving
 and shutdown threads are daemon threads with bounded main-thread observation;
 never-started serving is not passed to stdlib's shutdown wait. Owned-thread errors
 become fixed failure state rather than raw tracebacks. Listener close is prompt.
+An entry gate cancels delayed serving before it invokes a closed host. If entry
+was already admitted, closure waits for actual SDK serving or completion within
+the same deadline, rather than confusing Thread.start with selector registration.
+Deadline expiry forces closure and incomplete124; unrelated serving errors remain
+sticky failures, not blanket-suppressed shutdown noise.
 
 TERM/INT is sent to the owned group once, KILL at first-stop+7s if needed, with
 final cleanup at+8s. Leader poll/reap and group absence are distinct observations;

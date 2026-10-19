@@ -30,6 +30,12 @@ At0e909260 the owning Docker gate collected54 connector methods:30 predecessor
 passes and24 new methods yielding44 intentional NotImplementedError records.
 Both reviewers accepted causal red; no import/fixture/Docker failure was credited.
 Log866e80061d20e6f04dc883710f6c604d3a03b013517e19db4d733d6fe5bb3243 records it.
+Actual source review then identified three publication/entry races. Additive
+regressions interrupt stop timestamp construction with another handler, inject a
+requested signal after native poll observes0, and delay a successfully created
+serving thread until stop/close. These preserve all24 reviewed predecessor target
+methods. The controlled host now refuses entry after close, matching the relevant
+SDK/stdlib selector boundary. New regressions are not yet executed.
 Downstream assertions still require green. The unmodified Docker ./test.sh is the
 only executable gate. A returned integer is not actual process-exit
 evidence. Managed-image, undrained pipe, selected Docker stop/profile, active SDK

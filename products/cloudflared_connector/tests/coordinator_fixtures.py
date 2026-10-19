@@ -49,6 +49,8 @@ class Host:
         return self.started.is_set() and not self.finish.is_set()
 
     def serve_forever(self, poll_interval=0.05):
+        if self.closed:
+            raise RuntimeError('controlled serving entered a closed host')
         self.serve_thread = current_thread()
         self.threads.append(current_thread())
         self.started.set()
@@ -99,6 +101,7 @@ class Harness:
         self.on_install = None
         self.health = None
         self.first_stop_at = None
+        self.on_clock = None
         self.stack = ExitStack()
 
     def at(self, when, action):
@@ -124,6 +127,12 @@ class Harness:
             _, action = self.actions.pop(0)
             action()
         _real_sleep(0.001)
+
+    def clock(self):
+        if self.on_clock is not None:
+            callback, self.on_clock = self.on_clock, None
+            callback()
+        return self.now
 
     def install(self, signum, handler):
         old = self.handlers.get(signum, signal.SIG_DFL)
@@ -174,7 +183,7 @@ class Harness:
                 self.child.code = self.native_stop_code
 
     def __enter__(self):
-        self.stack.enter_context(patch.object(coordinator.time, 'monotonic', side_effect=lambda: self.now))
+        self.stack.enter_context(patch.object(coordinator.time, 'monotonic', side_effect=self.clock))
         self.stack.enter_context(patch.object(coordinator.time, 'sleep', side_effect=self.sleep))
         self.stack.enter_context(patch.object(coordinator.signal, 'signal', side_effect=self.install))
         self.stack.enter_context(patch.object(coordinator.signal, 'getsignal', side_effect=lambda sig: self.handlers.get(sig, signal.SIG_DFL)))

@@ -15,6 +15,10 @@ scheduled actions may be delivered later by a valid polling interval. Nondefault
 prior handlers expose restoration defects. A group signal changes only a still
 running leader's returncode; group cleanup cannot rewrite an already-exited leader.
 Joining a controlled finished host makes competing-observation tests deterministic.
+A one-shot controlled-clock hook can interrupt first-stop candidate construction;
+the host refuses serving entry after close so delayed-entry regressions cannot
+silently accept an impossible SDK startup sequence. Neither fixture change adds
+a coordinator policy algorithm.
 
 These controls cannot establish PID1/process exit, real native connection/drain,
 kernel timing or Docker stop behavior. Those belong to the later source-image

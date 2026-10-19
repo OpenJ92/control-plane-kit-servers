@@ -5,7 +5,7 @@ import signal
 import stat
 import subprocess
 from types import SimpleNamespace
-from threading import Thread
+from threading import Event, Thread
 import unittest
 from unittest.mock import Mock, patch
 
@@ -75,6 +75,21 @@ class StartupTests(unittest.TestCase):
 
 
 class FailureTests(unittest.TestCase):
+    def test_signal_between_native_poll_and_classification_cannot_erase_exit(self):
+        with Harness() as h:
+            original_poll = h.child.poll
+            injected = []
+            def poll():
+                observed = original_poll()
+                if observed == 0 and not injected:
+                    injected.append(True)
+                    h.stop()
+                return observed
+            h.child.poll = poll
+            h.at(0.1, lambda: h.native_exit(0))
+            self.assertEqual(h.run(), 1)
+            self.assertEqual(injected, [True])
+
     def test_unexpected_native_exit_maps_zero_nonzero_and_signal(self):
         for code, expected in ((0, 1), (7, 7), (-signal.SIGTERM, 143)):
             with self.subTest(code=code), Harness() as h:
@@ -128,6 +143,52 @@ class FailureTests(unittest.TestCase):
 
 
 class SignalDeadlineTests(unittest.TestCase):
+    def test_first_published_stop_survives_interrupted_internal_or_requested_stop(self):
+        for origin in ('internal', 'requested'):
+            with self.subTest(origin=origin), Harness() as h:
+                h.ignore_term = True
+                def interrupt():
+                    h.stop(signal.SIGINT)
+                    h.now += 0.25
+                def trigger():
+                    h.on_clock = interrupt
+                    if origin == 'internal':
+                        h.native_exit(0, group_alive=True)
+                    else:
+                        h.stop(signal.SIGTERM)
+                h.at(0.1, trigger)
+                self.assertEqual(h.run(), 124)
+                self.assertEqual([sig for _, sig in h.signals], [signal.SIGINT, signal.SIGKILL])
+                self.assertAlmostEqual(h.signals[1][0] - h.first_stop_at, 7, delta=0.15)
+
+    def test_delayed_serving_entry_is_cancelled_before_closed_host_is_entered(self):
+        entry = Event()
+        threads = []
+        def make_thread(*, target, **kwargs):
+            if not threads:
+                actual_target = target
+                def delayed():
+                    entry.wait()
+                    actual_target()
+                target = delayed
+            thread = Thread(target=target, **kwargs)
+            threads.append(thread)
+            return thread
+        try:
+            with Harness() as h, patch.object(coordinator, 'Thread', side_effect=make_thread):
+                h.at(0.1, h.stop)
+                h.at(0.2, entry.set)
+                self.assertEqual(h.run(), 0)
+                self.assertTrue(h.host.closed)
+                self.assertFalse(h.host.started.is_set())
+                self.assertTrue(h.child.reaped)
+                self.assertLess(h.now, 1)
+        finally:
+            entry.set()
+            for thread in threads:
+                thread.join(1)
+                self.assertFalse(thread.is_alive(), 'delayed owner thread leaked')
+
     def test_term_and_int_forward_once_and_expected_host_return_is_clean(self):
         for selected in (signal.SIGTERM, signal.SIGINT):
             with self.subTest(selected=selected), Harness() as h:
