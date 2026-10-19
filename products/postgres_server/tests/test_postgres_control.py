@@ -31,8 +31,8 @@ class PostgresControlContractTests(unittest.TestCase):
         contract = config.postgres_source_runtime_contract(self.artifact)
         self.assertEqual(ProductRuntimeContractCodec().decode(contract.descriptor()), contract)
         self.assertEqual(
-            tuple((socket.name, socket.protocol) for socket in contract.sockets.providers),
-            (("postgres", Protocol.POSTGRES), ("management", Protocol.HTTP)),
+            {socket.name: socket.protocol for socket in contract.sockets.providers},
+            {"postgres": Protocol.POSTGRES, "management": Protocol.HTTP},
         )
         self.assertEqual(
             {port.provider_socket: port.container_port for port in contract.provider_ports},
