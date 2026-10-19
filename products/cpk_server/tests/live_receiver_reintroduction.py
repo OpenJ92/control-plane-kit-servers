@@ -296,7 +296,7 @@ async def witness():
         health = ProcessHealth(material, compute, ingress, processes)
         try:
             with IsolatedOperationsSchema(os.environ["CPK_RECEIVER_ACCEPTANCE_DATABASE_URL"],
-                    "cpk_reintroduction_" + uuid4().hex) as schema:
+                    "cpk_1912_reintro_" + uuid4().hex) as schema:
                 factory = OperationsApplicationFactory(schema.unit_of_work,
                     OperationsEffectPorts({RuntimeKind.DOCKER: synthetic_runtime_registration(compute)},
                         {IngressAuthorityProviderKind.CLOUDFLARE: ingress}, health, material.decoders),
