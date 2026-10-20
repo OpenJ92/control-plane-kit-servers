@@ -181,7 +181,8 @@ class ManagedNativeConnectionTests(unittest.TestCase):
         for result in (None, SimpleNamespace(**asdict(valid)), replace(valid, effect_id="other"),
                 replace(valid, activity_id="other"), replace(valid, outcome="connected"),
                 replace(valid, ready_connections=True), replace(valid, sample_end=None),
-                replace(valid, sample_start="private provider text")):
+                replace(valid, sample_start="private provider text"),
+                replace(valid, outcome=ConnectorConnectionOutcome.REFUSED)):
             with self.subTest(result_type=type(result).__name__):
                 with patch.object(DockerConnectorConnectionObserver, "observe", return_value=result):
                     with self.assertRaisesRegex(ManagedHealthUnavailable, "^managed health is unavailable$") as caught:
