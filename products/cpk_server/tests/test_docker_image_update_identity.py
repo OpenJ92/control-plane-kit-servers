@@ -164,3 +164,48 @@ class FixedArtifactIdentityTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             altered = replace(good.images["hello_a"], execution_id="sha256:" + "f" * 64)
             module.bind_fixed_images("daemon-a", {**good.images, "hello_a": altered})
+
+    def test_preload_optional_overlap_cannot_bypass_fixed_descriptor_proof(self):
+        module = importlib.import_module("docker_image_update_identity")
+        by_reference = {FIXED[role]["reference"]: attrs
+                        for role, attrs in observations("config-valued").items()}
+        overlap = FIXED["hello_family"]["reference"]
+        attrs = by_reference[overlap]
+        descriptor = observations()["hello_family"]["Descriptor"]
+        attrs["Descriptor"] = {**descriptor, "size": descriptor["size"] + 1}
+        # Every old optional-preload check passes; only fixed proof is invalid.
+        self.assertIn(overlap, attrs["RepoDigests"])
+        self.assertEqual((attrs["Os"], attrs["Architecture"]), ("linux", "amd64"))
+        self.assertEqual(attrs["Id"], FIXED["hello_family"]["image_id"])
+        with self.assertRaises(ValueError):
+            module.qualify_preloaded_images(daemon_id="daemon-a",
+                image_attrs_by_reference=by_reference, optional_references=(overlap,))
+
+    def test_preload_genuine_extra_keeps_prior_checks_without_fixed_config_claim(self):
+        module = importlib.import_module("docker_image_update_identity")
+        by_reference = {FIXED[role]["reference"]: attrs for role, attrs in observations().items()}
+        extra = "ghcr.io/openj92/control-plane-kit-servers/hello-server@sha256:" + "e" * 64
+        extra_attrs = {"Id": "sha256:" + "d" * 64, "RepoDigests": [extra],
+                       "Os": "linux", "Architecture": "amd64", "Config": {"User": "hello"}}
+        supplied = {**by_reference, extra: extra_attrs}
+        result = module.qualify_preloaded_images(daemon_id="daemon-a",
+            image_attrs_by_reference=supplied,
+            optional_references=(FIXED["hello_family"]["reference"], extra))
+        self.assertEqual(result["fixed"], qualified_images("manifest-valued").descriptor())
+        self.assertEqual(result["additional"], [
+            {"reference": extra, "execution_id": extra_attrs["Id"], "platform": "linux/amd64"}])
+        for field, wrong in (("RepoDigests", []), ("Architecture", "arm64"), ("Os", "windows")):
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                module.qualify_preloaded_images(daemon_id="daemon-a",
+                    image_attrs_by_reference={**by_reference, extra: {**extra_attrs, field: wrong}},
+                    optional_references=(extra,))
+
+    def test_preload_optional_selection_never_omits_mandatory_fixed_inputs(self):
+        module = importlib.import_module("docker_image_update_identity")
+        by_reference = {FIXED[role]["reference"]: attrs for role, attrs in observations().items()}
+        missing = FIXED["gateway"]["reference"]
+        by_reference.pop(missing)
+        for optional in ((), (FIXED["hello_family"]["reference"],), (missing,)):
+            with self.subTest(optional=optional), self.assertRaises(ValueError):
+                module.qualify_preloaded_images(daemon_id="daemon-a",
+                    image_attrs_by_reference=by_reference, optional_references=optional)
