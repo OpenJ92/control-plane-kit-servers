@@ -15,7 +15,20 @@ The tests substitute only result retrieval or record writing at the existing
 witness boundary. The deadline case uses the actual reader. They do not model
 Docker internals, native lifetime, or SDK behavior. Existing automatic product
 test discovery collects them; no collection or skip configuration changes.
-No executable validation has run for this correction. Only the owning Docker
-`./test.sh` can validate it after source review and North's next run release.
-The prior993b61b gate stopped at integrity before these methods executed;
-the local receipt correction addresses that contract without an exclusion.
+The993b61b gate stopped at integrity before these methods executed.
+Gate39385659976 on10720fa subsequently passed integrity and all five methods as
+part of752 passing package methods. Runtime qualification still failed with a
+generic outer message and no helper/controller record.
+
+The next fixed-marker correction adds four methods at actual witness functions:
+capture freezes primary context before cleanup changes and clears requested
+helper mode outside observation; publication rejects candidate-bearing context;
+terminal selection preserves the original exception despite cleanup failure
+and refuses cleanup-only failure; failed emission retains the frozen context
+and original outcome. Existing helper-result laws remain unchanged.
+No Docker state machine or runtime success is simulated.
+
+Nine diagnostic methods now exist. The four new methods and changed controller
+have not executed. Only the owning Docker `./test.sh` can validate this local
+correction after exact source review and North's next run release; no supported
+narrow local entrypoint exists and no alternate harness is introduced.

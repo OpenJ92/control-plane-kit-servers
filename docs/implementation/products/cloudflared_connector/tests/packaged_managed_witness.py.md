@@ -62,15 +62,46 @@ This receipt is diagnostic state, never recovery of the terminal helper failure.
 Existing exact-owned cleanup handles remaining files.
 
 Five focused diagnostic tests exercise these laws at the completion boundary.
-They do not simulate Docker or award runtime acceptance. This correction awaits
-local source review before any push; executable validation has not been rerun.
+They do not simulate Docker or award runtime acceptance.
 
 Diagnostic gate39384890071 tested993b61b via merge0eeab408 and passed26 policy
 tests, then integrity enumerated752 methods and rejected two exception/pass
 handlers before any package execution. The local correction makes write receipts
 explicit and assigns the closed invalid availability state on read errors.
-It does not waive or modify the integrity checker. Five diagnostic tests and
-runtime qualification remain unexecuted for the corrected source.
+It does not waive or modify the integrity checker. Gate39385659976 subsequently
+tested10720fa via merge51cee511, passing integrity and all752 package methods,
+including those five diagnostic tests, and building the image with103 notices.
+Its sole runtime failure was the outer generic message; no helper or controller
+JSON record appeared. No precise operation or native cause was established.
+
+The next local correction follows the reviewers' fixed-marker consensus.
+One invocation-local context contains only `phase`, `operation`, `helper_mode`.
+Phases are setup/native/profile/fatal/cleanup; profile denotes the controlled
+stop case. Operations are literal values placed before calls, and helper mode
+is an existing requested observation mode or null. Setup now enters the same
+capture/cleanup boundary before imports, environment access or client creation.
+Nested create/execute helpers refine the marker; successful observations clear
+the helper mode. A marker describes work in progress, not successful effects or
+a dependency root cause. No traceback inspection is used.
+
+On failure the controller copies the context before reporting and cleanup.
+It emits one closed primary record, preserves the original exception, and
+continues every existing owned cleanup attempt plus client close. The first
+cleanup failure gets a separate frozen context and aggregate cleanup record.
+If both fail, the original exception is re-raised; cleanup-only still refuses
+with `managed_cleanup_incomplete`. Failure-record publication returns a boolean
+receipt. A primary record whose publication failed has at most one fallback
+attempt after cleanup; publication never recovers the original failure.
+Existing qualification snapshots remain best-effort, and their publication
+cannot replace the original qualification. Final success is still emitted only
+after cleanup; failure to publish that result receives a closed report marker.
+
+Four additional focused methods exercise actual marker/capture/publication and
+terminal-precedence boundaries, for nine diagnostic methods total. They check
+frozen primary state, mode clearing, candidate refusal, primary-plus-cleanup and
+cleanup-only results, and failed publication without simulating Docker.
+The four-file local delta awaits exact source review and has not executed.
+All runtime/profile/fullcleanup acceptance remains HOLD.
 
 The separate controlled TERM-ignoring PID1 has handler-ready/TERM receipts and one
 selected stop. Its bounded Engine event query requires exact identity,

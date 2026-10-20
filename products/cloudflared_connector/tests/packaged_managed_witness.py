@@ -31,6 +31,13 @@ HELPER_REASONS = frozenset((
     "helper_output_bound", "helper_output_path", "helper_output_write",
     "helper_exception",
 ))
+CONTROLLER_PHASES = frozenset(("setup", "native", "profile", "fatal", "cleanup"))
+CONTROLLER_OPERATIONS = frozenset((
+    "initialize", "inputs", "connect", "owner", "image_inspect", "prepare_files",
+    "absence_check", "create", "record", "start", "reload", "observe",
+    "exec_create", "exec_start", "exec_inspect", "result_read", "resolve_profile",
+    "stop", "logs", "events", "kill", "wait", "remove", "close", "report",
+))
 
 
 class QualificationFailure(AssertionError):
@@ -40,6 +47,51 @@ class QualificationFailure(AssertionError):
 def require(condition, reason):
     if not condition:
         raise QualificationFailure(reason)
+
+
+def mark_controller(context, phase, operation, helper_mode=None):
+    require(phase in CONTROLLER_PHASES and operation in CONTROLLER_OPERATIONS
+            and (helper_mode is None or helper_mode in OBSERVATION_MODES),
+            "controller_context")
+    context.update(phase=phase, operation=operation, helper_mode=helper_mode)
+
+
+def emit_controller_failure(role, context):
+    """Publish only closed marker values; emission cannot replace the failure."""
+    try:
+        if (role not in ("primary", "cleanup")
+                or set(context) != {"phase", "operation", "helper_mode"}
+                or context["phase"] not in CONTROLLER_PHASES
+                or context["operation"] not in CONTROLLER_OPERATIONS
+                or (context["helper_mode"] is not None
+                    and context["helper_mode"] not in OBSERVATION_MODES)):
+            return False
+        print(json.dumps({"stage": "managed_cloudflared_controller_failure",
+                          "outcome": "unqualified", "role": role, **context}), flush=True)
+    except Exception:
+        return False
+    return True
+
+
+def capture_controller_failure(role, context):
+    snapshot = dict(context)
+    return snapshot, emit_controller_failure(role, snapshot)
+
+
+def emit_qualification_failure(failure, states):
+    try:
+        print(json.dumps({"stage": "managed_cloudflared_controller",
+                          "outcome": "unqualified", "reason": str(failure),
+                          "states": states}), flush=True)
+    except Exception:
+        return False
+    return True
+
+
+def finish_controller(primary_failure, cleanup_failed):
+    if primary_failure is not None:
+        raise primary_failure
+    require(not cleanup_failed, "managed_cleanup_incomplete")
 
 
 def helper_failure_value(failure):
@@ -353,26 +405,26 @@ def verify_image(image):
 
 
 def controller():
-    import docker
-    from control_plane_kit_interpreters.docker.sdk import DockerSdkClient
-    records = Path("/witness")
-    results = records / "results"
-    run = os.environ["CPK_MANAGED_TEST_RUN"]
-    image_id = os.environ["CPK_MANAGED_IMAGE"]
-    host_records = os.environ["CPK_MANAGED_HOST_RECORDS"]
-    host_tests = os.environ["CPK_MANAGED_HOST_TESTS"]
-    client = docker.from_env(timeout=5)
-    owner = DockerSdkClient(client=client)
+    context = {"phase": "setup", "operation": "initialize", "helper_mode": None}
+    primary_failure = None
+    primary_context = None
+    primary_reported = False
+    cleanup_context = None
+    client = None
     created = []
 
     def create(name, **kwargs):
+        phase = context["phase"]
+        mark_controller(context, phase, "absence_check")
         require(not client.containers.list(all=True, filters={"name": "^/" + name + "$"}),
                 "existing_container")
+        mark_controller(context, phase, "create")
         container = client.containers.create(
             image_id, name=name, network_mode="none",
             labels={OWNER: run, "org.openj92.project": "control-plane-kit-servers"},
             **kwargs)
         created.append(container.id)
+        mark_controller(context, phase, "record")
         (records / "containers.json").write_text(json.dumps(created))
         return container
 
@@ -380,6 +432,8 @@ def controller():
         # Detached exec avoids docker-py's unbounded upgraded-socket frame reader.
         # Each helper writes one exclusive bounded file on an owned fixture
         # mount. Read it locally, not through Docker's timeout-disabled archive.
+        phase = context["phase"]
+        mark_controller(context, phase, "observe", mode)
         name = "cpk-witness-" + uuid.uuid4().hex + ".json"
         path = "/witness-results/" + name
         local_path = results / name
@@ -387,28 +441,36 @@ def controller():
         client.api.timeout = 1
         try:
             require(time.monotonic() < deadline, "helper_deadline")
+            mark_controller(context, phase, "exec_create", mode)
             execution = client.api.exec_create(
                 container.id,
                 ["python", "/witness-tests/packaged_managed_witness.py", mode, path],
                 stdout=False, stderr=False)
             require(time.monotonic() < deadline, "helper_deadline")
+            mark_controller(context, phase, "exec_start", mode)
             client.api.exec_start(execution["Id"], detach=True)
             while time.monotonic() < deadline:
+                mark_controller(context, phase, "exec_inspect", mode)
                 state = client.api.exec_inspect(execution["Id"])
                 if not state["Running"] and state["ExitCode"] is not None:
                     break
                 time.sleep(0.05)
             else:
                 require(False, "helper_deadline")
-            return completed_helper(mode, state["ExitCode"], local_path, deadline)
+            mark_controller(context, phase, "result_read", mode)
+            value = completed_helper(mode, state["ExitCode"], local_path, deadline)
+            mark_controller(context, phase, "observe")
+            return value
         finally:
             client.api.timeout = old_timeout
 
     def wait_receipt(container, expected):
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
+            mark_controller(context, "profile", "reload")
             container.reload()
             require(container.status == "running", "controlled_early_exit")
+            mark_controller(context, "profile", "logs")
             output = container.logs(tail=3)
             require(len(output) <= 128, "controlled_log_bound")
             if expected in output.splitlines():
@@ -417,8 +479,23 @@ def controller():
         require(False, "controlled_receipt_timeout")
 
     try:
+        import docker
+        from control_plane_kit_interpreters.docker.sdk import DockerSdkClient
+        mark_controller(context, "setup", "inputs")
+        records = Path("/witness")
+        results = records / "results"
+        run = os.environ["CPK_MANAGED_TEST_RUN"]
+        image_id = os.environ["CPK_MANAGED_IMAGE"]
+        host_records = os.environ["CPK_MANAGED_HOST_RECORDS"]
+        host_tests = os.environ["CPK_MANAGED_HOST_TESTS"]
+        mark_controller(context, "setup", "connect")
+        client = docker.from_env(timeout=5)
+        mark_controller(context, "setup", "owner")
+        owner = DockerSdkClient(client=client)
+        mark_controller(context, "setup", "image_inspect")
         image = client.images.get(image_id)
         verify_image(image)
+        mark_controller(context, "setup", "prepare_files")
         results.mkdir(mode=0o770)
         results.chmod(0o770)
         # The host run owner can clean up failed observations; the numeric
@@ -434,15 +511,18 @@ def controller():
             str(Path(host_tests).parent / "licenses/cloudflared-manifest.json"):
                 {"bind": "/witness/notice-manifest.json", "mode": "ro"},
         }
+        mark_controller(context, "native", "create")
         native = create(run + "-native", volumes=mounts, environment={
             "CPK_WRAPPER_CONFIGURATION_FILE": "/etc/cpk/cloudflared/control.json",
             "TUNNEL_TOKEN_FILE": "/run/secrets/cloudflared-token",
         })
+        mark_controller(context, "native", "start")
         native.start()
         deadline = time.monotonic() + 15
         # No replacement launch. Every observation belongs to this one identity.
         before = None
         while before is None and time.monotonic() < deadline:
+            mark_controller(context, "native", "reload")
             native.reload()
             require(native.status == "running", "native_early_exit")
             before = execute(native, "starting", deadline)
@@ -458,45 +538,58 @@ def controller():
             require(observed["identity"] == before, "native_changed_during_startup")
             time.sleep(0.05)
         require(observed == before and time.monotonic() <= deadline, "native_interval")
+        mark_controller(context, "native", "resolve_profile")
         profile = resolve_profile(client, native)
         require(execute(native, "identity", time.monotonic() + 3) == before,
                 "native_changed_before_stop")
+        mark_controller(context, "native", "stop")
         owner.stop_container(native.id)
+        mark_controller(context, "native", "reload")
         native.reload()
         require(native.status == "exited", "native_stop_incomplete")
         require(native.attrs["State"]["ExitCode"] == 0, "native_stop_not_clean")
 
+        mark_controller(context, "profile", "create")
         controlled = create(
             run + "-profile", entrypoint=["python", "/witness-tests/packaged_managed_witness.py",
                                         "controlled"],
             volumes={host_tests: {"bind": "/witness-tests", "mode": "ro"}},
             healthcheck={"test": ["NONE"]})
+        mark_controller(context, "profile", "start")
         controlled.start()
+        mark_controller(context, "profile", "resolve_profile")
         require(resolve_profile(client, controlled) == profile, "profile_mismatch")
         wait_receipt(controlled, b"handler-ready")
         wall_before, mono_before = time.time_ns(), time.monotonic_ns()
+        mark_controller(context, "profile", "stop")
         owner.stop_container(controlled.id)
         wall_after, mono_after = time.time_ns(), time.monotonic_ns()
         require(abs((wall_after - wall_before) - (mono_after - mono_before)) <= 1_000_000_000,
                 "controller_clock_discontinuity")
+        mark_controller(context, "profile", "reload")
         controlled.reload()
         require(controlled.status == "exited" and controlled.attrs["State"]["ExitCode"] == 137,
                 "controlled_terminal_state")
+        mark_controller(context, "profile", "logs")
         output = controlled.logs(tail=3)
         require(len(output) <= 128 and output.splitlines() == [b"handler-ready", b"term-received"],
                 "controlled_receipts")
+        mark_controller(context, "profile", "events")
         events = events_between(client, controlled.id, wall_before // 1_000_000_000,
                                 wall_after // 1_000_000_000 + 1)
         evidence = verify_stop_events(events)
+        mark_controller(context, "fatal", "create")
         fatal = create(
             run + "-fatal", entrypoint=["python", "/witness-tests/packaged_managed_witness.py",
                                       "fatal"],
             volumes={host_tests: {"bind": "/witness-tests", "mode": "ro"}},
             healthcheck={"test": ["NONE"]})
+        mark_controller(context, "fatal", "start")
         fatal.start()
         fatal_deadline = time.monotonic() + 5
         child = None
         while time.monotonic() < fatal_deadline:
+            mark_controller(context, "fatal", "logs")
             output = fatal.logs(tail=1)
             require(len(output) <= 128, "fatal_receipt_bound")
             if output:
@@ -505,8 +598,11 @@ def controller():
             time.sleep(0.05)
         require(child is not None and child["child_pid"] == child["child_group"] > 1,
                 "fatal_child_group")
+        mark_controller(context, "fatal", "kill")
         fatal.kill(signal="SIGKILL")
+        mark_controller(context, "fatal", "wait")
         require(fatal.wait(timeout=5)["StatusCode"] == 137, "fatal_exit")
+        mark_controller(context, "fatal", "reload")
         fatal.reload()
         require(fatal.status == "exited" and fatal.attrs["State"]["Pid"] == 0,
                 "fatal_namespace_still_running")
@@ -514,33 +610,53 @@ def controller():
         # Docker's stopped namespace evidence, not a scan of all host processes.
         result = {"stage": "managed_cloudflared_controller", "outcome": "pass",
                   "docker_sdk": docker.__version__, **profile, **evidence, **contents}
-    except QualificationFailure as failure:
-        states = []
-        for identity in created:
-            try:
-                container = client.containers.get(identity)
-                state = container.attrs["State"]
-                states.append({"id": identity, "status": container.status,
-                               "exit_code": state["ExitCode"], "pid": state["Pid"]})
-            except Exception:
-                states.append({"id": identity, "status": "observation_unavailable"})
-        print(json.dumps({"stage": "managed_cloudflared_controller", "outcome": "unqualified",
-                          "reason": str(failure), "states": states}), flush=True)
-        raise
+    except Exception as failure:
+        primary_failure = failure
+        primary_context, primary_reported = capture_controller_failure("primary", context)
+        if isinstance(failure, QualificationFailure):
+            states = []
+            for identity in created:
+                try:
+                    container = client.containers.get(identity)
+                    state = container.attrs["State"]
+                    states.append({"id": identity, "status": container.status,
+                                   "exit_code": state["ExitCode"], "pid": state["Pid"]})
+                except Exception:
+                    states.append({"id": identity, "status": "observation_unavailable"})
+            mark_controller(context, context["phase"], "report")
+            emit_qualification_failure(failure, states)
     finally:
-        cleanup_failed = False
         for identity in reversed(created):
             try:
+                mark_controller(context, "cleanup", "reload")
                 container = client.containers.get(identity)
                 require(container.labels.get(OWNER) == run, "cleanup_ownership")
+                mark_controller(context, "cleanup", "remove")
                 container.remove(force=True)
+                mark_controller(context, "cleanup", "absence_check")
                 require(not client.containers.list(all=True, filters={"id": identity}),
                         "cleanup_incomplete")
             except Exception:
-                cleanup_failed = True
-        client.close()
-        require(not cleanup_failed, "managed_cleanup_incomplete")
-    print(json.dumps(result), flush=True)
+                if cleanup_context is None:
+                    cleanup_context = dict(context)
+        if client is not None:
+            try:
+                mark_controller(context, "cleanup", "close")
+                client.close()
+            except Exception:
+                if cleanup_context is None:
+                    cleanup_context = dict(context)
+        if cleanup_context is not None:
+            emit_controller_failure("cleanup", cleanup_context)
+    if primary_context is not None and not primary_reported:
+        emit_controller_failure("primary", primary_context)
+    finish_controller(primary_failure, cleanup_context is not None)
+    mark_controller(context, "cleanup", "report")
+    try:
+        print(json.dumps(result), flush=True)
+    except Exception:
+        emit_controller_failure("primary", context)
+        raise
 
 
 def emit_helper(value):

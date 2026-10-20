@@ -11,6 +11,65 @@ import packaged_managed_witness as witness
 
 
 class ManagedWitnessDiagnosticTests(unittest.TestCase):
+    def test_controller_capture_freezes_requested_mode_before_cleanup(self):
+        context = {}
+        witness.mark_controller(context, "native", "exec_start", "management")
+        output = io.StringIO()
+        with redirect_stdout(output):
+            primary, reported = witness.capture_controller_failure("primary", context)
+            witness.mark_controller(context, "cleanup", "remove")
+            cleanup, cleanup_reported = witness.capture_controller_failure("cleanup", context)
+        self.assertTrue(reported)
+        self.assertTrue(cleanup_reported)
+        self.assertEqual(primary, {"phase": "native", "operation": "exec_start",
+                                   "helper_mode": "management"})
+        self.assertEqual(cleanup, {"phase": "cleanup", "operation": "remove",
+                                   "helper_mode": None})
+        self.assertEqual([json.loads(line) for line in output.getvalue().splitlines()], [
+            {"stage": "managed_cloudflared_controller_failure", "outcome": "unqualified",
+             "role": "primary", **primary},
+            {"stage": "managed_cloudflared_controller_failure", "outcome": "unqualified",
+             "role": "cleanup", **cleanup},
+        ])
+
+    def test_controller_failure_output_refuses_candidate_context(self):
+        valid = {"phase": "native", "operation": "exec_inspect", "helper_mode": "starting"}
+        output = io.StringIO()
+        with redirect_stdout(output), redirect_stderr(output):
+            for field in valid:
+                self.assertFalse(witness.emit_controller_failure(
+                    "primary", {**valid, field: "PRIVATE_CANDIDATE"}))
+            self.assertFalse(witness.emit_controller_failure(
+                "PRIVATE_CANDIDATE", valid))
+            self.assertFalse(witness.emit_controller_failure(
+                "primary", {**valid, "extra": "PRIVATE_CANDIDATE"}))
+        self.assertEqual(output.getvalue(), "")
+
+    def test_controller_primary_survives_cleanup_failure_and_cleanup_alone_refuses(self):
+        primary = RuntimeError("PRIVATE_CANDIDATE")
+        for cleanup_failed in (False, True):
+            with self.subTest(cleanup_failed=cleanup_failed):
+                with self.assertRaises(RuntimeError) as raised:
+                    witness.finish_controller(primary, cleanup_failed)
+                self.assertIs(raised.exception, primary)
+        with self.assertRaisesRegex(witness.QualificationFailure, "^managed_cleanup_incomplete$"):
+            witness.finish_controller(None, True)
+        self.assertIsNone(witness.finish_controller(None, False))
+
+    def test_controller_failed_emission_retains_capture_and_original_outcome(self):
+        context = {"phase": "setup", "operation": "connect", "helper_mode": None}
+        primary = RuntimeError("PRIVATE_CANDIDATE")
+        with patch("builtins.print", side_effect=OSError("PRIVATE_CANDIDATE")):
+            snapshot, reported = witness.capture_controller_failure("primary", context)
+            self.assertFalse(reported)
+            self.assertEqual(snapshot, context)
+            self.assertIsNot(snapshot, context)
+            self.assertFalse(witness.emit_qualification_failure(
+                witness.QualificationFailure("native_early_exit"), []))
+            with self.assertRaises(RuntimeError) as raised:
+                witness.finish_controller(primary, False)
+            self.assertIs(raised.exception, primary)
+
     def test_only_allowlisted_qualification_reasons_survive(self):
         for failure, reason in (
             (witness.QualificationFailure("native_parent"), "native_parent"),
