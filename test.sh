@@ -248,6 +248,7 @@ CPK_SERVER_IMAGE="$CPK_IMAGE" sh scripts/cpk_server_published_image_smoke.sh
     python /source/products/cpk_server/tests/live_root_bootstrap.py unchanged "$RUN"
 )
 sh scripts/cloudflared_connection_witness.sh
+sh scripts/cloudflared_managed_witness.sh
 
 # PostgreSQL source image: exact non-root wrapper, retained native data and
 # bounded failure/stop behavior. The controller owns only its labeled resources.
