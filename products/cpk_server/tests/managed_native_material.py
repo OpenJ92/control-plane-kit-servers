@@ -9,6 +9,7 @@ from control_plane_kit_core.configuration import ConfigurationArtifact, Configur
 from control_plane_kit_core.configuration_instances import ConfigurationInstanceRef, ConfigurationInstanceSelection
 from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
 from control_plane_kit_core.operations import RunId
+from control_plane_kit_core.planning import StartNode
 from control_plane_kit_core.products import ProductReference, ProductRuntimeContract, ProviderRuntimePort
 from control_plane_kit_core.runtime_effects import RuntimeEffectKind, RuntimeEffectRequest, RuntimeEffectSource, RuntimeProductMaterial
 from control_plane_kit_core.secret_installation import (
@@ -99,7 +100,7 @@ class NativeMaterial:
             activity.activity_id, activity.operation, self.authority.authority_ref, products=(material,))
         installation = None
         if retained:
-            start, = (item for item in fresh.activities if type(item.operation) is core.StartNode
+            start, = (item for item in fresh.activities if type(item.operation) is StartNode
                 and item.operation.target.node_id == "connector")
             allocation = ConfigurationInstanceRef("allocation", "workspace-a", "docker", "connector",
                 artifact.artifact_id, artifact.target_path, artifact.media_type, artifact.file_mode, artifact.content_digest)

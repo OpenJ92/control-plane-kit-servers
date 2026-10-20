@@ -1,6 +1,6 @@
 """Source composition evidence, not managed-image or admitted-run qualification."""
 import asyncio
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 import threading
 from types import SimpleNamespace
@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 
 import control_plane_kit_core as core
 from control_plane_kit_core.products import ProductDescriptorCodec, ProductReference
+from control_plane_kit_core.planning import WaitForHealthy
 from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC, validate_graph
 from control_plane_kit_core.types import RuntimeKind
 from control_plane_kit_interpreters.docker.connector_connection import (
@@ -177,7 +178,7 @@ class ManagedNativeConnectionTests(unittest.TestCase):
     def test_malformed_or_uncorrelated_result_is_fixed_read_failure(self):
         from control_plane_kit_servers_cpk_server.managed_health import ManagedHealthUnavailable
         valid = self.result()
-        for result in (None, SimpleNamespace(**valid.__dict__), replace(valid, effect_id="other"),
+        for result in (None, SimpleNamespace(**asdict(valid)), replace(valid, effect_id="other"),
                 replace(valid, activity_id="other"), replace(valid, outcome="connected"),
                 replace(valid, ready_connections=True), replace(valid, sample_end=None),
                 replace(valid, sample_start="private provider text")):
@@ -228,7 +229,7 @@ class ManagedNativeConnectionTests(unittest.TestCase):
         graph = self.world.desired
         legacy = replace(graph, runtimes={"docker": replace(graph.runtimes["docker"], management=None)})
         plan = core.compile_graph_activity_plan(validate_graph(self.world.current), validate_graph(legacy))
-        self.assertTrue(any(type(item.operation) is core.WaitForHealthy for item in plan.activities))
+        self.assertTrue(any(type(item.operation) is WaitForHealthy for item in plan.activities))
         self.assertIsNone(self.select(plan=plan, desired=legacy))
         self.world.realization.plan = plan
         self.world.realization.desired_graph.graph_descriptor = DEFAULT_GRAPH_CODEC.encode(legacy)
