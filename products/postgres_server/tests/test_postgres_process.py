@@ -9,7 +9,7 @@ from tempfile import TemporaryDirectory
 from threading import Event, Thread
 import time
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, call, patch
 
 import control_plane_kit_core as core
 from control_plane_kit_server_sdk.stdlib import CpkThreadingHTTPServer
@@ -426,6 +426,270 @@ class LifecycleRecordTests(unittest.TestCase):
             process.LifecycleRecord(process.LifecycleReason.NATIVE_EXIT, True)
         with self.assertRaises(ValueError):
             process.LifecycleRecord(process.LifecycleReason.MANAGEMENT_EXIT, 1)
+
+
+class WitnessQueryOrderingTests(unittest.TestCase):
+    QUERY_COMMAND = (
+        "/usr/local/bin/psql",
+        "-X",
+        "-U",
+        "cpk",
+        "-d",
+        "cpk",
+        "-tA",
+        "-c",
+        "SELECT value FROM cpk_witness;",
+    )
+
+    class Clock:
+        def __init__(self):
+            self.now = 0.0
+            self.sleeps = []
+
+        def monotonic(self):
+            return self.now
+
+        def sleep(self, seconds):
+            self.sleeps.append(seconds)
+            self.now += seconds
+
+    @staticmethod
+    def running_container():
+        container = Mock()
+        container.name = "postgres-recovery"
+        container.status = "running"
+        return container
+
+    @staticmethod
+    def result(stdout=b"retained-row\n", stderr=b"", exit_code=0):
+        result = Mock()
+        result.output = (stdout, stderr)
+        result.exit_code = exit_code
+        return result
+
+    def assert_only_retained_query(self, container):
+        observed = container.exec_run.call_args_list
+        self.assertTrue(observed)
+        self.assertEqual(
+            observed,
+            [call(self.QUERY_COMMAND, stdin=False, demux=True)] * len(observed),
+        )
+
+    def test_persisted_query_waits_for_listener_and_still_requires_sql_proof(self):
+        clock = self.Clock()
+        container = self.running_container()
+        connection = Mock()
+        events = []
+        addresses = []
+        attempts = []
+
+        def connect(address, *, timeout):
+            events.append("connect")
+            addresses.append(address)
+            attempts.append((clock.now, timeout))
+            if len(attempts) == 1:
+                raise ConnectionRefusedError
+            return connection
+
+        query_results = iter((self.result(stdout=b""), self.result()))
+        container.exec_run.side_effect = lambda *args, **kwargs: (
+            events.append("exec") or next(query_results)
+        )
+        socket_module = Mock()
+        socket_module.create_connection.side_effect = connect
+        with patch.object(live_witness, "socket", socket_module, create=True), \
+                patch.object(live_witness.time, "monotonic", side_effect=clock.monotonic), \
+                patch.object(live_witness.time, "sleep", side_effect=clock.sleep):
+            live_witness.wait_query(container, seconds=1.0, observe_native=True)
+
+        self.assertEqual(events, ["connect", "connect", "exec", "exec"])
+        self.assertEqual(addresses, [(container.name, 5432)] * 2)
+        self.assertTrue(all(
+            0.0 < timeout <= 1.0 - attempt_time
+            for attempt_time, timeout in attempts
+        ))
+        self.assert_only_retained_query(container)
+        connection.close.assert_called_once_with()
+        self.assertGreater(len(clock.sleeps), 1)
+        self.assertLess(clock.now, 1.0)
+
+    def test_terminal_container_before_listener_refuses_without_exec(self):
+        container = self.running_container()
+        container.status = "exited"
+        socket_module = Mock()
+        with patch.object(live_witness, "socket", socket_module, create=True), \
+                patch.object(
+                    live_witness,
+                    "raise_container_failure",
+                    side_effect=AssertionError("bounded failure"),
+                ) as failure, self.assertRaisesRegex(AssertionError, "bounded failure"):
+            live_witness.wait_query(container, observe_native=True)
+
+        failure.assert_called_once_with(
+            container, "PostgreSQL source container exited before readiness"
+        )
+        socket_module.create_connection.assert_not_called()
+        container.exec_run.assert_not_called()
+
+    def test_terminal_container_after_listener_closes_socket_and_refuses_without_exec(self):
+        container = self.running_container()
+        container.exec_run.return_value = self.result()
+        listener_observed = False
+
+        def reload():
+            container.status = "exited" if listener_observed else "running"
+
+        def connect(address, *, timeout):
+            nonlocal listener_observed
+            self.assertEqual(address, (container.name, 5432))
+            self.assertGreater(timeout, 0.0)
+            listener_observed = True
+            return connection
+
+        container.reload.side_effect = reload
+        connection = Mock()
+        socket_module = Mock()
+        socket_module.create_connection.side_effect = connect
+        with patch.object(live_witness, "socket", socket_module, create=True), \
+                patch.object(
+                    live_witness,
+                    "raise_container_failure",
+                    side_effect=AssertionError("bounded failure"),
+                ) as failure, self.assertRaisesRegex(AssertionError, "bounded failure"):
+            live_witness.wait_query(container, observe_native=True)
+
+        connection.close.assert_called_once_with()
+        failure.assert_called_once_with(
+            container, "PostgreSQL source container exited before readiness"
+        )
+        container.exec_run.assert_not_called()
+
+    def test_listener_attempts_and_backoff_share_one_bounded_query_deadline(self):
+        clock = self.Clock()
+        container = self.running_container()
+        container.exec_run.return_value = self.result()
+        attempts = []
+
+        def connect(address, *, timeout):
+            self.assertEqual(address, (container.name, 5432))
+            attempts.append((clock.now, timeout))
+            raise ConnectionRefusedError
+
+        socket_module = Mock()
+        socket_module.create_connection.side_effect = connect
+        with patch.object(live_witness, "socket", socket_module, create=True), \
+                patch.object(live_witness.time, "monotonic", side_effect=clock.monotonic), \
+                patch.object(live_witness.time, "sleep", side_effect=clock.sleep), \
+                self.assertRaisesRegex(AssertionError, "retained row was not queryable"):
+            live_witness.wait_query(container, seconds=0.25, observe_native=True)
+
+        self.assertGreater(len(attempts), 1)
+        self.assertTrue(all(
+            0.0 < timeout <= 0.25 - attempt_time
+            for attempt_time, timeout in attempts
+        ))
+        self.assertTrue(all(0.0 < delay <= 0.25 for delay in clock.sleeps))
+        self.assertAlmostEqual(clock.now, 0.25)
+        container.exec_run.assert_not_called()
+
+    def test_listener_and_sql_polling_share_the_original_deadline(self):
+        clock = self.Clock()
+        container = self.running_container()
+        connection = Mock()
+        exec_times = []
+
+        def connect(address, *, timeout):
+            self.assertEqual(address, (container.name, 5432))
+            clock.now = 0.20
+            return connection
+
+        def exec_run(*args, **kwargs):
+            exec_times.append(clock.now)
+            return self.result(stdout=b"")
+
+        container.exec_run.side_effect = exec_run
+        socket_module = Mock()
+        socket_module.create_connection.side_effect = connect
+        with patch.object(live_witness, "socket", socket_module, create=True), \
+                patch.object(live_witness.time, "monotonic", side_effect=clock.monotonic), \
+                patch.object(live_witness.time, "sleep", side_effect=clock.sleep), \
+                self.assertRaisesRegex(AssertionError, "retained row was not queryable"):
+            live_witness.wait_query(container, seconds=0.25, observe_native=True)
+
+        connection.close.assert_called_once_with()
+        self.assertTrue(exec_times)
+        self.assertTrue(all(observed < 0.25 for observed in exec_times))
+        self.assert_only_retained_query(container)
+        self.assertAlmostEqual(clock.now, 0.25)
+
+    def test_listener_success_after_deadline_closes_socket_without_exec(self):
+        clock = self.Clock()
+        container = self.running_container()
+        container.exec_run.return_value = self.result()
+        connection = Mock()
+
+        def connect(address, *, timeout):
+            self.assertEqual(address, (container.name, 5432))
+            clock.now = 0.25
+            return connection
+
+        socket_module = Mock()
+        socket_module.create_connection.side_effect = connect
+        with patch.object(live_witness, "socket", socket_module, create=True), \
+                patch.object(live_witness.time, "monotonic", side_effect=clock.monotonic), \
+                patch.object(live_witness.time, "sleep", side_effect=clock.sleep), \
+                self.assertRaisesRegex(AssertionError, "retained row was not queryable"):
+            live_witness.wait_query(container, seconds=0.25, observe_native=True)
+
+        connection.close.assert_called_once_with()
+        container.exec_run.assert_not_called()
+
+    def test_listener_success_does_not_replace_exact_sql_proof(self):
+        cases = (
+            (self.result(exit_code=1), "retained row was not queryable"),
+            (
+                self.result(stderr=b"unexpected stderr"),
+                "successful retained query wrote stderr",
+            ),
+        )
+        for result, expected_error in cases:
+            with self.subTest(
+                exit_code=result.exit_code,
+                stderr=result.output[1],
+                expected_error=expected_error,
+            ):
+                clock = self.Clock()
+                container = self.running_container()
+                container.exec_run.return_value = result
+                connection = Mock()
+                socket_module = Mock()
+                socket_module.create_connection.return_value = connection
+
+                with patch.object(live_witness, "socket", socket_module, create=True), \
+                        patch.object(
+                            live_witness.time,
+                            "monotonic",
+                            side_effect=clock.monotonic,
+                        ), patch.object(
+                            live_witness.time,
+                            "sleep",
+                            side_effect=clock.sleep,
+                        ), self.assertRaisesRegex(
+                            AssertionError,
+                            expected_error,
+                        ):
+                    live_witness.wait_query(
+                        container,
+                        seconds=0.25,
+                        observe_native=True,
+                    )
+
+                socket_module.create_connection.assert_called_once_with(
+                    (container.name, 5432),
+                    timeout=ANY,
+                )
+                self.assert_only_retained_query(container)
+                connection.close.assert_called_once_with()
 
 
 class WitnessFailureRecordTests(unittest.TestCase):
