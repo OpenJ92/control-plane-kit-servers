@@ -52,11 +52,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          records="$(mktemp -d)"
+          trap 'rm -rf -- "$records"' EXIT
           inputs=products/cpk_server/tests/docker_image_update_images.json
           jq -e 'keys == ["connector","gateway","hello_a","hello_b","hello_family"] and
             all(.[]; (.reference | test("^[a-z0-9./-]+@sha256:[0-9a-f]{64}$")) and
               (.image_id | test("^sha256:[0-9a-f]{64}$")))' "$inputs" >/dev/null
           mapfile -t references < <(jq -r '.[].reference' "$inputs")
+          optional_references=()
           for reference in "${references[@]}"; do
             [[ "$reference" =~ ^(ghcr\.io/openj92/control-plane-kit-servers/(hello-server|cpk-local-gateway)|registry\.k8s\.io/pause)@sha256:[0-9a-f]{64}$ ]]
           done
@@ -65,23 +68,39 @@ jobs:
             [[ "$CPK_WRAPPER_HELLO_B" =~ ^ghcr\.io/openj92/control-plane-kit-servers/hello-server@sha256:[0-9a-f]{64}$ ]]
             [[ "$CPK_WRAPPER_GATEWAY" =~ ^ghcr\.io/openj92/control-plane-kit-servers/cpk-local-gateway@sha256:[0-9a-f]{64}$ ]]
             [[ "$CPK_WRAPPER_HELLO_A" != "$CPK_WRAPPER_HELLO_B" ]]
-            references+=("$CPK_WRAPPER_HELLO_A" "$CPK_WRAPPER_HELLO_B" "$CPK_WRAPPER_GATEWAY")
+            optional_references=("$CPK_WRAPPER_HELLO_A" "$CPK_WRAPPER_HELLO_B" "$CPK_WRAPPER_GATEWAY")
+            references+=("${optional_references[@]}")
           fi
           case "$(docker info --format '{{.OSType}}/{{.Architecture}}')" in
             linux/x86_64|linux/amd64) ;;
             *) echo 'Artifact qualification requires the released Linux amd64 daemon' >&2; exit 1 ;;
           esac
-          docker info --format 'wrapper_preload_engine_id={{.ID}}'
+          daemon_id="$(docker info --format '{{.ID}}')"
           mapfile -t references < <(printf '%s\n' "${references[@]}" | sort -u)
           for reference in "${references[@]}"; do
             docker pull --platform linux/amd64 "$reference"
             [ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$reference")" = linux/amd64 ]
             docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$reference" | grep -Fx -- "$reference"
             docker image inspect --format 'wrapper_preload_image_id={{.Id}}' "$reference"
-            expected_id="$(jq -r --arg reference "$reference" '.[] | select(.reference == $reference) | .image_id' "$inputs")"
-            if [ -n "$expected_id" ]; then
-              [ "$(docker image inspect --format '{{.Id}}' "$reference")" = "$expected_id" ]
-            fi
+            docker image inspect "$reference" | jq --arg reference "$reference" '
+              .[0] | {reference: $reference, image:
+                ({Id, RepoDigests, Os, Architecture,
+                  Config: {User: .Config.User, Entrypoint: .Config.Entrypoint,
+                    Labels: ((.Config.Labels // {}) |
+                      with_entries(select(.key == "org.opencontainers.image.revision")))}} +
+                 (if has("Descriptor") then {Descriptor} else {} end))}' \
+              >> "$records/observations.jsonl"
           done
+          [ "$(docker info --format '{{.ID}}')" = "$daemon_id" ]
+          jq -n --args '$ARGS.positional' "${optional_references[@]}" > "$records/optional.json"
+          jq -s --arg daemon_id "$daemon_id" --slurpfile optional "$records/optional.json" '
+            {daemon_id: $daemon_id, optional_references: $optional[0],
+             image_attrs_by_reference: (reduce .[] as $row ({}; .[$row.reference] = $row.image))}' \
+            "$records/observations.jsonl" > "$records/input.json"
+          docker run --rm --network none \
+            --mount "type=bind,source=$PWD,target=/source,readonly" \
+            --mount "type=bind,source=$records,target=/evidence,readonly" \
+            "${CPK_SERVERS_POLICY_IMAGE:-python:3.14-slim}" \
+            python /source/products/cpk_server/tests/docker_image_update_identity.py /evidence/input.json
       - name: Run Docker-first tests
         run: ./test.sh

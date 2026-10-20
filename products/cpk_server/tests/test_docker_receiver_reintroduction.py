@@ -10,6 +10,7 @@ from control_plane_kit_core.runtime_effects import RuntimeEffectResult, RuntimeP
 from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC
 
 from docker_image_update_material import DockerImageMaterial, IMAGES, image_value
+from image_identity_test_material import qualified_images
 from docker_image_update_placement import OwnedControllerPlacement, PREFIX
 from docker_image_update_ports import CompletedRuntimeCall, FixtureBoundaryFailure
 from docker_receiver_reintroduction import DockerReintroductionMaterial, route_intent, with_nodes
@@ -74,7 +75,8 @@ class SelectedStartImageTests(unittest.TestCase):
         sdk.inspect_container.return_value = SimpleNamespace(container_id=container.id, running=True,
             network_attachments=(SimpleNamespace(network_id="n" * 64),))
         placement = OwnedControllerPlacement(engine, sdk, "workspace-a", "b" * 64, "daemon-a",
-            expected_start_roles={} if expected_role is None else {"api": expected_role})
+            expected_start_roles={} if expected_role is None else {"api": expected_role},
+            qualified_images=qualified_images())
         placement.network_id = "n" * 64
         record = CompletedRuntimeCall(request, RuntimeEffectResult.succeeded(request.effect_id,
             evidence={"runtime_id": "docker", "container": container.id}))

@@ -67,3 +67,15 @@ credentials, request or response bodies.
 #253's material test also requires distinct overlap/workload public fingerprints
 and absence of the overlap member from every initial wrapper. The installed
 witness supplies custody/registration/refresh evidence through the owning gate.
+
+#191 target-only correction supplies each existing placement fixture with a real
+qualified config-valued proof set, preserving its prior assertions and resource
+fences. New manifest-valued cases require the complete daemon-bound proof record
+before dispatch, persistence failure preventing dispatch, returned container
+identity before incarnation recording, and cleanup using the frozen execution ID
+without another image lookup. Missing/mutated maps or changed daemon block both
+dispatch and cleanup. A mismatch in the last container prevents every removal and
+detachment, even when earlier candidates are valid. Existing configuration/secret
+volume, foreign-label, network-membership and resource-ID laws remain intact.
+These targets await the reviewed implementation and released owning gate; source
+and runtime cleanup behavior are not changed by adding them.

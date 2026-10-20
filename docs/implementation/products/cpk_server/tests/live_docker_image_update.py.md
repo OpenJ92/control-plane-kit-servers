@@ -186,3 +186,12 @@ The success summary classifies remaining volumes through the existing ownership
 maps, separating historical configuration from secret volumes just as final
 fixture disposal does. Public desired-empty removes managed containers/network;
 remaining exact recorded volumes receive the separately approved fixture cleanup.
+
+#191 `inspect_inputs` now qualifies every fixed image against original manifest
+bytes and historical config identity, requiring raw/Interpreter ID and RepoDigest
+agreement. A/B execution IDs remain distinct. The complete immutable map is bound
+to the daemon observed before and after admission and passed to placement for both
+image-update and receiver-reintroduction. The emitted input record distinguishes
+manifest/config/execution identity and proof form; it does not classify a backend.
+No artifact pulls or registry credentials enter this controller. Admission failure
+precedes scenario effects; runtime and cleanup acceptance still require the gate.
