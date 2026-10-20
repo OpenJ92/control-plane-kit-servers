@@ -46,6 +46,7 @@ from control_plane_kit_servers_cpk_server.client import ClientProfile, TopologyC
 from control_plane_kit_servers_cpk_server.managed_health_placement import DockerGatewayBinding
 
 from docker_image_update_material import DockerImageMaterial, IMAGES
+from image_identity_test_material import qualified_images
 from docker_image_update_selection import consumer_graph, application_content_graph
 from docker_image_update_placement import OwnedControllerPlacement, SyntheticConnectorConnection, PREFIX
 from docker_image_update_ports import (
@@ -389,7 +390,9 @@ class OwnedAttachmentTests(unittest.TestCase):
             self.assertEqual(identity, self.controller.container_id)
             self.controller.network_attachments = (SimpleNamespace(network_id=self.network.id),)
         self.network.connect.side_effect = connect
-        self.placement = OwnedControllerPlacement(self.engine, self.sdk, "workspace-a", "b" * 64, "daemon-a")
+        self.qualified_images = qualified_images()
+        self.placement = OwnedControllerPlacement(self.engine, self.sdk, "workspace-a", "b" * 64, "daemon-a",
+            qualified_images=self.qualified_images)
         self.record = completed()
         self.record = replace(self.record, result=RuntimeEffectResult.succeeded("effect-a",
             evidence={"runtime_id": "docker", "network": "returned-provider-name"}))
@@ -532,11 +535,12 @@ class OwnedAttachmentTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "ownership.json"
             placement = OwnedControllerPlacement(self.engine, self.sdk, "workspace-a", "b" * 64,
-                "daemon-a", record_path=path, run="fixture-run")
+                "daemon-a", record_path=path, run="fixture-run", qualified_images=self.qualified_images)
             runtime = Mock()
             def execute(actual):
                 self.assertIs(actual, request)
                 recorded = json.loads(path.read_text())
+                self.assertEqual(recorded["qualified_images"], self.qualified_images.descriptor())
                 self.assertEqual(recorded["intents"][0]["effect_id"], request.effect_id)
                 self.assertEqual(set(recorded["volumes"]),
                     {configuration_volume_name(ref) for ref in request.configuration_instances.instances})
@@ -556,11 +560,12 @@ class OwnedAttachmentTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "ownership.json"
             placement = OwnedControllerPlacement(self.engine, self.sdk, "workspace-a", "b" * 64,
-                "daemon-a", record_path=path)
+                "daemon-a", record_path=path, qualified_images=self.qualified_images)
             runtime = Mock()
             def execute(actual):
                 self.assertIs(actual, request)
                 recorded = json.loads(path.read_text())
+                self.assertEqual(recorded["qualified_images"], self.qualified_images.descriptor())
                 self.assertEqual(set(recorded["secret_volumes"]), {name})
                 self.assertEqual(recorded["secret_volumes"][name][PREFIX + "secret.reference"],
                     delivery.reference.reference_id)
@@ -620,6 +625,151 @@ class OwnedAttachmentTests(unittest.TestCase):
         with self.assertRaises(FixtureBoundaryFailure):
             dispose_fixture(self.placement)
         volume.remove.assert_not_called()
+
+    def test_missing_or_wrong_daemon_proof_set_prevents_placement_effects(self):
+        for supplied in (None, qualified_images(daemon_id="another-daemon")):
+            with self.subTest(supplied=supplied), self.assertRaises(FixtureBoundaryFailure):
+                OwnedControllerPlacement(self.engine, self.sdk, "workspace-a", "b" * 64,
+                    "daemon-a", qualified_images=supplied)
+        self.network.connect.assert_not_called()
+        self.network.disconnect.assert_not_called()
+        self.engine.containers.create.assert_not_called()
+
+    def test_manifest_execution_identity_is_recorded_before_runtime_dispatch(self):
+        proof_set = qualified_images("manifest-valued")
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "ownership.json"
+            placement = OwnedControllerPlacement(self.engine, self.sdk, "workspace-a", "b" * 64,
+                "daemon-a", record_path=path, qualified_images=proof_set)
+            request = replacement_record().request
+            runtime = Mock()
+            def execute(actual):
+                stored = json.loads(path.read_text())
+                self.assertEqual(stored["qualified_images"], proof_set.descriptor())
+                for role, proof in proof_set.images.items():
+                    self.assertEqual(stored["qualified_images"]["images"][role]["execution_id"],
+                                     IMAGES[role]["reference"].split("@")[1])
+                    self.assertEqual(stored["qualified_images"]["images"][role]["config_digest"],
+                                     IMAGES[role]["image_id"])
+                raise FixtureBoundaryFailure("simulated provider stop")
+            runtime.execute.side_effect = execute
+            with self.assertRaises(FixtureBoundaryFailure):
+                RecordedDockerRuntime(runtime, resources=placement).execute(request)
+            runtime.execute.assert_called_once_with(request)
+
+    def test_proof_record_persistence_failure_prevents_runtime_dispatch(self):
+        request = replacement_record().request
+        runtime = Mock()
+        with patch.object(self.placement, "persist", side_effect=OSError("simulated write failure")):
+            with self.assertRaises(OSError):
+                RecordedDockerRuntime(runtime, resources=self.placement).execute(request)
+        runtime.execute.assert_not_called()
+        self.network.connect.assert_not_called()
+        self.network.disconnect.assert_not_called()
+
+    def owned_identity_candidates(self):
+        proofs = qualified_images("manifest-valued")
+        placement = OwnedControllerPlacement(self.engine, self.sdk, "workspace-a", "b" * 64,
+            "daemon-a", qualified_images=proofs)
+        candidates = []
+        for identity, node, role in (("c" * 64, "api", "hello_a"), ("d" * 64, "api-y", "hello_b")):
+            container = Mock()
+            container.id = identity
+            container.labels = {PREFIX + "workspace": "workspace-a", PREFIX + "runtime": "docker",
+                                PREFIX + "node": node, PREFIX + "kind": "container"}
+            container.attrs = {"Image": proofs.images[role].execution_id,
+                               "Config": {"User": IMAGES[role]["user"]}}
+            placement.record["containers"][identity] = {"node": node, "image_role": role}
+            candidates.append(container)
+        self.engine.containers.list.return_value = candidates
+        by_id = {container.id: container for container in candidates}
+        self.engine.containers.get.side_effect = by_id.__getitem__
+        self.engine.networks.list.return_value = []
+        self.engine.volumes.list.return_value = []
+        # An image lookup here would silently replace the original expectation.
+        self.engine.images.get.side_effect = AssertionError("cleanup must not resolve image identity")
+        self.sdk.inspect_image.side_effect = AssertionError("cleanup must not inspect replacement image")
+        return placement, candidates
+
+    def test_cleanup_uses_captured_manifest_execution_identity_without_resolving_again(self):
+        placement, candidates = self.owned_identity_candidates()
+        selected = placement.cleanup_candidates()
+        self.assertEqual(selected["containers"], candidates)
+        self.engine.images.get.assert_not_called()
+        self.sdk.inspect_image.assert_not_called()
+
+    def test_late_image_mismatch_prevents_all_removal_and_detachment(self):
+        from docker_image_update_placement import dispose_fixture
+        placement, candidates = self.owned_identity_candidates()
+        candidates[-1].attrs["Image"] = IMAGES["hello_b"]["image_id"]
+        with patch.object(placement, "detach") as detach:
+            with self.assertRaises(FixtureBoundaryFailure):
+                dispose_fixture(placement)
+            detach.assert_not_called()
+        for container in candidates:
+            container.remove.assert_not_called()
+        self.network.remove.assert_not_called()
+        self.network.disconnect.assert_not_called()
+        self.engine.volumes.get.assert_not_called()
+        self.engine.images.get.assert_not_called()
+
+    def test_missing_or_mutated_map_and_changed_daemon_preserve_every_candidate(self):
+        from docker_image_update_placement import dispose_fixture
+        for failure in ("missing-map", "changed-map", "changed-daemon"):
+            with self.subTest(failure=failure):
+                self.engine.info.return_value = {"ID": "daemon-a"}
+                placement, candidates = self.owned_identity_candidates()
+                if failure == "missing-map":
+                    placement.record.pop("qualified_images")
+                elif failure == "changed-map":
+                    placement.record["qualified_images"]["images"]["hello_a"]["execution_id"] = IMAGES["hello_a"]["image_id"]
+                else:
+                    self.engine.info.return_value = {"ID": "foreign-daemon"}
+                runtime = Mock()
+                with self.assertRaises(FixtureBoundaryFailure):
+                    RecordedDockerRuntime(runtime, resources=placement).execute(replacement_record().request)
+                runtime.execute.assert_not_called()
+                with patch.object(placement, "detach") as detach:
+                    with self.assertRaises(FixtureBoundaryFailure):
+                        dispose_fixture(placement)
+                    detach.assert_not_called()
+                for container in candidates:
+                    container.remove.assert_not_called()
+        self.network.remove.assert_not_called()
+        self.network.disconnect.assert_not_called()
+
+    def test_manifest_container_result_is_checked_before_recording_incarnation(self):
+        proof_set = qualified_images("manifest-valued")
+        placement = OwnedControllerPlacement(self.engine, self.sdk, "workspace-a", "b" * 64,
+            "daemon-a", qualified_images=proof_set)
+        placement.network_id = self.network.id
+        record = replacement_record()
+        container = Mock()
+        container.id = "d" * 64
+        container.labels = {PREFIX + "workspace": "workspace-a", PREFIX + "runtime": "docker",
+                            PREFIX + "node": "api", PREFIX + "kind": "container"}
+        container.attrs = {"Image": proof_set.images["hello_b"].execution_id,
+                           "Config": {"User": IMAGES["hello_b"]["user"]}}
+        self.engine.containers.get.return_value = container
+        self.sdk.inspect_container.return_value = SimpleNamespace(container_id=container.id, running=True,
+            network_attachments=(SimpleNamespace(network_id=self.network.id),))
+        record = replace(record, result=replace(record.result,
+            evidence={**record.result.evidence, "container": container.id, "runtime_id": "docker"}))
+        placement.observed(record)
+        self.assertEqual(placement.record["containers"][container.id],
+                         {"node": "api", "image_role": "hello_b"})
+        wrong = Mock()
+        wrong.id = "e" * 64
+        wrong.labels = container.labels
+        wrong.attrs = {**container.attrs, "Image": IMAGES["hello_b"]["image_id"]}
+        self.engine.containers.get.return_value = wrong
+        self.sdk.inspect_container.return_value = SimpleNamespace(container_id=wrong.id, running=True,
+            network_attachments=(SimpleNamespace(network_id=self.network.id),))
+        wrong_record = replace(record, result=replace(record.result,
+            evidence={**record.result.evidence, "container": wrong.id}))
+        with self.assertRaises(FixtureBoundaryFailure):
+            placement.observed(wrong_record)
+        self.assertNotIn(wrong.id, placement.record["containers"])
 
 
 class NativeFixtureSelectionTests(unittest.TestCase):
