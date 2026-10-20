@@ -177,6 +177,54 @@ class HealthReceiverAdapterTests(unittest.TestCase):
         self.refusal(lambda:self.api.select_own_health_configuration(
             self.selection("workload", artifact=empty)))
 
+    def required_selection(self, artifact=None):
+        default = self.world.defaults["workload"]
+        requirement = core.ConfigurationArtifactRequirement(
+            default.artifact_id, default.target_path, default.media_type, default.file_mode)
+        declared = document("required-declared-slot", replace(
+            self.world.documents["workload"].product.runtime_contract,
+            configuration_artifacts=(), configuration_requirements=(requirement,)))
+        return self.selection("workload", artifact=artifact, doc=declared)
+
+    def test_required_declared_slot_selects_only_genuine_actual_configuration(self):
+        selected = self.required_selection()
+        actual = self.api.select_own_health_configuration(selected)
+        expected = core.ReceiverNodeControlConfigurationCodec().decode_bytes(
+            selected.artifact.content.encode("utf-8"))
+        self.assertEqual(actual, expected)
+        self.assertEqual(actual.target, self.world.config.target)
+        self.assertEqual(verifier_family(actual).public_keys,
+                         verifier_family(self.world.config).public_keys)
+        self.assertEqual(selected.descriptor_document.product.runtime_contract.configuration_artifacts, ())
+
+    def test_required_declared_slot_preserves_actual_and_provenance_refusals(self):
+        original = self.required_selection()
+        for change in (dict(artifact_id="other"), dict(target_path="/etc/other.json"),
+                dict(media_type=ConfigurationMediaType.TEXT),
+                dict(file_mode=ConfigurationFileMode.OWNER_READ_ONLY), dict(content="{}")):
+            with self.subTest(change=change):
+                self.refusal(lambda:self.api.select_own_health_configuration(
+                    self.required_selection(replace(original.artifact, **change))))
+        raw = json.loads(original.artifact.content)
+        mutations = (
+            lambda value:value.update(profile="unsupported.v1"),
+            lambda value:value["target"].update(workspace_id="foreign"),
+            lambda value:value["target"].update(runtime_id="foreign"),
+            lambda value:value["target"].update(node_id="foreign"),
+            lambda value:value["target"].update(provider_socket_name="foreign"),
+            lambda value:value["verifiers"][0].update(public_keys=[]),
+        )
+        for index, mutate in enumerate(mutations):
+            changed = json.loads(json.dumps(raw))
+            mutate(changed)
+            with self.subTest(mutation=index):
+                self.refusal(lambda:self.api.select_own_health_configuration(
+                    self.required_selection(replace(original.artifact, content=json.dumps(changed)))))
+        forged = replace(original)
+        object.__setattr__(forged, "descriptor_document",
+            document("substituted-required-product", original.descriptor_document.product.runtime_contract))
+        self.refusal(lambda:self.api.select_own_health_configuration(forged))
+
     def test_exact_product_and_declared_slot_bindings_refuse_substitution(self):
         for family in ("workload", "gateway"):
             doc = self.world.documents[family]

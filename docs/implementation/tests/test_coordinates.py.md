@@ -162,3 +162,30 @@ this source adoption still requires the original coupled public Docker gate.
 No scenario/assertion/runner change or new image publication is included.
 Qualified Hello retains its immutable digest and actual installed Core `9861e536`
 and SDK `d4e7c4d` provenance; source Dockerfile pins do not rewrite that artifact.
+
+## Pending #280 targets and dependency preparation
+
+Accepted Core/Operations `ec61e2b`, SDK `eff0909`, Secrets `b30e626` and
+Interpreters `2365565` are selected in the canonical manifest and prepared pin
+mirrors. Existing selected Secrets expectations advance; historical published
+source/digest assertions stay unchanged. No generator or gate has run on this
+checkpoint.
+
+The existing upstream-mutation test now expects the concrete managed Cloudflared
+Dockerfile path. It asserts output membership before indexing and checks the
+changed SDK URL through existing full-byte comparison, preserving all other
+bytes and product outputs. The current-pin law also requires its existing SDK
+verification extra. The current generator omits this destination: the membership
+assertion is the intended behavioral-red boundary. No missing new constant,
+import or regex change is needed. Later product tests are unexecuted if the
+owning runner stops at this root-suite failure. The generator implementation is
+intentionally unchanged at this target checkpoint.
+
+## #280 source implementation after bounded red
+
+The one authorized `8bc3d66` run passed 26 policy and 57 of 58 root tests; the
+single failure was exactly the managed output-membership assertion. Product
+suites and later runtime/image witnesses were not executed. The generator now
+owns that output through its existing URL substitution. The target assertions
+are unchanged, including verification-extra/current-pin and unchanged-product
+laws. This source implementation has not been rerun or claimed green.

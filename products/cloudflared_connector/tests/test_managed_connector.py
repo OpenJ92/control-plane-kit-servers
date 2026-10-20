@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import control_plane_kit_core as core
+from control_plane_kit_core.configuration import ConfigurationFileMode, ConfigurationMediaType
 from control_plane_kit_core.products import ProductRuntimeContractCodec, ProductDescriptorCodec
 from control_plane_kit_core.secrets import (
     SecretFileDelivery, SecretFilePathBinding, SecretReference, SecretUseIntent,
@@ -19,6 +20,43 @@ from managed_control_fixtures import fixture, token, request
 
 
 class ManagedContractTests(unittest.TestCase):
+    def test_declared_contract_requires_real_control_material_before_instantiation(self):
+        # A missing entrance is an interface assertion, not semantic-red evidence.
+        declaration_factory = getattr(managed, "control_declaration", None)
+        contract_factory = getattr(managed, "declared_runtime_contract", None)
+        self.assertTrue(callable(declaration_factory), "public control declaration is unavailable")
+        self.assertTrue(callable(contract_factory), "required contract factory is unavailable")
+        declaration = declaration_factory()
+        contract = contract_factory()
+        self.assertEqual(declaration, fixture().config.declaration)
+        self.assertEqual(ProductRuntimeContractCodec().decode(contract.descriptor()), contract)
+        self.assertEqual(contract.configuration_requirements, (
+            core.ConfigurationArtifactRequirement(
+                "cloudflared-control", "/etc/cpk/cloudflared/control.json",
+                ConfigurationMediaType.JSON, ConfigurationFileMode.READ_ONLY),
+        ))
+        self.assertEqual(contract.configuration_artifacts, ())
+        self.assertEqual(contract.secret_deliveries, ())
+        self.assertEqual(contract.sockets.provider_names(), ("control",))
+        self.assertEqual(contract.sockets.requirement_names(), ())
+        self.assertEqual([(port.provider_socket, port.container_port)
+                          for port in contract.provider_ports], [("control", 8000)])
+        self.assertEqual(contract.control_surfaces, (declaration.surface,))
+        self.assertEqual([(item.name, item.value) for item in contract.public_environment],
+                         [("CPK_WRAPPER_CONFIGURATION_FILE", "/etc/cpk/cloudflared/control.json")])
+        self.assertEqual({item.value for item in contract.capabilities},
+                         {"health-checkable", "node-controllable"})
+        self.assertEqual(contract.verification.checks, ())
+        self.assertEqual(contract.retained_data_mounts, ())
+        from control_plane_kit_core.products import ProductInstanceConfiguration, ProductInstantiationError
+        with self.assertRaises(ProductInstantiationError):
+            ProductInstanceConfiguration.from_contract(contract)
+
+    def test_actual_source_contract_still_refuses_absent_token_material(self):
+        artifact = managed.control_configuration_artifact(fixture().config)
+        with self.assertRaises(managed.ConnectorConfigurationError):
+            managed.source_runtime_contract(artifact, None)
+
     def test_real_contract_has_only_management_provider_and_scoped_token(self):
         value = fixture()
         artifact = managed.control_configuration_artifact(value.config)

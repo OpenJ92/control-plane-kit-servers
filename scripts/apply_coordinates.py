@@ -24,6 +24,7 @@ HTTP_MULTIPLEXER_DOCKERFILE = ROOT / "products" / "http_multiplexer" / "Dockerfi
 HTTP_ACTIVE_ROUTER_DOCKERFILE = ROOT / "products" / "http_active_router" / "Dockerfile"
 HELLO_SERVER_DOCKERFILE = ROOT / "products" / "hello_server" / "Dockerfile"
 POSTGRES_SERVER_DOCKERFILE = ROOT / "products" / "postgres_server" / "Dockerfile"
+CLOUDFLARED_MANAGED_DOCKERFILE = ROOT / "products" / "cloudflared_connector" / "Dockerfile.managed"
 CATALOGUE = ROOT / "catalogue" / "products.json"
 PACKAGED_CATALOGUE = ROOT / "src" / "control_plane_kit_servers" / "catalogue.json"
 
@@ -158,6 +159,12 @@ def generate_updates(coordinates: Mapping[str, Any]) -> dict[Path, bytes]:
 
     updates[HTTP_MULTIPLEXER_DOCKERFILE] = _replace_dependency_pins(
         HTTP_MULTIPLEXER_DOCKERFILE.read_text(encoding="utf-8"),
+        sdk_commit=sdk_commit, core_commit=core_commit, operations_commit=operations_commit,
+        interpreters_commit=interpreters_commit, secrets_commit=secrets_commit,
+    ).encode("utf-8")
+
+    updates[CLOUDFLARED_MANAGED_DOCKERFILE] = _replace_dependency_pins(
+        CLOUDFLARED_MANAGED_DOCKERFILE.read_text(encoding="utf-8"),
         sdk_commit=sdk_commit, core_commit=core_commit, operations_commit=operations_commit,
         interpreters_commit=interpreters_commit, secrets_commit=secrets_commit,
     ).encode("utf-8")

@@ -61,3 +61,18 @@ Servers #245 translates the existing unexpected-decoder error witness to the
 actual Core codec entry point. Malformed/duplicate/missing/foreign self-binding
 cases still exercise the real canonical decoder and the product selector's
 bounded refusal. No malformed case or owner-error identity assertion is removed.
+
+## Pending #280 required declared-slot targets
+
+A real required-slot descriptor replaces only the concrete declaration slot;
+the selected actual artifact remains genuine V2 configuration. The existing
+selector must return its unchanged target/public verifier facts. Complementary
+cases preserve all four slot fields, actual profile/material/target refusal and
+original selected-product provenance. Existing inert-declaration and gateway
+transit laws are unchanged. This positive test exercises the existing callable
+and can establish behavioral red without any new helper import. The selector
+implementation is unchanged and these targets have not run.
+
+The #280 source checkpoint now passes requirements to the declared selector.
+No target assertion changed. The earlier root-suite failure left these product
+tests unexecuted; they must run in the full ordinary green gate before acceptance.

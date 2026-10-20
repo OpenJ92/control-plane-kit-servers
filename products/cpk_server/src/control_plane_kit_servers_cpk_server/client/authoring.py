@@ -219,14 +219,14 @@ def _surface(graph: DeploymentGraph, scope: ReceiverScope):
 
 
 def _target(
-    *, workspace_id: str, node: Node, scope: ReceiverScope, receiver_id: str
+    *, workspace_id: str, runtime_id: str, scope: ReceiverScope, receiver_id: str
 ) -> core.NodeControlReceiverTarget:
-    if _RECEIVER_ID.fullmatch(receiver_id) is None:
+    if type(receiver_id) is not str or _RECEIVER_ID.fullmatch(receiver_id) is None:
         raise ValueError
     roles = core.NodeControlGraphReferenceRole
     return core.NodeControlReceiverTarget(
         _reference(roles.WORKSPACE, workspace_id),
-        _reference(roles.RUNTIME, node.runtime_id),
+        _reference(roles.RUNTIME, runtime_id),
         _reference(roles.NODE, scope.node_id),
         _reference(roles.PROVIDER_SOCKET, scope.provider_socket_name),
         receiver_id,
@@ -341,7 +341,7 @@ def _selected_existing(
     )
     expected = _target(
         workspace_id=workspace_id,
-        node=node,
+        runtime_id=node.runtime_id,
         scope=scope,
         receiver_id=binding["receiver_id"],
     )
@@ -417,6 +417,53 @@ def _verifiers(
             NodeControlVerificationConfiguration(purpose, entry["issuer"], tuple(keys))
         )
     return tuple(admitted)
+
+
+def prepare_receiver_configuration(
+    *,
+    workspace_id: str,
+    runtime_id: str,
+    scope: ReceiverScope,
+    receiver_id: str,
+    declaration: core.WorkloadNodeControlSurfaceDeclaration,
+    context: object,
+    verifier_configuration: object,
+) -> ReceiverNodeControlConfiguration:
+    """Prepare fresh product material before an instance exists, without I/O.
+
+    The caller chooses identity and supplies public context/verifier material.
+    Accepted or pending receivers remain owned by existing graph authoring.
+    """
+    try:
+        if (
+            type(scope) is not ReceiverScope
+            or type(declaration) is not core.WorkloadNodeControlSurfaceDeclaration
+            or type(context) is not dict
+            or context.get("workspace_id") != workspace_id
+        ):
+            raise ValueError
+        roles = core.NodeControlGraphReferenceRole
+        _graph_reference(roles.WORKSPACE, workspace_id)
+        _graph_reference(roles.RUNTIME, runtime_id)
+        _graph_reference(roles.NODE, scope.node_id)
+        _graph_reference(roles.PROVIDER_SOCKET, scope.provider_socket_name)
+        current = _current_receivers(context)
+        if scope in current or context.get("pending_draft") is not None:
+            raise ValueError
+        target = _target(
+            workspace_id=workspace_id, runtime_id=runtime_id,
+            scope=scope, receiver_id=receiver_id,
+        )
+        if target.provider_socket_name != declaration.surface.provider_socket_name:
+            raise ValueError
+        configuration = ReceiverNodeControlConfiguration(
+            target, declaration, _verifiers(verifier_configuration, declaration)
+        )
+        codec = ReceiverNodeControlConfigurationCodec()
+        return codec.decode_bytes(codec.encode_bytes(configuration))
+    except _INPUT_ERRORS:
+        failure = ReceiverAuthoringError(_ERROR)
+    raise failure from None
 
 
 def _install_wrapper(
@@ -685,7 +732,7 @@ def author_receiver_graph(
                 raise ValueError
             target = _target(
                 workspace_id=workspace_id,
-                node=node,
+                runtime_id=node.runtime_id,
                 scope=introduction.scope,
                 receiver_id=receiver_id,
             )
@@ -723,4 +770,5 @@ __all__ = (
     "ReceiverIntroduction",
     "ReceiverScope",
     "author_receiver_graph",
+    "prepare_receiver_configuration",
 )

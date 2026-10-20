@@ -167,8 +167,8 @@ def image_contents():
                              capture_output=True, timeout=3)
     require(version.returncode == 0 and b"2026.6.1" in version.stdout, "native_version")
     for name, commit in (
-        ("control-plane-kit-core", "73d87e99bf711ff8a88112ca56c5eee8055ac5b7"),
-        ("control-plane-kit-server-sdk", "1657cb91b143931bafcdb32108950d2bbbb66d95"),
+        ("control-plane-kit-core", "ec61e2b17c3a3f1bdea1dd6bc8fc64ac1b9528b0"),
+        ("control-plane-kit-server-sdk", "eff09090755eb21028695f0224eec7b81f2db535"),
     ):
         direct = json.loads(metadata.distribution(name).read_text("direct_url.json"))
         require(commit in direct["url"], "installed_source_coordinate")

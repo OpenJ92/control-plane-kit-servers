@@ -64,3 +64,27 @@ same common receiving configuration and decoder, without an application registry
 The latter tests ports 8000 and 8081 and differing health declarations. Explicit
 caller origins remain configuration, not admission authority: Operations must
 independently verify eligible pinned graph and registered-product truth.
+
+## #280 fresh configuration before instantiation
+
+`prepare_receiver_configuration` takes explicit workspace/runtime/scope/receiver
+identity, a genuine declaration and caller-supplied public context/verifiers.
+It constructs no graph or identity and performs no I/O. It validates nominal
+owner coordinates and declaration/socket agreement, reuses `_current_receivers`
+and `_verifiers`, and returns Core-codec-validated receiving material. Current
+scope overlap and any non-null pending draft refuse through the existing bounded
+`ReceiverAuthoringError` entrance. This fresh-only rule does not change ordinary
+accepted/pending/mixed graph authoring or claim admission/current authority.
+
+The private `_target` now accepts the runtime coordinate directly. Existing
+graph callers pass the same node runtime, sharing target construction without
+calling the new fresh-only guard. Graph collisions, retained exact bytes,
+journal persistence and replay remain in their original owners. The product
+artifact factory can render the resulting value before ordinary catalogue
+instantiation; no dummy graph, default configuration or late metadata repair is
+needed. Operations retains durable receiver/secret authority.
+
+The target checkpoint `8bc3d66` demonstrated only the generator omission's
+behavioral red. New helper/product targets were downstream and unexecuted.
+This source implementation awaits independent review and the ordinary full
+Docker gate; no green or live claim is made.

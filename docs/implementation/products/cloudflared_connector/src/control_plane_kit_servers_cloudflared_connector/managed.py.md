@@ -30,3 +30,24 @@ It implements only configuration/health/SDK composition. Process supervision,
 entrypoint, signal/exit guarantees, new OCI, actual stop witness and artifact
 qualification remain separate outstanding #188 work. Existing readiness.py and
 historical image/descriptor remain unchanged. No provider or credential mutation.
+
+## #280 declaration and actual material
+
+`control_declaration()` exposes the existing pure product surface.
+`declared_runtime_contract()` requires the fixed JSON/read-only control file,
+with the existing provider/environment/capability/health advertisement and no
+concrete default or direct token delivery. It uses the explicitly adopted
+accepted Core tuple; no old-Core fallback is promised.
+
+`source_runtime_contract(artifact, token_delivery)` still independently validates
+genuine actual V2 configuration, exact slot/surface and owner-read-only token
+purpose/path binding. After validation it uses the declared shape with the
+requirement discharged into the actual artifact and token delivery. This keeps
+one product declaration while preserving the actual-source contract boundary.
+No historical native descriptor or image is relabeled. SDK startup/auth and
+native process behavior are unchanged.
+
+The parameterized cpk-server example renders actual material before each ordinary
+product instance. Generated ingress activation still owns durable token material;
+this declaration does not create or resolve secrets. Source review and the full
+ordinary gate remain pending; #284/#188 live acceptance is separate.
