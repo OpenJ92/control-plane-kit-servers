@@ -4,9 +4,12 @@ Source: [packaged_managed_witness.py](../../../../../products/cloudflared_connec
 
 Servers #284 owns these targets, invoked through the single new product stage
 of the existing Docker `test.sh`. Exact targets at f30abdf earned Meridian TARGET
-PASS. They have not run. Managed Dockerfile and notice source now await their own
-source review and normal owning green. Their earlier absence was not causal-red
-evidence; no apparatus probe was run.
+PASS. Owning PR gate39381573535 on tested merge30c4de9 (tree equal to source
+5609d35) passed all747 package methods and built the managed image with103
+verified notices, then failed the detached helper exit check. The snapshot was
+combined-container exited/1/Pid0; helper mode and reason were discarded. This
+does not diagnose native, SDK, configuration or DNS cause. Runtime qualification,
+whole-stage cleanup and final residue acceptance remain uncredited.
 
 The real-image lane checks image launch/health metadata, actual installed native
 version and SDK/Core source coordinates, dependency license metadata and exact
@@ -41,6 +44,24 @@ Neither scheduler latency nor an in-flight finite request/local filesystem
 operation is claimed to have a zero-overrun wall-clock guarantee.
 These endpoint reads do not prove before-protected-I/O ordering beyond existing
 SDK/product tests.
+
+The reviewed diagnostic correction retains successful payloads unchanged.
+Only the four observation modes can write a failure record, exactly
+`{"outcome":"failure","reason":<allowlisted code or "helper_exception">}`.
+Nonzero exec completion retains controller-owned mode and actual exit code,
+then attempts the same bounded file read within the remaining deadline. It emits
+a closed availability state (`valid_error`, `unavailable`, `invalid`, or
+`deadline_exhausted`) and always preserves `real_native_observation_failed`.
+Missing or invalid diagnostics cannot replace the original failure or earn
+success. A reserved failure record with exit zero is also refused.
+No exception messages/classes, native output, configuration, response bytes or
+credentials enter diagnostics. A helper reason identifies an observed check,
+not necessarily the cause of combined-process exit. Failed diagnostic writes
+are best effort; existing exact-owned cleanup handles remaining files.
+
+Five focused diagnostic tests exercise these laws at the completion boundary.
+They do not simulate Docker or award runtime acceptance. This correction awaits
+local source review before any push; executable validation has not been rerun.
 
 The separate controlled TERM-ignoring PID1 has handler-ready/TERM receipts and one
 selected stop. Its bounded Engine event query requires exact identity,

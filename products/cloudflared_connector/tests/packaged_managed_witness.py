@@ -21,6 +21,16 @@ ENTRYPOINT = "control_plane_kit_servers_cloudflared_connector.entrypoint"
 READER = "control_plane_kit_servers_cloudflared_connector.readiness"
 OWNER = "org.openj92.cpk.test-run"
 MAX_BYTES = 131072
+OBSERVATION_MODES = frozenset(("starting", "contents", "management", "identity"))
+HELPER_REASONS = frozenset((
+    "native_version", "installed_source_coordinate", "notice_source", "notice_path",
+    "notice_blob", "dependency_license_metadata", "numeric_uid", "python_pid1",
+    "native_parent", "native_group", "native_environment",
+    "native_alive_interval_unproved", "response_bound", "management_status",
+    "capabilities_correlation", "health_truth", "native_changed_during_management",
+    "helper_output_bound", "helper_output_path", "helper_output_write",
+    "helper_exception",
+))
 
 
 class QualificationFailure(AssertionError):
@@ -30,6 +40,75 @@ class QualificationFailure(AssertionError):
 def require(condition, reason):
     if not condition:
         raise QualificationFailure(reason)
+
+
+def helper_failure_value(failure):
+    reason = (failure.args[0]
+              if isinstance(failure, QualificationFailure) and len(failure.args) == 1
+              else None)
+    if type(reason) is not str or reason not in HELPER_REASONS:
+        reason = "helper_exception"
+    return {"outcome": "failure", "reason": reason}
+
+
+def retain_helper_failure(mode, failure):
+    if mode in OBSERVATION_MODES:
+        try:
+            emit_helper(helper_failure_value(failure))
+        except Exception:
+            # Original failure survives an absent, partial or unwritable result.
+            pass
+
+
+def read_helper_result(local_path, deadline):
+    require(time.monotonic() < deadline, "helper_deadline")
+    descriptor = os.open(local_path, os.O_RDONLY | os.O_NOFOLLOW |
+                         os.O_NONBLOCK | os.O_CLOEXEC)
+    try:
+        before = os.fstat(descriptor)
+        require(stat.S_ISREG(before.st_mode) and stat.S_IMODE(before.st_mode) == 0o400
+                and before.st_uid == 65532 and 0 < before.st_size <= 4096,
+                "helper_result_file")
+        value = os.read(descriptor, 4097)
+        after = os.fstat(descriptor)
+        require((before.st_size, before.st_mtime_ns, before.st_ctime_ns) ==
+                (after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+                and len(value) == before.st_size, "helper_result_changed")
+    finally:
+        os.close(descriptor)
+    require(time.monotonic() < deadline, "helper_deadline")
+    require(len(value) <= 4096, "helper_output_bound")
+    decoded = json.loads(value)
+    local_path.unlink()
+    require(time.monotonic() < deadline, "helper_deadline")
+    return decoded
+
+
+def completed_helper(mode, exit_code, local_path, deadline):
+    require(mode in OBSERVATION_MODES and type(exit_code) is int, "helper_completion")
+    if exit_code == 0:
+        value = read_helper_result(local_path, deadline)
+        require(not (isinstance(value, dict) and value.get("outcome") == "failure"),
+                "helper_failure_with_zero_exit")
+        return value
+    diagnostic = {"stage": "managed_cloudflared_helper", "mode": mode,
+                  "exit_code": exit_code, "result": "invalid"}
+    try:
+        value = read_helper_result(local_path, deadline)
+        if (type(value) is dict and set(value) == {"outcome", "reason"}
+                and value["outcome"] == "failure" and type(value["reason"]) is str
+                and value["reason"] in HELPER_REASONS):
+            diagnostic.update(result="valid_error", reason=value["reason"])
+    except FileNotFoundError:
+        diagnostic["result"] = "unavailable"
+    except Exception:
+        # Never serialize exception details or replace the original exec failure.
+        pass
+    if time.monotonic() >= deadline:
+        diagnostic = {"stage": "managed_cloudflared_helper", "mode": mode,
+                      "exit_code": exit_code, "result": "deadline_exhausted"}
+    print(json.dumps(diagnostic), flush=True)
+    require(False, "real_native_observation_failed")
 
 
 def image_contents():
@@ -315,32 +394,11 @@ def controller():
             while time.monotonic() < deadline:
                 state = client.api.exec_inspect(execution["Id"])
                 if not state["Running"] and state["ExitCode"] is not None:
-                    require(state["ExitCode"] == 0, "real_native_observation_failed")
                     break
                 time.sleep(0.05)
             else:
                 require(False, "helper_deadline")
-            require(time.monotonic() < deadline, "helper_deadline")
-            descriptor = os.open(local_path, os.O_RDONLY | os.O_NOFOLLOW |
-                                 os.O_NONBLOCK | os.O_CLOEXEC)
-            try:
-                before = os.fstat(descriptor)
-                require(stat.S_ISREG(before.st_mode) and stat.S_IMODE(before.st_mode) == 0o400
-                        and before.st_uid == 65532 and 0 < before.st_size <= 4096,
-                        "helper_result_file")
-                value = os.read(descriptor, 4097)
-                after = os.fstat(descriptor)
-                require((before.st_size, before.st_mtime_ns, before.st_ctime_ns) ==
-                        (after.st_size, after.st_mtime_ns, after.st_ctime_ns)
-                        and len(value) == before.st_size, "helper_result_changed")
-            finally:
-                os.close(descriptor)
-            require(time.monotonic() < deadline, "helper_deadline")
-            require(len(value) <= 4096, "helper_output_bound")
-            decoded = json.loads(value)
-            local_path.unlink()
-            require(time.monotonic() < deadline, "helper_deadline")
-            return decoded
+            return completed_helper(mode, state["ExitCode"], local_path, deadline)
         finally:
             client.api.timeout = old_timeout
 
@@ -499,6 +557,7 @@ def emit_helper(value):
 
 
 if __name__ == "__main__":
+    mode = None
     try:
         mode = sys.argv[1]
         if mode == "identity":
@@ -521,9 +580,11 @@ if __name__ == "__main__":
         else:
             raise QualificationFailure("invalid_witness_mode")
     except QualificationFailure as failure:
+        retain_helper_failure(mode, failure)
         print(str(failure), file=sys.stderr)
         raise SystemExit(1)
-    except Exception:
+    except Exception as failure:
+        retain_helper_failure(mode, failure)
         # Do not serialize Docker exception payloads, credentials or responses.
         print("managed cloudflared witness did not qualify", file=sys.stderr)
         raise SystemExit(1)
