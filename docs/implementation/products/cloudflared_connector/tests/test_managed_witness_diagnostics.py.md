@@ -8,6 +8,8 @@ Five focused methods cover closed reason selection with candidate canaries,
 nonzero completion with valid/missing/invalid records, deadline exhaustion
 before file opening, unchanged success and zero-exit/failure inconsistency,
 and mode-restricted best-effort failure writing.
+The write test asserts True for successful retention, False for excluded modes
+without writing, and False with no output for a candidate-bearing write error.
 
 The tests substitute only result retrieval or record writing at the existing
 witness boundary. The deadline case uses the actual reader. They do not model
@@ -15,3 +17,5 @@ Docker internals, native lifetime, or SDK behavior. Existing automatic product
 test discovery collects them; no collection or skip configuration changes.
 No executable validation has run for this correction. Only the owning Docker
 `./test.sh` can validate it after source review and North's next run release.
+The prior993b61b gate stopped at integrity before these methods executed;
+the local receipt correction addresses that contract without an exclusion.

@@ -57,11 +57,20 @@ success. A reserved failure record with exit zero is also refused.
 No exception messages/classes, native output, configuration, response bytes or
 credentials enter diagnostics. A helper reason identifies an observed check,
 not necessarily the cause of combined-process exit. Failed diagnostic writes
-are best effort; existing exact-owned cleanup handles remaining files.
+return False, as do excluded modes; only a completed bounded write returns True.
+This receipt is diagnostic state, never recovery of the terminal helper failure.
+Existing exact-owned cleanup handles remaining files.
 
 Five focused diagnostic tests exercise these laws at the completion boundary.
 They do not simulate Docker or award runtime acceptance. This correction awaits
 local source review before any push; executable validation has not been rerun.
+
+Diagnostic gate39384890071 tested993b61b via merge0eeab408 and passed26 policy
+tests, then integrity enumerated752 methods and rejected two exception/pass
+handlers before any package execution. The local correction makes write receipts
+explicit and assigns the closed invalid availability state on read errors.
+It does not waive or modify the integrity checker. Five diagnostic tests and
+runtime qualification remain unexecuted for the corrected source.
 
 The separate controlled TERM-ignoring PID1 has handler-ready/TERM receipts and one
 selected stop. Its bounded Engine event query requires exact identity,

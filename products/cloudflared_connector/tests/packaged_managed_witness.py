@@ -52,12 +52,14 @@ def helper_failure_value(failure):
 
 
 def retain_helper_failure(mode, failure):
-    if mode in OBSERVATION_MODES:
-        try:
-            emit_helper(helper_failure_value(failure))
-        except Exception:
-            # Original failure survives an absent, partial or unwritable result.
-            pass
+    if mode not in OBSERVATION_MODES:
+        return False
+    try:
+        emit_helper(helper_failure_value(failure))
+    except Exception:
+        # A failed receipt cannot recover the original terminal helper failure.
+        return False
+    return True
 
 
 def read_helper_result(local_path, deadline):
@@ -103,7 +105,7 @@ def completed_helper(mode, exit_code, local_path, deadline):
         diagnostic["result"] = "unavailable"
     except Exception:
         # Never serialize exception details or replace the original exec failure.
-        pass
+        diagnostic["result"] = "invalid"
     if time.monotonic() >= deadline:
         diagnostic = {"stage": "managed_cloudflared_helper", "mode": mode,
                       "exit_code": exit_code, "result": "deadline_exhausted"}

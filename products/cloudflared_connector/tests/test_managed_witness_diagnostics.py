@@ -1,5 +1,5 @@
 """Closed diagnostics at the existing packaged witness completion boundary."""
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 import io
 import json
 from pathlib import Path
@@ -85,13 +85,16 @@ class ManagedWitnessDiagnosticTests(unittest.TestCase):
         failure = RuntimeError("PRIVATE_CANDIDATE")
         with patch.object(witness, "emit_helper") as emit:
             for mode in ("controlled", "fatal", "controller", None):
-                witness.retain_helper_failure(mode, failure)
+                self.assertFalse(witness.retain_helper_failure(mode, failure))
             emit.assert_not_called()
             for mode in witness.OBSERVATION_MODES:
-                witness.retain_helper_failure(mode, failure)
+                self.assertTrue(witness.retain_helper_failure(mode, failure))
             self.assertEqual(emit.call_count, 4)
             for call in emit.call_args_list:
                 self.assertEqual(call.args, (
                     {"outcome": "failure", "reason": "helper_exception"},))
-        with patch.object(witness, "emit_helper", side_effect=OSError("PRIVATE_CANDIDATE")):
-            self.assertIsNone(witness.retain_helper_failure("contents", failure))
+        output = io.StringIO()
+        with patch.object(witness, "emit_helper", side_effect=OSError("PRIVATE_CANDIDATE")), \
+                redirect_stdout(output), redirect_stderr(output):
+            self.assertFalse(witness.retain_helper_failure("contents", failure))
+        self.assertEqual(output.getvalue(), "")
