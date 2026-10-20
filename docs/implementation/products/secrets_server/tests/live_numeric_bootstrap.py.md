@@ -64,3 +64,13 @@ logs and cleanup remain mandatory. This phase precedes the public Docker scenari
 and cannot silently skip a missing artifact. Source dual-Hello and optional
 historical A/B checks keep their original meanings. It qualifies the artifact;
 it does not yet prove the coupled declaration transition.
+
+#191 replaces the published family/gateway config-ID equality with the same
+original-manifest proof used by public admission and preload. Raw Engine and
+Interpreter IDs must agree. Both family declarations receive captured execution
+IDs which the wrapper routine rechecks before launch. Results compare against
+those captured IDs and report config/manifest identities separately; fixed
+coordinates, source revision, installed provenance, signed behavior, distinct
+configuration digests and runtime UID checks remain. Optional fixed overlaps also
+receive full proof in the wrapper; extras retain prior laws. Cache absence still
+refuses rather than pulling. Source-built execution-ID laws remain unchanged.

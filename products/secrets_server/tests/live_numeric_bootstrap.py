@@ -30,6 +30,7 @@ from control_plane_kit_interpreters.secret_provider import (
     SecretProviderClientCode, SecretProviderClientError,
 )
 from products.cpk_server.tests.live_numeric_bootstrap import exercise_cpk_file
+from products.cpk_server.tests.docker_image_update_identity import fixed_manifest_bytes, qualify_fixed_image
 from live_wrapper_artifacts import exercise_wrapper_artifacts
 
 
@@ -170,10 +171,16 @@ def main() -> None:
         inputs = json.loads((Path(__file__).parents[2] /
             "cpk_server/tests/docker_image_update_images.json").read_text())
         family, gateway = inputs["hello_family"], inputs["gateway"]
-        for selected in (family, gateway):
+        family_proofs = {}
+        for role, selected in (("hello_family", family), ("gateway", gateway)):
             image = engine.images.get(selected["reference"])
-            assert image.id == selected["image_id"]
-            assert image.attrs["Config"]["User"] == selected["user"]
+            observed = sdk.inspect_image(selected["reference"])
+            assert observed is not None and observed.image_id == image.id
+            family_proofs[role] = qualify_fixed_image(role, reference=selected["reference"],
+                manifest_bytes=fixed_manifest_bytes(role), image_attrs=image.attrs,
+                interpreter_image_id=observed.image_id)
+        family_execution_ids = {"hello": family_proofs["hello_family"].execution_id,
+                                "gateway": family_proofs["gateway"].execution_id}
         published_family = []
         for kinds in ((core.NodeHealthReadKind.LIVENESS, core.NodeHealthReadKind.READINESS),
                       (core.NodeHealthReadKind.READINESS,)):
@@ -181,11 +188,15 @@ def main() -> None:
                 engine=engine, sdk=sdk, resources=resources, labels=labels,
                 network_id=network_id, hello_reference=family["reference"],
                 gateway_reference=gateway["reference"], mode="published-digest",
-                expected_attribution=True, expected_source=family["source_revision"], hello_health_reads=kinds))
-        assert {value["hello_image_id"] for value in published_family} == {family["image_id"]}
+                expected_attribution=True, expected_source=family["source_revision"], hello_health_reads=kinds,
+                expected_execution_ids=family_execution_ids))
+        assert {value["hello_image_id"] for value in published_family} == {family_execution_ids["hello"]}
         assert len({value["hello_configuration_digest"] for value in published_family}) == 2
         print(json.dumps({"hello_declaration_family": "passed", "mode": "published-digest",
-            "same_image": True, "reference": family["reference"], "image_id": family["image_id"],
+            "same_image": True, "reference": family["reference"],
+            "config_digest": family_proofs["hello_family"].config_digest,
+            "manifest_digest": family_proofs["hello_family"].manifest_digest,
+            "image_id": family_execution_ids["hello"],
             "declarations": published_family}), flush=True)
         if os.environ["CPK_WRAPPER_ARTIFACT_MODE"] == "published-digest":
             assert engine.images.get(os.environ["CPK_WRAPPER_HELLO_A"]).id != engine.images.get(
