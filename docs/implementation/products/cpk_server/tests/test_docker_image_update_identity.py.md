@@ -12,6 +12,11 @@ platform evidence with no weaker fallback. Unknown optional roles cannot enter
 the fixed qualifier; additional manual artifacts retain their existing distinct
 runtime law and receive no fixed-config qualification claim.
 
+The actual `inspect_inputs` absent/disagreeing Interpreter test is maintained in
+`tests/test_z_fixed_image_admission.py`, alongside its positive admission law.
+That existing root-test subprocess contains the public-witness imports; this
+product file retains the pure proof, mapping, and preload-partition checks.
+
 Complete daemon-bound maps copy their inputs, freeze proof values and expose a
 separate descriptor. Missing/conflicting/unknown role entries or altered identity
 facts refuse. No backend labels, driver-field matrix, registry client or public

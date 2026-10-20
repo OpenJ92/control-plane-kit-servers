@@ -7,6 +7,13 @@ call. Thus the old config-ID equality rejects genuinely linked manifest-valued
 observations; an unavailable future helper is not the reason for this target red.
 The owning product test path is added only during the test's import/call scope.
 
+The absent/disagreeing Interpreter admission test lives here alongside the positive
+admission law. Both negative observations retain their `ValueError` and zero-create
+assertions. The existing runner starts each test root in a separate subprocess,
+so importing the public witness here cannot leave a cached factory reference in
+the later product suite while its bootstrap tests evict product modules. No new
+runner, cache mutation, or weakened factory identity assertion is needed.
+
 On the implemented side the same test requires a complete daemon-bound result,
 unchanged config identities and explicit manifest-valued execution proofs. No
 Docker client, registry, network, provider or application is executed. It belongs

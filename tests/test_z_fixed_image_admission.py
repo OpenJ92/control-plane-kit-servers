@@ -5,10 +5,23 @@ import json
 from pathlib import Path
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 class FixedImageAdmissionTests(unittest.TestCase):
+    def test_admission_refuses_absent_or_disagreeing_interpreter_without_effects(self):
+        owner = Path(__file__).resolve().parents[1] / "products/cpk_server/tests"
+        with patch.object(sys, "path", [str(owner), *sys.path]):
+            from image_identity_test_material import clients
+            from live_docker_image_update import inspect_inputs
+            for selected in (None, type("Inspection", (), {"image_id": "sha256:" + "f" * 64})()):
+                engine, sdk = clients()
+                sdk.inspect_image = lambda reference: selected
+                engine.containers = Mock()
+                with self.subTest(selected=selected), self.assertRaises(ValueError):
+                    inspect_inputs(engine, sdk)
+                engine.containers.create.assert_not_called()
+
     def test_linked_manifest_identity_is_admitted_without_rebasing_config_fixture(self):
         owner = Path(__file__).resolve().parents[1] / "products/cpk_server/tests"
         with patch.object(sys, "path", [str(owner), *sys.path]):

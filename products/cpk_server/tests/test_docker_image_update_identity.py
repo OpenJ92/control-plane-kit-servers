@@ -4,9 +4,8 @@ import hashlib
 import importlib
 import json
 import unittest
-from unittest.mock import Mock
 
-from image_identity_test_material import FIXED, clients, manifest_bytes, observations, qualified_images
+from image_identity_test_material import FIXED, manifest_bytes, observations, qualified_images
 
 
 class FixedArtifactIdentityTests(unittest.TestCase):
@@ -115,16 +114,6 @@ class FixedArtifactIdentityTests(unittest.TestCase):
             self.qualify(connector, role="connector")
         with self.assertRaises(ValueError):
             self.qualify(observations()["hello_family"], interpreter_id="sha256:" + "f" * 64)
-
-    def test_admission_refuses_absent_or_disagreeing_interpreter_without_effects(self):
-        from live_docker_image_update import inspect_inputs
-        for selected in (None, type("Inspection", (), {"image_id": "sha256:" + "f" * 64})()):
-            engine, sdk = clients()
-            sdk.inspect_image = lambda reference: selected
-            engine.containers = Mock()
-            with self.subTest(selected=selected), self.assertRaises(ValueError):
-                inspect_inputs(engine, sdk)
-            engine.containers.create.assert_not_called()
 
     def test_bound_complete_map_copies_input_and_freezes_proof_values(self):
         module = importlib.import_module("docker_image_update_identity")
