@@ -11,6 +11,17 @@ import packaged_managed_witness as witness
 
 
 class ManagedWitnessDiagnosticTests(unittest.TestCase):
+    def test_contents_refuses_wrong_numeric_identity_before_version_io(self):
+        for uid, gid in ((0, 65532), (65532, 0)):
+            with self.subTest(uid=uid, gid=gid):
+                with patch.object(witness.os, "getuid", return_value=uid), \
+                        patch.object(witness.os, "getgid", return_value=gid), \
+                        patch.object(witness.subprocess, "run", side_effect=AssertionError(
+                            "version I/O reached before numeric identity admission")) as version:
+                    with self.assertRaisesRegex(witness.QualificationFailure, "^numeric_uid$"):
+                        witness.image_contents()
+                    version.assert_not_called()
+
     def test_controller_capture_freezes_requested_mode_before_cleanup(self):
         context = {}
         witness.mark_controller(context, "native", "exec_start", "management")
@@ -121,6 +132,11 @@ class ManagedWitnessDiagnosticTests(unittest.TestCase):
             "stage": "managed_cloudflared_helper", "mode": "identity",
             "exit_code": 1, "result": "deadline_exhausted",
         })
+        with patch.object(witness.os, "open") as opened:
+            with self.assertRaisesRegex(witness.QualificationFailure, "^helper_deadline$"):
+                witness.completed_helper("contents", 0, Path("unused"),
+                                         time.monotonic() - 1)
+        opened.assert_not_called()
 
     def test_zero_exit_rejects_failure_envelope_and_preserves_success_payload(self):
         for mode, payload in (

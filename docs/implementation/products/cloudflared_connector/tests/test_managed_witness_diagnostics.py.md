@@ -32,3 +32,24 @@ Nine diagnostic methods now exist. The four new methods and changed controller
 have not executed. Only the owning Docker `./test.sh` can validate this local
 correction after exact source review and North's next run release; no supported
 narrow local entrypoint exists and no alternate harness is introduced.
+
+## Approved package-lane target preparation
+
+Jacob approved source/package checks now and mandatory positive CPK/Cloudflare
+acceptance after integration, with all laws retained on #284. Both reviewers
+accepted two narrow target additions before implementation:
+
+- One table-driven method calls the actual image_contents boundary with either
+  wrong UID or wrong GID. It requires numeric_uid refusal before the version
+  subprocess; the patched subprocess raises a fixed assertion if reached.
+  Metadata/file reads occur later, so this boundary must stop them too.
+- The existing deadline method also requires exit-zero completion with an expired
+  deadline to refuse before opening the result file. Its nonzero case remains.
+
+This is a target-only checkpoint on e0402db source: the numeric admission is
+missing, so expected causal red is reaching the guarded version-call boundary
+in both UID/GID cases. The expiry case protects an existing law and need not
+fail. No executable red has been observed yet. The nine prior diagnostic
+methods remain intact; artifact/mode translation follows only with the later
+package implementation. There are ten diagnostic methods at this checkpoint.
+No runtime witness, shell gate or production source has changed.
