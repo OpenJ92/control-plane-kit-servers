@@ -41,6 +41,174 @@ class ReceiverAuthoringTests(unittest.TestCase):
         )
         return importlib.import_module(AUTHORING_MODULE)
 
+    def preparation_inputs(self):
+        """Real public material with no graph, product instance or accepted receiver."""
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        import control_plane_kit_core as core
+        api = self.api()
+        public = Ed25519PrivateKey.generate().public_key().public_bytes(
+            serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo).decode("ascii")
+        declaration = core.WorkloadNodeControlSurfaceDeclaration(
+            core.WorkloadNodeControlSurfaceDescriptor(
+                core.NodeControlGraphReference(core.NodeControlGraphReferenceRole.PROVIDER_SOCKET, "control"),
+                (), health_reads=(core.NodeHealthReadKind.LIVENESS, core.NodeHealthReadKind.READINESS)),
+            profile=core.WorkloadNodeControlSurfaceDeclarationProfile.V2)
+        context = {
+            "profile": "receiver-authoring-context.v1", "workspace_id": "workspace-a",
+            "expectation": {"current_graph_id": None, "current_realized_projection_id": None,
+                "desired_graph_id": None, "desired_realized_projection_id": None,
+                "desired_graph_revision": 0},
+            "current": {"graph_id": None, "realized_projection_id": None, "receivers": []},
+            "desired": None, "pending_draft": None,
+        }
+        verifiers = {"workload_verifier_configuration": {"verifiers": [
+            {"purpose": purpose.value, "issuer": "issuer-a",
+             "public_keys": [{"key_id": "public-a",
+                "algorithm": core.DelegationKeyAlgorithm.ED25519.value, "public_key_pem": public}]}
+            for purpose in (core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ,
+                            core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ)
+        ]}}
+        return api, core, dict(workspace_id="workspace-a", runtime_id="runtime-a",
+            scope=api.ReceiverScope("connector-a", "control"), receiver_id="a" * 32,
+            declaration=declaration, context=context, verifier_configuration=verifiers)
+
+    def preparation_entrypoint(self, api):
+        # This assertion preserves collection and distinguishes interface absence
+        # from downstream semantic laws that have not yet executed.
+        prepare = getattr(api, "prepare_receiver_configuration", None)
+        self.assertTrue(callable(prepare), "fresh receiver preparation interface is unavailable")
+        return prepare
+
+    def test_prepare_genuine_receiver_configuration_before_any_graph_or_instance(self):
+        api, core, inputs = self.preparation_inputs()
+        prepare = self.preparation_entrypoint(api)
+        configured = prepare(**inputs)
+        self.assertIs(type(configured), core.ReceiverNodeControlConfiguration)
+        codec = core.ReceiverNodeControlConfigurationCodec()
+        self.assertEqual(codec.decode_bytes(codec.encode_bytes(configured)), configured)
+        self.assertEqual((configured.target.workspace_id.value, configured.target.runtime_id.value,
+            configured.target.node_id.value, configured.target.provider_socket_name.value,
+            configured.target.receiver_id), ("workspace-a", "runtime-a", "connector-a", "control", "a" * 32))
+        self.assertEqual(configured.declaration, inputs["declaration"])
+        self.assertEqual({item.purpose for item in configured.verifiers}, {
+            core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ,
+            core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ})
+        self.assertEqual({key.public_key_pem for item in configured.verifiers for key in item.public_keys},
+            {inputs["verifier_configuration"]["workload_verifier_configuration"]["verifiers"][0]
+             ["public_keys"][0]["public_key_pem"]})
+        from control_plane_kit_servers_cloudflared_connector import managed
+        artifact = managed.control_configuration_artifact(configured)
+        self.assertEqual(codec.decode_bytes(artifact.content.encode()), configured)
+        public_api = importlib.import_module("control_plane_kit_servers_cpk_server.client")
+        self.assertIs(public_api.prepare_receiver_configuration, prepare)
+
+    def test_prepare_uses_owner_coordinate_grammars(self):
+        api, core, inputs = self.preparation_inputs()
+        prepare = self.preparation_entrypoint(api)
+        surface = replace(inputs["declaration"].surface,
+            provider_socket_name=core.NodeControlGraphReference(
+                core.NodeControlGraphReferenceRole.PROVIDER_SOCKET, "API.Socket"))
+        configured = prepare(**{**inputs, "runtime_id": "2Runtime",
+            "scope": api.ReceiverScope("2Node", "API.Socket"),
+            "declaration": replace(inputs["declaration"], surface=surface)})
+        self.assertEqual((configured.target.runtime_id.value, configured.target.node_id.value,
+                          configured.target.provider_socket_name.value), ("2Runtime", "2Node", "API.Socket"))
+
+    def test_prepare_refuses_invalid_material_current_scope_and_pending_context(self):
+        api, core, inputs = self.preparation_inputs()
+        prepare = self.preparation_entrypoint(api)
+        cases = [
+            {"workspace_id": "foreign"}, {"workspace_id": "bad workspace"},
+            {"runtime_id": "bad runtime"}, {"runtime_id": 123},
+            {"scope": "connector-a"}, {"declaration": object()},
+            {"scope": api.ReceiverScope("connector-a", "different")},
+            *({"receiver_id": identity} for identity in ("", "a" * 31, "a" * 33, "A" * 32, "z" * 32, 1)),
+            {"context": None}, {"verifier_configuration": None},
+        ]
+        for path, value in (
+            (("profile",), "foreign.v1"), (("workspace_id",), "foreign"),
+            (("current", "graph_id"), "unexpected-graph"),
+            (("current", "realized_projection_id"), "unexpected-projection"),
+            (("pending_draft",), {}), (("pending_draft",), {"draft_id": "draft-a", "revision": 1}),
+        ):
+            context = json.loads(json.dumps(inputs["context"]))
+            target = context
+            for key in path[:-1]:
+                target = target[key]
+            target[path[-1]] = value
+            cases.append({"context": context})
+        current = self.fixture()
+        from control_plane_kit_servers_hello_server.configuration import hello_control_declaration
+        cases.append({"context": current["context"], "scope": api.ReceiverScope("hello-x", "internal"),
+                      "declaration": hello_control_declaration()})
+        for mutate in (
+            lambda families:families.pop(),
+            lambda families:families[0].update(purpose=core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL.value),
+            lambda families:families[0].update(public_keys=[]),
+            lambda families:families[0]["public_keys"][0].update(public_key_pem="PRIVATE-CONFIG-CANARY"),
+            lambda families:families.append(dict(families[0])),
+        ):
+            verifiers = json.loads(json.dumps(inputs["verifier_configuration"]))
+            mutate(verifiers["workload_verifier_configuration"]["verifiers"])
+            cases.append({"verifier_configuration": verifiers})
+        for index, changes in enumerate(cases):
+            with self.subTest(case=index), self.assertRaises(api.ReceiverAuthoringError) as caught:
+                prepare(**{**inputs, **changes})
+            self.assertEqual(str(caught.exception), "receiver graph could not be authored")
+            self.assertIsNone(caught.exception.__cause__)
+            self.assertIsNone(caught.exception.__context__)
+            self.assertEqual(vars(caught.exception), {})
+
+    def test_two_prepared_instances_preserve_one_original_catalogue_identity(self):
+        api, core, inputs = self.preparation_inputs()
+        prepare = self.preparation_entrypoint(api)
+        from control_plane_kit_core.algebra import DeploymentTopology, DockerRuntime
+        from control_plane_kit_core.products import (
+            ProductCatalog, ProductInstanceConfiguration, ProductInstantiationError,
+            instantiate_catalog_product,
+        )
+        from control_plane_kit_core.topology import compile_topology
+        from control_plane_kit_servers_cloudflared_connector import managed
+        from health_receiver_join_fixtures import document
+        factory = getattr(managed, "declared_runtime_contract", None)
+        self.assertTrue(callable(factory), "required contract factory is unavailable")
+        # Existing never-executed source descriptor fixture; no published native
+        # descriptor is relabeled and no built/deployed image is claimed.
+        selected = document("prepared-connectors", factory())
+        catalog = ProductCatalog.from_documents((selected,))
+        original = selected.content
+        contract = selected.product.runtime_contract
+        blocks, configurations = [], []
+        for node_id, identity in (("connector-a", "a" * 32), ("connector-b", "b" * 32)):
+            configured = prepare(**{**inputs, "scope": api.ReceiverScope(node_id, "control"),
+                                   "receiver_id": identity})
+            configurations.append(configured)
+            artifact = managed.control_configuration_artifact(configured)
+            blocks.append(instantiate_catalog_product(
+                catalog, selected.product.identity, role_id=node_id,
+                configuration=ProductInstanceConfiguration(
+                    public_environment=contract.public_environment,
+                    configuration_artifacts=(artifact,), secret_deliveries=())))
+        graph = compile_topology(DeploymentTopology("prepared-connectors",
+            DockerRuntime(runtime_id="runtime-a", children=tuple(blocks))))
+        codec = core.ReceiverNodeControlConfigurationCodec()
+        artifacts = []
+        for node_id, configured in zip(("connector-a", "connector-b"), configurations):
+            node = graph.node(node_id)
+            artifact, = node.configuration_artifacts
+            artifacts.append(artifact)
+            self.assertEqual(codec.decode_bytes(artifact.content.encode()), configured)
+            self.assertEqual(node.metadata["product_identity"], selected.product.identity.key)
+            self.assertEqual(node.metadata["product_descriptor_digest"], selected.content_digest)
+            self.assertEqual(node.metadata["oci_image"], selected.product.image.execution_reference)
+            self.assertEqual(node.secret_deliveries, ())
+        self.assertNotEqual(artifacts[0].content, artifacts[1].content)
+        self.assertEqual(catalog.lookup(selected.product.identity).content, original)
+        with self.assertRaises(ProductInstantiationError):
+            instantiate_catalog_product(catalog, selected.product.identity, role_id="missing",
+                configuration=ProductInstanceConfiguration(public_environment=contract.public_environment))
+
     def refresh_fixture(self):
         api = self.api()
         self.assertIn("verifier_refreshes", api.AuthoredDesiredGraph.__dataclass_fields__,

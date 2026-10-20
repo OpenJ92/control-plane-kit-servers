@@ -117,6 +117,9 @@ class CoordinateGenerationTests(unittest.TestCase):
             module.POSTGRES_SERVER_DOCKERFILE: ("control_plane_kit_server_sdk_commit",),
             module.HTTP_ACTIVE_ROUTER_DOCKERFILE: ("control_plane_kit_server_sdk_commit",),
             module.HTTP_MULTIPLEXER_DOCKERFILE: ("control_plane_kit_server_sdk_commit",),
+            ROOT / "products/cloudflared_connector/Dockerfile.managed": (
+                "control_plane_kit_server_sdk_commit",
+            ),
         }
         archive_templates = {
             "control_plane_kit_core_commit": (
@@ -147,6 +150,7 @@ class CoordinateGenerationTests(unittest.TestCase):
                     )
                 self.assertEqual(content, expected)
         for path, keys in destinations.items():
+            self.assertIn(path, generated, "dependency destination omitted from generation")
             for key in keys:
                 with self.subTest(path=path.name, upstream=key):
                     self.assertIn(replacements[key].encode(), generated[path])
@@ -185,6 +189,14 @@ class CoordinateGenerationTests(unittest.TestCase):
         secrets_commit = coordinates["upstreams"][
             "control_plane_kit_secrets_commit"
         ]
+        self.assertIn(
+            "control-plane-kit-server-sdk[verification] @ "
+            "https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/"
+            f"{coordinates['upstreams']['control_plane_kit_server_sdk_commit']}.zip",
+            (ROOT / "products/cloudflared_connector/Dockerfile.managed").read_text(
+                encoding="utf-8"
+            ),
+        )
         self.assertIn(
             "control-plane-kit-server-sdk[verification] @ "
             "https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/"
@@ -327,7 +339,7 @@ class CoordinateGenerationTests(unittest.TestCase):
         )
         self.assertEqual(
             document["upstreams"]["control_plane_kit_secrets_commit"],
-            "7ff1e771874e5963ee840d7148d2d4052278baa1",
+            "b30e62664da50cfdda347509a17fa70888cb169a",
         )
         self.assertEqual(
             secrets_server["image"]["digest"],

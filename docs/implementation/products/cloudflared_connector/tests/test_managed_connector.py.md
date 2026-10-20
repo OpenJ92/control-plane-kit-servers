@@ -31,3 +31,14 @@ law (malformed-media cases at105–120). The product target instead uses valid J
 assertion and the well-typed foreign declaration case. Initial red placeholders
 had prevented this downstream fixture branch from running; that red did not
 prove the branch was correctly constructed.
+
+## Pending #280 declared contract targets
+
+The new target requires public declaration and required-contract factories,
+exact control slot and advertisement, empty defaults/direct deliveries, and
+ordinary Core refusal of unresolved required material. Existing strict actual
+configuration/token laws remain; an explicit absent-token case protects the
+actual-source entrance. Missing factories are asserted inside test bodies to
+preserve collection. An interface assertion failure is not evidence for later
+semantic assertions. No factory implementation or test run is included in this
+target checkpoint.

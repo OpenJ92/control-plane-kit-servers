@@ -109,3 +109,24 @@ immediately derives source_digest from changed content when given None; the test
 checks that fresh digest and its difference from original provenance. No source
 behavior changed; these are fixture premises, not target-red proof. Later runtime
 phases were unreached and corrected-head owning evidence remains pending.
+
+## Pending #280 pre-instantiation targets
+
+New targets use real generated public verifier material and an empty authoring
+context without constructing a graph. They require the fresh preparation API to
+produce genuine typed/codec-valid product material, honor owner coordinate
+grammars, and refuse malformed identity/context/declaration/verifiers, current
+scope and non-null pending drafts with bounded candidate-free errors. The
+existing current/pending/mixed, collision, retained-byte and journal/restart laws
+remain unchanged.
+
+The composition target prepares each real artifact before its own ordinary
+catalogue instantiation. A never-executed source descriptor fixture supplies one
+immutable catalogue identity; compiled nodes preserve its original descriptor
+digest and OCI reference while payloads differ. This is no publication or live
+claim. Missing required material remains a Core refusal.
+
+The new public helper/factory names are resolved inside test bodies. Their
+callable assertions are interface availability checks; if they fail, subsequent
+semantic assertions have not run and earn no semantic-red credit. No production
+placeholder or shim was added. Targets are prepared but unexecuted.

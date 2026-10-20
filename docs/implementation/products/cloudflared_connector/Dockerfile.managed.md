@@ -34,3 +34,22 @@ coordinator. No restart policy, timeout override, extra supervisor or runtime
 adapter is added. No image build, native interval, effective daemon profile or
 cleanup result has yet been observed for this source. Publication, registered
 product adoption and provider effects remain excluded.
+
+## Pending #280 required-configuration adoption
+
+The source checkpoint selects accepted Core/Operations `ec61e2b`, SDK
+`eff0909`, Secrets `b30e626`, and Interpreters `2365565`; full immutable commits
+are in the canonical coordinates manifest.
+Dependency mirrors and current installed-source expectations advance together.
+Earlier dependency/evidence accounts above remain historical. This checkpoint
+is unvalidated: pin edits do not establish installed compatibility, image
+qualification or live acceptance. Existing package subsets/extras, native/base
+images, runtime/license inputs, assertion strength and published product
+source/image/descriptor/catalogue identities remain unchanged. The existing
+coordinate generator and Docker-backed owning gate must verify the prepared
+source; no validation result is claimed here.
+
+#280 explicitly adopts the current managed recipe's SDK/Core pair. Its planned
+addition to the existing coordinate generator has not yet been implemented at
+the target checkpoint; the new omission target must expose that missing owner.
+No compatibility fallback or second supported old tuple is introduced.

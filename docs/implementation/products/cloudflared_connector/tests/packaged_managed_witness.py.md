@@ -126,3 +126,23 @@ Nonstring version values cannot enter map lookup. Source reporting returns the
 matched immutable commit only for inferred defaults. No gate, dependency,
 production code or runtime override changed. Exact source review and separately
 released owning green remain necessary; all live laws remain pending.
+
+## Pending #280 required-configuration adoption
+
+The source checkpoint selects accepted Core/Operations `ec61e2b`, SDK
+`eff0909`, Secrets `b30e626`, and Interpreters `2365565`; full immutable commits
+are in the canonical coordinates manifest.
+Dependency mirrors and current installed-source expectations advance together.
+Earlier dependency/evidence accounts above remain historical. This checkpoint
+is unvalidated: pin edits do not establish installed compatibility, image
+qualification or live acceptance. Existing package subsets/extras, native/base
+images, runtime/license inputs, assertion strength and published product
+source/image/descriptor/catalogue identities remain unchanged. The existing
+coordinate generator and Docker-backed owning gate must verify the prepared
+source; no validation result is claimed here.
+
+The existing `image_contents` predicate is commit-substring membership in the
+installed `direct_url.json` URL. The new expected commits do not strengthen that
+predicate into exact URL/subdirectory equality or artifact authentication.
+Controlled-process package diagnostics remain distinct from the mandatory
+connected-native/authenticated-receiver live laws under #284/#188.
