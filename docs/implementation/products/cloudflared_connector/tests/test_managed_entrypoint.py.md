@@ -7,7 +7,7 @@ with Meridian and Kepler PLAN PASS and Rowan's reconciled qualification decision
 All targets are new laws at the process-entry boundary, preserving the accepted
 SDK and coordinator ownership.
 
-Ten test methods cover real configuration delivery, exact one-call handoff on
+Nine test methods cover real configuration delivery, exact one-call handoff on
 the main thread, coordinator result preservation, missing/malformed/mode-invalid
 or symlink configuration, wrong product surface, missing/empty/relative token
 path, bounded loader exceptions, inert import and module-exit forwarding.

@@ -70,7 +70,11 @@ class EntrypointTests(unittest.TestCase):
             owner.assert_not_called()
         output = stdout.getvalue() + stderr.getvalue()
         self.assertLessEqual(len(output.encode("utf-8")), 256)
-        for private in ("PRIVATE", str(self.path), self.token_path):
+        candidates = tuple(
+            value for name in (CONFIG_ENV, "TUNNEL_TOKEN_FILE")
+            if isinstance(value := environment.get(name), str) and value
+        )
+        for private in ("PRIVATE", str(self.path), self.token_path, *candidates):
             self.assertNotIn(private, output)
 
     def test_missing_configuration_binding_refuses_before_coordinator(self):
