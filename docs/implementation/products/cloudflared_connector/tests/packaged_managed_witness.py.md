@@ -1,139 +1,97 @@
-# Managed cloudflared executable target draft
+# Managed cloudflared package witness
 
 Source: [packaged_managed_witness.py](../../../../../products/cloudflared_connector/tests/packaged_managed_witness.py).
 
-Servers #284 owns these targets, invoked through the single new product stage
-of the existing Docker `test.sh`. Exact targets at f30abdf earned Meridian TARGET
-PASS. Owning PR gate39381573535 on tested merge30c4de9 (tree equal to source
-5609d35) passed all747 package methods and built the managed image with103
-verified notices, then failed the detached helper exit check. The snapshot was
-combined-container exited/1/Pid0; helper mode and reason were discarded. This
-does not diagnose native, SDK, configuration or DNS cause. Runtime qualification,
-whole-stage cleanup and final residue acceptance remain uncredited.
+Servers #284 owns this unconditional stage of the existing Docker `test.sh`.
+The approved issue law ledger separates source/package proof from mandatory real
+Cloudflare acceptance through CPK after integration. #284/#188 remain open until
+both lanes pass. This local implementation has not yet earned package green.
 
-The real-image lane checks image launch/health metadata, actual installed native
-version and SDK/Core source coordinates, dependency license metadata and exact
-notice blobs. It uses real 0444 SDK configuration and same-UID 0400 synthetic
-native token delivery. Its test-only HTTP client receives current-time generated
-credentials by a separate readonly fixture file, never argv or logs. The normal
-entrypoint remains unchanged, without native launch overrides or static edges.
+## Image inspection
 
-The helper observes numeric Python PID1, one real native child/session and fixed
-native environment, then authorized static/liveness/readiness and denied reads.
-Before the first native observation it allows bounded pre-spawn scheduling while
-the container remains running. After observing native, only connection-refused
-management polling on that same identity is permitted. No replacement launch.
-The public result codecs validate complete schema/request digest, target context,
-declaration and kind; capabilities must equal the exact expected declaration.
-Real-native stop uses the selected unmodified interpreter. Profile reads happen
-before the final native snapshot. The latter observes alive immediately before
-the call, not an atomic guarantee against exit racing signal delivery.
+The controller verifies the exact built image ID's original user65532:65532,
+Python managed entrypoint, empty command, SIGTERM and healthcheck metadata before
+any fixture override. One credential-free container from that image runs the
+existing contents checker as PID1, with the default image user and network none.
+Its healthcheck is disabled only on the fixture, as for controlled/fatal cases.
+Only the readonly checker/notice manifest and owned writable results directory
+are mounted. There is no token, SDK configuration, request credential or socket
+in any image fixture. The controller alone retains the existing daemon socket.
 
-Helper execution uses detached Docker exec, not the unbounded upgraded socket
-reader. Completion polling checks the deadline with finite one-second API
-requests. Result retrieval uses no Docker archive or streamed socket: helpers
-write one exclusive file capped4096bytes in a dedicated run-owned results
-directory, mounted writable only as test instrumentation. After completion the
-controller opens its local file with NOFOLLOW/NONBLOCK, requires regular mode0400
-and numeric owner65532, reads at most4097bytes and checks stable metadata/size
-before parsing and unlinking. Deadline/refusal enters exact-owned cleanup,
-terminating remaining helpers with their container. Remaining named result
-files are removed only after container cleanup. This fixture channel contains
-observation metadata, never credentials; it is shared custody, not isolation.
-Neither scheduler latency nor an in-flight finite request/local filesystem
-operation is claimed to have a zero-overrun wall-clock guarantee.
-These endpoint reads do not prove before-protected-I/O ordering beyond existing
-SDK/product tests.
+Contents checks actual UID/GID before version I/O, the real native version,
+selected Core/SDK source coordinates, exact103 notice blobs and dependency
+license metadata. It does not launch a tunnel. The observation budget starts
+before create, remains fixed at15seconds through start, terminal polling and
+result consumption, and is checked around Docker calls. API timeout is temporarily
+one second and restored in finally before the controlled stop. Finite API and
+filesystem operations can overrun the deadline; no exact cancellation guarantee
+is claimed. An actual exited State and integer ExitCode are required; a running
+container's initial zero field never establishes success.
 
-The reviewed diagnostic correction retains successful payloads unchanged.
-Only the four observation modes can write a failure record, exactly
-`{"outcome":"failure","reason":<allowlisted code or "helper_exception">}`.
-Nonzero exec completion retains controller-owned mode and actual exit code,
-then attempts the same bounded file read within the remaining deadline. It emits
-a closed availability state (`valid_error`, `unavailable`, `invalid`, or
-`deadline_exhausted`) and always preserves `real_native_observation_failed`.
-Missing or invalid diagnostics cannot replace the original failure or earn
-success. A reserved failure record with exit zero is also refused.
-No exception messages/classes, native output, configuration, response bytes or
-credentials enter diagnostics. A helper reason identifies an observed check,
-not necessarily the cause of combined-process exit. Failed diagnostic writes
-return False, as do excluded modes; only a completed bounded write returns True.
-This receipt is diagnostic state, never recovery of the terminal helper failure.
-Existing exact-owned cleanup handles remaining files.
+The inspector writes one exclusive result capped4096bytes, mode0400, owned by
+65532. The controller uses NOFOLLOW/NONBLOCK, regular-file/owner/mode checks,
+bounded read, stable size/timestamps, parsing/unlink and deadline checks. No
+Docker archive or exec stream is used. Nonzero results always refuse as
+package_inspection_failed; only a closed allowlisted failure record may enrich
+that refusal. Missing/invalid/expired records never supply success, and a
+failure envelope with exit zero refuses. Reasons and marker fields contain no
+exception text, native output, configuration or credentials.
 
-Five focused diagnostic tests exercise these laws at the completion boundary.
-They do not simulate Docker or award runtime acceptance.
+## Controlled process evidence
 
-Diagnostic gate39384890071 tested993b61b via merge0eeab408 and passed26 policy
-tests, then integrity enumerated752 methods and rejected two exception/pass
-handlers before any package execution. The local correction makes write receipts
-explicit and assigns the closed invalid availability state on read errors.
-It does not waive or modify the integrity checker. Gate39385659976 subsequently
-tested10720fa via merge51cee511, passing integrity and all752 package methods,
-including those five diagnostic tests, and building the image with103 notices.
-Its sole runtime failure was the outer generic message; no helper or controller
-JSON record appeared. No precise operation or native cause was established.
+The same exact image and daemon run the preserved TERM-ignoring PID1 fixture.
+The actual container/Engine/SDK profile is resolved from that container. SDK7.2.0,
+Linux and SIGTERM are required. Timeout10 must be explicit or derived from the
+reviewed fixed Unix default in Moby28.5.1 commit
+f8215cc266744ef195a50a70d427c345da2acdbb (at least7 matching commit characters).
+Unknown defaults refuse; no stop override is supplied. Moby source anchors are
+container/container.go:597, container/container_unix.go:26 and daemon/stop.go:57.
+This is compatibility evidence, not binary attestation.
 
-The next local correction follows the reviewers' fixed-marker consensus.
-One invocation-local context contains only `phase`, `operation`, `helper_mode`.
-Phases are setup/native/profile/fatal/cleanup; profile denotes the controlled
-stop case. Operations are literal values placed before calls, and helper mode
-is an existing requested observation mode or null. Setup now enters the same
-capture/cleanup boundary before imports, environment access or client creation.
-Nested create/execute helpers refine the marker; successful observations clear
-the helper mode. A marker describes work in progress, not successful effects or
-a dependency root cause. No traceback inspection is used.
+Handler-ready/TERM receipts and the unchanged interpreter stop call are followed
+by a finite exact-container event query. Integer timeNano and unambiguous
+15/9/die137 require inclusive9–11seconds on the Engine clock. Initial start before
+TERM is allowed; competing start/restart refuses. Controller clock continuity
+is separately checked. The reported profile_container_id binds this evidence to
+the controlled fixture, not a real connector. The preserved fatal-PID1 fixture
+observes an owned child session, then SIGKILL and exited namespace/Pid0; it does
+not scan host processes or prove graceful native shutdown.
 
-On failure the controller copies the context before reporting and cleanup.
-It emits one closed primary record, preserves the original exception, and
-continues every existing owned cleanup attempt plus client close. The first
-cleanup failure gets a separate frozen context and aggregate cleanup record.
-If both fail, the original exception is re-raised; cleanup-only still refuses
-with `managed_cleanup_incomplete`. Failure-record publication returns a boolean
-receipt. A primary record whose publication failed has at most one fallback
-attempt after cleanup; publication never recovers the original failure.
-Existing qualification snapshots remain best-effort, and their publication
-cannot replace the original qualification. Final success is still emitted only
-after cleanup; failure to publish that result receives a closed report marker.
+## Failure and cleanup
 
-Four additional focused methods exercise actual marker/capture/publication and
-terminal-precedence boundaries, for nine diagnostic methods total. They check
-frozen primary state, mode clearing, candidate refusal, primary-plus-cleanup and
-cleanup-only results, and failed publication without simulating Docker.
-The four-file local delta awaits exact source review and has not executed.
-All runtime/profile/fullcleanup acceptance remains HOLD.
+Closed invocation-local markers use setup/artifact/profile/fatal/cleanup phases.
+Created IDs are recorded before subsequent effects or deadline refusal. Primary
+context is copied before cleanup, original failure takes precedence, all recorded
+containers get cleanup attempts, and the client is closed. First cleanup failure
+has a separate marker; cleanup-only failure refuses. Publication failures cannot
+recover the original outcome. The shell's owner-label fallback covers uncertain
+create outcomes without broad pruning.
 
-The separate controlled TERM-ignoring PID1 has handler-ready/TERM receipts and one
-selected stop. Its bounded Engine event query requires exact identity,
-integer timeNano, unambiguous15/9/die137 and fixed inclusive9–11second
-corroboration. The legitimate initial start before TERM is allowed; starts within
-the TERM-to-terminal interval and restarts are refused. Cleanup/competing events
-cannot supply its proof. This is a chosen
-empirical interval, not timing accuracy or a useful-execution lower bound.
-A separate controlled fatal-PID1 case observes an owned child session before
-SIGKILL and Docker's exited namespace/Pid0 afterward; it does not scan all host
-processes or claim graceful drain. The inner controller PASS requires its container
-cleanup. Only the shell stage's final success after image/fixture cleanup earns
-whole-stage acceptance; the later global residue audit remains separate.
+The controller emits outcome=package_pass and live_qualification=pending only
+after its container cleanup. Shell success additionally requires exact owned
+container/image/fixture cleanup. Later PostgreSQL and global residue checks stay
+mandatory. No success here proves normal native lifetime, token delivery,
+current authority, bootstrap, authenticated management or real-native stop.
 
-Actual effective timeout must resolve independently. Docker's Info schema does
-not expose a daemon default timeout. Kepler identified one bounded source path:
-Moby28.5.1 commit `f8215cc266744ef195a50a70d427c345da2acdbb` uses fixed Unix10
-when container StopTimeout is absent. The draft matches that exact advertised
-version and its full or at-least-seven-character commit prefix, or requires an
-explicit inspected container timeout10. Unknown/configurable defaults remain
-`stop_profile_unproved`; no timeout override is added. It records actual safe
-Engine/container/SDK fields before refusal and requires the observed SDK7.2.0,
-whose omitted-timeout call was read in primary source.
+## Evidence and live handoff
 
-Source anchors at that immutable Moby commit: `container/container.go:597`
-returns the explicit timeout or default; `container/container_unix.go:26` defines
-Unix10; `daemon/stop.go:57` selects it unless request options override it.
-This is source-identified compatibility plus required empirical corroboration,
-not binary attestation or a claim that the current runner matches. No actual
-runner tuple has yet been observed. Generic Linux documentation alone and
-invented API fields remain insufficient.
+Historical source e0402db preserves the retired offline normal-native witness.
+Its synthetic-token/network-none profile has no native lifetime guarantee.
+Runs39381573535,39384890071,39385659976,39389284324 remain failures with bounded
+findings on #284; none establishes whole-stage or live acceptance. The final
+historical observation was contents-helper137/result unavailable and subsequent
+combined container exited1/Pid0, without a proved cause.
 
-The script is compile/discovery-safe, but the unit suite does not award image
-coverage merely by compiling it. No alternate harness, tests of Docker internals,
-retries, fake-native substitution or production fault switches are introduced.
+The package slice removes that orchestration and its now-unreferenced detached
+exec, synthetic file/credential generators, HTTP/native identity helpers and
+modes. Production coordinator/entrypoint tests and shared fixtures are untouched.
+All positive native laws remain mandatory in the authoritative #284 live ledger;
+they require independently approved real material, transport, selected runtime
+profile and CPK actions. Protected grandparent ingress and paused #224 remain
+unchanged. No provider action, credential change, dependency adoption or image
+publication is part of this slice.
+
+Target1a37e29 earned exact review, then gate39451603339 confirmed both intended
+numeric-admission failures before actual version I/O. Nine other diagnostic
+methods passed. That causal red does not establish this implementation's green;
+exact source review and the released owning Docker gate remain necessary.

@@ -32,8 +32,7 @@ cleanup() {
       rm -f "$RECORDS/results"/cpk-witness-*.json
       rmdir "$RECORDS/results" || return 1
     fi
-    rm -f "$RECORDS/control.json" "$RECORDS/token" "$RECORDS/requests.json" \
-      "$RECORDS/containers.json" "$RECORDS/image"
+    rm -f "$RECORDS/containers.json" "$RECORDS/image"
     rmdir "$RECORDS"
   fi
   return "$failed"
@@ -65,4 +64,4 @@ docker run --rm --name "$RUN-controller" --network none \
 
 cleanup
 trap - EXIT INT TERM
-echo 'managed cloudflared stage passed with owned container/image/fixture cleanup'
+echo 'managed cloudflared package stage passed with owned container/image/fixture cleanup; live qualification pending'

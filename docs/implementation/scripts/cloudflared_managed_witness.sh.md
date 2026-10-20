@@ -1,27 +1,31 @@
-# Managed cloudflared owning stage
+# Managed cloudflared owning package stage
 
 Source: [cloudflared_managed_witness.sh](../../../scripts/cloudflared_managed_witness.sh).
 
-Target-draft stage for Servers #284, invoked by normal `test.sh` after the
-historical connector witness. It builds the distinct managed Dockerfile,
-records the resulting image identity, and invokes the product target controller
-using the existing package test image. The controller alone has the Docker
-socket; product containers use network none and no host port bindings.
+Servers #284 invokes this stage unconditionally from normal test.sh after the
+historical connector witness. It builds the distinct managed Dockerfile, records
+its exact image ID and invokes the package controller in the existing test image.
+Only that controller has the daemon socket. Image fixtures use network none,
+no host ports and no credentials/configuration. The same image supplies contents,
+controlled stop-profile and fatal-PID1 cases; none is positive live qualification.
 
-The run's unique ownership label is checked absent before creation. Cleanup
-checks that label on each selected container and checks the recorded image
-identity before deletion; it never prunes global state. The controller also
-verifies exact created container identities. Trap cleanup preserves failure if
-resource removal cannot be verified. Only named temporary fixture records are
-removed after cleanup succeeds.
-The dedicated result directory is test-only writable observation material.
-After owned containers are gone, cleanup unlinks only its named result files
-and requires the directory to be empty; unexpected files cause cleanup failure.
-The final stage-success marker follows container, image and fixture cleanup.
-The controller's earlier PASS is limited to its own observations and containers;
-it cannot substitute for shell terminal success or the later global residue audit.
+Unique ownership-label absence is checked before creation. Cleanup checks each
+container's label and the recorded image/tag identity before deletion; no broad
+prune occurs. The controller verifies created IDs, while shell fallback covers
+its run label. Trap cleanup preserves failure if removal cannot be verified.
+After containers are gone, only named result files are unlinked and the results
+directory must be empty. Unexpected files fail cleanup. Obsolete synthetic
+control/token/request file cleanup was removed together with their producers;
+only containers.json and image remain as named top-level records.
 
-This stage has not been run. Exact targets earned review at f30abdf; managed
-Dockerfile/notice source now awaits source review. Earlier missing build material
-was not meaningful red. Do not invoke this stage independently or create another
-workflow. The existing entrypoint causal-red baseline remains the only run.
+The final marker explicitly says package stage passed and live qualification
+pending, after container/image/fixture cleanup. Controller package_pass covers
+only its observations and container cleanup. Later PostgreSQL and final global
+residue stages remain mandatory and cannot be credited from the earlier marker.
+
+This local package-lane change awaits exact source review and owning Docker
+green. Prior failures and target-red39451603339 remain recorded on #284; no
+standalone stage, alternate harness or manual duplicate run is authorized.
+The approved source/package versus mandatory later CPK/Cloudflare split retains
+all real native acceptance laws. #284/#188 stay open, and no provider, credential,
+public ingress, dependency or publication effect is introduced.

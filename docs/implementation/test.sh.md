@@ -90,12 +90,14 @@ Their exact identity/owner checks, SDK helper ledger and final residue checks
 are unchanged. Original generic SDK process examples remain covered by the
 existing CPK smoke. This source cleanup neither removes a published image nor
 proves the coupled #254 update; publisher retirement belongs to #271.
-# Managed cloudflared target preparation (#284)
+# Managed cloudflared package lane (#284)
 
-The new `scripts/cloudflared_managed_witness.sh` invocation follows the preserved
-historical connector witness. Exact executable targets earned review at f30abdf;
-managed Dockerfile/notice source awaits its separate source review. No extra gate
-is authorized by this invocation. See the product witness companion for the
-source-identified daemon-default qualification boundary and the distinction
-between real-native and controlled-process evidence. Actual runtime evidence
-remains unobserved until the normal owning gate.
+The unconditional scripts/cloudflared_managed_witness.sh invocation remains after
+the historical connector witness. The approved #284 split uses one exact managed
+image for credential-free contents inspection and preserved controlled stop/fatal
+cases. Success explicitly says package pass and live qualification pending.
+The unsupported offline positive-native orchestration is retired; all real native
+laws remain mandatory through later CPK/Cloudflare acceptance on #284. No skip,
+flag, workflow or test.sh source change is introduced. Later PostgreSQL and final
+residue stages remain required. Exact source review and the owning Docker green
+are pending; causal target-red39451603339 is not whole-package acceptance.

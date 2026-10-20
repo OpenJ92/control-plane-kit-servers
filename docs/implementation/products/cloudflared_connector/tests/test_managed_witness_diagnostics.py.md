@@ -2,54 +2,31 @@
 
 Source: [test_managed_witness_diagnostics.py](../../../../../products/cloudflared_connector/tests/test_managed_witness_diagnostics.py).
 
-Servers #284 diagnostic plan received Meridian and Kepler PLAN PASS after
-gate39381573535 lost the detached helper's specific failure observation.
-Five focused methods cover closed reason selection with candidate canaries,
-nonzero completion with valid/missing/invalid records, deadline exhaustion
-before file opening, unchanged success and zero-exit/failure inconsistency,
-and mode-restricted best-effort failure writing.
-The write test asserts True for successful retention, False for excluded modes
-without writing, and False with no output for a candidate-bearing write error.
+Servers #284 owns ten focused methods at real witness boundaries. They protect
+numeric UID/GID refusal before version I/O, frozen primary context, closed
+candidate-free diagnostics, original-versus-cleanup failure precedence,
+publication failure, allowlisted helper reasons, nonzero result refusal,
+exhausted deadlines, zero-exit failure-envelope refusal and restricted best-effort
+result emission. Existing automatic discovery collects them without skips.
 
-The tests substitute only result retrieval or record writing at the existing
-witness boundary. The deadline case uses the actual reader. They do not model
-Docker internals, native lifetime, or SDK behavior. Existing automatic product
-test discovery collects them; no collection or skip configuration changes.
-The993b61b gate stopped at integrity before these methods executed.
-Gate39385659976 on10720fa subsequently passed integrity and all five methods as
-part of752 passing package methods. Runtime qualification still failed with a
-generic outer message and no helper/controller record.
+The approved package split translates obsolete native modes to retained contents
+and artifact operations. The success payload remains untouched; result fixtures
+use the retained numeric_uid reason. Only contents can retain failure receipts;
+controlled/fatal/controller are still refused. This translates fixture structure
+while retaining all nine prior behavioral laws. It does not model Docker states
+or credit real native acceptance. Production/shared tests are unchanged.
 
-The next fixed-marker correction adds four methods at actual witness functions:
-capture freezes primary context before cleanup changes and clears requested
-helper mode outside observation; publication rejects candidate-bearing context;
-terminal selection preserves the original exception despite cleanup failure
-and refuses cleanup-only failure; failed emission retains the frozen context
-and original outcome. Existing helper-result laws remain unchanged.
-No Docker state machine or runtime success is simulated.
+Target-only1a37e296d5c5a4a6fde45ee7e7832a954c5b7337 added wrong UID and wrong GID
+subcases against actual image_contents, guarding the version call with a fixed
+assertion. It also strengthened the existing deadline method with an exit-zero
+expired case that must not open a result file. Owning run39451603339 tested merge
+b801922bef45193b8c266c3f36c41bc449ec030e/treee61cd746a7534be526d7b2fe23550338194f54dd.
+Both numeric subcases failed at the guarded I/O as intended; all nine other
+methods, including expired-zero refusal, passed. Meridian and Kepler independently
+accepted causal red. No real native subprocess ran in the failing targets.
 
-Nine diagnostic methods now exist. The four new methods and changed controller
-have not executed. Only the owning Docker `./test.sh` can validate this local
-correction after exact source review and North's next run release; no supported
-narrow local entrypoint exists and no alternate harness is introduced.
-
-## Approved package-lane target preparation
-
-Jacob approved source/package checks now and mandatory positive CPK/Cloudflare
-acceptance after integration, with all laws retained on #284. Both reviewers
-accepted two narrow target additions before implementation:
-
-- One table-driven method calls the actual image_contents boundary with either
-  wrong UID or wrong GID. It requires numeric_uid refusal before the version
-  subprocess; the patched subprocess raises a fixed assertion if reached.
-  Metadata/file reads occur later, so this boundary must stop them too.
-- The existing deadline method also requires exit-zero completion with an expired
-  deadline to refuse before opening the result file. Its nonzero case remains.
-
-This is a target-only checkpoint on e0402db source: the numeric admission is
-missing, so expected causal red is reaching the guarded version-call boundary
-in both UID/GID cases. The expiry case protects an existing law and need not
-fail. No executable red has been observed yet. The nine prior diagnostic
-methods remain intact; artifact/mode translation follows only with the later
-package implementation. There are ten diagnostic methods at this checkpoint.
-No runtime witness, shell gate or production source has changed.
+The subsequent local implementation adds admission and translates diagnostic
+examples without weakening the laws. It awaits exact source review and owning
+Docker green. This repo has no alternate focused runner. The earlier diagnostic
+history and later mandatory CPK/Cloudflare laws remain recorded on #284; package
+tests alone cannot close #284/#188 or prove runtime cleanup.

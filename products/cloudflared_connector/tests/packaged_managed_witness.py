@@ -1,11 +1,10 @@
 """Product-owned executable targets for the distinct managed image.
 
-Invoked only by the owning Docker harness. The controlled stop case is not
-evidence of real cloudflared management or shutdown.
+Invoked only by the owning Docker harness. Image inspection and controlled
+process cases do not prove real cloudflared management or shutdown. Mandatory
+live qualification is owned by the later approved CPK/Cloudflare lane.
 """
-import base64
 import hashlib
-from http.client import HTTPConnection
 import json
 import os
 from pathlib import Path
@@ -20,22 +19,18 @@ import uuid
 ENTRYPOINT = "control_plane_kit_servers_cloudflared_connector.entrypoint"
 READER = "control_plane_kit_servers_cloudflared_connector.readiness"
 OWNER = "org.openj92.cpk.test-run"
-MAX_BYTES = 131072
-OBSERVATION_MODES = frozenset(("starting", "contents", "management", "identity"))
+OBSERVATION_MODES = frozenset(("contents",))
 HELPER_REASONS = frozenset((
     "native_version", "installed_source_coordinate", "notice_source", "notice_path",
-    "notice_blob", "dependency_license_metadata", "numeric_uid", "python_pid1",
-    "native_parent", "native_group", "native_environment",
-    "native_alive_interval_unproved", "response_bound", "management_status",
-    "capabilities_correlation", "health_truth", "native_changed_during_management",
+    "notice_blob", "dependency_license_metadata", "numeric_uid",
     "helper_output_bound", "helper_output_path", "helper_output_write",
     "helper_exception",
 ))
-CONTROLLER_PHASES = frozenset(("setup", "native", "profile", "fatal", "cleanup"))
+CONTROLLER_PHASES = frozenset(("setup", "artifact", "profile", "fatal", "cleanup"))
 CONTROLLER_OPERATIONS = frozenset((
     "initialize", "inputs", "connect", "owner", "image_inspect", "prepare_files",
-    "absence_check", "create", "record", "start", "reload", "observe",
-    "exec_create", "exec_start", "exec_inspect", "result_read", "resolve_profile",
+    "absence_check", "create", "record", "start", "reload",
+    "result_read", "resolve_profile",
     "stop", "logs", "events", "kill", "wait", "remove", "close", "report",
 ))
 
@@ -156,16 +151,17 @@ def completed_helper(mode, exit_code, local_path, deadline):
     except FileNotFoundError:
         diagnostic["result"] = "unavailable"
     except Exception:
-        # Never serialize exception details or replace the original exec failure.
+        # Never serialize exception details or replace the original inspection failure.
         diagnostic["result"] = "invalid"
     if time.monotonic() >= deadline:
         diagnostic = {"stage": "managed_cloudflared_helper", "mode": mode,
                       "exit_code": exit_code, "result": "deadline_exhausted"}
     print(json.dumps(diagnostic), flush=True)
-    require(False, "real_native_observation_failed")
+    require(False, "package_inspection_failed")
 
 
 def image_contents():
+    require(os.getuid() == 65532 and os.getgid() == 65532, "numeric_uid")
     from importlib import metadata
     version = subprocess.run(["/usr/local/bin/cloudflared", "version"],
                              capture_output=True, timeout=3)
@@ -195,75 +191,6 @@ def image_contents():
         for distribution in metadata.distributions()}}
 
 
-def native_identity(*, allow_pending=False):
-    """Observe the actual namespace, without emitting environment or tokens."""
-    require(os.getuid() == 65532 and os.getgid() == 65532, "numeric_uid")
-    command = Path("/proc/1/cmdline").read_bytes().split(b"\0")
-    require(command[:3] == [b"python", b"-m", ENTRYPOINT.encode()], "python_pid1")
-    children = []
-    for directory in Path("/proc").iterdir():
-        if not directory.name.isdecimal():
-            continue
-        try:
-            executable = (directory / "exe").readlink()
-            fields = (directory / "stat").read_text().rsplit(")", 1)[1].split()
-        except FileNotFoundError:
-            continue
-        if str(executable) == "/usr/local/bin/cloudflared":
-            require(int(fields[1]) == 1, "native_parent")
-            require(int(fields[2]) == int(directory.name), "native_group")
-            environment = (directory / "environ").read_bytes().split(b"\0")
-            require([value for value in environment if value] ==
-                    [b"TUNNEL_TOKEN_FILE=/run/secrets/cloudflared-token"], "native_environment")
-            children.append([int(directory.name), int(fields[2]), fields[19]])
-    if not children and allow_pending:
-        return None
-    require(len(children) == 1, "native_alive_interval_unproved")
-    return children[0]
-
-
-def management_observation():
-    import control_plane_kit_core as core
-    from control_plane_kit_server_sdk.wrapper import load_wrapper_configuration
-    requests = json.loads(Path("/witness/requests.json").read_text())
-    configuration = load_wrapper_configuration()
-    authority = core.NodeControlAuthorityContextCodec().decode(requests["authority_context"])
-    before = native_identity()
-    for name, path, credential in (
-        ("capabilities", "/__control/capabilities", requests["capabilities"]),
-        ("liveness", "/__control/health/liveness", requests["liveness"]),
-        ("readiness", "/__control/health/readiness", requests["readiness"]),
-        ("denied", "/__control/health/readiness", None),
-    ):
-        connection = HTTPConnection("127.0.0.1", 8000, timeout=1)
-        try:
-            headers = {} if credential is None else {"Authorization": "Bearer " + credential}
-            connection.request("GET", path, headers=headers)
-            response = connection.getresponse()
-            body = response.read(MAX_BYTES + 1)
-            require(len(body) <= MAX_BYTES, "response_bound")
-            require(response.status == (401 if name == "denied" else 200), "management_status")
-            if name == "capabilities":
-                request = core.ReceiverControlSurfaceReadRequest(
-                    configuration.target, authority, core.NodeControlSurfaceReadKind.CAPABILITIES,
-                    configuration.declaration.identity(), "surface-request")
-                codec = core.ReceiverControlSurfaceReadResultCodec(request, configuration.declaration)
-                require(codec.decode(json.loads(body)) == codec.capabilities_result(),
-                        "capabilities_correlation")
-            elif name in ("liveness", "readiness"):
-                request = core.ReceiverHealthReadRequest(
-                    configuration.target, authority, core.NodeHealthReadKind(name),
-                    configuration.declaration.identity(), "health-request")
-                value = core.ReceiverHealthReadResultCodec(
-                    request, configuration.declaration).decode(json.loads(body))
-                expected = ("healthy",) if name == "liveness" else ("unhealthy", "unknown")
-                require(value.outcome.value in expected, "health_truth")
-        finally:
-            connection.close()
-    require(native_identity() == before, "native_changed_during_management")
-    return before
-
-
 def controlled_process():
     def on_term(_signum, _frame):
         os.write(1, b"term-received\n")
@@ -279,49 +206,6 @@ def fatal_process():
     print(json.dumps({"child_pid": child.pid, "child_group": os.getpgid(child.pid)}), flush=True)
     while True:
         time.sleep(1)
-
-
-def fresh_credential(value, *, static=False, kind=None):
-    """Retain the existing fixture's grant, using a real short validity window."""
-    import jwt
-    import control_plane_kit_core as core
-    from managed_control_fixtures import token
-    original = token(value, static=static, kind=kind)
-    payload = jwt.decode(original, options={"verify_signature": False})
-    key = "workload_node_control_surface_read" if static else "workload_node_health_read"
-    now = int(time.time()) - 1
-    payload.update(iat=now, nbf=now, exp=now + 100)
-    payload[key].update(issued_at=now, not_before=now, expires_at=now + 100)
-    codec = (core.DelegatedWorkloadReceiverControlSurfaceReadGrantCodec() if static
-             else core.DelegatedWorkloadReceiverHealthReadGrantCodec())
-    codec.decode(payload[key])
-    private = value.static_private if static else value.health_private
-    return jwt.encode(payload, private, algorithm="EdDSA",
-                      headers=jwt.get_unverified_header(original))
-
-
-def prepare_files(records):
-    import control_plane_kit_core as core
-    from managed_control_fixtures import fixture
-    value = fixture()
-    files = {
-        "control.json": core.ReceiverNodeControlConfigurationCodec().encode_bytes(value.config),
-        "token": base64.b64encode(json.dumps({
-            "a": "synthetic-account", "s": base64.b64encode(b"x" * 32).decode(),
-            "t": str(uuid.uuid4()),
-        }).encode()),
-        "requests.json": json.dumps({
-            "capabilities": fresh_credential(value, static=True),
-            "liveness": fresh_credential(value, kind=core.NodeHealthReadKind.LIVENESS),
-            "readiness": fresh_credential(value),
-            "authority_context": value.authority.descriptor(),
-        }).encode(),
-    }
-    for name, content in files.items():
-        path = records / name
-        path.write_bytes(content)
-        path.chmod(0o444 if name == "control.json" else 0o400)
-        os.chown(path, 65532, 65532)
 
 
 def events_between(client, identity, since, until):
@@ -413,56 +297,27 @@ def controller():
     client = None
     created = []
 
-    def create(name, **kwargs):
+    def create(name, *, deadline=None, **kwargs):
         phase = context["phase"]
-        mark_controller(context, phase, "absence_check")
+        mode = context["helper_mode"]
+        if deadline is not None:
+            require(time.monotonic() < deadline, "helper_deadline")
+        mark_controller(context, phase, "absence_check", mode)
         require(not client.containers.list(all=True, filters={"name": "^/" + name + "$"}),
                 "existing_container")
-        mark_controller(context, phase, "create")
+        if deadline is not None:
+            require(time.monotonic() < deadline, "helper_deadline")
+        mark_controller(context, phase, "create", mode)
         container = client.containers.create(
             image_id, name=name, network_mode="none",
             labels={OWNER: run, "org.openj92.project": "control-plane-kit-servers"},
             **kwargs)
         created.append(container.id)
-        mark_controller(context, phase, "record")
+        mark_controller(context, phase, "record", mode)
         (records / "containers.json").write_text(json.dumps(created))
+        if deadline is not None:
+            require(time.monotonic() < deadline, "helper_deadline")
         return container
-
-    def execute(container, mode, deadline):
-        # Detached exec avoids docker-py's unbounded upgraded-socket frame reader.
-        # Each helper writes one exclusive bounded file on an owned fixture
-        # mount. Read it locally, not through Docker's timeout-disabled archive.
-        phase = context["phase"]
-        mark_controller(context, phase, "observe", mode)
-        name = "cpk-witness-" + uuid.uuid4().hex + ".json"
-        path = "/witness-results/" + name
-        local_path = results / name
-        old_timeout = client.api.timeout
-        client.api.timeout = 1
-        try:
-            require(time.monotonic() < deadline, "helper_deadline")
-            mark_controller(context, phase, "exec_create", mode)
-            execution = client.api.exec_create(
-                container.id,
-                ["python", "/witness-tests/packaged_managed_witness.py", mode, path],
-                stdout=False, stderr=False)
-            require(time.monotonic() < deadline, "helper_deadline")
-            mark_controller(context, phase, "exec_start", mode)
-            client.api.exec_start(execution["Id"], detach=True)
-            while time.monotonic() < deadline:
-                mark_controller(context, phase, "exec_inspect", mode)
-                state = client.api.exec_inspect(execution["Id"])
-                if not state["Running"] and state["ExitCode"] is not None:
-                    break
-                time.sleep(0.05)
-            else:
-                require(False, "helper_deadline")
-            mark_controller(context, phase, "result_read", mode)
-            value = completed_helper(mode, state["ExitCode"], local_path, deadline)
-            mark_controller(context, phase, "observe")
-            return value
-        finally:
-            client.api.timeout = old_timeout
 
     def wait_receipt(container, expected):
         deadline = time.monotonic() + 5
@@ -501,53 +356,43 @@ def controller():
         # The host run owner can clean up failed observations; the numeric
         # product group can write only this fixture directory.
         os.chown(results, records.stat().st_uid, 65532)
-        prepare_files(records)
         mounts = {
             host_tests: {"bind": "/witness-tests", "mode": "ro"},
-            host_records + "/control.json": {"bind": "/etc/cpk/cloudflared/control.json", "mode": "ro"},
-            host_records + "/token": {"bind": "/run/secrets/cloudflared-token", "mode": "ro"},
-            host_records + "/requests.json": {"bind": "/witness/requests.json", "mode": "ro"},
             host_records + "/results": {"bind": "/witness-results", "mode": "rw"},
             str(Path(host_tests).parent / "licenses/cloudflared-manifest.json"):
                 {"bind": "/witness/notice-manifest.json", "mode": "ro"},
         }
-        mark_controller(context, "native", "create")
-        native = create(run + "-native", volumes=mounts, environment={
-            "CPK_WRAPPER_CONFIGURATION_FILE": "/etc/cpk/cloudflared/control.json",
-            "TUNNEL_TOKEN_FILE": "/run/secrets/cloudflared-token",
-        })
-        mark_controller(context, "native", "start")
-        native.start()
+        name = "cpk-witness-" + uuid.uuid4().hex + ".json"
         deadline = time.monotonic() + 15
-        # No replacement launch. Every observation belongs to this one identity.
-        before = None
-        while before is None and time.monotonic() < deadline:
-            mark_controller(context, "native", "reload")
-            native.reload()
-            require(native.status == "running", "native_early_exit")
-            before = execute(native, "starting", deadline)
-            if before is None:
+        old_timeout = client.api.timeout
+        client.api.timeout = 1
+        try:
+            mark_controller(context, "artifact", "create", "contents")
+            inspection = create(
+                run + "-contents", deadline=deadline,
+                entrypoint=["python", "/witness-tests/packaged_managed_witness.py",
+                            "contents", "/witness-results/" + name],
+                volumes=mounts, healthcheck={"test": ["NONE"]})
+            require(time.monotonic() < deadline, "helper_deadline")
+            mark_controller(context, "artifact", "start", "contents")
+            inspection.start()
+            require(time.monotonic() < deadline, "helper_deadline")
+            while True:
+                require(time.monotonic() < deadline, "helper_deadline")
+                mark_controller(context, "artifact", "reload", "contents")
+                inspection.reload()
+                require(time.monotonic() < deadline, "helper_deadline")
+                state = inspection.attrs["State"]
+                if state["Status"] == "exited":
+                    require(type(state["ExitCode"]) is int, "helper_completion")
+                    break
+                require(state["Status"] in ("created", "running"),
+                        "package_inspection_state")
                 time.sleep(0.05)
-        require(before is not None, "native_startup_timeout")
-        contents = execute(native, "contents", deadline)
-        observed = None
-        while time.monotonic() < deadline:
-            observed = execute(native, "management", deadline)
-            if not isinstance(observed, dict) or not observed.get("pending"):
-                break
-            require(observed["identity"] == before, "native_changed_during_startup")
-            time.sleep(0.05)
-        require(observed == before and time.monotonic() <= deadline, "native_interval")
-        mark_controller(context, "native", "resolve_profile")
-        profile = resolve_profile(client, native)
-        require(execute(native, "identity", time.monotonic() + 3) == before,
-                "native_changed_before_stop")
-        mark_controller(context, "native", "stop")
-        owner.stop_container(native.id)
-        mark_controller(context, "native", "reload")
-        native.reload()
-        require(native.status == "exited", "native_stop_incomplete")
-        require(native.attrs["State"]["ExitCode"] == 0, "native_stop_not_clean")
+            mark_controller(context, "artifact", "result_read", "contents")
+            contents = completed_helper("contents", state["ExitCode"], results / name, deadline)
+        finally:
+            client.api.timeout = old_timeout
 
         mark_controller(context, "profile", "create")
         controlled = create(
@@ -558,7 +403,7 @@ def controller():
         mark_controller(context, "profile", "start")
         controlled.start()
         mark_controller(context, "profile", "resolve_profile")
-        require(resolve_profile(client, controlled) == profile, "profile_mismatch")
+        profile = resolve_profile(client, controlled)
         wait_receipt(controlled, b"handler-ready")
         wall_before, mono_before = time.time_ns(), time.monotonic_ns()
         mark_controller(context, "profile", "stop")
@@ -608,7 +453,9 @@ def controller():
                 "fatal_namespace_still_running")
         # Linux PID-namespace init death terminates namespace members. This is
         # Docker's stopped namespace evidence, not a scan of all host processes.
-        result = {"stage": "managed_cloudflared_controller", "outcome": "pass",
+        result = {"stage": "managed_cloudflared_controller", "outcome": "package_pass",
+                  "live_qualification": "pending",
+                  "profile_container_id": controlled.id,
                   "docker_sdk": docker.__version__, **profile, **evidence, **contents}
     except Exception as failure:
         primary_failure = failure
@@ -678,16 +525,7 @@ if __name__ == "__main__":
     mode = None
     try:
         mode = sys.argv[1]
-        if mode == "identity":
-            emit_helper(native_identity())
-        elif mode == "starting":
-            emit_helper(native_identity(allow_pending=True))
-        elif mode == "management":
-            try:
-                emit_helper(management_observation())
-            except ConnectionRefusedError:
-                emit_helper({"pending": True, "identity": native_identity()})
-        elif mode == "contents":
+        if mode == "contents":
             emit_helper(image_contents())
         elif mode == "controlled":
             controlled_process()

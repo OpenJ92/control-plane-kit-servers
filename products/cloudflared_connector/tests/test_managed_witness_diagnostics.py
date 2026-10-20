@@ -24,7 +24,7 @@ class ManagedWitnessDiagnosticTests(unittest.TestCase):
 
     def test_controller_capture_freezes_requested_mode_before_cleanup(self):
         context = {}
-        witness.mark_controller(context, "native", "exec_start", "management")
+        witness.mark_controller(context, "artifact", "start", "contents")
         output = io.StringIO()
         with redirect_stdout(output):
             primary, reported = witness.capture_controller_failure("primary", context)
@@ -32,8 +32,8 @@ class ManagedWitnessDiagnosticTests(unittest.TestCase):
             cleanup, cleanup_reported = witness.capture_controller_failure("cleanup", context)
         self.assertTrue(reported)
         self.assertTrue(cleanup_reported)
-        self.assertEqual(primary, {"phase": "native", "operation": "exec_start",
-                                   "helper_mode": "management"})
+        self.assertEqual(primary, {"phase": "artifact", "operation": "start",
+                                   "helper_mode": "contents"})
         self.assertEqual(cleanup, {"phase": "cleanup", "operation": "remove",
                                    "helper_mode": None})
         self.assertEqual([json.loads(line) for line in output.getvalue().splitlines()], [
@@ -44,7 +44,7 @@ class ManagedWitnessDiagnosticTests(unittest.TestCase):
         ])
 
     def test_controller_failure_output_refuses_candidate_context(self):
-        valid = {"phase": "native", "operation": "exec_inspect", "helper_mode": "starting"}
+        valid = {"phase": "artifact", "operation": "reload", "helper_mode": "contents"}
         output = io.StringIO()
         with redirect_stdout(output), redirect_stderr(output):
             for field in valid:
@@ -76,16 +76,16 @@ class ManagedWitnessDiagnosticTests(unittest.TestCase):
             self.assertEqual(snapshot, context)
             self.assertIsNot(snapshot, context)
             self.assertFalse(witness.emit_qualification_failure(
-                witness.QualificationFailure("native_early_exit"), []))
+                witness.QualificationFailure("package_inspection_state"), []))
             with self.assertRaises(RuntimeError) as raised:
                 witness.finish_controller(primary, False)
             self.assertIs(raised.exception, primary)
 
     def test_only_allowlisted_qualification_reasons_survive(self):
         for failure, reason in (
-            (witness.QualificationFailure("native_parent"), "native_parent"),
+            (witness.QualificationFailure("numeric_uid"), "numeric_uid"),
             (witness.QualificationFailure("PRIVATE_CANDIDATE"), "helper_exception"),
-            (RuntimeError("native_parent"), "helper_exception"),
+            (RuntimeError("numeric_uid"), "helper_exception"),
             (RuntimeError("PRIVATE_CANDIDATE"), "helper_exception"),
             (witness.QualificationFailure(["PRIVATE_CANDIDATE"]), "helper_exception"),
         ):
@@ -95,11 +95,11 @@ class ManagedWitnessDiagnosticTests(unittest.TestCase):
 
     def test_nonzero_exit_preserves_failure_with_closed_diagnostics(self):
         cases = (
-            ({"outcome": "failure", "reason": "native_parent"}, None, "valid_error"),
+            ({"outcome": "failure", "reason": "numeric_uid"}, None, "valid_error"),
             (None, FileNotFoundError("PRIVATE_CANDIDATE"), "unavailable"),
             (None, ValueError("PRIVATE_CANDIDATE"), "invalid"),
             ({"outcome": "failure", "reason": "PRIVATE_CANDIDATE"}, None, "invalid"),
-            ({"outcome": "failure", "reason": "native_parent",
+            ({"outcome": "failure", "reason": "numeric_uid",
               "extra": "PRIVATE_CANDIDATE"}, None, "invalid"),
             ({"outcome": "failure", "reason": ["PRIVATE_CANDIDATE"]}, None, "invalid"),
             ({"native_version": "2026.6.1"}, None, "invalid"),
@@ -110,13 +110,13 @@ class ManagedWitnessDiagnosticTests(unittest.TestCase):
                 with patch.object(witness, "read_helper_result", return_value=value,
                                   side_effect=error), redirect_stdout(output):
                     with self.assertRaisesRegex(witness.QualificationFailure,
-                                                "^real_native_observation_failed$"):
+                                                "^package_inspection_failed$"):
                         witness.completed_helper("contents", 7, Path("unused"),
                                                  time.monotonic() + 10)
                 self.assertEqual(json.loads(output.getvalue()), {
                     "stage": "managed_cloudflared_helper", "mode": "contents",
                     "exit_code": 7, "result": availability,
-                    **({"reason": "native_parent"} if availability == "valid_error" else {}),
+                    **({"reason": "numeric_uid"} if availability == "valid_error" else {}),
                 })
                 self.assertNotIn("PRIVATE_CANDIDATE", output.getvalue())
 
@@ -124,12 +124,12 @@ class ManagedWitnessDiagnosticTests(unittest.TestCase):
         output = io.StringIO()
         with patch.object(witness.os, "open") as opened, redirect_stdout(output):
             with self.assertRaisesRegex(witness.QualificationFailure,
-                                        "^real_native_observation_failed$"):
-                witness.completed_helper("identity", 1, Path("unused"),
+                                        "^package_inspection_failed$"):
+                witness.completed_helper("contents", 1, Path("unused"),
                                          time.monotonic() - 1)
         opened.assert_not_called()
         self.assertEqual(json.loads(output.getvalue()), {
-            "stage": "managed_cloudflared_helper", "mode": "identity",
+            "stage": "managed_cloudflared_helper", "mode": "contents",
             "exit_code": 1, "result": "deadline_exhausted",
         })
         with patch.object(witness.os, "open") as opened:
@@ -140,8 +140,6 @@ class ManagedWitnessDiagnosticTests(unittest.TestCase):
 
     def test_zero_exit_rejects_failure_envelope_and_preserves_success_payload(self):
         for mode, payload in (
-            ("starting", None), ("identity", [1, 1, "42"]),
-            ("management", {"pending": True, "identity": [1, 1, "42"]}),
             ("contents", {"native_version": "2026.6.1"}),
         ):
             with self.subTest(mode=mode):
@@ -149,7 +147,7 @@ class ManagedWitnessDiagnosticTests(unittest.TestCase):
                     self.assertIs(witness.completed_helper(
                         mode, 0, Path("unused"), time.monotonic() + 10), payload)
                 with patch.object(witness, "read_helper_result", return_value={
-                    "outcome": "failure", "reason": "native_parent",
+                    "outcome": "failure", "reason": "numeric_uid",
                 }):
                     with self.assertRaisesRegex(witness.QualificationFailure,
                                                 "^helper_failure_with_zero_exit$"):
@@ -164,7 +162,7 @@ class ManagedWitnessDiagnosticTests(unittest.TestCase):
             emit.assert_not_called()
             for mode in witness.OBSERVATION_MODES:
                 self.assertTrue(witness.retain_helper_failure(mode, failure))
-            self.assertEqual(emit.call_count, 4)
+            self.assertEqual(emit.call_count, 1)
             for call in emit.call_args_list:
                 self.assertEqual(call.args, (
                     {"outcome": "failure", "reason": "helper_exception"},))
