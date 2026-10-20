@@ -26,12 +26,18 @@ before the final native snapshot. The latter observes alive immediately before
 the call, not an atomic guarantee against exit racing signal delivery.
 
 Helper execution uses detached Docker exec, not the unbounded upgraded socket
-reader. One exclusive result file is capped4096bytes; completion polling and
-incremental archive reads check a deadline, use finite one-second API requests,
-and cap archive bytes32768 before parsing. No archive extraction to disk occurs.
-Deadline/refusal enters exact-owned cleanup, terminating remaining helper
-processes with their container. Neither scheduler latency nor an in-flight
-finite request is claimed to have a zero-overrun wall-clock guarantee.
+reader. Completion polling checks the deadline with finite one-second API
+requests. Result retrieval uses no Docker archive or streamed socket: helpers
+write one exclusive file capped4096bytes in a dedicated run-owned results
+directory, mounted writable only as test instrumentation. After completion the
+controller opens its local file with NOFOLLOW/NONBLOCK, requires regular mode0400
+and numeric owner65532, reads at most4097bytes and checks stable metadata/size
+before parsing and unlinking. Deadline/refusal enters exact-owned cleanup,
+terminating remaining helpers with their container. Remaining named result
+files are removed only after container cleanup. This fixture channel contains
+observation metadata, never credentials; it is shared custody, not isolation.
+Neither scheduler latency nor an in-flight finite request/local filesystem
+operation is claimed to have a zero-overrun wall-clock guarantee.
 These endpoint reads do not prove before-protected-I/O ordering beyond existing
 SDK/product tests.
 

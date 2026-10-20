@@ -6,14 +6,13 @@ evidence of real cloudflared management or shutdown.
 import base64
 import hashlib
 from http.client import HTTPConnection
-import io
 import json
 import os
 from pathlib import Path
 import signal
+import stat
 import subprocess
 import sys
-import tarfile
 import time
 import uuid
 
@@ -276,6 +275,7 @@ def controller():
     import docker
     from control_plane_kit_interpreters.docker.sdk import DockerSdkClient
     records = Path("/witness")
+    results = records / "results"
     run = os.environ["CPK_MANAGED_TEST_RUN"]
     image_id = os.environ["CPK_MANAGED_IMAGE"]
     host_records = os.environ["CPK_MANAGED_HOST_RECORDS"]
@@ -297,8 +297,11 @@ def controller():
 
     def execute(container, mode, deadline):
         # Detached exec avoids docker-py's unbounded upgraded-socket frame reader.
-        # Each helper writes one exclusive bounded file; no stdout buffering.
-        path = "/tmp/cpk-witness-" + uuid.uuid4().hex + ".json"
+        # Each helper writes one exclusive bounded file on an owned fixture
+        # mount. Read it locally, not through Docker's timeout-disabled archive.
+        name = "cpk-witness-" + uuid.uuid4().hex + ".json"
+        path = "/witness-results/" + name
+        local_path = results / name
         old_timeout = client.api.timeout
         client.api.timeout = 1
         try:
@@ -318,24 +321,24 @@ def controller():
             else:
                 require(False, "helper_deadline")
             require(time.monotonic() < deadline, "helper_deadline")
-            archive, metadata = container.get_archive(path, chunk_size=1024)
-            raw = bytearray()
+            descriptor = os.open(local_path, os.O_RDONLY | os.O_NOFOLLOW |
+                                 os.O_NONBLOCK | os.O_CLOEXEC)
             try:
-                require(metadata["size"] <= 4096, "helper_output_bound")
-                for chunk in archive:
-                    require(time.monotonic() < deadline, "helper_deadline")
-                    require(len(raw) + len(chunk) <= 32768, "helper_archive_bound")
-                    raw.extend(chunk)
+                before = os.fstat(descriptor)
+                require(stat.S_ISREG(before.st_mode) and stat.S_IMODE(before.st_mode) == 0o400
+                        and before.st_uid == 65532 and 0 < before.st_size <= 4096,
+                        "helper_result_file")
+                value = os.read(descriptor, 4097)
+                after = os.fstat(descriptor)
+                require((before.st_size, before.st_mtime_ns, before.st_ctime_ns) ==
+                        (after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+                        and len(value) == before.st_size, "helper_result_changed")
             finally:
-                archive.close()
+                os.close(descriptor)
             require(time.monotonic() < deadline, "helper_deadline")
-            with tarfile.open(fileobj=io.BytesIO(raw), mode="r:") as bundle:
-                members = bundle.getmembers()
-                require(len(members) == 1 and members[0].isfile()
-                        and members[0].size <= 4096, "helper_archive_shape")
-                value = bundle.extractfile(members[0]).read(4097)
             require(len(value) <= 4096, "helper_output_bound")
             decoded = json.loads(value)
+            local_path.unlink()
             require(time.monotonic() < deadline, "helper_deadline")
             return decoded
         finally:
@@ -356,12 +359,18 @@ def controller():
     try:
         image = client.images.get(image_id)
         verify_image(image)
+        results.mkdir(mode=0o770)
+        results.chmod(0o770)
+        # The host run owner can clean up failed observations; the numeric
+        # product group can write only this fixture directory.
+        os.chown(results, records.stat().st_uid, 65532)
         prepare_files(records)
         mounts = {
             host_tests: {"bind": "/witness-tests", "mode": "ro"},
             host_records + "/control.json": {"bind": "/etc/cpk/cloudflared/control.json", "mode": "ro"},
             host_records + "/token": {"bind": "/run/secrets/cloudflared-token", "mode": "ro"},
             host_records + "/requests.json": {"bind": "/witness/requests.json", "mode": "ro"},
+            host_records + "/results": {"bind": "/witness-results", "mode": "rw"},
             str(Path(host_tests).parent / "licenses/cloudflared-manifest.json"):
                 {"bind": "/witness/notice-manifest.json", "mode": "ro"},
         }
@@ -478,11 +487,13 @@ def emit_helper(value):
     content = json.dumps(value).encode()
     require(len(content) <= 4096, "helper_output_bound")
     path = sys.argv[2]
-    require(path.startswith("/tmp/cpk-witness-") and "/" not in path[len("/tmp/"):],
+    require(path.startswith("/witness-results/cpk-witness-")
+            and "/" not in path[len("/witness-results/"):],
             "helper_output_path")
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     try:
         require(os.write(descriptor, content) == len(content), "helper_output_write")
+        os.fchmod(descriptor, 0o400)
     finally:
         os.close(descriptor)
 

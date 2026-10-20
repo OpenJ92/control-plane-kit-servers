@@ -28,6 +28,10 @@ cleanup() {
     [ -z "$observed" ] || failed=1
   fi
   if [ "$failed" = 0 ]; then
+    if [ -d "$RECORDS/results" ]; then
+      rm -f "$RECORDS/results"/cpk-witness-*.json
+      rmdir "$RECORDS/results" || return 1
+    fi
     rm -f "$RECORDS/control.json" "$RECORDS/token" "$RECORDS/requests.json" \
       "$RECORDS/containers.json" "$RECORDS/image"
     rmdir "$RECORDS"
