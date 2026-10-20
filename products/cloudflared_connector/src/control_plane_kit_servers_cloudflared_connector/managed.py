@@ -5,6 +5,7 @@ The existing fixed-loopback reader remains the native connection authority.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from http.server import BaseHTTPRequestHandler
 from threading import Lock
 import time
@@ -34,7 +35,8 @@ class ConnectorConfigurationError(ValueError):
     """Fixed product refusal, without submitted material."""
 
 
-def _declaration():
+def control_declaration() -> core.WorkloadNodeControlSurfaceDeclaration:
+    """The product's public control surface, independent of instance material."""
     return core.WorkloadNodeControlSurfaceDeclaration(
         core.WorkloadNodeControlSurfaceDescriptor(
             core.NodeControlGraphReference(core.NodeControlGraphReferenceRole.PROVIDER_SOCKET, 'control'),
@@ -42,12 +44,25 @@ def _declaration():
         profile=core.WorkloadNodeControlSurfaceDeclarationProfile.V2)
 
 
+def declared_runtime_contract() -> ProductRuntimeContract:
+    """Declare the control file requirement without default config or token."""
+    return ProductRuntimeContract(
+        sockets=BlockSockets(providers=(ProviderSocket('control', Protocol.HTTP),)),
+        provider_ports=(ProviderRuntimePort('control', 8000),),
+        configuration_requirements=(core.ConfigurationArtifactRequirement(
+            _ARTIFACT_ID, _CONTROL_PATH, ConfigurationMediaType.JSON, ConfigurationFileMode.READ_ONLY),),
+        public_environment=(PublicStaticEnvironmentBinding(
+            WORKLOAD_NODE_CONTROL_CONFIGURATION_ENVIRONMENT, _CONTROL_PATH),),
+        capabilities=(CapabilityName.HEALTH_CHECKABLE, CapabilityName.NODE_CONTROLLABLE),
+        control_surfaces=(control_declaration().surface,), verification=VerificationContract())
+
+
 def _validated(configuration):
     if type(configuration) is not core.ReceiverNodeControlConfiguration:
         raise ValueError
     codec = core.ReceiverNodeControlConfigurationCodec()
     value = codec.decode_bytes(codec.encode_bytes(configuration))
-    if value.declaration != _declaration():
+    if value.declaration != control_declaration():
         raise ValueError
     return value
 
@@ -71,7 +86,7 @@ def source_runtime_contract(artifact, token_delivery):
                 or artifact.target_path != _CONTROL_PATH or artifact.media_type is not ConfigurationMediaType.JSON
                 or artifact.file_mode is not ConfigurationFileMode.READ_ONLY):
             raise ValueError
-        value = _validated(core.ReceiverNodeControlConfigurationCodec().decode_bytes(artifact.content.encode('utf-8')))
+        _validated(core.ReceiverNodeControlConfigurationCodec().decode_bytes(artifact.content.encode('utf-8')))
         if (type(token_delivery) is not SecretFileDelivery
                 or token_delivery.intent is not SecretUseIntent.CLOUDFLARE_TUNNEL_TOKEN
                 or token_delivery.file_mode is not SecretFileMode.OWNER_READ_ONLY
@@ -79,15 +94,9 @@ def source_runtime_contract(artifact, token_delivery):
                 or token_delivery.path_binding.environment_name != 'TUNNEL_TOKEN_FILE'):
             raise ValueError
         token_delivery.__post_init__()
-        return ProductRuntimeContract(
-            sockets=BlockSockets(providers=(ProviderSocket('control', Protocol.HTTP),)),
-            provider_ports=(ProviderRuntimePort('control', 8000),),
-            configuration_artifacts=(artifact,),
-            public_environment=(PublicStaticEnvironmentBinding(
-                WORKLOAD_NODE_CONTROL_CONFIGURATION_ENVIRONMENT, _CONTROL_PATH),),
-            secret_deliveries=(token_delivery,),
-            capabilities=(CapabilityName.HEALTH_CHECKABLE, CapabilityName.NODE_CONTROLLABLE),
-            control_surfaces=(value.declaration.surface,), verification=VerificationContract())
+        return replace(declared_runtime_contract(),
+            configuration_requirements=(), configuration_artifacts=(artifact,),
+            secret_deliveries=(token_delivery,))
     except Exception:
         failure = ConnectorConfigurationError(_ERROR)
     raise failure

@@ -64,7 +64,8 @@ def select_own_health_configuration(selection: HealthReceiverSelection) -> Recei
     try:
         declared = select_receiver_node_control_configuration_slot(
             artifacts=contract.configuration_artifacts, environment=contract.public_environment,
-            control_surfaces=contract.control_surfaces)
+            control_surfaces=contract.control_surfaces,
+            requirements=contract.configuration_requirements)
         if _slot(declared) != _slot(checked.artifact):
             raise HealthReceiverTrustError(_UNAVAILABLE)
         actual = select_receiver_node_control_configuration_artifact(

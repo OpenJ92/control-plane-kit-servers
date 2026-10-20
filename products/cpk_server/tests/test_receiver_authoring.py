@@ -205,6 +205,17 @@ class ReceiverAuthoringTests(unittest.TestCase):
             self.assertEqual(node.secret_deliveries, ())
         self.assertNotEqual(artifacts[0].content, artifacts[1].content)
         self.assertEqual(catalog.lookup(selected.product.identity).content, original)
+        example_path = ROOT / "products/cpk_server/examples/prepared_receiver_configuration.py"
+        spec = importlib.util.spec_from_file_location("prepared_receiver_example", example_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        example = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(example)
+        self.assertEqual(example.two_instances(
+            catalog=catalog, identity=selected.product.identity,
+            workspace_id=inputs["workspace_id"], runtime_id=inputs["runtime_id"],
+            context=inputs["context"], verifier_configuration=inputs["verifier_configuration"],
+            first_receiver_id="a" * 32, second_receiver_id="b" * 32), graph)
         with self.assertRaises(ProductInstantiationError):
             instantiate_catalog_product(catalog, selected.product.identity, role_id="missing",
                 configuration=ProductInstanceConfiguration(public_environment=contract.public_environment))

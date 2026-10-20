@@ -72,3 +72,7 @@ original selected-product provenance. Existing inert-declaration and gateway
 transit laws are unchanged. This positive test exercises the existing callable
 and can establish behavioral red without any new helper import. The selector
 implementation is unchanged and these targets have not run.
+
+The #280 source checkpoint now passes requirements to the declared selector.
+No target assertion changed. The earlier root-suite failure left these product
+tests unexecuted; they must run in the full ordinary green gate before acceptance.

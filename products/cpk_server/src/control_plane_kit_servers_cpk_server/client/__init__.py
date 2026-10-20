@@ -20,6 +20,7 @@ _AUTHORING_EXPORTS = frozenset({
     "ReceiverAuthoringError",
     "ReceiverIntroduction",
     "ReceiverScope",
+    "prepare_receiver_configuration",
 })
 
 
@@ -53,4 +54,5 @@ __all__ = (
     "SavedDesiredRevision",
     "canonical_operation_ref",
     "load_profile",
+    "prepare_receiver_configuration",
 )

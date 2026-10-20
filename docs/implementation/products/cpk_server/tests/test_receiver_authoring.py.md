@@ -130,3 +130,12 @@ The new public helper/factory names are resolved inside test bodies. Their
 callable assertions are interface availability checks; if they fail, subsequent
 semantic assertions have not run and earn no semantic-red credit. No production
 placeholder or shim was added. Targets are prepared but unexecuted.
+
+## #280 source implementation checkpoint
+
+The helper and product factories now exist. The target checkpoint's ordinary
+run stopped at the root generator omission, so these semantic targets still
+have no executed result. The existing two-instance target additionally imports
+the shipped parameterized example and requires the same compiled graph. This
+strengthens example maintenance without removing any original material,
+provenance or missing-slot assertion. Full ordinary green validation is pending.

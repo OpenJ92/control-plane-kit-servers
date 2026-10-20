@@ -82,3 +82,17 @@ consistency and actual installed family. Published product source/image and
 catalogue coordinates are unchanged. This source checkpoint is unvalidated;
 installed refresh and full #237/#225 acceptance are separate evidence.
 Earlier coordinate accounts in this document are historical.
+
+## #280 managed Cloudflared recipe ownership
+
+`CLOUDFLARED_MANAGED_DOCKERFILE` is now an explicit `generate_updates` destination.
+It uses the existing archive replacement function; `[verification]` was already
+supported and no regex/schema/generator mechanism changed. Only its SDK archive
+URL changes with the canonical SDK coordinate; native/Python base digests,
+license/runtime inputs and published product coordinates remain independent.
+
+The reviewed target checkpoint `8bc3d66` failed exactly because the concrete
+managed path was absent from the output mapping. Its full-byte mutation test
+also preserves every unrelated output. This source addition resolves that
+missing connection but has not yet run: the next ordinary owning gate must
+validate generated consistency, all downstream targets and image evidence.

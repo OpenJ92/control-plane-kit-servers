@@ -42,3 +42,8 @@ actual-source entrance. Missing factories are asserted inside test bodies to
 preserve collection. An interface assertion failure is not evidence for later
 semantic assertions. No factory implementation or test run is included in this
 target checkpoint.
+
+The #280 source checkpoint now supplies the declaration and required-contract
+factories. Targets remain unchanged; actual-source token/config refusal remains
+strict. These product tests were not reached by the bounded root-red run and
+must pass in the full ordinary gate before acceptance.

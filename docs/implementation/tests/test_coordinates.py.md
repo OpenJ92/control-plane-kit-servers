@@ -180,3 +180,12 @@ assertion is the intended behavioral-red boundary. No missing new constant,
 import or regex change is needed. Later product tests are unexecuted if the
 owning runner stops at this root-suite failure. The generator implementation is
 intentionally unchanged at this target checkpoint.
+
+## #280 source implementation after bounded red
+
+The one authorized `8bc3d66` run passed 26 policy and 57 of 58 root tests; the
+single failure was exactly the managed output-membership assertion. Product
+suites and later runtime/image witnesses were not executed. The generator now
+owns that output through its existing URL substitution. The target assertions
+are unchanged, including verification-extra/current-pin and unchanged-product
+laws. This source implementation has not been rerun or claimed green.

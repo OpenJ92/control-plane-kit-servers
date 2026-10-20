@@ -53,3 +53,9 @@ source; no validation result is claimed here.
 addition to the existing coordinate generator has not yet been implemented at
 the target checkpoint; the new omission target must expose that missing owner.
 No compatibility fallback or second supported old tuple is introduced.
+
+The subsequent #280 source checkpoint adds the managed destination to the
+existing coordinate generator. The recipe bytes remain at the reviewed target
+checkpoint's accepted SDK/Core selection. The managed image has not yet been
+rebuilt at this source checkpoint; the previous target run built only the main
+package test image and stopped before product/image witnesses.

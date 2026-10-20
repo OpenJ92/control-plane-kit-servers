@@ -39,3 +39,12 @@ translated alongside existing product trust/control failures to the existing
 bounded `HealthReceiverTrustError`. Unexpected owner errors still propagate.
 Declared slots, full selection context and exact self-target/declaration matching
 remain unchanged. No receiver registry or dispatch authority is added.
+
+#280 passes `contract.configuration_requirements` only to the declared-side
+common receiver slot selector. A structural required slot can therefore bind
+genuine selected actual V2 material. Original selected-product provenance, four
+slot fields, strict actual decoding, complete target/surface and independent
+selection scope remain mandatory. The actual selector receives no requirements;
+missing actual material cannot become a declaration-only success. Gateway
+transit parsing/selection is unchanged. This adds no authorization, network or
+current-state owner. Full owning validation remains pending.
