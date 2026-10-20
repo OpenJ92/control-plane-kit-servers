@@ -14,6 +14,9 @@ identity before deletion; it never prunes global state. The controller also
 verifies exact created container identities. Trap cleanup preserves failure if
 resource removal cannot be verified. Only named temporary fixture records are
 removed after cleanup succeeds.
+The final stage-success marker follows container, image and fixture cleanup.
+The controller's earlier PASS is limited to its own observations and containers;
+it cannot substitute for shell terminal success or the later global residue audit.
 
 This stage has not been run. Managed Dockerfile/notice material is deliberately
 not implemented before target review. A missing build file is an apparatus

@@ -16,29 +16,55 @@ entrypoint remains unchanged, without native launch overrides or static edges.
 
 The helper observes numeric Python PID1, one real native child/session and fixed
 native environment, then authorized static/liveness/readiness and denied reads.
-It bounds startup and permits only connection-refused polling on that same native
-identity; an early native exit cannot become success. Real-native stop uses the
-selected unmodified interpreter. It must return cleanly while the native identity
-was alive immediately before the call. These endpoint reads do not prove
-before-protected-I/O ordering beyond existing SDK/product tests.
+Before the first native observation it allows bounded pre-spawn scheduling while
+the container remains running. After observing native, only connection-refused
+management polling on that same identity is permitted. No replacement launch.
+The public result codecs validate complete schema/request digest, target context,
+declaration and kind; capabilities must equal the exact expected declaration.
+Real-native stop uses the selected unmodified interpreter. Profile reads happen
+before the final native snapshot. The latter observes alive immediately before
+the call, not an atomic guarantee against exit racing signal delivery.
+
+Helper execution uses detached Docker exec, not the unbounded upgraded socket
+reader. One exclusive result file is capped4096bytes; completion polling and
+incremental archive reads check a deadline, use finite one-second API requests,
+and cap archive bytes32768 before parsing. No archive extraction to disk occurs.
+Deadline/refusal enters exact-owned cleanup, terminating remaining helper
+processes with their container. Neither scheduler latency nor an in-flight
+finite request is claimed to have a zero-overrun wall-clock guarantee.
+These endpoint reads do not prove before-protected-I/O ordering beyond existing
+SDK/product tests.
 
 The separate controlled TERM-ignoring PID1 has handler-ready/TERM receipts and one
 selected stop. Its bounded Engine event query requires exact identity,
 integer timeNano, unambiguous15/9/die137 and fixed inclusive9–11second
-corroboration. Cleanup/competing events cannot supply its proof. This is a chosen
+corroboration. The legitimate initial start before TERM is allowed; starts within
+the TERM-to-terminal interval and restarts are refused. Cleanup/competing events
+cannot supply its proof. This is a chosen
 empirical interval, not timing accuracy or a useful-execution lower bound.
 A separate controlled fatal-PID1 case observes an owned child session before
 SIGKILL and Docker's exited namespace/Pid0 afterward; it does not scan all host
-processes or claim graceful drain. Exact-owned cleanup must complete before PASS.
+processes or claim graceful drain. The inner controller PASS requires its container
+cleanup. Only the shell stage's final success after image/fixture cleanup earns
+whole-stage acceptance; the later global residue audit remains separate.
 
-**Concrete open target gap:** actual effective timeout must resolve independently.
-Docker's Info schema does not expose a daemon default timeout. This draft
-accepts only an explicit inspected container timeout10 and otherwise yields
-`stop_profile_unproved`; it does not silently add a timeout override. The normal
-creation path supplies none. Before target acceptance, reviewers must establish
-the actual-version/default evidence path or retain an explicit blocked profile.
-Generic Linux documentation is insufficient, and an invented API field is not a
-resolver. This is reported for review before image implementation or a new run.
+Actual effective timeout must resolve independently. Docker's Info schema does
+not expose a daemon default timeout. Kepler identified one bounded source path:
+Moby28.5.1 commit `f8215cc266744ef195a50a70d427c345da2acdbb` uses fixed Unix10
+when container StopTimeout is absent. The draft matches that exact advertised
+version and its full or at-least-seven-character commit prefix, or requires an
+explicit inspected container timeout10. Unknown/configurable defaults remain
+`stop_profile_unproved`; no timeout override is added. It records actual safe
+Engine/container/SDK fields before refusal and requires the observed SDK7.2.0,
+whose omitted-timeout call was read in primary source.
+
+Source anchors at that immutable Moby commit: `container/container.go:597`
+returns the explicit timeout or default; `container/container_unix.go:26` defines
+Unix10; `daemon/stop.go:57` selects it unless request options override it.
+This is source-identified compatibility plus required empirical corroboration,
+not binary attestation or a claim that the current runner matches. No actual
+runner tuple has yet been observed. Generic Linux documentation alone and
+invented API fields remain insufficient.
 
 The script is compile/discovery-safe, but the unit suite does not award image
 coverage merely by compiling it. No alternate harness, tests of Docker internals,

@@ -61,3 +61,4 @@ docker run --rm --name "$RUN-controller" --network none \
 
 cleanup
 trap - EXIT INT TERM
+echo 'managed cloudflared stage passed with owned container/image/fixture cleanup'

@@ -6,12 +6,14 @@ evidence of real cloudflared management or shutdown.
 import base64
 import hashlib
 from http.client import HTTPConnection
+import io
 import json
 import os
 from pathlib import Path
 import signal
 import subprocess
 import sys
+import tarfile
 import time
 import uuid
 
@@ -61,7 +63,7 @@ def image_contents():
         for distribution in metadata.distributions()}}
 
 
-def native_identity():
+def native_identity(*, allow_pending=False):
     """Observe the actual namespace, without emitting environment or tokens."""
     require(os.getuid() == 65532 and os.getgid() == 65532, "numeric_uid")
     command = Path("/proc/1/cmdline").read_bytes().split(b"\0")
@@ -82,12 +84,18 @@ def native_identity():
             require([value for value in environment if value] ==
                     [b"TUNNEL_TOKEN_FILE=/run/secrets/cloudflared-token"], "native_environment")
             children.append([int(directory.name), int(fields[2]), fields[19]])
+    if not children and allow_pending:
+        return None
     require(len(children) == 1, "native_alive_interval_unproved")
     return children[0]
 
 
 def management_observation():
+    import control_plane_kit_core as core
+    from control_plane_kit_server_sdk.wrapper import load_wrapper_configuration
     requests = json.loads(Path("/witness/requests.json").read_text())
+    configuration = load_wrapper_configuration()
+    authority = core.NodeControlAuthorityContextCodec().decode(requests["authority_context"])
     before = native_identity()
     for name, path, credential in (
         ("capabilities", "/__control/capabilities", requests["capabilities"]),
@@ -103,11 +111,21 @@ def management_observation():
             body = response.read(MAX_BYTES + 1)
             require(len(body) <= MAX_BYTES, "response_bound")
             require(response.status == (401 if name == "denied" else 200), "management_status")
-            if name in ("liveness", "readiness"):
-                value = json.loads(body)
-                require(value["request_id"] == "health-request", "health_correlation")
+            if name == "capabilities":
+                request = core.ReceiverControlSurfaceReadRequest(
+                    configuration.target, authority, core.NodeControlSurfaceReadKind.CAPABILITIES,
+                    configuration.declaration.identity(), "surface-request")
+                codec = core.ReceiverControlSurfaceReadResultCodec(request, configuration.declaration)
+                require(codec.decode(json.loads(body)) == codec.capabilities_result(),
+                        "capabilities_correlation")
+            elif name in ("liveness", "readiness"):
+                request = core.ReceiverHealthReadRequest(
+                    configuration.target, authority, core.NodeHealthReadKind(name),
+                    configuration.declaration.identity(), "health-request")
+                value = core.ReceiverHealthReadResultCodec(
+                    request, configuration.declaration).decode(json.loads(body))
                 expected = ("healthy",) if name == "liveness" else ("unhealthy", "unknown")
-                require(value["outcome"] in expected, "health_truth")
+                require(value.outcome.value in expected, "health_truth")
         finally:
             connection.close()
     require(native_identity() == before, "native_changed_during_management")
@@ -164,6 +182,7 @@ def prepare_files(records):
             "capabilities": fresh_credential(value, static=True),
             "liveness": fresh_credential(value, kind=core.NodeHealthReadKind.LIVENESS),
             "readiness": fresh_credential(value),
+            "authority_context": value.authority.descriptor(),
         }).encode(),
     }
     for name, content in files.items():
@@ -201,25 +220,44 @@ def verify_stop_events(events):
     first, second, terminal = kills[0]["timeNano"], kills[1]["timeNano"], dies[0]["timeNano"]
     require(first < second <= terminal, "event_clock_order")
     require(9_000_000_000 <= second - first <= 11_000_000_000, "stop_conformance")
-    require(not any(event.get("Action") in ("restart", "start") for event in events),
+    require(not any(event.get("Action") == "restart" or
+                    (event.get("Action") == "start" and event["timeNano"] >= first)
+                    for event in events),
             "competing_start")
     return {"term_time_ns": first, "kill_time_ns": second, "die_time_ns": terminal}
 
 
 def resolve_profile(client, container):
+    import docker
     container.reload()
     info, version = client.info(), client.version()
     config = container.attrs["Config"]
+    print(json.dumps({
+        "stage": "stop_profile_inputs", "container_id": container.id,
+        "engine_id": info.get("ID"), "engine_version": version.get("Version"),
+        "engine_commit": version.get("GitCommit"), "platform": info.get("OSType"),
+        "docker_sdk": docker.__version__, "configured_signal": config.get("StopSignal"),
+        "configured_timeout": config.get("StopTimeout"),
+    }), flush=True)
+    require(docker.__version__ == "7.2.0", "sdk_stop_semantics_unproved")
     require(info.get("OSType") == "linux", "stop_platform_unproved")
     require(config.get("StopSignal") == "SIGTERM", "stop_signal_unproved")
     timeout = config.get("StopTimeout")
-    # Docker Info does not expose a DefaultStopTimeout field. Do not fabricate
-    # one or infer an actual daemon default from generic Linux documentation.
-    # The absent-timeout resolution path is explicitly outstanding for review.
+    origin = "container"
+    # This one reviewed source identity has a fixed Unix default, not a
+    # configurable daemon default. Unknown Engine builds remain unproved.
+    commit = version.get("GitCommit")
+    fixed_source = "f8215cc266744ef195a50a70d427c345da2acdbb"
+    if (timeout is None and version.get("Version") == "28.5.1"
+            and type(commit) is str and 7 <= len(commit) <= 40
+            and fixed_source.startswith(commit)):
+        timeout, origin = 10, "engine_fixed_default"
     require(type(timeout) is int and timeout == 10, "stop_profile_unproved")
     return {"engine_id": info["ID"], "engine_version": version["Version"],
             "engine_commit": version.get("GitCommit"), "stop_timeout": timeout,
-            "timeout_origin": "container", "stop_signal": config["StopSignal"]}
+            "configured_stop_timeout": config.get("StopTimeout"),
+            "reviewed_engine_source": fixed_source if origin == "engine_fixed_default" else None,
+            "timeout_origin": origin, "stop_signal": config["StopSignal"]}
 
 
 def verify_image(image):
@@ -257,11 +295,51 @@ def controller():
         (records / "containers.json").write_text(json.dumps(created))
         return container
 
-    def execute(container, mode):
-        result = container.exec_run(["python", "/witness-tests/packaged_managed_witness.py", mode])
-        require(len(result.output) <= 4096, "helper_output_bound")
-        require(result.exit_code == 0, "real_native_observation_failed")
-        return json.loads(result.output)
+    def execute(container, mode, deadline):
+        # Detached exec avoids docker-py's unbounded upgraded-socket frame reader.
+        # Each helper writes one exclusive bounded file; no stdout buffering.
+        path = "/tmp/cpk-witness-" + uuid.uuid4().hex + ".json"
+        old_timeout = client.api.timeout
+        client.api.timeout = 1
+        try:
+            require(time.monotonic() < deadline, "helper_deadline")
+            execution = client.api.exec_create(
+                container.id,
+                ["python", "/witness-tests/packaged_managed_witness.py", mode, path],
+                stdout=False, stderr=False)
+            require(time.monotonic() < deadline, "helper_deadline")
+            client.api.exec_start(execution["Id"], detach=True)
+            while time.monotonic() < deadline:
+                state = client.api.exec_inspect(execution["Id"])
+                if not state["Running"] and state["ExitCode"] is not None:
+                    require(state["ExitCode"] == 0, "real_native_observation_failed")
+                    break
+                time.sleep(0.05)
+            else:
+                require(False, "helper_deadline")
+            require(time.monotonic() < deadline, "helper_deadline")
+            archive, metadata = container.get_archive(path, chunk_size=1024)
+            raw = bytearray()
+            try:
+                require(metadata["size"] <= 4096, "helper_output_bound")
+                for chunk in archive:
+                    require(time.monotonic() < deadline, "helper_deadline")
+                    require(len(raw) + len(chunk) <= 32768, "helper_archive_bound")
+                    raw.extend(chunk)
+            finally:
+                archive.close()
+            require(time.monotonic() < deadline, "helper_deadline")
+            with tarfile.open(fileobj=io.BytesIO(raw), mode="r:") as bundle:
+                members = bundle.getmembers()
+                require(len(members) == 1 and members[0].isfile()
+                        and members[0].size <= 4096, "helper_archive_shape")
+                value = bundle.extractfile(members[0]).read(4097)
+            require(len(value) <= 4096, "helper_output_bound")
+            decoded = json.loads(value)
+            require(time.monotonic() < deadline, "helper_deadline")
+            return decoded
+        finally:
+            client.api.timeout = old_timeout
 
     def wait_receipt(container, expected):
         deadline = time.monotonic() + 5
@@ -294,18 +372,26 @@ def controller():
         native.start()
         deadline = time.monotonic() + 15
         # No replacement launch. Every observation belongs to this one identity.
-        before = execute(native, "identity")
-        contents = execute(native, "contents")
+        before = None
+        while before is None and time.monotonic() < deadline:
+            native.reload()
+            require(native.status == "running", "native_early_exit")
+            before = execute(native, "starting", deadline)
+            if before is None:
+                time.sleep(0.05)
+        require(before is not None, "native_startup_timeout")
+        contents = execute(native, "contents", deadline)
         observed = None
         while time.monotonic() < deadline:
-            observed = execute(native, "management")
+            observed = execute(native, "management", deadline)
             if not isinstance(observed, dict) or not observed.get("pending"):
                 break
             require(observed["identity"] == before, "native_changed_during_startup")
             time.sleep(0.05)
         require(observed == before and time.monotonic() <= deadline, "native_interval")
-        require(execute(native, "identity") == before, "native_changed_before_stop")
         profile = resolve_profile(client, native)
+        require(execute(native, "identity", time.monotonic() + 3) == before,
+                "native_changed_before_stop")
         owner.stop_container(native.id)
         native.reload()
         require(native.status == "exited", "native_stop_incomplete")
@@ -357,7 +443,7 @@ def controller():
                 "fatal_namespace_still_running")
         # Linux PID-namespace init death terminates namespace members. This is
         # Docker's stopped namespace evidence, not a scan of all host processes.
-        result = {"stage": "managed_cloudflared", "outcome": "pass",
+        result = {"stage": "managed_cloudflared_controller", "outcome": "pass",
                   "docker_sdk": docker.__version__, **profile, **evidence, **contents}
     except QualificationFailure as failure:
         states = []
@@ -369,7 +455,7 @@ def controller():
                                "exit_code": state["ExitCode"], "pid": state["Pid"]})
             except Exception:
                 states.append({"id": identity, "status": "observation_unavailable"})
-        print(json.dumps({"stage": "managed_cloudflared", "outcome": "unqualified",
+        print(json.dumps({"stage": "managed_cloudflared_controller", "outcome": "unqualified",
                           "reason": str(failure), "states": states}), flush=True)
         raise
     finally:
@@ -388,18 +474,33 @@ def controller():
     print(json.dumps(result), flush=True)
 
 
+def emit_helper(value):
+    content = json.dumps(value).encode()
+    require(len(content) <= 4096, "helper_output_bound")
+    path = sys.argv[2]
+    require(path.startswith("/tmp/cpk-witness-") and "/" not in path[len("/tmp/"):],
+            "helper_output_path")
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        require(os.write(descriptor, content) == len(content), "helper_output_write")
+    finally:
+        os.close(descriptor)
+
+
 if __name__ == "__main__":
     try:
         mode = sys.argv[1]
         if mode == "identity":
-            print(json.dumps(native_identity()))
+            emit_helper(native_identity())
+        elif mode == "starting":
+            emit_helper(native_identity(allow_pending=True))
         elif mode == "management":
             try:
-                print(json.dumps(management_observation()))
+                emit_helper(management_observation())
             except ConnectionRefusedError:
-                print(json.dumps({"pending": True, "identity": native_identity()}))
+                emit_helper({"pending": True, "identity": native_identity()})
         elif mode == "contents":
-            print(json.dumps(image_contents()))
+            emit_helper(image_contents())
         elif mode == "controlled":
             controlled_process()
         elif mode == "fatal":
