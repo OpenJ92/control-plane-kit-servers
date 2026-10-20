@@ -2,10 +2,11 @@
 
 Source: [packaged_managed_witness.py](../../../../../products/cloudflared_connector/tests/packaged_managed_witness.py).
 
-Servers #284 owns this target draft, invoked through the single new product stage
-of the existing Docker `test.sh`. It has not run or passed exact target review.
-The managed Dockerfile and notice manifest remain unimplemented. Missing build
-material is not causal-red evidence; do not run this draft as an apparatus probe.
+Servers #284 owns these targets, invoked through the single new product stage
+of the existing Docker `test.sh`. Exact targets at f30abdf earned Meridian TARGET
+PASS. They have not run. Managed Dockerfile and notice source now await their own
+source review and normal owning green. Their earlier absence was not causal-red
+evidence; no apparatus probe was run.
 
 The real-image lane checks image launch/health metadata, actual installed native
 version and SDK/Core source coordinates, dependency license metadata and exact

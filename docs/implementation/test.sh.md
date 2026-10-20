@@ -93,8 +93,9 @@ proves the coupled #254 update; publisher retirement belongs to #271.
 # Managed cloudflared target preparation (#284)
 
 The new `scripts/cloudflared_managed_witness.sh` invocation follows the preserved
-historical connector witness. Its executable targets are still under review;
-managed Dockerfile/notice inputs are not implemented, so this checkpoint is not
-ready for execution. No extra gate is authorized by the invocation. See the
-product witness companion for the explicit unresolved daemon-default evidence
-path and the distinction between real-native and controlled-process evidence.
+historical connector witness. Exact executable targets earned review at f30abdf;
+managed Dockerfile/notice source awaits its separate source review. No extra gate
+is authorized by this invocation. See the product witness companion for the
+source-identified daemon-default qualification boundary and the distinction
+between real-native and controlled-process evidence. Actual runtime evidence
+remains unobserved until the normal owning gate.

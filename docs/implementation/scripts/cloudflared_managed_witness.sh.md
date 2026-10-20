@@ -21,7 +21,7 @@ The final stage-success marker follows container, image and fixture cleanup.
 The controller's earlier PASS is limited to its own observations and containers;
 it cannot substitute for shell terminal success or the later global residue audit.
 
-This stage has not been run. Managed Dockerfile/notice material is deliberately
-not implemented before target review. A missing build file is an apparatus
-failure, not meaningful red. Do not invoke it independently or create another
+This stage has not been run. Exact targets earned review at f30abdf; managed
+Dockerfile/notice source now awaits source review. Earlier missing build material
+was not meaningful red. Do not invoke this stage independently or create another
 workflow. The existing entrypoint causal-red baseline remains the only run.
