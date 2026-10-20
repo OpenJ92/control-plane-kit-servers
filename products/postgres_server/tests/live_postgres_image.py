@@ -201,7 +201,12 @@ def wait_running(container, seconds: float = 30.0) -> None:
     raise AssertionError("PostgreSQL source container did not run")
 
 
-def wait_query(container, seconds: float = 45.0) -> None:
+def wait_query(
+    container,
+    seconds: float = 45.0,
+    *,
+    observe_native: bool = False,
+) -> None:
     deadline = time.monotonic() + seconds
     command = ("/usr/local/bin/psql", "-X", "-U", "cpk", "-d", "cpk", "-tA", "-c",
                "SELECT value FROM cpk_witness;")
