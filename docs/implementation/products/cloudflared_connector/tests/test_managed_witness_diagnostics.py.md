@@ -30,3 +30,24 @@ examples without weakening the laws. It awaits exact source review and owning
 Docker green. This repo has no alternate focused runner. The earlier diagnostic
 history and later mandatory CPK/Cloudflare laws remain recorded on #284; package
 tests alone cannot close #284/#188 or prove runtime cleanup.
+
+## Observed Engine28.0.4 profile targets
+
+Run39452982680 passed all757 package methods, including the ten methods above,
+then refused the actual28.0.4/6430e49/null stop profile. The separately reviewed
+four-file plan records immutable source6430e49a55babd9b8f4d08e70ecb2b68900770fe
+and its fixed Unix default, while preserving empirical timing and cleanup laws.
+
+Two local target methods now exercise the actual resolver using only canned
+info/version/config inputs and a reload receipt. They prove profile admission
+and reporting, never Docker timing or effects. Supported defaults include full
+and seven-character identities for both28.5.1 and28.0.4. Explicit integer10 on
+an otherwise unknown build reports container origin with no inferred source.
+Negative cases retain unknown/crossed version-build refusal; short, wrong,
+empty, nonstring and overlong commit refusal; bool/noninteger/non10 explicit
+timeout refusal; and Linux/SIGTERM/SDK7.2.0 guards. All ten prior methods remain.
+
+This is target preparation before resolver modification, with twelve methods
+total. Current source still refuses the two28.0.4 positive subcases. The observed
+real gate refusal is preserved; no additional executable red, source change or
+run is claimed. North owns the next sequence and gate release after exact review.

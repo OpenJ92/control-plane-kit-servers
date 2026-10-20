@@ -4,13 +4,66 @@ import io
 import json
 from pathlib import Path
 import time
+from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import packaged_managed_witness as witness
 
 
 class ManagedWitnessDiagnosticTests(unittest.TestCase):
+    def test_stop_profile_resolves_only_reviewed_defaults_or_explicit_integer_ten(self):
+        sources = (
+            ("28.5.1", "f8215cc266744ef195a50a70d427c345da2acdbb"),
+            ("28.0.4", "6430e49a55babd9b8f4d08e70ecb2b68900770fe"),
+        )
+        cases = [(version, commit, None, source)
+                 for version, source in sources for commit in (source, source[:7])]
+        cases.append(("unreviewed", "unknown", 10, None))
+        for version, commit, timeout, source in cases:
+            with self.subTest(version=version, commit=commit, timeout=timeout):
+                container = SimpleNamespace(id="controlled", reload=Mock(), attrs={
+                    "Config": {"StopSignal": "SIGTERM", "StopTimeout": timeout}})
+                client = SimpleNamespace(
+                    info=Mock(return_value={"ID": "engine", "OSType": "linux"}),
+                    version=Mock(return_value={"Version": version, "GitCommit": commit}))
+                with patch("docker.__version__", "7.2.0"), redirect_stdout(io.StringIO()):
+                    result = witness.resolve_profile(client, container)
+                self.assertEqual(result["stop_timeout"], 10)
+                self.assertEqual(result["configured_stop_timeout"], timeout)
+                self.assertEqual(result["timeout_origin"],
+                                 "container" if timeout is not None else "engine_fixed_default")
+                self.assertEqual(result["reviewed_engine_source"], source)
+                self.assertEqual(result["engine_commit"], commit)
+                container.reload.assert_called_once_with()
+
+    def test_stop_profile_refuses_unknown_mismatched_or_invalid_inputs(self):
+        cases = [
+            ("unknown", "6430e49", None, "linux", "SIGTERM", "7.2.0", "stop_profile_unproved"),
+            ("28.5.1", "6430e49", None, "linux", "SIGTERM", "7.2.0", "stop_profile_unproved"),
+            ("28.0.4", "f8215cc", None, "linux", "SIGTERM", "7.2.0", "stop_profile_unproved"),
+        ]
+        cases += [("28.0.4", commit, None, "linux", "SIGTERM", "7.2.0", "stop_profile_unproved")
+                  for commit in ("6430e4", "wrong00", "", None, 643049, "6430e49" + "0" * 34)]
+        cases += [("28.0.4", "6430e49", timeout, "linux", "SIGTERM", "7.2.0",
+                   "stop_profile_unproved") for timeout in (True, False, "10", 10.0, 9, 11, -1)]
+        cases += [
+            ("28.0.4", "6430e49", 10, "windows", "SIGTERM", "7.2.0", "stop_platform_unproved"),
+            ("28.0.4", "6430e49", 10, "linux", "SIGINT", "7.2.0", "stop_signal_unproved"),
+            ("28.0.4", "6430e49", 10, "linux", "SIGTERM", "7.1.0", "sdk_stop_semantics_unproved"),
+        ]
+        for version, commit, timeout, platform, signal, sdk, reason in cases:
+            with self.subTest(version=version, commit=commit, timeout=timeout,
+                              platform=platform, signal=signal, sdk=sdk):
+                container = SimpleNamespace(id="controlled", reload=Mock(), attrs={
+                    "Config": {"StopSignal": signal, "StopTimeout": timeout}})
+                client = SimpleNamespace(
+                    info=Mock(return_value={"ID": "engine", "OSType": platform}),
+                    version=Mock(return_value={"Version": version, "GitCommit": commit}))
+                with patch("docker.__version__", sdk), redirect_stdout(io.StringIO()):
+                    with self.assertRaisesRegex(witness.QualificationFailure, "^" + reason + "$"):
+                        witness.resolve_profile(client, container)
+
     def test_contents_refuses_wrong_numeric_identity_before_version_io(self):
         for uid, gid in ((0, 65532), (65532, 0)):
             with self.subTest(uid=uid, gid=gid):
