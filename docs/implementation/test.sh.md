@@ -1,6 +1,18 @@
 Source: [test.sh](../../test.sh).
 Maintain with the normal Docker-backed owning gate and prerequisite effects.
 
+Servers #279 tightens only the PostgreSQL source witness's retained-data start
+sequencing. On the existing restart, recovery predecessor and recovered
+successor paths, the already attached controller first observes the container's
+native TCP 5432 listener and then runs the unchanged exact retained-row SQL
+proof. Listener attempts, backoff and SQL polling share one deadline; every
+connect timeout and sleep is capped by its remaining budget, container terminal
+state is checked before listener attempts and before each SQL exec, and every
+successful observation socket is closed. The initialization path and its
+UNKNOWN-before-row evidence stay unchanged. This ordering check does not remove
+or rewrite PostgreSQL locks or data, add a network, retry a lifecycle action, or
+replace the exact SQL exit/stdout/stderr proof.
+
 Servers #228 adds scripts/cloudflared_connection_witness.sh before the final
 residue audit. It builds the source connector and checks packaged reader output,
 numeric UID, synthetic token permissions and effective image configuration in

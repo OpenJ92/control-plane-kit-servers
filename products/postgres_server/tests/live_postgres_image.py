@@ -7,6 +7,7 @@ from http.client import HTTPConnection
 import json
 import os
 from pathlib import Path
+import socket
 import time
 
 import docker
@@ -201,10 +202,42 @@ def wait_running(container, seconds: float = 30.0) -> None:
     raise AssertionError("PostgreSQL source container did not run")
 
 
-def wait_query(container, seconds: float = 45.0) -> None:
+def wait_query(
+    container,
+    seconds: float = 45.0,
+    *,
+    observe_native: bool = False,
+) -> None:
     deadline = time.monotonic() + seconds
     command = ("/usr/local/bin/psql", "-X", "-U", "cpk", "-d", "cpk", "-tA", "-c",
                "SELECT value FROM cpk_witness;")
+    if observe_native:
+        while time.monotonic() < deadline:
+            container.reload()
+            if container.status != "running":
+                raise_container_failure(
+                    container,
+                    "PostgreSQL source container exited before readiness",
+                )
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.0:
+                break
+            try:
+                connection = socket.create_connection(
+                    (container.name, 5432),
+                    timeout=min(1.0, remaining),
+                )
+            except OSError:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0.0:
+                    break
+                time.sleep(min(0.1, remaining))
+                continue
+            try:
+                pass
+            finally:
+                connection.close()
+            break
     while time.monotonic() < deadline:
         container.reload()
         if container.status != "running":
@@ -214,7 +247,13 @@ def wait_query(container, seconds: float = 45.0) -> None:
         if result.exit_code == 0 and stdout == b"retained-row\n":
             require(not stderr, "successful retained query wrote stderr")
             return
-        time.sleep(0.25)
+        if observe_native:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.0:
+                break
+            time.sleep(min(0.25, remaining))
+        else:
+            time.sleep(0.25)
     raise AssertionError("PostgreSQL retained row was not queryable")
 
 
@@ -348,7 +387,7 @@ def main() -> int:
         containers.append(restarted)
         restarted.start()
         wait_running(restarted)
-        wait_query(restarted)
+        wait_query(restarted, observe_native=True)
         restarted.exec_run(("python3", "-c", "import os; os.kill(int(open('/var/lib/postgresql/data/postmaster.pid').readline()), 15)"))
         wait_exit(restarted, 1)
         require(PASSWORD.encode() not in restarted.logs(stdout=True, stderr=True), "password reached failure logs")
@@ -359,7 +398,7 @@ def main() -> int:
         containers.append(recovery)
         recovery.start()
         wait_running(recovery)
-        wait_query(recovery)
+        wait_query(recovery, observe_native=True)
         recovery.kill(signal="KILL")
         wait_exit(recovery, 137)
         recovery.remove()
@@ -369,7 +408,7 @@ def main() -> int:
         containers.append(recovered)
         recovered.start()
         wait_running(recovered)
-        wait_query(recovered)
+        wait_query(recovered, observe_native=True)
         recovered.stop(timeout=10)
         wait_exit(recovered, 0)
         recovered.remove()
