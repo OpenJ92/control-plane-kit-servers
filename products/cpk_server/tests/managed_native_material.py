@@ -54,8 +54,9 @@ class NativeMaterial:
                 artifact.target_path, artifact.media_type, artifact.file_mode),))
         delivery = SecretFileDelivery("/run/secrets/tunnel", SecretReference("secret://fixture/tunnel"),
             SecretUseIntent.CLOUDFLARE_TUNNEL_TOKEN, path_binding=SecretFilePathBinding("TUNNEL_TOKEN_FILE"))
+        selection = SecretVersionSelection(delivery.reference, delivery.intent, "fixture-version")
         connector = replace(authored.node("connector", contract), configuration_artifacts=(artifact,),
-            secret_deliveries=(delivery,))
+            secret_deliveries=(delivery,), secret_selections=(selection,))
         self.document = authored.documents["connector"]
         self.reference = ProductReference.from_document(self.document)
         gateway = authored.a.nodes["gateway"]
@@ -92,7 +93,7 @@ class NativeMaterial:
             replace(self.document.product, runtime_contract=replace(contract, configuration_requirements=(),
                 configuration_artifacts=(artifact,), secret_deliveries=(delivery,))),
             public_environment=contract.public_environment,
-            secret_selections=(SecretVersionSelection(delivery.reference, delivery.intent, "fixture-version"),))
+            secret_selections=(selection,))
         self.request = RuntimeEffectRequest("native-effect", RuntimeEffectKind.REALIZE_ACTIVITY, RuntimeKind.DOCKER,
             RuntimeEffectSource("workspace-a", "request", RunId("run"), "plan", "base", "desired", "native-effect"),
             activity.activity_id, activity.operation, self.authority.authority_ref, products=(material,))

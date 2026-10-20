@@ -29,6 +29,7 @@ class ManagedNativeConnectionTests(unittest.TestCase):
         from control_plane_kit_servers_cpk_server.managed_native_connection import DockerManagedNativeConnection
         self.world = NativeMaterial()
         self.api = Mock()
+        self.api.timeout = 60
         self.api.inspect_container.side_effect = RuntimeError("private provider failure")
         self.client = DockerSdkClient(client=SimpleNamespace(api=self.api), connect_on_init=False)
         self.clock = Mock(return_value=datetime(2026, 10, 20, tzinfo=timezone.utc))
