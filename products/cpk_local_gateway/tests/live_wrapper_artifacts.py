@@ -15,6 +15,9 @@ import httpx
 import control_plane_kit_core as core
 from control_plane_kit_interpreters.docker import DockerSdkConfigurationMount
 from control_plane_kit_interpreters.docker.sdk import matches_image_reference
+from products.cpk_server.tests.docker_image_update_identity import (
+    FIXED, fixed_manifest_bytes, qualify_fixed_image,
+)
 from control_plane_kit_servers_hello_server.configuration import (
     hello_control_configuration_artifact, hello_control_declaration, hello_source_runtime_contract,
 )
@@ -90,7 +93,8 @@ def _controls(origin, value, sensitive):
 
 def exercise_wrapper_artifacts(*, engine, sdk, resources, labels, network_id,
                                hello_reference, gateway_reference, mode, expected_attribution, expected_source=None,
-                               hello_health_reads=(core.NodeHealthReadKind.LIVENESS, core.NodeHealthReadKind.READINESS)):
+                               hello_health_reads=(core.NodeHealthReadKind.LIVENESS, core.NodeHealthReadKind.READINESS),
+                               expected_execution_ids=None):
     """Caller owns the existing exact cleanup ledger, daemon and internal network."""
     assert mode in ("source-built", "published-digest")
     assert hello_health_reads in ((core.NodeHealthReadKind.READINESS,),
@@ -107,12 +111,21 @@ def exercise_wrapper_artifacts(*, engine, sdk, resources, labels, network_id,
             assert reference.startswith("ghcr.io/openj92/control-plane-kit-servers/" + product + "@sha256:")
             assert matches_image_reference(reference, observed.repo_digests)
             assert raw.attrs["Architecture"] == "amd64", "published tuple platform differs"
+            fixed_role = next((role for role, selected in FIXED.items()
+                               if selected["reference"] == reference), None)
+            if fixed_role is not None:
+                qualify_fixed_image(fixed_role, reference=reference,
+                    manifest_bytes=fixed_manifest_bytes(fixed_role), image_attrs=raw.attrs,
+                    interpreter_image_id=observed.image_id)
         else:
             assert reference == observed.image_id
             assert raw.labels.get("org.openj92.cpk.test-run") == labels["org.openj92.cpk.test-run"]
         assert observed.configured_user in ({"hello", "10002"} if name == "hello" else {"gateway", "10005"})
         if name == "hello" and expected_source is not None:
             assert raw.labels.get("org.opencontainers.image.revision") == expected_source
+        if expected_execution_ids is not None:
+            assert set(expected_execution_ids) == {"hello", "gateway"}
+            assert observed.image_id == expected_execution_ids[name], "admitted image identity changed"
         images[name] = (observed.image_id, raw.attrs["Architecture"])
 
     world = World()

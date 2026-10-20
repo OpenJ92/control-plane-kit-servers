@@ -35,8 +35,9 @@ compensation, native connectivity, public ingress or #251 update is claimed.
 
 The bounded result now includes the validated input image references and current
 daemon ID alongside actual image IDs/platforms. Published qualification evidence
-must compare these IDs with the publication records and the workflow preload
-engine ID. These fields add provenance, not a new health or image-admission rule.
+must correlate the captured execution IDs with linked manifest/config publication
+records and the workflow preload daemon. No equality between differently typed
+digests is inferred.
 
 #269 takes an explicit selected Hello health tuple, defaulting to both health
 kinds for unchanged historical A/B calls. Every selected kind is actually read;
@@ -55,7 +56,8 @@ published A/B calls retain their existing provenance behavior. Bounded observati
 now includes the observed source label, checked runtime UID and installed package
 URLs (or null when that historical check is not selected). Actual RepoDigest,
 image/platform, default startup, public mounts and signed controls remain required;
-the caller also compares the image ID to the independently verified producer.
+the caller also binds execution identity to the independently verified producer's
+manifest/config coordinates.
 
 The #254 accepted dependency adoption exposed a shared-expectation defect before
 published qualification: source-built and published-family paths previously
@@ -68,3 +70,10 @@ regression tests reject cross-use, partial/extra/substituted entries and unknown
 mode. They prove selection/refusal; the original owning Docker gate must still
 prove actual installed provenance, sockets and cleanup. No coupled scenario,
 image/source identity, UID, runtime or authority changes accompany the repair.
+
+#191 applies the shared fixed-artifact proof whenever a published reference
+matches the fixed tuple, including through optional inputs. Genuine extra
+references retain their original checks without a fixed-config claim. The
+numeric family caller supplies captured Hello/gateway execution IDs; both
+declaration launches must still match those IDs before any effects. No registry
+credentials, lookup/pull, backend classification or source-built rule changes.

@@ -35,6 +35,7 @@ from control_plane_kit_servers_cpk_server.client.transport import PublicHttpTran
 from control_plane_kit_servers_cpk_server.managed_health import ManagedHealthBootstrap
 
 from docker_image_update_material import DockerImageMaterial, IMAGES
+from docker_image_update_identity import bind_fixed_images, fixed_manifest_bytes, qualify_fixed_image
 from docker_declaration_update import declaration_documents, declaration_graph, current_route_intent
 from docker_image_update_placement import (
     OwnedControllerPlacement, SyntheticConnectorConnection, owned_resources, dispose_fixture,
@@ -73,19 +74,21 @@ class PublicRegistration:
 
 def inspect_inputs(engine, sdk):
     observed = {}
+    daemon_id = engine.info().get("ID")
     for role, value in IMAGES.items():
         image = engine.images.get(value["reference"])
         selected = sdk.inspect_image(value["reference"])
-        assert selected is not None and selected.image_id == image.id == value["image_id"]
-        assert matches_image_reference(value["reference"], selected.repo_digests)
-        assert (image.attrs["Os"], image.attrs["Architecture"]) == ("linux", "amd64")
-        assert image.attrs["Config"]["User"] == value["user"]
-        if role == "connector":
-            assert image.attrs["Config"]["Entrypoint"] == ["/pause"]
-        observed[role] = {"reference": value["reference"], "image_id": image.id,
-            "platform": "linux/amd64", "user": value["user"]}
-    assert observed["hello_a"]["image_id"] != observed["hello_b"]["image_id"]
-    return observed
+        if selected is None or selected.image_id != image.id:
+            raise ValueError("artifact interpreter observation differs")
+        if not matches_image_reference(value["reference"], selected.repo_digests):
+            raise ValueError("artifact interpreter reference differs")
+        observed[role] = qualify_fixed_image(role, reference=value["reference"],
+            manifest_bytes=fixed_manifest_bytes(role), image_attrs=image.attrs,
+            interpreter_image_id=selected.image_id)
+    assert observed["hello_a"].execution_id != observed["hello_b"].execution_id
+    if engine.info().get("ID") != daemon_id:
+        raise ValueError("artifact qualification daemon changed")
+    return bind_fixed_images(daemon_id, observed)
 
 
 async def scenario(root, engine, sdk, placement, material, provider, database_url, *, reintroduction=False):
@@ -744,8 +747,9 @@ async def witness(*, reintroduction=False):
         material = DockerImageMaterial(workspace)
     placement = OwnedControllerPlacement(engine, sdk, workspace, controller.id, daemon_id,
         record_path=ownership, run=os.environ["CPK_DOCKER_WITNESS_RUN"],
-        expected_start_roles=material.expected_start_roles if reintroduction else None)
-    print(json.dumps({"docker_image_inputs": images, "daemon_id": daemon_id,
+        expected_start_roles=material.expected_start_roles if reintroduction else None,
+        qualified_images=images)
+    print(json.dumps({"docker_image_inputs": images.descriptor(), "daemon_id": daemon_id,
         "controller_id": controller.id, "owned_workspace": workspace}), flush=True)
     database_url = os.environ["CPK_RECEIVER_ACCEPTANCE_DATABASE_URL"]
     try:

@@ -35,8 +35,8 @@ reading the actual pause container. This remains a named substitution, not
 Cloudflare connection evidence or production qualification logic.
 
 The existing resource discovery and disposal functions now live beside this
-placement/ownership record. Their bodies are unchanged: validate all candidates
-before disposal, preserve unknown ownership/membership, and verify residue.
+placement/ownership record. Disposal still validates all candidates before
+deletion, preserves unknown ownership/membership, and verifies residue.
 Unit cleanup tests can exercise this owner without importing live composition.
 
 Secret-file volumes have a separate ownership map and disposal count. Before a
@@ -46,3 +46,14 @@ the exact name and expected labels, including file target and secret reference.
 No secret value/digest is read or stored. Disposal requires that prerecord and
 matching engine/SDK ownership before any deletion; same-workspace discovery,
 changed labels or overlap with configuration ownership cannot authorize cleanup.
+
+#191 requires a complete immutable `FixedImages` proof set bound to the current
+daemon at construction. Its role/reference/manifest/config/execution/form values
+are copied into the existing protected record before effects. Every daemon fence
+also compares that record with the independently frozen set; missing/mutated
+expectations refuse before dispatch or disposal. Persistence failure propagates
+before provider dispatch. Result/node/container checks use captured execution IDs,
+never fixture config digests or a fresh image lookup. Only a verified returned
+container enters the incarnation record. The entire candidate set is checked
+before detach/removal, so even a late identity mismatch preserves every resource.
+No ownership adoption, automatic repair or cleanup identity substitution exists.

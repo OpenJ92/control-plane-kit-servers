@@ -32,6 +32,7 @@ from control_plane_kit_servers_cpk_server.managed_health_placement import (
 )
 
 from docker_image_update_material import IMAGES
+from docker_image_update_identity import FixedImages
 from docker_image_update_ports import FixtureBoundaryFailure
 
 
@@ -71,9 +72,14 @@ def dispose_fixture(placement):
 
 class OwnedControllerPlacement:
     def __init__(self, engine, sdk, workspace, controller_id, daemon_id, *, record_path=None, run=None,
-                 expected_start_roles=None):
+                 expected_start_roles=None, qualified_images=None):
         self.engine, self.sdk, self.workspace = engine, sdk, workspace
         self.controller_id, self.daemon_id = controller_id, daemon_id
+        if type(qualified_images) is not FixedImages or qualified_images.daemon_id != daemon_id:
+            raise FixtureBoundaryFailure("qualified artifact map missing or conflicting")
+        self._qualified_images = qualified_images
+        if self.engine.info().get("ID") != daemon_id:
+            raise FixtureBoundaryFailure("fixture daemon identity changed")
         self.network_id = None
         self.nodes, self.bindings = {}, {}
         self.attachment_attempted = False
@@ -86,7 +92,8 @@ class OwnedControllerPlacement:
         self.record_path = record_path
         self.record = {"workspace": workspace, "controller_id": controller_id,
             "daemon_id": daemon_id, "run": run, "intents": [], "containers": {},
-            "networks": {}, "volumes": {}, "secret_volumes": {}, "attachment": None}
+            "networks": {}, "volumes": {}, "secret_volumes": {}, "attachment": None,
+            "qualified_images": qualified_images.descriptor()}
         self.persist()
         self.reader = DockerGatewayEndpointReader((DockerControllerPlacement(workspace, "docker",
             RuntimeAuthorityReference("local-docker"), controller_id, sdk),), self.binding_for)
@@ -228,7 +235,7 @@ class OwnedControllerPlacement:
                     raise FixtureBoundaryFailure("recorded resource identity differs")
                 if kind == "containers":
                     self.owned(value.labels, "container", expected["node"])
-                    if value.attrs["Image"] != IMAGES[expected["image_role"]]["image_id"]:
+                    if value.attrs["Image"] != self.expected_image_id(expected["image_role"]):
                         raise FixtureBoundaryFailure("recorded container image differs")
                 elif kind == "networks":
                     self.owned(value.attrs["Labels"], "runtime-network")
@@ -256,6 +263,15 @@ class OwnedControllerPlacement:
     def same_daemon(self):
         if self.engine.info().get("ID") != self.daemon_id:
             raise FixtureBoundaryFailure("fixture daemon identity changed")
+        if (self._qualified_images.daemon_id != self.daemon_id
+                or self.record.get("daemon_id") != self.daemon_id
+                or self.record.get("qualified_images") != self._qualified_images.descriptor()):
+            raise FixtureBoundaryFailure("qualified artifact map changed; preserve fixture")
+
+    def expected_image_id(self, role):
+        if role not in self._qualified_images.images:
+            raise FixtureBoundaryFailure("qualified artifact role missing")
+        return self._qualified_images.images[role].execution_id
 
     def owned(self, labels, kind, node=None):
         expected = {PREFIX + "workspace": self.workspace, PREFIX + "runtime": "docker",
@@ -322,7 +338,7 @@ class OwnedControllerPlacement:
         role = image_role or self.expected_start_roles.get(name) or (
             name if name in {"gateway", "connector"} else "hello_a")
         if (observed is None or observed.container_id != container.id or not observed.running
-                or container.attrs["Image"] != IMAGES[role]["image_id"]
+                or container.attrs["Image"] != self.expected_image_id(role)
                 or container.attrs["Config"]["User"] != IMAGES[role]["user"]
                 or sum(item.network_id == self.network_id for item in observed.network_attachments) != 1):
             raise FixtureBoundaryFailure("installed node identity differs")
