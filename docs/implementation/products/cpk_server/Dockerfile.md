@@ -7,8 +7,8 @@ to `2274d974`. Core/SDK pins, extras, process entrypoint and image hardening
 remain unchanged. This recipe has not yet passed the complete owning gate and
 does not change any published image. See the
 [canonical coordinate account](../../coordinates/server-products.json.md) for
-the gate dependency and separate semantic adapter work. Earlier selections below
-are historical.
+the pending selected-composition validation and separate semantic adapter work.
+Earlier selections below are historical.
 
 ## Historical dependency adoption
 

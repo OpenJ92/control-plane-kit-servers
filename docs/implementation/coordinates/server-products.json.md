@@ -16,12 +16,12 @@ pre-allocation shape qualification and compatible product/profile selection
 remain separate decisions. Existing exact-coordinate, generator and composition
 tests remain the owning laws; no assertion or gate stage is weakened.
 
-This source checkpoint has not passed the full owning gate. The unchanged gate
-unconditionally runs the PostgreSQL source-image witness before its terminal
-residue audit; the known PostgreSQL failure must be resolved through its owning
-lane before a complete PASS can be claimed. Earlier dependency selections below
-are historical. No provider, credential, data or network mutation is introduced
-by this source adoption; selected-package composition remains unverified.
+This source checkpoint has not passed the full owning gate. Accepted #279 now
+supplies the corrected PostgreSQL source-image witness before the terminal
+residue audit, removing the earlier apparatus blocker without validating this
+selected-package composition. One normal PR-triggered full gate remains required.
+Earlier dependency selections below are historical. No provider, credential,
+data or network mutation is introduced by this source adoption.
 
 ## Historical dependency adoption
 

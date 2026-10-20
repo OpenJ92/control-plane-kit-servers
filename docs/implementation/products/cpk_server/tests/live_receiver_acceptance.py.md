@@ -8,7 +8,7 @@ direct-URL assertion, scenarios, substitutes, accounting and cleanup are
 unchanged. This pin update does not make its synthetic ports a production native
 adapter and does not claim a new witness run. The
 [coordinate account](../../../coordinates/server-products.json.md) records the
-pending whole-gate dependency. Earlier expected-coordinate accounts are historical.
+pending owning-gate validation. Earlier expected-coordinate accounts are historical.
 
 The current #249 dependency alignment selects accepted Operations #1983
 `8fb86473948c86a7376c0b3dc2f8da79266a37c2` in this witness's exact installed
