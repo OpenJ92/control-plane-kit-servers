@@ -77,6 +77,12 @@ class NativeMaterial:
             self.current = installed
             self.desired = installed.update_node(replace(api, configuration_artifacts=(
                 *api.configuration_artifacts[:-1], replace(application, content='{"color":"green"}', source_digest=None))))
+        # Realization supplies canonical descriptors, not pre-serialization tuple
+        # order. Preserve those authored descriptors and compile their decoded values.
+        current_descriptor = DEFAULT_GRAPH_CODEC.encode(self.current)
+        desired_descriptor = DEFAULT_GRAPH_CODEC.encode(self.desired)
+        self.current = DEFAULT_GRAPH_CODEC.decode(current_descriptor)
+        self.desired = DEFAULT_GRAPH_CODEC.decode(desired_descriptor)
         pair = validate_graph(self.current), validate_graph(self.desired)
         for graph in pair:
             graph.require_valid()
@@ -115,8 +121,8 @@ class NativeMaterial:
                 "docker", "connector", original, receipt)
         self.realization = SimpleNamespace(plan=self.plan, registered_products=self.products,
             runtime_authorities=(self.authority,), connector_installation=installation,
-            base_graph=SimpleNamespace(graph_descriptor=DEFAULT_GRAPH_CODEC.encode(self.current)),
-            desired_graph=SimpleNamespace(graph_descriptor=DEFAULT_GRAPH_CODEC.encode(self.desired)))
+            base_graph=SimpleNamespace(graph_descriptor=current_descriptor),
+            desired_graph=SimpleNamespace(graph_descriptor=desired_descriptor))
 
     def selection(self):
         return dict(plan=self.plan, current=self.current, desired=self.desired,

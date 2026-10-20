@@ -1,7 +1,8 @@
 # Managed native connection composition
 
 This #181 slice connects the CPK process's existing native health port to the
-accepted Interpreters `MANAGED_WRAPPER_V1` observer. Source validation is pending.
+accepted Interpreters `MANAGED_WRAPPER_V1` observer. Exact validation checkpoints
+and acceptance status are recorded in [PR288](https://github.com/OpenJ92/control-plane-kit-servers/pull/288).
 It does not qualify a deployed managed connector image or complete #181/#148.
 
 Trusted process composition supplies the existing provisioner-owned placements,

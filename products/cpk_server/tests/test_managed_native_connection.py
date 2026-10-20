@@ -127,12 +127,12 @@ class ManagedNativeConnectionTests(unittest.TestCase):
         self.assertIs(observer.clock, self.clock)
         self.assertIs(request, self.world.request)
         self.assertIs(inputs["plan"], self.world.plan)
-        # Realization stores descriptors. Canonical decoding may reorder warning
-        # findings; the complete graph value and descriptor must remain identical.
+        self.assertEqual(inputs["current"], validate_graph(self.world.current))
+        self.assertEqual(inputs["desired"], validate_graph(self.world.desired))
+        # Keep every original authored descriptor field across the effect boundary.
         for side, stored in (("current", self.world.realization.base_graph),
                 ("desired", self.world.realization.desired_graph)):
             graph = inputs[side].require_valid()
-            self.assertEqual(graph, getattr(self.world, side))
             self.assertEqual(DEFAULT_GRAPH_CODEC.encode(graph), stored.graph_descriptor)
         self.assertIsNone(inputs.get("installation_request"))
         self.assertIsNone(inputs.get("installation_receipt"))
