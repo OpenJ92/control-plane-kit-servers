@@ -1,5 +1,15 @@
 Source: [live_receiver_acceptance.py](../../../../../products/cpk_server/tests/live_receiver_acceptance.py).
 
+## Current #181 installed provenance expectations
+
+The source-built witness now expects Operations `2d10a61c` and Interpreters
+`2274d974`; Core/SDK/Secrets expectations are unchanged. Its exact installed
+direct-URL assertion, scenarios, substitutes, accounting and cleanup are
+unchanged. This pin update does not make its synthetic ports a production native
+adapter and does not claim a new witness run. The
+[coordinate account](../../../coordinates/server-products.json.md) records the
+pending owning-gate validation. Earlier expected-coordinate accounts are historical.
+
 The current #249 dependency alignment selects accepted Operations #1983
 `8fb86473948c86a7376c0b3dc2f8da79266a37c2` in this witness's exact installed
 provenance expectation. Core #1981, SDK #51, Secrets #49 and Interpreters #192

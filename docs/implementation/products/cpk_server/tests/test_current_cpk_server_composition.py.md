@@ -1,5 +1,14 @@
 Source: [products/cpk_server/tests/test_current_cpk_server_composition.py](../../../../../products/cpk_server/tests/test_current_cpk_server_composition.py).
 
+## Current #181 dependency expectations
+
+Only the expected Operations (`2d10a61c`) and Interpreters (`2274d974`) commits
+advance. Existing canonical-field, exact archive/subdirectory/count and process
+composition assertions remain intact; Core stays `73d87e99`. These are reused
+adoption tests, not new native-adapter laws. The unchanged full owning gate is
+still required; see the [coordinate account](../../../coordinates/server-products.json.md).
+Earlier expected-coordinate accounts below are historical.
+
 ## Historical #249 dependency composition
 
 Core selects accepted #1981 merge `fe8d44fa09eed7d0d3df70f7782203f3045f9c15`;
