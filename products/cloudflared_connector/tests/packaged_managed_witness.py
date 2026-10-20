@@ -260,11 +260,15 @@ def resolve_profile(client, container):
     require(config.get("StopSignal") == "SIGTERM", "stop_signal_unproved")
     timeout = config.get("StopTimeout")
     origin = "container"
-    # This one reviewed source identity has a fixed Unix default, not a
-    # configurable daemon default. Unknown Engine builds remain unproved.
+    # These reviewed source identities have a fixed Unix default, not a
+    # configurable daemon default. Unknown version/build pairs remain unproved.
     commit = version.get("GitCommit")
-    fixed_source = "f8215cc266744ef195a50a70d427c345da2acdbb"
-    if (timeout is None and version.get("Version") == "28.5.1"
+    engine_version = version.get("Version")
+    fixed_source = {
+        "28.5.1": "f8215cc266744ef195a50a70d427c345da2acdbb",
+        "28.0.4": "6430e49a55babd9b8f4d08e70ecb2b68900770fe",
+    }.get(engine_version) if type(engine_version) is str else None
+    if (timeout is None and fixed_source is not None
             and type(commit) is str and 7 <= len(commit) <= 40
             and fixed_source.startswith(commit)):
         timeout, origin = 10, "engine_fixed_default"

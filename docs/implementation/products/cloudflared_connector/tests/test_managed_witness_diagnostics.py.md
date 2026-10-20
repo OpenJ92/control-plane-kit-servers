@@ -51,3 +51,12 @@ This is target preparation before resolver modification, with twelve methods
 total. Current source still refuses the two28.0.4 positive subcases. The observed
 real gate refusal is preserved; no additional executable red, source change or
 run is claimed. North owns the next sequence and gate release after exact review.
+
+The target checkpoint d44b91c80147f510004891467e6db090b3039239 was subsequently
+validated by single run39458036934 on merge74fb1249b9ed2116776e64352a25eeb32159ab74,
+tree823504f3bfd1ae7a480eb34b122b45c01e8d5de2. Exactly the two full/short28.0.4
+positive subcases refused stop_profile_unproved in the actual resolver; all other
+cases passed, including negative inputs and prior diagnostics. Meridian and
+Kepler independently accepted causal red. Later runtime stages were not reached.
+North then released the local closed two-pair implementation. Targets remain
+unchanged; post-implementation green is not yet claimed.

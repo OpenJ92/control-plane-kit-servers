@@ -43,7 +43,9 @@ The same exact image and daemon run the preserved TERM-ignoring PID1 fixture.
 The actual container/Engine/SDK profile is resolved from that container. SDK7.2.0,
 Linux and SIGTERM are required. Timeout10 must be explicit or derived from the
 reviewed fixed Unix default in Moby28.5.1 commit
-f8215cc266744ef195a50a70d427c345da2acdbb (at least7 matching commit characters).
+f8215cc266744ef195a50a70d427c345da2acdbb or Moby28.0.4 commit
+6430e49a55babd9b8f4d08e70ecb2b68900770fe (at least7 matching commit characters
+paired with that exact version).
 Unknown defaults refuse; no stop override is supplied. Moby source anchors are
 container/container.go:597, container/container_unix.go:26 and daemon/stop.go:57.
 This is compatibility evidence, not binary attestation.
@@ -95,3 +97,32 @@ Target1a37e29 earned exact review, then gate39451603339 confirmed both intended
 numeric-admission failures before actual version I/O. Nine other diagnostic
 methods passed. That causal red does not establish this implementation's green;
 exact source review and the released owning Docker gate remain necessary.
+
+## Observed28.0.4 source-profile addition
+
+Run39452982680 at f0d45fe passed all757 package methods and image contents, then
+refused the actual Linux Engine28.0.4/build6430e49 with null configured timeout.
+Controlled stop, fatal and whole-stage cleanup remained uncredited. Immutable
+v28.0.4 resolves to6430e49a55babd9b8f4d08e70ecb2b68900770fe: container/container.go596
+chooses explicit Config.StopTimeout or the Unix constant; container_unix.go26
+sets10; daemon/stop.go55 uses that unless an explicit request override is supplied.
+The HTTP stop route container_routes.go234 populates timeout only for a supplied
+t parameter, and daemon/inspect.go89 returns the configured input. Null alone is
+not an effective timeout claim. The signal-error branch at stop.go80 can shorten
+its wait to2seconds; the unchanged empirical9–11second predicate still must pass.
+
+Selected Interpreter2274d974 sdk.py1118 calls container.stop() without kwargs.
+Docker-py7.2.0 immutable5ad5327fba623897ee9a527d7eee1b01703e0726 forwards those
+kwargs at models/containers.py441; api/container.py1187 sends empty query params
+for timeout=None. Its local10 extends HTTP timeout, not daemon stop timeout.
+These immutable source anchors and observed advertised version/build justify the
+closed pair addition, not binary attestation or measured stop behavior.
+
+Targetd44b91c's owning run39458036934 produced exactly the two intended new
+full/short28.0.4 positive-case refusals. Both reviewers accepted causal red.
+The local resolver now selects one of the two exact version/source pairs; all
+prefix-length, explicit integer10, Linux/SIGTERM/SDK and empirical laws remain.
+Nonstring version values cannot enter map lookup. Source reporting returns the
+matched immutable commit only for inferred defaults. No gate, dependency,
+production code or runtime override changed. Exact source review and separately
+released owning green remain necessary; all live laws remain pending.
