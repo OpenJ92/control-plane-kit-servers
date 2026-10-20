@@ -1,0 +1,36 @@
+# Distinct managed cloudflared image
+
+Source: [Dockerfile.managed](../../../../products/cloudflared_connector/Dockerfile.managed).
+
+Servers #284 source checkpoint, pending image/source review and owning green.
+This is distinct from the historical Dockerfile, reader image, descriptor and
+published coordinates, none of which change.
+
+The native stage copies the unchanged selected cloudflared2026.6.1 binary at
+digest `6d91c121b803126f7a5344005d17a9324788fc09d305b6e2560ec6040a7ae283`.
+Notice and runtime stages use the existing selected Python3.12-slim digest
+`a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1`.
+The selected SDK1657cb91 archive plus verification extras supplies the SDK and
+its declared Core73d87e99 dependency, matching accepted repository coordinates.
+Transitive installation is not claimed byte reproducible; the target records
+actual installed provenance and versions.
+
+The build-only collector verifies pinned-source notice completeness and blob
+identities against the committed manifest. Only collected notices and the exact
+input manifest enter `/usr/share/licenses/cloudflared`; the downloader/build
+collector is absent from the final image. Base and installed distribution license
+metadata are retained. No general publication/license-compliance conclusion is
+implied, particularly for repositories without a root license declaration.
+
+Runtime uses numeric65532:65532, an exec-form Python module entrypoint and an
+explicit empty CMD. The common SDK configuration path is declared; credentials
+and instance configuration are never baked in. No native token value/path default
+is introduced. Port8000 metadata names the SDK listener without publishing any
+host port. SIGTERM and the existing connection-readiness healthcheck preserve
+their selected bounds; management availability remains a separate observation.
+
+The already source-reviewed entrypoint delegates lifecycle to the existing
+coordinator. No restart policy, timeout override, extra supervisor or runtime
+adapter is added. No image build, native interval, effective daemon profile or
+cleanup result has yet been observed for this source. Publication, registered
+product adoption and provider effects remain excluded.
