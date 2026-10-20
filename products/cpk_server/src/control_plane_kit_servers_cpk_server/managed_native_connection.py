@@ -125,6 +125,6 @@ class DockerManagedNativeConnection:
                 observed.effect_id, observed.activity_id, observed.container_id,
                 observed.sample_start, observed.sample_end, observed.ready_connections, observed.connector_id)
         except Exception:
-            pass
+            failure = ManagedHealthUnavailable("managed health is unavailable")
         # Raise outside the exception context: provider/material detail is private.
-        raise ManagedHealthUnavailable("managed health is unavailable")
+        raise failure
