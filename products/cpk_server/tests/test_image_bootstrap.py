@@ -55,6 +55,7 @@ APPROVED_PROVIDER_FUNCTIONS = {
     "_docker_runtime_interpreter",
     "_gateway_probe_dispatcher",
     "_public_dns_resolver",
+    "_provider_bootstrap_registry",
     "_secret_provider_composition",
 }
 
