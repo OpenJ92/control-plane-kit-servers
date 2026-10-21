@@ -44,7 +44,8 @@ file and substitutes only the filesystem location at os.open, checking the
 requested fixed plan path outside the reader. The accepted real reader still
 performs flags/fstat/bounded read/closure. It uses the existing #294 composition
 helper to run actual create_app and OperationsApplicationFactory with established
-schema/provider/database substitutions. Runtime policy/selector identity and
+schema/database substitutions and an explicit pure provider composition.
+Runtime policy/selector identity and
 native/Operations clock types are observed. This does not prove real mounted
 image startup; delivery/receipt/no-retry behavior remains with #226 and the
 unchanged full owner gate.
@@ -52,6 +53,18 @@ unchanged full owner gate.
 Independent TARGET review and normal owner causal red precede source work.
 The image-bootstrap contract test adds only the two newly declared environment
 names to its exact expected list; its existing assertions remain intact.
-The 16 new target methods, pins, policy and runner remain unchanged. No
+All 16 target laws, pins, policy and runner are preserved. No
 credentials, live provider resources, image publication or retained deployment
 are involved.
+
+Normal source run 39641780175 exposed one downstream fixture error: the reused
+#294 helper supplied secret_custodian=None while the actual projected environment
+enabled Cloudflare. All 507 prior CPK tests and 15 new targets passed; later gates
+were unreached. PR #298 comment 6322054722 records the failure, with independent
+diagnosis/correction acceptance at 6322076698. The corrected consumption fixture
+passes the actual pure provider composition to the helper, preserving original
+defaults for #294. Metadata correctly enables RuntimeAdapterRegistration, so the
+same policy-identity assertion now follows its adapter and also checks the exact
+registration type/flags. It asserts the actual Cloudflare entry and shared
+metadata reader; projected environment and reader/factory assertions are intact.
+No production guard is weakened and no ingress setting is overridden.

@@ -24,6 +24,7 @@ from control_plane_kit_core.secrets import (
 )
 from control_plane_kit_core.topology import GraphDescriptorCodec, compile_topology
 from control_plane_kit_core.types import RuntimeKind
+from control_plane_kit_operations.runtime_adapter_registration import RuntimeAdapterRegistration
 from managed_native_material import NativeMaterial
 import test_docker_installation as installation_fixture
 import test_managed_health_configuration as process_fixture
@@ -351,13 +352,21 @@ assert "control_plane_kit_servers_cpk_server.managed_health_configuration" not i
                 config = server.CpkServerBootstrapConfiguration.from_environment(environment)
                 helper = process_fixture.ManagedHealthConfigurationTests()
                 helper.server = server
-                factory = helper.compose(config)
+                provider = server._secret_provider_composition(config)
+                factory = helper.compose(config, provider=provider)
             self.assertEqual(opened, [entry["target"]])
             docker.assert_not_called()
         process = config.managed_health_process
         self.assertEqual(process.native_product_document, self.world.document)
-        self.assertIs(factory.ports.runtime_interpreters[RuntimeKind.DOCKER].local_client_config,
-            process.local_client_config)
+        registration = factory.ports.runtime_interpreters[RuntimeKind.DOCKER]
+        self.assertIs(type(registration), RuntimeAdapterRegistration)
+        self.assertTrue(registration.exact_version_execute)
+        self.assertTrue(registration.exact_version_execute_with_authority)
+        self.assertFalse(registration.exact_version_observe)
+        self.assertIs(registration.adapter.local_client_config, process.local_client_config)
+        self.assertIs(factory.ports.secret_metadata_reader, provider.metadata_reader)
+        self.assertEqual(set(factory.ports.ingress_interpreters),
+            {server.IngressAuthorityProviderKind.CLOUDFLARE})
         self.assertIs(factory.ports.runtime_observer.local_client_config, process.local_client_config)
         self.assertIs(factory.ports.managed_health.provider_clients, process.provider_clients)
         self.assertIsNotNone(factory.ports.managed_health.native.clock().utcoffset())
