@@ -1,5 +1,18 @@
 Please update alongside [publish_product_image.sh](../../../scripts/publish_product_image.sh).
 
+## Current CPK/Secrets producer metadata (#191)
+
+These two existing branches gain clean-checkout admission, Linux/amd64, actual
+checkout revision label and numeric user10001/10006 checks before push. Captured
+image ID must remain identical afterward; the existing exact-repository selector
+returns its digest. Output separates producer source, observed platform/user/ID
+and digest. It changes no catalogue and does not imply ABI qualification.
+
+Exact source/tag/private destination plus privacy/tag-absence checks remain the
+reviewed effect packet. These branches do not inherit Hello's provider visibility
+policy automatically. No retry/deletion/visibility repair follows uncertainty.
+See [current-root qualification](../../current-root-artifacts.md).
+
 ## Hello declaration-family publication (#271)
 
 The Hello branch accepts only the existing repository

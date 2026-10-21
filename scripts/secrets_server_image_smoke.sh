@@ -6,6 +6,7 @@ BUILD_IMAGE="${CPK_SECRETS_BUILD_IMAGE:-1}"
 CONTROLLER_IMAGE="${CPK_SERVERS_TEST_IMAGE:-control-plane-kit-servers-test:local}"
 BUILD_CONTROLLER="${CPK_SECRETS_BUILD_CONTROLLER:-1}"
 PROFILE="${CPK_SECRETS_SMOKE_PROFILE:-}"
+PRODUCT_PULL_POLICY=missing
 invalid_inputs() {
   echo 'secrets-server image smoke: invalid profile or build inputs' >&2
   exit 2
@@ -18,6 +19,14 @@ case "$PROFILE:$BUILD_IMAGE" in
   wrapped-source:1) ;;
   published-baseline:0)
     printf '%s\n' "$IMAGE" | grep -Eq '@sha256:[0-9a-f]{64}$' || invalid_inputs
+    ;;
+  wrapped-artifact:0)
+    [ "$BUILD_CONTROLLER" = 0 ] || invalid_inputs
+    . ./scripts/root_artifact_shell.sh
+    root_artifact_admit secrets-server "$IMAGE" "$CONTROLLER_IMAGE"
+    IMAGE="$ROOT_ARTIFACT_IMAGE_ID"
+    CONTROLLER_IMAGE="$ROOT_ARTIFACT_CONTROLLER"
+    PRODUCT_PULL_POLICY=never
     ;;
   *) invalid_inputs ;;
 esac
@@ -34,7 +43,8 @@ PROVIDER="$RUN_ID-provider"
 
 cleanup_records() {
   [ -n "$CONTROL_RECORDS" ] || return 0
-  rm -f "$CONTROL_RECORDS/provider.log" "$CONTROL_RECORDS/log.status" || return 1
+  rm -f "$CONTROL_RECORDS/provider.log" "$CONTROL_RECORDS/log.status" \
+    "$CONTROL_RECORDS/artifact-provenance.json" "$CONTROL_RECORDS/artifact-provenance.status" || return 1
   for phase in initial restart; do
     rm -f "$CONTROL_RECORDS/$phase/control.json" \
       "$CONTROL_RECORDS/$phase/surface.headers" "$CONTROL_RECORDS/$phase/health.headers" || return 1
@@ -48,37 +58,46 @@ cleanup_records() {
 }
 
 cleanup_owned() {
-  docker ps -aq --filter "label=$LABEL_KEY=$RUN_ID" \
-    | while IFS= read -r resource; do
-        if [ -n "$resource" ]; then
-          docker rm -f "$resource" >/dev/null 2>&1 || true
-        fi
+  cleanup_failed=0
+  for resource_kind in container volume network; do
+    case "$resource_kind" in
+      container) set -- ps -aq ;;
+      volume) set -- volume ls -q ;;
+      network) set -- network ls -q ;;
+    esac
+    if owned="$(docker "$@" --filter "label=$LABEL_KEY=$RUN_ID")"; then
+      for resource in $owned; do
+        case "$resource_kind" in
+          container) docker rm -f "$resource" >/dev/null 2>&1 || cleanup_failed=1 ;;
+          volume) docker volume rm -f "$resource" >/dev/null 2>&1 || cleanup_failed=1 ;;
+          network) docker network rm "$resource" >/dev/null 2>&1 || cleanup_failed=1 ;;
+        esac
       done
-  docker volume ls -q --filter "label=$LABEL_KEY=$RUN_ID" \
-    | while IFS= read -r resource; do
-        if [ -n "$resource" ]; then
-          docker volume rm -f "$resource" >/dev/null 2>&1 || true
-        fi
-      done
-  docker network ls -q --filter "label=$LABEL_KEY=$RUN_ID" \
-    | while IFS= read -r resource; do
-        if [ -n "$resource" ]; then
-          docker network rm "$resource" >/dev/null 2>&1 || true
-        fi
-      done
+    else
+      cleanup_failed=1
+    fi
+    # Independently require a successful authoritative absence observation.
+    if remaining="$(docker "$@" --filter "label=$LABEL_KEY=$RUN_ID")"; then
+      [ -z "$remaining" ] || cleanup_failed=1
+    else
+      cleanup_failed=1
+    fi
+  done
+  return "$cleanup_failed"
 }
 
 finish() {
   status=$?
   trap - EXIT INT TERM
-  cleanup_owned
-  if docker ps -aq --filter "label=$LABEL_KEY=$RUN_ID" | grep . \
-    || docker volume ls -q --filter "label=$LABEL_KEY=$RUN_ID" | grep . \
-    || docker network ls -q --filter "label=$LABEL_KEY=$RUN_ID" | grep .; then
-    echo "secrets-server image smoke left owned Docker resources" >&2
+  if ! cleanup_owned; then
+    echo "secrets-server image smoke cleanup could not be verified" >&2
     status=1
   fi
   cleanup_records || { echo 'secrets-server fixture cleanup incomplete' >&2; status=1; }
+  if [ "$status" = 0 ]; then
+    echo "secrets-server image smoke passed ($PROFILE)"
+    if [ "$PROFILE" = wrapped-artifact ]; then root_artifact_pass; fi
+  fi
   exit "$status"
 }
 trap finish EXIT
@@ -99,7 +118,7 @@ docker volume create --label "$LABEL_KEY=$RUN_ID" "$PROVIDER_BOOTSTRAP" >/dev/nu
 docker volume create --label "$LABEL_KEY=$RUN_ID" "$CLIENT_BOOTSTRAP" >/dev/null
 docker volume create --label "$LABEL_KEY=$RUN_ID" "$DATA_VOLUME" >/dev/null
 
-docker run --rm -i \
+docker run --pull "$PRODUCT_PULL_POLICY" --rm -i \
   --label "$LABEL_KEY=$RUN_ID" \
   --user 0:0 \
   --mount "type=volume,src=$PROVIDER_BOOTSTRAP,dst=/provider-bootstrap" \
@@ -181,15 +200,18 @@ start_provider() {
     --network-alias secrets-provider \
     --mount "type=volume,src=$PROVIDER_BOOTSTRAP,dst=/run/secrets/cpk-secrets,readonly" \
     --mount "type=volume,src=$DATA_VOLUME,dst=/var/lib/cpk-secrets"
-  if [ "$PROFILE" = wrapped-source ]; then
+  if [ "$PROFILE" != published-baseline ]; then
     set -- "$@" --mount "type=bind,source=$CONTROL_RECORDS/$CONTROL_PHASE/control.json,target=/etc/cpk/secrets-server/control.json,readonly"
   fi
-  docker create "$@" "$IMAGE" >/dev/null
+  docker create --pull "$PRODUCT_PULL_POLICY" "$@" "$IMAGE" >/dev/null
   docker start "$PROVIDER" >/dev/null
+  if [ "$PROFILE" = wrapped-artifact ]; then
+    root_artifact_verify_container "$PROVIDER" "$CONTROL_RECORDS"
+  fi
 }
 
 prepare_control() {
-  [ "$PROFILE" = wrapped-source ] || return 0
+  [ "$PROFILE" != published-baseline ] || return 0
   CONTROL_PHASE="$1"
   mkdir -m 700 "$CONTROL_RECORDS/$CONTROL_PHASE"
   docker run --rm --label "$LABEL_KEY=$RUN_ID" --network none \
@@ -200,7 +222,7 @@ prepare_control() {
 }
 
 check_control() {
-  [ "$PROFILE" = wrapped-source ] || return 0
+  [ "$PROFILE" != published-baseline ] || return 0
   docker run --rm --label "$LABEL_KEY=$RUN_ID" --user 0:0 --network "$NETWORK" \
     --mount "type=bind,source=$CONTROL_RECORDS/$CONTROL_PHASE,target=/fixture,readonly" \
     "$CONTROLLER_IMAGE" python products/secrets_server/tests/source_control_fixture.py check /fixture
@@ -246,7 +268,7 @@ assert_logs_redacted() {
     return 1
   fi
   set -- logs /fixture /client
-  if [ "$PROFILE" = wrapped-source ]; then
+  if [ "$PROFILE" != published-baseline ]; then
     set -- "$@" "/fixture/$CONTROL_PHASE"
   fi
   docker run --rm --label "$LABEL_KEY=$RUN_ID" --user 0:0 --network none \
@@ -436,4 +458,3 @@ print("secrets-server restart contract passed")
 PY
 
 assert_logs_redacted
-echo "secrets-server image smoke passed ($PROFILE)"

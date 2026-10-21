@@ -1,6 +1,20 @@
 Source: [cpk_server_image_smoke.sh](../../../scripts/cpk_server_image_smoke.sh).
 Maintain with the owning smoke profiles and local synthetic effect plan.
 
+#191 adds explicit wrapped-artifact/build0 admission. The cached role-specific
+digest, source/platform/user and actual execution ID are validated by the bounded
+shared artifact owner before runtime effects. Selected image use disables pulling;
+actual container Image/cache mapping and product-installed dependency provenance
+are checked. Existing public factory/signed read/denial branches serve both wrapped
+profiles. The broad receiver/image-update/reintroduction scenarios stay only on
+mandatory wrapped-source. Historical baseline remains distinct.
+
+Public provenance files join the existing fixture cleanup list. No CPK cleanup
+rewrite occurs: its authoritative final residue audit remains unchanged, and
+selected-artifact PASS follows it. Missing cache/build1 refuses; no registry
+credential mount or production authority is added. Actual pair qualification is
+separate from source/default CI and #225 public acceptance.
+
 #255 runs the accepted image-update scenario followed by a separate
 receiver-reintroduction scenario through the same finite Docker launch procedure.
 Each controller has an exact distinct name and fresh record directory. Previous
