@@ -2,6 +2,24 @@
 
 Source: [packaged_managed_witness.py](../../../../../products/cloudflared_connector/tests/packaged_managed_witness.py).
 
+
+## #291 provenance correction after mixed target red
+
+The image-contents check now expects accepted Core `95566689` and SDK `cad5cc3d`,
+matching the source recipe and SDK's declared Core dependency. Only those two
+commit literals change. Native version, licenses, image profile, controlled
+stop/fatal fixtures, deadlines and exact-owned cleanup remain unchanged.
+
+The first #291 gate at `3fae9dd` passed 26 policy tests, root60, managed
+connector80 and gateway61, then ran CPK478 with four failures: two intended
+image-proof forwarding assertions and two stale current-composition pin checks.
+It was not clean causal red. Later product/runtime/image and residue stages were
+unreached. This bounded correction updates eleven current-source expectations
+across four existing files; native targets and production forwarding are unchanged.
+Independent correction review and a new owning run remain required. Full commits
+are in the canonical manifest; earlier selections below remain historical.
+No native live, image qualification or cleanup acceptance is inferred.
+
 Servers #284 owns this unconditional stage of the existing Docker `test.sh`.
 The approved issue law ledger separates source/package proof from mandatory real
 Cloudflare acceptance through CPK after integration. #284/#188 remain open until
