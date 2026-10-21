@@ -6,6 +6,9 @@ a command-recording failing observation. The workflow's invalid optional root
 tuple must be refused before Docker acquisition; an accepted selected profile
 must reach exact cache inspection without build/pull fallback when the cache is
 unavailable. Explicit selected-profile build1 is prohibited before Docker.
+The owning Dockerfile.test provides actual jq for the existing manifest check;
+the test asserts its availability before invoking the workflow block. jq is not
+shimmed and the workflow validation is not copied into a second implementation.
 
 These are early admission/refusal tests, not fake successful deployment or image
 qualification. They do not construct a second workflow or lifecycle state machine.

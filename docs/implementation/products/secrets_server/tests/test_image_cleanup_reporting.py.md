@@ -9,6 +9,9 @@ The cases require successful authoritative inventories and private-file cleanup
 before exactly one final PASS; failed inventory/removal and retained residue stay
 failure; prior primary failure survives successful cleanup; no ambiguous removal
 is retried and no image is removed. Existing unique run-label scope remains.
+The same scenarios independently cover container, volume and network inventories,
+removal, residue, and failed post-cleanup absence inventory. This avoids proving
+only the container path while masking the independent volume/network pipelines.
 CPK's already-authoritative final residue audit is outside this correction.
 
 All subprocess execution belongs to the established Docker package tests. No host

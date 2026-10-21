@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import sys
 from tempfile import TemporaryDirectory
 import unittest
@@ -43,6 +44,7 @@ class RootArtifactShellBoundaryTests(unittest.TestCase):
                 "CPK_WRAPPER_ARTIFACT_MODE": "source-built"}
 
     def test_real_preload_rejects_invalid_root_tuple_before_any_docker_acquisition(self):
+        self.assertIsNotNone(shutil.which("jq"), "owning test image must provide real jq")
         workflow = yaml.safe_load((ROOT / ".github/workflows/tests.yml").read_text())
         steps = workflow["jobs"]["docker-tests"]["steps"]
         scripts = [step["run"] for step in steps if "optional artifact tuple" in step.get("name", "")]

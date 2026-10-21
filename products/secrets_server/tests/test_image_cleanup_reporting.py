@@ -19,24 +19,31 @@ prior = [json.loads(line) for line in path.read_text().splitlines()] if path.exi
 with path.open("a") as output:
     output.write(json.dumps(args) + "\n")
 scenario = os.environ["CLEANUP_SCENARIO"]
-if args[:1] == ["ps"]:
-    number = sum(item[:1] == ["ps"] for item in prior)
-    if scenario == "inventory-failed" and number == 0:
-        sys.exit(31)
-    if scenario == "residue" or (scenario in ("removed", "removal-failed") and number == 0):
-        print("owned-container")
-elif args[:1] == ["rm"]:
-    if args[-1] != "owned-container":
+selected = os.environ["CLEANUP_RESOURCE"]
+inventory = {"container": ["ps"], "volume": ["volume", "ls"], "network": ["network", "ls"]}
+removal = {"container": ["rm"], "volume": ["volume", "rm"], "network": ["network", "rm"]}
+kind = next((kind for kind, prefix in inventory.items() if args[:len(prefix)] == prefix), None)
+if kind is not None:
+    prefix = inventory[kind]
+    number = sum(item[:len(prefix)] == prefix for item in prior)
+    if kind == selected:
+        if ((scenario == "inventory-failed" and number == 0)
+                or (scenario == "absence-inventory-failed" and number > 0)):
+            sys.exit(31)
+        if scenario == "residue" or (scenario in ("removed", "removal-failed") and number == 0):
+            print("owned-" + kind)
+elif any(args[:len(prefix)] == prefix for prefix in removal.values()):
+    prefix = removal[selected]
+    if args[:len(prefix)] != prefix or args[-1] != "owned-" + selected:
         sys.exit(90)
-    if scenario == "removal-failed":
-        sys.exit(32)
-elif args[:2] not in (["volume", "ls"], ["network", "ls"]):
+    if scenario == "removal-failed": sys.exit(32)
+else:
     sys.exit(91)
 '''
 
 
 class ImageCleanupReportingTests(unittest.TestCase):
-    def run_finish(self, scenario, body_status=0, private_residue=False):
+    def run_finish(self, scenario, body_status=0, private_residue=False, resource="container"):
         source = SCRIPT.read_text()
         boundary = 'if [ "$BUILD_IMAGE" = "1" ]; then'
         self.assertEqual(source.count(boundary), 1)
@@ -52,7 +59,8 @@ class ImageCleanupReportingTests(unittest.TestCase):
                 "CPK_SECRETS_SMOKE_PROFILE": "published-baseline", "CPK_SECRETS_BUILD_IMAGE": "0",
                 "CPK_SECRETS_BUILD_CONTROLLER": "0", "CPK_SECRETS_IMAGE":
                     "ghcr.io/openj92/control-plane-kit-servers/secrets-server@sha256:" + "b" * 64,
-                "CLEANUP_SCENARIO": scenario, "CLEANUP_COMMANDS": str(commands)}
+                "CLEANUP_SCENARIO": scenario, "CLEANUP_RESOURCE": resource,
+                "CLEANUP_COMMANDS": str(commands)}
             shell = prefix + "\nCONTROL_RECORDS=" + shlex.quote(str(root / "private-records")) + "\n"
             (root / "private-records").mkdir(mode=0o700)
             if private_residue:
@@ -72,34 +80,44 @@ class ImageCleanupReportingTests(unittest.TestCase):
                     "label=cpk.test-run=cpk-secrets-image-smoke-"))
             if args[:1] == ["rm"]:
                 self.assertEqual(args[-1], "owned-container")
+            for kind in ("volume", "network"):
+                if args[:2] == [kind, "rm"]:
+                    self.assertEqual(args[-1], "owned-" + kind)
         self.assertFalse(any(args[:1] in (["pull"], ["push"], ["build"], ["rmi"])
                              or args[:2] == ["image", "rm"] for args in observed))
 
     def test_success_requires_absence_and_private_cleanup_before_one_final_pass(self):
-        for scenario in ("absent", "removed"):
-            with self.subTest(scenario=scenario):
-                result, observed, private_absent = self.run_finish(scenario)
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertTrue(private_absent)
-                self.assertEqual(result.stdout.count("secrets-server image smoke passed"), 1)
-                self.assertGreaterEqual(sum(args[:1] == ["ps"] for args in observed), 2)
-                self.assert_scope(observed)
+        for resource in ("container", "volume", "network"):
+            for scenario in ("absent", "removed"):
+                with self.subTest(resource=resource, scenario=scenario):
+                    result, observed, private_absent = self.run_finish(scenario, resource=resource)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertTrue(private_absent)
+                    self.assertEqual(result.stdout.count("secrets-server image smoke passed"), 1)
+                    for prefix in (["ps"], ["volume", "ls"], ["network", "ls"]):
+                        self.assertGreaterEqual(sum(args[:len(prefix)] == prefix for args in observed), 2)
+                    self.assert_scope(observed)
 
     def test_failed_inventory_or_removal_cannot_become_empty_success(self):
-        for scenario in ("inventory-failed", "removal-failed"):
-            with self.subTest(scenario=scenario):
-                result, observed, _ = self.run_finish(scenario)
-                self.assertNotEqual(result.returncode, 0, "failed Docker operation was masked")
-                self.assertNotIn("secrets-server image smoke passed", result.stdout)
-                self.assertLessEqual(sum(args[:1] == ["rm"] for args in observed), 1)
-                self.assert_scope(observed)
+        for resource in ("container", "volume", "network"):
+            for scenario in ("inventory-failed", "absence-inventory-failed", "removal-failed"):
+                with self.subTest(resource=resource, scenario=scenario):
+                    result, observed, _ = self.run_finish(scenario, resource=resource)
+                    self.assertNotEqual(result.returncode, 0, "failed Docker operation was masked")
+                    self.assertNotIn("secrets-server image smoke passed", result.stdout)
+                    for prefix in (["rm"], ["volume", "rm"], ["network", "rm"]):
+                        self.assertLessEqual(sum(args[:len(prefix)] == prefix for args in observed), 1)
+                    self.assert_scope(observed)
 
     def test_observed_residue_is_failure_without_repeated_removal_or_pass(self):
-        result, observed, _ = self.run_finish("residue")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertNotIn("secrets-server image smoke passed", result.stdout)
-        self.assertEqual(sum(args[:1] == ["rm"] for args in observed), 1)
-        self.assert_scope(observed)
+        for resource in ("container", "volume", "network"):
+            with self.subTest(resource=resource):
+                result, observed, _ = self.run_finish("residue", resource=resource)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("secrets-server image smoke passed", result.stdout)
+                prefix = ["rm"] if resource == "container" else [resource, "rm"]
+                self.assertEqual(sum(args[:len(prefix)] == prefix for args in observed), 1)
+                self.assert_scope(observed)
 
     def test_prior_failure_survives_successful_cleanup_without_pass(self):
         result, observed, private_absent = self.run_finish("absent", body_status=17)
