@@ -19,6 +19,7 @@ from control_plane_kit_core.identity import WorkspaceGrant
 from control_plane_kit_core.lifecycle import ResourcePersistence
 from control_plane_kit_core.products import (
     ContainerServerProduct,
+    OciImageReference,
     ProductDescriptorCodec,
     ProductDescriptorDocument,
     ProductIdentity,
@@ -50,6 +51,7 @@ _WORKSPACE_ID = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}\Z")
 _STORES = ("activity-history-store", "graph-topology-store", "observer-state-store",
            "workplace-store")
 _PROVIDER_CLIENT_FILE = "/run/secrets/cpk-installation/provider-client"
+_INVALID_WEBSITE = "installation website configuration is invalid"
 
 
 @dataclass(frozen=True)
@@ -106,6 +108,18 @@ class ExternalInstallationIngress:
             raise ValueError("external installation endpoint port is invalid")
 
 
+@dataclass(frozen=True, kw_only=True, repr=False)
+class DockerCpkWebsite:
+    """Explicit website image and exposure intent; upstream comes from the API."""
+
+    image: OciImageReference
+    ingress: ExternalInstallationIngress | NamedPublicIngress
+    connector_product: ProductDescriptorDocument | None = None
+
+    def __post_init__(self) -> None:
+        _website_input(self)
+
+
 @dataclass(frozen=True, kw_only=True)
 class DockerCpkInstallation:
     """Immutable desired values; all credential inputs are unresolved references.
@@ -140,6 +154,7 @@ class DockerCpkInstallation:
     connector_product: ProductDescriptorDocument | None
     control_auth: SingleOperatorControlAuth | MultiPrincipalControlAuth = SingleOperatorControlAuth()
     managed_health_configuration: ConfigurationArtifact | None = field(default=None, repr=False)
+    website: DockerCpkWebsite | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.control_auth, (SingleOperatorControlAuth, MultiPrincipalControlAuth)):
@@ -183,6 +198,7 @@ class DockerCpkInstallation:
         _selected_product(self.postgres_product, "postgres-server")
         _selected_product(self.secrets_product, "secrets-server")
         _managed_health_artifact(self)
+        _website_parts(self)
 
     @property
     def cpk_node_id(self) -> str:
@@ -196,6 +212,10 @@ class DockerCpkInstallation:
     def secrets_node_id(self) -> str:
         return f"{self.installation_id}-secrets"
 
+    @property
+    def website_node_id(self) -> str:
+        return f"{self.installation_id}-website"
+
 
 def compose_docker_cpk_installation(installation: DockerCpkInstallation) -> DeploymentTopology:
     """Declare existing product contracts and return an ordinary topology tree."""
@@ -204,6 +224,7 @@ def compose_docker_cpk_installation(installation: DockerCpkInstallation) -> Depl
     postgres = _postgres_variant(installation)
     cpk = _cpk_variant(installation, postgres)
     secrets = _secrets_variant(installation)
+    website_parts = _website_parts(installation)
     children = [
         instantiate_product(product, node_id, ProductInstanceConfiguration.from_contract(product.runtime_contract))
         for product, node_id in ((postgres, installation.postgres_node_id),
@@ -218,6 +239,15 @@ def compose_docker_cpk_installation(installation: DockerCpkInstallation) -> Depl
         children.append(instantiate_product(connector, installation.ingress.connector_node_id,
                         ProductInstanceConfiguration.from_contract(connector.runtime_contract)))
         public_ingresses = (installation.ingress,)
+    if website_parts is not None:
+        website, connector = website_parts
+        children.append(instantiate_product(website, installation.website_node_id,
+                        ProductInstanceConfiguration.from_contract(website.runtime_contract)))
+        if connector is not None:
+            ingress = installation.website.ingress
+            children.append(instantiate_product(connector, ingress.connector_node_id,
+                            ProductInstanceConfiguration.from_contract(connector.runtime_contract)))
+            public_ingresses += (ingress,)
     children.extend(SocketConnection(installation.postgres_node_id, "postgres",
                     installation.cpk_node_id, requirement) for requirement in _STORES)
     return DeploymentTopology(
@@ -227,6 +257,61 @@ def compose_docker_cpk_installation(installation: DockerCpkInstallation) -> Depl
                       authority_ref=installation.runtime_authority, children=tuple(children)),
         public_ingresses=public_ingresses,
     )
+
+
+def _website_input(value: DockerCpkWebsite) -> tuple[str, ContainerServerProduct | None]:
+    """Validate enabled-only inputs using the existing frontend owners."""
+    from .client.frontend import _canonical_origin, _selected_frontend_connector
+
+    try:
+        if not isinstance(value, DockerCpkWebsite) or not isinstance(value.image, OciImageReference):
+            raise ValueError(_INVALID_WEBSITE)
+        if isinstance(value.ingress, NamedPublicIngress):
+            connector = _selected_frontend_connector(value.connector_product)
+            return _canonical_origin("https://" + value.ingress.hostname), connector
+        if isinstance(value.ingress, ExternalInstallationIngress) and value.connector_product is None:
+            return _canonical_origin(value.ingress.endpoint), None
+        raise ValueError(_INVALID_WEBSITE)
+    except (ValueError, TypeError, AttributeError, KeyError):
+        error = ValueError(_INVALID_WEBSITE)
+    # Raise outside the handler: rejected input must not survive as context.
+    raise error
+
+
+def _website_parts(value: DockerCpkInstallation) -> tuple[
+    ContainerServerProduct, ContainerServerProduct | None,
+] | None:
+    if value.website is None:
+        return None
+    from .client.frontend import _canonical_origin, _selected_frontend_connector, frontend_product
+
+    try:
+        origin, connector = _website_input(value.website)
+        ingress = value.website.ingress
+        if isinstance(value.ingress, NamedPublicIngress) and isinstance(ingress, NamedPublicIngress):
+            _selected_frontend_connector(value.connector_product)
+            product_ids = {value.cpk_node_id, value.postgres_node_id,
+                           value.secrets_node_id, value.website_node_id}
+            connector_ids = {value.ingress.connector_node_id, ingress.connector_node_id}
+            if (ingress.target != PublicIngressTarget(value.website_node_id, "http")
+                    or value.ingress.target != PublicIngressTarget(value.cpk_node_id, "http-api")
+                    or len(connector_ids) != 2 or product_ids & connector_ids
+                    or ingress.ingress_id == value.ingress.ingress_id):
+                raise ValueError(_INVALID_WEBSITE)
+            upstream = _canonical_origin("https://" + value.ingress.hostname)
+        elif (isinstance(value.ingress, ExternalInstallationIngress)
+                and isinstance(ingress, ExternalInstallationIngress)
+                and value.connector_product is None):
+            upstream = _canonical_origin(value.ingress.endpoint)
+        else:
+            raise ValueError(_INVALID_WEBSITE)
+        # Compare host identity only; preserve both original origin strings.
+        if urlsplit(upstream).hostname.removesuffix(".") == urlsplit(origin).hostname.removesuffix("."):
+            raise ValueError(_INVALID_WEBSITE)
+        return frontend_product(value.website.image, upstream=upstream, port=8080), connector
+    except (ValueError, TypeError, AttributeError, KeyError):
+        error = ValueError(_INVALID_WEBSITE)
+    raise error
 
 
 def _cpk_variant(value: DockerCpkInstallation, postgres: ContainerServerProduct) -> ContainerServerProduct:

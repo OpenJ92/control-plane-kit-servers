@@ -1,8 +1,8 @@
 # Shared Docker installation value
 
 `DockerCpkInstallation` describes one CPK Docker+Cloudflare process, one PostgreSQL
-database for its four stores, and one dedicated Secrets process with retained
-custody. `compose_docker_cpk_installation` returns an ordinary Core
+database for its four stores, one dedicated Secrets process with retained
+custody, and an optional website. `compose_docker_cpk_installation` returns an ordinary Core
 `DeploymentTopology`. It performs no IO, secret resolution, authority admission,
 workspace creation, or execution.
 
@@ -141,6 +141,65 @@ Source-built CPK images declare numeric user `10001`, retaining the existing
 image UID with mode `0400` and a read-only mount. Older images declaring the named
 user `cpk` are unsupported by numeric protected-file delivery. The newly selected
 published CPK image declares numeric `10001`; old image digests remain unchanged.
+
+## Website in the installation
+
+Servers #299 adds `website=None` to preserve existing callers. For the complete
+#225 installation, supply a `DockerCpkWebsite` with a separately reviewed immutable
+image and explicit exposure intent. Building the value does not select, publish
+or qualify that image.
+
+```python
+from dataclasses import replace
+from control_plane_kit_servers_cpk_server import DockerCpkWebsite
+
+def include_website(desired, reviewed_website_image):
+    website = DockerCpkWebsite(
+        image=reviewed_website_image,
+        ingress=NamedPublicIngress(
+            ingress_id="child-a-website-public",
+            authority_ref=IngressAuthorityReference("parent-cloudflare"),
+            target=PublicIngressTarget(desired.website_node_id, "http"),
+            connector_node_id="child-a-website-connector",
+            hostname="web.child-a.example.test",
+        ),
+        connector_product=desired.connector_product,
+    )
+    return compose_docker_cpk_installation(replace(desired, website=website))
+```
+
+This extends the example above to six nodes in the same workspace, runtime and
+network: CPK, PostgreSQL, Secrets, website and two connectors. Both connector
+documents must have canonical bytes, the ordinary revision-1 cloudflared identity
+and an empty runtime contract. Their node IDs must differ from each other and
+all four product node IDs. Ingress IDs and hostnames must differ; each supplied
+ingress lifecycle is preserved. The website node is always
+`<installation_id>-website`, with provider `http`, port 8080 and `PORT=8080`.
+Its only upstream is `https://` plus this installation's API hostname.
+
+The other supported profile uses `ExternalInstallationIngress` for both API and
+website, with both connector documents absent. It yields four nodes and no
+graph-owned ingress allocations. Both endpoints must satisfy the existing
+[frontend canonical HTTPS origin rule](frontend-deployment.md). The website
+upstream is exactly the API endpoint; the website endpoint remains explicit
+exposure intent, without claiming provider allocation. Root acquisition does
+not yet accept this website option and needs its separately reviewed profile.
+
+Mixed Named/external profiles are refused. Origins must have distinct hostnames,
+even when their ports differ or one hostname has a terminal DNS root dot.
+Accepted origin bytes are preserved; no DNS lookup or normalization occurs.
+New website/profile errors are fixed and omit rejected values. Existing backend
+and API validation retains its original errors and runs first. Website-free
+installations retain their existing external-endpoint and connector admission.
+
+The website reuses `frontend_product`; its image and API upstream determine its
+product identity. Existing backend nodes, store edges, configuration, credential
+references and runtime access remain unchanged. The website has no secret
+delivery, provider/admin credential, Docker access, retained data, protected
+control surface or verification check. Empty verification means unverified
+readiness. Public browser operation, image compatibility, restart/history and
+survival after managed Hello teardown still require #225/Web #6 evidence.
+This composition performs no acquisition, durable mutation or cleanup.
 
 ## Explicit managed-health configuration
 

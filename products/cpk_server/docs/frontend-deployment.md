@@ -14,6 +14,12 @@ perform no IO, build, credential resolution, admission or execution. They do not
 modify root bootstrap, register a product, create a workspace or select a current
 graph. The existing public client remains the execution path.
 
+For #225, use the [shared installation's website option](installation.md#website-in-the-installation)
+to place the website beside CPK, PostgreSQL and Secrets. The standalone helper
+below remains available, but a separate frontend-only topology does not satisfy
+the complete-installation capstone. The installation derives the upstream from
+its own API ingress and fixes the website port at 8080.
+
 ## Inputs and example
 
 Supply a separately reviewed `OciImageReference`, preserving its actual registry,
@@ -82,20 +88,21 @@ deliver that authority to the website.
 
 ## Retention and evidence
 
-The frontend uses a **separate public API workspace** from managed Hello on the
-same approved Docker host. A Core graph has a `name`, not an authoritative
-workspace ID: `workspace_id` names the topology here, and the caller must use that
-workspace in the public client request. Matching graph names cannot authorize or
-prove isolation. Before #225 effects, check the actual workspace, network,
-resource and ingress inventory, including the unchanged grandparent origin.
+The complete installation, including its website, must remain outside managed
+Hello's teardown scope. The standalone example above labels its own topology;
+that label is not an authoritative workspace selection. A Core graph has a
+`name`, and the caller must select the intended workspace in the public client
+request. Matching graph names cannot authorize or prove isolation. Before #225
+effects, check the actual workspace, network, resource and ingress inventory,
+including the unchanged grandparent origin.
 
 The named ingress targets the website directly and is distinct from Hello's
 management ingress. The composer does not add a gateway or SDK receiver. Retain
-the frontend workspace while submitting Hello's explicitly empty desired graph;
-never submit that teardown to the frontend workspace. Keeping the separate
-workspace is the lifetime boundary, not permanent resource retention. The
-supplied ingress lifecycle is preserved, and eventual frontend removal still
-requires its own exact inspected and approved plan.
+the complete installation while submitting Hello's explicitly empty desired
+graph to Hello's workspace. Workspace separation supplies the lifetime boundary;
+it does not promise permanent resource retention. The supplied ingress lifecycle
+is preserved, and eventual installation removal still requires its own exact
+inspected and approved plan.
 
 The website's verification contract is empty. **Readiness is unverified.**
 `no-verification-contract` is an ordinary deployment result, not a successful
