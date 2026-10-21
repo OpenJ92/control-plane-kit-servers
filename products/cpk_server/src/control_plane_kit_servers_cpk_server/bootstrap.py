@@ -209,7 +209,7 @@ def _installation(document):
     item = document["installation"]
     _closed(item, {"installation_id", "workspace_id", "runtime_authority", "runtime_access",
         "products", "references", "workspace_grants", "provider_endpoint_ref", "external_endpoint"},
-        {"control_auth", "managed_health_configuration"})
+        {"control_auth", "managed_health_configuration", "website"})
     _closed(item["products"], {"cpk", "postgres", "secrets"})
     _closed(item["references"], {"control_credential", "postgres_password", "custody_root_key",
         "provider_credentials_document", "provider_client_credential", "provider_bootstrap_credential_ref"})
@@ -219,7 +219,15 @@ def _installation(document):
         grants.append(WorkspaceGrant(grant["workspace_id"], tuple(PolicyScope(s) for s in grant["scopes"])))
     products = {name: ProductDescriptorCodec().decode_document(value)
                 for name, value in item["products"].items()}
-    return DockerCpkInstallation(
+    website = {}
+    if "website" in item:
+        from control_plane_kit_core.products import OciImageReferenceCodec
+        from .installation import DockerCpkWebsite
+        selected = item["website"]
+        _closed(selected, {"image", "external_endpoint", "host_binding"})
+        website["website"] = DockerCpkWebsite(image=OciImageReferenceCodec().decode(selected["image"]),
+            ingress=ExternalInstallationIngress(selected["external_endpoint"]))
+    installation = DockerCpkInstallation(
         installation_id=item["installation_id"], workspace_id=item["workspace_id"],
         runtime_authority=RuntimeAuthorityReference(item["runtime_authority"]),
         runtime_access=RuntimeAuthorityAccessDeliveryCodec().decode(item["runtime_access"]),
@@ -231,7 +239,48 @@ def _installation(document):
         provider_endpoint_ref=SecretProviderEndpointReference(item["provider_endpoint_ref"]),
         ingress=ExternalInstallationIngress(item["external_endpoint"]), connector_product=None,
         **{name: SecretReference(value) for name, value in item["references"].items()},
+        **website,
     )
+    if website:
+        _complete_control_configuration(installation, products)
+    return installation
+
+
+def _complete_control_configuration(installation, products):
+    """Bind actual public receiving contracts to the installation's two roles."""
+    from control_plane_kit_core.configuration import ConfigurationFileMode, ConfigurationMediaType
+    from control_plane_kit_core.receiver_configuration import select_receiver_node_control_configuration_artifact
+    from control_plane_kit_secrets.control import decode_secrets_control_configuration
+    from .control_configuration import decode_cpk_control_configuration
+
+    receivers = []
+    for role, node_id, socket, decode in (
+            ("cpk", installation.cpk_node_id, "http-api", decode_cpk_control_configuration),
+            ("secrets", installation.secrets_node_id, "control", decode_secrets_control_configuration)):
+        contract = products[role].product.runtime_contract
+        identity, path = role + "-control", "/etc/cpk/" + role + "-server/control.json"
+        candidates = [artifact for artifact in contract.configuration_artifacts
+            if artifact.artifact_id == identity or artifact.target_path == path]
+        if len(candidates) != 1:
+            raise RootBootstrapError("bootstrap receiving configuration is invalid")
+        artifact = select_receiver_node_control_configuration_artifact(
+            artifacts=contract.configuration_artifacts, environment=contract.public_environment,
+            control_surfaces=contract.control_surfaces)
+        if (artifact.artifact_id != identity or artifact.target_path != path
+                or artifact.media_type is not ConfigurationMediaType.JSON
+                or artifact.file_mode is not ConfigurationFileMode.READ_ONLY
+                or len(artifact.content.encode("utf-8")) > 65_536):
+            raise RootBootstrapError("bootstrap receiving configuration is invalid")
+        configuration = decode(artifact.content.encode("utf-8"))
+        target = configuration.target
+        if (contract.control_surfaces != (configuration.declaration.surface,)
+                or target.workspace_id.value != installation.workspace_id
+                or target.runtime_id.value != installation.installation_id + "-docker"
+                or target.node_id.value != node_id or target.provider_socket_name.value != socket):
+            raise RootBootstrapError("bootstrap receiving configuration is invalid")
+        receivers.append(target.receiver_id)
+    if len(set(receivers)) != 2:
+        raise RootBootstrapError("bootstrap receiving configuration is invalid")
 
 
 def plan_root_bootstrap(document: Mapping[str, object], *, driver_image_id: str) -> dict:
@@ -244,6 +293,12 @@ def plan_root_bootstrap(document: Mapping[str, object], *, driver_image_id: str)
         _closed(binding, {"address", "port"})
         if binding["address"] != "127.0.0.1" or type(binding["port"]) is not int or not 1024 <= binding["port"] <= 65535:
             raise RootBootstrapError("bootstrap host binding must be explicit loopback")
+        if installation.website is not None:
+            website_binding = document["installation"]["website"]["host_binding"]
+            _closed(website_binding, {"address", "port"})
+            if (website_binding["address"] != "127.0.0.1" or type(website_binding["port"]) is not int
+                    or not 1024 <= website_binding["port"] <= 65535 or website_binding["port"] == binding["port"]):
+                raise RootBootstrapError("bootstrap website binding must be distinct explicit loopback")
         setup = document["setup"]
         _closed(setup, {"workspace_name", "provider", "secret_references", "image_pull_authorities", "ingress_authorities"})
         _text(setup["workspace_name"])
@@ -329,9 +384,16 @@ def plan_root_bootstrap(document: Mapping[str, object], *, driver_image_id: str)
             "setup_routes": ["command.workspace.create", "command.secret-provider.register",
                 *(["command.secret-reference.register"] * len(setup["secret_references"])),
                 "command.runtime-authority.register", "command.runtime-authority-delivery.register",
-                *(["command.product.import"] * len(document["installation"]["products"])),
+                *(["command.product.import"] * (len(document["installation"]["products"]) + (installation.website is not None))),
                 *(["command.image-pull-authority.register"] * len(setup["image_pull_authorities"])),
                 *(["command.ingress-authority.register"] * len(setup["ingress_authorities"]))]}
+        if installation.website is not None:
+            plan["website_node_id"] = installation.website_node_id
+            plan["host_bindings"] = [
+                {"node_id": installation.cpk_node_id, "provider_socket": "http-api", "container_port": 8080, **binding},
+                {"node_id": installation.website_node_id, "provider_socket": "http", "container_port": 8080, **website_binding}]
+            website_document = ProductDescriptorCodec().encode_document(products[installation.website_node_id])
+            plan["setup_products"] = [*document["installation"]["products"].values(), json.loads(website_document.content)]
         plan["digest"] = hashlib.sha256(canonical(plan)).hexdigest()
         return plan
     except RootBootstrapError:

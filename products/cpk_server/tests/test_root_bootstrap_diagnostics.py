@@ -18,7 +18,7 @@ from products.cpk_server.tests import live_root_bootstrap as witness
 
 class RootBootstrapDiagnosticTests(unittest.TestCase):
     def test_commissioning_child_failure_reports_only_validated_stage(self):
-        stages = ("imports", "provenance", "plan", "prepare", "decode", "reuse")
+        stages = ("imports", "provenance", "plan", "prepare", "decode", "reuse", "complete-plan")
         for index, stage in enumerate(stages, 1):
             with self.subTest(stage=stage), contextlib.redirect_stdout(io.StringIO()) as output:
                 child = subprocess.CompletedProcess([], 1,
@@ -49,7 +49,7 @@ class RootBootstrapDiagnosticTests(unittest.TestCase):
     def test_commissioning_child_success_requires_zero_exit_and_complete_witness(self):
         success = "root commissioning: actual driver factories and exact reuse PASS"
         markers = ["commissioning-stage:" + stage for stage in
-            ("imports", "provenance", "plan", "prepare", "decode", "reuse")]
+            ("imports", "provenance", "plan", "prepare", "decode", "reuse", "complete-plan")]
         for code, stdout, accepted in ((0, "\n".join([*markers, success]), True),
                 (1, "\n".join([*markers, success]), False),
                 (0, "\n".join(markers), False)):

@@ -30,3 +30,12 @@ stage, or unknown for malformed output. No arbitrary child stdout, stderr,
 traceback or payload is printed. Success still requires zero exit and the exact
 success line, now preceded by all six markers. Three focused projection tests
 cover every stage, malformed/private output and incomplete or failed success.
+
+#302 adds a seventh closed stage, complete-plan, before the original success
+condition. Using only image-owned bootstrap/frontend/product modules and the
+same isolated public commissioning artifacts, it builds real source contracts
+and compiles the complete four-node/two-binding/four-import profile. It verifies
+both artifact descriptors survive exactly. A second fixed public success line
+is printed only after the child passes every assertion. The synthetic website
+image is never pulled or served. All original commissioning and legacy launcher
+checks remain; this source packaging evidence cannot qualify production images.

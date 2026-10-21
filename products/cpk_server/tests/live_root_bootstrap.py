@@ -198,7 +198,7 @@ def prepare(run):
     (ROOT / "state").mkdir(mode=0o700)
 
 
-COMMISSIONING_STAGES = ("imports", "provenance", "plan", "prepare", "decode", "reuse")
+COMMISSIONING_STAGES = ("imports", "provenance", "plan", "prepare", "decode", "reuse", "complete-plan")
 COMMISSIONING_SUCCESS = "root commissioning: actual driver factories and exact reuse PASS"
 
 
@@ -230,7 +230,8 @@ def commissioning_driver_witness(run):
         # Synthetic immutable ID binds this isolated library witness. It is not
         # image qualification; the existing launcher separately checks its ID.
         selected = json.loads((Path(__file__).resolve().parents[3] / "coordinates/server-products.json").read_text())["upstreams"]
-        payload = json.dumps({"intent": document, "preparer": "sha256:" + "a" * 64, "upstreams": selected})
+        payload = json.dumps({"intent": document, "preparer": "sha256:" + "a" * 64, "upstreams": selected,
+            "bootstrap_input": example_input(installation_id=run, workspace_id=run)})
         program = """
 print("commissioning-stage:imports", flush=True)
 import importlib, importlib.metadata, json, pathlib, sys
@@ -269,12 +270,42 @@ print("commissioning-stage:reuse", flush=True)
 assert prepare_root_commissioning(plan, expected_digest=plan["digest"],
     preparer_image_id=payload["preparer"], state_directory=state) == result
 assert "PRIVATE KEY" not in json.dumps(result)
+print("commissioning-stage:complete-plan", flush=True)
+from dataclasses import replace
+from control_plane_kit_core.products import OciImageReference, ProductDescriptorCodec
+from control_plane_kit_core.topology import GraphDescriptorCodec
+from control_plane_kit_servers_cpk_server.bootstrap import plan_root_bootstrap
+from control_plane_kit_servers_cpk_server.control_configuration import CpkSourceVariant, cpk_source_runtime_contract
+from control_plane_kit_servers_secrets_server.configuration import secrets_source_runtime_contract
+document = payload["bootstrap_input"]
+codec = ProductDescriptorCodec()
+for role in ("cpk", "secrets"):
+    artifact = ConfigurationArtifact.from_descriptor(result["artifacts"][role])
+    contract = (cpk_source_runtime_contract(CpkSourceVariant.DOCKER_CLOUDFLARE, artifact)
+        if role == "cpk" else secrets_source_runtime_contract(artifact))
+    selected = codec.decode_document(document["installation"]["products"][role])
+    document["installation"]["products"][role] = json.loads(codec.encode_document(
+        replace(selected.product, runtime_contract=contract)).content)
+document["installation"]["website"] = {
+    "image": OciImageReference("example.invalid", "fixture/website", "sha256:" + "a" * 64).descriptor(),
+    "external_endpoint": "https://web.example.test", "host_binding": {"address": "127.0.0.1", "port": 18081}}
+complete = plan_root_bootstrap(document, driver_image_id=payload["preparer"])
+assert len(GraphDescriptorCodec().decode(complete["graph"]).nodes) == 4
+assert len(complete["host_bindings"]) == 2
+assert len(complete["setup_products"]) == 4
+assert complete["setup_routes"].count("command.product.import") == 4
+for role in ("cpk", "secrets"):
+    node = next(node for node in complete["resources"]["nodes"] if node["node_id"] == document["installation"]["installation_id"] + "-" + role)
+    assert node["configuration_files"][0]["artifact"] == result["artifacts"][role]
+for name in ("control_plane_kit_servers_cpk_server.bootstrap", "control_plane_kit_servers_cpk_server.client.frontend"):
+    assert pathlib.Path(importlib.import_module(name).__file__).resolve().is_relative_to(pathlib.Path("/app/products/cpk_server/src"))
 print("root commissioning: actual driver factories and exact reuse PASS")
 """
         completed = subprocess.run([sys.executable, "-c", program], input=payload,
             text=True, capture_output=True, env=environment, cwd="/app", check=False)
         # Do not print arbitrary child exceptions or private fixture payloads.
         report_commissioning_driver_result(completed)
+        print("root bootstrap: actual driver complete plan PASS", flush=True)
 
 
 def check(run):
