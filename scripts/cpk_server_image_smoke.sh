@@ -50,7 +50,8 @@ cleanup_control_fixture() {
     rm -f "$CONTROL_RECORDS/control.json" "$CONTROL_RECORDS/surface.headers" \
       "$CONTROL_RECORDS/health.headers" "$CONTROL_RECORDS/surface.json" \
       "$CONTROL_RECORDS/health.json" "$CONTROL_RECORDS/denied.json" \
-      "$CONTROL_RECORDS/artifact-provenance.json" "$CONTROL_RECORDS/artifact-provenance.status" || return 1
+      "$CONTROL_RECORDS/artifact-provenance.json" "$CONTROL_RECORDS/artifact-provenance.status" \
+      "$CONTROL_RECORDS/artifact-pid1.status" "$CONTROL_RECORDS/artifact-pid1.exit" || return 1
     rmdir "$CONTROL_RECORDS" || return 1
     [ ! -e "$CONTROL_RECORDS" ] || return 1
     CONTROL_RECORDS=""

@@ -68,6 +68,22 @@ root_artifact_verify_container() {
     "$ROOT_ARTIFACT_REFERENCE" "$CPK_ROOT_SOURCE_REVISION" "$ROOT_ARTIFACT_IMAGE_ID" >/dev/null || return 1
   root_observed="$(docker inspect "$root_container" --format '{{.Image}}')" || return 1
   root_artifact_checker execution "$ROOT_ARTIFACT_IMAGE_ID" "$root_observed" </dev/null || return 1
+  (umask 077; : > "$root_records/artifact-pid1.status"; : > "$root_records/artifact-pid1.exit") || return 1
+  # Observe the running server (PID 1), not the newly exec'd probe's user.
+  if (
+    set +e
+    docker exec "$root_container" python -B -c \
+      'import sys; f=open("/proc/1/status","rb"); sys.stdout.buffer.write(f.read(65537))' 2>/dev/null
+    root_probe_status=$?
+    printf '%s\n' "$root_probe_status" > "$root_records/artifact-pid1.exit"
+  ) | head -c 65537 > "$root_records/artifact-pid1.status"; then :; else return 1; fi
+  [ "$(cat "$root_records/artifact-pid1.exit")" = 0 ] || { root_artifact_invalid; return 2; }
+  [ "$(wc -c < "$root_records/artifact-pid1.status")" -le 65536 ] || { root_artifact_invalid; return 2; }
+  docker run --pull never --rm --network none --read-only --cap-drop ALL \
+    --security-opt no-new-privileges --user "$(id -u):$(id -g)" \
+    --mount "type=bind,source=$root_records,target=/artifact-evidence,readonly" \
+    "$ROOT_ARTIFACT_CONTROLLER" python scripts/root_artifact_inputs.py process-uid \
+    "$ROOT_ARTIFACT_ROLE" /artifact-evidence/artifact-pid1.status || return 1
   case "$ROOT_ARTIFACT_ROLE" in
     cpk-server) set -- control-plane-kit-core control-plane-kit-operations control-plane-kit-server-sdk control-plane-kit-interpreters ;;
     secrets-server) set -- control-plane-kit-core control-plane-kit-server-sdk control-plane-kit-secrets ;;

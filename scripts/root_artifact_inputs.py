@@ -76,6 +76,19 @@ def require_root_artifact_execution(*, proof, observed_image_id):
     require(identity(observed_image_id) and observed_image_id == proof["execution_id"])
 
 
+def require_root_artifact_process_uid(*, role, pid1_status):
+    require(type(role) is str and role in ROLES)
+    require(type(pid1_status) is str and len(pid1_status) <= LIMIT and pid1_status.isascii())
+    rows = [line for line in pid1_status.splitlines() if line.startswith("Uid:")]
+    require(len(rows) == 1)
+    number = r"(0|[1-9][0-9]*)"
+    row = re.fullmatch(r"Uid:[ \t]+" + r"[ \t]+".join([number] * 4), rows[0])
+    require(row is not None)
+    effective = row.group(2)
+    require(effective == ROLES[role])
+    return effective
+
+
 def expected_provenance(role, upstreams):
     require(type(role) is str and role in ROLES and type(upstreams) is dict)
     selected = {
@@ -138,6 +151,13 @@ def main(argv=None):
         elif action == "execution":
             require(len(args) == 3)
             require_root_artifact_execution(proof={"execution_id": args[1]}, observed_image_id=args[2])
+        elif action == "process-uid":
+            require(len(args) == 3)
+            with Path(args[2]).open("rb") as stream:
+                raw = stream.read(LIMIT + 1)
+            require(len(raw) <= LIMIT)
+            effective = require_root_artifact_process_uid(role=args[1], pid1_status=raw.decode("ascii"))
+            print(f"root_artifact_process_uid role={args[1]} pid=1 effective_uid={effective}")
         elif action == "provenance":
             require(len(args) == 3)
             with Path(args[2]).open("rb") as stream:

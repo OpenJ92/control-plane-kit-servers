@@ -43,10 +43,13 @@ The helper checks old markers/exact private values and source tokens without
 matching output or token argv. Capture does not create a hard Docker deadline.
 HTTP has bounded accumulation and per-operation timeouts, not a total deadline.
 
-Finish retains labelled Docker cleanup and namespace audit, then deletes exactly
-two root log files and three files per known phase. Partial generation/check
+Finish retains labelled Docker cleanup and namespace audit, then deletes named
+root log/artifact evidence files and three files per known phase. Partial generation/check
 failure follows the same path. Unknown files or failed removal prevent rmdir
 and retain the recorded path; no recursive prune or foreign-resource cleanup.
 The first full owner run passed both profiles, including initial/restart signed
 source reads and original custody/retained-value checks. Source success cannot
 substitute for published qualification or public grandparent acceptance.
+The selected artifact verifier requires actual PID 1 effective UID 10006 on both
+initial and restarted provider containers. Bounded private status/exit records
+join exact fixture cleanup; only validated role/PID/UID reaches public output.

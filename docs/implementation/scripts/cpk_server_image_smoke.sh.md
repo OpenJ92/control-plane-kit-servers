@@ -87,3 +87,6 @@ controller records and a local Unix daemon socket only in this controller. The
 owned record directory carries the unique managed workspace and absence marker;
 unverified cleanup preserves the records and fails. Fixed input preloading is
 an explicit workflow prerequisite, not a scenario repair step.
+The selected artifact verifier also requires actual PID 1 effective UID 10001
+at startup. Its bounded private status/exit records are part of the existing
+exact fixture cleanup; this does not replace Config.User or container identity checks.

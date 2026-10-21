@@ -44,7 +44,8 @@ PROVIDER="$RUN_ID-provider"
 cleanup_records() {
   [ -n "$CONTROL_RECORDS" ] || return 0
   rm -f "$CONTROL_RECORDS/provider.log" "$CONTROL_RECORDS/log.status" \
-    "$CONTROL_RECORDS/artifact-provenance.json" "$CONTROL_RECORDS/artifact-provenance.status" || return 1
+    "$CONTROL_RECORDS/artifact-provenance.json" "$CONTROL_RECORDS/artifact-provenance.status" \
+    "$CONTROL_RECORDS/artifact-pid1.status" "$CONTROL_RECORDS/artifact-pid1.exit" || return 1
   for phase in initial restart; do
     rm -f "$CONTROL_RECORDS/$phase/control.json" \
       "$CONTROL_RECORDS/$phase/surface.headers" "$CONTROL_RECORDS/$phase/health.headers" || return 1

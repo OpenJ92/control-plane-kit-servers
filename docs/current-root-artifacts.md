@@ -50,6 +50,13 @@ execution ID and starts that ID with pull disabled. Missing cache or identity
 drift refuses. Reference/manifest digest is never equated with execution/config
 ID. Actual container Image must match; the cache mapping is rechecked.
 
+At CPK startup and both Secrets starts, a bounded read of `/proc/1/status` inside
+the actual selected container must report effective UID 10001 or 10006,
+respectively. This observes the running server, rather than the probe process's
+default user. Missing, malformed, duplicate, oversized or wrong-UID observations
+refuse. Raw status stays in private fixture evidence and is removed by its owner;
+only the validated role, PID and effective UID are reported. No environment is read.
+
 Probes read selected installed `direct_url.json` from the actual artifact. The
 gate's immutable canonical cohort supplies exact URLs and subdirectories:
 Core/Operations must select their own subdirectories; SDK/Interpreters/Secrets
