@@ -100,7 +100,8 @@ class DockerManagedNativeConnection:
                     or request.operation != realization.plan.activity(activity).operation):
                 raise ValueError
             original, receipt = None, None
-            if mode is ConnectorConnectionQualification.RETAINED_CONTENT_UPDATE:
+            if mode in (ConnectorConnectionQualification.RETAINED_CONTENT_UPDATE,
+                        ConnectorConnectionQualification.RETAINED_IMAGE_INGRESS_UPDATE):
                 installation = realization.connector_installation
                 if installation is not None:
                     original, receipt = installation.original_request, installation.receipt

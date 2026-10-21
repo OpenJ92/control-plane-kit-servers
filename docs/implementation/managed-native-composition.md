@@ -1,6 +1,6 @@
 # Managed native connection composition
 
-## #291 target checkpoint and evidence boundary
+## #291 forwarding implementation and evidence boundary
 
 The selected cohort supplies Core's retained-image compiler, Operations'
 retained-image profile and Interpreters' retained-image qualification. Targets
@@ -13,10 +13,20 @@ valid image proof must reach one unavailable-provider read and return UNKNOWN
 correlated to the current effect. Missing proof or a separately valid original
 installation for foreign material must return REFUSED before SDK I/O. Patched
 observer assertions establish exact input identity only; no connected sample
-or real native readiness is invented. The production forwarding branch still
-recognizes only retained-content updates at this target checkpoint, so the
-valid-image target and image proof-identity assertion are expected to fail.
-No owning run has yet established that red boundary.
+or real native readiness is invented. Production now explicitly forwards the
+same original request/receipt for retained-image and retained-content modes.
+The qualifier, whole plan, current authority, current request correlation,
+result conversion and single synchronous observer call remain unchanged.
+
+The initial target checkpoint `3fae9dd` produced two intended forwarding
+failures plus two stale provenance-expectation failures. After eleven current
+source expectations were corrected, `f9becb96` run39600550494/job119223650616
+passed 26 policy tests, root60, connector80 and gateway61, then ran CPK478
+with exactly the two intended forwarding failures and zero errors. Kepler
+independently accepted that causal red. Native tests and fixture are unchanged
+for this implementation; full green and later runtime/residue stages remain
+pending. The target/dependency checkpoint notes in pin companions record those
+earlier states, not a completed source or live acceptance.
 
 The existing synthetic native/ingress Docker image witness retains its actual
 workload replacement/history/cleanup evidence. Final genuine connector and
@@ -62,8 +72,10 @@ controller placement is required only for gateway-local readiness. There is
 no ambient enablement, new registry, automatic image choice or support file.
 
 Selection retains the original complete plan and performs no SDK, clock, binding
-or secret read. The accepted interpreter qualifies fresh creation or its bounded
-retained content-update shape. `WaitForHealthy` is unsupported by this managed
+or secret read. The accepted interpreter qualifies fresh creation, its bounded
+retained content-update shape or the exact retained-image ingress plan compiled
+by Core. Servers does not reconstruct that plan or infer mode from a fixed
+activity count. `WaitForHealthy` is unsupported by this managed
 composition. Runtime execution rechecks the request, current authority and
 selection before invoking the synchronous observer once through
 `asyncio.to_thread`. The retained path passes the Operations-owned original
