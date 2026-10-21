@@ -8,6 +8,7 @@ from control_plane_kit_core.planning import StartNode, NodeTarget
 from control_plane_kit_core.products import ProductDescriptorCodec, ProductReference
 from control_plane_kit_core.runtime_effects import RuntimeEffectResult, RuntimeProductMaterial
 from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC
+from control_plane_kit_interpreters.docker.sdk import DockerSdkClient
 
 from docker_image_update_material import DockerImageMaterial, IMAGES, image_value
 from image_identity_test_material import qualified_images
@@ -60,7 +61,10 @@ class ContainmentTests(unittest.TestCase):
 
 class SelectedStartImageTests(unittest.TestCase):
     def fixture(self, role="hello_family", *, expected_role=None):
-        engine, sdk = Mock(), Mock()
+        engine = Mock()
+        sdk = DockerSdkClient(client=Mock(), connect_on_init=False)
+        sdk.inspect_container = Mock()
+        sdk.close = Mock()
         engine.info.return_value = {"ID": "daemon-a"}
         product = DockerImageMaterial("workspace-a").documents["api-y"].product
         document = ProductDescriptorCodec().encode_document(replace(product,

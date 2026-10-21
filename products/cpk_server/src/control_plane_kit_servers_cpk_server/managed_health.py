@@ -1,6 +1,7 @@
 """Operations-to-Interpreter managed health composition; no admission or stores."""
 import asyncio
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from control_plane_kit_core.delegation_keys import DelegationKeyPurpose
 from control_plane_kit_core.node_control import NodeControlGraphReference, NodeControlGraphReferenceRole
@@ -25,7 +26,9 @@ from control_plane_kit_servers_cpk_local_gateway.health_relay_configuration impo
     ARTIFACT_ID as TARGETS_ARTIFACT_ID, CONFIGURATION_PATH as TARGETS_PATH,
 )
 from .health_receiver_adapters import select_own_health_configuration, select_gateway_health_route_binding
-from .managed_health_placement import DockerRuntimeClientSelector
+
+if TYPE_CHECKING:
+    from .managed_health_placement import DockerRuntimeClientSelector
 
 
 class ManagedHealthUnavailable(RuntimeError):
@@ -76,12 +79,14 @@ def _own_selection(products, graph, node_id, preparation, side):
 @dataclass(frozen=True, slots=True, repr=False)
 class ManagedHealthBridge:
     reader: object
-    provider_clients: DockerRuntimeClientSelector
+    provider_clients: "DockerRuntimeClientSelector"
     endpoints: object | None
     decoders: object
     native: object | None = None
 
     def __post_init__(self):
+        from .managed_health_placement import DockerRuntimeClientSelector
+
         if (type(self.provider_clients) is not DockerRuntimeClientSelector
                 or (self.native is not None
                     and getattr(self.native, "provider_clients", None) is not self.provider_clients)):
@@ -238,7 +243,7 @@ class ManagedHealthBootstrap:
     Local readiness always uses the real bounded socket transport.
     """
     gateway_documents: tuple
-    provider_clients: DockerRuntimeClientSelector
+    provider_clients: "DockerRuntimeClientSelector"
     endpoints: object | None = None
     native: object | None = None
     public_client: object | None = None

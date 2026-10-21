@@ -58,3 +58,28 @@ Security/history: no new authority, store, exposure or provider mutation. Curren
 authority, complete plans, product/receiver/route checks and signed observations
 remain mandatory; unsupported plans cannot partially dispatch. Caller-owned
 clients are not closed. Startup and live225 remain separately held.
+
+## Full-gate correction
+
+The first source gate (run39528984377, tested merge c2879d677694cdf201033b917590a6fa7499ba59)
+passed all nine new targets but failed the CPK suite: 476 methods, one failure
+and23 errors. The source PASS for14304bea was withdrawn pending correction.
+Twenty-two errors came from indirect owned-placement test callers still passing
+bare Mock SDKs, and one from a synthetic placement missing its selector. The
+failure exposed a new eager import from managed_health into placement/Docker
+that violated the existing disabled-runtime zero-import law. Later runtime
+witnesses were not reached; this run provides no full acceptance.
+
+The bounded correction supplies actual nonconnecting SDK instances with the
+existing mocked inspection seams in the two test owners, and an explicit empty
+typed selector in the isolated pure synthetic-selection fixture. Production
+nominal checks and every existing assertion remain. The selector annotation is
+typing-only at module import; actual bridge construction imports and validates
+the exact selector class locally. No provider capability is added to disabled
+startup. All indirect owned-placement/synthetic constructors were inspected;
+the live witness already supplies an actual SDK and its owned selector.
+
+North released this correction after independent diagnosis. The nine target
+tests are unchanged; corrected-source review and a full ordinary owning gate
+are still required. Failure evidence and rationale are recorded on PR290 in
+comment6306008167. No factory/lifetime/retained-image law is changed here.
