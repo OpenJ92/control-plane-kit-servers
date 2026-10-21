@@ -45,13 +45,16 @@ Accepted Interpreters528fb206 supplies both fixed Unix acquisition and the pure
 qualifier. Target run39622335625 reached26 policy/root60/connector80/gateway61
 passing tests, then CPK491 with exactly13 missing-binding assertions and no
 errors; all478 prior CPK methods passed. Kepler accepted that causal red. The
-thirteen reviewed targets are unchanged for implementation. Full owning green
-is pending source review; no source-process or live qualification is claimed.
+thirteen reviewed targets stayed unchanged for implementation. Full owning run
+39623706350 passed26 policy/827 package methods and later normal witnesses;
+Kepler FINAL6319834414 preceded accepted merge6b1bcd9. This is source acceptance,
+not live qualification.
 
-This is programmatic composition only. Issue294 separately owns the bounded
-startup schema and one canonical policy across execution, reconciliation and
-native reads. No environment enablement, image publication, retained deployment
-change or live225/291/284 acceptance follows from this source change.
+That #293 slice is programmatic composition. The [#294 startup format](managed-health-startup.md)
+adds opt-in environment composition and one canonical policy across execution,
+reconciliation and native reads; its source/gate status is recorded separately.
+Neither slice implies image publication, retained deployment changes or
+live225/291/284 acceptance.
 
 ## #291 forwarding implementation and evidence boundary
 

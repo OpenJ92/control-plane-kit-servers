@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 import json
 import os
@@ -84,6 +84,10 @@ from .http_host import install_operator_http_routes
 from control_plane_kit_operations.health_receiver_trust import HealthReceiverDecoders
 from .operations_application import OperationsApplicationFactory, OperationsEffectPorts, OperationsIdFactories
 from .managed_health import ManagedHealthBootstrap
+from .managed_health_configuration import (
+    ManagedHealthProcessConfiguration, read_managed_health_process_configuration,
+)
+from .managed_native_connection import DockerManagedNativeConnection
 from control_plane_kit_core.receiver_configuration import ReceiverNodeControlConfiguration
 from control_plane_kit_server_sdk.fastapi import install_cpk_wrapper
 from .boundary import (
@@ -105,6 +109,7 @@ from .composition import (
 
 
 _DEFAULT_PUBLIC_DNS_RESOLVER_ENDPOINT = "https://1.1.1.1/dns-query"
+_MANAGED_HEALTH_INVALID = "managed health process configuration is invalid"
 
 
 class BootstrapConfigurationError(ValueError):
@@ -191,11 +196,35 @@ class CpkServerBootstrapConfiguration:
         StaticDevelopmentPrincipalCredential, ...
     ] = field(default=(), repr=False, compare=False, hash=False)
     managed_health: ManagedHealthBootstrap | None = field(default=None, repr=False, compare=False)
+    managed_health_process: ManagedHealthProcessConfiguration | None = field(
+        default=None, repr=False, compare=False)
 
     @classmethod
     def from_environment(
         cls,
         environ: Mapping[str, str] | None = None,
+    ) -> "CpkServerBootstrapConfiguration":
+        values = dict(os.environ if environ is None else environ)
+        mode = values.get("CPK_MANAGED_HEALTH", "disabled")
+        path_key = "CPK_MANAGED_HEALTH_CONFIGURATION_FILE"
+        if mode == "disabled" and path_key not in values:
+            return cls._from_environment(values)
+        try:
+            if mode != "docker-unix-v1" or path_key not in values:
+                raise ValueError
+            process = read_managed_health_process_configuration(values[path_key])
+            config = replace(cls._from_environment(values), managed_health_process=process)
+            _validate_managed_health_process(config)
+            return config
+        except (ValueError, TypeError, AttributeError, KeyError, OverflowError,
+                RecursionError, ModuleNotFoundError):
+            pass
+        raise BootstrapConfigurationError(_MANAGED_HEALTH_INVALID)
+
+    @classmethod
+    def _from_environment(
+        cls,
+        environ: Mapping[str, str],
     ) -> "CpkServerBootstrapConfiguration":
         values = dict(os.environ if environ is None else environ)
         mode = _required(values, "CPK_SERVER_MODE")
@@ -476,6 +505,7 @@ def create_app(
 ) -> FastAPI:
     """Create the hosted cpk-server FastAPI application."""
 
+    _validate_managed_health_process(config)
     cpk_control_configuration_artifact(control)
     composition = create_cpk_server_composition(config.process_configuration())
     app = FastAPI(
@@ -758,6 +788,7 @@ def _static_principals(
 def _operations_application(
     config: CpkServerBootstrapConfiguration,
 ) -> CpkServerOperationsApplication:
+    _validate_managed_health_process(config)
     database_url = config.operations_database_url()
     _install_operations_schema(database_url)
 
@@ -773,6 +804,7 @@ def _operations_application(
 
 
 def _operations_effect_ports(config, provider):
+    _validate_managed_health_process(config)
     runtimes = None
     if config.runtime_dispatcher.enabled:
         if config.runtime_dispatcher.runtime_kinds != (RuntimeKind.DOCKER,):
@@ -786,10 +818,20 @@ def _operations_effect_ports(config, provider):
     ingress = (_ingress_interpreters(config, provider) if config.ingress_interpreters.enabled else None)
     health = None
     decoders = HealthReceiverDecoders(())
-    if config.managed_health is not None:
-        if type(config.managed_health) is not ManagedHealthBootstrap:
+    bootstrap = config.managed_health
+    process = getattr(config, "managed_health_process", None)
+    if process is not None:
+        bootstrap = ManagedHealthBootstrap(
+            gateway_documents=process.gateway_documents,
+            provider_clients=process.provider_clients,
+            endpoints=None,
+            native=DockerManagedNativeConnection(process.provider_clients,
+                process.native_product_document, clock=lambda: datetime.now(timezone.utc)),
+        )
+    if bootstrap is not None:
+        if type(bootstrap) is not ManagedHealthBootstrap:
             raise BootstrapConfigurationError("managed health composition is invalid")
-        health = config.managed_health.build(provider.authorized_resolver)
+        health = bootstrap.build(provider.authorized_resolver)
         decoders = health.decoders
     return OperationsEffectPorts(runtimes, ingress, health, decoders,
         _runtime_observer(config, secret_provider=provider), _UnsupportedExecutionAdapter(),
@@ -1117,6 +1159,7 @@ def _docker_runtime_observer(
     config: CpkServerBootstrapConfiguration,
     secret_provider: "_SecretProviderComposition | None" = None,
 ):
+    _validate_managed_health_process(config)
     try:
         from control_plane_kit_interpreters.docker import (
             DockerLocalAmbientClientConfig,
@@ -1129,6 +1172,12 @@ def _docker_runtime_observer(
             "control-plane-kit-interpreters[docker]"
         ) from error
     provider = secret_provider or _secret_provider_composition(config)
+    process = getattr(config, "managed_health_process", None)
+    if process is not None:
+        return DockerRuntimeEffectObserver(
+            local_client_config=process.local_client_config,
+            authorized_secret_resolver=provider.authorized_resolver,
+        )
     return DockerRuntimeEffectObserver(
         DockerSdkClient.from_authority(
             DockerLocalAmbientClientConfig(),
@@ -1142,6 +1191,7 @@ def _docker_runtime_interpreter(
     config: CpkServerBootstrapConfiguration,
     secret_provider: "_SecretProviderComposition | None" = None,
 ):
+    _validate_managed_health_process(config)
     try:
         from control_plane_kit_interpreters.docker import (
             DockerLocalAmbientClientConfig,
@@ -1154,6 +1204,12 @@ def _docker_runtime_interpreter(
             "control-plane-kit-interpreters[docker]"
         ) from error
     provider = secret_provider or _secret_provider_composition(config)
+    process = getattr(config, "managed_health_process", None)
+    if process is not None:
+        return DockerRuntimeInterpreter(
+            local_client_config=process.local_client_config,
+            authorized_secret_resolver=provider.authorized_resolver,
+        )
     return DockerRuntimeInterpreter(
         DockerSdkClient.from_authority(
             DockerLocalAmbientClientConfig(),
@@ -1348,6 +1404,48 @@ class _LocalDevelopmentAuthorizedSecretResolver:
         return "LocalDevelopmentAuthorizedSecretResolver(<redacted>)"
 
 
+def _provider_bootstrap_registry(config):
+    """Pure structural validation; credential files are not opened here."""
+    from control_plane_kit_core.secrets import SecretProviderEndpointReference
+    from control_plane_kit_interpreters.secret_provider import SecretProviderBootstrapRegistry
+
+    return SecretProviderBootstrapRegistry(
+        endpoints={
+            SecretProviderEndpointReference(reference_id): endpoint
+            for reference_id, endpoint in _validated_bootstrap_mapping_json(
+                config.material_provider_routes_json
+            ).items()
+        },
+        credential_files={
+            SecretReference(reference_id): Path(path)
+            for reference_id, path in _validated_bootstrap_mapping_json(
+                config.material_provider_bootstrap_files_json
+            ).items()
+        },
+    )
+
+
+def _validate_managed_health_process(config):
+    process = getattr(config, "managed_health_process", None)
+    if process is None:
+        return
+    try:
+        if (type(process) is not ManagedHealthProcessConfiguration
+                or config.managed_health is not None
+                or config.mode != "execution-capable"
+                or config.runtime_dispatcher.runtime_kinds != (RuntimeKind.DOCKER,)
+                or config.product_material_resolver != "provider"
+                or config.product_secret_values_json is not None):
+            raise ValueError
+        process.__post_init__()
+        _provider_bootstrap_registry(config)
+        return
+    except (ValueError, TypeError, AttributeError, KeyError, OverflowError,
+            RecursionError, ModuleNotFoundError):
+        pass
+    raise BootstrapConfigurationError(_MANAGED_HEALTH_INVALID)
+
+
 def _secret_provider_composition(
     config: CpkServerBootstrapConfiguration,
     *,
@@ -1381,35 +1479,18 @@ def _secret_provider_composition(
     ):
         raise AssertionError("provider bootstrap registries validated")
     try:
-        from control_plane_kit_core.secrets import (
-            SecretProviderEndpointReference,
-        )
         from control_plane_kit_interpreters.secret_provider import (
             ControlPlaneKitSecretsCustodian,
             ControlPlaneKitSecretsResolver,
             ControlPlaneKitSecretsMetadataReader,
             SecretProviderBootstrapError,
-            SecretProviderBootstrapRegistry,
         )
     except ModuleNotFoundError:
         raise BootstrapConfigurationError(
             "secret provider integration is unavailable"
         ) from None
     try:
-        registry = SecretProviderBootstrapRegistry(
-            endpoints={
-                SecretProviderEndpointReference(reference_id): endpoint
-                for reference_id, endpoint in _validated_bootstrap_mapping_json(
-                    config.material_provider_routes_json
-                ).items()
-            },
-            credential_files={
-                SecretReference(reference_id): Path(path)
-                for reference_id, path in _validated_bootstrap_mapping_json(
-                    config.material_provider_bootstrap_files_json
-                ).items()
-            },
-        )
+        registry = _provider_bootstrap_registry(config)
     except (
         SecretProviderBootstrapError,
         SecretResolutionError,
