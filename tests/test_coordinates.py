@@ -38,22 +38,6 @@ def load_product_image_script_module():
 
 
 class CoordinateGenerationTests(unittest.TestCase):
-    def test_bootstrap_driver_secrets_pin_is_a_generated_destination(self) -> None:
-        module = load_script_module()
-        coordinates = module.load_coordinates(module.COORDINATES)
-        original = module.generate_updates(coordinates)
-        destination = ROOT / "products/cpk_server/Dockerfile.bootstrap"
-        self.assertIn(destination, original, "bootstrap dependency destination omitted from generation")
-        changed = copy.deepcopy(coordinates)
-        changed["upstreams"]["control_plane_kit_secrets_commit"] = "f" * 40
-        generated = module.generate_updates(changed)
-        old = coordinates["upstreams"]["control_plane_kit_secrets_commit"].encode()
-        self.assertIn(old, original[destination])
-        self.assertEqual(generated[destination], original[destination].replace(old, b"f" * 40))
-        for path, content in original.items():
-            if path.suffix == ".json":
-                self.assertEqual(generated[path], content)
-
     def test_shared_archive_pin_splits_by_package_subdirectory(self) -> None:
         module = load_script_module()
         archive = "https://github.com/OpenJ92/control-plane-kit/archive/" + "f" * 40 + ".zip"

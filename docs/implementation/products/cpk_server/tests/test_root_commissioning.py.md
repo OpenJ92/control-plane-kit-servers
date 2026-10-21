@@ -23,3 +23,10 @@ using only image-owned product source paths plus installed dependencies. Unit
 green alone cannot establish that packaging boundary. Existing launcher setup,
 no-redispatch and cleanup assertions remain in force. Production commissioning,
 image publication and later website wiring remain outside this target set.
+
+The bootstrap recipe's coordinate-generation target lives in this CPK suite.
+The normal runner stops after a failed suite: keeping it here permits one
+causal-red run to reach both the missing commissioning interface and dependency
+destination. The generator and root coordinate suite retain their existing
+ownership; no collection or runner behavior changes. Synthetic Secrets pin
+drift must update this recipe while preserving generated JSON product documents.

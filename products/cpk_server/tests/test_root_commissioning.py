@@ -4,6 +4,7 @@ import copy
 import fcntl
 from hashlib import sha256
 import importlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -507,6 +508,29 @@ else:
             self.assertFalse(runs)
             self.assertFalse(destination.exists())
             self.assertEqual(stat.S_IMODE(parent.stat().st_mode), previous_mode)
+
+
+class RootCommissioningCoordinateTests(unittest.TestCase):
+    def test_bootstrap_driver_secrets_pin_is_a_generated_destination(self):
+        root = Path(__file__).resolve().parents[3]
+        spec = importlib.util.spec_from_file_location("commissioning_coordinates", root / "scripts/apply_coordinates.py")
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        coordinates = module.load_coordinates(module.COORDINATES)
+        original = module.generate_updates(coordinates)
+        destination = root / "products/cpk_server/Dockerfile.bootstrap"
+        self.assertIn(destination, original, "bootstrap dependency destination omitted from generation")
+        changed = copy.deepcopy(coordinates)
+        changed["upstreams"]["control_plane_kit_secrets_commit"] = "f" * 40
+        generated = module.generate_updates(changed)
+        old = coordinates["upstreams"]["control_plane_kit_secrets_commit"].encode()
+        self.assertIn(old, original[destination])
+        self.assertEqual(generated[destination], original[destination].replace(old, b"f" * 40))
+        for path, content in original.items():
+            if path.suffix == ".json":
+                self.assertEqual(generated[path], content)
 
 
 if __name__ == "__main__":
