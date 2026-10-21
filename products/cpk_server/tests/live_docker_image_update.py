@@ -116,7 +116,7 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
 
     def endpoint_for(raw):
         request = core.ReceiverHealthReadRequestCodec().decode(raw)
-        selected = placement.reader.read(workspace_id=workspace, runtime_id="docker",
+        selected = placement.reader.read(provider_binding=placement.provider, workspace_id=workspace, runtime_id="docker",
             authority=registered_authority, gateway_node_id="gateway", socket_name="control", port=8000,
             graph_id=request.authority_context.authored_graph_id)
         return selected.endpoint.address.value
@@ -125,7 +125,7 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
     public = SignedGatewayHealthClient(clock=lambda: int(time.time()),
         public_resolver=SyntheticIngressAddressResolver("cpk-1912.example.invalid"),
         transport=health_socket)
-    health = ManagedHealthBootstrap((material.documents["gateway"],), placement.reader,
+    health = ManagedHealthBootstrap((material.documents["gateway"],), placement.provider_clients, endpoints=placement.reader,
         native=native, public_client=public).build(provider.composition.authorized_resolver)
     with IsolatedOperationsSchema(database_url, "cpk_1912_image_" + uuid4().hex) as schema:
         factory = OperationsApplicationFactory(schema.unit_of_work,

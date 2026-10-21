@@ -16,7 +16,10 @@ from receiver_acceptance_material import AuthoredMaterial
 class ManagedHealthBridgeSelectionTests(unittest.TestCase):
     def setUp(self):
         from control_plane_kit_servers_cpk_server.managed_health import ManagedHealthBridge
-        from control_plane_kit_servers_cpk_server.managed_health_placement import DockerControllerPlacement, DockerGatewayEndpointReader
+        from control_plane_kit_servers_cpk_server.managed_health_placement import (
+            DockerControllerPlacement, DockerGatewayEndpointReader, DockerRuntimeClientBinding, DockerRuntimeClientSelector,
+        )
+        from control_plane_kit_interpreters.docker import DockerSdkClient
         self.material = AuthoredMaterial()
         graph = self.material.a
         retained = {"gateway", "connector"}
@@ -36,12 +39,15 @@ class ManagedHealthBridgeSelectionTests(unittest.TestCase):
             ProductReference.from_document(document), document, InlineDescriptorSource(),
             "operator", "2026-10-13T00:00:00Z") for name, document in self.material.documents.items())
         self.client, self.bindings, self.reader = Mock(), Mock(), Mock()
-        self.endpoints = DockerGatewayEndpointReader((DockerControllerPlacement("workspace-a", "docker",
-            self.authority.authority_ref, "c" * 64, self.client),), self.bindings)
+        self.sdk = DockerSdkClient(client=self.client, connect_on_init=False)
+        self.provider = DockerRuntimeClientBinding("workspace-a", "docker", self.authority.authority_ref, self.sdk)
+        self.provider_clients = DockerRuntimeClientSelector((self.provider,))
+        self.endpoints = DockerGatewayEndpointReader((DockerControllerPlacement(self.provider, "c" * 64),), self.bindings)
         self.native = Mock()
+        self.native.provider_clients = self.provider_clients
         self.native.select.return_value = tuple(item.activity_id for item in self.plan.activities
             if is_native_connection_operation(item.operation))
-        self.bridge = ManagedHealthBridge(self.reader, self.endpoints, self.material.decoders, self.native)
+        self.bridge = ManagedHealthBridge(self.reader, self.provider_clients, self.endpoints, self.material.decoders, self.native)
 
     def select(self, bridge=None, authorities=None):
         return (bridge or self.bridge).select(plan=self.plan, current=self.current, desired=self.desired,
@@ -177,7 +183,7 @@ class ManagedHealthBridgeSelectionTests(unittest.TestCase):
                 self.assertIs(args.kwargs["local_destination"], endpoint if local else None)
                 if local:
                     self.assertIsNone(args.kwargs["destination"])
-                    read.assert_called_once_with(workspace_id="workspace-a", runtime_id="docker",
+                    read.assert_called_once_with(provider_binding=self.provider, workspace_id="workspace-a", runtime_id="docker",
                         authority=self.authority, gateway_node_id="gateway", socket_name="control", port=8000,
                         graph_id="graph-desired")
                 else:

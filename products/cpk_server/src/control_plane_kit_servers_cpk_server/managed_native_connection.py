@@ -19,23 +19,23 @@ from control_plane_kit_operations.effect_outcome_evidence import (
 from control_plane_kit_operations.runtime_management_targets import is_native_connection_operation
 
 from .managed_health import ManagedHealthUnavailable, _authority, _graph_pair, _product
-from .managed_health_placement import DockerGatewayEndpointReader
+from .managed_health_placement import DockerRuntimeClientSelector
 
 
 @dataclass(frozen=True, slots=True, repr=False)
 class DockerManagedNativeConnection:
-    """One explicitly reviewed managed product and provisioner-owned placements.
+    """One explicitly reviewed managed product and caller-owned scoped clients.
 
     Registered product values must match this process capability. Neither that
-    match nor a placement grants execution authority or qualifies a live image.
+    match nor a binding grants execution authority or qualifies a live image.
     """
-    endpoints: DockerGatewayEndpointReader
+    provider_clients: DockerRuntimeClientSelector
     product_document: ProductDescriptorDocument
     clock: Callable[[], datetime]
 
     def _selected(self, *, plan, current, desired, registered_products, runtime_authorities):
         try:
-            if (type(self.endpoints) is not DockerGatewayEndpointReader
+            if (type(self.provider_clients) is not DockerRuntimeClientSelector
                     or type(self.product_document) is not ProductDescriptorDocument
                     or not callable(self.clock)):
                 return None
@@ -54,14 +54,14 @@ class DockerManagedNativeConnection:
                 resolved = resolve_management_observation(operation, *pair, expected_operation=operation)
                 runtime = resolved.selected_graph.graph.runtimes[operation.target.runtime_id]
                 authority = _authority(runtime_authorities, runtime)
-                placement = self.endpoints.select(workspace_id=authority.workspace_id,
+                binding = self.provider_clients.select(workspace_id=authority.workspace_id,
                     runtime_id=runtime.runtime_id, authority=authority)
-                if placement is None or type(placement.client) is not DockerSdkClient:
+                if binding is None or type(binding.client) is not DockerSdkClient:
                     return None
                 product = _product(registered_products, authority.workspace_id, resolved.connector_node)
                 if product.reference != reference or product.descriptor_document != document:
                     return None
-                observer = DockerConnectorConnectionObserver(placement.client, reference,
+                observer = DockerConnectorConnectionObserver(binding.client, reference,
                     document.product.image.execution_reference, self.clock,
                     profile=ConnectorConnectionProfile.MANAGED_WRAPPER_V1)
                 mode = observer.qualify_shape(activity_id=activity.activity_id, plan=plan,
