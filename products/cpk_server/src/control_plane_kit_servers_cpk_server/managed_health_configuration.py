@@ -4,6 +4,9 @@ import json
 import os
 import stat
 
+from control_plane_kit_core.configuration import (
+    ConfigurationArtifact, ConfigurationFileMode, ConfigurationMediaType,
+)
 from control_plane_kit_core.products import (
     ProductDescriptorCodec, ProductDescriptorDocument, ProductReference,
 )
@@ -17,6 +20,9 @@ from .managed_health_placement import DockerRuntimeClientSelector, DockerRuntime
 
 
 _INVALID = "managed health process configuration is invalid"
+_INVALID_INSTALLATION = "managed health installation configuration is invalid"
+MANAGED_HEALTH_ARTIFACT_ID = "cpk-managed-health"
+MANAGED_HEALTH_CONFIGURATION_PATH = "/etc/cpk/cpk-server/managed-health.json"
 _MAX_BYTES = 1_048_576
 _INPUT_ERRORS = (ValueError, TypeError, AttributeError, KeyError, OverflowError, RecursionError)
 
@@ -120,6 +126,42 @@ def decode_managed_health_process_configuration(raw: bytes) -> ManagedHealthProc
             _documents_text(value["native_product_document"]))
     except _INPUT_ERRORS:
         failure = ValueError(_INVALID)
+    raise failure
+
+
+def managed_health_configuration_artifact(raw: bytes) -> ConfigurationArtifact:
+    """Preserve reviewed UTF-8 bytes in the fixed, public installation slot."""
+    try:
+        if type(raw) is not bytes:
+            raise ValueError
+        artifact = ConfigurationArtifact(
+            MANAGED_HEALTH_ARTIFACT_ID, MANAGED_HEALTH_CONFIGURATION_PATH,
+            ConfigurationMediaType.JSON, raw.decode("utf-8"), ConfigurationFileMode.READ_ONLY,
+        )
+        _managed_health_configuration_from_artifact(artifact)
+        return artifact
+    except _INPUT_ERRORS:
+        failure = ValueError(_INVALID_INSTALLATION)
+    raise failure
+
+
+def _managed_health_configuration_from_artifact(
+    artifact: ConfigurationArtifact,
+) -> ManagedHealthProcessConfiguration:
+    """Revalidate caller-owned metadata and content before installation use."""
+    try:
+        if (type(artifact) is not ConfigurationArtifact
+                or artifact.artifact_id != MANAGED_HEALTH_ARTIFACT_ID
+                or artifact.target_path != MANAGED_HEALTH_CONFIGURATION_PATH
+                or artifact.media_type is not ConfigurationMediaType.JSON
+                or artifact.file_mode is not ConfigurationFileMode.READ_ONLY):
+            raise ValueError
+        # Core checks content_digest against bytes and validates source_digest
+        # syntax. A distinct source_digest is metadata, not authenticated origin.
+        checked = ConfigurationArtifact.from_descriptor(artifact.descriptor())
+        return decode_managed_health_process_configuration(checked.content.encode("utf-8"))
+    except _INPUT_ERRORS:
+        failure = ValueError(_INVALID_INSTALLATION)
     raise failure
 
 

@@ -113,6 +113,8 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
                 "CPK_CONTROL_AUTH_STATIC_WORKSPACE_GRANTS_JSON",
                 "CPK_PORT",
                 "CPK_RUNTIME_INTERPRETERS",
+                "CPK_MANAGED_HEALTH",
+                "CPK_MANAGED_HEALTH_CONFIGURATION_FILE",
                 "CPK_INGRESS_INTERPRETERS",
                 "CPK_GATEWAY_PROBE_SIGNER",
                 "CPK_PUBLIC_DNS_RESOLVER_ENDPOINT",

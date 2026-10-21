@@ -1,11 +1,15 @@
 Source: [test_managed_health_installation.py](../../../../../products/cpk_server/tests/test_managed_health_installation.py).
 
-Servers #297 CONTRACT PASS6321483838 freezes the product helper/constants,
+Servers #297 CONTRACT PASS 6321483838 freezes the product helper/constants,
 optional installation artifact and closed root descriptor field. Accepted
-predecessor53b15a13 supplies #294's process decoder/reader/composition. These16
+predecessor 53b15a13 supplies #294's process decoder/reader/composition. These 16
 targets precede implementation. setUp asserts the genuinely missing artifact
-constructor before creating fixtures; expected causal red is16 missing-interface
-assertions with collection/imports intact. No test has run yet.
+constructor before creating fixtures. Normal owning run 39639824385 collected
+523 CPK tests: exactly 16 missing-interface failures, zero errors, and all 507
+prior tests passed. Policy and earlier package groups passed; later gates were
+unreached. PR #298 comment 6321825637 records the raw log hash, tested merge,
+parents and tree. Downstream target assertions still require implementation
+and full owning validation; the red run does not establish those laws green.
 
 Law cards MHI-01 through MHI-10 are recorded on #297. Tests preserve exact outer
 JSON bytes/whitespace, fixed JSON0444 slot, original content digest and valid
@@ -46,6 +50,8 @@ image startup; delivery/receipt/no-retry behavior remains with #226 and the
 unchanged full owner gate.
 
 Independent TARGET review and normal owner causal red precede source work.
-All existing tests, source, pins, policy and runner remain unchanged. No
+The image-bootstrap contract test adds only the two newly declared environment
+names to its exact expected list; its existing assertions remain intact.
+The 16 new target methods, pins, policy and runner remain unchanged. No
 credentials, live provider resources, image publication or retained deployment
 are involved.

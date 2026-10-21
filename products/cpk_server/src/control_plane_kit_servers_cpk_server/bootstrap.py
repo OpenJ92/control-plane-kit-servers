@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 from typing import Mapping
 
+from control_plane_kit_core.configuration import ConfigurationArtifact
 from control_plane_kit_core.identity import WorkspaceGrant
 from control_plane_kit_core.policies import PolicyScope
 from control_plane_kit_core.products import ProductDescriptorCodec
@@ -207,7 +208,8 @@ def _installation(document):
         raise RootBootstrapError("bootstrap input schema is invalid")
     item = document["installation"]
     _closed(item, {"installation_id", "workspace_id", "runtime_authority", "runtime_access",
-        "products", "references", "workspace_grants", "provider_endpoint_ref", "external_endpoint"}, {"control_auth"})
+        "products", "references", "workspace_grants", "provider_endpoint_ref", "external_endpoint"},
+        {"control_auth", "managed_health_configuration"})
     _closed(item["products"], {"cpk", "postgres", "secrets"})
     _closed(item["references"], {"control_credential", "postgres_password", "custody_root_key",
         "provider_credentials_document", "provider_client_credential", "provider_bootstrap_credential_ref"})
@@ -224,6 +226,8 @@ def _installation(document):
         cpk_product=products["cpk"], postgres_product=products["postgres"], secrets_product=products["secrets"],
         workspace_grants=tuple(grants),
         control_auth=ControlAuthCodec().decode(item.get("control_auth", {"kind": "single-operator"})),
+        managed_health_configuration=(ConfigurationArtifact.from_descriptor(item["managed_health_configuration"])
+            if "managed_health_configuration" in item else None),
         provider_endpoint_ref=SecretProviderEndpointReference(item["provider_endpoint_ref"]),
         ingress=ExternalInstallationIngress(item["external_endpoint"]), connector_product=None,
         **{name: SecretReference(value) for name, value in item["references"].items()},

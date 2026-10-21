@@ -142,6 +142,58 @@ image UID with mode `0400` and a read-only mount. Older images declaring the nam
 user `cpk` are unsupported by numeric protected-file delivery. The newly selected
 published CPK image declares numeric `10001`; old image digests remain unchanged.
 
+## Explicit managed-health configuration
+
+Managed health defaults to absent. To include it in a new reviewed installation,
+construct a public artifact from the closed process format described in
+[managed-health startup](../../../docs/managed-health-startup.md):
+
+```python
+from dataclasses import replace
+from control_plane_kit_servers_cpk_server.managed_health_configuration import (
+    managed_health_configuration_artifact,
+)
+
+# reviewed_bytes contains the explicit scopes and canonical product documents.
+artifact = managed_health_configuration_artifact(reviewed_bytes)
+desired = replace(desired, managed_health_configuration=artifact)
+topology = compose_docker_cpk_installation(desired)
+```
+
+The composer adds `cpk-managed-health` at
+`/etc/cpk/cpk-server/managed-health.json`, JSON mode `0444`, and the CPK process
+inputs `CPK_MANAGED_HEALTH=docker-unix-v1` and
+`CPK_MANAGED_HEALTH_CONFIGURATION_FILE=/etc/cpk/cpk-server/managed-health.json`.
+It uses ordinary graph configuration delivery. The selected image coordinates,
+other instances, installation-composed credential references and explicit runtime
+access declaration are preserved. The CPK variant identity changes with the
+artifact content. No image is selected or published by this helper.
+
+The original selected CPK contract must leave those environment names and the
+artifact ID/path unused, including configuration requirements. Even an identical
+existing declaration is refused. Existing base-product restrictions on secret
+deliveries and retained mounts still apply before composition. Unrelated public
+configuration is preserved.
+
+The process Unix socket must match the installation's delivered
+`/var/run/docker.sock`. Managed scope references remain exactly as supplied;
+they may describe future managed workspaces and are not inferred from the
+installation's placement. Declaring them does not admit their authority.
+
+Outer UTF-8 bytes, including JSON whitespace, are preserved. Core computes the
+content digest and checks descriptor digests on admission. A valid distinct
+`source_digest` is retained as caller-asserted metadata, not proof of origin.
+Configuration is public: never put credentials into this artifact.
+
+The artifact limit is 262,144 bytes. The complete composed product independently
+has Core's 262,144-byte document limit, so a maximum-sized artifact will not fit
+inside that envelope. The standalone process reader permits 1,048,576 bytes;
+that larger reader bound does not enlarge topology delivery. Root input and
+plan envelopes each have their own 1,048,576-byte bound, including repeated and
+escaped content. A new artifact requires a freshly reviewed plan and process
+restart. Source tests do not establish that a retained or published image has
+adopted this optional mode.
+
 The owning `./test.sh` exercises three product-owned composition tests using real
 descriptors, graph compilation and the graph codec, followed by the repository's
 existing source/live validation phases. No new test runner or provider fixture is

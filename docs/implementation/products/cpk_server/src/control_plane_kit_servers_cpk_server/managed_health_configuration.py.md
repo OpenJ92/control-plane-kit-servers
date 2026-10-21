@@ -23,3 +23,13 @@ See [startup example](../../../../managed-health-startup.md) for the complete
 fixture-derived format and its source-only evidence limits. Targets and source
 review/owning gate coordinates are recorded on PR296; this companion does not
 claim green validation or live deployment before those gates complete.
+
+Servers #297 adds `managed_health_configuration_artifact(raw)` and constants for
+the fixed `cpk-managed-health` JSON/0444 installation slot. The constructor keeps
+outer UTF-8 bytes intact and reuses the process decoder. Core owns the smaller
+262,144-byte artifact bound, content validation, content digest and provenance
+syntax. Direct typed artifacts are round-tripped through Core's descriptor
+decoder before installation use, catching corrupted digest metadata. Distinct
+valid source digests survive as metadata, not authenticity claims. Delivery
+errors use the separate fixed installation message outside caught context;
+the accepted standalone decoder and reader behavior remain unchanged.
