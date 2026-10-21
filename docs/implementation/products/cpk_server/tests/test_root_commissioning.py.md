@@ -30,3 +30,11 @@ causal-red run to reach both the missing commissioning interface and dependency
 destination. The generator and root coordinate suite retain their existing
 ownership; no collection or runner behavior changes. Synthetic Secrets pin
 drift must update this recipe while preserving generated JSON product documents.
+
+Kepler's TARGET review strengthened durability to require ordered file *and*
+custody-directory fsync before UUID allocation and before key generation. A
+directory-sync fault at each boundary must preserve the incomplete marker,
+perform no premature allocation/generation and hold on reentry. Real CLI
+subprocess tests also exercise differing host/mounted paths via --host-state:
+exact approved host coordinates succeed and reuse, mismatch refuses before
+writes, and the direct library retains its stricter exact-path law.

@@ -208,21 +208,26 @@ class RootCommissioningTests(unittest.TestCase):
         api, state = self.api(), self.custody()
         import uuid
         allocate, generate = uuid.uuid4, Ed25519PrivateKey.generate
-        allocations, generations, persisted = [], [], set()
+        allocations, generations, persisted = [], [], []
         real_fsync = os.fsync
         def persist_checked(fd):
             real_fsync(fd)
-            persisted.add(os.readlink(f"/proc/self/fd/{fd}"))
+            persisted.append(os.readlink(f"/proc/self/fd/{fd}"))
+        def assert_durable_entry(name):
+            self.assertIn(str(state / name), persisted)
+            file_position = len(persisted) - 1 - persisted[::-1].index(str(state / name))
+            self.assertIn(str(state), persisted[file_position + 1:],
+                          "directory entry must be durable before allocation/generation")
         def allocate_checked():
             self.assertTrue((state / "intent.json").is_file())
-            self.assertIn(str(state / "intent.json"), persisted)
+            assert_durable_entry("intent.json")
             self.assertFalse(any((state / name).exists() for name in PURPOSE_FILES.values()))
             value = allocate()
             allocations.append(value.hex)
             return value
         def generate_checked():
             saved = (state / "receivers.json").read_text()
-            self.assertIn(str(state / "receivers.json"), persisted)
+            assert_durable_entry("receivers.json")
             self.assertEqual(len(allocations), 2)
             for receiver in allocations:
                 self.assertIn(receiver, saved)
@@ -233,6 +238,34 @@ class RootCommissioningTests(unittest.TestCase):
             result = self.prepare(api, state)
         self.assertEqual(set(result["receiver_ids"].values()), set(allocations))
         self.assertEqual(len(generations), 2)
+
+    def test_pre_generation_directory_sync_failure_preserves_marker_and_holds_retry(self):
+        api = self.api()
+        import uuid
+        real_allocate, real_fsync = uuid.uuid4, os.fsync
+        for stop in ("intent.json", "receivers.json"):
+            state = self.custody()
+            reached = []
+            def fail_directory_sync(fd):
+                if os.readlink(f"/proc/self/fd/{fd}") == str(state) and (state / stop).exists():
+                    reached.append(stop)
+                    raise OSError("private-canary directory persistence failure")
+                real_fsync(fd)
+            with self.subTest(stop=stop), patch("os.fsync", side_effect=fail_directory_sync), \
+                    patch("uuid.uuid4", wraps=real_allocate) as allocate, \
+                    patch.object(Ed25519PrivateKey, "generate", side_effect=AssertionError("premature key")) as generate:
+                with self.assertRaises(self.hold):
+                    self.prepare(api, state)
+                self.assertEqual(reached, [stop])
+                self.assertEqual(allocate.call_count, 0 if stop == "intent.json" else 2)
+                generate.assert_not_called()
+            self.assertTrue((state / "intent.json").exists())
+            self.assertFalse((state / "complete.json").exists())
+            self.assertFalse(any((state / name).exists() for name in PURPOSE_FILES.values()))
+            before = snapshot(state)
+            with self.no_generation(), self.assertRaises(self.hold):
+                self.prepare(api, state)
+            self.assertEqual(snapshot(state), before)
 
     def test_completion_is_persisted_after_all_inputs_and_directory_sync_follows_rename(self):
         api, state = self.api(), self.custody()
@@ -435,6 +468,35 @@ class RootCommissioningTests(unittest.TestCase):
         self.assertEqual(prepared.returncode, 0, "commissioning prepare CLI failed")
         self.assertEqual(json.loads(prepared.stdout), json.loads((state / "public.json").read_bytes()))
         self.assertNotIn(b"PRIVATE KEY", prepared.stdout + prepared.stderr)
+
+    def test_mapped_cli_binds_approved_host_state_and_refuses_mismatch_before_writes(self):
+        api, state = self.api(), self.custody()
+        approved_host = state.parent / "host-only-commissioning"
+        plan = self.planned(api, approved_host)
+        plan_path = state.parent / "mapped-plan.json"
+        plan_path.write_text(json.dumps(plan))
+        plan_path.chmod(0o600)
+        command = [sys.executable, "-m", MODULE, "prepare", "--plan", str(plan_path),
+            "--digest", plan["digest"], "--preparer", PREPARER, "--state", str(state), "--host-state"]
+        refused = subprocess.run(command + [str(state.parent / "wrong-host")], capture_output=True, check=False)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertFalse(list(state.iterdir()))
+        # The library has no implicit mapping exception to its exact-path law.
+        with self.no_generation(), self.assertRaises(self.error):
+            self.prepare(api, state, plan)
+        self.assertFalse(list(state.iterdir()))
+        prepared = subprocess.run(command + [str(approved_host)], capture_output=True, check=False)
+        self.assertEqual(prepared.returncode, 0, "mapped commissioning CLI failed")
+        result = json.loads(prepared.stdout)
+        self.assertEqual(result["intent_digest"], plan["digest"])
+        self.assertEqual(result, json.loads((state / "public.json").read_bytes()))
+        self.assertFalse(approved_host.exists(), "container CLI must not open the host namespace path")
+        self.assertNotIn(b"PRIVATE KEY", prepared.stdout + prepared.stderr + refused.stdout + refused.stderr)
+        before = snapshot(state)
+        repeated = subprocess.run(command + [str(approved_host)], capture_output=True, check=False)
+        self.assertEqual(repeated.returncode, 0, "mapped exact reuse failed")
+        self.assertEqual(json.loads(repeated.stdout), result)
+        self.assertEqual(snapshot(state), before)
 
     def launcher(self, state, action, *arguments):
         """Execute the real shell launcher; replace only the Docker CLI boundary."""
