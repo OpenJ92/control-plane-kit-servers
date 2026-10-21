@@ -1,5 +1,9 @@
 # Shared Docker installation value
 
+For explicit first-root public read trust, see
+[offline root commissioning](root-commissioning.md). Private commissioning
+custody stays separate from installation material; it is never a service mount.
+
 `DockerCpkInstallation` describes one CPK Docker+Cloudflare process, one PostgreSQL
 database for its four stores, one dedicated Secrets process with retained
 custody, and an optional website. `compose_docker_cpk_installation` returns an ordinary Core

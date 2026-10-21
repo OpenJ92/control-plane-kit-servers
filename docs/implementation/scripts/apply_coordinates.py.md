@@ -3,6 +3,13 @@ Source: [scripts/apply_coordinates.py](../../../scripts/apply_coordinates.py).
 The early #181 prerequisite for #208 splits the former common field into required `control_plane_kit_core_commit` and `control_plane_kit_operations_commit`. Archive replacement is scoped by the exact package subdirectory, including when both original URLs share a commit. Every install destination receives only its own selected package coordinate. Coreb79 and Operationsbc559 are independent immutable sources; matching Core subtree evidence does not replace installed compatibility checks. Product source/image coordinates and generated descriptor/catalogue bytes remain unchanged.
 Maintain this companion when the generator or selected dependency contracts change.
 
+Servers #301 adds CPK_BOOTSTRAP_DOCKERFILE as the existing acquisition driver's
+Secrets-only dependency destination. The archive substitution algorithm is
+unchanged. The bootstrap-specific target proves this destination and synthetic
+pin drift in the CPK suite; the existing root destination matrix also includes
+the new recipe so its full-byte preservation law remains exhaustive. Published
+product/catalogue coordinates and service-image recipes are unchanged.
+
 The canonical upstream fields are exact lowercase commits for Core/Operations,
 Interpreters, Secrets and SDK. The loader rejects missing or malformed SDK pins.
 Generation replaces owned archive URLs in the root pyproject, CPK, gateway and

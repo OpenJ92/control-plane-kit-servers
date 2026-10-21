@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 COORDINATES = ROOT / "coordinates" / "server-products.json"
 PYPROJECT = ROOT / "pyproject.toml"
 CPK_SERVER_DOCKERFILE = ROOT / "products" / "cpk_server" / "Dockerfile"
+CPK_BOOTSTRAP_DOCKERFILE = ROOT / "products" / "cpk_server" / "Dockerfile.bootstrap"
 CPK_LOCAL_GATEWAY_DOCKERFILE = (
     ROOT / "products" / "cpk_local_gateway" / "Dockerfile"
 )
@@ -123,6 +124,11 @@ def generate_updates(coordinates: Mapping[str, Any]) -> dict[Path, bytes]:
         core_commit=core_commit, operations_commit=operations_commit,
         interpreters_commit=interpreters_commit,
         secrets_commit=secrets_commit,
+    ).encode("utf-8")
+    updates[CPK_BOOTSTRAP_DOCKERFILE] = _replace_dependency_pins(
+        CPK_BOOTSTRAP_DOCKERFILE.read_text(encoding="utf-8"),
+        sdk_commit=sdk_commit, core_commit=core_commit, operations_commit=operations_commit,
+        interpreters_commit=interpreters_commit, secrets_commit=secrets_commit,
     ).encode("utf-8")
     updates[CPK_LOCAL_GATEWAY_DOCKERFILE] = _replace_dependency_pins(
         CPK_LOCAL_GATEWAY_DOCKERFILE.read_text(encoding="utf-8"),

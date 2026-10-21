@@ -1,8 +1,13 @@
 # External acquisition driver, not a graph product or a replacement server image.
 ARG CPK_IMAGE
 FROM ${CPK_IMAGE}
-COPY products/cpk_server/src /app/products/cpk_server/src
 # Existing SDK archive helpers need root on a new volume. Public setup explicitly
 # drops to the inspected CPK image UID and receives no Docker socket.
 USER 0
+RUN python -m pip install --no-cache-dir \
+    "control-plane-kit-secrets @ https://github.com/OpenJ92/control-plane-kit-secrets/archive/f4747b23872aca537786f86017feb25e0ae83fbd.zip"
+COPY products/cpk_server/src /app/products/cpk_server/src
+COPY products/secrets_server/src /app/products/secrets_server/src
+ENV PYTHONPATH=/app/products/cpk_server/src:/app/products/cpk_local_gateway/src:/app/products/secrets_server/src
+# Commissioning overrides USER explicitly to the approved operator UID/GID.
 CMD ["python", "-m", "control_plane_kit_servers_cpk_server.bootstrap_cli"]
