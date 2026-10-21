@@ -14,3 +14,9 @@ receiver-protocol acceptance for the historical CPK/Secrets images. The existing
 real launcher plan/apply/public setup, numeric identity/socket observation,
 denial/no-redispatch and exact owned cleanup behavior is preserved. Historical
 limitations in those observations remain unchanged.
+
+SOURCE review found that the actual driver inherits the historical published CPK
+image, not the current service Dockerfile. The witness now compares installed
+Core/Operations/SDK/Interpreters/Secrets direct_url.json URLs and subdirectories
+with the exact selected upstream manifest. Version 0.1.0/import success alone
+does not prove cohort alignment. All legacy checks remain unchanged.

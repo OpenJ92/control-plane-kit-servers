@@ -212,9 +212,10 @@ def commissioning_driver_witness(run):
             "custody": {"host_directory": str(state), "uid": os.geteuid(), "gid": os.getegid()}}
         # Synthetic immutable ID binds this isolated library witness. It is not
         # image qualification; the existing launcher separately checks its ID.
-        payload = json.dumps({"intent": document, "preparer": "sha256:" + "a" * 64})
+        selected = json.loads((Path(__file__).resolve().parents[3] / "coordinates/server-products.json").read_text())["upstreams"]
+        payload = json.dumps({"intent": document, "preparer": "sha256:" + "a" * 64, "upstreams": selected})
         program = """
-import importlib, json, pathlib, sys
+import importlib, importlib.metadata, json, pathlib, sys
 from control_plane_kit_core.configuration import ConfigurationArtifact
 from control_plane_kit_secrets.control import decode_secrets_control_configuration
 from control_plane_kit_servers_cpk_server.control_configuration import decode_cpk_control_configuration
@@ -224,6 +225,13 @@ for name, product in (("control_plane_kit_servers_cpk_server.root_commissioning"
     loaded = pathlib.Path(importlib.import_module(name).__file__).resolve()
     assert loaded.is_relative_to(pathlib.Path("/app/products") / product / "src")
 payload = json.loads(sys.stdin.read())
+for name in ("core", "operations", "server_sdk", "interpreters", "secrets"):
+    distribution = "control-plane-kit-" + name.replace("_", "-")
+    repository = "control-plane-kit" if name in ("core", "operations") else distribution
+    selected = payload["upstreams"]["control_plane_kit_" + name + "_commit"]
+    direct = json.loads(importlib.metadata.distribution(distribution).read_text("direct_url.json"))
+    assert direct["url"] == f"https://github.com/OpenJ92/{repository}/archive/{selected}.zip"
+    assert direct.get("subdirectory") == (distribution if name in ("core", "operations") else None)
 plan = plan_root_commissioning(payload["intent"], preparer_image_id=payload["preparer"])
 state = pathlib.Path(payload["intent"]["custody"]["host_directory"])
 result = prepare_root_commissioning(plan, expected_digest=plan["digest"],

@@ -44,6 +44,19 @@ def snapshot(state):
 
 
 class RootCommissioningTests(unittest.TestCase):
+    def test_digit_leading_key_entropy_still_produces_valid_public_ids_and_exact_reuse(self):
+        # Strengthened Core DelegationPublicKey law from Kepler SOURCE review.
+        api, state = self.api(), self.custody()
+        with patch("secrets.token_hex", return_value="0" * 32):
+            result = self.prepare(api, state)
+        for metadata in result["public_keys"].values():
+            self.assertRegex(metadata["key_id"], r"^[a-z][a-z0-9._-]{0,127}$")
+        before = snapshot(state)
+        with self.no_generation(), patch("secrets.token_hex", side_effect=AssertionError("key identity allocated")) as allocate:
+            self.assertEqual(self.prepare(api, state), result)
+            allocate.assert_not_called()
+        self.assertEqual(snapshot(state), before)
+
     def api(self):
         try:
             module = importlib.import_module(MODULE)
@@ -573,6 +586,33 @@ else:
 
 
 class RootCommissioningCoordinateTests(unittest.TestCase):
+    def test_bootstrap_driver_full_cohort_pins_follow_selected_coordinates(self):
+        root = Path(__file__).resolve().parents[3]
+        spec = importlib.util.spec_from_file_location("commissioning_cohort_coordinates", root / "scripts/apply_coordinates.py")
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        coordinates = module.load_coordinates(module.COORDINATES)
+        destination = root / "products/cpk_server/Dockerfile.bootstrap"
+        original = module.generate_updates(coordinates)[destination]
+        changed = copy.deepcopy(coordinates)
+        expected = original
+        for index, name in enumerate(("core", "operations", "server_sdk", "interpreters", "secrets")):
+            field = "control_plane_kit_" + name + "_commit"
+            before = coordinates["upstreams"][field]
+            after = str(index + 1) * 40
+            changed["upstreams"][field] = after
+            repository = "control-plane-kit" if name in ("core", "operations") else "control-plane-kit-" + name.replace("_", "-")
+            old = f"https://github.com/OpenJ92/{repository}/archive/{before}.zip"
+            new = f"https://github.com/OpenJ92/{repository}/archive/{after}.zip"
+            if name in ("core", "operations"):
+                old += "#subdirectory=control-plane-kit-" + name
+                new += "#subdirectory=control-plane-kit-" + name
+            self.assertIn(old.encode(), original, "driver inherits an unqualified dependency")
+            expected = expected.replace(old.encode(), new.encode())
+        self.assertEqual(module.generate_updates(changed)[destination], expected)
+
     def test_bootstrap_driver_secrets_pin_is_a_generated_destination(self):
         root = Path(__file__).resolve().parents[3]
         spec = importlib.util.spec_from_file_location("commissioning_coordinates", root / "scripts/apply_coordinates.py")

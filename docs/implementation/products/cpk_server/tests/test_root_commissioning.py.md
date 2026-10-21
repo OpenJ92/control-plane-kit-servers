@@ -38,3 +38,11 @@ perform no premature allocation/generation and hold on reentry. Real CLI
 subprocess tests also exercise differing host/mounted paths via --host-state:
 exact approved host coordinates succeed and reuse, mismatch refuses before
 writes, and the direct library retains its stricter exact-path law.
+
+Kepler SOURCE review added two strengthened regressions while retaining all
+original targets. Digit-leading entropy must still produce Core-valid public
+key IDs and immutable reuse. The driver must explicitly select every accepted
+Core/Operations/SDK/Interpreters/Secrets coordinate: the actual owning runner
+inherits a historical CPK base, so installing Secrets alone can mix cohorts.
+Synthetic full-cohort drift covers generated recipe bytes; the actual driver
+witness additionally checks installed direct_url.json provenance.
