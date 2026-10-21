@@ -206,3 +206,7 @@ suites and later runtime/image witnesses were not executed. The generator now
 owns that output through its existing URL substitution. The target assertions
 are unchanged, including verification-extra/current-pin and unchanged-product
 laws. This source implementation has not been rerun or claimed green.
+Servers #301 adds a target for the existing bootstrap driver's Secrets dependency
+as a generated destination. Synthetic Secrets pin drift must change that recipe
+while all generated JSON product/catalogue bytes remain unchanged. This is a
+target-only addition pending the source destination and actual driver witness.

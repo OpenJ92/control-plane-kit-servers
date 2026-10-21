@@ -9,7 +9,9 @@ from pathlib import Path
 import secrets
 import signal
 import stat
+import subprocess
 import sys
+from tempfile import TemporaryDirectory
 from typing import NamedTuple
 
 from products.cpk_server.examples.root_bootstrap_input import example_input
@@ -156,6 +158,7 @@ def retain_authority_evidence(run, container, inspection, node, receipt, engine_
 
 def prepare(run):
     os.umask(0o077)
+    commissioning_driver_witness(run)
     port_text = os.environ.get("CPK_ROOT_TEST_PORT", "18089")
     if not port_text.isascii() or not port_text.isdecimal() or not 1 <= int(port_text) <= 65535:
         raise ValueError("CPK_ROOT_TEST_PORT must be an integer from 1 to 65535")
@@ -193,6 +196,57 @@ def prepare(run):
     (material / "index.json").write_text(json.dumps({"schema": "cpk.root-bootstrap.material.v1", "files": files}))
     (material / "index.json").chmod(0o400)
     (ROOT / "state").mkdir(mode=0o700)
+
+
+def commissioning_driver_witness(run):
+    """Use image-owned modules in the actual driver, not the full unit image."""
+    # test.sh supplies /source for its fixture entrypoint. The subprocess may
+    # load product implementations only from the driver's copied /app paths.
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = ":".join("/app/products/" + name + "/src"
+        for name in ("cpk_server", "cpk_local_gateway", "secrets_server"))
+    with TemporaryDirectory(prefix="commissioning-fixture-", dir=ROOT) as directory:
+        state = Path(directory)
+        document = {"schema": "cpk.root-commissioning.intent.v1", "installation_id": run,
+            "workspace_id": run, "profile": "operator-offline-read-trust",
+            "custody": {"host_directory": str(state), "uid": os.geteuid(), "gid": os.getegid()}}
+        # Synthetic immutable ID binds this isolated library witness. It is not
+        # image qualification; the existing launcher separately checks its ID.
+        payload = json.dumps({"intent": document, "preparer": "sha256:" + "a" * 64})
+        program = """
+import importlib, json, pathlib, sys
+from control_plane_kit_core.configuration import ConfigurationArtifact
+from control_plane_kit_secrets.control import decode_secrets_control_configuration
+from control_plane_kit_servers_cpk_server.control_configuration import decode_cpk_control_configuration
+from control_plane_kit_servers_cpk_server.root_commissioning import plan_root_commissioning, prepare_root_commissioning
+for name, product in (("control_plane_kit_servers_cpk_server.root_commissioning", "cpk_server"),
+                      ("control_plane_kit_servers_secrets_server.configuration", "secrets_server")):
+    loaded = pathlib.Path(importlib.import_module(name).__file__).resolve()
+    assert loaded.is_relative_to(pathlib.Path("/app/products") / product / "src")
+payload = json.loads(sys.stdin.read())
+plan = plan_root_commissioning(payload["intent"], preparer_image_id=payload["preparer"])
+state = pathlib.Path(payload["intent"]["custody"]["host_directory"])
+result = prepare_root_commissioning(plan, expected_digest=plan["digest"],
+    preparer_image_id=payload["preparer"], state_directory=state)
+assert set(result["artifacts"]) == {"cpk", "secrets"}
+for role, decode in (("cpk", decode_cpk_control_configuration), ("secrets", decode_secrets_control_configuration)):
+    artifact = ConfigurationArtifact.from_descriptor(result["artifacts"][role])
+    configured = decode(artifact.content.encode())
+    assert configured.target.receiver_id == result["receiver_ids"][role]
+    assert {family.purpose.value for family in configured.verifiers} == {
+        "workload-node-control-surface-read", "workload-node-health-read"}
+assert prepare_root_commissioning(plan, expected_digest=plan["digest"],
+    preparer_image_id=payload["preparer"], state_directory=state) == result
+assert "PRIVATE KEY" not in json.dumps(result)
+print("root commissioning: actual driver factories and exact reuse PASS")
+"""
+        completed = subprocess.run([sys.executable, "-c", program], input=payload,
+            text=True, capture_output=True, env=environment, cwd="/app", check=False)
+        # Do not print arbitrary child exceptions or private fixture payloads.
+        if completed.returncode != 0:
+            raise AssertionError("root commissioning actual driver witness failed")
+        assert completed.stdout.strip() == "root commissioning: actual driver factories and exact reuse PASS"
+        print(completed.stdout.strip(), flush=True)
 
 
 def check(run):
