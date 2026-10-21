@@ -25,6 +25,9 @@ class CompleteRootSetupTests(unittest.TestCase):
         imported, commands = [], []
         with TemporaryDirectory() as directory:
             progress = Path(directory) / "progress"
+            credential = Path(directory) / "credential"
+            credential.write_text("synthetic-operator-credential")
+            credential.chmod(0o400)
             with patch.object(cli, "Path", side_effect=lambda path: progress if path == "/tmp/cpk-bootstrap-progress" else Path(path)), \
                     patch("socket.create_connection"), \
                     patch("control_plane_kit_servers_cpk_server.client.transport.PublicHttpTransport") as transport:
@@ -65,7 +68,10 @@ class CompleteRootSetupTests(unittest.TestCase):
                 transport.return_value.call.side_effect = call
                 expected_error = (TimeoutError if fault == "interrupted" else api.RootBootstrapError)
                 with self.assertRaises(expected_error) if fault else nullcontext():
-                    result = cli.public_setup(plan, "synthetic-operator-credential")
+                    result = cli.public_setup(plan, credential)
+                profile = transport.call_args.args[0]
+                self.assertEqual(profile.credentials,
+                    {role: credential for role in ("operator", "approver", "worker")})
                 saved = json.loads((progress / "progress.json").read_text())
                 expected = plan["setup_products"] if enabled else list(plan["input"]["installation"]["products"].values())
                 self.assertEqual(imported, expected)
