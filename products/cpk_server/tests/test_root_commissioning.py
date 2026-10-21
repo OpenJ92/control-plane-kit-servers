@@ -532,6 +532,7 @@ else:
         environment = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"],
                            COMMISSION_TEST_CALLS=str(log))
         root = Path(__file__).resolve().parents[3]
+        self.assertTrue((root / "bootstrap.sh").is_file(), "real bootstrap launcher is missing from owning test image")
         process = subprocess.run(["sh", str(root / "bootstrap.sh"), action, PREPARER, *map(str, arguments)],
             env=environment, capture_output=True, check=False)
         calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []

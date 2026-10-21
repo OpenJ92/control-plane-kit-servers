@@ -5,7 +5,7 @@ ENV PIP_DEFAULT_TIMEOUT=120 \
 
 WORKDIR /app
 
-COPY pyproject.toml README.md AGENTS.md GIT-FLOW.md test.sh Dockerfile.test ./
+COPY pyproject.toml README.md AGENTS.md GIT-FLOW.md test.sh bootstrap.sh Dockerfile.test ./
 COPY .github ./.github
 COPY coordination ./coordination
 COPY coordinates ./coordinates

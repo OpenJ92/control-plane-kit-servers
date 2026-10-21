@@ -46,3 +46,9 @@ Core/Operations/SDK/Interpreters/Secrets coordinate: the actual owning runner
 inherits a historical CPK base, so installing Secrets alone can mix cohorts.
 Synthetic full-cohort drift covers generated recipe bytes; the actual driver
 witness additionally checks installed direct_url.json provenance.
+
+The first full source run reached 565 CPK tests but the owning unit image lacked
+the root bootstrap.sh file. The launcher helper now requires that file before
+invocation, so missing apparatus cannot falsely satisfy negative exit assertions.
+Dockerfile.test includes the real launcher in its existing root COPY. No shell
+assertion, runner or workflow is weakened; the failed run remains preserved.
