@@ -29,6 +29,7 @@ from control_plane_kit_operations.effect_outcome_evidence import NativeConnectio
 from control_plane_kit_operations.runtime_management_targets import is_native_connection_operation
 from control_plane_kit_servers_cpk_server.managed_health_placement import (
     DockerControllerPlacement, DockerGatewayBinding, DockerGatewayEndpointReader,
+    DockerRuntimeClientBinding, DockerRuntimeClientSelector,
 )
 
 from docker_image_update_material import IMAGES
@@ -95,8 +96,9 @@ class OwnedControllerPlacement:
             "networks": {}, "volumes": {}, "secret_volumes": {}, "attachment": None,
             "qualified_images": qualified_images.descriptor()}
         self.persist()
-        self.reader = DockerGatewayEndpointReader((DockerControllerPlacement(workspace, "docker",
-            RuntimeAuthorityReference("local-docker"), controller_id, sdk),), self.binding_for)
+        self.provider = DockerRuntimeClientBinding(workspace, "docker", RuntimeAuthorityReference("local-docker"), sdk)
+        self.provider_clients = DockerRuntimeClientSelector((self.provider,))
+        self.reader = DockerGatewayEndpointReader((DockerControllerPlacement(self.provider, controller_id),), self.binding_for)
 
     def persist(self):
         if self.record_path is None:
@@ -366,6 +368,7 @@ class SyntheticConnectorConnection:
     """Synthetic CONNECTED, correlated with an actual owned pause container."""
     def __init__(self, placement, ingress, material):
         self.placement, self.ingress, self.material = placement, ingress, material
+        self.provider_clients = placement.provider_clients
         self.reads = []
 
     def select(self, *, plan, current, desired, registered_products, runtime_authorities):

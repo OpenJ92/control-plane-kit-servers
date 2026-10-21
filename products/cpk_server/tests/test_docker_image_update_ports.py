@@ -37,13 +37,13 @@ from control_plane_kit_interpreters.docker.configuration import (
     _container_incarnation_fingerprint, configuration_volume_name,
 )
 from control_plane_kit_interpreters.docker.runtime import _secret_volume_name
-from control_plane_kit_interpreters.docker.sdk import DockerSdkImageInspection
+from control_plane_kit_interpreters.docker.sdk import DockerSdkClient, DockerSdkImageInspection
 from control_plane_kit_core.topology import validate_graph
 from control_plane_kit_operations.runtime_authorities import LocalDockerSocketAuthority, RegisteredRuntimeAuthority
 from control_plane_kit_operations.products import InlineDescriptorSource, RegisteredProduct
 from control_plane_kit_core.runtime_authority import RuntimeAuthorityReference
 from control_plane_kit_servers_cpk_server.client import ClientProfile, TopologyClient
-from control_plane_kit_servers_cpk_server.managed_health_placement import DockerGatewayBinding
+from control_plane_kit_servers_cpk_server.managed_health_placement import DockerGatewayBinding, DockerRuntimeClientSelector
 
 from docker_image_update_material import DockerImageMaterial, IMAGES
 from image_identity_test_material import qualified_images
@@ -376,7 +376,13 @@ class DockerImageTransportTests(unittest.IsolatedAsyncioTestCase):
 
 class OwnedAttachmentTests(unittest.TestCase):
     def setUp(self):
-        self.engine, self.sdk = Mock(), Mock()
+        self.engine = Mock()
+        self.sdk = DockerSdkClient(client=Mock(), connect_on_init=False)
+        self.sdk.inspect_network = Mock()
+        self.sdk.inspect_container = Mock()
+        self.sdk.inspect_image = Mock()
+        self.sdk.inspect_volume = Mock()
+        self.sdk.close = Mock()
         self.engine.info.return_value = {"ID": "daemon-a"}
         self.network = Mock()
         self.network.id = "a" * 64
@@ -775,7 +781,7 @@ class OwnedAttachmentTests(unittest.TestCase):
 class NativeFixtureSelectionTests(unittest.TestCase):
     def test_every_native_operation_resolves_to_the_exact_fixture_tuple(self):
         material = DockerImageMaterial("workspace-a")
-        placement = SimpleNamespace(workspace="workspace-a")
+        placement = SimpleNamespace(workspace="workspace-a", provider_clients=DockerRuntimeClientSelector(()))
         observer = SyntheticConnectorConnection(placement, SimpleNamespace(allocations={}), material)
         authority = RegisteredRuntimeAuthority("registration", "workspace-a",
             RuntimeAuthorityReference("local-docker"), RuntimeKind.DOCKER,

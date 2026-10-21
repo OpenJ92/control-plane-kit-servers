@@ -1,6 +1,7 @@
 """Operations-to-Interpreter managed health composition; no admission or stores."""
 import asyncio
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from control_plane_kit_core.delegation_keys import DelegationKeyPurpose
 from control_plane_kit_core.node_control import NodeControlGraphReference, NodeControlGraphReferenceRole
@@ -25,6 +26,9 @@ from control_plane_kit_servers_cpk_local_gateway.health_relay_configuration impo
     ARTIFACT_ID as TARGETS_ARTIFACT_ID, CONFIGURATION_PATH as TARGETS_PATH,
 )
 from .health_receiver_adapters import select_own_health_configuration, select_gateway_health_route_binding
+
+if TYPE_CHECKING:
+    from .managed_health_placement import DockerRuntimeClientSelector
 
 
 class ManagedHealthUnavailable(RuntimeError):
@@ -75,15 +79,22 @@ def _own_selection(products, graph, node_id, preparation, side):
 @dataclass(frozen=True, slots=True, repr=False)
 class ManagedHealthBridge:
     reader: object
+    provider_clients: "DockerRuntimeClientSelector"
     endpoints: object | None
     decoders: object
     native: object | None = None
 
+    def __post_init__(self):
+        from .managed_health_placement import DockerRuntimeClientSelector
+
+        if (type(self.provider_clients) is not DockerRuntimeClientSelector
+                or (self.native is not None
+                    and getattr(self.native, "provider_clients", None) is not self.provider_clients)):
+            raise ValueError("managed provider composition is invalid")
+
     def select(self, *, plan, current, desired, registered_products, runtime_authorities):
         selected = None
         try:
-            if self.endpoints is None:
-                return None
             pair = _graph_pair(current, desired)
             result, required_native = [], []
             for activity in plan.activities:
@@ -97,9 +108,15 @@ class ManagedHealthBridge:
                 graph = resolved.selected_graph.graph
                 runtime = graph.runtimes[operation.target.runtime_id]
                 authority = _authority(runtime_authorities, runtime)
-                if (runtime.kind is not RuntimeKind.DOCKER or self.endpoints.select(
-                        workspace_id=authority.workspace_id, runtime_id=runtime.runtime_id,
-                        authority=authority) is None):
+                binding = self.provider_clients.select(workspace_id=authority.workspace_id,
+                    runtime_id=runtime.runtime_id, authority=authority)
+                if runtime.kind is not RuntimeKind.DOCKER or binding is None:
+                    return None
+                if (type(operation) is ObserveManagementBootstrap
+                        and operation.stage is ManagementBootstrapStage.GATEWAY_LOCAL_READY
+                        and (self.endpoints is None or self.endpoints.select(
+                            provider_binding=binding, workspace_id=authority.workspace_id,
+                            runtime_id=runtime.runtime_id, authority=authority) is None)):
                     return None
                 gateway = _product(registered_products, authority.workspace_id, resolved.gateway_node)
                 self.decoders.binding_for(gateway.reference, DelegationKeyPurpose.GATEWAY_NODE_HEALTH_READ_TRANSIT)
@@ -199,7 +216,12 @@ class ManagedHealthBridge:
         # Only local readiness needs private placement; public reads use NamedIngress.
         endpoint = None
         if local:
+            binding = self.provider_clients.select(workspace_id=preparation.workspace_id,
+                runtime_id=request.operation.target.runtime_id, authority=selected_authority)
+            if binding is None:
+                raise ManagedHealthUnavailable("managed health is unavailable")
             endpoint = await asyncio.to_thread(self.endpoints.read,
+                provider_binding=binding,
                 workspace_id=preparation.workspace_id, runtime_id=request.operation.target.runtime_id,
                 authority=selected_authority, gateway_node_id=gateway.node_id, socket_name=socket_name,
                 port=port, graph_id=preparation.request.authority_context.authored_graph_id)
@@ -216,12 +238,13 @@ class ManagedHealthBridge:
 class ManagedHealthBootstrap:
     """Trusted process composition, never public product-registration authority.
 
-    Endpoint SDK clients are provisioner-owned. Native support is explicit;
+    Scoped SDK clients are caller-owned. Native support is explicit;
     public_client is an explicit ingress transport override for maintained tests.
     Local readiness always uses the real bounded socket transport.
     """
     gateway_documents: tuple
-    endpoints: object
+    provider_clients: "DockerRuntimeClientSelector"
+    endpoints: object | None = None
     native: object | None = None
     public_client: object | None = None
 
@@ -239,5 +262,5 @@ class ManagedHealthBootstrap:
             Ed25519HealthCredentialPairSigner(authorized_secret_resolver, clock),
             self.public_client if self.public_client is not None else SignedGatewayHealthClient(clock=clock),
             LocalGatewayHealthClient(clock=clock))
-        return ManagedHealthBridge(reader, self.endpoints,
+        return ManagedHealthBridge(reader, self.provider_clients, self.endpoints,
             health_receiver_decoders(gateway_documents=self.gateway_documents), self.native)

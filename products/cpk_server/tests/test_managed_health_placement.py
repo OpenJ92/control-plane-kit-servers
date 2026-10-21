@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 from control_plane_kit_core.runtime_authority import RuntimeAuthorityReference
 from control_plane_kit_core.types import RuntimeKind
-from control_plane_kit_interpreters.docker import DockerSdkNetworkAttachment, DockerSdkResourceInspection
+from control_plane_kit_interpreters.docker import DockerSdkClient, DockerSdkNetworkAttachment, DockerSdkResourceInspection
 from control_plane_kit_operations.runtime_authorities import (
     LocalDockerSocketAuthority, RegisteredRuntimeAuthority, RegisteredRuntimeAuthorityStatus,
 )
@@ -14,14 +14,18 @@ from control_plane_kit_operations.runtime_authorities import (
 class ManagedHealthPlacementTests(unittest.TestCase):
     def setUp(self):
         from control_plane_kit_servers_cpk_server.managed_health_placement import (
-            DockerControllerPlacement, DockerGatewayBinding, DockerGatewayEndpointReader,
+            DockerControllerPlacement, DockerGatewayBinding, DockerGatewayEndpointReader, DockerRuntimeClientBinding,
         )
         self.authority = RegisteredRuntimeAuthority("registration", "workspace-a",
             RuntimeAuthorityReference("local-docker"), RuntimeKind.DOCKER,
             LocalDockerSocketAuthority(), "operator", "2026-10-13T00:00:00Z")
         self.client = Mock()
-        self.placement = DockerControllerPlacement("workspace-a", "docker",
-            self.authority.authority_ref, "c" * 64, self.client)
+        self.sdk = DockerSdkClient(client=Mock(), connect_on_init=False)
+        self.sdk.inspect_network = self.client.inspect_network
+        self.sdk.inspect_container = self.client.inspect_container
+        self.sdk.close = self.client.close
+        self.provider = DockerRuntimeClientBinding("workspace-a", "docker", self.authority.authority_ref, self.sdk)
+        self.placement = DockerControllerPlacement(self.provider, "c" * 64)
         self.binding = DockerGatewayBinding("workspace-a", "docker", self.authority.authority_ref,
             "gateway", "a" * 64, "b" * 64)
         self.bindings = Mock(return_value=self.binding)
@@ -36,16 +40,18 @@ class ManagedHealthPlacementTests(unittest.TestCase):
             "b" * 64: self.gateway, "c" * 64: self.controller}[identity]
 
     def read(self):
-        return self.reader.read(workspace_id="workspace-a", runtime_id="docker", authority=self.authority,
+        return self.reader.read(provider_binding=self.provider,
+            workspace_id="workspace-a", runtime_id="docker", authority=self.authority,
             gateway_node_id="gateway", socket_name="readiness", port=8123, graph_id="graph-original")
 
     def test_selection_is_pure_and_rejects_wrong_workspace_or_authority(self):
-        self.assertIs(self.reader.select(workspace_id="workspace-a", runtime_id="docker",
+        self.assertIs(self.reader.select(provider_binding=self.provider, workspace_id="workspace-a", runtime_id="docker",
             authority=self.authority), self.placement)
         for authority in (replace(self.authority, workspace_id="workspace-b"),
                 replace(self.authority, authority_ref=RuntimeAuthorityReference("different")),
                 replace(self.authority, status=RegisteredRuntimeAuthorityStatus.REVOKED)):
-            self.assertIsNone(self.reader.select(workspace_id="workspace-a", runtime_id="docker", authority=authority))
+            self.assertIsNone(self.reader.select(provider_binding=self.provider,
+                workspace_id="workspace-a", runtime_id="docker", authority=authority))
         self.client.assert_not_called()
         self.assertEqual(self.client.mock_calls, [])
         self.bindings.assert_not_called()

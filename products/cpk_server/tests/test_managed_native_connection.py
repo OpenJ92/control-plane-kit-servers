@@ -25,7 +25,7 @@ from managed_native_material import NativeMaterial
 class ManagedNativeConnectionTests(unittest.TestCase):
     def setUp(self):
         from control_plane_kit_servers_cpk_server.managed_health_placement import (
-            DockerControllerPlacement, DockerGatewayEndpointReader,
+            DockerControllerPlacement, DockerGatewayEndpointReader, DockerRuntimeClientBinding, DockerRuntimeClientSelector,
         )
         from control_plane_kit_servers_cpk_server.managed_native_connection import DockerManagedNativeConnection
         self.world = NativeMaterial()
@@ -35,10 +35,11 @@ class ManagedNativeConnectionTests(unittest.TestCase):
         self.client = DockerSdkClient(client=SimpleNamespace(api=self.api), connect_on_init=False)
         self.clock = Mock(return_value=datetime(2026, 10, 20, tzinfo=timezone.utc))
         self.binding = Mock(side_effect=AssertionError("native reads must not resolve gateway bindings"))
-        self.placement = DockerControllerPlacement("workspace-a", "docker",
-            self.world.authority.authority_ref, "c" * 64, self.client)
+        self.provider = DockerRuntimeClientBinding("workspace-a", "docker", self.world.authority.authority_ref, self.client)
+        self.provider_clients = DockerRuntimeClientSelector((self.provider,))
+        self.placement = DockerControllerPlacement(self.provider, "c" * 64)
         self.endpoints = DockerGatewayEndpointReader((self.placement,), self.binding)
-        self.native = DockerManagedNativeConnection(self.endpoints, self.world.document, self.clock)
+        self.native = DockerManagedNativeConnection(self.provider_clients, self.world.document, self.clock)
 
     def select(self, world=None, native=None, **changes):
         inputs = (world or self.world).selection()
@@ -49,7 +50,7 @@ class ManagedNativeConnectionTests(unittest.TestCase):
         from control_plane_kit_servers_cpk_server.managed_health import ManagedHealthBootstrap
         world = world or self.world
         return ManagedHealthBootstrap((world.authored.documents["gateway"],),
-            self.endpoints, native=native or self.native).build(Mock())
+            self.provider_clients, endpoints=self.endpoints, native=native or self.native).build(Mock())
 
     def observe(self, *, world=None, request=None, authority=None, bridge=None):
         world = world or self.world
@@ -80,17 +81,19 @@ class ManagedNativeConnectionTests(unittest.TestCase):
                 self.assertEqual(self.select(world, native), (world.request.activity_id,))
         self.assert_pure()
 
-    def test_current_authority_and_unique_actual_sdk_placement_are_required(self):
+    def test_current_authority_and_unique_actual_sdk_binding_are_required(self):
         for authorities in ((), (self.world.authority, self.world.authority),
                 (replace(self.world.authority, workspace_id="workspace-b"),)):
             with self.subTest(authorities=authorities):
                 self.assertIsNone(self.select(runtime_authorities=authorities))
-        for placements in ((), (self.placement, self.placement),
-                (replace(self.placement, runtime_id="other"),),
-                (replace(self.placement, client=Mock()),)):
-            with self.subTest(placements=len(placements)):
+        for bindings in ((), (replace(self.provider, runtime_id="other"),)):
+            with self.subTest(bindings=len(bindings)):
                 self.assertIsNone(self.select(native=replace(self.native,
-                    endpoints=replace(self.endpoints, placements=placements))))
+                    provider_clients=replace(self.provider_clients, bindings=bindings))))
+        with self.assertRaises(ValueError):
+            replace(self.provider_clients, bindings=(self.provider, self.provider))
+        with self.assertRaises(ValueError):
+            replace(self.provider, client=Mock())
         self.assert_pure()
 
     def test_trusted_document_must_match_registration_and_graph(self):
@@ -250,7 +253,8 @@ class ManagedNativeConnectionTests(unittest.TestCase):
         from control_plane_kit_servers_cpk_server.managed_health import ManagedHealthBootstrap
         config = SimpleNamespace(runtime_dispatcher=SimpleNamespace(enabled=False),
             ingress_interpreters=SimpleNamespace(enabled=False), managed_health=ManagedHealthBootstrap(
-                (self.world.authored.documents["gateway"],), self.endpoints, native=self.native))
+                (self.world.authored.documents["gateway"],), self.provider_clients,
+                endpoints=self.endpoints, native=self.native))
         provider = SimpleNamespace(metadata_reader=None, authorized_resolver=Mock())
         with patch.object(server, "_runtime_observer", return_value=Mock()):
             ports = server._operations_effect_ports(config, provider)

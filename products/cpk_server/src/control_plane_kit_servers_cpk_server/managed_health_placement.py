@@ -11,7 +11,7 @@ import re
 from control_plane_kit_core.probe_intents import EndpointContext, LiteralEndpointMaterial, RuntimeEndpointObservation
 from control_plane_kit_core.runtime_authority import RuntimeAuthorityReference
 from control_plane_kit_core.types import Protocol, RuntimeKind
-from control_plane_kit_interpreters.docker import DockerSdkResourceInspection
+from control_plane_kit_interpreters.docker import DockerSdkClient, DockerSdkResourceInspection
 from control_plane_kit_interpreters.probes.local_health import SelectedLocalGateway
 from control_plane_kit_interpreters.probes.security import ProbeAddressPolicy
 from control_plane_kit_operations.runtime_authorities import (
@@ -32,20 +32,60 @@ def _reference(value):
 
 
 @dataclass(frozen=True, slots=True, repr=False)
-class DockerControllerPlacement:
+class DockerRuntimeClientBinding:
+    """Exact configured capability; the caller owns the client and its transport."""
     workspace_id: str
     runtime_id: str
     authority_ref: RuntimeAuthorityReference
-    controller_container_id: str
-    client: object = field(repr=False, compare=False)
+    client: DockerSdkClient = field(repr=False, compare=False)
 
     def __post_init__(self):
         if (not all(_reference(value) for value in (self.workspace_id, self.runtime_id))
                 or type(self.authority_ref) is not RuntimeAuthorityReference
-                or not _identity(self.controller_container_id)
-                or not callable(getattr(self.client, "inspect_container", None))
-                or not callable(getattr(self.client, "inspect_network", None))):
+                or type(self.client) is not DockerSdkClient):
+            raise ValueError("runtime client binding is invalid")
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class DockerRuntimeClientSelector:
+    bindings: tuple[DockerRuntimeClientBinding, ...]
+
+    def __post_init__(self):
+        if (type(self.bindings) is not tuple or len(self.bindings) > 64
+                or any(type(value) is not DockerRuntimeClientBinding for value in self.bindings)):
+            raise ValueError("runtime client selection is invalid")
+        seen = set()
+        for value in self.bindings:
+            value.__post_init__()
+            scope = (value.workspace_id, value.runtime_id, value.authority_ref)
+            if scope in seen:
+                raise ValueError("runtime client selection is invalid")
+            seen.add(scope)
+
+    def select(self, *, workspace_id, runtime_id, authority):
+        # Configured capability only: no provider connection or transport proof.
+        if (type(authority) is not RegisteredRuntimeAuthority
+                or authority.workspace_id != workspace_id
+                or authority.status is not RegisteredRuntimeAuthorityStatus.ACTIVE
+                or authority.runtime_kind is not RuntimeKind.DOCKER
+                or type(authority.authority) is not LocalDockerSocketAuthority):
+            return None
+        values = tuple(value for value in self.bindings
+            if (value.workspace_id, value.runtime_id, value.authority_ref)
+                == (workspace_id, runtime_id, authority.authority_ref))
+        return values[0] if len(values) == 1 else None
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class DockerControllerPlacement:
+    provider: DockerRuntimeClientBinding
+    controller_container_id: str
+
+    def __post_init__(self):
+        if (type(self.provider) is not DockerRuntimeClientBinding
+                or not _identity(self.controller_container_id)):
             raise ValueError("controller placement configuration is invalid")
+        self.provider.__post_init__()
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -77,23 +117,26 @@ class DockerGatewayEndpointReader:
         for value in self.placements:
             value.__post_init__()
 
-    def select(self, *, workspace_id, runtime_id, authority):
+    def select(self, *, provider_binding, workspace_id, runtime_id, authority):
         # No inspection or binding lookup before the owner records its attempt.
-        if (type(authority) is not RegisteredRuntimeAuthority
+        if (type(provider_binding) is not DockerRuntimeClientBinding
+                or type(authority) is not RegisteredRuntimeAuthority
                 or authority.workspace_id != workspace_id
                 or authority.status is not RegisteredRuntimeAuthorityStatus.ACTIVE
                 or authority.runtime_kind is not RuntimeKind.DOCKER
-                or type(authority.authority) is not LocalDockerSocketAuthority):
+                or type(authority.authority) is not LocalDockerSocketAuthority
+                or (provider_binding.workspace_id, provider_binding.runtime_id, provider_binding.authority_ref)
+                    != (workspace_id, runtime_id, authority.authority_ref)):
             return None
         values = tuple(value for value in self.placements
-            if (value.workspace_id, value.runtime_id, value.authority_ref)
-                == (workspace_id, runtime_id, authority.authority_ref))
+            if value.provider is provider_binding)
         return values[0] if len(values) == 1 else None
 
-    def read(self, *, workspace_id, runtime_id, authority, gateway_node_id, socket_name, port, graph_id):
+    def read(self, *, provider_binding, workspace_id, runtime_id, authority, gateway_node_id, socket_name, port, graph_id):
         selected = None
         try:
-            placement = self.select(workspace_id=workspace_id, runtime_id=runtime_id, authority=authority)
+            placement = self.select(provider_binding=provider_binding,
+                workspace_id=workspace_id, runtime_id=runtime_id, authority=authority)
             if placement is None or type(port) is not int or not 1 <= port <= 65535:
                 raise ValueError
             binding = self.binding_for(workspace_id=workspace_id, runtime_id=runtime_id,
@@ -104,7 +147,7 @@ class DockerGatewayEndpointReader:
             if ((binding.workspace_id, binding.runtime_id, binding.authority_ref, binding.gateway_node_id)
                     != (workspace_id, runtime_id, authority.authority_ref, gateway_node_id)):
                 raise ValueError
-            client = placement.client
+            client = provider_binding.client
             network = client.inspect_network(binding.network_id)
             controller = client.inspect_container(placement.controller_container_id)
             gateway = client.inspect_container(binding.gateway_container_id)
