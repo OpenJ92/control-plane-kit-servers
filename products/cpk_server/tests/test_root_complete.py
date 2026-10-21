@@ -170,6 +170,34 @@ assert "control_plane_kit_interpreters.docker" not in sys.modules
                 contract(changed, role)[field] = value
                 self.refused(changed)
 
+    def test_core_valid_but_product_inappropriate_declaration_is_refused(self):
+        self.plan()
+        from dataclasses import replace
+        from control_plane_kit_core.configuration import ConfigurationArtifact
+        from control_plane_kit_core.node_control import NodeHealthReadKind
+        from control_plane_kit_core.receiver_configuration import (
+            ReceiverNodeControlConfigurationCodec, select_receiver_node_control_configuration_artifact,
+        )
+        codec = ReceiverNodeControlConfigurationCodec()
+        for role in ("cpk", "secrets"):
+            with self.subTest(role=role):
+                changed = copy.deepcopy(self.document)
+                original = ConfigurationArtifact.from_descriptor(contract(changed, role)["configuration_artifacts"][0])
+                configuration = codec.decode_bytes(original.content.encode())
+                surface = replace(configuration.declaration.surface,
+                    health_reads=(NodeHealthReadKind.LIVENESS, NodeHealthReadKind.READINESS))
+                self.assertNotEqual(surface, configuration.declaration.surface)
+                altered = replace(configuration, declaration=replace(configuration.declaration, surface=surface))
+                artifact = replace(original, content=codec.encode_bytes(altered).decode())
+                contract(changed, role)["configuration_artifacts"] = [artifact.descriptor()]
+                contract(changed, role)["control_surfaces"] = [surface.descriptor()]
+                selected = ProductDescriptorCodec().decode_document(changed["installation"]["products"][role]).product.runtime_contract
+                generic = select_receiver_node_control_configuration_artifact(
+                    artifacts=selected.configuration_artifacts, environment=selected.public_environment,
+                    control_surfaces=selected.control_surfaces)
+                self.assertEqual(generic.descriptor(), artifact.descriptor())
+                self.refused(changed)
+
     def test_plan_digest_binds_both_origins_image_bindings_and_control_bytes(self):
         plan = self.plan()
         mutations = [lambda d: d["installation"]["website"].update(external_endpoint="https://changed.example.test"),
