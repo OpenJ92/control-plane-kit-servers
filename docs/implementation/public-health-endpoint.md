@@ -18,6 +18,10 @@ exercised with ephemeral test keys and a failing HTTP transport, preserving
 timeout/failure results and bounded redaction. No real DNS/HTTP or credential
 service is used. Local endpoint failure still prevents signing-reader access,
 and wrong current authority refuses public reads before either reader.
+The transport connects to the DNS-authorized numeric IP while preserving the
+authored hostname in Host and TLS SNI; all three values are asserted. The initial
+target incorrectly expected a hostname URL and was corrected after independent
+review, before application implementation.
 
 Selection still requires the existing scoped placement. This slice does not
 enable ordinary process startup, remove retained-local requirements, qualify
