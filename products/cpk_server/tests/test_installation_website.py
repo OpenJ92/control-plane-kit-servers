@@ -1,4 +1,5 @@
 """Same-installation website laws; no image or live serving claim."""
+import copy
 from dataclasses import FrozenInstanceError, replace
 import importlib
 import json
@@ -157,6 +158,13 @@ assert "control_plane_kit_servers_cpk_server.managed_health_configuration" not i
         self.refused(lambda: replace(external.website, connector_product=named.connector_product))
         for item in ({}, "private invalid website", False):
             self.refused(lambda: replace(named, website=item))
+        # Corrupt only an isolated copy after valid construction. Actual compose
+        # must revalidate rather than relying on an earlier dataclass check.
+        malformed_site = copy.copy(named.website)
+        object.__setattr__(malformed_site, "ingress", external.website.ingress)
+        malformed_installation = copy.copy(named)
+        object.__setattr__(malformed_installation, "website", malformed_site)
+        self.refused(lambda: self.compose(malformed_installation))
 
     def test_named_targets_and_all_connector_node_collisions_are_refused(self):
         value = self.named()
@@ -292,10 +300,15 @@ assert "control_plane_kit_servers_cpk_server.managed_health_configuration" not i
         self.assertEqual(enabled.managed_health_configuration.descriptor(), artifact.descriptor())
 
     def test_pure_composition_and_new_errors_do_not_contact_effects_or_echo_inputs(self):
-        value = self.named()
+        base = self.value()
+        inputs = dict(image=self.image(), connector_product=base.connector_product,
+            ingress=NamedPublicIngress("website-public", IngressAuthorityReference("website-zone"),
+                PublicIngressTarget(base.website_node_id, "http"), "website-connector", "web.example.test"))
         with patch("docker.DockerClient") as docker, patch("docker.from_env") as ambient, \
                 patch("builtins.open") as files, patch("os.open") as descriptors, \
                 patch("socket.getaddrinfo") as network:
+            website = self.api.DockerCpkWebsite(**inputs)
+            value = replace(base, website=website)
             self.compose(value)
             self.refused(lambda: replace(value, website="private invalid website"))
             self.refused(lambda: self.api.DockerCpkWebsite(image="private unpinned image", ingress=value.website.ingress,

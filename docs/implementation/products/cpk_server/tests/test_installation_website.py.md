@@ -35,3 +35,11 @@ simulated. New pure-boundary effect mocks assert zero calls outside error captur
 Root acquisition/receipt changes, actual provider inventory, images, credentials,
 browser usability, live retention and healthy readiness are not claimed here.
 Independent TARGET review and normal owning causal red precede source work.
+
+Pre-execution TARGET review strengthened WIC-09 in two places. A copied valid
+website/installation is corrupted only after construction, then passed to actual
+compose; its fixed context-free refusal proves validation is repeated at use.
+No shared fixture is mutated. The purity target prepares only ordinary input
+values before effect guards, then constructs the valid website AND installation
+inside those guards before composition. All zero-call assertions remain outside
+captured-error scopes. The original candidate was not executed; no source changed.
