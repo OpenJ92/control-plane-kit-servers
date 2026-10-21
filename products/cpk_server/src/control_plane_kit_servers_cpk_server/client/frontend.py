@@ -101,6 +101,18 @@ def frontend_product(
     )
 
 
+def _selected_frontend_connector(document: ProductDescriptorDocument) -> ContainerServerProduct:
+    """Share exact ordinary connector admission with installation composition."""
+    if not isinstance(document, ProductDescriptorDocument):
+        raise TypeError("frontend requires a selected connector descriptor")
+    connector = document.product
+    if (ProductDescriptorCodec().encode_document(connector).content != document.content
+            or connector.identity != ProductIdentity("control-plane-kit", "cloudflared-connector", 1)
+            or connector.runtime_contract != ProductRuntimeContract()):
+        raise ValueError("frontend requires the ordinary selected connector contract")
+    return connector
+
+
 def compose_frontend_deployment(
     *, image: OciImageReference, upstream: str, workspace_id: str,
     runtime_id: str, network_name: str, authority_ref: RuntimeAuthorityReference,
@@ -124,13 +136,7 @@ def compose_frontend_deployment(
     if (ingress.target.provider_socket != "http"
             or ingress.target.node_id == ingress.connector_node_id):
         raise ValueError("frontend ingress must target the distinct website HTTP socket")
-    if not isinstance(connector_product, ProductDescriptorDocument):
-        raise TypeError("frontend requires a selected connector descriptor")
-    connector = connector_product.product
-    if (ProductDescriptorCodec().encode_document(connector).content != connector_product.content
-            or connector.identity != ProductIdentity("control-plane-kit", "cloudflared-connector", 1)
-            or connector.runtime_contract != ProductRuntimeContract()):
-        raise ValueError("frontend requires the ordinary selected connector contract")
+    connector = _selected_frontend_connector(connector_product)
     website = frontend_product(image, upstream=upstream, port=port)
     children = tuple(instantiate_product(product, node_id,
                          ProductInstanceConfiguration.from_contract(product.runtime_contract))

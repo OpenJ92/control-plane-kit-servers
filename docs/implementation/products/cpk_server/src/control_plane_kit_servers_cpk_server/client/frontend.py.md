@@ -16,3 +16,10 @@ subset, real workspace isolation obligation and live evidence limits. The law
 cards and `test_frontend_deployment.py` protect exact material, ports, canonical
 roundtrip, invalid-input refusals and authority absence. Future image adoption or
 managed health belongs to its explicit owner, not an exception here.
+
+Servers #299 extracts the existing connector check into private
+`_selected_frontend_connector`. The standalone function keeps the same validation
+order, errors and contract; the installation calls this owner for both Named
+connectors only when its website option is enabled. No canonical-origin behavior
+or standalone port option changes. The capstone now uses the shared installation
+composer, while the standalone function remains a reusable lower-level value.

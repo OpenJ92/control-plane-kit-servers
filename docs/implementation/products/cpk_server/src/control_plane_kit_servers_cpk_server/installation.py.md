@@ -24,3 +24,22 @@ The owning targets check exact byte/provenance projection, closed root admission
 unchanged disabled imports, conflict refusals, separate size bounds and actual
 reader/application-factory consumption. #226 retains materialization and receipt
 ownership; source review and the full owning gate are recorded on PR #298.
+
+Servers #299 adds the frozen, repr-hidden `DockerCpkWebsite` and an optional
+installation field. `_website_input` delegates origin and exact connector
+admission to the existing frontend owner. `_website_parts` checks the closed
+Named/Named or external/external profile, derived target, distinct ingress and
+connector identities, and distinct origin hostnames. Host comparison alone
+removes an optional terminal DNS dot; stored strings stay exact. Both construction
+and actual composition revalidate enabled inputs. Errors are raised outside
+handlers to omit rejected exception context. Earlier backend/API errors keep
+their existing owner; None returns before importing the frontend adapter.
+
+`frontend_product` supplies the ordinary website contract from the exact image
+and same-installation API origin. Composition appends the website and, for Named
+ingress, its connector and ingress to the existing runtime. Backend variants and
+store edges stay unchanged. No new wire format, root acquisition behavior,
+credentials, process authority, readiness claim or external effect is introduced.
+The 16 reviewed `test_installation_website.py` methods protect these laws. Source
+and owning-suite evidence belong to PR #300; image and live acceptance remain
+separate.
