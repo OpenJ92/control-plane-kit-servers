@@ -6,9 +6,11 @@ returns None for empty/default selection or the exact mode/source/images mapping
 `qualify_root_artifact` validates role/reference/source against raw selected-image
 metadata and optional prior execution ID; `require_root_artifact_provenance`
 checks actual direct_url records against the gate-selected canonical cohort.
+`require_root_artifact_execution` compares the actual container Image with the
+admitted execution identity, never with the reference or its manifest digest.
 Invalid observations use one fixed `RootArtifactError`, never input material.
 
-Six methods cover complete/default/partial inputs, strict role repositories and
+Seven methods cover complete/default/partial inputs, strict role repositories and
 digest/source syntax, distinct reference versus execution identity, cache drift,
 platform/user/source metadata, and actual archive/subdirectory provenance. Source
 revision labels are tested as metadata, not independent producer authorization.

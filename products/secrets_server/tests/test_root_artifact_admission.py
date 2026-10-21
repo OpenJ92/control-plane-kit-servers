@@ -125,6 +125,18 @@ class RootArtifactAdmissionTests(unittest.TestCase):
                     self.rejected(owner, lambda: owner.qualify_root_artifact(role=role,
                         reference=REFERENCES[role], source_revision=SOURCE, image_attrs=candidate))
 
+    def test_actual_container_image_must_equal_the_admitted_execution_identity(self):
+        owner = self.owner()
+        for role in REFERENCES:
+            proof = owner.qualify_root_artifact(role=role, reference=REFERENCES[role],
+                source_revision=SOURCE, image_attrs=self.attrs(role))
+            owner.require_root_artifact_execution(proof=proof, observed_image_id=proof["execution_id"])
+            for observed in (None, "", "sha256:" + "d" * 64, REFERENCES[role],
+                             REFERENCES[role].split("@")[1]):
+                with self.subTest(role=role, observed=observed):
+                    self.rejected(owner, lambda: owner.require_root_artifact_execution(
+                        proof=proof, observed_image_id=observed))
+
     def test_actual_installed_archive_and_subdirectory_match_gate_selected_cohort(self):
         owner = self.owner()
         for role in REFERENCES:
