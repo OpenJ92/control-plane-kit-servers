@@ -83,8 +83,13 @@ Reviewed targets at786bc11 produced exactly16 intended missing-interface
 assertions and zero errors in run39628908931;491 prior CPK tests passed, and
 later suite stages were not reached. Kepler accepted that causal red at
 [#294 comment6320231060](https://github.com/OpenJ92/control-plane-kit-servers/issues/294#issuecomment-6320231060).
-Source review and the full unchanged owner gate remain pending for this source
-candidate. Deeper fixtures are not claimed green yet.
+SOURCE PASS6320460778 covered4ec7c06. Its full owner run39631252315 passed26
+policy tests, then stopped at integrity checks: five source `except: pass`
+redaction handlers were rejected (products is also a test root). No application
+test or later witness was reached. The correction constructs the fixed failure
+in each handler and raises it afterward, preserving context-free redaction.
+The policy, runner and reviewed targets are unchanged. Corrected source review
+and full owning green remain pending; deeper fixtures are not claimed green.
 
 This format is not yet delivered by the closed root launcher or installation
 schema. Image publication, live grandparent/child acceptance and provider

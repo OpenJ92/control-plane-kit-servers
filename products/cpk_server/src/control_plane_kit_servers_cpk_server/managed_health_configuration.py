@@ -58,9 +58,9 @@ class ManagedHealthProcessConfiguration:
             )
             return
         except _INPUT_ERRORS:
-            pass
+            failure = ValueError(_INVALID)
         # Do not retain the document, path or provider exception as context.
-        raise ValueError(_INVALID)
+        raise failure
 
 
 def _canonical_document(document):
@@ -119,8 +119,8 @@ def decode_managed_health_process_configuration(raw: bytes) -> ManagedHealthProc
             tuple(_documents_text(document) for document in value["gateway_documents"]),
             _documents_text(value["native_product_document"]))
     except _INPUT_ERRORS:
-        pass
-    raise ValueError(_INVALID)
+        failure = ValueError(_INVALID)
+    raise failure
 
 
 def read_managed_health_process_configuration(path: str) -> ManagedHealthProcessConfiguration:
@@ -145,5 +145,5 @@ def read_managed_health_process_configuration(path: str) -> ManagedHealthProcess
         finally:
             os.close(descriptor)
     except (*_INPUT_ERRORS, OSError):
-        pass
-    raise ValueError(_INVALID)
+        failure = ValueError(_INVALID)
+    raise failure

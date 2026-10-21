@@ -218,8 +218,8 @@ class CpkServerBootstrapConfiguration:
             return config
         except (ValueError, TypeError, AttributeError, KeyError, OverflowError,
                 RecursionError, ModuleNotFoundError):
-            pass
-        raise BootstrapConfigurationError(_MANAGED_HEALTH_INVALID)
+            failure = BootstrapConfigurationError(_MANAGED_HEALTH_INVALID)
+        raise failure
 
     @classmethod
     def _from_environment(
@@ -1442,8 +1442,8 @@ def _validate_managed_health_process(config):
         return
     except (ValueError, TypeError, AttributeError, KeyError, OverflowError,
             RecursionError, ModuleNotFoundError):
-        pass
-    raise BootstrapConfigurationError(_MANAGED_HEALTH_INVALID)
+        failure = BootstrapConfigurationError(_MANAGED_HEALTH_INVALID)
+    raise failure
 
 
 def _secret_provider_composition(
