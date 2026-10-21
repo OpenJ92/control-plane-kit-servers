@@ -118,7 +118,7 @@ docker volume create --label "$LABEL_KEY=$RUN_ID" "$PROVIDER_BOOTSTRAP" >/dev/nu
 docker volume create --label "$LABEL_KEY=$RUN_ID" "$CLIENT_BOOTSTRAP" >/dev/null
 docker volume create --label "$LABEL_KEY=$RUN_ID" "$DATA_VOLUME" >/dev/null
 
-docker run --pull "$PRODUCT_PULL_POLICY" --rm -i \
+docker run --rm -i --pull "$PRODUCT_PULL_POLICY" \
   --label "$LABEL_KEY=$RUN_ID" \
   --user 0:0 \
   --mount "type=volume,src=$PROVIDER_BOOTSTRAP,dst=/provider-bootstrap" \
