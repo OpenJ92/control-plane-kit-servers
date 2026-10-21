@@ -238,7 +238,8 @@ class ManagedHealthBridge:
 class ManagedHealthBootstrap:
     """Trusted process composition, never public product-registration authority.
 
-    Scoped SDK clients are caller-owned. Native support is explicit;
+    Scoped borrowed SDK clients are caller-owned; native policy bindings own
+    each observation's client inside its worker. Native support is explicit;
     public_client is an explicit ingress transport override for maintained tests.
     Local readiness always uses the real bounded socket transport.
     """

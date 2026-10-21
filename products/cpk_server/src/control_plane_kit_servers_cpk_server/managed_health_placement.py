@@ -1,7 +1,7 @@
 """Explicit provisioner coordinates plus current Interpreter-owned Docker reads.
 
-This module does not discover, create, attach or certify a route. Configured
-clients are caller-owned and must address the admitted local Docker authority.
+This module does not discover, create, attach or certify a route. Borrowed
+clients and immutable acquisition policies select explicit local capabilities.
 """
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -11,7 +11,9 @@ import re
 from control_plane_kit_core.probe_intents import EndpointContext, LiteralEndpointMaterial, RuntimeEndpointObservation
 from control_plane_kit_core.runtime_authority import RuntimeAuthorityReference
 from control_plane_kit_core.types import Protocol, RuntimeKind
-from control_plane_kit_interpreters.docker import DockerSdkClient, DockerSdkResourceInspection
+from control_plane_kit_interpreters.docker import (
+    DockerSdkClient, DockerSdkResourceInspection, DockerUnixSocketClientConfig,
+)
 from control_plane_kit_interpreters.probes.local_health import SelectedLocalGateway
 from control_plane_kit_interpreters.probes.security import ProbeAddressPolicy
 from control_plane_kit_operations.runtime_authorities import (
@@ -47,12 +49,29 @@ class DockerRuntimeClientBinding:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class DockerRuntimePolicyBinding:
+    """Scoped acquisition policy; each admitted native call owns its client."""
+    workspace_id: str
+    runtime_id: str
+    authority_ref: RuntimeAuthorityReference
+    local_client_config: DockerUnixSocketClientConfig = field(repr=False)
+
+    def __post_init__(self):
+        if (not all(_reference(value) for value in (self.workspace_id, self.runtime_id))
+                or type(self.authority_ref) is not RuntimeAuthorityReference
+                or type(self.local_client_config) is not DockerUnixSocketClientConfig):
+            raise ValueError("runtime policy binding is invalid")
+        self.local_client_config.__post_init__()
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class DockerRuntimeClientSelector:
-    bindings: tuple[DockerRuntimeClientBinding, ...]
+    bindings: tuple[DockerRuntimeClientBinding | DockerRuntimePolicyBinding, ...]
 
     def __post_init__(self):
         if (type(self.bindings) is not tuple or len(self.bindings) > 64
-                or any(type(value) is not DockerRuntimeClientBinding for value in self.bindings)):
+                or any(type(value) not in (DockerRuntimeClientBinding, DockerRuntimePolicyBinding)
+                    for value in self.bindings)):
             raise ValueError("runtime client selection is invalid")
         seen = set()
         for value in self.bindings:

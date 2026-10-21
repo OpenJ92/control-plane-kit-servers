@@ -13,3 +13,11 @@ request/receipt, explicitly asserts different product material, then exercises
 observer refusal before any contact. This follows the existing native fixture
 pattern; no Core validation/assertion was weakened. TARGET HOLD6319168407 is
 retained as history, and the corrected exact checkpoint requires narrow review.
+
+Corrected TARGET PASS6319204302 sealed5828c1f and targetSHA
+d65cf2769873d1f1407d5b29b3ba306f408b5aab7a1ad66677526f512d2d4419.
+Normal owner run39622335625/job119298799994 then produced exactly13 intended
+missing-binding assertions inCPK491/22.152s, no errors;478 prior CPK methods and
+root60/connector80/gateway61 passed, as did26 policy tests. Later groups/witnesses
+were unreached. Kepler causal acceptance6319352881 permits implementation.
+Reviewed targets remain unchanged for the source checkpoint; full green pending.

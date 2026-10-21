@@ -1,5 +1,58 @@
 # Managed native connection composition
 
+## #293 owned policy and worker boundary
+
+Trusted programmatic composition may now select an immutable Unix policy
+instead of supplying a borrowed client:
+
+```python
+from control_plane_kit_interpreters.docker import DockerUnixSocketClientConfig
+from control_plane_kit_servers_cpk_server.managed_health_placement import (
+    DockerRuntimeClientSelector, DockerRuntimePolicyBinding,
+)
+
+policy = DockerUnixSocketClientConfig("/var/run/docker.sock", 5.0)
+provider_clients = DockerRuntimeClientSelector((
+    DockerRuntimePolicyBinding(workspace_id, runtime_id, authority_ref, policy),
+))
+# Pass this identical selector to ManagedHealthBootstrap and its native port.
+```
+
+The closed selector admits borrowed-client or policy bindings, keeps its
+64-entry limit and rejects duplicate scope triples across both kinds. Current
+active local authority remains required. Policy bindings do not supply private
+gateway placement; a whole plan requiring local readiness still needs that
+explicit capability. Public stages retain the existing signed NamedIngress route.
+
+Selection uses the accepted client/clock-free qualifier. After current request
+and authority checks, one synchronous worker constructs a lazy SDK wrapper from
+the selected policy, invokes the unchanged observer and closes its owned wrapper
+in finally. Original retained proof and material validation precede the first
+SDK read, so invalid proof cannot trigger Docker construction or a version
+handshake. The SDK owns failed-acquisition cleanup; closing a terminal wrapper
+cannot close its raw handle twice. Existing borrowed clients are never closed.
+
+Observer-classified UNKNOWN remains correlated to the current request. Escaping
+ordinary failures and owned final-close failures become fixed unavailable;
+cleanup failure cannot return a clean result. Cancellation propagates to the
+caller without closing a blocked worker's client concurrently. The worker closes
+when its call finishes; it cannot return late success to the cancelled caller.
+Concurrent calls own distinct clients. This supplies neither a total deadline
+nor a guarantee of cleanup after forced process death. Operations still owns
+durable cancellation/result folding and retries.
+
+Accepted Interpreters528fb206 supplies both fixed Unix acquisition and the pure
+qualifier. Target run39622335625 reached26 policy/root60/connector80/gateway61
+passing tests, then CPK491 with exactly13 missing-binding assertions and no
+errors; all478 prior CPK methods passed. Kepler accepted that causal red. The
+thirteen reviewed targets are unchanged for implementation. Full owning green
+is pending source review; no source-process or live qualification is claimed.
+
+This is programmatic composition only. Issue294 separately owns the bounded
+startup schema and one canonical policy across execution, reconciliation and
+native reads. No environment enablement, image publication, retained deployment
+change or live225/291/284 acceptance follows from this source change.
+
 ## #291 forwarding implementation and evidence boundary
 
 The selected cohort supplies Core's retained-image compiler, Operations'
@@ -23,10 +76,11 @@ failures plus two stale provenance-expectation failures. After eleven current
 source expectations were corrected, `f9becb96` run39600550494/job119223650616
 passed 26 policy tests, root60, connector80 and gateway61, then ran CPK478
 with exactly the two intended forwarding failures and zero errors. Kepler
-independently accepted that causal red. Native tests and fixture are unchanged
-for this implementation; full green and later runtime/residue stages remain
-pending. The target/dependency checkpoint notes in pin companions record those
-earlier states, not a completed source or live acceptance.
+independently accepted that causal red. Native tests and fixture remained
+unchanged for that implementation. The later full gate39601338387 passed26
+policy/814 package tests and its remaining runtime and residue stages. PR292 was
+accepted as4731b951. Earlier target/dependency notes in pin companions are
+historical, not live acceptance.
 
 The existing synthetic native/ingress Docker image witness retains its actual
 workload replacement/history/cleanup evidence. Final genuine connector and
@@ -41,7 +95,7 @@ accepted Interpreters `MANAGED_WRAPPER_V1` observer. Exact validation checkpoint
 and acceptance status are recorded in [PR288](https://github.com/OpenJ92/control-plane-kit-servers/pull/288).
 It does not qualify a deployed managed connector image or complete #181/#148.
 
-Trusted process composition supplies capability-scoped borrowed Docker clients,
+Trusted process composition supplies capability-scoped borrowed clients or policies,
 optional provisioner-owned controller placement, one reviewed canonical
 connector document, and a UTC clock:
 
@@ -66,7 +120,7 @@ health = ManagedHealthBootstrap(
 
 The document must match the actual registered declaration and graph metadata.
 Registration alone does not qualify an image. The adapter reuses
-`DockerRuntimeClientSelector.select` to choose the unique client for the current
+`DockerRuntimeClientSelector.select` to choose the unique binding for the current
 local Docker authority; this capability lookup grants no authorization. Optional
 controller placement is required only for gateway-local readiness. There is
 no ambient enablement, new registry, automatic image choice or support file.
@@ -90,7 +144,8 @@ read-failure handling. There is no helper, public probe or retry fallback.
 
 Operations continues to own admission, installation history, structured result
 folding and durable graph state. The adapter adds no transaction, mutation,
-credential resolution, listener or cleanup ownership. Provider errors and
+credential resolution or listener. Owned worker cleanup is described above;
+borrowed client cleanup stays with the caller. Provider errors and
 token contents are not returned.
 
 `test_managed_native_connection.py` covers pure selection, result conversion,

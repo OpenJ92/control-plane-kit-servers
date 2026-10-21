@@ -10,7 +10,7 @@ from control_plane_kit_core.runtime_effects import RuntimeEffectRequest
 from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC
 from control_plane_kit_interpreters.docker.connector_connection import (
     ConnectorConnectionObservation, ConnectorConnectionOutcome, ConnectorConnectionQualification,
-    DockerConnectorConnectionObserver,
+    DockerConnectorConnectionObserver, DockerConnectorConnectionQualifier,
 )
 from control_plane_kit_interpreters.docker.sdk import ConnectorConnectionProfile, DockerSdkClient
 from control_plane_kit_operations.effect_outcome_evidence import (
@@ -19,12 +19,12 @@ from control_plane_kit_operations.effect_outcome_evidence import (
 from control_plane_kit_operations.runtime_management_targets import is_native_connection_operation
 
 from .managed_health import ManagedHealthUnavailable, _authority, _graph_pair, _product
-from .managed_health_placement import DockerRuntimeClientSelector
+from .managed_health_placement import DockerRuntimeClientSelector, DockerRuntimePolicyBinding
 
 
 @dataclass(frozen=True, slots=True, repr=False)
 class DockerManagedNativeConnection:
-    """One explicitly reviewed managed product and caller-owned scoped clients.
+    """One reviewed managed product and explicit borrowed or owned capabilities.
 
     Registered product values must match this process capability. Neither that
     match nor a binding grants execution authority or qualifies a live image.
@@ -56,20 +56,20 @@ class DockerManagedNativeConnection:
                 authority = _authority(runtime_authorities, runtime)
                 binding = self.provider_clients.select(workspace_id=authority.workspace_id,
                     runtime_id=runtime.runtime_id, authority=authority)
-                if binding is None or type(binding.client) is not DockerSdkClient:
+                if binding is None:
                     return None
                 product = _product(registered_products, authority.workspace_id, resolved.connector_node)
                 if product.reference != reference or product.descriptor_document != document:
                     return None
-                observer = DockerConnectorConnectionObserver(binding.client, reference,
-                    document.product.image.execution_reference, self.clock,
+                qualifier = DockerConnectorConnectionQualifier(reference,
+                    document.product.image.execution_reference,
                     profile=ConnectorConnectionProfile.MANAGED_WRAPPER_V1)
-                mode = observer.qualify_shape(activity_id=activity.activity_id, plan=plan,
+                mode = qualifier.qualify_shape(activity_id=activity.activity_id, plan=plan,
                     current=pair[0], desired=pair[1], product_document=document,
                     authority_ref=authority.authority_ref)
                 if mode is None:
                     return None
-                selected.append((activity.activity_id, authority, observer, mode))
+                selected.append((activity.activity_id, authority, binding, mode))
             return pair, tuple(selected)
         except (ValueError, TypeError, KeyError, AttributeError, OverflowError, RecursionError):
             return None
@@ -92,7 +92,7 @@ class DockerManagedNativeConnection:
             if selected is None:
                 raise ValueError
             pair, activities = selected
-            activity, current_authority, observer, mode = next(
+            activity, current_authority, binding, mode = next(
                 item for item in activities if item[0] == request.activity_id)
             if (authority != current_authority or type(authority) is not type(current_authority)
                     or request.source.workspace_id != current_authority.workspace_id
@@ -105,7 +105,7 @@ class DockerManagedNativeConnection:
                 installation = realization.connector_installation
                 if installation is not None:
                     original, receipt = installation.original_request, installation.receipt
-            observed = await asyncio.to_thread(observer.observe, request,
+            observed = await asyncio.to_thread(self._observe, binding, request,
                 plan=realization.plan, current=pair[0], desired=pair[1],
                 installation_request=original, installation_receipt=receipt)
             if (type(observed) is not ConnectorConnectionObservation
@@ -129,3 +129,22 @@ class DockerManagedNativeConnection:
             failure = ManagedHealthUnavailable("managed health is unavailable")
         # Raise outside the exception context: provider/material detail is private.
         raise failure
+
+    def _observe(self, binding, request, **inputs):
+        # Cancellation of the awaiting task cannot close a client while this
+        # worker is using it. The worker retains custody until its own finally.
+        owned = type(binding) is DockerRuntimePolicyBinding
+        client = None
+        try:
+            client = (DockerSdkClient.from_authority(binding.local_client_config,
+                connect_on_init=False) if owned else binding.client)
+            observer = DockerConnectorConnectionObserver(client,
+                ProductReference.from_document(self.product_document),
+                self.product_document.product.image.execution_reference, self.clock,
+                profile=ConnectorConnectionProfile.MANAGED_WRAPPER_V1)
+            # Original-proof/material preflight stays in the observer and runs
+            # before its first SDK read acquires the explicit Unix transport.
+            return observer.observe(request, **inputs)
+        finally:
+            if owned and client is not None:
+                client.close()
