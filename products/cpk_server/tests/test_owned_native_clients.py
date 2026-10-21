@@ -157,9 +157,8 @@ class OwnedNativeClientTests(unittest.TestCase):
                     if kind == "missing":
                         installation = None
                     elif kind == "foreign":
-                        foreign = replace(original.original_request,
-                            source=replace(original.original_request.source, workspace_id="foreign"))
-                        installation = SimpleNamespace(original_request=foreign, receipt=original.receipt)
+                        installation = NativeMaterial(retained=True).realization.connector_installation
+                        self.assertNotEqual(installation.original_request.products, world.request.products)
                     else:
                         installation = SimpleNamespace(original_request=original.original_request, receipt=object())
                     world.realization.connector_installation = installation
