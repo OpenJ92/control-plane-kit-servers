@@ -72,12 +72,13 @@ class ManagedHealthConfigurationTests(unittest.TestCase):
         self.assertEqual(str(raised.exception), ERROR)
         self.assertIsNone(raised.exception.__context__)
 
-    def compose(self, config):
+    def compose(self, config, *, provider=None):
         # Capture the real public factory inputs, then run the real factory.
         # Only external schema/credential/database effects are substituted.
         factories = []
         actual = self.server.OperationsApplicationFactory
-        provider = SimpleNamespace(authorized_resolver=Mock(), metadata_reader=None, secret_custodian=None)
+        if provider is None:
+            provider = SimpleNamespace(authorized_resolver=Mock(), metadata_reader=None, secret_custodian=None)
         def factory(*args, **kwargs):
             value = actual(*args, **kwargs)
             factories.append(value)

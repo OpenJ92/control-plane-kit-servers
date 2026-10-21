@@ -50,6 +50,14 @@ original target was run, no production source or assertion law was weakened.
 Metadata-adapter coverage remains in its existing tests: this composition fixture
 intentionally supplies metadata_reader=None and does not claim that path.
 
+Servers #297 makes this test-only compose helper accept an optional provider
+composition. Explicit None preserves the original resolver mock and absent
+metadata/custodian for every #294 call and assertion. The installation-consumption
+target instead supplies the real pure provider composition because its actual
+projected environment enables Cloudflare ingress. That environment requires the
+existing custodian; no production check is bypassed. Real metadata enables the
+existing exact-version adapter registration, which #297 inspects explicitly.
+
 Source review preparation found two existing unrestricted Mock configurations in
 test_process_composition and test_operations_application_factory. Their absent
 new attribute would synthesize a Mock and correctly fail typed process input

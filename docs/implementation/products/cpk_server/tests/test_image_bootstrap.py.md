@@ -1,6 +1,13 @@
 Source: [test_image_bootstrap.py](../../../../../products/cpk_server/tests/test_image_bootstrap.py).
 Maintain with the bootstrap/product installation and source-host contracts.
 
+Servers #297 extends the exact environment-name expectation with
+CPK_MANAGED_HEALTH and CPK_MANAGED_HEALTH_CONFIGURATION_FILE, matching the
+explicit optional process contract. All preexisting names, ordering, exact-list
+comparison and secret-refusal assertions remain. The original required control
+file stays first; the optional managed-health file is appended. This update was
+identified by source review before running the implementation gate.
+
 Servers #294 extracts the existing pure SecretProviderBootstrapRegistry
 construction into _provider_bootstrap_registry so it can validate before schema
 mutation. Kepler SOURCE review identified the exact-name bootstrap import

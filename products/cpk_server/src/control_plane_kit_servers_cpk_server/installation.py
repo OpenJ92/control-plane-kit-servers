@@ -6,13 +6,14 @@ does not resolve secrets, admit authority, contact providers, or execute a plan.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import hashlib
 import json
 import re
 from urllib.parse import urlsplit
 
 from control_plane_kit_core.algebra import DeploymentTopology, DockerRuntime, SocketConnection
+from control_plane_kit_core.configuration import ConfigurationArtifact
 from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
 from control_plane_kit_core.identity import WorkspaceGrant
 from control_plane_kit_core.lifecycle import ResourcePersistence
@@ -138,6 +139,7 @@ class DockerCpkInstallation:
     ingress: ExternalInstallationIngress | NamedPublicIngress
     connector_product: ProductDescriptorDocument | None
     control_auth: SingleOperatorControlAuth | MultiPrincipalControlAuth = SingleOperatorControlAuth()
+    managed_health_configuration: ConfigurationArtifact | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.control_auth, (SingleOperatorControlAuth, MultiPrincipalControlAuth)):
@@ -180,6 +182,7 @@ class DockerCpkInstallation:
         _selected_product(self.cpk_product, "cpk-server-docker-cloudflare")
         _selected_product(self.postgres_product, "postgres-server")
         _selected_product(self.secrets_product, "secrets-server")
+        _managed_health_artifact(self)
 
     @property
     def cpk_node_id(self) -> str:
@@ -229,6 +232,7 @@ def compose_docker_cpk_installation(installation: DockerCpkInstallation) -> Depl
 def _cpk_variant(value: DockerCpkInstallation, postgres: ContainerServerProduct) -> ContainerServerProduct:
     base = value.cpk_product.product
     contract = base.runtime_contract
+    managed_health = _managed_health_artifact(value)
     if set(contract.sockets.requirement_names()) != set(_STORES):
         raise ValueError("CPK installation requires all four PostgreSQL store sockets")
     postgres_environment = {item.name: item.value for item in postgres.runtime_contract.public_environment}
@@ -243,6 +247,13 @@ def _cpk_variant(value: DockerCpkInstallation, postgres: ContainerServerProduct)
         "PGUSER": postgres_environment["POSTGRES_USER"],
         "PGDATABASE": postgres_environment["POSTGRES_DB"],
     }
+    if managed_health is not None:
+        additions.update({
+            "CPK_MANAGED_HEALTH": "docker-unix-v1",
+            "CPK_MANAGED_HEALTH_CONFIGURATION_FILE": managed_health.target_path,
+        })
+        contract = replace(contract,
+            configuration_artifacts=(*contract.configuration_artifacts, managed_health))
     environment.update({name: PublicStaticEnvironmentBinding(name, item) for name, item in additions.items()})
     auth_delivery = SecretEnvironmentDelivery("CPK_CONTROL_AUTH_STATIC_CREDENTIAL", value.control_credential,
                                              SecretUseIntent.APPLICATION_CONTROL_TOKEN)
@@ -262,6 +273,27 @@ def _cpk_variant(value: DockerCpkInstallation, postgres: ContainerServerProduct)
                            SecretUseIntent.APPLICATION_CONTROL_TOKEN),
     ))
     return _variant(value.cpk_product, "cpk", contract)
+
+
+def _managed_health_artifact(value: DockerCpkInstallation) -> ConfigurationArtifact | None:
+    artifact = value.managed_health_configuration
+    if artifact is None:
+        return None
+    # Disabled installation planning must not import optional Docker adapters.
+    from .managed_health_configuration import (
+        MANAGED_HEALTH_ARTIFACT_ID, MANAGED_HEALTH_CONFIGURATION_PATH,
+        _INVALID_INSTALLATION, _managed_health_configuration_from_artifact,
+    )
+    process = _managed_health_configuration_from_artifact(artifact)
+    contract = value.cpk_product.product.runtime_contract
+    if (process.local_client_config.socket_path != "/var/run/docker.sock"
+            or any(item.name in {"CPK_MANAGED_HEALTH", "CPK_MANAGED_HEALTH_CONFIGURATION_FILE"}
+                   for item in contract.public_environment)
+            or any(item.artifact_id == MANAGED_HEALTH_ARTIFACT_ID
+                   or item.target_path == MANAGED_HEALTH_CONFIGURATION_PATH
+                   for item in (*contract.configuration_artifacts, *contract.configuration_requirements))):
+        raise ValueError(_INVALID_INSTALLATION)
+    return artifact
 
 
 def _postgres_variant(value: DockerCpkInstallation) -> ContainerServerProduct:
