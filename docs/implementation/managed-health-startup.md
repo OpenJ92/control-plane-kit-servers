@@ -88,8 +88,15 @@ policy tests, then stopped at integrity checks: five source `except: pass`
 redaction handlers were rejected (products is also a test root). No application
 test or later witness was reached. The correction constructs the fixed failure
 in each handler and raises it afterward, preserving context-free redaction.
-The policy, runner and reviewed targets are unchanged. Corrected source review
-and full owning green remain pending; deeper fixtures are not claimed green.
+The policy, runner and reviewed targets are unchanged. Corrected SOURCE
+PASS6320540117 covered614fa70; run39631801423 then passed integrity, policy26,
+root60/connector80/gateway61 and506 of507 CPK tests, including all16 new targets.
+The existing disabled-observer test caught an eager Docker import introduced by
+server.py. This is a production compatibility regression: process/native imports
+are now inside enabled branches, with the public value annotation under
+TYPE_CHECKING. The existing failing assertion is unchanged. Later groups and
+runtime witnesses were not reached. Exact corrected source review and full
+owning green remain pending.
 
 This format is not yet delivered by the closed root launcher or installation
 schema. Image publication, live grandparent/child acceptance and provider

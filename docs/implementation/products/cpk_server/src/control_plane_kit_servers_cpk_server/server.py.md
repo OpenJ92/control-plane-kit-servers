@@ -16,6 +16,12 @@ endpoints=None preserves whole-plan refusal for local-required readiness.
 Existing disabled/programmatic borrowed behavior and metadata adapter selection
 remain. See the [startup format](../../../../managed-health-startup.md).
 
+Run39631801423 caught a disabled-mode eager Docker import in the initial wiring.
+Managed process/native imports now occur only in enabled validation/composition
+branches; the value annotation is type-checking-only. The existing zero-I/O,
+no-Docker-import disabled observer assertion is preserved. All16 new startup
+targets passed that run; the remaining full owner gate is still required.
+
 Selected-version composition (#252) adds one typed metadata bridge over the
 Interpreter reader and existing provider bootstrap registry. The concrete IO
 validates requested workspace/reference/version; the bridge requires the existing

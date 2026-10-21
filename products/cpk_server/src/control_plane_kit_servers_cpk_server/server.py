@@ -8,7 +8,7 @@ import json
 import os
 from pathlib import Path
 import time
-from typing import Callable, Mapping
+from typing import Callable, Mapping, TYPE_CHECKING
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -84,10 +84,6 @@ from .http_host import install_operator_http_routes
 from control_plane_kit_operations.health_receiver_trust import HealthReceiverDecoders
 from .operations_application import OperationsApplicationFactory, OperationsEffectPorts, OperationsIdFactories
 from .managed_health import ManagedHealthBootstrap
-from .managed_health_configuration import (
-    ManagedHealthProcessConfiguration, read_managed_health_process_configuration,
-)
-from .managed_native_connection import DockerManagedNativeConnection
 from control_plane_kit_core.receiver_configuration import ReceiverNodeControlConfiguration
 from control_plane_kit_server_sdk.fastapi import install_cpk_wrapper
 from .boundary import (
@@ -110,6 +106,9 @@ from .composition import (
 
 _DEFAULT_PUBLIC_DNS_RESOLVER_ENDPOINT = "https://1.1.1.1/dns-query"
 _MANAGED_HEALTH_INVALID = "managed health process configuration is invalid"
+
+if TYPE_CHECKING:
+    from .managed_health_configuration import ManagedHealthProcessConfiguration
 
 
 class BootstrapConfigurationError(ValueError):
@@ -212,6 +211,8 @@ class CpkServerBootstrapConfiguration:
         try:
             if mode != "docker-unix-v1" or path_key not in values:
                 raise ValueError
+            from .managed_health_configuration import read_managed_health_process_configuration
+
             process = read_managed_health_process_configuration(values[path_key])
             config = replace(cls._from_environment(values), managed_health_process=process)
             _validate_managed_health_process(config)
@@ -821,6 +822,8 @@ def _operations_effect_ports(config, provider):
     bootstrap = config.managed_health
     process = getattr(config, "managed_health_process", None)
     if process is not None:
+        from .managed_native_connection import DockerManagedNativeConnection
+
         bootstrap = ManagedHealthBootstrap(
             gateway_documents=process.gateway_documents,
             provider_clients=process.provider_clients,
@@ -1430,6 +1433,8 @@ def _validate_managed_health_process(config):
     if process is None:
         return
     try:
+        from .managed_health_configuration import ManagedHealthProcessConfiguration
+
         if (type(process) is not ManagedHealthProcessConfiguration
                 or config.managed_health is not None
                 or config.mode != "execution-capable"
