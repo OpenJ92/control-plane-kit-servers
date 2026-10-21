@@ -20,6 +20,11 @@ in offline custody. Actual Core values and CPK/Secrets product factories own
 configuration construction and validation. No parent context, managed signer,
 registration, provider credential or Operations authority is synthesized.
 
+Public key IDs prefix fresh entropy with `key-`, preserving Core's required
+alphabetic first character even when the entropy begins in a digit. SOURCE
+review caught the unprefixed form before execution; a strengthened real-factory
+regression forces zero-leading entropy and verifies exact reuse.
+
 Private PEM files are exclusively created at 0400. Public/intent/receiver files
 are 0600. All file writes and directory entries are flushed before completion;
 persisted own-key/public correspondence is checked before complete.new is written

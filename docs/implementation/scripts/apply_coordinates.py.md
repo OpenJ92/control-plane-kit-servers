@@ -4,11 +4,14 @@ The early #181 prerequisite for #208 splits the former common field into require
 Maintain this companion when the generator or selected dependency contracts change.
 
 Servers #301 adds CPK_BOOTSTRAP_DOCKERFILE as the existing acquisition driver's
-Secrets-only dependency destination. The archive substitution algorithm is
+complete accepted dependency-cohort destination. The archive substitution algorithm is
 unchanged. The bootstrap-specific target proves this destination and synthetic
 pin drift in the CPK suite; the existing root destination matrix also includes
 the new recipe so its full-byte preservation law remains exhaustive. Published
-product/catalogue coordinates and service-image recipes are unchanged.
+product/catalogue coordinates and service-image recipes are unchanged. SOURCE
+review established that the actual driver inherits the historical CPK image;
+therefore Core/Operations/SDK/Interpreters/Secrets are all explicit here, rather
+than relying on inherited version-0.1.0 packages.
 
 The canonical upstream fields are exact lowercase commits for Core/Operations,
 Interpreters, Secrets and SDK. The loader rejects missing or malformed SDK pins.

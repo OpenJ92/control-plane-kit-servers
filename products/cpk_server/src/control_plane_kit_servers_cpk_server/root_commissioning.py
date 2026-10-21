@@ -283,7 +283,7 @@ def _prepare_locked(plan, state):
         for purpose, name in PURPOSE_FILES.items():
             private = Ed25519PrivateKey.generate()
             private_keys[purpose] = private
-            key_ids[purpose] = secrets.token_hex(16)
+            key_ids[purpose] = "key-" + secrets.token_hex(16)
             raw = private.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
                                         serialization.NoEncryption())
             _write(directory, name, raw, 0o400)
