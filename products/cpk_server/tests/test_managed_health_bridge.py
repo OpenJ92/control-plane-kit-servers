@@ -82,16 +82,30 @@ class ManagedHealthBridgeSelectionTests(unittest.TestCase):
         self.assertEqual(self.reader.mock_calls, [])
         self.assertEqual(self.client.mock_calls, [])
 
-    def dispatch_inputs(self, *, local):
+    def use_fresh_plan(self):
+        from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC, DeploymentGraph
+        self.current = DeploymentGraph(self.desired.name)
+        self.desired = DEFAULT_GRAPH_CODEC.decode(DEFAULT_GRAPH_CODEC.encode(self.desired))
+        self.plan = core.compile_graph_activity_plan(validate_graph(self.current), validate_graph(self.desired))
+        self.assertTrue(self.plan.ready_for_execution)
+        self.assertFalse(any(type(item.operation) is core.ObserveManagementBootstrap
+            and item.operation.stage is core.ManagementBootstrapStage.GATEWAY_LOCAL_READY
+            for item in self.plan.activities))
+        self.native.select.return_value = tuple(item.activity_id for item in self.plan.activities
+            if is_native_connection_operation(item.operation))
+
+    def dispatch_inputs(self, *, local, stage=None):
         from types import SimpleNamespace
         from control_plane_kit_core.operations import RunId
         from control_plane_kit_core.runtime_effects import RuntimeEffectKind, RuntimeEffectRequest, RuntimeEffectSource
         from control_plane_kit_core.secrets import SecretProviderEndpointReference, SecretReference, SecretResolutionGrant, SecretUseIntent
         from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC
-        operation_type = core.ObserveManagementBootstrap if local else core.ObserveNodeHealth
+        if local:
+            stage = core.ManagementBootstrapStage.GATEWAY_LOCAL_READY
+        operation_type = core.ObserveManagementBootstrap if stage is not None else core.ObserveNodeHealth
         activity = next(item for item in self.plan.activities if type(item.operation) is operation_type
-            and (not local or item.operation.stage is core.ManagementBootstrapStage.GATEWAY_LOCAL_READY))
-        configured = self.material.configurations["gateway" if local else activity.operation.node_id]
+            and (stage is None or item.operation.stage is stage))
+        configured = self.material.configurations["gateway" if stage is not None else activity.operation.node_id]
         gateway = self.material.configurations["gateway"]
         request = core.ReceiverHealthReadRequest(configured.target,
             core.NodeControlAuthorityContext("graph-desired", "projection-desired"),
@@ -163,15 +177,122 @@ class ManagedHealthBridgeSelectionTests(unittest.TestCase):
                 self.assertIs(args.kwargs["local_destination"], endpoint if local else None)
                 if local:
                     self.assertIsNone(args.kwargs["destination"])
+                    read.assert_called_once_with(workspace_id="workspace-a", runtime_id="docker",
+                        authority=self.authority, gateway_node_id="gateway", socket_name="control", port=8000,
+                        graph_id="graph-desired")
                 else:
                     destination = args.kwargs["destination"]
                     self.assertEqual(destination.gateway_node_id.value, "gateway")
                     self.assertEqual(destination.target_id, "api")
-                read.assert_called_once_with(workspace_id="workspace-a", runtime_id="docker",
-                    authority=self.authority, gateway_node_id="gateway", socket_name="control", port=8000,
-                    graph_id="graph-desired")
+                    read.assert_not_called()
                 reader.observe.return_value = SimpleNamespace(code=GatewayHealthTransportCode.TIMED_OUT)
                 self.assertIsNone(asyncio.run(bridge.observe_signed(realization, request, authority)))
+
+    def test_fresh_public_stages_preserve_named_ingress_without_private_reads(self):
+        import asyncio
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+        from control_plane_kit_interpreters.probes.health_transport import GatewayHealthTransportCode
+        self.use_fresh_plan()
+        for stage in (core.ManagementBootstrapStage.AUTHENTICATED_MANAGEMENT_PATH,
+                core.ManagementBootstrapStage.GATEWAY_INGRESS_READY, None):
+            with self.subTest(stage=stage):
+                realization, request, authority, result = self.dispatch_inputs(local=False, stage=stage)
+                read = Mock(side_effect=AssertionError("public health must not inspect private placement"))
+                reader = SimpleNamespace(observe=AsyncMock(return_value=SimpleNamespace(
+                    code=GatewayHealthTransportCode.RECEIVED, result=result)))
+                bridge = replace(self.bridge, reader=reader,
+                    endpoints=SimpleNamespace(select=self.endpoints.select, read=read))
+                self.assertIs(asyncio.run(bridge.observe_signed(realization, request, authority)), result)
+                read.assert_not_called()
+                reader.observe.assert_awaited_once()
+                args = reader.observe.call_args
+                self.assertIs(args.args[0], request)
+                self.assertIs(args.kwargs["plan"], self.plan)
+                self.assertEqual(args.kwargs["current"], validate_graph(self.current))
+                self.assertEqual(args.kwargs["desired"], validate_graph(self.desired))
+                self.assertIs(args.kwargs["context"].request, authority.preparation.request)
+                self.assertIs(args.kwargs["authority_context"], authority.preparation.request.authority_context)
+                for family in ("transit", "workload"):
+                    self.assertIs(args.kwargs[family + "_grant"], getattr(authority.preparation, family + "_grant"))
+                    self.assertIs(args.kwargs[family + "_key"].resolution_grant, getattr(authority, family).resolution_grant)
+                self.assertIsNone(args.kwargs["local_destination"])
+                destination = args.kwargs["destination"]
+                self.assertEqual(destination.ingress, self.desired.public_ingresses[0])
+                self.assertEqual(destination.gateway_node_id.value, "gateway")
+                self.assertEqual(destination.runtime_id.value, "docker")
+                self.assertEqual(destination.gateway_transit_provider_socket_name, "control")
+                self.assertEqual(destination.target_id, "self" if stage is not None else "api")
+
+    def test_public_stage_wrong_current_authority_refuses_before_any_reader(self):
+        import asyncio
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+        from control_plane_kit_core.runtime_authority import RuntimeAuthorityReference
+        from control_plane_kit_servers_cpk_server.managed_health import ManagedHealthUnavailable
+        self.use_fresh_plan()
+        for stage in (core.ManagementBootstrapStage.AUTHENTICATED_MANAGEMENT_PATH,
+                core.ManagementBootstrapStage.GATEWAY_INGRESS_READY, None):
+            with self.subTest(stage=stage):
+                realization, request, authority, _ = self.dispatch_inputs(local=False, stage=stage)
+                request = replace(request, authority_ref=RuntimeAuthorityReference("wrong-authority"))
+                reader, read = SimpleNamespace(observe=AsyncMock()), Mock()
+                bridge = replace(self.bridge, reader=reader,
+                    endpoints=SimpleNamespace(select=self.endpoints.select, read=read))
+                with self.assertRaises(ManagedHealthUnavailable):
+                    asyncio.run(bridge.observe_signed(realization, request, authority))
+                read.assert_not_called()
+                reader.observe.assert_not_awaited()
+
+    def test_actual_public_transport_failure_is_redacted_without_private_fallback(self):
+        import asyncio
+        import json
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+        import httpx
+        from control_plane_kit_core.secrets import SecretResolved, SecretValue
+        from control_plane_kit_interpreters.docker.managed_health import DockerManagedHealthReader
+        from control_plane_kit_interpreters.probes.health_signing import Ed25519HealthCredentialPairSigner
+        from control_plane_kit_interpreters.probes.health_transport import GatewayHealthTransportCode, SignedGatewayHealthClient
+        from control_plane_kit_interpreters.probes.local_health import LocalGatewayHealthClient
+        self.use_fresh_plan()
+        for error_type, code in ((httpx.ReadTimeout, GatewayHealthTransportCode.TIMED_OUT),
+                (httpx.ConnectError, GatewayHealthTransportCode.TRANSPORT_FAILED)):
+            with self.subTest(code=code):
+                realization, request, authority, _ = self.dispatch_inputs(local=False)
+                resolved = {getattr(authority, family).resolution_grant.reference:
+                    SecretResolved(getattr(authority, family).resolution_grant.reference,
+                        SecretValue(self.material.private[family].decode("ascii")))
+                    for family in ("transit", "workload")}
+                resolver = SimpleNamespace(resolve=Mock(side_effect=lambda grant: resolved[grant.reference]))
+                dns = SimpleNamespace(resolve=AsyncMock(return_value=("93.184.216.34",)))
+                sent, observations = [], []
+                def fail(outbound):
+                    sent.append(outbound)
+                    raise error_type("sensitive-provider-sentinel", request=outbound)
+                actual = DockerManagedHealthReader(Ed25519HealthCredentialPairSigner(resolver, lambda: 150),
+                    SignedGatewayHealthClient(lambda: 150, public_resolver=dns, transport=httpx.MockTransport(fail)),
+                    LocalGatewayHealthClient(lambda: 150))
+                async def observe(*args, **kwargs):
+                    outcome = await actual.observe(*args, **kwargs)
+                    observations.append(outcome)
+                    return outcome
+                read = Mock(side_effect=AssertionError("public transport must not fall back to private placement"))
+                bridge = replace(self.bridge, reader=SimpleNamespace(observe=observe),
+                    endpoints=SimpleNamespace(select=self.endpoints.select, read=read))
+                self.assertIsNone(asyncio.run(bridge.observe_signed(realization, request, authority)))
+                self.assertEqual(len(sent), 1)
+                self.assertEqual(str(sent[0].url), "https://93.184.216.34/cpk/health/readiness")
+                self.assertEqual(sent[0].headers["Host"], "cpk-1912.example.invalid:443")
+                self.assertEqual(sent[0].extensions["sni_hostname"], "cpk-1912.example.invalid")
+                self.assertEqual(json.loads(sent[0].content)["target_id"], "api")
+                self.assertEqual(len(observations), 1)
+                self.assertIs(observations[0].code, code)
+                self.assertIsNone(observations[0].result)
+                self.assertNotIn("sensitive-provider-sentinel", repr(observations[0]))
+                read.assert_not_called()
+                dns.resolve.assert_awaited_once_with("cpk-1912.example.invalid")
+                self.assertEqual(resolver.resolve.call_count, 2)
 
     def test_unavailable_placement_cannot_reach_signing_reader(self):
         import asyncio
