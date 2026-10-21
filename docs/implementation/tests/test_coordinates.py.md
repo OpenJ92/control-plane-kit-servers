@@ -206,3 +206,7 @@ suites and later runtime/image witnesses were not executed. The generator now
 owns that output through its existing URL substitution. The target assertions
 are unchanged, including verification-extra/current-pin and unchanged-product
 laws. This source implementation has not been rerun or claimed green.
+Servers #301 adds the bootstrap recipe to the existing synthetic dependency
+destination matrix. This is required because the generator now owns that recipe;
+the unchanged full-byte assertion continues to check every destination. The new
+causally reviewed bootstrap-specific target lives in the CPK product suite.
