@@ -1,6 +1,22 @@
 Source: [secrets_server_image_smoke.sh](../../../scripts/secrets_server_image_smoke.sh).
 Maintain with the owning product recipe, fixture and image profiles.
 
+#191 adds wrapped-artifact/build0/controller-build0 for the explicitly selected
+current digest. Existing public-file factories, signed reads, provider storage and
+restart checks are reused. The selected process is pinned to the admitted actual
+image ID with pull disabled; both initial and restart container Image/cache and
+actual installed direct_url provenance are checked through the existing controller.
+Two bounded public evidence/status files join the existing private fixture cleanup.
+
+The existing finish owner now captures every container/volume/network inventory
+status, removes only its run-labelled observations, and requires fresh successful
+absence inventories. Removal/inventory/residue failures aggregate without retries.
+Private-file cleanup must also succeed. Final smoke PASS moves from the body to
+this finish boundary and appears only for primary+cleanup success; selected ABI
+PASS follows it. Input images are never deleted. This fixes false-success reporting
+in all existing profiles without a new cleanup framework. Source/default CI still
+does not qualify an unexecuted selected pair or any live #225 behavior.
+
 #204 restores default wrapped-source build. Profile/build flags and historical
 immutable-image syntax are validated before Docker, directories or traps.
 Explicit legacy BUILD_IMAGE=0 selects published-baseline; contradictory inputs
@@ -27,10 +43,13 @@ The helper checks old markers/exact private values and source tokens without
 matching output or token argv. Capture does not create a hard Docker deadline.
 HTTP has bounded accumulation and per-operation timeouts, not a total deadline.
 
-Finish retains labelled Docker cleanup and namespace audit, then deletes exactly
-two root log files and three files per known phase. Partial generation/check
+Finish retains labelled Docker cleanup and namespace audit, then deletes named
+root log/artifact evidence files and three files per known phase. Partial generation/check
 failure follows the same path. Unknown files or failed removal prevent rmdir
 and retain the recorded path; no recursive prune or foreign-resource cleanup.
 The first full owner run passed both profiles, including initial/restart signed
 source reads and original custody/retained-value checks. Source success cannot
 substitute for published qualification or public grandparent acceptance.
+The selected artifact verifier requires actual PID 1 effective UID 10006 on both
+initial and restarted provider containers. Bounded private status/exit records
+join exact fixture cleanup; only validated role/PID/UID reaches public output.

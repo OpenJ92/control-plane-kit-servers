@@ -46,6 +46,16 @@ case "$PRODUCT_ID" in
 esac
 
 IMAGE="ghcr.io/$OWNER/$PACKAGE/$IMAGE_NAME:$TAG"
+ROOT_PRODUCT=0
+case "$PRODUCT_ID" in
+  cpk-server|secrets-server)
+    ROOT_PRODUCT=1
+    SOURCE_COMMIT="$(git rev-parse HEAD)"
+    ROOT_SOURCE_STATUS="$(git status --porcelain)"
+    [ -z "$ROOT_SOURCE_STATUS" ]
+    case "$PRODUCT_ID" in cpk-server) ROOT_USER=10001 ;; secrets-server) ROOT_USER=10006 ;; esac
+    ;;
+esac
 
 if [ "$PRODUCT_ID" = hello-server ]; then
   SOURCE_COMMIT="$(git rev-parse HEAD)"
@@ -70,6 +80,16 @@ if [ "$PRODUCT_ID" = hello-server ]; then
   [ "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMAGE")" = "$SOURCE_COMMIT" ]
   # Recheck immediately before the consequential step; no retry on ambiguity.
   sh scripts/check_hello_package.sh before-push "$SOURCE_COMMIT"
+elif [ "$ROOT_PRODUCT" = 1 ]; then
+  docker build --platform linux/amd64 \
+    --label "org.opencontainers.image.revision=$SOURCE_COMMIT" \
+    -f "$DOCKERFILE" -t "$IMAGE" .
+  [ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$IMAGE")" = linux/amd64 ]
+  [ "$(docker image inspect --format '{{.Config.User}}' "$IMAGE")" = "$ROOT_USER" ]
+  [ "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMAGE")" = "$SOURCE_COMMIT" ]
+  ROOT_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+  ROOT_SOURCE_STATUS="$(git status --porcelain)"
+  [ -z "$ROOT_SOURCE_STATUS" ]
 else
   docker build -f "$DOCKERFILE" -t "$IMAGE" .
 fi
@@ -84,6 +104,14 @@ if [ "$PRODUCT_ID" = hello-server ]; then
   sh scripts/check_hello_package.sh published "$SOURCE_COMMIT" "$REFERENCE"
   printf 'hello-server reference=%s image_id=%s source=%s platform=linux/amd64 configured_user=hello recipe_uid=10002\n' "$REFERENCE" "$HELLO_IMAGE_ID" "$SOURCE_COMMIT"
   echo "Qualify this actual pulled-by-digest Hello artifact with both declarations before installed use. Source startup evidence does not qualify this rebuilt image. Historical catalogue coordinates remain unchanged." >&2
+elif [ "$ROOT_PRODUCT" = 1 ]; then
+  [ "$(docker image inspect --format '{{.Id}}' "$IMAGE")" = "$ROOT_IMAGE_ID" ]
+  REPOSITORY="${IMAGE%:*}"
+  REPO_DIGESTS="$(docker image inspect "$ROOT_IMAGE_ID" --format '{{range .RepoDigests}}{{println .}}{{end}}')"
+  REFERENCE="$(printf '%s\n' "$REPO_DIGESTS" | sh scripts/select_repository_digest.sh "$REPOSITORY")"
+  printf '%s reference=%s image_id=%s source=%s platform=linux/amd64 configured_user=%s\n' \
+    "$PRODUCT_ID" "$REFERENCE" "$ROOT_IMAGE_ID" "$SOURCE_COMMIT" "$ROOT_USER"
+  echo 'Publication is not artifact qualification. Preserve the exact producer record and qualify the actual digest through the current-root owning gate before use.' >&2
 else
   docker image inspect "$IMAGE" --format "{{index .RepoDigests 0}}"
   echo "Update coordinates/server-products.json with the verified published digest; regenerate coordinates in Docker and validate with ./test.sh." >&2

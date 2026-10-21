@@ -1,6 +1,15 @@
 Source: [test.sh](../../test.sh).
 Maintain with the normal Docker-backed owning gate and prerequisite effects.
 
+#191 additionally admits `CPK_ROOT_ARTIFACT_MODE=published-digest` with exact
+CPK/Secrets references and producer revision. Default mode refuses populated
+optional fields; invalid tuples refuse before Docker. Mandatory source builds
+and historical invocations remain literal and unchanged. Additional wrapped-
+artifact calls follow those paths, using the existing controller without rebuild.
+Gate and producer revisions are distinct; independent cohort/recipe equivalence
+remains required. Later root/connector/PostgreSQL/final residue stages remain.
+Source green cannot qualify an unexecuted pair. See [selection](../current-root-artifacts.md).
+
 Servers #279 tightens only the PostgreSQL source witness's retained-data start
 sequencing. On the existing restart, recovery predecessor and recovered
 successor paths, the already attached controller first observes the container's

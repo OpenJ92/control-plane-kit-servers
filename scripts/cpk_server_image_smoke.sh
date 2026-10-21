@@ -4,12 +4,22 @@ set -eu
 IMAGE="${CPK_SERVER_IMAGE:-localhost/control-plane-kit-servers/cpk-server:local}"
 BUILD_IMAGE="${CPK_SERVER_BUILD_IMAGE:-1}"
 PROFILE="${CPK_SERVER_SMOKE_PROFILE:-wrapped-source}"
+PRODUCT_PULL_POLICY=missing
 CONTROL_RECORDS=""
 MISSING_CONTROL_CONTAINER=""
 RECEIVER_RECORDS=""
 case "$PROFILE" in
   wrapped-source)
     : "${CPK_SERVERS_TEST_IMAGE:?wrapped-source requires the owning test/controller image}"
+    ;;
+  wrapped-artifact)
+    [ "$BUILD_IMAGE" = 0 ] || { echo 'current root artifact input is invalid' >&2; exit 2; }
+    : "${CPK_SERVERS_TEST_IMAGE:?wrapped-artifact requires the owning test/controller image}"
+    . ./scripts/root_artifact_shell.sh
+    root_artifact_admit cpk-server "$IMAGE" "$CPK_SERVERS_TEST_IMAGE"
+    IMAGE="$ROOT_ARTIFACT_IMAGE_ID"
+    CPK_SERVERS_TEST_IMAGE="$ROOT_ARTIFACT_CONTROLLER"
+    PRODUCT_PULL_POLICY=never
     ;;
   published-baseline) ;;
   *) echo "cpk-server image smoke: invalid profile" >&2; exit 1 ;;
@@ -39,7 +49,9 @@ cleanup_control_fixture() {
   if [ -n "$CONTROL_RECORDS" ]; then
     rm -f "$CONTROL_RECORDS/control.json" "$CONTROL_RECORDS/surface.headers" \
       "$CONTROL_RECORDS/health.headers" "$CONTROL_RECORDS/surface.json" \
-      "$CONTROL_RECORDS/health.json" "$CONTROL_RECORDS/denied.json" || return 1
+      "$CONTROL_RECORDS/health.json" "$CONTROL_RECORDS/denied.json" \
+      "$CONTROL_RECORDS/artifact-provenance.json" "$CONTROL_RECORDS/artifact-provenance.status" \
+      "$CONTROL_RECORDS/artifact-pid1.status" "$CONTROL_RECORDS/artifact-pid1.exit" || return 1
     rmdir "$CONTROL_RECORDS" || return 1
     [ ! -e "$CONTROL_RECORDS" ] || return 1
     CONTROL_RECORDS=""
@@ -235,7 +247,7 @@ if [ "$BUILD_IMAGE" = "1" ]; then
 fi
 
 phase "reject missing bootstrap configuration"
-if docker run --rm "$IMAGE" >"$MISSING_CONFIG_OUTPUT" 2>&1; then
+if docker run --pull "$PRODUCT_PULL_POLICY" --rm "$IMAGE" >"$MISSING_CONFIG_OUTPUT" 2>&1; then
   echo "cpk-server started without required configuration" >&2
   exit 1
 fi
@@ -273,7 +285,7 @@ fi
 
 # Generate after image/Postgres preparation so the240-second grants cover only
 # startup and the immediate protected reads. No private key leaves the process.
-if [ "$PROFILE" = "wrapped-source" ]; then
+if [ "$PROFILE" != "published-baseline" ]; then
   phase "prepare synthetic source control authority"
   CONTROL_RECORDS="$(mktemp -d)"
   chmod 700 "$CONTROL_RECORDS"
@@ -296,9 +308,9 @@ set -- \
   -e CPK_ACTIVITY_HISTORY_DATABASE_URL="$ACTIVITY_HISTORY_DATABASE_URL" \
   -e CPK_OBSERVER_STATE_DATABASE_URL="$OBSERVER_STATE_DATABASE_URL" \
   -e CPK_GRAPH_TOPOLOGY_DATABASE_URL="$GRAPH_TOPOLOGY_DATABASE_URL"
-if [ "$PROFILE" = "wrapped-source" ]; then
+if [ "$PROFILE" != "published-baseline" ]; then
   phase "reject missing required source control file"
-  MISSING_CONTROL_CONTAINER="$(docker create --label "$LABEL" \
+  MISSING_CONTROL_CONTAINER="$(docker create --label "$LABEL" --pull "$PRODUCT_PULL_POLICY" \
     --label "org.openj92.cpk.test-run=$NETWORK" --name "$NETWORK-missing-control" \
     --network "$NETWORK" "$@" "$IMAGE")"
   docker start "$MISSING_CONTROL_CONTAINER" >/dev/null
@@ -319,11 +331,15 @@ if [ "$PROFILE" = "wrapped-source" ]; then
   grep -q 'CPK control configuration is invalid' "$MISSING_CONFIG_OUTPUT"
   set -- "$@" --mount "type=bind,source=$CONTROL_RECORDS/control.json,target=/etc/cpk/cpk-server/control.json,readonly"
 fi
-CONTAINER="$(docker run -d \
+CONTAINER="$(docker run --pull "$PRODUCT_PULL_POLICY" -d \
   --label "$LABEL" \
   --network "$NETWORK" \
   -p 127.0.0.1::8080 \
   "$@" "$IMAGE")"
+
+if [ "$PROFILE" = wrapped-artifact ]; then
+  root_artifact_verify_container "$CONTAINER" "$CONTROL_RECORDS"
+fi
 
 
 PORT_BINDING="$(docker port "$CONTAINER" 8080/tcp)"
@@ -350,7 +366,7 @@ if ! live="$(liveness_with_diagnostics "$BASE/health/live")"; then
   exit 1
 fi
 
-if [ "$PROFILE" = "wrapped-source" ]; then
+if [ "$PROFILE" != "published-baseline" ]; then
   phase "verify authenticated source control health"
   (
     umask 077
@@ -638,3 +654,4 @@ sh scripts/docker_residue_audit.sh
 
 phase "complete"
 echo "cpk-server image smoke passed"
+if [ "$PROFILE" = wrapped-artifact ]; then root_artifact_pass; fi

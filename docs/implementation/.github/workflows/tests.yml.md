@@ -1,5 +1,19 @@
 Source: [tests.yml](../../../../.github/workflows/tests.yml).
 
+#191 adds four manual inputs for an optional current CPK/Secrets digest pair and
+common producer revision. PR/push select source-built defaults. Quoted environment
+values enter the shared closed selector before Docker inspection/acquisition.
+After the unchanged fixed Hello/gateway input qualification, the same preloader
+pulls the two exact role references on the same Linux/amd64 daemon and checks
+repository digest, source label and numeric user. Their observations never enter
+the fixed helper's closed tuple. Existing package-read login, sole test.sh step,
+concurrency and30-minute budget remain. No alternate workflow is introduced.
+
+The eventual dispatch packet must bind exact producer/gate sources, independent
+cohort/recipe equivalence, private destinations/digests and reviewed effects.
+Source-only CI does not execute or qualify the optional pair. See
+[current-root artifacts](../../../current-root-artifacts.md).
+
 The existing authenticated host step owns exact-reference acquisition. It retains
 registry allowlists, required fixed entries, optional A/B/gateway inputs, explicit
 Linux/amd64 selection and RepoDigest checks. It records only whitelisted image

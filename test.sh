@@ -7,6 +7,9 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 
 cd "$ROOT"
 
+. ./scripts/root_artifact_shell.sh
+root_artifact_selection
+
 docker run --rm \
   -v "$ROOT:/source:ro" \
   -e PYTHONDONTWRITEBYTECODE=1 \
@@ -193,6 +196,20 @@ CPK_SERVER_SMOKE_PROFILE=wrapped-source CPK_SERVERS_TEST_IMAGE="$IMAGE" \
 CPK_SERVER_BUILD_IMAGE=1 sh scripts/cpk_server_image_smoke.sh
 CPK_IMAGE="$(docker run --rm "$IMAGE" python scripts/product_image_coordinate.py cpk-server)"
 CPK_SERVER_IMAGE="$CPK_IMAGE" sh scripts/cpk_server_published_image_smoke.sh
+
+# Additional current immutable pair; neither source nor historical coverage is
+# replaced. Producer-side preload and publication are separately authorized.
+if [ "${CPK_ROOT_ARTIFACT_MODE:-source-built}" = published-digest ]; then
+  ROOT_ARTIFACT_GATE_SOURCE="$(git rev-parse HEAD)"
+  printf 'current root artifact qualification gate_source=%s producer_source=%s\n' \
+    "$ROOT_ARTIFACT_GATE_SOURCE" "$CPK_ROOT_SOURCE_REVISION"
+  CPK_SECRETS_SMOKE_PROFILE=wrapped-artifact CPK_SECRETS_BUILD_IMAGE=0 \
+    CPK_SECRETS_BUILD_CONTROLLER=0 CPK_SERVERS_TEST_IMAGE="$IMAGE" \
+    CPK_SECRETS_IMAGE="$CPK_ROOT_SECRETS_IMAGE" sh scripts/secrets_server_image_smoke.sh
+  CPK_SERVER_SMOKE_PROFILE=wrapped-artifact CPK_SERVER_BUILD_IMAGE=0 \
+    CPK_SERVERS_TEST_IMAGE="$IMAGE" CPK_SERVER_IMAGE="$CPK_ROOT_CPK_IMAGE" \
+    sh scripts/cpk_server_image_smoke.sh
+fi
 # Real external-root launcher: canonical products, isolated test workspace, no
 # provider/DNS exposure or retained acceptance installation.
 (
