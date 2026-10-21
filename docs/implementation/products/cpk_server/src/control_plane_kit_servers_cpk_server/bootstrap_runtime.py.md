@@ -21,3 +21,12 @@ invoked state directories are not a distributed lock. There is no automatic
 rollback. Configuration volumes follow existing retained-resource ownership and
 exact-ID cleanup. Public initialization still uses authenticated CPK routes;
 this path neither grants managed-health execution nor qualifies new images.
+
+#302 enabled plans select only their two derived loopback bindings. After each
+start/reload, before clearing start intent, actual SDK published_ports must equal
+the complete expected tuple (sorted without deduplication): exactly one for
+API/website, empty for PostgreSQL/Secrets. Only after equality are bounded
+fixed-field mappings persisted under observations.host_bindings[node_id], while
+start remains pending; the existing observed() then clears it. Errors preserve
+uncertainty. Pre-start image/mount checks and the website-absent branch remain
+unchanged. This proves local publication only, not external reachability.

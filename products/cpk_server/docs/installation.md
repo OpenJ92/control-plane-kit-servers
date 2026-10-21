@@ -186,8 +186,11 @@ website, with both connector documents absent. It yields four nodes and no
 graph-owned ingress allocations. Both endpoints must satisfy the existing
 [frontend canonical HTTPS origin rule](frontend-deployment.md). The website
 upstream is exactly the API endpoint; the website endpoint remains explicit
-exposure intent, without claiming provider allocation. Root acquisition does
-not yet accept this website option and needs its separately reviewed profile.
+exposure intent, without claiming provider allocation. Root acquisition
+accepts this option through the [complete local root profile](complete-root.md),
+which requires actual public receiving configurations and two explicit loopback
+bindings. Production image qualification and external browser acceptance remain
+separate.
 
 Mixed Named/external profiles are refused. Origins must have distinct hostnames,
 even when their ports differ or one hostname has a terminal DNS root dot.

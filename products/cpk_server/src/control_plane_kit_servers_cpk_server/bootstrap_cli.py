@@ -133,7 +133,8 @@ def public_setup(plan, credential):
     delivered = command("command.runtime-authority-delivery.register", {"delivery": installation["runtime_access"], "admitted_at": stamp})
     delivery_id = identity(delivered, "delivery_id")
     detail("read.runtime-authority-delivery-detail", "runtime_authority_delivery", "delivery_id", delivery_id, authority_ref=authority_ref)
-    for product in installation["products"].values():
+    products = plan["setup_products"] if "setup_products" in plan else installation["products"].values()
+    for product in products:
         result = command("command.product.import", {"descriptor_document": product, "imported_at": stamp})
         identity(result, "registration_id")
         expected = ProductReference.from_document(ProductDescriptorCodec().decode_document(product)).descriptor()

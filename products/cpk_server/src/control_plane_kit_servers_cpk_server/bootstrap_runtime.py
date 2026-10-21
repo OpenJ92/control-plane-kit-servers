@@ -372,7 +372,11 @@ def _acquire(plan, material, state):
                 socket_path = node["local_docker_access"]["socket"]
                 mounts.append(docker.types.Mount(socket_path, socket_path, type="bind"))
                 options["group_add"] = [str(os.stat(socket_path).st_gid)]
-            if node["node_id"] == plan["cpk_node_id"]:
+            if "host_bindings" in plan:
+                for binding in plan["host_bindings"]:
+                    if binding["node_id"] == node["node_id"]:
+                        options["ports"] = {"8080/tcp": (binding["address"], binding["port"])}
+            elif node["node_id"] == plan["cpk_node_id"]:
                 binding = plan["input"]["host_binding"]
                 options["ports"] = {"8080/tcp": (binding["address"], binding["port"])}
             container = effect("create-container:" + node["node_id"], lambda: client.containers.create(
@@ -392,6 +396,20 @@ def _acquire(plan, material, state):
             container.reload()
             if not container.attrs["State"]["Running"]:
                 raise RootBootstrapHold("bootstrap container failed to start")
+            if "host_bindings" in plan:
+                from control_plane_kit_core.types import Transport
+                from control_plane_kit_interpreters.docker.sdk import DockerSdkPublishedPort
+                expected = tuple(DockerSdkPublishedPort(binding["container_port"], Transport.TCP,
+                    binding["address"], binding["port"]) for binding in plan["host_bindings"]
+                    if binding["node_id"] == node["node_id"])
+                inspection = sdk.inspect_container(container.id)
+                if inspection is None or sorted(inspection.published_ports) != sorted(expected):
+                    raise RootBootstrapHold("bootstrap published mappings could not be verified")
+                receipt["observations"].setdefault("host_bindings", {})[node["node_id"]] = [
+                    {"container_port": port.container_port, "transport": port.transport.value,
+                     "host_address": port.host_address, "host_port": port.host_port}
+                    for port in sorted(inspection.published_ports)]
+                _save(state, receipt)
             observed()
             if node["node_id"] == plan["postgres_node_id"]:
                 effect("observe-postgres-readiness", lambda: _postgres_ready(container))
