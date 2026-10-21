@@ -1,12 +1,39 @@
 # Managed native connection composition
 
+## #291 target checkpoint and evidence boundary
+
+The selected cohort supplies Core's retained-image compiler, Operations'
+retained-image profile and Interpreters' retained-image qualification. Targets
+extend the existing genuine compiled fixture with a same-family image successor
+and the original typed connector installation pair. These are composition input
+values, not an admitted Operations history.
+
+The discriminating target uses the actual unpatched observer and DockerSdkClient:
+valid image proof must reach one unavailable-provider read and return UNKNOWN
+correlated to the current effect. Missing proof or a separately valid original
+installation for foreign material must return REFUSED before SDK I/O. Patched
+observer assertions establish exact input identity only; no connected sample
+or real native readiness is invented. The production forwarding branch still
+recognizes only retained-content updates at this target checkpoint, so the
+valid-image target and image proof-identity assertion are expected to fail.
+No owning run has yet established that red boundary.
+
+The existing synthetic native/ingress Docker image witness retains its actual
+workload replacement/history/cleanup evidence. Final genuine connector and
+public prepare/approve/execute/history A/B evidence remains mandatory jointly
+under #291/#225; #284's native lifetime and same-native stop/profile laws remain.
+Source integration cannot close those live gates or select live images.
+
+## Existing process composition
+
 This #181 slice connects the CPK process's existing native health port to the
 accepted Interpreters `MANAGED_WRAPPER_V1` observer. Exact validation checkpoints
 and acceptance status are recorded in [PR288](https://github.com/OpenJ92/control-plane-kit-servers/pull/288).
 It does not qualify a deployed managed connector image or complete #181/#148.
 
-Trusted process composition supplies the existing provisioner-owned placements,
-one reviewed canonical connector document, and a UTC clock:
+Trusted process composition supplies capability-scoped borrowed Docker clients,
+optional provisioner-owned controller placement, one reviewed canonical
+connector document, and a UTC clock:
 
 ```python
 from datetime import datetime, timezone
@@ -14,12 +41,13 @@ from control_plane_kit_servers_cpk_server.managed_health import ManagedHealthBoo
 from control_plane_kit_servers_cpk_server.managed_native_connection import DockerManagedNativeConnection
 
 native = DockerManagedNativeConnection(
-    endpoints=provisioner_endpoints,
+    provider_clients=provider_clients,
     product_document=reviewed_connector_document,
     clock=lambda: datetime.now(timezone.utc),
 )
 health = ManagedHealthBootstrap(
     gateway_documents=(reviewed_gateway_document,),
+    provider_clients=provider_clients,
     endpoints=provisioner_endpoints,
     native=native,
 )
@@ -28,8 +56,9 @@ health = ManagedHealthBootstrap(
 
 The document must match the actual registered declaration and graph metadata.
 Registration alone does not qualify an image. The adapter reuses
-`DockerGatewayEndpointReader.select` to choose the unique client for the current
-local Docker authority; this placement lookup grants no authorization. There is
+`DockerRuntimeClientSelector.select` to choose the unique client for the current
+local Docker authority; this capability lookup grants no authorization. Optional
+controller placement is required only for gateway-local readiness. There is
 no ambient enablement, new registry, automatic image choice or support file.
 
 Selection retains the original complete plan and performs no SDK, clock, binding

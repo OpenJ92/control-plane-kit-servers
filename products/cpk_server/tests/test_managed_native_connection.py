@@ -73,9 +73,9 @@ class ManagedNativeConnectionTests(unittest.TestCase):
         self.binding.assert_not_called()
 
     def test_fresh_and_retained_complete_plan_selection_is_pure(self):
-        for retained in (False, True):
-            with self.subTest(retained=retained):
-                world = self.world if not retained else NativeMaterial(retained=True)
+        for options in ({}, {"retained": True}, {"retained_image": True}):
+            with self.subTest(options=options):
+                world = self.world if not options else NativeMaterial(**options)
                 native = replace(self.native, product_document=world.document)
                 # Real accepted interpreter qualification, with genuine compiled graphs.
                 self.assertEqual(self.select(world, native), (world.request.activity_id,))
@@ -144,20 +144,25 @@ class ManagedNativeConnectionTests(unittest.TestCase):
         self.assert_pure()
 
     def test_retained_original_installation_pair_is_passed_unchanged(self):
-        world = NativeMaterial(retained=True)
-        native = replace(self.native, product_document=world.document)
-        # These are typed pure input values, not a fabricated admitted workflow.
-        calls = []
-        def observed(observer, request, **inputs):
-            calls.append((request, inputs))
-            return ConnectorConnectionObservation(ConnectorConnectionOutcome.REFUSED)
-        with patch.object(DockerConnectorConnectionObserver, "observe", observed):
-            self.assertIs(type(self.observe(world=world, bridge=self.bridge(native, world))), NativeConnectionRefused)
-        request, inputs = calls[0]
-        self.assertIs(request, world.request)
-        self.assertIs(inputs["plan"], world.plan)
-        self.assertIs(inputs["installation_request"], world.realization.connector_installation.original_request)
-        self.assertIs(inputs["installation_receipt"], world.realization.connector_installation.receipt)
+        for options in ({"retained": True}, {"retained_image": True}):
+            with self.subTest(options=options):
+                world = NativeMaterial(**options)
+                native = replace(self.native, product_document=world.document)
+                # Patched identity assertion only; these inputs are not an admitted workflow.
+                calls = []
+                def observed(observer, request, **inputs):
+                    calls.append((request, inputs))
+                    return ConnectorConnectionObservation(ConnectorConnectionOutcome.REFUSED)
+                with patch.object(DockerConnectorConnectionObserver, "observe", observed):
+                    self.assertIs(type(self.observe(world=world, bridge=self.bridge(native, world))), NativeConnectionRefused)
+                self.assertEqual(len(calls), 1)
+                request, inputs = calls[0]
+                self.assertIs(request, world.request)
+                self.assertIs(inputs["plan"], world.plan)
+                self.assertEqual(inputs["current"], validate_graph(world.current))
+                self.assertEqual(inputs["desired"], validate_graph(world.desired))
+                self.assertIs(inputs["installation_request"], world.realization.connector_installation.original_request)
+                self.assertIs(inputs["installation_receipt"], world.realization.connector_installation.receipt)
         self.assert_pure()
 
     def test_every_completed_result_preserves_correlation_and_nanoseconds(self):
@@ -231,6 +236,35 @@ class ManagedNativeConnectionTests(unittest.TestCase):
         self.assertEqual(self.observe(world=retained, bridge=self.bridge(native, retained)), NativeConnectionRefused())
         self.assertEqual(self.api.mock_calls, [])
         self.binding.assert_not_called()
+
+    def test_retained_image_real_observer_reads_with_original_proof_and_returns_current_unknown(self):
+        world = NativeMaterial(retained_image=True)
+        native = replace(self.native, product_document=world.document)
+        original = world.realization.connector_installation.original_request
+        self.assertNotEqual(original.effect_id, world.request.effect_id)
+        self.assertNotEqual(original.activity_id, world.request.activity_id)
+        # Actual observer and DockerSdkClient; the existing unavailable provider
+        # supplies no connected sample and performs no external operation.
+        result = self.observe(world=world, bridge=self.bridge(native, world))
+        self.assertEqual(result, NativeConnectionObservation(NativeConnectionOutcome.UNKNOWN,
+            world.request.effect_id, world.request.activity_id.value))
+        self.api.inspect_container.assert_called_once()
+        self.assertEqual(len(self.api.mock_calls), 1)
+        self.clock.assert_not_called()
+        self.binding.assert_not_called()
+
+    def test_retained_image_missing_or_foreign_original_proof_refuses_before_sdk(self):
+        world = NativeMaterial(retained_image=True)
+        native = replace(self.native, product_document=world.document)
+        # Independently valid typed installation, but for different selected
+        # receiver/configuration material. Do not forge an admitted history row.
+        foreign = NativeMaterial(retained=True).realization.connector_installation
+        self.assertNotEqual(foreign.original_request.products, world.request.products)
+        for installation in (None, foreign):
+            with self.subTest(missing=installation is None):
+                world.realization.connector_installation = installation
+                self.assertEqual(self.observe(world=world, bridge=self.bridge(native, world)), NativeConnectionRefused())
+                self.assert_pure()
 
     def test_unsupported_whole_plan_cannot_reach_any_observation(self):
         from control_plane_kit_servers_cpk_server.managed_health import ManagedHealthUnavailable

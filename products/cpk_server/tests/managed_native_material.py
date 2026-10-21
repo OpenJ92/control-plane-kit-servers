@@ -10,7 +10,7 @@ from control_plane_kit_core.configuration_instances import ConfigurationInstance
 from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
 from control_plane_kit_core.operations import RunId
 from control_plane_kit_core.planning import StartNode
-from control_plane_kit_core.products import ProductReference, ProductRuntimeContract, ProviderRuntimePort
+from control_plane_kit_core.products import ProductDescriptorCodec, ProductReference, ProductRuntimeContract, ProviderRuntimePort
 from control_plane_kit_core.runtime_effects import RuntimeEffectKind, RuntimeEffectRequest, RuntimeEffectSource, RuntimeProductMaterial
 from control_plane_kit_core.secret_installation import (
     SecretInstallationDisposition, SecretInstallationReceipt,
@@ -28,7 +28,8 @@ from receiver_acceptance_material import AuthoredMaterial
 
 
 class NativeMaterial:
-    def __init__(self, *, retained=False):
+    def __init__(self, *, retained=False, retained_image=False):
+        retained = retained or retained_image
         authored = self.authored = AuthoredMaterial()
         roles = core.NodeControlGraphReferenceRole
         declaration = core.WorkloadNodeControlSurfaceDeclaration(
@@ -68,12 +69,26 @@ class NativeMaterial:
             '{"color":"blue"}')
         api = authored.a.nodes["api"]
         api = replace(api, configuration_artifacts=(*api.configuration_artifacts, application))
+        if retained_image:
+            product = authored.documents["api"].product
+            api = replace(api, metadata={**api.metadata, "oci_image": product.image.execution_reference})
+            successor = ProductDescriptorCodec().encode_document(replace(product,
+                identity=replace(product.identity, contract_revision=product.identity.contract_revision + 1),
+                image=replace(product.image, digest="sha256:" + "b" * 64)))
+            authored.documents["api-image"] = successor
         installed = replace(authored.a, nodes={"gateway": gateway, "connector": connector, "api": api})
         empty = DeploymentGraph(installed.name)
         fresh = core.compile_graph_activity_plan(validate_graph(empty), validate_graph(installed))
         assert fresh.ready_for_execution, "fresh native fixture must compile"
         self.current, self.desired = empty, installed
-        if retained:
+        if retained_image:
+            reference = ProductReference.from_document(successor)
+            self.current = installed
+            self.desired = installed.update_node(replace(api, metadata={**api.metadata,
+                "product_identity": reference.identity.key,
+                "product_descriptor_digest": reference.descriptor_sha256.value,
+                "oci_image": successor.product.image.execution_reference}))
+        elif retained:
             self.current = installed
             self.desired = installed.update_node(replace(api, configuration_artifacts=(
                 *api.configuration_artifacts[:-1], replace(application, content='{"color":"green"}', source_digest=None))))
@@ -86,9 +101,11 @@ class NativeMaterial:
         pair = validate_graph(self.current), validate_graph(self.desired)
         for graph in pair:
             graph.require_valid()
-        self.plan = (core.compile_managed_update_activity_plan(*pair) if retained
-            else core.compile_graph_activity_plan(*pair))
-        assert self.plan.ready_for_execution, "native fixture must compile"
+        compiler = (core.compile_retained_image_ingress_activity_plan if retained_image
+            else core.compile_managed_update_activity_plan if retained
+            else core.compile_graph_activity_plan)
+        self.plan = compiler(*pair)
+        assert self.plan.ready_for_execution and self.plan.activities, "native fixture must compile"
         activity, = (item for item in self.plan.activities if is_native_connection_operation(item.operation))
         self.authority = RegisteredRuntimeAuthority("registration", "workspace-a",
             installed.runtimes["docker"].authority_ref, RuntimeKind.DOCKER,

@@ -1,5 +1,22 @@
 Source: [products/cpk_local_gateway/Dockerfile](../../../../products/cpk_local_gateway/Dockerfile).
 
+
+## Current #291 target and dependency checkpoint
+
+The selected owner cohort is Core/Operations `95566689`, Interpreters
+`350b1918`, SDK `cad5cc3d` and Secrets `f4747b23`; full immutable commits live
+in `coordinates/server-products.json`. The unchanged coordinate generator
+renders each existing package subset and extras into the root requirements and
+eight product recipes. Current provenance expectations advance together;
+published product source/image values, descriptor/catalogue bytes and native/base
+image inputs remain unchanged. Earlier coordinate accounts below are historical.
+
+This checkpoint prepares targets and dependency availability; the retained-image
+proof-forwarding production branch is deliberately unchanged pending causal red.
+No owning gate result, image qualification or live readiness is claimed.
+Source acceptance and mandatory real CPK-driven #291/#225 live acceptance are
+separate gates; the source PR must not close #291.
+
 ## Historical dependency adoption
 
 The canonical dependency tuple selects accepted Core/Operations #1981
