@@ -1,5 +1,22 @@
 Source: [test_source_control_product.py](../../../../../products/secrets_server/tests/test_source_control_product.py).
 
+
+## #291 provenance correction after mixed target red
+
+The current source expectation now names accepted Secrets `f4747b23`, matching
+the canonical manifest and source recipe. Exact installed provenance, public
+import, source composition and historical published-product assertions remain.
+
+The first #291 gate at `3fae9dd` passed 26 policy tests, root60, managed
+connector80 and gateway61, then ran CPK478 with four failures: two intended
+image-proof forwarding assertions and two stale current-composition pin checks.
+It was not clean causal red. Later product/runtime/image and residue stages were
+unreached. This bounded correction updates eleven current-source expectations
+across four existing files; native targets and production forwarding are unchanged.
+Independent correction review and a new owning run remain required. Full commits
+are in the canonical manifest; earlier selections below remain historical.
+No native live, image qualification or cleanup acceptance is inferred.
+
 ## Historical retained-update adoption (#249)
 
 The canonical dependency tuple selects accepted Core/Operations #1981

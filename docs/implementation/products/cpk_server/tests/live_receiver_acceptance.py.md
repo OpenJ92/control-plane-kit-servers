@@ -1,5 +1,22 @@
 Source: [live_receiver_acceptance.py](../../../../../products/cpk_server/tests/live_receiver_acceptance.py).
 
+
+## #291 provenance correction after mixed target red
+
+The five installed-source expectations now match the accepted canonical cohort.
+Exact direct-URL assertions, A/B/C scenarios, substitutes, configuration accounting
+and cleanup remain unchanged; this witness still does not prove native deployment.
+
+The first #291 gate at `3fae9dd` passed 26 policy tests, root60, managed
+connector80 and gateway61, then ran CPK478 with four failures: two intended
+image-proof forwarding assertions and two stale current-composition pin checks.
+It was not clean causal red. Later product/runtime/image and residue stages were
+unreached. This bounded correction updates eleven current-source expectations
+across four existing files; native targets and production forwarding are unchanged.
+Independent correction review and a new owning run remain required. Full commits
+are in the canonical manifest; earlier selections below remain historical.
+No native live, image qualification or cleanup acceptance is inferred.
+
 ## Current #181 installed provenance expectations
 
 The source-built witness now expects Operations `2d10a61c` and Interpreters

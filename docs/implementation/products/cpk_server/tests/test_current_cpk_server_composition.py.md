@@ -1,5 +1,22 @@
 Source: [products/cpk_server/tests/test_current_cpk_server_composition.py](../../../../../products/cpk_server/tests/test_current_cpk_server_composition.py).
 
+
+## #291 provenance correction after mixed target red
+
+The three independent Core/Operations/Interpreters expectations now match the
+accepted canonical cohort. Exact canonical-field and archive/subdirectory/count
+assertions remain unchanged.
+
+The first #291 gate at `3fae9dd` passed 26 policy tests, root60, managed
+connector80 and gateway61, then ran CPK478 with four failures: two intended
+image-proof forwarding assertions and two stale current-composition pin checks.
+It was not clean causal red. Later product/runtime/image and residue stages were
+unreached. This bounded correction updates eleven current-source expectations
+across four existing files; native targets and production forwarding are unchanged.
+Independent correction review and a new owning run remain required. Full commits
+are in the canonical manifest; earlier selections below remain historical.
+No native live, image qualification or cleanup acceptance is inferred.
+
 ## Current #181 dependency expectations
 
 Only the expected Operations (`2d10a61c`) and Interpreters (`2274d974`) commits
