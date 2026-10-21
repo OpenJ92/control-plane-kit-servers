@@ -49,3 +49,10 @@ The safeguard still prevents a faulty FIFO implementation from hanging. No
 original target was run, no production source or assertion law was weakened.
 Metadata-adapter coverage remains in its existing tests: this composition fixture
 intentionally supplies metadata_reader=None and does not claim that path.
+
+Source review preparation found two existing unrestricted Mock configurations in
+test_process_composition and test_operations_application_factory. Their absent
+new attribute would synthesize a Mock and correctly fail typed process input
+validation. Each now explicitly supplies managed_health_process=None for its
+existing disabled composition law. Assertions and the reviewed16 targets stay
+unchanged. This was found before any source execution, not an observed failure.

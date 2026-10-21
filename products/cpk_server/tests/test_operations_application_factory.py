@@ -100,6 +100,7 @@ class OperationsApplicationFactoryTests(unittest.TestCase):
         self.assertIs(server.OperationsApplicationFactory, composition.OperationsApplicationFactory)
         self.assertIs(witness.SharedOperationsApplicationFactory, composition.OperationsApplicationFactory)
         config = Mock()
+        config.managed_health_process = None
         with patch.object(server, "_install_operations_schema") as schema, \
                 patch.object(server, "_secret_provider_composition") as provider, \
                 patch.object(server, "_operations_effect_ports") as effect_ports, \
