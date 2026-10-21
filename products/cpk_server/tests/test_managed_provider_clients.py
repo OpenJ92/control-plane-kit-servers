@@ -128,11 +128,17 @@ class ManagedProviderClientTests(unittest.TestCase):
         realization, request, authority, _ = fixture.dispatch_inputs(local=False)
         reader = SimpleNamespace(observe=AsyncMock())
         bridge = replace(fixture.bridge, endpoints=None, reader=reader)
-        with self.assertRaises(ManagedHealthUnavailable):
-            asyncio.run(bridge.observe_signed(realization, request, authority))
+        with (patch.object(DockerSdkClient, "inspect_container") as containers,
+                patch.object(DockerSdkClient, "inspect_network") as networks,
+                patch.object(DockerSdkClient, "inspect_connector_container") as connectors):
+            with self.assertRaises(ManagedHealthUnavailable):
+                asyncio.run(bridge.observe_signed(realization, request, authority))
+        containers.assert_not_called()
+        networks.assert_not_called()
+        connectors.assert_not_called()
         reader.observe.assert_not_awaited()
         fixture.bindings.assert_not_called()
-        fixture.native.select.assert_not_called()
+        fixture.native.observe_connection.assert_not_called()
 
     def test_public_stages_dispatch_without_any_local_capability(self):
         self.api()
