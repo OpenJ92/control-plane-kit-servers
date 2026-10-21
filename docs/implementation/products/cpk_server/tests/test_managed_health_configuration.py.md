@@ -34,3 +34,14 @@ No test has run yet. Independent TARGET review and the unchanged normal owning
 ./test.sh causal-red gate precede source work. No credential reads, new provider
 resources, image publication, root deployment changes or live acceptance are
 implied. Full owning evidence and final review remain required.
+
+Pre-execution TARGET HOLD6320092953 found flags assertions inside the reader's
+exception boundary could be swallowed into the expected fixed error. Corrected
+callbacks now only record flags/returned descriptors and prevent unsafe opens
+with an OSError sentinel. Required flags are asserted outside the invocation,
+including the successful regular-file case, and descriptors returned for all
+fstat-rejected types/sizes are checked closed. Invalid paths assert zero opens.
+The safeguard still prevents a faulty FIFO implementation from hanging. No
+original target was run, no production source or assertion law was weakened.
+Metadata-adapter coverage remains in its existing tests: this composition fixture
+intentionally supplies metadata_reader=None and does not claim that path.

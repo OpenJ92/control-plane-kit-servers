@@ -171,9 +171,10 @@ class ManagedHealthConfigurationTests(unittest.TestCase):
             self.assertEqual(str(raised.exception), ERROR)
 
     def test_regular_file_is_opened_once_and_descriptor_is_closed(self):
-        opened = []
+        opened, attempted_flags = [], []
         actual_open = os.open
         def capture(path, flags, *args, **kwargs):
+            attempted_flags.append(flags)
             fd = actual_open(path, flags, *args, **kwargs)
             opened.append(fd)
             return fd
@@ -181,6 +182,8 @@ class ManagedHealthConfigurationTests(unittest.TestCase):
             observed = self.api.read_managed_health_process_configuration(str(self.path))
         self.assertEqual(observed.native_product_document, self.world.document)
         self.assertEqual(len(opened), 1)
+        required = os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
+        self.assertEqual(attempted_flags[0] & required, required)
         with self.assertRaises(OSError):
             os.fstat(opened[0])
 
@@ -194,21 +197,33 @@ class ManagedHealthConfigurationTests(unittest.TestCase):
         huge = Path(self.directory.name) / "huge"
         huge.write_bytes(b" " * (MAX_BYTES + 1))
         actual_open = os.open
+        required = os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
         def bounded_open(path, flags, *args, **kwargs):
-            # Enforce the reviewed security flags before a broken implementation
-            # could block the test opening a FIFO or follow a link.
-            self.assertEqual(flags & (os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK),
-                os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
-            return actual_open(path, flags, *args, **kwargs)
+            attempted_flags.append(flags)
+            # A sentinel prevents a broken reader from hanging/following links.
+            # The actual flags assertion is outside its redaction boundary.
+            if flags & required != required:
+                raise OSError("unsafe test open prevented")
+            fd = actual_open(path, flags, *args, **kwargs)
+            opened.append(fd)
+            return fd
         for path in (link, fifo, Path(self.directory.name), empty, huge):
+            attempted_flags, opened = [], []
             with self.subTest(kind=path.name), patch.object(os, "open", side_effect=bounded_open):
                 with self.assertRaises(ValueError) as raised:
                     self.api.read_managed_health_process_configuration(str(path))
                 self.assertEqual(str(raised.exception), ERROR)
                 self.assertIsNone(raised.exception.__context__)
+                self.assertEqual(len(attempted_flags), 1)
+                self.assertEqual(attempted_flags[0] & required, required)
+                for fd in opened:
+                    with self.assertRaises(OSError):
+                        os.fstat(fd)
         for path in ("relative.json", "", "/tmp/private\nname", None, "/" + "x" * 4096):
-            with self.assertRaises(ValueError):
-                self.api.read_managed_health_process_configuration(path)
+            with patch.object(os, "open", side_effect=OSError("test open forbidden")) as opened:
+                with self.assertRaises(ValueError):
+                    self.api.read_managed_health_process_configuration(path)
+            opened.assert_not_called()
 
     def test_growth_and_read_failure_close_the_same_opened_descriptor(self):
         for fault in ("growth", "read"):
