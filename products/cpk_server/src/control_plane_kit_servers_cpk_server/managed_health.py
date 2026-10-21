@@ -196,11 +196,13 @@ class ManagedHealthBridge:
         if inputs is None:
             raise ManagedHealthUnavailable("managed health is unavailable")
         pair, selected_authority, gateway, socket_name, port, context, local, destination = inputs
-        # Read provider facts only after all pure selection, before touching signing keys.
-        endpoint = await asyncio.to_thread(self.endpoints.read,
-            workspace_id=preparation.workspace_id, runtime_id=request.operation.target.runtime_id,
-            authority=selected_authority, gateway_node_id=gateway.node_id, socket_name=socket_name,
-            port=port, graph_id=preparation.request.authority_context.authored_graph_id)
+        # Only local readiness needs private placement; public reads use NamedIngress.
+        endpoint = None
+        if local:
+            endpoint = await asyncio.to_thread(self.endpoints.read,
+                workspace_id=preparation.workspace_id, runtime_id=request.operation.target.runtime_id,
+                authority=selected_authority, gateway_node_id=gateway.node_id, socket_name=socket_name,
+                port=port, graph_id=preparation.request.authority_context.authored_graph_id)
         observed = await self.reader.observe(request, plan=realization.plan, current=pair[0], desired=pair[1],
             authority_context=preparation.request.authority_context, context=context,
             transit_grant=preparation.transit_grant, workload_grant=preparation.workload_grant,

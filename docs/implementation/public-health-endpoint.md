@@ -1,8 +1,16 @@
 # Public managed health endpoint selection
 
-Issue181 step1 tests the existing bridge's public/local transport boundary.
-The target checkpoint has no application source change and is expected to fail
-because public signed reads still inspect a private endpoint that they discard.
+Issue181 step1 corrects the existing bridge's public/local transport boundary.
+Only the exact GATEWAY_LOCAL_READY operation reads a private endpoint. Public
+operations retain their selected NamedIngress and pass no local destination.
+All original selection, authority, receiver, route and signing checks remain.
+
+Corrected target476d82b established six intended private-read failures in
+[owning run39521946962](https://github.com/OpenJ92/control-plane-kit-servers/actions/runs/39521946962),
+independently confirmed by Kepler. The source delta is only the conditional read;
+the reviewed target assertions are unchanged. Full source green and final review
+remain pending; [PR289](https://github.com/OpenJ92/control-plane-kit-servers/pull/289)
+records exact checkpoints and final disposition.
 
 The exact selected Core fresh plan uses independent native connection and
 authenticated management-path observations, followed by ingress readiness.
