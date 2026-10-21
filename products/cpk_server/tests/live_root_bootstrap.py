@@ -198,6 +198,23 @@ def prepare(run):
     (ROOT / "state").mkdir(mode=0o700)
 
 
+COMMISSIONING_STAGES = ("imports", "provenance", "plan", "prepare", "decode", "reuse")
+COMMISSIONING_SUCCESS = "root commissioning: actual driver factories and exact reuse PASS"
+
+
+def report_commissioning_driver_result(completed):
+    """Project only a closed, ordered stage prefix; discard all child errors."""
+    markers = tuple("commissioning-stage:" + stage for stage in COMMISSIONING_STAGES)
+    lines = completed.stdout.strip().splitlines()
+    if completed.returncode == 0 and lines == [*markers, COMMISSIONING_SUCCESS]:
+        print(COMMISSIONING_SUCCESS, flush=True)
+        return
+    stage = "unknown"
+    if 0 < len(lines) <= len(markers) and tuple(lines) == markers[:len(lines)]:
+        stage = COMMISSIONING_STAGES[len(lines) - 1]
+    raise AssertionError("root commissioning actual driver witness failed; stage=" + stage)
+
+
 def commissioning_driver_witness(run):
     """Use image-owned modules in the actual driver, not the full unit image."""
     # test.sh supplies /source for its fixture entrypoint. The subprocess may
@@ -215,11 +232,13 @@ def commissioning_driver_witness(run):
         selected = json.loads((Path(__file__).resolve().parents[3] / "coordinates/server-products.json").read_text())["upstreams"]
         payload = json.dumps({"intent": document, "preparer": "sha256:" + "a" * 64, "upstreams": selected})
         program = """
+print("commissioning-stage:imports", flush=True)
 import importlib, importlib.metadata, json, pathlib, sys
 from control_plane_kit_core.configuration import ConfigurationArtifact
 from control_plane_kit_secrets.control import decode_secrets_control_configuration
 from control_plane_kit_servers_cpk_server.control_configuration import decode_cpk_control_configuration
 from control_plane_kit_servers_cpk_server.root_commissioning import plan_root_commissioning, prepare_root_commissioning
+print("commissioning-stage:provenance", flush=True)
 for name, product in (("control_plane_kit_servers_cpk_server.root_commissioning", "cpk_server"),
                       ("control_plane_kit_servers_secrets_server.configuration", "secrets_server")):
     loaded = pathlib.Path(importlib.import_module(name).__file__).resolve()
@@ -232,10 +251,13 @@ for name in ("core", "operations", "server_sdk", "interpreters", "secrets"):
     direct = json.loads(importlib.metadata.distribution(distribution).read_text("direct_url.json"))
     assert direct["url"] == f"https://github.com/OpenJ92/{repository}/archive/{selected}.zip"
     assert direct.get("subdirectory") == (distribution if name in ("core", "operations") else None)
+print("commissioning-stage:plan", flush=True)
 plan = plan_root_commissioning(payload["intent"], preparer_image_id=payload["preparer"])
 state = pathlib.Path(payload["intent"]["custody"]["host_directory"])
+print("commissioning-stage:prepare", flush=True)
 result = prepare_root_commissioning(plan, expected_digest=plan["digest"],
     preparer_image_id=payload["preparer"], state_directory=state)
+print("commissioning-stage:decode", flush=True)
 assert set(result["artifacts"]) == {"cpk", "secrets"}
 for role, decode in (("cpk", decode_cpk_control_configuration), ("secrets", decode_secrets_control_configuration)):
     artifact = ConfigurationArtifact.from_descriptor(result["artifacts"][role])
@@ -243,6 +265,7 @@ for role, decode in (("cpk", decode_cpk_control_configuration), ("secrets", deco
     assert configured.target.receiver_id == result["receiver_ids"][role]
     assert {family.purpose.value for family in configured.verifiers} == {
         "workload-node-control-surface-read", "workload-node-health-read"}
+print("commissioning-stage:reuse", flush=True)
 assert prepare_root_commissioning(plan, expected_digest=plan["digest"],
     preparer_image_id=payload["preparer"], state_directory=state) == result
 assert "PRIVATE KEY" not in json.dumps(result)
@@ -251,10 +274,7 @@ print("root commissioning: actual driver factories and exact reuse PASS")
         completed = subprocess.run([sys.executable, "-c", program], input=payload,
             text=True, capture_output=True, env=environment, cwd="/app", check=False)
         # Do not print arbitrary child exceptions or private fixture payloads.
-        if completed.returncode != 0:
-            raise AssertionError("root commissioning actual driver witness failed")
-        assert completed.stdout.strip() == "root commissioning: actual driver factories and exact reuse PASS"
-        print(completed.stdout.strip(), flush=True)
+        report_commissioning_driver_result(completed)
 
 
 def check(run):

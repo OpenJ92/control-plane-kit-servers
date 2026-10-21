@@ -20,3 +20,13 @@ image, not the current service Dockerfile. The witness now compares installed
 Core/Operations/SDK/Interpreters/Secrets direct_url.json URLs and subdirectories
 with the exact selected upstream manifest. Version 0.1.0/import success alone
 does not prove cohort alignment. All legacy checks remain unchanged.
+
+Run39666813360 passed all901 package tests but failed inside this child. Build
+evidence showed same-version inherited dependencies were retained; the exact
+child stage was unknown because imports precede provenance. The child now emits
+only fixed ordered markers for imports, provenance, plan, prepare, decode and
+reuse. The parent accepts an exact marker prefix on failure and reports its last
+stage, or unknown for malformed output. No arbitrary child stdout, stderr,
+traceback or payload is printed. Success still requires zero exit and the exact
+success line, now preceded by all six markers. Three focused projection tests
+cover every stage, malformed/private output and incomplete or failed success.

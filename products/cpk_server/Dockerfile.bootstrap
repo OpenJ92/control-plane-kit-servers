@@ -4,7 +4,7 @@ FROM ${CPK_IMAGE}
 # Existing SDK archive helpers need root on a new volume. Public setup explicitly
 # drops to the inspected CPK image UID and receives no Docker socket.
 USER 0
-RUN python -m pip install --no-cache-dir \
+RUN python -m pip install --no-cache-dir --force-reinstall \
     "control-plane-kit-core @ https://github.com/OpenJ92/control-plane-kit/archive/955666898218e4f2956b6e9fcd33bdba97ffdb06.zip#subdirectory=control-plane-kit-core" \
     "control-plane-kit-operations @ https://github.com/OpenJ92/control-plane-kit/archive/955666898218e4f2956b6e9fcd33bdba97ffdb06.zip#subdirectory=control-plane-kit-operations" \
     "control-plane-kit-server-sdk[fastapi] @ https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/cad5cc3dacbff1da79e6cc8b4c0c88526363e033.zip" \
