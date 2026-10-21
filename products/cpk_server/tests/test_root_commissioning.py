@@ -72,9 +72,12 @@ class RootCommissioningTests(unittest.TestCase):
 
     def no_generation(self):
         stack = ExitStack()
-        stack.enter_context(patch("uuid.uuid4", side_effect=AssertionError("identity allocated")))
-        stack.enter_context(patch.object(Ed25519PrivateKey, "generate",
-                                        side_effect=AssertionError("key generated")))
+        allocate = stack.enter_context(patch("uuid.uuid4", side_effect=AssertionError("identity allocated")))
+        generate = stack.enter_context(patch.object(Ed25519PrivateKey, "generate",
+                                                   side_effect=AssertionError("key generated")))
+        # A bounded implementation may catch AssertionError: verify calls too.
+        stack.callback(allocate.assert_not_called)
+        stack.callback(generate.assert_not_called)
         return stack
 
     def test_plan_is_pure_deterministic_and_binds_exact_intent_and_image(self):
