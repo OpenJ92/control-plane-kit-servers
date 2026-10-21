@@ -1,3 +1,15 @@
+## Current #293 accepted dependency adoption
+
+Interpreters is now528fb20692400c01e107f86b3952a52a70883652, supplying accepted
+fixed Unix acquisition and pure native qualification. Core/Operations95566689,
+SDKcad5cc3d and Secretsf4747b23 remain selected. The unchanged coordinate generator
+updated only existing consumers of the Interpreter pin (root requirements and
+CPK Dockerfile); two current-source test expectations match. Published product
+source/image values and catalogue bytes are unchanged. Older checkpoint accounts
+below are historical. This adoption supports issue293 programmatic owned native
+clients; startup294 and live evidence remain separate. Full owning green for293
+is pending source review.
+
 Source: [coordinates/server-products.json](../../../coordinates/server-products.json).
 
 

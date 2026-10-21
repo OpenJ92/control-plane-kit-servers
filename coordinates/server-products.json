@@ -3,7 +3,7 @@
   "upstreams": {
     "control_plane_kit_core_commit": "955666898218e4f2956b6e9fcd33bdba97ffdb06",
     "control_plane_kit_operations_commit": "955666898218e4f2956b6e9fcd33bdba97ffdb06",
-    "control_plane_kit_interpreters_commit": "350b1918ab7fec16d15c6daa1276cbd905bacb75",
+    "control_plane_kit_interpreters_commit": "528fb20692400c01e107f86b3952a52a70883652",
     "control_plane_kit_server_sdk_commit": "cad5cc3dacbff1da79e6cc8b4c0c88526363e033",
     "control_plane_kit_secrets_commit": "f4747b23872aca537786f86017feb25e0ae83fbd"
   },
