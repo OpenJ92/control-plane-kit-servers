@@ -1,0 +1,5 @@
+# Managed cloudflared release policy
+
+Product-owned closed evidence parsing checks source-bound destinations, explicit controller acquisition receipts, complete package-version pages and the same qualified candidate. Its qualification entry reuses the existing packaged controller and preserves exact stop-profile laws. It retains bounded status, source/recipe/controller/candidate/witness provenance and cleanup facts on failure. No credential values, generic runtime semantics, image acquisition or publication occur in the policy. Shell owner entries provide explicit acquisition/effect boundaries. Test doubles are source evidence, not OCI or live qualification.
+
+Fallback cleanup uses recorded container IDs plus their current ownership labels. A matching label alone is not deletion authority; an unexpected same-label object stops cleanup. Per-invocation run identity is independently randomized. Client-close failures cannot skip terminal failed/unverified receipt finalization. Unknown cleanup retains fixtures and ownership evidence. Candidate images are never deleted by this lane.

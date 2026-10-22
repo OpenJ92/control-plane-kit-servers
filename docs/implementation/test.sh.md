@@ -135,3 +135,7 @@ laws remain mandatory through later CPK/Cloudflare acceptance on #284. No skip,
 flag, workflow or test.sh source change is introduced. Later PostgreSQL and final
 residue stages remain required. Exact source review and the owning Docker green
 are pending; causal target-red39451603339 is not whole-package acceptance.
+
+## Narrow managed release validation
+
+Explicit `--managed-connector-controller`, `--managed-connector-release-tests`, and `--managed-connector-candidate` routes exit before root artifact/policy/full-suite setup. Candidate mode uses the existing managed witness owner. Focused release tests run in the exact previously acquired Dockerfile.test controller with no socket/network and a test-only executable tmpfs for command doubles. All other isolation flags remain; this is not a product mount/configuration. Every acquisition/validation uses a new retained receipt directory; image identities and controller provenance are explicit. Default full gate and its managed witness behavior remain unchanged.

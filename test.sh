@@ -11,6 +11,9 @@ case "${1:-}" in
   --managed-connector-controller|--managed-connector-release-tests)
     exec sh scripts/cloudflared_release_shell.sh "$@"
     ;;
+  --managed-connector-candidate)
+    exec sh scripts/cloudflared_managed_witness.sh "$@"
+    ;;
 esac
 
 . ./scripts/root_artifact_shell.sh

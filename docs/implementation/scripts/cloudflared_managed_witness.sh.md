@@ -29,3 +29,7 @@ standalone stage, alternate harness or manual duplicate run is authorized.
 The approved source/package versus mandatory later CPK/Cloudflare split retains
 all real native acceptance laws. #284/#188 stay open, and no provider, credential,
 public ingress, dependency or publication effect is introduced.
+
+## Selected candidate release mode (#308)
+
+The owning `test.sh --managed-connector-candidate` entry delegates here before broad gate setup. Explicit arguments route to the product release policy through `cloudflared_release_shell.sh`, reusing the packaged controller unchanged. Unlike default package mode, the supplied exact image is borrowed and retained; evidence is written to a new caller-selected directory. No implicit image build/pull occurs. A controller failure cannot authorize publication, and a missing/partial receipt never proves success. The original no-argument build/owned cleanup stage is unchanged.

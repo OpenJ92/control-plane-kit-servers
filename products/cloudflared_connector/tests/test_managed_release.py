@@ -109,3 +109,152 @@ class ManagedReleasePolicyTests(unittest.TestCase):
                              ('source_commit','d'*40)]:
             with self.assertRaises(ValueError):
                 check(dict(receipt, **{field:value}), candidate, 'b'*40)
+
+
+class ManagedCandidateOwnershipTests(unittest.TestCase):
+    def test_success_and_failure_retain_borrowed_image_and_receipt(self):
+        import json
+        import runpy
+        from types import SimpleNamespace
+        from unittest.mock import Mock, patch
+        import packaged_managed_witness as witness
+        policy = runpy.run_path(str(ROOT / 'products/cloudflared_connector/release.py'))
+        candidate = 'sha256:'+'a'*64
+        controller = 'sha256:'+'b'*64
+        source = 'c'*40
+        tree = 'd'*40
+        for failed, close_failed in ((False, False), (True, False), (True, True)):
+            with self.subTest(failed=failed, close_failed=close_failed), tempfile.TemporaryDirectory() as directory:
+                evidence = Path(directory)
+                (evidence/'fixtures').mkdir()
+                record = dict(schema='cpk.cloudflared-controller-acquisition.v1',source_commit=source,
+                              source_tree=tree,image_id=controller,build_exit=0,build_log_sha256='e'*64,
+                              dockerfile_sha256=policy['digest_file'](ROOT/'Dockerfile.test'))
+                (evidence/'controller.json').write_text(json.dumps(record))
+                image = SimpleNamespace(id=candidate, attrs={'Os':'linux','Architecture':'amd64',
+                    'Config':{'Labels':{'org.opencontainers.image.revision':source}}})
+                client = Mock()
+                client.images.get.return_value = image
+                client.containers.list.return_value = []
+                if close_failed:
+                    client.close.side_effect = RuntimeError('close failed')
+                env = dict(CPK_MANAGED_IMAGE=candidate,CPK_MANAGED_SOURCE=source,
+                           CPK_MANAGED_TEST_RUN='owned-test',CPK_RELEASE_CONTROLLER=controller,
+                           CPK_RELEASE_TREE=tree)
+                with patch.dict(os.environ,env), patch('docker.from_env',return_value=client), \
+                     patch.object(witness,'verify_image'), patch.object(witness,'controller',
+                         side_effect=RuntimeError('private detail must not escape') if failed else None):
+                    if failed:
+                        with self.assertRaises(ValueError):
+                            policy['qualify'](ROOT,evidence)
+                    else:
+                        policy['qualify'](ROOT,evidence)
+                final = json.loads((evidence/'qualification.json').read_text())
+                self.assertEqual(final['status'], 'fail' if failed else 'pass')
+                self.assertEqual(final['cleanup'], 'unverified' if close_failed else 'verified')
+                self.assertTrue(final['candidate_retained'])
+                self.assertEqual((evidence/'fixtures').exists(), close_failed)
+                self.assertNotIn('private detail', (evidence/'qualification.json').read_text())
+                client.images.remove.assert_not_called()
+                client.images.build.assert_not_called()
+                client.images.pull.assert_not_called()
+
+
+class ManagedProducerOrderingTests(unittest.TestCase):
+    def producer(self, fail_qualification=False, substitute=False):
+        import json
+        import shutil
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root/'scripts').mkdir()
+            shutil.copy(ROOT/'scripts/cloudflared_managed_publish.sh', root/'scripts')
+            binary = root/'bin'
+            binary.mkdir()
+            calls = root/'calls'
+            source = 'a'*40
+            candidate = 'sha256:'+'b'*64
+            controller = 'sha256:'+'c'*64
+            (binary/'git').write_text('#!/bin/sh\ncase "$1" in status) exit 0;; rev-parse) printf "%s\\n" "$SOURCE";; *) exit 92;; esac\n')
+            (binary/'gh').write_text('#!/bin/sh\ncase "$*" in *versions*) echo "[[]]";; *) echo \'{"name":"control-plane-kit-servers/cloudflared-connector","package_type":"container","visibility":"private"}\';; esac\n')
+            (root/'test.sh').write_text('''#!/bin/sh
+printf 'test %s\n' "$1" >> "$CALLS"
+case "$1" in
+ --managed-connector-controller)
+   mkdir -p "$3"
+   printf '%s\n' "$CONTROLLER" > "$3/image.id"
+   echo '{}' > "$3/controller.json";;
+ --managed-connector-candidate) exit "$QUALIFICATION_EXIT";;
+ *) exit 93;;
+esac
+''')
+            (binary/'docker').write_text('''#!/bin/sh
+printf 'docker %s\n' "$*" >> "$CALLS"
+case "$1 $2" in
+ 'buildx build')
+  shift 2
+  while [ "$#" -gt 0 ]; do
+   case "$1" in --iidfile) printf '%s\n' "$CANDIDATE" > "$2"; shift;;
+   --metadata-file) echo '{}' > "$2"; shift;; esac
+   shift
+  done;;
+ 'image inspect')
+   case "$*" in *revision*) printf '%s\n' "$SOURCE";;
+   *) if [ "$SUBSTITUTE" = 1 ] && [ -f "$CASE_ROOT/tagged" ]; then echo 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'; else printf '%s\n' "$CANDIDATE"; fi;; esac;;
+ 'tag '*) touch "$CASE_ROOT/tagged";;
+ 'run '*) exit 0;;
+ 'push '*) exit 94;;
+ *) exit 95;;
+esac
+''')
+            for path in [*binary.iterdir(), root/'test.sh']:
+                path.chmod(0o755)
+            env = dict(os.environ, PATH=str(binary)+os.pathsep+os.environ['PATH'],
+                       SOURCE=source,CANDIDATE=candidate,CONTROLLER=controller,CALLS=str(calls),
+                       CASE_ROOT=str(root),SUBSTITUTE='1' if substitute else '0',
+                       QUALIFICATION_EXIT='7' if fail_qualification else '0',
+                       CPK_MANAGED_RELEASE_RECEIPTS=str(root/'evidence'))
+            result = subprocess.run(['sh',str(root/'scripts/cloudflared_managed_publish.sh'),'managed-'+source],
+                                    cwd=root,env=env,capture_output=True,text=True,timeout=10)
+            return result, calls.read_text()
+
+    def test_qualification_failure_never_tags_or_pushes(self):
+        result, calls = self.producer(fail_qualification=True)
+        self.assertEqual(result.returncode, 7, result.stderr)
+        self.assertIn('test --managed-connector-candidate', calls)
+        self.assertNotIn('docker tag ', calls)
+        self.assertNotIn('docker push ', calls)
+        self.assertEqual(calls.count('docker buildx build '), 1)
+
+    def test_tag_substitution_refuses_without_push_or_rebuild(self):
+        result, calls = self.producer(substitute=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('docker tag ', calls)
+        self.assertNotIn('docker push ', calls)
+        self.assertEqual(calls.count('docker buildx build '), 1)
+
+
+class ManagedCleanupOwnershipTests(unittest.TestCase):
+    def test_unrecorded_same_label_is_never_removed_even_on_failure(self):
+        import runpy
+        from unittest.mock import Mock
+        cleanup = runpy.run_path(str(ROOT/'products/cloudflared_connector/release.py'))['cleanup_owned']
+        foreign = Mock(id='b'*64)
+        client = Mock()
+        client.containers.list.return_value = [foreign]
+        with self.assertRaises(ValueError):
+            cleanup(client, 'collision', ['a'*64])
+        foreign.remove.assert_not_called()
+        client.containers.get.assert_not_called()
+
+    def test_recorded_id_with_changed_label_is_not_removed(self):
+        import runpy
+        from unittest.mock import Mock
+        cleanup = runpy.run_path(str(ROOT/'products/cloudflared_connector/release.py'))['cleanup_owned']
+        container = Mock(id='a'*64)
+        container.attrs = {'Config':{'Labels':{'org.openj92.cpk.test-run':'another-run'}}}
+        client = Mock()
+        client.containers.list.return_value = []
+        client.containers.get.return_value = container
+        with self.assertRaises(ValueError):
+            cleanup(client, 'owned-run', ['a'*64])
+        container.remove.assert_not_called()
