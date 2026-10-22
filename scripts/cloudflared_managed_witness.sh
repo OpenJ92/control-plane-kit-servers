@@ -2,6 +2,12 @@
 # Owned test.sh stage; no standalone release or alternate test harness.
 set -eu
 
+# Explicit selected-image mode borrows the image and retains its evidence.
+if [ "$#" -gt 0 ]; then
+  [ "$1" = --managed-connector-candidate ] || exit 2
+  exec sh "$(dirname -- "$0")/cloudflared_release_shell.sh" "$@"
+fi
+
 RECORDS="$(mktemp -d)"
 RUN="cpk-managed-$(basename "$RECORDS")"
 TAG="control-plane-kit-cloudflared-managed:$RUN"

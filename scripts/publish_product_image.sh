@@ -10,6 +10,10 @@ POLICY_IMAGE="${CPK_SERVERS_POLICY_IMAGE:-python:3.14-slim}"
 
 cd "$ROOT"
 
+if [ "$PRODUCT_ID" = cloudflared-connector-managed ]; then
+  exec sh scripts/cloudflared_managed_publish.sh "$TAG"
+fi
+
 case "$PRODUCT_ID" in
   cpk-server)
     DOCKERFILE="products/cpk_server/Dockerfile"

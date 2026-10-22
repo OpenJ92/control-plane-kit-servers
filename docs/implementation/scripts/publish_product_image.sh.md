@@ -52,3 +52,7 @@ provenance, authentication and cleanup before #254 consumes it. SDK/Core source
 commits and Python base are pinned; transitive third-party Python requirements
 are not a complete reproducible dependency lock. A rebuild can differ; the final
 digest, installed distributions and observed provenance identify its actual output.
+
+## Managed cloudflared (#308)
+
+`cloudflared-connector-managed managed-<source>` explicitly selects the managed producer. The existing `cloudflared-connector` native recipe is unchanged. Set `CPK_MANAGED_RELEASE_RECEIPTS` to a new absolute evidence directory under the reviewed artifact release. The managed producer acquires controller apparatus explicitly, qualifies one exact candidate and retains it; publication is a separate consequential invocation, not released by normal CI.
