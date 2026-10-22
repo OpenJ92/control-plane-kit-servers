@@ -9,6 +9,9 @@ cd "$ROOT"
 TAG="${1:?source-bound tag required}"
 SOURCE="$(git rev-parse HEAD)"
 [ -z "$(git status --porcelain)" ]
+# Policy executes from mounted source; archive-only build inputs are separate.
+IGNORED="$(git ls-files --others --ignored --exclude-standard -- products scripts src tests)"
+if printf '%s\n' "$IGNORED" | grep -Eq '\.(py|pyc|pyo|pyd|so|sh)$'; then exit 2; fi
 [ -z "$(git ls-tree -r "$SOURCE" | awk '$1 == "160000" {print $3}')" ]
 for INPUT in products/cloudflared_connector/Dockerfile.managed products/cloudflared_connector/src products/cloudflared_connector/licenses; do
   git cat-file -e "$SOURCE:$INPUT"

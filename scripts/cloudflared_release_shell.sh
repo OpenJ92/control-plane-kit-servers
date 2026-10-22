@@ -36,9 +36,12 @@ case "$RECEIPTS" in /*) ;; *) invalid ;; esac
 PARENT="$(dirname -- "$RECEIPTS")"
 [ -d "$PARENT" ] && [ ! -L "$PARENT" ] || invalid
 [ "$(CDPATH= cd -- "$PARENT" && pwd -P)" = "$PARENT" ] || invalid
-# Only these source-mounted test/import roots participate in this owned lane.
-# This is not a CPK requirement on arbitrary OCI images or unrelated outputs.
-[ -z "$(git ls-files --others --ignored --exclude-standard -- products scripts src tests)" ] || invalid
+# Archive acquisition never reads ignored working files. Only mounted modes
+# reject executable inputs absent from their tracked source evidence.
+if [ "$MODE" != --managed-connector-controller ]; then
+  IGNORED="$(git ls-files --others --ignored --exclude-standard -- products scripts src tests)"
+  if printf '%s\n' "$IGNORED" | grep -Eq '\.(py|pyc|pyo|pyd|so|sh)$'; then invalid; fi
+fi
 umask 077
 if [ "$MODE" = --managed-connector-controller ]; then
   [ -z "$CONTROLLER$CONTROLLER_RECEIPT" ] || invalid

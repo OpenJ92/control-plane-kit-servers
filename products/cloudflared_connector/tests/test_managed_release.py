@@ -19,7 +19,8 @@ class ManagedReleaseRoutingTests(unittest.TestCase):
             if ignored:
                 import json
                 git = home / 'git'
-                git.write_text('#!/bin/sh\ncase "$*" in *--ignored*) echo products/cloudflared_connector/src/__pycache__/untracked.pyc;; esac\n')
+                ignored_path = 'products/.coverage' if ignored == 'cache' else 'products/cloudflared_connector/src/__pycache__/untracked.pyc'
+                git.write_text('#!/bin/sh\ncase "$*" in *--ignored*) echo ' + ignored_path + ';; esac\n')
                 git.chmod(0o755)
                 (home/'controller.json').write_text(json.dumps(dict(
                     schema='cpk.cloudflared-controller-acquisition.v1',image_id='sha256:'+'a'*64,
@@ -59,6 +60,14 @@ class ManagedReleaseRoutingTests(unittest.TestCase):
                     '--managed-connector-controller', '--receipt-dir', '@receipts'], unsupported=unsupported)
                 self.assertEqual(result.returncode, 2)
                 self.assertEqual(calls, '')
+
+    def test_non_executable_ignored_report_does_not_block_source_mount(self):
+        result, calls = self.run_owner([
+            '--managed-connector-release-tests', '--controller-image-id', 'sha256:'+'a'*64,
+            '--controller-receipt', '@controller-receipt', '--receipt-dir', '@receipts'], ignored='cache')
+        # The Docker double deliberately refuses inspection; admission reached it.
+        self.assertNotEqual(result.returncode, 2)
+        self.assertIn('image inspect', calls)
 
     def test_mutable_candidate_refuses_before_any_docker_call(self):
         result, calls = self.run_owner([
@@ -208,7 +217,7 @@ class ManagedProducerOrderingTests(unittest.TestCase):
             source = 'a'*40
             candidate = 'sha256:'+'b'*64
             controller = 'sha256:'+'c'*64
-            (binary/'git').write_text('#!/bin/sh\ncase "$1" in status|ls-tree|cat-file) exit 0;; archive) echo exact-source-context;; rev-parse) printf "%s\\n" "$SOURCE";; *) exit 92;; esac\n')
+            (binary/'git').write_text('#!/bin/sh\ncase "$1" in status|ls-files|ls-tree|cat-file) exit 0;; archive) echo exact-source-context;; rev-parse) printf "%s\\n" "$SOURCE";; *) exit 92;; esac\n')
             (binary/'gh').write_text('#!/bin/sh\ncase "$*" in *versions*) echo "[[]]";; *) echo \'{"name":"control-plane-kit-servers/cloudflared-connector","package_type":"container","visibility":"private"}\';; esac\n')
             (binary/'tar').write_text('#!/bin/sh\nexit 0\n')
             (root/'test.sh').write_text('''#!/bin/sh
