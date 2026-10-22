@@ -362,6 +362,48 @@ class GatewaySelfHealthAdapterTests(unittest.TestCase):
             self.refusal(lambda:registry.binding_for(reference, purpose))
         self.refusal(lambda:self.api.health_receiver_decoders().binding_for(reference, core.DelegationKeyPurpose.GATEWAY_NODE_HEALTH_READ_TRANSIT))
 
+    def required_document(self):
+        contract = self.value.contract
+        return document("required-gateway", replace(contract, configuration_artifacts=(),
+            configuration_requirements=tuple(core.ConfigurationArtifactRequirement(
+                value.artifact_id, value.target_path, value.media_type, value.file_mode)
+                for value in contract.configuration_artifacts)))
+
+    def test_gateway_requirements_bind_actual_transit_self_and_route_material(self):
+        doc = self.required_document()
+        reference = ProductReference.from_document(doc)
+        registry = self.api.health_receiver_decoders(gateway_documents=(doc,))
+        selected = {family:self.selection(family, doc=doc) for family in self.selections()}
+        decoded = registry.binding_for(reference,
+            core.DelegationKeyPurpose.GATEWAY_NODE_HEALTH_READ_TRANSIT).decoder.decode(selected["transit"])
+        self.assertEqual(decoded.public_keys, verifier_family(self.value.config).public_keys)
+        self.assertEqual(self.select(**selected), self.value.binding)
+        own = self.own(selected["control"])
+        self.assertEqual(self.api.select_gateway_health_route_binding(
+            targets=selected["targets"], configured=own, gateway_configured=own), self.value.binding)
+        self.assertEqual(doc.product.runtime_contract.configuration_artifacts, ())
+
+    def test_gateway_requirements_do_not_supply_missing_or_foreign_actual_trust(self):
+        doc = self.required_document()
+        registry = self.api.health_receiver_decoders(gateway_documents=(doc,))
+        decoder = registry.binding_for(ProductReference.from_document(doc),
+            core.DelegationKeyPurpose.GATEWAY_NODE_HEALTH_READ_TRANSIT).decoder
+        for family in ("transit", "targets", "control"):
+            for artifact in (replace(self.value.artifacts[family], content="{}"),
+                    replace(self.value.artifacts[family], target_path="/etc/foreign.json")):
+                selected = {name:self.selection(name, doc=doc) for name in self.selections()}
+                selected[family] = self.selection(family, doc=doc, artifact=artifact)
+                self.refusal(lambda:self.select(**selected))
+            selected = {name:self.selection(name, doc=doc) for name in self.selections()}
+            selected[family] = replace(selected[family], authored_graph_id="foreign")
+            self.refusal(lambda:self.select(**selected))
+        self.refusal(lambda:decoder.decode(self.selection("transit")))
+        for slot in doc.product.runtime_contract.configuration_requirements:
+            missing = document("required-missing", replace(doc.product.runtime_contract,
+                configuration_requirements=tuple(value for value in doc.product.runtime_contract.configuration_requirements
+                    if value != slot)))
+            self.refusal(lambda:self.select(**{name:self.selection(name, doc=missing) for name in self.selections()}))
+
     def test_actual_self_alias_and_selected_target_bytes_are_preserved(self):
         selected = self.selections()
         actual = self.select(**selected)

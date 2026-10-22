@@ -76,3 +76,10 @@ implementation is unchanged and these targets have not run.
 The #280 source checkpoint now passes requirements to the declared selector.
 No target assertion changed. The earlier root-suite failure left these product
 tests unexecuted; they must run in the full ordinary green gate before acceptance.
+## #309 required gateway targets
+
+New requirement-only gateway cases exercise exact transit decoder binding, self
+and target route selection, and actual-material/provenance refusal. They use existing
+Core requirement values so the causal red reaches the artifact-only adapter selection
+rather than failing imports. No selected artifact is supplied by a requirement.
+These targets precede source implementation; owning validation remains pending.

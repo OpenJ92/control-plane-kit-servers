@@ -8,6 +8,7 @@ import asyncio
 import importlib.metadata
 import json
 import os
+from dataclasses import replace
 from uuid import uuid4
 
 from control_plane_kit_core.operations import EffectAttemptIdentity, EffectAttemptStatus
@@ -265,9 +266,115 @@ async def failed_update(database_url, fault):
 
 
 async def run(database_url):
+    await declared_gateway_preparation(database_url)
     await accepted_history(database_url)
     for fault in ("missing-installation-receipt", "unavailable-signing-material"):
         await failed_update(database_url, fault)
+
+
+async def declared_gateway_preparation(database_url):
+    """Required slots -> real public context -> actual artifacts -> ordinary prepare.
+
+    Uses the existing smoke's isolated Postgres and authenticated application
+    service driver. No provider resource or completed lifecycle fact is seeded.
+    """
+    import control_plane_kit_core as core
+    from control_plane_kit_core.algebra import DeploymentTopology, DockerRuntime
+    from control_plane_kit_core.operations import ControlPlaneServiceRole
+    from control_plane_kit_core.products import (
+        ProductCatalog, ProductDescriptorCodec, ProductInstanceConfiguration,
+        ProductReference, instantiate_catalog_product,
+    )
+    from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC, compile_topology
+    from control_plane_kit_servers_cpk_local_gateway import health_relay_configuration as relay
+    from control_plane_kit_servers_cpk_local_gateway.control_configuration import (
+        gateway_control_configuration_artifact, gateway_control_declaration,
+    )
+    from control_plane_kit_servers_cpk_local_gateway.health_transit_configuration import (
+        GatewayHealthTransitConfiguration, gateway_health_transit_configuration_artifact,
+    )
+    from control_plane_kit_servers_cpk_server.client.authoring import ReceiverScope, prepare_receiver_configuration
+    from control_plane_kit_servers_cpk_server.health_receiver_adapters import health_receiver_decoders
+    from receiver_acceptance_operations import utc_now
+
+    material = AuthoredMaterial()
+    contract = relay.gateway_health_declared_runtime_contract()
+    original = material.documents["gateway"]
+    declared = ProductDescriptorCodec().encode_document(replace(original.product,
+        identity=replace(original.product.identity, contract_revision=2), runtime_contract=contract))
+    material.documents["gateway"] = declared
+    decoders = health_receiver_decoders(gateway_documents=(declared,))
+    assert not contract.configuration_artifacts
+    compute = ComputeSubstitute()
+    ingress = IngressSubstitute(compute)
+    health = SignedHealthComposition(material, compute, ingress)
+    with IsolatedOperationsSchema(database_url, "cpk_1912_" + uuid4().hex) as schema:
+        factory = OperationsApplicationFactory(schema.unit_of_work,
+            OperationsEffectPorts({RuntimeKind.DOCKER: synthetic_runtime_registration(compute)},
+                {IngressAuthorityProviderKind.CLOUDFLARE: ingress}, health, decoders),
+            id_factory=lambda: "declared-" + uuid4().hex)
+        driver = PublicOperationsDriver(factory, workspace_id="workspace-a")
+        await driver.create_workspace()
+        await register_material(driver, material)
+        # Surface-read is a distinct required public family, even for health-only
+        # declarations. Admit it through the same registration owners as health.
+        instant = utc_now()
+        intent, reference = "gateway.probe-signing-key", "secret://declared-surface/keys/surface"
+        purpose = core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ.value
+        provider = await driver.register("command.secret-provider.register", {
+            "provider_id": "declared-surface", "display_name": "Declaration witness custody",
+            "provider_kind": "control-plane-kit-secrets", "endpoint_reference": "declared-surface",
+            "credential_reference": "secret://bootstrap/declared-surface/client-token",
+            "allowed_reference_prefixes": ["secret://declared-surface/keys"], "allowed_intents": [intent],
+            "admitted_at": instant, "metadata": {}, "idempotency_key": "declared-provider"})
+        await driver.register("command.secret-reference.register", {
+            "reference": reference, "provider_registration_id": provider["registration_id"],
+            "allowed_intents": [intent], "admitted_at": instant, "metadata": {},
+            "idempotency_key": "declared-reference"})
+        await driver.register("command.delegation-key.register", {
+            "purpose": purpose, "issuer": "cpk-server", "key_id": "declared-surface",
+            "algorithm": "ed25519", "public_key_pem": material.public["workload"].public_key_pem,
+            "private_key_reference": reference, "admitted_at": instant, "idempotency_key": "declared-key"})
+        await driver.register("command.delegation-key.activate", {
+            "purpose": purpose, "issuer": "cpk-server", "key_id": "declared-surface",
+            "activated_at": instant, "idempotency_key": "declared-active"})
+        path = {"workspace_id": "workspace-a"}
+        context = await driver.invoke("read.receiver-authoring-context", ControlPlaneServiceRole.READS, path=path)
+        verifiers = await driver.invoke("read.workload-verifier-configuration", ControlPlaneServiceRole.READS,
+            path=path, payload={"purposes": purpose + ",workload-node-health-read"})
+        configured = prepare_receiver_configuration(workspace_id="workspace-a", runtime_id="docker",
+            scope=ReceiverScope("gateway", "control"), receiver_id="b" * 32,
+            declaration=gateway_control_declaration(), context=context,
+            verifier_configuration={"workload_verifier_configuration": verifiers["workload_verifier_configuration"]})
+        trust = gateway_health_transit_configuration_artifact(GatewayHealthTransitConfiguration(
+            configured.target, "cpk-server", core.DelegationKeyPurpose.GATEWAY_NODE_HEALTH_READ_TRANSIT,
+            (material.public["transit"],)))
+        material.configurations["gateway"] = configured
+        artifacts = (trust, material.routes(("gateway", "api")), gateway_control_configuration_artifact(configured))
+        block = instantiate_catalog_product(ProductCatalog.from_documents((declared,)), declared.product.identity,
+            role_id="gateway", configuration=ProductInstanceConfiguration(
+                public_environment=contract.public_environment, configuration_artifacts=artifacts, secret_deliveries=()))
+        node = compile_topology(DeploymentTopology("declared-gateway",
+            DockerRuntime(runtime_id="docker", children=(block,)))).node("gateway")
+        desired = replace(material.a, nodes={**material.a.nodes, "gateway": node})
+        assert node.metadata["product_descriptor_digest"] == declared.content_digest
+        assert node.metadata["product_identity"] == declared.product.identity.key
+        before = await driver.workspace()
+        prepared = await driver.invoke("command.deployment.prepare", ControlPlaneServiceRole.PLANNING, path=path,
+            payload={"desired_graph": DEFAULT_GRAPH_CODEC.encode(desired),
+                "expected_current": {"authored_graph_id": before["current_graph_id"],
+                    "realized_projection_id": before["current_realized_projection_id"]},
+                "expected_desired": None, "expected_desired_graph_revision": before["desired_graph_revision"],
+                "title": "Declared gateway preparation", "idempotency_key": "declared-prepare"})
+        assert prepared["status"] == "approval-required"
+        after = await driver.invoke("read.receiver-authoring-context", ControlPlaneServiceRole.READS, path=path)
+        receivers = [value for value in after["desired"]["receivers"] if value["binding"]["node_id"] == "gateway"]
+        assert len(receivers) == 1 and receivers[0]["binding"]["receiver_id"] == configured.target.receiver_id
+        with schema.unit_of_work() as uow:
+            registered = uow.stores.registered_products.get("workspace-a", ProductReference.from_document(declared))
+            assert registered.descriptor_document == declared
+        assert not compute.calls and not ingress.calls and not health.signed_reads
+    print("declared gateway: authenticated context, actual material and ordinary preparation passed", flush=True)
 
 
 def main():

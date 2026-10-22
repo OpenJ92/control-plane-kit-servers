@@ -331,7 +331,22 @@ assert "control_plane_kit_servers_cpk_server.managed_health_configuration" not i
             self.plan(document)
 
     def test_actual_projected_file_is_consumed_by_normal_process_and_factory(self):
-        artifact = self.artifact()
+        self.assert_projected_file_consumed(self.artifact())
+
+    def test_required_gateway_declaration_reaches_normal_enabled_factory(self):
+        document = self.world.authored.documents["gateway"]
+        contract = document.product.runtime_contract
+        declaration = self.codec.encode_document(replace(document.product,
+            runtime_contract=replace(contract, configuration_artifacts=(),
+                configuration_requirements=tuple(ConfigurationArtifactRequirement(
+                    value.artifact_id, value.target_path, value.media_type, value.file_mode)
+                    for value in contract.configuration_artifacts))))
+        raw = json.loads(self.raw())
+        raw["gateway_documents"] = [declaration.content.decode()]
+        self.assertEqual(declaration.product.runtime_contract.configuration_artifacts, ())
+        self.assert_projected_file_consumed(self.artifact(json.dumps(raw).encode()))
+
+    def assert_projected_file_consumed(self, artifact):
         plan = self.plan(self.root_input(artifact))
         cpk = next(node for node in plan["resources"]["nodes"] if node["node_id"] == plan["cpk_node_id"])
         entry = next(item for item in cpk["configuration_files"] if item["artifact"]["artifact_id"] == ARTIFACT_ID)

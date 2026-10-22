@@ -68,3 +68,9 @@ same policy-identity assertion now follows its adapter and also checks the exact
 registration type/flags. It asserts the actual Cloudflare entry and shared
 metadata reader; projected environment and reader/factory assertions are intact.
 No production guard is weakened and no ingress setting is overridden.
+## #309 instance-free gateway startup target
+
+Both the existing concrete gateway and a requirement-only gateway now exercise the
+same root-plan file projection and normal enabled application factory. The new case
+retains the existing no-Docker-contact and planned-file-only assertions. It changes
+no shared fixture defaults. Target added before source; validation is pending.
