@@ -42,6 +42,69 @@ docker run --rm "$IMAGE"
 docker run --rm "$IMAGE" \
   sh -c 'cd /tmp && python -c "import control_plane_kit_servers; print(\"control-plane-kit-servers import ok\")"'
 
+# Exercise the actual Docker renderer in default mode, before product effects.
+(
+  INSPECTION_RECORDS="$(mktemp -d)"
+  finish_inspection() {
+    inspection_result=$?
+    trap - EXIT INT TERM
+    rm -f "$INSPECTION_RECORDS/inspection.json" "$INSPECTION_RECORDS/inspection.status" || inspection_result=1
+    rmdir "$INSPECTION_RECORDS" || inspection_result=1
+    if [ "$inspection_result" = 0 ]; then
+      echo 'root artifact inspection serialization passed'
+    else
+      echo 'root artifact inspection serialization failed' >&2
+    fi
+    exit "$inspection_result"
+  }
+  trap finish_inspection EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  INSPECTION_IMAGE_ID="$(docker image inspect "$IMAGE" --format '{{.Id}}')"
+  umask 077
+  : > "$INSPECTION_RECORDS/inspection.json"
+  : > "$INSPECTION_RECORDS/inspection.status"
+  if (
+    set +e
+    root_artifact_inspection "$INSPECTION_IMAGE_ID" 2>/dev/null
+    inspection_producer_status=$?
+    printf '%s\n' "$inspection_producer_status" > "$INSPECTION_RECORDS/inspection.status"
+  ) | head -c 65537 > "$INSPECTION_RECORDS/inspection.json"; then :; else exit 1; fi
+  [ "$(cat "$INSPECTION_RECORDS/inspection.status")" = 0 ] || exit 1
+  [ "$(wc -c < "$INSPECTION_RECORDS/inspection.json")" -le 65536 ] || exit 1
+  docker run --pull never --rm --network none --read-only --cap-drop ALL \
+    --security-opt no-new-privileges --user "$(id -u):$(id -g)" -i \
+    --mount "type=bind,source=$INSPECTION_RECORDS,target=/inspection,readonly" \
+    "$INSPECTION_IMAGE_ID" python -B - "$INSPECTION_IMAGE_ID" <<'PY'
+import json
+import sys
+from scripts.root_artifact_inputs import identity, read_json, require, RootArtifactError
+
+try:
+    with open("/inspection/inspection.json", "rb") as source:
+        observed = read_json(source)
+    require(type(observed) is dict and set(observed) == {
+        "Id", "RepoDigests", "Os", "Architecture", "Config"})
+    require(identity(sys.argv[1]) and observed["Id"] == sys.argv[1])
+    digests = observed["RepoDigests"]
+    require(digests is None or (type(digests) is list and all(type(value) is str for value in digests)))
+    require(type(observed["Os"]) is str and type(observed["Architecture"]) is str)
+    config = observed["Config"]
+    require(type(config) is dict and set(config) == {"User", "Labels"})
+    require(type(config["User"]) is str)
+    labels = config["Labels"]
+    require(type(labels) is dict and set(labels) == {"org.opencontainers.image.revision"})
+    revision = labels["org.opencontainers.image.revision"]
+    require(revision is None or type(revision) is str)
+except json.JSONDecodeError:
+    print("root artifact inspection JSON parse failed", file=sys.stderr)
+    raise SystemExit(1)
+except (RootArtifactError, ValueError, TypeError, KeyError, OSError):
+    print("root artifact inspection contract failed", file=sys.stderr)
+    raise SystemExit(1)
+PY
+)
+
 # Source-built file and wrapper witnesses. Only this isolated controller receives
 # local daemon authority; the ordinary package suite above remains socket-free.
 (

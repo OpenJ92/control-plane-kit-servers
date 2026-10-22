@@ -1,6 +1,25 @@
 Source: [test.sh](../../test.sh).
 Maintain with the normal Docker-backed owning gate and prerequisite effects.
 
+#306 adds one unconditional representation regression after the existing
+controller/package/import checks and before product runtime effects. It calls
+the actual sourced `root_artifact_inspection` function on the already-built
+controller ID, using Docker's real renderer. Capture preserves producer status
+and caps output at 65537 bytes, requiring success and at most 65536 bytes.
+The same controller parses through the existing bounded reader and validates
+the exact outer/Config/Labels whitelist, types and observed image ID. A local
+controller's empty user, absent revision and null RepoDigests remain valid.
+
+The validator has no network, daemon or credentials, uses a read-only root and
+private evidence mount, drops capabilities and runs as the invoking numeric
+UID/GID. It prints no raw inspection data. Fixed parse/contract failure markers
+distinguish the boundary without exposing inputs. Exact output/status file and
+directory cleanup gates the sole success marker; cleanup uncertainty fails.
+No new workflow, helper harness, image build or product effect is introduced.
+At the test-only checkpoint the malformed source template is intentionally
+preserved for causal red; all 944 package methods and 23 artifact/UID targets
+remain unchanged. This regression is not actual-pair qualification evidence.
+
 #191 additionally admits `CPK_ROOT_ARTIFACT_MODE=published-digest` with exact
 CPK/Secrets references and producer revision. Default mode refuses populated
 optional fields; invalid tuples refuse before Docker. Mandatory source builds
