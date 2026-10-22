@@ -9,13 +9,32 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 class ManagedReleaseRoutingTests(unittest.TestCase):
-    def run_owner(self, arguments):
+    def run_owner(self, arguments, ignored=False, unsupported=None):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
             calls = home / 'calls'
             docker = home / 'docker'
             docker.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$CALLS"\nexit 91\n')
             docker.chmod(0o755)
+            if ignored:
+                import json
+                git = home / 'git'
+                git.write_text('#!/bin/sh\ncase "$*" in *--ignored*) echo products/cloudflared_connector/src/__pycache__/untracked.pyc;; esac\n')
+                git.chmod(0o755)
+                (home/'controller.json').write_text(json.dumps(dict(
+                    schema='cpk.cloudflared-controller-acquisition.v1',image_id='sha256:'+'a'*64,
+                    source_commit='b'*40,source_tree='c'*40,dockerfile_sha256='d'*64,
+                    build_exit=0,build_log_sha256='e'*64)))
+            if unsupported:
+                git = home / 'git'
+                git.write_text('#!/bin/sh\ncase "$1" in\n'
+                    'rev-parse) echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;;\n'
+                    + ('ls-tree) echo "160000 commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa submodule";;\n'
+                       if unsupported == 'submodule' else 'cat-file) exit 1;;\n')
+                    + 'esac\n')
+                git.chmod(0o755)
+            replacements = {'@receipts':str(home/'new-receipts'), '@controller-receipt':str(home/'controller.json')}
+            arguments = [replacements.get(item,item) for item in arguments]
             environment = dict(os.environ, PATH=str(home) + os.pathsep + os.environ['PATH'], CALLS=str(calls))
             result = subprocess.run(['sh', str(ROOT / 'test.sh'), *arguments], cwd=ROOT,
                                     env=environment, capture_output=True, text=True, timeout=10)
@@ -25,6 +44,21 @@ class ManagedReleaseRoutingTests(unittest.TestCase):
         result, calls = self.run_owner(['--managed-connector-candidate'])
         self.assertEqual(result.returncode, 2)
         self.assertEqual(calls, '')
+
+    def test_ignored_bytecode_refuses_before_controller_or_source_import(self):
+        result, calls = self.run_owner([
+            '--managed-connector-release-tests', '--controller-image-id', 'sha256:'+'a'*64,
+            '--controller-receipt', '@controller-receipt', '--receipt-dir', '@receipts'], ignored=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(calls, '')
+
+    def test_incomplete_or_submodule_context_refuses_before_build(self):
+        for unsupported in ('submodule', 'missing-input'):
+            with self.subTest(unsupported=unsupported):
+                result, calls = self.run_owner([
+                    '--managed-connector-controller', '--receipt-dir', '@receipts'], unsupported=unsupported)
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(calls, '')
 
     def test_mutable_candidate_refuses_before_any_docker_call(self):
         result, calls = self.run_owner([
@@ -174,8 +208,9 @@ class ManagedProducerOrderingTests(unittest.TestCase):
             source = 'a'*40
             candidate = 'sha256:'+'b'*64
             controller = 'sha256:'+'c'*64
-            (binary/'git').write_text('#!/bin/sh\ncase "$1" in status) exit 0;; rev-parse) printf "%s\\n" "$SOURCE";; *) exit 92;; esac\n')
+            (binary/'git').write_text('#!/bin/sh\ncase "$1" in status|ls-tree|cat-file) exit 0;; archive) echo exact-source-context;; rev-parse) printf "%s\\n" "$SOURCE";; *) exit 92;; esac\n')
             (binary/'gh').write_text('#!/bin/sh\ncase "$*" in *versions*) echo "[[]]";; *) echo \'{"name":"control-plane-kit-servers/cloudflared-connector","package_type":"container","visibility":"private"}\';; esac\n')
+            (binary/'tar').write_text('#!/bin/sh\nexit 0\n')
             (root/'test.sh').write_text('''#!/bin/sh
 printf 'test %s\n' "$1" >> "$CALLS"
 case "$1" in

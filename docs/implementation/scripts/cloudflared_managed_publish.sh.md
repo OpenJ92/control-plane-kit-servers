@@ -1,3 +1,5 @@
 # Managed cloudflared producer
 
 Explicit managed selector only; historical selector stays unchanged. Requires clean source, source-bound tag, existing private package, no tag collision, and a new retained receipt directory. Acquires the owning test controller explicitly, builds one managed candidate, qualifies its exact ID through test.sh, binds/rechecks the publication tag and pushes once. Provider metadata and actual remote index/platform/config/source correspondence must verify afterward. Failure/ambiguity never triggers retry or cleanup of the borrowed candidate/evidence. Running this producer requires an artifact-specific release; source/CI approval alone does not authorize it.
+
+Both controller and product contexts come from the exact tracked commit archive rather than the working directory. Required paths, absence of submodules and complete archived path coverage are checked; archive bytes/hash remain with the source/recipe receipt. Ignored bytecode never enters these build contexts. This does not broaden production invocation authority.

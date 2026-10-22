@@ -1,6 +1,9 @@
 #!/bin/sh
 # Reached only through the owning test.sh / producer entrypoints.
 set -eu
+hash_file() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi
+}
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 cd "$ROOT"
 MODE="${1:-}"
@@ -33,17 +36,31 @@ case "$RECEIPTS" in /*) ;; *) invalid ;; esac
 PARENT="$(dirname -- "$RECEIPTS")"
 [ -d "$PARENT" ] && [ ! -L "$PARENT" ] || invalid
 [ "$(CDPATH= cd -- "$PARENT" && pwd -P)" = "$PARENT" ] || invalid
+# Only these source-mounted test/import roots participate in this owned lane.
+# This is not a CPK requirement on arbitrary OCI images or unrelated outputs.
+[ -z "$(git ls-files --others --ignored --exclude-standard -- products scripts src tests)" ] || invalid
 umask 077
 if [ "$MODE" = --managed-connector-controller ]; then
   [ -z "$CONTROLLER$CONTROLLER_RECEIPT" ] || invalid
   [ -z "$(git status --porcelain)" ] || invalid
   SOURCE="$(git rev-parse HEAD)"
   TREE="$(git rev-parse HEAD^{tree})"
-  RECIPE="$(shasum -a 256 Dockerfile.test | cut -d ' ' -f 1)"
+  [ -z "$(git ls-tree -r "$SOURCE" | awk '$1 == "160000" {print $3}')" ] || invalid
+  for INPUT in Dockerfile.test pyproject.toml README.md AGENTS.md GIT-FLOW.md test.sh bootstrap.sh .github coordination coordinates catalogue products docs scripts src tests; do
+    git cat-file -e "$SOURCE:$INPUT" || invalid
+  done
+  RECIPE="$(hash_file Dockerfile.test | cut -d ' ' -f 1)"
   mkdir -m 700 "$RECEIPTS"
+  git archive --format=tar "$SOURCE" > "$RECEIPTS/source.tar"
+  git ls-tree -r --name-only "$SOURCE" > "$RECEIPTS/source.paths"
+  LC_ALL=C sort "$RECEIPTS/source.paths" > "$RECEIPTS/source.files"
+  tar -tf "$RECEIPTS/source.tar" > "$RECEIPTS/archive.paths"
+  sed '/\/$/d' "$RECEIPTS/archive.paths" | LC_ALL=C sort > "$RECEIPTS/archive.files"
+  cmp "$RECEIPTS/source.files" "$RECEIPTS/archive.files" || invalid
+  hash_file "$RECEIPTS/source.tar" > "$RECEIPTS/source.tar.sha256"
   set +e
   docker build -f Dockerfile.test --label "org.opencontainers.image.revision=$SOURCE" \
-    --iidfile "$RECEIPTS/image.id" . > "$RECEIPTS/build.log" 2>&1
+    --iidfile "$RECEIPTS/image.id" - < "$RECEIPTS/source.tar" > "$RECEIPTS/build.log" 2>&1
   RESULT=$?
   set -e
   printf '%s\n' "$RESULT" > "$RECEIPTS/build.exit"
@@ -51,7 +68,7 @@ if [ "$MODE" = --managed-connector-controller ]; then
   [ -z "$(git status --porcelain)" ] && [ "$(git rev-parse HEAD)" = "$SOURCE" ] || exit 1
   ID="$(cat "$RECEIPTS/image.id")"
   [ "$(docker image inspect "$ID" --format '{{.Id}}')" = "$ID" ] || exit 1
-  LOG_HASH="$(shasum -a 256 "$RECEIPTS/build.log" | cut -d ' ' -f 1)"
+  LOG_HASH="$(hash_file "$RECEIPTS/build.log" | cut -d ' ' -f 1)"
   jq -n --arg source "$SOURCE" --arg tree "$TREE" --arg recipe "$RECIPE" --arg image "$ID" --arg log "$LOG_HASH" \
     '{schema:"cpk.cloudflared-controller-acquisition.v1",source_commit:$source,source_tree:$tree,dockerfile_sha256:$recipe,image_id:$image,build_exit:0,build_log_sha256:$log}' > "$RECEIPTS/controller.json"
   echo "Controller receipt: $RECEIPTS/controller.json"
@@ -106,7 +123,7 @@ if [ "$MODE" = --managed-connector-candidate ]; then
 fi
 git rev-parse HEAD > "$RECEIPTS/source.commit"
 git diff --binary HEAD > "$RECEIPTS/source.diff"
-shasum -a 256 "$RECEIPTS/source.diff" > "$RECEIPTS/source.diff.sha256"
+hash_file "$RECEIPTS/source.diff" > "$RECEIPTS/source.diff.sha256"
 set +e
 docker run --pull never --rm --network none --read-only --cap-drop ALL \
   --security-opt no-new-privileges --tmpfs /tmp:exec \
