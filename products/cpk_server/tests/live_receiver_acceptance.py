@@ -341,7 +341,7 @@ async def declared_gateway_preparation(database_url):
         path = {"workspace_id": "workspace-a"}
         context = await driver.invoke("read.receiver-authoring-context", ControlPlaneServiceRole.READS, path=path)
         verifiers = await driver.invoke("read.workload-verifier-configuration", ControlPlaneServiceRole.READS,
-            path=path, payload={"purposes": purpose + ",workload-node-health-read"})
+            path={**path, "purposes": purpose + ",workload-node-health-read"})
         configured = prepare_receiver_configuration(workspace_id="workspace-a", runtime_id="docker",
             scope=ReceiverScope("gateway", "control"), receiver_id="b" * 32,
             declaration=gateway_control_declaration(), context=context,

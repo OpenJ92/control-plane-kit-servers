@@ -197,3 +197,10 @@ the resulting desired receiver binding and no compute/ingress/health dispatch.
 Existing A/B/C/teardown scenarios are unchanged. This is source composition evidence,
 not real provider or published-image acceptance. Target precedes implementation;
 successful execution has not yet been observed.
+
+The first implementation gate39719376050 at3d901a2 passed26 policy and948
+package tests, then stopped at the new verifier read: the fixture incorrectly
+placed `purposes` in the payload. The existing HTTP read contract and maintained
+client put it in path parameters. The bounded correction follows that convention
+without changing production guards or assertions. Actual gateway construction
+and preparation were not reached; complete owning validation remains pending.
