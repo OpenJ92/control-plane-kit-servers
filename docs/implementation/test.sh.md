@@ -3,17 +3,23 @@ Maintain with the normal Docker-backed owning gate and prerequisite effects.
 
 #306 adds one unconditional representation regression after the existing
 controller/package/import checks and before product runtime effects. It calls
-the actual sourced `root_artifact_inspection` function on the already-built
-controller ID, using Docker's real renderer. Capture preserves producer status
+the actual sourced `root_artifact_inspection` function on the cached `hello_family`
+image selected by the existing fixed-input manifest, using Docker's real renderer.
+The existing preloader independently verifies that image's identity and revision
+label. Its inspected ID is distinct from the already-built validator controller
+ID; the inspected product is never started. No extra image pull/build is added.
+Capture preserves producer status
 and caps output at 65537 bytes, requiring success and at most 65536 bytes.
-The same controller parses through the existing bounded reader and validates
-the exact outer/Config/Labels whitelist, types and observed image ID. A local
-controller's empty user, absent revision and null RepoDigests remain valid.
+The existing controller parses through the bounded reader and validates the exact
+outer/Config/Labels whitelist, types and observed image ID. The schema still
+allows empty user, absent revision and null RepoDigests; the selected fixture
+has the revision label required by the existing preloader.
 
 The validator has no network, daemon or credentials, uses a read-only root and
 private evidence mount, drops capabilities and runs as the invoking numeric
-UID/GID. It prints no raw inspection data. Fixed parse/contract failure markers
-distinguish the boundary without exposing inputs. Exact output/status file and
+UID/GID. It prints no raw inspection data. Fixed capture, producer/status, size,
+parse and contract failure markers distinguish the boundary without exposing
+inputs. Exact output/status file and
 directory cleanup gates the sole success marker; cleanup uncertainty fails.
 No new workflow, helper harness, image build or product effect is introduced.
 At the test-only checkpoint the malformed source template is intentionally

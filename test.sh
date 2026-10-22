@@ -60,7 +60,13 @@ docker run --rm "$IMAGE" \
   trap finish_inspection EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
-  INSPECTION_IMAGE_ID="$(docker image inspect "$IMAGE" --format '{{.Id}}')"
+  INSPECTION_CONTROLLER_ID="$(docker image inspect "$IMAGE" --format '{{.Id}}')"
+  # The existing preloader verifies this cached image's identity/revision label.
+  INSPECTION_REFERENCE="$(docker run --pull never --rm --network none --read-only --cap-drop ALL \
+    --security-opt no-new-privileges --user "$(id -u):$(id -g)" \
+    "$INSPECTION_CONTROLLER_ID" python -B -c \
+    'import json; print(json.load(open("products/cpk_server/tests/docker_image_update_images.json"))["hello_family"]["reference"])')"
+  INSPECTION_IMAGE_ID="$(docker image inspect "$INSPECTION_REFERENCE" --format '{{.Id}}')"
   umask 077
   : > "$INSPECTION_RECORDS/inspection.json"
   : > "$INSPECTION_RECORDS/inspection.status"
@@ -69,13 +75,28 @@ docker run --rm "$IMAGE" \
     root_artifact_inspection "$INSPECTION_IMAGE_ID" 2>/dev/null
     inspection_producer_status=$?
     printf '%s\n' "$inspection_producer_status" > "$INSPECTION_RECORDS/inspection.status"
-  ) | head -c 65537 > "$INSPECTION_RECORDS/inspection.json"; then :; else exit 1; fi
-  [ "$(cat "$INSPECTION_RECORDS/inspection.status")" = 0 ] || exit 1
-  [ "$(wc -c < "$INSPECTION_RECORDS/inspection.json")" -le 65536 ] || exit 1
+  ) | head -c 65537 > "$INSPECTION_RECORDS/inspection.json"; then :; else
+    echo 'root artifact inspection capture failed' >&2; exit 1
+  fi
+  [ -s "$INSPECTION_RECORDS/inspection.status" ] || {
+    echo 'root artifact inspection producer status missing' >&2; exit 1;
+  }
+  inspection_status="$(cat "$INSPECTION_RECORDS/inspection.status")" || {
+    echo 'root artifact inspection producer status unreadable' >&2; exit 1;
+  }
+  [ "$inspection_status" = 0 ] || {
+    echo 'root artifact inspection renderer failed' >&2; exit 1;
+  }
+  inspection_size="$(wc -c < "$INSPECTION_RECORDS/inspection.json")" || {
+    echo 'root artifact inspection size observation failed' >&2; exit 1;
+  }
+  [ "$inspection_size" -le 65536 ] || {
+    echo 'root artifact inspection output exceeds bound' >&2; exit 1;
+  }
   docker run --pull never --rm --network none --read-only --cap-drop ALL \
     --security-opt no-new-privileges --user "$(id -u):$(id -g)" -i \
     --mount "type=bind,source=$INSPECTION_RECORDS,target=/inspection,readonly" \
-    "$INSPECTION_IMAGE_ID" python -B - "$INSPECTION_IMAGE_ID" <<'PY'
+    "$INSPECTION_CONTROLLER_ID" python -B - "$INSPECTION_IMAGE_ID" <<'PY'
 import json
 import sys
 from scripts.root_artifact_inputs import identity, read_json, require, RootArtifactError
