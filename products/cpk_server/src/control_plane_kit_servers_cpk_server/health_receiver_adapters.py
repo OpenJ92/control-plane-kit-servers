@@ -6,6 +6,7 @@ from control_plane_kit_core.delegation_keys import DelegationKeyPurpose
 from control_plane_kit_core.node_control import NodeHealthReadKind
 from control_plane_kit_core.products import (
     ProductDescriptorCodec, ProductDescriptorDocument, ProductDescriptorError, ProductReference,
+    product_configuration_slots,
 )
 from control_plane_kit_operations.health_receiver_trust import (
     GatewayHealthReceiverTrust, HealthReceiverSelection,
@@ -107,7 +108,7 @@ def _declared_selected_bytes(selection, slot):
     if type(selection) is not HealthReceiverSelection:
         raise HealthReceiverTrustError(_UNAVAILABLE)
     raw = _selected_bytes(selection, selection.product_reference, slot)
-    declared = tuple(value for value in selection.descriptor_document.product.runtime_contract.configuration_artifacts
+    declared = tuple(value for value in product_configuration_slots(selection.descriptor_document.product.runtime_contract)
                      if _slot(value) == slot)
     if len(declared) != 1:
         raise HealthReceiverTrustError(_UNAVAILABLE)
@@ -165,7 +166,7 @@ def _binding(document, decoder_type, purpose, profile, slot):
     else:
         if canonical != document:
             raise HealthReceiverTrustError(_UNAVAILABLE)
-        declared = tuple(value for value in canonical.product.runtime_contract.configuration_artifacts
+        declared = tuple(value for value in product_configuration_slots(canonical.product.runtime_contract)
                          if _slot(value) == slot)
         if len(declared) != 1:
             raise HealthReceiverTrustError(_UNAVAILABLE)

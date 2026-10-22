@@ -1,5 +1,14 @@
 Source: [health_receiver_adapters.py](../../../../../../products/cpk_server/src/control_plane_kit_servers_cpk_server/health_receiver_adapters.py).
 
+## #309 required gateway slots
+
+Transit startup binding and route/self declaration checks now use existing Core
+`product_configuration_slots`, which projects exact slots from both requirements
+and concrete artifacts. The selected actual artifact is still independently
+revalidated and decoded; no requirement becomes configuration bytes. Canonical
+product references, full graph context, target equality and Operations authority
+remain unchanged. The adapter gains no I/O or registry. Owning green is pending.
+
 select_own_health_configuration accepts public Operations HealthReceiverSelection
 and returns actual Core ReceiverNodeControlConfiguration. It reconstructs canonical
 selection provenance, selects declared structure through Core's public

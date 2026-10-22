@@ -79,3 +79,9 @@ failed on precisely those two assertions in run38108503398; no test errors.
 Existing semantic roundtrip/refusal assertions now call Core's codec/error type;
 product policy assertions keep the product error. Final green is still pending
 independent source review and the owning gate at this implementation checkpoint.
+## #309 declaration target
+
+The new target requires a canonical gateway contract with exactly three required
+public JSON/read-only slots and no instance artifacts or secret delivery. Replacing
+those requirements with the existing concrete artifacts must recover the unchanged
+complete contract. Target added before implementation; no green claim yet.

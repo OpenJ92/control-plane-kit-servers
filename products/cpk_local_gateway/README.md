@@ -30,6 +30,15 @@ independent HttpChecks with the SDK management observation obligation; actual
 Core compilation still requires gateway-local readiness before connector/path/
 workload progression. This factory creates no published image association.
 
+When registering gateway capability before an instance exists, use
+`gateway_health_declared_runtime_contract()`. It declares the same control port,
+health surface and transit protocol with three required configuration slots,
+without receiver identities, public keys or route contents. A later
+`ProductInstanceConfiguration` supplies the actual control, transit and routes
+artifacts. CPK can bind this declaration at enabled startup; gateway process
+startup and later health selection still require valid, matching actual material.
+The declaration grants no authority and does not qualify an image.
+
 Existing public `/health/live` and `/health/ready` return only minimal process
 status. Unready returns503. Protected SDK health routes require exact signed
 workload-health credentials and return request-correlated Core outcomes;

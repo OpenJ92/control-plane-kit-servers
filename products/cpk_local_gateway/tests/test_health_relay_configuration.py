@@ -173,6 +173,27 @@ class HealthRelayConfigurationTests(unittest.TestCase):
                     replace(targets, file_mode=ConfigurationFileMode.OWNER_READ_ONLY)):
             self.refused(api, lambda:api.gateway_health_source_runtime_contract(trust, bad, control))
 
+    def test_declared_contract_requires_three_slots_without_instance_material(self):
+        api = self.api()
+        factory = getattr(api, "gateway_health_declared_runtime_contract", None)
+        self.assertTrue(callable(factory), "gateway declaration-only contract is unavailable")
+        with patch("builtins.open") as files, patch("socket.getaddrinfo") as network:
+            contract = factory()
+        files.assert_not_called()
+        network.assert_not_called()
+        self.assertEqual(ProductRuntimeContractCodec().decode(contract.descriptor()), contract)
+        self.assertEqual(contract.configuration_artifacts, ())
+        self.assertEqual(contract.secret_deliveries, ())
+        self.assertEqual({(slot.artifact_id, slot.target_path, slot.media_type, slot.file_mode)
+            for slot in contract.configuration_requirements}, {
+                ("gateway-health-transit", TRUST_PATH, ConfigurationMediaType.JSON, ConfigurationFileMode.READ_ONLY),
+                ("gateway-health-targets", TARGET_PATH, ConfigurationMediaType.JSON, ConfigurationFileMode.READ_ONLY),
+                ("gateway-control", CONTROL_PATH, ConfigurationMediaType.JSON, ConfigurationFileMode.READ_ONLY)})
+        trust, targets = self.artifacts(api)
+        concrete = api.gateway_health_source_runtime_contract(trust, targets, self.control_artifact())
+        self.assertEqual(replace(contract, configuration_requirements=(),
+            configuration_artifacts=concrete.configuration_artifacts), concrete)
+
     def run_main(self, files, environment):
         server = importlib.import_module(PACKAGE + ".server")
         actual_open = builtins.open
