@@ -8,13 +8,17 @@ import re
 import control_plane_kit_core as core
 from control_plane_kit_core.algebra import BlockSockets, ProviderSocket
 from control_plane_kit_core.capabilities import CapabilityName
-from control_plane_kit_core.configuration import ConfigurationArtifact, ConfigurationFileMode, ConfigurationMediaType
+from control_plane_kit_core.configuration import (
+    ConfigurationArtifact, ConfigurationArtifactRequirement, ConfigurationFileMode, ConfigurationMediaType,
+)
 from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
 from control_plane_kit_core.wrapper_configuration import WORKLOAD_NODE_CONTROL_CONFIGURATION_ENVIRONMENT
 from control_plane_kit_core.products import ProductRuntimeContract, ProductRuntimeContractCodec, ProviderRuntimePort
 from control_plane_kit_core.types import Protocol
 from control_plane_kit_core.verification import VerificationContract
 from .health_transit_configuration import _configuration_from_artifact, _INPUT_ERRORS
+from .health_transit_configuration import ARTIFACT_ID as TRANSIT_ARTIFACT_ID, CONFIGURATION_PATH as TRANSIT_PATH
+from .control_configuration import CONTROL_PATH, gateway_control_declaration
 
 ARTIFACT_ID = "gateway-health-targets"
 CONFIGURATION_PATH = "/etc/cpk/gateway/health-targets.json"
@@ -61,6 +65,22 @@ def gateway_health_relay_configuration_artifact(configuration):
     except _INPUT_ERRORS:
         failure = GatewayHealthRelayConfigurationError(_ERROR)
     raise failure
+
+
+def gateway_health_declared_runtime_contract():
+    """Declare capability and required public slots before instance trust exists."""
+    return ProductRuntimeContract(
+        sockets=BlockSockets(providers=(ProviderSocket("control", Protocol.HTTP),)),
+        provider_ports=(ProviderRuntimePort("control", 8000),),
+        configuration_requirements=tuple(ConfigurationArtifactRequirement(
+            artifact_id, path, ConfigurationMediaType.JSON, ConfigurationFileMode.READ_ONLY)
+            for artifact_id, path in ((TRANSIT_ARTIFACT_ID, TRANSIT_PATH),
+                (ARTIFACT_ID, CONFIGURATION_PATH), ("gateway-control", CONTROL_PATH))),
+        gateway_transit=core.GatewayTransitDeclaration("control", core.GatewayTransitProtocol.RECEIVER_HEALTH_READ_V2),
+        public_environment=(PublicStaticEnvironmentBinding(
+            WORKLOAD_NODE_CONTROL_CONFIGURATION_ENVIRONMENT, CONTROL_PATH),),
+        capabilities=(CapabilityName.HEALTH_CHECKABLE, CapabilityName.NODE_CONTROLLABLE),
+        control_surfaces=(gateway_control_declaration().surface,), verification=VerificationContract())
 
 
 def gateway_health_source_runtime_contract(trust_artifact, targets_artifact, control_artifact):

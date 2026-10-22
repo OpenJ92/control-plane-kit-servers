@@ -1,5 +1,16 @@
 # Explicit gateway management bindings
 
+## #309 declaration before instance trust
+
+`gateway_health_declared_runtime_contract()` returns the existing control8000,
+V2 own-health and health-transit capability with three exact JSON/read-only
+requirements: own control, transit and management routes. It contains no actual
+artifacts, key material or receiver identity. Instance configuration supplies those
+values later. The existing concrete factory and historical descriptors are unchanged.
+The new test requires replacing requirements with its concrete artifacts to recover
+the exact old contract. Initial target-red CI39719068823 at e1f8ca7 failed only on
+the missing factory in the gateway suite; owning green is pending.
+
 Source: `products/cpk_local_gateway/src/control_plane_kit_servers_cpk_local_gateway/health_relay_configuration.py`.
 
 Core's immutable `ReceiverManagementRoutes` binds a name to an exact receiver target (including runtime and receiver ID), V2
