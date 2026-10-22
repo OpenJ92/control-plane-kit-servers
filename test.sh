@@ -7,6 +7,12 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 
 cd "$ROOT"
 
+case "${1:-}" in
+  --managed-connector-controller|--managed-connector-release-tests)
+    exec sh scripts/cloudflared_release_shell.sh "$@"
+    ;;
+esac
+
 . ./scripts/root_artifact_shell.sh
 root_artifact_selection
 
