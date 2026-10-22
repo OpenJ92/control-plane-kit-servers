@@ -1,5 +1,14 @@
 Source: [root_artifact_shell.sh](../../../scripts/root_artifact_shell.sh).
 
+#306 closes the outer JSON object in the inspection projection. The final
+Go-template action and all three literal objects (Labels, Config, outer document)
+must close separately. The owning default gate now calls this actual function
+with Docker's real renderer on the already-preloaded, revision-verified
+hello_family image and parses its bounded output in the existing controller.
+The focused red reached JSON decoding after successful rendering/status/bounds;
+the one-brace correction changes no fields, selection law or redaction boundary.
+All product recipes/runtime source and the original published pair are unchanged.
+
 This shared boundary has two product consumers and their gate/preloader. Sourcing
 performs no effects. Selection uses no host Python and refuses invalid tuples
 before Docker. Admission inspects the cached reference before starting the

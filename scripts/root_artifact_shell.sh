@@ -30,7 +30,7 @@ root_artifact_selection() {
 }
 
 root_artifact_inspection() {
-  docker image inspect "$1" --format '{"Id":{{json .Id}},"RepoDigests":{{json .RepoDigests}},"Os":{{json .Os}},"Architecture":{{json .Architecture}},"Config":{"User":{{json .Config.User}},"Labels":{"org.opencontainers.image.revision":{{json (index .Config.Labels "org.opencontainers.image.revision")}}}}'
+  docker image inspect "$1" --format '{"Id":{{json .Id}},"RepoDigests":{{json .RepoDigests}},"Os":{{json .Os}},"Architecture":{{json .Architecture}},"Config":{"User":{{json .Config.User}},"Labels":{"org.opencontainers.image.revision":{{json (index .Config.Labels "org.opencontainers.image.revision")}}}}}'
 }
 
 root_artifact_checker() {
