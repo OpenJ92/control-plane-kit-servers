@@ -7,8 +7,11 @@ which forwards it through _operations_application into the shared factory.
 Injected verifiers alone never imply policy; create_app's authority defaults
 to None. The provider composition adds the thin public-client generator using
 its same bootstrap registry/transport and forwards it through effect ports.
-No constructor opens provider credential files. Generation needs both ports;
-confidential provision remains unconfigured. Permission changes require a new
+No constructor opens provider credential files. Generation needs both ports.
+#317 forwards the same existing provider custodian through the optional effect
+port; the shared factory enables provision only with independent authority too.
+Disabled/local-development custody remains absent. No provider adapter, service
+policy or credential format is added. Permission changes require a new
 process, with no hot reload or token/session revocation claim. See
 [configured authority](../../../../../deployment-input-authority.md).
 

@@ -28,11 +28,13 @@ return a fixed 500. Public bounded conflict/status references remain available.
 Repr omission does not make arbitrary serialization safe. Bounded accumulation
 does not promise zeroization, upstream ASGI allocation bounds or a timeout.
 
-## Provision example for the later enabled composition
+## Provision example for configured custody and authority
 
-Provision remains unavailable through #316. #317 owns explicit enablement and
-integration acceptance. This example documents that later HTTP surface; it was
-not run against a live server or retained credentials.
+Provision requires the configured provider custodian and explicit independent
+principal authority described in [deployment input authority](deployment-input-authority.md).
+Missing dependencies remain unavailable. #317 source enablement is pending normal
+green/integrated acceptance. This example has not been run against a live server
+or retained credentials.
 
 Use an already authorized HTTPS endpoint and an existing registered provider.
 The operator credential file must be protected (owner-only access) and contain
