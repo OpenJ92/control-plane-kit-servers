@@ -9,8 +9,10 @@ A stricter independently configured policy denies before payload decoding and
 custody; it does not model production hot reload. Existing generation-only
 matrix and #316 transport tests remain unchanged.
 
-These are unexecuted target tests awaiting concrete fixture/causality review.
-Missing-port/owner assertions are interface-red only until the actual normal
-Docker-backed gate executes. The later authenticated preparation witness owns
-successful encrypted custody and real PostgreSQL composition evidence; this
-matrix does not claim those effects happened.
+Normal CI40029935612 ran615 CPK methods with exactly three intended failures:
+forwarding returned None at line29, and the two other methods failed their first
+missing-port assertions at lines39/74. No later matrix, owner-construction or
+current-policy assertion in these methods was reached. Existing612 methods passed.
+The three target methods are unchanged for the implementation's green attempt.
+The later authenticated preparation witness owns successful encrypted custody
+and real PostgreSQL composition evidence; it was not reached in this red run.

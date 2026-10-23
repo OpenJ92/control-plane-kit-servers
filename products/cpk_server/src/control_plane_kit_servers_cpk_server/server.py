@@ -867,7 +867,8 @@ def _operations_effect_ports(config, provider):
     return OperationsEffectPorts(runtimes, ingress, health, decoders,
         _runtime_observer(config, secret_provider=provider), _UnsupportedExecutionAdapter(),
         secret_metadata_reader=provider.metadata_reader,
-        delegation_key_generator=provider.delegation_key_generator)
+        delegation_key_generator=provider.delegation_key_generator,
+        secret_custodian=provider.secret_custodian)
 
 
 def _gateway_probe_service(
