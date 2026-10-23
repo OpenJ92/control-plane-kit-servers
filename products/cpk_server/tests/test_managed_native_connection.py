@@ -289,7 +289,8 @@ class ManagedNativeConnectionTests(unittest.TestCase):
             ingress_interpreters=SimpleNamespace(enabled=False), managed_health=ManagedHealthBootstrap(
                 (self.world.authored.documents["gateway"],), self.provider_clients,
                 endpoints=self.endpoints, native=self.native))
-        provider = SimpleNamespace(metadata_reader=None, authorized_resolver=Mock(), delegation_key_generator=None)
+        provider = SimpleNamespace(metadata_reader=None, authorized_resolver=Mock(), delegation_key_generator=None,
+            secret_custodian=None)
         with patch.object(server, "_runtime_observer", return_value=Mock()):
             ports = server._operations_effect_ports(config, provider)
         self.assertIs(ports.managed_health.native, self.native)
