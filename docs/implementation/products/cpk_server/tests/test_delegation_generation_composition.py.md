@@ -4,9 +4,13 @@ Source: [test_delegation_generation_composition.py](../../../../../products/cpk_
 Operations grant and real registry select the public client's configuration;
 the client double proves exact arguments, one call, unchanged result and no retry.
 No credential file is created or opened. Real provider composition forwards the
-registry and transport into the effect ports. Factory tests cover all four
-generator/authority combinations, actual owner construction and real route
-availability without entering a UoW. Provision is 501 in every combination.
+registry and transport into the effect ports. A separate real _operations_application
+test proves explicit authority reaches the factory and the default remains None,
+with only schema/provider effects and factory construction replaced. Factory tests
+cover all four generator/authority combinations and actual owner construction.
+The 400/501 distinction observes route-adapter availability: its text parser
+rejects empty issuer before command construction, authorization or UoW entry.
+It does not execute generation command laws. Provision is 501 in every combination.
 
 This is a test-only checkpoint, not executed acceptance. Missing interfaces fail
 explicit assertions rather than collection imports; later checks remain uncredited

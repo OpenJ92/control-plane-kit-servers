@@ -100,6 +100,29 @@ class ProviderGenerationCompositionTests(unittest.TestCase):
 
 
 class GenerationFactoryAvailabilityTests(unittest.TestCase):
+    def test_real_operations_assembly_forwards_explicit_and_default_authority(self):
+        server = importlib.import_module("control_plane_kit_servers_cpk_server.server")
+        self.assertIn("principal_authorizer", inspect.signature(server._operations_application).parameters,
+                      "production assembly has no explicit authority input")
+        config = Mock()
+        config.managed_health_process = None
+        explicit = object()
+        for arguments, expected in (({}, None), ({"principal_authorizer": explicit}, explicit)):
+            with self.subTest(explicit=expected is not None):
+                with patch.object(server, "_install_operations_schema") as schema, \
+                        patch.object(server, "_secret_provider_composition") as provider, \
+                        patch.object(server, "_operations_effect_ports") as ports, \
+                        patch.object(server, "OperationsApplicationFactory") as factory:
+                    self.assertIs(server._operations_application(config, **arguments),
+                                  factory.return_value.return_value)
+                    factory.assert_called_once()
+                    self.assertIs(factory.call_args.kwargs.get("principal_authorizer"), expected)
+                    schema.assert_called_once_with(config.operations_database_url.return_value)
+                    provider.assert_called_once_with(config)
+                    ports.assert_called_once_with(config, provider.return_value)
+                    self.assertIs(factory.call_args.args[1], ports.return_value)
+                    self.assertIs(factory.call_args.kwargs["clock"], server._clock)
+
     def test_four_availability_cases_and_provision_always_unavailable(self):
         composition = importlib.import_module("control_plane_kit_servers_cpk_server.operations_application")
         boundary = importlib.import_module("control_plane_kit_servers_cpk_server.boundary")
@@ -131,8 +154,8 @@ class GenerationFactoryAvailabilityTests(unittest.TestCase):
                     ControlPlaneServiceRole.EXECUTION, {"workspace_id": "workspace-a"}, payload, principal)
                 with self.assertRaises(CpkServerApplicationError) as raised:
                     app.handle(request)
-                # Closed fields pass initial routing. Empty issuer is rejected by the configured owner;
-                # absent service stops first with 501, without entering that command constructor.
+                # Closed fields pass initial routing. The configured Operations route adapter's
+                # _text check rejects empty issuer before command construction; absence stops at 501.
                 self.assertEqual(raised.exception.status, 400 if has_generator and has_authority else 501)
                 provision = boundary.CpkServerServiceRequest("http", "command.secret-material.provision",
                     ControlPlaneServiceRole.EXECUTION, {"workspace_id": "workspace-a"}, {}, principal)
