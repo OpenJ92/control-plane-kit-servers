@@ -1,3 +1,12 @@
+Source: [coordinates/server-products.json](../../../coordinates/server-products.json).
+Maintain this companion alongside its source and selected dependencies.
+
+## Current #313 dependency adoption
+
+The accepted upstream cohort is Core/Operations `879efb9576ac0580a6236d0a7372c036537b4dfe`, SDK `43838fd0f4391428cfffa87f8c4dbd5cc6d5eab1`, Secrets `78a2ed7c8abee6da31f8661993ed4c5426edd7ee` and Interpreters `6faf6698e47381476fb2f09058894eab16f0c768`. Only the five upstream fields change. The existing generator updates root requirements and nine dependency recipes. Product source/image/tag/digest fields and descriptor/catalogue bytes stay unchanged; generated source dependencies do not establish publication. Normal owner CI and source review must establish installed compatibility before #311 composition.
+
+Earlier checkpoint accounts below describe their named historical selections; they are not the current cohort or acceptance status.
+
 ## Current #293 accepted dependency adoption
 
 Interpreters is now528fb20692400c01e107f86b3952a52a70883652, supplying accepted

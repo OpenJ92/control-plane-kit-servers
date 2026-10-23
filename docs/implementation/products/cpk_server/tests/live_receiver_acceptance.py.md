@@ -1,3 +1,12 @@
+Source: [products/cpk_server/tests/live_receiver_acceptance.py](../../../../../products/cpk_server/tests/live_receiver_acceptance.py).
+Maintain this companion alongside its source and selected dependencies.
+
+## Current #313 dependency adoption
+
+For #313, the existing current-source provenance expectations follow the accepted cohort in `coordinates/server-products.json`. Exact archive/subdirectory, installed-source, generated-byte and historical-product assertions remain unchanged; only their selected upstream coordinates move. This adds no fixture law or relaxed assertion. Normal owner CI must establish the updated composition.
+
+Earlier checkpoint accounts below describe their named historical selections; they are not the current cohort or acceptance status.
+
 Source: [live_receiver_acceptance.py](../../../../../products/cpk_server/tests/live_receiver_acceptance.py).
 
 
