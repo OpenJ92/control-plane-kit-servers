@@ -43,3 +43,9 @@ This is an unexecuted test-only checkpoint. The package-level missing-port tests
 may stop the normal fail-fast gate before this integration witness; only reached
 assertions can receive causal-red credit. Production enablement follows that red
 evidence and independent review, never this fixture's existence alone.
+
+Concrete source review corrected two fixture expectations before any execution:
+MCP intake asserts the accepted exact 404/unknown-operation refusal, and key
+activation supplies issuer/key ID explicitly as URL coordinates as well as its
+existing command fields. The HTTP helper still does not infer URL coordinates
+from confidential payloads. Production and the governing #316 tests are unchanged.

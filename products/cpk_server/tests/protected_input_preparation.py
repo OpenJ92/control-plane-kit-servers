@@ -156,7 +156,8 @@ def exercise(host, provider, documents):
         "Accept": "application/json", "MCP-Protocol-Version": "2025-06-18", "Mcp-Method": "tools/call"},
         json={"jsonrpc": "2.0", "id": "protected-refusal", "method": "tools/call",
               "params": {"name": INTAKE, "arguments": {"workspace_id": WORKSPACE, **provision}}})
-    assert response.status_code == 400
+    assert (response.status_code, response.json()) == (404, {
+        "error": {"status": 404, "message": "unknown MCP operation"}})
     host.record(response.json())
     response = host.client.post(f"/workspaces/{WORKSPACE}/secret-material/provision",
         headers={"Authorization": "Bearer " + OPERATOR}, content=b" " * 98_305)
@@ -173,7 +174,8 @@ def exercise(host, provider, documents):
         assert receipt["version_id"] and receipt["version_number"] == 1
         assert host.call("read.delegation-key-generation", path={"request_id": f"generate-{number}"}) == result
         host.call("command.delegation-key.activate", {"purpose": purpose.value, "issuer": "cpk-server",
-            "key_id": receipt["public_key"]["key_id"], "activated_at": utc_now(), "idempotency_key": f"activate-{number}"})
+            "key_id": receipt["public_key"]["key_id"], "activated_at": utc_now(), "idempotency_key": f"activate-{number}"},
+            path={"issuer": "cpk-server", "key_id": receipt["public_key"]["key_id"]})
         generated.append(result)
     admitted = host.call(INTAKE, provision)
     assert admitted["state"] == "admitted" and admitted["custody"]["version_number"] == 1
