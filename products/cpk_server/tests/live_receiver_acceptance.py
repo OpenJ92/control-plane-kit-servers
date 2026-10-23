@@ -266,6 +266,8 @@ async def failed_update(database_url, fault):
 
 
 async def run(database_url):
+    from protected_input_preparation import protected_input_preparation
+    await asyncio.to_thread(protected_input_preparation, database_url)
     await declared_gateway_preparation(database_url)
     await accepted_history(database_url)
     for fault in ("missing-installation-receipt", "unavailable-signing-material"):
