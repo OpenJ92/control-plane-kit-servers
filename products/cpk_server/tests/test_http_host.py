@@ -55,7 +55,7 @@ class CpkHttpHostTests(unittest.TestCase):
 
     def test_every_operator_contract_reaches_unchanged_auth_boundary(self):
         routes = self.app.state.http_boundary.composition.http_api.routes
-        self.assertEqual(len(routes), 77)
+        self.assertEqual(len(routes), 82)
         for route_id, path in (
             ("read.receiver-authoring-context", "/workspaces/{workspace_id}/receiver-authoring-context"),
             ("read.workload-verifier-configuration", "/workspaces/{workspace_id}/workload-verifier-configuration/{purposes}"),
