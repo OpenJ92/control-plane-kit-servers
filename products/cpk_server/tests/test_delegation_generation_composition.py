@@ -93,6 +93,7 @@ class ProviderGenerationCompositionTests(unittest.TestCase):
             self.assertIsNotNone(generator, "production provider composition omits generation")
             self.assertIs(generator.bootstrap_registry, provider.bootstrap_registry)
             self.assertIs(generator.transport, transport)
+            self.assertIs(generator.policy, provider.secret_custodian.policy)
             ports = server._operations_effect_ports(config, provider)
             self.assertIs(ports.delegation_key_generator, generator)
             disabled = server._operations_effect_ports(config, server._SecretProviderComposition())

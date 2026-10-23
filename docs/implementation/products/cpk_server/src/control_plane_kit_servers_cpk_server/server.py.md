@@ -1,6 +1,17 @@
 Source: [server.py](../../../../../../products/cpk_server/src/control_plane_kit_servers_cpk_server/server.py).
 Maintain with the process composition and operational ownership boundary.
 
+#315 explicitly projects configured static-development principals into a
+credential-free ConfiguredPrincipalAuthorizer. Main passes it to create_app,
+which forwards it through _operations_application into the shared factory.
+Injected verifiers alone never imply policy; create_app's authority defaults
+to None. The provider composition adds the thin public-client generator using
+its same bootstrap registry/transport and forwards it through effect ports.
+No constructor opens provider credential files. Generation needs both ports;
+confidential provision remains unconfigured. Permission changes require a new
+process, with no hot reload or token/session revocation claim. See
+[configured authority](../../../../../deployment-input-authority.md).
+
 Servers #294 adds explicit managed_health_process configuration. The environment
 wrapper preserves the disabled legacy parser and translates enabled failures to
 one fixed, context-free bootstrap error. Both public create_app and private

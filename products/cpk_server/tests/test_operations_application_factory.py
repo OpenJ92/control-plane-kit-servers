@@ -81,10 +81,11 @@ class OperationsApplicationFactoryTests(unittest.TestCase):
             self.assertIs(services["lifecycle"], lifecycle.return_value)
             self.assertIs(services["execution"], coordinator.return_value)
             self.assertIs(services["unit_of_work_factory"], unit_of_work)
+            self.assertIsNone(services["delegation_key_generation"])
             self.assertEqual(set(services), {
                 "unit_of_work_factory", "planning", "workspaces", "products",
                 "image_pull_authorities", "runtime_authorities", "ingress_authorities",
-                "secret_providers", "delegation_signing_keys", "desired_topology_drafts",
+                "secret_providers", "delegation_signing_keys", "delegation_key_generation", "desired_topology_drafts",
                 "desired_graphs", "approval", "admission", "lifecycle", "operations",
                 "execution", "advancement", "gateway_probes", "clock"})
             self.assertIs(result, composition.CpkServerOperationsApplication.return_value)

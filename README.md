@@ -99,6 +99,9 @@ control-plane process wrapper. This is now paired with a published descriptor in
 `products/cpk_server/product.cpk.json` and a catalogue declaration containing
 descriptor, image, and source digest evidence.
 
+See [configured deployment-input authority](docs/deployment-input-authority.md)
+for restart-only permission policy and explicit generation-service composition.
+
 Local smoke:
 
 ```bash

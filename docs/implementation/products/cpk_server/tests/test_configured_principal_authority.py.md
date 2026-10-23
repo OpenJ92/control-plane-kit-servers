@@ -8,7 +8,9 @@ directories demonstrate process replacement, not hot reload. Startup tests use
 real configuration/verifier/create_app with only effectful application construction
 and the listener replaced. Injecting a verifier alone does not supply authority.
 
-This test-only checkpoint precedes implementation. Missing-interface assertions
-are interface-red only; downstream policy laws earn evidence only when executed.
+The initial test-only checkpoint preceded implementation. Run 40009978175 showed
+the intended missing-interface/forwarding assertions; downstream policy laws were
+not executed by that red run. The implementation now supplies the interfaces;
+full owning green remains pending, and laws earn evidence only when executed.
 Normal Docker-backed ./test.sh/PR CI is required; no host or alternate harness.
 All tokens and identities are synthetic. No confidential provision is enabled.
