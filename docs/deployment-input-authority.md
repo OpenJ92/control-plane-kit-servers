@@ -32,6 +32,8 @@ uncertainty and structured history. No implicit retry or private store seeding i
 introduced. Confidential secret-material provision remains unavailable in #315
 and #316. #317 must explicitly compose and test authority, custody, bounded HTTP,
 confidential representations and early HTTP-only MCP refusal before enabling it.
+See [confidential transport](confidential-transport.md) for byte limits, ordering
+and a stdin-based example for that later enabled composition.
 
 Source validation does not qualify new images or establish live #225 behavior.
 Historical product images, retained tunnel/DNS/token and commissioning custody
