@@ -18,7 +18,9 @@ from fastapi.responses import JSONResponse
 import psycopg
 import uvicorn
 from control_plane_kit_core.identity import (
+    AuthenticatedPrincipal,
     CredentialVerifier,
+    PrincipalAuthorizer,
     PrincipalKind,
     WorkspaceGrant,
 )
@@ -81,6 +83,7 @@ from .control_configuration import (
     cpk_control_configuration_artifact, read_cpk_control_configuration,
 )
 from .http_host import install_operator_http_routes
+from .request_body import MCP_ENVELOPE_MAX_BYTES, RequestBodyTooLarge, collect_request_body
 from control_plane_kit_operations.health_receiver_trust import HealthReceiverDecoders
 from .operations_application import OperationsApplicationFactory, OperationsEffectPorts, OperationsIdFactories
 from .managed_health import ManagedHealthBootstrap
@@ -92,10 +95,12 @@ from .boundary import (
     CpkServerMcpProcessBoundary,
 )
 from .authentication import (
+    ConfiguredPrincipalAuthorizer,
     StaticDevelopmentCredentialVerifier,
     StaticDevelopmentMultiCredentialVerifier,
     StaticDevelopmentPrincipalCredential,
     static_development_principal,
+    _static_operator_identity,
 )
 from .composition import (
     CpkServerCompositionError,
@@ -503,6 +508,7 @@ def create_app(
     credential_verifier: CredentialVerifier,
     *, control: ReceiverNodeControlConfiguration,
     clock: Callable[[], int] = lambda: int(time.time()),
+    principal_authorizer: PrincipalAuthorizer | None = None,
 ) -> FastAPI:
     """Create the hosted cpk-server FastAPI application."""
 
@@ -540,7 +546,12 @@ def create_app(
 
     @app.post("/mcp")
     async def mcp(request: Request) -> JSONResponse:
-        body = await request.body()
+        try:
+            body = await collect_request_body(request.stream(), MCP_ENVELOPE_MAX_BYTES)
+        except RequestBodyTooLarge:
+            return _json_response(
+                413, {"error": {"status": 413, "message": "request body too large"}},
+            )
         try:
             message = json.loads(body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -555,11 +566,11 @@ def create_app(
         return _json_response(response.status, response.body)
 
     async def http(request: Request) -> JSONResponse:
-        response = await http_boundary.handle_async(
+        response = await http_boundary.handle_stream_async(
             method=request.method,
             path=request.url.path,
             headers=request.headers,
-            body=await request.body(),
+            body=request.stream(),
             query_string=request.scope["query_string"],
         )
         return _json_response(response.status, response.body)
@@ -568,7 +579,9 @@ def create_app(
     install_cpk_wrapper(app, configuration=control, clock=clock)
     # No application/listener escapes before both admitted routes and existing
     # Operations schema/services are ready. Callbacks never perform schema work.
-    application = CpkServerApplicationBoundary(_operations_application(config).services, credential_verifier)
+    application = CpkServerApplicationBoundary(
+        _operations_application(config, principal_authorizer=principal_authorizer).services,
+        credential_verifier)
     http_boundary = CpkServerHttpProcessBoundary(composition, application)
     mcp_boundary = CpkServerMcpProcessBoundary(composition, application)
     app.state.http_boundary = http_boundary
@@ -583,7 +596,8 @@ def main() -> int:
         control = read_cpk_control_configuration()
         if config.port != 8080:
             raise BootstrapConfigurationError("CPK_PORT must be 8080")
-        app = create_app(config, credential_verifier, control=control)
+        app = create_app(config, credential_verifier, control=control,
+                         principal_authorizer=_configured_principal_authorizer(config))
     except (BootstrapConfigurationError, CpkServerCompositionError, CpkControlConfigurationError) as error:
         print(f"cpk-server bootstrap error: {error}", flush=True)
         return 2
@@ -613,6 +627,18 @@ def _credential_verifier(
     raise BootstrapConfigurationError(
         "no credential verifier is configured for cpk-server"
     )
+
+
+def _configured_principal_authorizer(config: CpkServerBootstrapConfiguration) -> ConfiguredPrincipalAuthorizer:
+    """Project startup policies without retaining credentials or the config."""
+    if config.control_auth_verifier != "static-development":
+        raise BootstrapConfigurationError("no configured principal authority is available")
+    if config.control_auth_static_principals:
+        principals = tuple(item.principal for item in config.control_auth_static_principals)
+    else:
+        principals = (AuthenticatedPrincipal(_static_operator_identity(),
+                                             config.control_auth_static_workspace_grants),)
+    return ConfiguredPrincipalAuthorizer(principals)
 
 
 def _validated_bootstrap_mapping_json(value: str) -> dict[str, str]:
@@ -788,6 +814,7 @@ def _static_principals(
 
 def _operations_application(
     config: CpkServerBootstrapConfiguration,
+    *, principal_authorizer: PrincipalAuthorizer | None = None,
 ) -> CpkServerOperationsApplication:
     _validate_managed_health_process(config)
     database_url = config.operations_database_url()
@@ -800,6 +827,7 @@ def _operations_application(
     return OperationsApplicationFactory(unit_of_work, _operations_effect_ports(config, provider),
         OperationsIdFactories(_id, _lifecycle_id, _start_id, _fold_id, _coordinator_id),
         clock=_clock,
+        principal_authorizer=principal_authorizer,
         gateway_probe_factory=lambda uow, authorizer: _gateway_probe_service(
             config, uow, authorizer, provider))()
 
@@ -838,7 +866,9 @@ def _operations_effect_ports(config, provider):
         decoders = health.decoders
     return OperationsEffectPorts(runtimes, ingress, health, decoders,
         _runtime_observer(config, secret_provider=provider), _UnsupportedExecutionAdapter(),
-        secret_metadata_reader=provider.metadata_reader)
+        secret_metadata_reader=provider.metadata_reader,
+        delegation_key_generator=provider.delegation_key_generator,
+        secret_custodian=provider.secret_custodian)
 
 
 def _gateway_probe_service(
@@ -1374,6 +1404,7 @@ class _SecretProviderComposition:
     bootstrap_registry: object | None = field(default=None, repr=False)
     transport: object | None = field(default=None, repr=False)
     metadata_reader: object | None = field(default=None, repr=False)
+    delegation_key_generator: object | None = field(default=None, repr=False)
 
     def __repr__(self) -> str:
         return (
@@ -1505,19 +1536,20 @@ def _secret_provider_composition(
         raise BootstrapConfigurationError(
             "secret provider bootstrap configuration is unavailable"
         ) from None
+    from .delegation_key_generation import _ProviderDelegationKeyGenerator
+    custodian = ControlPlaneKitSecretsCustodian(registry, transport=transport)
     return _SecretProviderComposition(
         authorized_resolver=ControlPlaneKitSecretsResolver(
             registry,
             transport=transport,
         ),
-        secret_custodian=ControlPlaneKitSecretsCustodian(
-            registry,
-            transport=transport,
-        ),
+        secret_custodian=custodian,
         bootstrap_registry=registry,
         transport=transport,
         metadata_reader=_SecretVersionMetadataBridge(
             ControlPlaneKitSecretsMetadataReader(registry, transport=transport)),
+        delegation_key_generator=_ProviderDelegationKeyGenerator(
+            registry, policy=custodian.policy, transport=transport),
     )
 
 

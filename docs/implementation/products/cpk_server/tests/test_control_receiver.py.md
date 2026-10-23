@@ -1,6 +1,10 @@
 Source: [test_control_receiver.py](../../../../../products/cpk_server/tests/test_control_receiver.py).
 Maintain with CPK receiving, startup and authority contracts.
 
+#315 updates only the schema-failure double's new explicit authority keyword and
+call expectation, requiring None for this injected-verifier fixture. The actual
+SDK-before-schema ordering and failure propagation assertions remain intact.
+
 Focused laws cover real artifact/config round trips, all three complete
 historical contract comparisons, closed/typed malformed input and fixed errors,
 opened-file bounds/symlink/directory/FIFO/missing cases, required configuration and

@@ -3,6 +3,8 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from control_plane_kit_core.identity import PrincipalAuthorizer
+from control_plane_kit_core.secrets import SecretCustodian
 from control_plane_kit_operations import (
     ActivityExecutionDispatcher, ActivityPlanningCommandService, ApprovalCommandService,
     CpkServerOperationsApplication, CurrentGraphAdvancementCommandService,
@@ -18,6 +20,9 @@ from control_plane_kit_operations.desired_topology_drafts import DesiredTopology
 from control_plane_kit_operations.health_signing_authority import HealthSigningAuthorityReloadService
 from control_plane_kit_operations.health_receiver_trust import HealthReceiverDecoders
 from control_plane_kit_operations.graph_authoring import SecretVersionMetadataReader
+from control_plane_kit_operations.delegation_key_generation import DelegationKeyGenerator
+from control_plane_kit_operations.delegation_key_generation_commands import DelegationKeyGenerationCommandService
+from control_plane_kit_operations.secret_material_provision_commands import SecretMaterialProvisionCommandService
 
 
 @dataclass(frozen=True)
@@ -43,6 +48,8 @@ class OperationsEffectPorts:
     runtime_observer: object
     disabled_runtime_adapter: object | None = None
     secret_metadata_reader: SecretVersionMetadataReader | None = None
+    delegation_key_generator: DelegationKeyGenerator | None = None
+    secret_custodian: SecretCustodian | None = None
 
 
 def _utc_now():
@@ -57,6 +64,7 @@ class OperationsApplicationFactory:
     clock: Callable[[], str] = _utc_now
     gateway_probe_factory: Callable | None = None
     start_service_decorator: Callable | None = None
+    principal_authorizer: PrincipalAuthorizer | None = None
 
     def __call__(self) -> CpkServerOperationsApplication:
         unit_of_work, ports, ids, clock = self.unit_of_work_factory, self.ports, self.ids, self.clock
@@ -88,6 +96,14 @@ class OperationsApplicationFactory:
             managed_health=ports.managed_health, health_signing_authority=reload)
         probes = (None if self.gateway_probe_factory is None
             else self.gateway_probe_factory(unit_of_work, authorizer))
+        generation = None
+        if ports.delegation_key_generator is not None and self.principal_authorizer is not None:
+            generation = DelegationKeyGenerationCommandService(unit_of_work,
+                ports.delegation_key_generator, authorizer=self.principal_authorizer, clock=clock)
+        provision = None
+        if ports.secret_custodian is not None and self.principal_authorizer is not None:
+            provision = SecretMaterialProvisionCommandService(unit_of_work,
+                ports.secret_custodian, authorizer=self.principal_authorizer, clock=clock)
         return CpkServerOperationsApplication(cpk_server_services(
             unit_of_work_factory=unit_of_work,
             planning=ActivityPlanningCommandService(unit_of_work, clock=clock, id_factory=ids.service),
@@ -98,6 +114,8 @@ class OperationsApplicationFactory:
             ingress_authorities=IngressAuthorityRegistrationService(unit_of_work),
             secret_providers=SecretProviderRegistrationService(unit_of_work),
             delegation_signing_keys=DelegationSigningKeyRegistrationService(unit_of_work),
+            delegation_key_generation=generation,
+            secret_material_provision=provision,
             desired_topology_drafts=DesiredTopologyDraftCommandService(unit_of_work, clock=clock, id_factory=ids.service),
             desired_graphs=DesiredGraphCommandService(unit_of_work, clock=clock, id_factory=ids.service,
                 secret_metadata_reader=ports.secret_metadata_reader),

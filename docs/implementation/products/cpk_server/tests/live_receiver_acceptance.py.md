@@ -1,6 +1,17 @@
 Source: [products/cpk_server/tests/live_receiver_acceptance.py](../../../../../products/cpk_server/tests/live_receiver_acceptance.py).
 Maintain this companion alongside its source and selected dependencies.
 
+## #317 protected-input checkpoint
+
+The existing run function unconditionally calls protected_input_preparation in
+a worker thread before the existing scenarios. This permits the fixture's real
+context-managed synchronous TestClients without nesting an event loop. The
+normal smoke controller, dependencies, workflow and Docker owner are unchanged.
+The new helper owns a separate schema and provider custody directory and stops
+after authenticated preparation. Existing synthetic runtime scenarios remain
+distinct evidence. The new path is unexecuted pending concrete review and the
+owning Docker gate; see its companion for authority and effect limits.
+
 ## Current #313 dependency adoption
 
 For #313, the existing current-source provenance expectations follow the accepted cohort in `coordinates/server-products.json`. Exact archive/subdirectory, installed-source, generated-byte and historical-product assertions remain unchanged; only their selected upstream coordinates move. This adds no fixture law or relaxed assertion. Normal owner CI must establish the updated composition.

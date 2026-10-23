@@ -1,6 +1,20 @@
 Source: [server.py](../../../../../../products/cpk_server/src/control_plane_kit_servers_cpk_server/server.py).
 Maintain with the process composition and operational ownership boundary.
 
+#315 explicitly projects configured static-development principals into a
+credential-free ConfiguredPrincipalAuthorizer. Main passes it to create_app,
+which forwards it through _operations_application into the shared factory.
+Injected verifiers alone never imply policy; create_app's authority defaults
+to None. The provider composition adds the thin public-client generator using
+its same bootstrap registry/transport and forwards it through effect ports.
+No constructor opens provider credential files. Generation needs both ports.
+#317 forwards the same existing provider custodian through the optional effect
+port; the shared factory enables provision only with independent authority too.
+Disabled/local-development custody remains absent. No provider adapter, service
+policy or credential format is added. Permission changes require a new
+process, with no hot reload or token/session revocation claim. See
+[configured authority](../../../../../deployment-input-authority.md).
+
 Servers #294 adds explicit managed_health_process configuration. The environment
 wrapper preserves the disabled legacy parser and translates enabled failures to
 one fixed, context-free bootstrap error. Both public create_app and private
@@ -55,7 +69,12 @@ explicit common receiving file via CPK_WRAPPER_CONFIGURATION_FILE and port8080, 
 it will listen, and then starts Uvicorn. This is source behavior; the historical
 published image remains separate until candidate qualification/publication.
 
-HTTP and MCP host closures await their process boundary handle_async methods.
+HTTP uses request.stream with handle_stream_async so route/auth admission precedes
+body reads. MCP uses the same neutral collector with a fixed inclusive 1 MiB
+envelope before JSON parsing, then awaits its existing handle_async entrance.
+Both map only the payload-free overflow exception to fixed 413 and ignore
+Content-Length as an acceptance authority. No request.body call remains in these
+host closures. SDK wrapper routes keep their own unchanged host behavior.
 The shared boundary uses the exact constructed service objects in the actual
 Operations application, whose async entrance selects managed execute/reobserve.
 No task is detached and no nested event loop is introduced. Synchronous neutral
