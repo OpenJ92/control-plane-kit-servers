@@ -2,6 +2,28 @@
 
 Source: [packaged_managed_witness.py](../../../../../products/cloudflared_connector/tests/packaged_managed_witness.py).
 
+## #313 current-source dependency adoption
+
+The normal owning gate builds the current `Dockerfile.managed`, then mounts this
+checker into that exact image. Its Core and SDK expectations therefore advance
+to accepted `879efb9576ac0580a6236d0a7372c036537b4dfe` and
+`43838fd0f4391428cfffa87f8c4dbd5cc6d5eab1`. Run 39998445394 installed those
+dependencies successfully but failed this check's stale coordinates with
+`installed_source_coordinate`, then `package_inspection_failed`. Managed-stage
+acceptance, the later PostgreSQL witness and the final residue audit were not
+reached. Earlier successful package and image stages do not make that run pass.
+
+Only these two expected commit literals change. The existing commit-substring
+predicate is unchanged; this does not strengthen it into exact URL or artifact
+authentication. Native version, notice source `81a53555`, notice blobs, numeric
+identity, controlled/fatal fixtures, deadlines and owned cleanup stay unchanged.
+Selected-image qualification also uses this checker and requires clean source
+HEAD, controller source/tree and candidate revision to match the selected source.
+Older artifacts retain their original source/witness/controller cohort in Git;
+no older artifact is newly qualified by this edit. Historical product
+source/image/tag/digest records and earlier evidence below remain unchanged.
+Normal owning validation of the correction is pending; no live proof is claimed.
+
 
 ## #291 provenance correction after mixed target red
 

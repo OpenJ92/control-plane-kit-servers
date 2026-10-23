@@ -3,7 +3,7 @@ Maintain alongside product transport compatibility.
 
 Tests call real create_app, replacing only the effectful operations factory with
 existing RecordingService/DeterministicVerifier fixtures from the neutral boundary
-tests. All 77 current routes must reach auth before malformed payload decode;
+tests. All 82 current routes must reach auth before malformed payload decode;
 exact workspace creation and raw query paging must preserve boundary responses.
 The compatibility table checks bodies, methods, Allow sets, strict slashes,
 legacy public health and MCP parsing/auth/dispatch order, with zero-work counters.
@@ -20,6 +20,17 @@ static/health test authority entirely in memory. It is not a production receiver
 issuer service or deployable default. Existing18 neutral boundary laws remain.
 Only the normal Docker-backed ./test.sh executes these tests. No source-host or
 published-image result establishes a production CPK wrapper in this child.
+
+The #313 dependency adoption selects accepted Core 879efb95 and adds five
+declarations: `read.delegation-key-generation`, `read.secret-material-provision`,
+`command.delegation-key.generate`, `command.secret-material.provision`, and
+`command.delegation-key-generation.reconcile`. The closed count changes 77 to
+82. Run 39997457595 failed at the stale count before the per-route loop; the
+correction retains its exact 401/error-body checks, verifier-call count and zero
+service-work assertion for every route. This is route inventory adoption only:
+the generation and confidential provision services remain unconfigured, and
+#311 must compose and test their authority and transport protections before
+enabling intake. The earlier route counts below describe historical adoptions.
 
 The #181 dependency adoption selects Core f1e's added reobserve-connector route.
 The closed count changes74→75 and requires exactly one such declaration; the

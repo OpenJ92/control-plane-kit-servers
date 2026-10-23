@@ -1,4 +1,13 @@
 Source: [products/cpk_local_gateway/Dockerfile](../../../../products/cpk_local_gateway/Dockerfile).
+Maintain this companion alongside its source and selected dependencies.
+
+## Current #313 dependency adoption
+
+For #313, existing generated dependency URLs select the accepted cohort in `coordinates/server-products.json`. Package subsets/extras, recipe behavior, base images and process identities are unchanged. This source dependency adoption does not change historical published product identities or enable confidential intake. Normal owner CI must establish installed compatibility.
+
+Earlier checkpoint accounts below describe their named historical selections; they are not the current cohort or acceptance status.
+
+Source: [products/cpk_local_gateway/Dockerfile](../../../../products/cpk_local_gateway/Dockerfile).
 
 
 ## Current #291 target and dependency checkpoint
