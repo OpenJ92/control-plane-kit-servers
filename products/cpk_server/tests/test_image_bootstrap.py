@@ -1556,7 +1556,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             and isinstance(node.func, ast.Attribute)
             and isinstance(node.func.value, ast.Name)
             and node.func.value.id == "http_boundary"
-            and node.func.attr == "handle_async"
+            and node.func.attr == "handle_stream_async"
         ]
         self.assertEqual(len(calls), 1)
         self.assertTrue(any(

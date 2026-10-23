@@ -1,6 +1,14 @@
 Source: [test_image_bootstrap.py](../../../../../products/cpk_server/tests/test_image_bootstrap.py).
 Maintain with the bootstrap/product installation and source-host contracts.
 
+Servers #316 translates the raw-ASGI-query forwarding call selector from
+handle_async to the hosted handle_stream_async entrance. Run 40021647574 passed
+all twelve new transport methods but failed this old-name selector (zero calls
+found) in the 612-method CPK group. The correction preserves exactly one call,
+awaited completion and the exact request.scope["query_string"] expression; it
+does not weaken or skip a query assertion. New direct-ASGI tests independently
+exercise stream behavior. This failed run does not credit later gate stages.
+
 Servers #297 extends the exact environment-name expectation with
 CPK_MANAGED_HEALTH and CPK_MANAGED_HEALTH_CONFIGURATION_FILE, matching the
 explicit optional process contract. All preexisting names, ordering, exact-list
