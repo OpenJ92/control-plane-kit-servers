@@ -41,27 +41,59 @@ command, expand it into a shell variable used as an argument, or enable shell
 tracing. The example reads that protected header file directly through curl.
 
 Replace `your-approved-secret-source` with an approved tool that emits only the
-material to stdout. Supply nonempty UTF-8 material of at most 65,536 bytes through
-this pipe, including any intended newline bytes. The jq program builds base64
-and JSON in memory; neither the material nor the request body is written to a
-command file. All literal arguments below are public identifiers or paths.
+material to stdout. Its arguments must contain no credentials or material. Save
+the following non-confidential source as a script and run it only for the later
+authorized enabled composition. The producer must finish successfully before
+curl starts; a nonzero exit after partial output sends no request. The script
+retains at most 65,537 producer bytes, rejects empty/oversized/non-UTF-8 material,
+and preserves intended newline bytes. Base64 and JSON stay in memory and enter
+curl through stdin. The protected operator header file is read directly by curl.
 
-```sh
-set -o pipefail
-your-approved-secret-source |
-  jq --raw-input --slurp --compact-output \
-    --arg request_id request-a \
-    --arg provider_registration_id provider-a \
-    --arg secret_reference secret://provider-a/cloudflare-token \
-    --arg intent cloudflare.api-token \
-    '{request_id: $request_id, provider_registration_id: $provider_registration_id,
-      secret_reference: $secret_reference, intent: $intent, value_base64: (. | @base64)}' |
-  curl --disable --silent --show-error --proto '=https' \
-    --connect-timeout 10 --max-time 30 \
-    --header @/protected/cpk-operator-header \
-    --header 'Content-Type: application/json' \
-    --data-binary @- --output /dev/null --write-out 'HTTP %{http_code}\n' \
-    https://cpk.example.invalid/workspaces/workspace-a/secret-material/provision
+```python
+import base64
+import json
+import subprocess
+
+with subprocess.Popen(
+    ["your-approved-secret-source"],
+    stdout=subprocess.PIPE,
+    stderr=subprocess.DEVNULL,
+) as source:
+    material = source.stdout.read(65_537)
+    if len(material) > 65_536:
+        source.kill()
+        source.wait()
+        raise SystemExit("material exceeds the byte limit; no request sent")
+    if source.wait() != 0:
+        raise SystemExit("material producer failed; no request sent")
+
+if not material:
+    raise SystemExit("material is empty; no request sent")
+try:
+    material.decode("utf-8")
+except UnicodeDecodeError:
+    raise SystemExit("material must be UTF-8; no request sent") from None
+
+body = json.dumps({
+    "request_id": "request-a",
+    "provider_registration_id": "provider-a",
+    "secret_reference": "secret://provider-a/cloudflare-token",
+    "intent": "cloudflare.api-token",
+    "value_base64": base64.b64encode(material).decode("ascii"),
+}).encode("utf-8")
+if len(body) > 98_304:
+    raise SystemExit("request exceeds the byte limit; no request sent")
+
+result = subprocess.run([
+    "curl", "--disable", "--silent", "--show-error", "--proto", "=https",
+    "--connect-timeout", "10", "--max-time", "30",
+    "--header", "@/protected/cpk-operator-header",
+    "--header", "Content-Type: application/json",
+    "--data-binary", "@-", "--output", "/dev/null",
+    "--write-out", "HTTP %{http_code}\\n",
+    "https://cpk.example.invalid/workspaces/workspace-a/secret-material/provision",
+], input=body, check=False)
+raise SystemExit(result.returncode)
 ```
 
 The example does not follow redirects, retry, print the response body or disable
