@@ -19,6 +19,7 @@ from control_plane_kit_interpreters.secret_provider import SecretProviderBootstr
 from control_plane_kit_interpreters.secret_provider.client import SecretProviderClientPolicy
 from control_plane_kit_operations import CpkServerApplicationError
 from control_plane_kit_operations.delegation_key_generation import DelegationKeyGenerationGrant
+from control_plane_kit_operations.health_receiver_trust import HealthReceiverDecoders
 
 from test_secret_provider_bootstrap import _provider_environment
 
@@ -141,7 +142,7 @@ class GenerationFactoryAvailabilityTests(unittest.TestCase):
                 generator = Mock() if has_generator else None
                 authority = Mock() if has_authority else None
                 clock = Mock(return_value="2026-10-23T00:00:00Z")
-                ports = composition.OperationsEffectPorts(None, None, None, Mock(), Mock(),
+                ports = composition.OperationsEffectPorts(None, None, None, HealthReceiverDecoders(()), Mock(),
                     disabled_runtime_adapter=Mock(), delegation_key_generator=generator)
                 ids = composition.OperationsIdFactories(*(Mock() for _ in range(5)))
                 with patch.object(composition, "DelegationKeyGenerationCommandService", wraps=owner) as service:

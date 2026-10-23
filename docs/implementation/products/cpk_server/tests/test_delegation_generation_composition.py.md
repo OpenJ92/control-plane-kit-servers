@@ -16,6 +16,13 @@ Implementation review additionally requires the generator to share the existing
 custodian's public client-policy object, alongside registry and transport; one
 identity assertion protects that composition without reimplementing client policy.
 
+Run 40012073568 reached the real factory but all four availability subcases errored
+before their assertions: the fixture supplied Mock instead of the required exact
+HealthReceiverDecoders value. The correction uses the existing empty immutable
+HealthReceiverDecoders(()) prerequisite, as disabled production composition does.
+It changes no trust check, production source or availability/zero-work assertion.
+Those four subcases and later gate stages remain uncredited until a completed run.
+
 The initial test-only checkpoint earned intended missing-interface/connection red
 in run 40009978175. Implementation now supplies those interfaces, but later checks
 remain uncredited until they execute in a successful owning run. Only normal
