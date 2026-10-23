@@ -173,14 +173,15 @@ class CpkControlReceiverTests(unittest.TestCase):
         def install(app,**kwargs):
             original(app,**kwargs)
             captured.append(app)
-        def fail_schema(config):
+        def fail_schema(config, *, principal_authorizer=None):
+            self.assertIsNone(principal_authorizer)
             self.assertEqual(len(captured),1)
             self.assertTrue(any(route.path.startswith("/__control/") for route in captured[0].routes))
             raise RuntimeError("test schema failure")
         with patch.object(self.server,"install_cpk_wrapper",side_effect=install), patch.object(self.server,"_operations_application",side_effect=fail_schema) as operations:
             with self.assertRaisesRegex(RuntimeError,"test schema failure"):
                 self.server.create_app(self.bootstrap,self.verifier,control=self.control,clock=lambda:150)
-            operations.assert_called_once_with(self.bootstrap)
+            operations.assert_called_once_with(self.bootstrap, principal_authorizer=None)
 
     def test_real_protected_health_and_separate_instance_authorities_do_no_operator_work(self):
         second=fixture("second")

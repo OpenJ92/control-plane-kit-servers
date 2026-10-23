@@ -1,5 +1,9 @@
 # Managed-health startup laws — Servers294
 
+#315 adds explicit delegation_key_generator=None to this file's two existing
+provider doubles. They continue to represent unavailable generation, retain all
+managed-health assertions and do not enable confidential provision.
+
 Detailed PLAN PASS6319596408, corrected packetSHA0ae1d52f and accepted predecessor
 293 merge6b1bcd9 govern these16 new/strengthened methods. No existing test or
 application source changes in this target checkpoint. The module lookup asserts

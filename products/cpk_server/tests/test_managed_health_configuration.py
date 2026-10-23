@@ -78,7 +78,8 @@ class ManagedHealthConfigurationTests(unittest.TestCase):
         factories = []
         actual = self.server.OperationsApplicationFactory
         if provider is None:
-            provider = SimpleNamespace(authorized_resolver=Mock(), metadata_reader=None, secret_custodian=None)
+            provider = SimpleNamespace(authorized_resolver=Mock(), metadata_reader=None, secret_custodian=None,
+                                       delegation_key_generator=None)
         def factory(*args, **kwargs):
             value = actual(*args, **kwargs)
             factories.append(value)
@@ -410,7 +411,8 @@ class ManagedHealthConfigurationTests(unittest.TestCase):
         def create(config, verifier, **kwargs):
             captured.append(config)
             return real_create(config, verifier, **kwargs)
-        provider = SimpleNamespace(authorized_resolver=Mock(), metadata_reader=None, secret_custodian=None)
+        provider = SimpleNamespace(authorized_resolver=Mock(), metadata_reader=None, secret_custodian=None,
+                                   delegation_key_generator=None)
         with patch.dict(os.environ, values, clear=True), \
                 patch.object(self.server, "read_cpk_control_configuration", return_value=fixture().config), \
                 patch.object(self.server, "_install_operations_schema"), \
