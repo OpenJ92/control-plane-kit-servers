@@ -8,11 +8,26 @@ entrances share request preparation with their synchronous counterparts and
 share result/error normalization. The host awaits completion; cancellation is
 not caught because normalization handles Exception, not BaseException.
 
-HTTP preserves route matching then authentication before payload decoding. MCP
-preserves host JSON parsing followed by header validation and authentication,
+HTTP preserves route matching then authentication before payload decoding. Its
+stream entrance shares the private immutable admission value with the existing
+byte entrances: route, path pairs and verified principal. No public entrance
+accepts an admission value or trusted principal. Unknown routes and invalid
+credentials return before any stream pull; an accepted request authenticates
+once. Commands reject nonempty queries before collection and use the route byte
+budget. Reads reject the first nonempty body chunk before query validation,
+retaining no body. Completed empty reads retain their query grammar and budgets.
+
+MCP preserves bounded host JSON parsing followed by header validation and authentication,
 then validates object shape before inspecting the method. Trusted identity is
 provided only by the configured verifier. Operations owns workspace/kind/scope
 authorization and canonical command construction.
+
+MCP resolves the name through parity or HTTP-route fallback, then rejects Core's
+HTTP_ONLY_COMMAND_ROUTE_IDS before retrieving or copying arguments. Unknown and
+HTTP-only operations return the same fixed 404. Canonical bindings and the
+independent Operations guard remain unchanged. Standard service-request repr
+omits payload on both surfaces; this is not an asdict or arbitrary serialization
+guarantee. Confidential provision is still unavailable in production through #316.
 
 Read query decoding is route-local transport framing. Existing paged reads keep
 the closed `limit` integer and `after` JSON-object grammar. The receiver

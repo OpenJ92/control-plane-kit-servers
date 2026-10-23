@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import AsyncIterable
+from dataclasses import dataclass, field
 import json
 import math
 import re
@@ -12,7 +13,9 @@ from control_plane_kit_core.identity import (
     AuthenticatedPrincipal,
     CredentialVerifier,
 )
-from control_plane_kit_core.operations import ControlPlaneServiceRole, InvalidEffectRecoveryContract
+from control_plane_kit_core.operations import (
+    ControlPlaneServiceRole, HTTP_ONLY_COMMAND_ROUTE_IDS, InvalidEffectRecoveryContract,
+)
 from control_plane_kit_core.operations.http import (
     HttpApiRouteContract,
     HttpMethod,
@@ -25,6 +28,7 @@ from control_plane_kit_operations import (
 )
 
 from .composition import CpkServerComposition, CpkServerCompositionError
+from .request_body import RequestBodyTooLarge, collect_request_body
 from .authentication import (
     CredentialAuthenticationError,
     authenticate_bearer_credential,
@@ -44,7 +48,7 @@ class CpkServerServiceRequest:
     route_id: str
     service_role: ControlPlaneServiceRole
     path_parameters: dict[str, str]
-    payload: Mapping[str, object]
+    payload: Mapping[str, object] = field(repr=False)
     principal: AuthenticatedPrincipal
 
 
@@ -54,6 +58,13 @@ class CpkServerBoundaryResponse:
 
     status: int
     body: Mapping[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class _HttpAdmission:
+    route: HttpApiRouteContract
+    path_parameters: tuple[tuple[str, str], ...]
+    principal: AuthenticatedPrincipal
 
 
 class CpkServerApplicationBoundary:
@@ -130,6 +141,45 @@ class CpkServerHttpProcessBoundary:
         self, method: str, path: str, headers: Mapping[str, str],
         body: bytes, query_string: bytes,
     ) -> CpkServerServiceRequest | CpkServerBoundaryResponse:
+        admission = self._admit(method, path, headers)
+        if isinstance(admission, CpkServerBoundaryResponse):
+            return admission
+        return self._prepare_admitted(admission, body, query_string)
+
+    async def handle_stream_async(
+        self,
+        *,
+        method: str,
+        path: str,
+        headers: Mapping[str, str],
+        body: AsyncIterable[bytes],
+        query_string: bytes = b"",
+    ) -> CpkServerBoundaryResponse:
+        """Admit once before reading; retain only the matched route's budget."""
+        admission = self._admit(method, path, headers)
+        if isinstance(admission, CpkServerBoundaryResponse):
+            return admission
+        if admission.route.method is HttpMethod.GET:
+            # Body refusal precedes query validation, as in the byte entrance.
+            async for chunk in body:
+                if chunk:
+                    return _error(400, "read routes do not accept request bodies")
+            collected = b""
+        else:
+            if query_string != b"":
+                return _error(400, "command routes do not accept query arguments")
+            try:
+                collected = await collect_request_body(body, admission.route.request_schema.max_bytes)
+            except RequestBodyTooLarge:
+                return _error(413, "request body too large")
+        request = self._prepare_admitted(admission, collected, query_string)
+        if isinstance(request, CpkServerBoundaryResponse):
+            return request
+        return _http_response(await _dispatch_application_async(self.application, request))
+
+    def _admit(
+        self, method: str, path: str, headers: Mapping[str, str],
+    ) -> _HttpAdmission | CpkServerBoundaryResponse:
         route_match = _match_http_route(self.composition, method, path)
         if route_match is None:
             return _error(404, "unknown route")
@@ -138,6 +188,12 @@ class CpkServerHttpProcessBoundary:
             principal = self.application.authenticate(headers)
         except CredentialAuthenticationError:
             return _error(401, "invalid credential")
+        return _HttpAdmission(route, tuple(path_parameters.items()), principal)
+
+    def _prepare_admitted(
+        self, admission: _HttpAdmission, body: bytes, query_string: bytes,
+    ) -> CpkServerServiceRequest | CpkServerBoundaryResponse:
+        route = admission.route
         payload = _decode_http_payload(route, body, query_string)
         if isinstance(payload, CpkServerBoundaryResponse):
             return payload
@@ -148,9 +204,9 @@ class CpkServerHttpProcessBoundary:
             surface="http",
             route_id=route.route_id,
             service_role=route.service_role,
-            path_parameters=path_parameters,
+            path_parameters=dict(admission.path_parameters),
             payload=payload,
-            principal=principal,
+            principal=admission.principal,
         )
 
 
@@ -430,14 +486,14 @@ def _decode_mcp_message(
     if not isinstance(params, Mapping):
         return _error(400, "MCP params must be an object")
     name = params.get("name")
-    arguments = params.get("arguments", {})
     if not isinstance(name, str):
         return _error(400, "MCP operation name must be text")
+    route = _mcp_route(composition, method, name)
+    if route is None or route.route_id in HTTP_ONLY_COMMAND_ROUTE_IDS:
+        return _error(404, "unknown MCP operation")
+    arguments = params.get("arguments", {})
     if not isinstance(arguments, Mapping):
         return _error(400, "MCP arguments must be an object")
-    route = _mcp_route(composition, method, name)
-    if route is None:
-        return _error(404, "unknown MCP operation")
     if method == "tools/call" and route.safety is HttpOperationSafety.READ_ONLY:
         return _error(400, "tools/call requires a command route")
     if method == "resources/read" and route.safety is not HttpOperationSafety.READ_ONLY:

@@ -83,6 +83,7 @@ from .control_configuration import (
     cpk_control_configuration_artifact, read_cpk_control_configuration,
 )
 from .http_host import install_operator_http_routes
+from .request_body import MCP_ENVELOPE_MAX_BYTES, RequestBodyTooLarge, collect_request_body
 from control_plane_kit_operations.health_receiver_trust import HealthReceiverDecoders
 from .operations_application import OperationsApplicationFactory, OperationsEffectPorts, OperationsIdFactories
 from .managed_health import ManagedHealthBootstrap
@@ -545,7 +546,12 @@ def create_app(
 
     @app.post("/mcp")
     async def mcp(request: Request) -> JSONResponse:
-        body = await request.body()
+        try:
+            body = await collect_request_body(request.stream(), MCP_ENVELOPE_MAX_BYTES)
+        except RequestBodyTooLarge:
+            return _json_response(
+                413, {"error": {"status": 413, "message": "request body too large"}},
+            )
         try:
             message = json.loads(body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -560,11 +566,11 @@ def create_app(
         return _json_response(response.status, response.body)
 
     async def http(request: Request) -> JSONResponse:
-        response = await http_boundary.handle_async(
+        response = await http_boundary.handle_stream_async(
             method=request.method,
             path=request.url.path,
             headers=request.headers,
-            body=await request.body(),
+            body=request.stream(),
             query_string=request.scope["query_string"],
         )
         return _json_response(response.status, response.body)

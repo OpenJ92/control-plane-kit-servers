@@ -66,7 +66,12 @@ explicit common receiving file via CPK_WRAPPER_CONFIGURATION_FILE and port8080, 
 it will listen, and then starts Uvicorn. This is source behavior; the historical
 published image remains separate until candidate qualification/publication.
 
-HTTP and MCP host closures await their process boundary handle_async methods.
+HTTP uses request.stream with handle_stream_async so route/auth admission precedes
+body reads. MCP uses the same neutral collector with a fixed inclusive 1 MiB
+envelope before JSON parsing, then awaits its existing handle_async entrance.
+Both map only the payload-free overflow exception to fixed 413 and ignore
+Content-Length as an acceptance authority. No request.body call remains in these
+host closures. SDK wrapper routes keep their own unchanged host behavior.
 The shared boundary uses the exact constructed service objects in the actual
 Operations application, whose async entrance selects managed execute/reobserve.
 No task is detached and no nested event loop is introduced. Synchronous neutral

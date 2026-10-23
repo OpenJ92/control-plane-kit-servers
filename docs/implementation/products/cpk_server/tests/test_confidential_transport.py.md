@@ -19,8 +19,14 @@ The separate default-composition case uses the real production factory and
 synthetic configured operator, replacing only schema/database effects, to require
 provision 501. Cancellation remains cancellation, not overflow.
 
-This is a test-only checkpoint awaiting fixture review and normal Docker-backed
-target-red evidence. No source change, provider call, image/live qualification or
-confidential intake enablement is supplied. Only the unchanged ./test.sh/PR CI is
-used. Repr omission does not make asdict/arbitrary serialization safe, and bounded
-owned accumulation is not a network timeout or upstream ASGI allocation bound.
+Test-only commit 30b809f ran in normal CI 40020316825: 612 CPK methods,
+19 assertion failures across eight new methods, with no collection/fixture error
+or unrelated failure. Four whole methods preserved existing behavior. Exact
+assertion reach and checkout identity are recorded in PR #320 comment 6374259741;
+assertions after each failure and later gate stages receive no red evidence.
+The subsequent source implements these missing protections without changing the
+target tests. Green validation remains pending. No provider call, image/live
+qualification or confidential intake enablement is supplied. Only unchanged
+./test.sh/PR CI is used. Repr omission does not make asdict/arbitrary serialization
+safe, and bounded owned accumulation is not a network timeout or upstream ASGI
+allocation bound.
