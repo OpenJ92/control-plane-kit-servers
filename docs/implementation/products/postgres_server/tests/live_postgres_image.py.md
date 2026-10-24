@@ -10,4 +10,7 @@ additionally checks the tag still identifies the owned image.
 Before fixtures or lifecycle effects, existing named or labelled containers,
 volumes and networks refuse without adoption or cleanup. Only newly returned
 objects from the admitted invocation enter cleanup lists.
+After image reload, lifecycle admission accepts omitted, null or empty-list
+entrypoints, matching initial published-artifact admission. Nonempty and malformed
+entrypoints still refuse before network, volume or product-container creation.
 See [artifact procedure](../../../../managed-postgres-artifacts.md).

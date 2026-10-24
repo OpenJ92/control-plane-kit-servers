@@ -119,6 +119,15 @@ recovery and wrong-owner refusal. Retained starts preserve #279's native-listene
 observation before SQL. No user database or retained installation is accepted as
 an input. This does not prove the historical PID-lock cause.
 
+Image admission treats an omitted, null or empty-list `Config.Entrypoint` as
+empty, consistent with the publication policy and Docker's
+[optional empty inspect fields](https://docs.docker.com/engine/deprecated/#emptynil-fields-in-image-config-from-inspect-api).
+Nonempty or malformed entrypoints remain forbidden. The lifecycle admission
+regression reaches this check after image reload, before resource creation;
+testing only initial artifact selection would miss this boundary. A witness-only
+correction does not change the product image: record its runner source separately
+from the published producer source when a later qualification is authorized.
+
 The JSON success record follows successful lifecycle and resource/fixture-file
 cleanup. The shell additionally requires controller completion and removal of the
 empty fixture directory; `qualification.exit` must be zero for the whole invocation

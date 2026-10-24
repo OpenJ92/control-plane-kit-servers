@@ -20,3 +20,8 @@ Visibility-match laws cover both public and private repositories, exact reposito
 identity, consistent visibility/private fields, package association ID/name, both
 mismatch directions and pre-push/post-push repository drift. Existing provenance,
 single-push and borrowed-image/cleanup laws remain in the same owning suite.
+
+Entrypoint regressions invoke the actual lifecycle `exercise` admission after
+image reload. Missing, null and empty-list fields reach the first mocked resource
+boundary; nonempty and malformed values refuse before any resource call. The
+tests stop at that boundary rather than duplicating the lifecycle fixture system.
