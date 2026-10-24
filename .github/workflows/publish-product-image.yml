@@ -27,8 +27,34 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Publish product image
+        if: inputs.product_id != 'cloudflared-connector-managed'
         env:
           PRODUCT_ID: ${{ inputs.product_id }}
           IMAGE_TAG: ${{ inputs.tag }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: sh scripts/publish_product_image.sh "$PRODUCT_ID" "$IMAGE_TAG"
+      - name: Prepare managed release evidence
+        id: managed-evidence
+        if: inputs.product_id == 'cloudflared-connector-managed'
+        env:
+          IMAGE_TAG: ${{ inputs.tag }}
+        run: python3 products/cloudflared_connector/release_evidence.py prepare
+      - name: Publish selected managed product
+        if: inputs.product_id == 'cloudflared-connector-managed'
+        env:
+          ATTEMPT: ${{ steps.managed-evidence.outputs.attempt }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 products/cloudflared_connector/release_evidence.py run --attempt "$ATTEMPT"
+      - name: Project managed release evidence
+        if: always() && inputs.product_id == 'cloudflared-connector-managed' && steps.managed-evidence.outcome == 'success'
+        env:
+          ATTEMPT: ${{ steps.managed-evidence.outputs.attempt }}
+        run: python3 products/cloudflared_connector/release_evidence.py export --attempt "$ATTEMPT"
+      - name: Retain closed managed release evidence
+        if: always() && inputs.product_id == 'cloudflared-connector-managed' && steps.managed-evidence.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: managed-release-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.managed-evidence.outputs.attempt }}/public/managed-release-evidence.json
+          retention-days: 30
+          if-no-files-found: error

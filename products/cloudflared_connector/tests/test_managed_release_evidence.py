@@ -174,3 +174,159 @@ class ManagedEvidenceTests(unittest.TestCase):
                 value=project(root,ROOT,context,0)
                 self.assertEqual(value['outcomes']['projection'],'invalid')
                 self.assertEqual(value['outcomes']['remote_publication'],'unknown')
+
+    def test_output_keysets_are_closed(self):
+        project=self.implementation()['project']
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);value=project(root,ROOT,fixture(root),0)
+            self.assertEqual(set(value),{'schema','source','workflow','outcomes','artifacts',
+                'controller_receipt_sha256','qualification_receipt_sha256','stop','native_version','package_checks','failure'})
+            self.assertEqual(set(value['outcomes']),{'producer_exit','push_command_exit','remote_publication',
+                'qualification','cleanup','candidate_retained_before_runner_disposal','projection','retention'})
+            self.assertEqual(set(value['stop']),{'engine_version','engine_commit','reviewed_engine_source','docker_sdk',
+                'platform','configured_timeout','effective_timeout','timeout_origin','signal','term_to_kill_ns','kill_to_die_ns','owner_witness'})
+
+    def test_index_manifest_links_to_selected_platform(self):
+        project=self.implementation()['project']
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);context=fixture(root)
+            platform='sha256:'+digest(root/'remote-platform.json')
+            index=put(root,'remote-index.json',dict(schemaVersion=2,mediaType='application/vnd.oci.image.index.v1+json',
+                manifests=[dict(mediaType='application/vnd.oci.image.manifest.v1+json',digest=platform,size=10,
+                                platform=dict(os='linux',architecture='amd64'))]))
+            index_digest='sha256:'+digest(index)
+            meta=json.loads((root/'build-metadata.json').read_text());meta['containerimage.digest']=index_digest;put(root,'build-metadata.json',meta)
+            pub=json.loads((root/'publication.json').read_text());pub['reference']=REPOSITORY+'@'+index_digest;put(root,'publication.json',pub)
+            pkg=json.loads((root/'published/validated.json').read_text());pkg['digest']=index_digest;put(root,'published/validated.json',pkg)
+            result=project(root,ROOT,context,0)
+            self.assertEqual(result['outcomes']['remote_publication'],'verified')
+            self.assertEqual(result['artifacts']['platform_manifest'],platform)
+
+    def test_explicit_timeout_does_not_bypass_typed_profile_or_timing(self):
+        project=self.implementation()['project']
+        for defect in [None,'version','timeout','timing']:
+            with self.subTest(defect=defect),tempfile.TemporaryDirectory() as d:
+                root=Path(d);context=fixture(root);log=root/'qualification/witness.log';p,w=map(json.loads,log.read_text().splitlines())
+                p['configured_timeout']=10;w.update(configured_stop_timeout=10,timeout_origin='container',reviewed_engine_source=None)
+                if defect=='version':p['engine_version']=w['engine_version']=CANARY
+                if defect=='timeout':p['configured_timeout']=w['configured_stop_timeout']=True
+                if defect=='timing':w['kill_time_ns']=w['term_time_ns']+1
+                log.write_text(json.dumps(p)+'\n'+json.dumps(w)+'\n')
+                q=json.loads((root/'qualification/qualification.json').read_text());q['witness_log_sha256']=digest(log);qpath=put(root,'qualification/qualification.json',q)
+                pub=json.loads((root/'publication.json').read_text());pub['qualification_sha256']=digest(qpath);put(root,'publication.json',pub)
+                result=project(root,ROOT,context,0)
+                self.assertEqual(result['outcomes']['remote_publication'],'verified' if defect is None else 'unknown')
+                self.assertNotIn(CANARY,json.dumps(result))
+
+    def test_recursive_bounds_and_remote_revision_mismatch(self):
+        project=self.implementation()['project']
+        for defect in ['depth','count','string','revision']:
+            with self.subTest(defect=defect),tempfile.TemporaryDirectory() as d:
+                root=Path(d);context=fixture(root)
+                meta=json.loads((root/'build-metadata.json').read_text())
+                if defect=='depth':
+                    deep=None
+                    for _ in range(32):deep=[deep]
+                    meta['buildx.build.provenance']=deep
+                elif defect=='count':meta['buildx.build.provenance']=[0]*20001
+                elif defect=='string':meta['buildx.build.ref']='x'*8193
+                else:put(root,'remote-config.json',dict(os='linux',architecture='amd64',config={'Labels':{'org.opencontainers.image.revision':'f'*40}}))
+                put(root,'build-metadata.json',meta)
+                result=project(root,ROOT,context,0)
+                self.assertEqual(result['outcomes']['remote_publication'],'unknown')
+                self.assertEqual(result['outcomes']['projection'],'invalid')
+
+    def test_wrapper_captures_once_and_exports_only_fixed_file_without_echo(self):
+        import contextlib
+        import io
+        import subprocess
+        from unittest.mock import patch
+        api=self.implementation()
+        with tempfile.TemporaryDirectory() as d:
+            home=Path(d);source=home/'source';source.mkdir();(source/'scripts').mkdir()
+            (source/'scripts/publish_product_image.sh').write_text('#!/bin/sh\nprintf "'+CANARY+'\\n"\nprintf "'+CANARY+'\\n" >&2\nexit 7\n')
+            real_run=subprocess.run
+            def recorded_run(args,**kwargs):
+                if args[0]=='git':
+                    self.assertEqual(kwargs['cwd'],source)
+                    output={('status','--porcelain'):'',('rev-parse','HEAD'):SOURCE,
+                            ('rev-parse','HEAD^{tree}'):TREE}[tuple(args[1:])]
+                    return subprocess.CompletedProcess(args,0,output+'\n','')
+                return real_run(args,**kwargs)
+            with patch.object(subprocess,'run',side_effect=recorded_run):
+                attempt=api['prepare'](source,home,'123','1')
+                with contextlib.redirect_stdout(io.StringIO()) as out,contextlib.redirect_stderr(io.StringIO()) as err:
+                    self.assertEqual(api['run_attempt'](attempt,source),7)
+                    with self.assertRaisesRegex(ValueError,'^Invalid release evidence$'):api['run_attempt'](attempt,source)
+            self.assertNotIn(CANARY,out.getvalue()+err.getvalue())
+            self.assertIn(CANARY,(attempt/'producer.log').read_text())
+            # Export uses actual owner source in separate fixture case; no release invoked.
+            receipts=home/'receipts';receipts.mkdir();context=fixture(receipts)
+            export=home/'public'
+            result=api['export'](receipts,ROOT,context,7,export)
+            self.assertEqual([p.name for p in export.iterdir()],['managed-release-evidence.json'])
+            self.assertEqual(result['outcomes']['remote_publication'],'verified')
+            self.assertNotIn(CANARY,(export/'managed-release-evidence.json').read_text())
+            with self.assertRaisesRegex(ValueError,'^Invalid release evidence$'):api['export'](receipts,ROOT,context,7,export)
+
+    def test_known_owner_failure_is_incomplete_and_keeps_cleanup_observation(self):
+        project=self.implementation()['project']
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);context=fixture(root)
+            records=[dict(stage='managed_cloudflared_helper',mode='contents',exit_code=1,result='valid_error',reason='native_version'),
+                dict(stage='managed_cloudflared_controller_failure',outcome='unqualified',role='primary',phase='artifact',operation='result_read',helper_mode='contents'),
+                dict(stage='managed_cloudflared_controller',outcome='unqualified',reason='package_inspection_failed',states={})]
+            log=root/'qualification/witness.log';log.write_text(''.join(json.dumps(r)+'\n' for r in records))
+            q=json.loads((root/'qualification/qualification.json').read_text())
+            q.update(status='fail',witness_log_sha256=digest(log));put(root,'qualification/qualification.json',q)
+            (root/'publication.json').unlink()
+            value=project(root,ROOT,context,1)
+            self.assertEqual(value['outcomes']['projection'],'incomplete')
+            self.assertEqual(value['outcomes']['qualification'],'fail')
+            self.assertEqual(value['outcomes']['cleanup'],'verified')
+            self.assertIsNone(value['stop'])
+            self.assertIsNone(value['native_version'])
+            self.assertNotIn('package_inspection_failed',json.dumps(value))
+
+    def test_cli_malformed_exit_keeps_proved_publication_in_closed_artifact(self):
+        import contextlib
+        import io
+        import sys
+        from unittest.mock import patch
+        for raw in ['', 'PRIVATE-OWNER-CANARY', '2x\n']:
+            with self.subTest(raw=raw),tempfile.TemporaryDirectory() as d:
+                home=Path(d);receipts=home/'receipts';receipts.mkdir();context=fixture(receipts)
+                put(home,'context.json',context);(home/'producer.exit').write_text(raw)
+                api=self.implementation();main=api['main']
+                with patch.dict(main.__globals__,clean_context=lambda *args:context),patch.object(sys,'argv',['evidence','export','--attempt',str(home)]),contextlib.redirect_stderr(io.StringIO()) as err:
+                    self.assertEqual(main(),1)
+                artifact=home/'public/managed-release-evidence.json'
+                self.assertTrue(artifact.is_file(),'Malformed optional exit must not suppress proved publication')
+                value=json.loads(artifact.read_text())
+                self.assertEqual(value['outcomes']['remote_publication'],'verified')
+                self.assertEqual(value['outcomes']['projection'],'invalid')
+                self.assertIsNone(value['outcomes']['producer_exit'])
+                self.assertNotIn(CANARY,artifact.read_text()+err.getvalue())
+
+    def test_workflow_selectors_and_upload_contract(self):
+        # Inspect the small authored mapping, not runner execution or upload success.
+        workflow=(ROOT/'.github/workflows/publish-product-image.yml').read_text()
+        steps={}
+        for chunk in workflow.split('      - name: ')[1:]:
+            lines=chunk.splitlines();steps[lines[0]]='\n'.join(lines[1:])
+        ordinary=steps['Publish product image']
+        self.assertIn("if: inputs.product_id != 'cloudflared-connector-managed'",ordinary)
+        self.assertIn('run: sh scripts/publish_product_image.sh "$PRODUCT_ID" "$IMAGE_TAG"',ordinary)
+        managed="inputs.product_id == 'cloudflared-connector-managed'"
+        for name in ['Prepare managed release evidence','Publish selected managed product']:
+            self.assertIn('if: '+managed,steps[name])
+        condition="if: always() && "+managed+" && steps.managed-evidence.outcome == 'success'"
+        for name in ['Project managed release evidence','Retain closed managed release evidence']:
+            self.assertIn(condition,steps[name])
+        upload=steps['Retain closed managed release evidence']
+        self.assertIn('uses: actions/upload-artifact@v4',upload)
+        paths=[line.strip() for line in upload.splitlines() if line.strip().startswith('path:')]
+        self.assertEqual(paths,['path: ${{ steps.managed-evidence.outputs.attempt }}/public/managed-release-evidence.json'])
+        self.assertIn('retention-days: 30',upload)
+        self.assertIn('if-no-files-found: error',upload)
+        self.assertNotIn('continue-on-error',workflow)
