@@ -48,6 +48,32 @@ class PostgresPublicationTests(unittest.TestCase):
         for value in (None,dict(package,visibility='public'),dict(package,name='other')):
             with self.assertRaises(ValueError):check(value,[[]],SOURCE)
 
+    def test_first_publication_requires_exact_not_found_response_and_failed_http_exit(self):
+        policy=self.policy()
+        self.assertIn('first_publication_check',policy)
+        check=policy['first_publication_check']
+        raw=b'HTTP/2.0 404 Not Found\r\nContent-Type: application/json\r\n\r\n{"message":"Package not found.","status":"404"}'
+        check(raw,'1')
+        for body,status in ((raw,'0'),(raw,'2'),(raw.replace(b'404 Not Found',b'200 OK'),'1'),
+                            (raw.replace(b'404 Not Found',b'403 Forbidden'),'1'),
+                            (raw.replace(b'404 Not Found',b'500 Server Error'),'1'),
+                            (raw.replace(b'"status":"404"',b'"status":"404","status":"404"'),'1'),
+                            (b'{"message":"Package not found.","status":"404"}','1'),
+                            (raw+b'not json','1'),(b'x'*65537,'1')):
+            with self.subTest(status=status,body=body[:30]):
+                with self.assertRaises(ValueError):check(body,status)
+
+    def test_first_publication_postcheck_requires_owning_repository(self):
+        policy=self.policy()
+        self.assertIn('first_published_package',policy)
+        check=policy['first_published_package']
+        package=dict(id=7,name='control-plane-kit-servers/postgres-server',package_type='container',visibility='private',
+                     repository={'full_name':'OpenJ92/control-plane-kit-servers'})
+        version=dict(id=8,name=REFERENCE.split('@')[1],metadata={'container':{'tags':['managed-'+SOURCE]}})
+        check(package,[[version]],SOURCE,REFERENCE)
+        for repository in (None,{}, {'full_name':'OpenJ92/other'}):
+            with self.assertRaises(ValueError):check(dict(package,repository=repository),[[version]],SOURCE,REFERENCE)
+
     def test_published_identity_requires_exact_repository_source_recipe_platform_and_user(self):
         check=self.policy()['published_image']
         self.assertEqual(check(attrs(),REFERENCE,SOURCE,RECIPE),ID)
@@ -143,12 +169,25 @@ if name=='git':
     elif args[0]=='archive':sys.stdout.write('fake tracked archive')
 elif name=='gh':
     pushed='docker push ' in calls
+    if '--include' in args:
+        assert args[-1]=='users/OpenJ92/packages/container/control-plane-kit-servers%2Fpostgres-server'
+        if fail=='transport':sys.exit(1)
+        status=404
+        if fail in ('existing','public','used') or (fail=='appeared' and calls.count('gh api --include')==2):status=200
+        if fail in ('401','403','500'):status=int(fail)
+        print('HTTP/2.0 '+str(status)+' '+('Not Found' if status==404 else 'Other'))
+        print('Content-Type: application/json');print()
+        print('broken json' if fail=='malformed' else json.dumps({'message':'Package not found.','status':str(status)}))
+        sys.exit(0 if fail=='zero-exit-404' or status==200 else 1)
     if fail=='absent':sys.exit(1)
     if '--paginate' in args:
-        version=dict(id=8,name='sha256:'+'d'*64,metadata={'container':{'tags':['managed-'+source]}})
+        if fail=='versions-404':sys.exit(1)
+        version=dict(id=8,name='sha256:'+('e' if fail=='post-digest' else 'd')*64,
+                     metadata={'container':{'tags':[] if fail=='post-tag' else ['managed-'+source]}})
         print(json.dumps([[version]] if pushed or fail=='used' else [[]]))
     else:
         print(json.dumps(dict(id=7,name='control-plane-kit-servers/postgres-server',package_type='container',
+            repository={'full_name':'OpenJ92/other' if fail=='post-repository' else 'OpenJ92/control-plane-kit-servers'},
             visibility='public' if fail=='public' or (pushed and fail=='post-private') else 'private')))
 elif name=='docker':
     if '/policy/release.py' in args:
@@ -162,10 +201,11 @@ elif name=='docker':
         if fail==args[0]:sys.exit(1)
     elif args[:2]==['image','inspect']:
         fmt=args[args.index('--format')+1]
-        if fmt=='{{.Id}}':print('sha256:'+'c'*64)
+        if fmt=='{{.Id}}':print('sha256:'+('e' if fail=='post-image' and 'docker push ' in calls else 'c')*64)
         elif fmt=='{{.Os}}/{{.Architecture}}':print('linux/amd64')
         elif fmt=='{{.Config.User}}':print('70:70')
         elif 'revision' in fmt:print(source)
+        elif 'image.source' in fmt:print('https://github.com/OpenJ92/control-plane-kit-servers')
         elif 'recipe.sha256' in fmt:
             import hashlib
             print(hashlib.sha256((root/'products/postgres_server/Dockerfile').read_bytes()).hexdigest())
@@ -173,8 +213,12 @@ elif name=='docker':
         else:sys.exit(2)
 else:sys.exit(2)
 '''
-        for failure in ('none','public','absent','used','build','push','post-private'):
-            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+        cases=[('postgres-server-managed',failure) for failure in ('none','public','absent','used','build','push','post-private')]
+        cases += [('postgres-server-managed-first',failure) for failure in (
+            'none','existing','public','used','appeared','401','403','500','transport','malformed','zero-exit-404',
+            'build','push','post-private','post-repository','post-digest','post-tag','post-image','versions-404')]
+        for product,failure in cases:
+            with self.subTest(product=product,failure=failure), tempfile.TemporaryDirectory() as directory:
                 root=Path(directory);(root/'bin').mkdir();(root/'scripts').mkdir()
                 (root/'products/postgres_server').mkdir(parents=True)
                 for relative in ('scripts/publish_product_image.sh','scripts/select_repository_digest.sh',
@@ -186,10 +230,14 @@ else:sys.exit(2)
                 env=dict(os.environ,PATH=str(root/'bin')+':'+os.environ['PATH'],FAKE_ROOT=str(root),FAIL_AT=failure,
                          GHCR_OWNER='openj92',GHCR_PACKAGE='control-plane-kit-servers')
                 result=subprocess.run(['sh',str(root/'scripts/publish_product_image.sh'),
-                                       'postgres-server-managed','managed-'+SOURCE],env=env,capture_output=True,text=True)
+                                       product,'managed-'+SOURCE],env=env,capture_output=True,text=True)
                 calls=(root/'calls').read_text()
                 self.assertEqual(result.returncode==0,failure=='none',result.stderr)
-                self.assertEqual(calls.count('docker push '),int(failure in ('none','push','post-private')))
+                pushed=failure in ('none','push','post-private','post-repository','post-digest','post-tag','post-image','versions-404')
+                self.assertEqual(calls.count('docker push '),int(pushed))
+                if product.endswith('-first'):
+                    self.assertEqual(calls.count('gh api --include'),2 if pushed or failure=='appeared' else 1)
+                    self.assertEqual(calls.count('docker build '),int(pushed or failure in ('appeared','build')))
                 if failure=='none':self.assertIn('reference='+REFERENCE,result.stdout)
                 else:self.assertNotIn('postgres-server-managed reference=',result.stdout)
 

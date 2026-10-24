@@ -25,6 +25,49 @@ tag writes are not atomic; concurrent changes remain a risk. Dependency download
 inside the recipe mean a source revision alone does not identify output bytes.
 Neither this source change nor ordinary CI authorizes dispatching publication.
 
+## Explicit first publication
+
+`postgres-server-managed-first managed-<full source commit>` is a distinct opt-in
+selection for creating the real managed image's private package on its first push.
+The default `postgres-server-managed` selection still requires an existing private
+package and refuses404. There is no automatic fallback between these modes.
+
+Before selecting first publication, the reviewed execution plan must contain
+Jacob's explicit attestation that the exact package does not already exist, or
+equivalent owner-authoritative absence evidence, and one-attempt authorization
+for the exact integrated source/tree/tag/destination. A404 plus a visible-list
+miss is absent-or-inaccessible and cannot substitute for that attestation.
+Authorization must include new private-package creation and the normal automatic
+association/access of `OpenJ92/control-plane-kit-servers`, using that repository's
+reviewed workflow and its existing GITHUB_TOKEN (`contents:read`, `packages:write`).
+The workflow's existing credential wiring establishes this constraint; environment
+strings and the selector do not authenticate a token or grant permission.
+
+The selector repeats the exact package GET before build and immediately before
+the sole push. Only HTTP404 with the expected bounded, valid package-not-found
+body and failed HTTP command status passes this observation check. Package200,
+401/403/5xx, transport failure or malformed response stops. A versions endpoint404
+cannot substitute. An observed existing package stops first mode rather than
+switching to existing mode. No dummy image or package is created.
+
+The same tracked-archive build adds the explicit owning-repository source label
+and verifies it alongside revision, recipe, Linux/amd64 and user70:70. After the
+single push it checks the unchanged candidate and these fields again, then requires
+the exact private package to be associated with `OpenJ92/control-plane-kit-servers`
+and its source tag to identify the exact repository digest. Package/version IDs
+are not added to stdout. Temporary metadata stays in the private staging directory;
+any separately retained copy must remain private unless its disclosure is approved.
+
+GitHub documents default-private initial publication and automatic repository
+linkage with the workflow token in its [GHCR documentation](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry).
+Those defaults do not prove absence. Exclude concurrent writers in the execution
+plan, and preserve the non-atomic read/push limitation: there is no transactional
+create-if-absent guarantee. If push or post-check fails, a package/image may exist
+with unverified state. Stop without another push, deletion, relabel, visibility
+change, grant repair or live deployment. Eventual consistency does not authorize
+a retry. Actual-digest qualification follows only verified publication under its
+own explicit effect scope below.
+
 ## Qualifying the actual artifact
 
 After separate authorization, with the exact product digest already pulled and

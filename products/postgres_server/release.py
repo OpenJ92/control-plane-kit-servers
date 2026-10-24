@@ -5,6 +5,7 @@ import re
 import sys
 
 REPOSITORY='ghcr.io/openj92/control-plane-kit-servers/postgres-server'
+SOURCE_REPOSITORY='OpenJ92/control-plane-kit-servers'
 
 
 def require(value):
@@ -55,6 +56,23 @@ def package_check(package,pages,source,reference=None):
         require(len(found)==1 and found[0]['name']==reference.split('@')[1])
 
 
+def first_publication_check(raw,exit_status):
+    """Admit only the exact package GET's 404 observation, not proof of absence."""
+    require(exit_status=='1' and type(raw) is bytes and len(raw)<=65536)
+    header,separator,body=raw.replace(b'\r\n',b'\n').partition(b'\n\n')
+    require(separator and re.fullmatch(rb'HTTP/(?:1\.[01]|2(?:\.0)?) 404(?: Not Found)?',header.split(b'\n')[0]))
+    require(all(b':' in line for line in header.split(b'\n')[1:]))
+    value=decode_json(body)
+    require(type(value) is dict and value.get('status')=='404'
+            and value.get('message') in ('Not Found','Package not found.'))
+
+
+def first_published_package(package,pages,source,reference):
+    package_check(package,pages,source,reference)
+    repository=package.get('repository')
+    require(type(repository) is dict and repository.get('full_name')==SOURCE_REPOSITORY)
+
+
 def published_image(attrs,reference,source,recipe):
     published_reference(reference)
     require(hex_value(source,40) and hex_value(recipe,64) and type(attrs) is dict)
@@ -69,9 +87,7 @@ def published_image(attrs,reference,source,recipe):
     return attrs['Id']
 
 
-def bounded_json(path,limit):
-    with Path(path).open('rb') as stream:raw=stream.read(limit+1)
-    require(len(raw)<=limit)
+def decode_json(raw):
     def unique(pairs):
         value={}
         for key,item in pairs:
@@ -80,14 +96,28 @@ def bounded_json(path,limit):
     return json.loads(raw,object_pairs_hook=unique)
 
 
+def bounded_bytes(path,limit):
+    with Path(path).open('rb') as stream:raw=stream.read(limit+1)
+    require(len(raw)<=limit)
+    return raw
+
+
+def bounded_json(path,limit):
+    return decode_json(bounded_bytes(path,limit))
+
+
 def main():
     mode,*args=sys.argv[1:]
     if mode=='destination':print(publication_destination(*args))
-    elif mode=='package':
+    elif mode=='first-preflight':
+        root,status=args
+        first_publication_check(bounded_bytes(Path(root)/'package.response',65536),status)
+    elif mode in ('package','first-published'):
         root,source,*reference=args
         require(len(reference)<=1)
-        package_check(bounded_json(Path(root)/'package.json',65536),
-                      bounded_json(Path(root)/'versions.json',4194304),source,*reference)
+        check=first_published_package if mode=='first-published' else package_check
+        check(bounded_json(Path(root)/'package.json',65536),
+              bounded_json(Path(root)/'versions.json',4194304),source,*reference)
     else:require(False)
 
 
