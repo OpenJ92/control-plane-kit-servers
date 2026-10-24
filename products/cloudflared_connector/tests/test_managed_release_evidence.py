@@ -330,3 +330,15 @@ class ManagedEvidenceTests(unittest.TestCase):
         self.assertIn('retention-days: 30',upload)
         self.assertIn('if-no-files-found: error',upload)
         self.assertNotIn('continue-on-error',workflow)
+
+    def test_prepare_refuses_temp_inside_checkout_before_creating_attempt(self):
+        from unittest.mock import patch
+        prepare=self.implementation()['prepare']
+        with tempfile.TemporaryDirectory() as d:
+            source=Path(d);nested=source/'ignored-temp';nested.mkdir()
+            context=dict(schema='cpk.managed-release-context.v1',source_commit=SOURCE,source_tree=TREE,run_id='123',attempt='1')
+            with patch.dict(prepare.__globals__,clean_context=lambda *args:context):
+                for temp in (source,nested):
+                    with self.subTest(temp=temp),self.assertRaisesRegex(ValueError,'^Invalid release evidence$'):
+                        prepare(source,temp,'123','1')
+            self.assertEqual(list(nested.iterdir()),[])
