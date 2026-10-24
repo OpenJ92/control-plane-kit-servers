@@ -69,5 +69,17 @@ class SamePushAnchorTests(unittest.TestCase):
             path.write_bytes(b'x'*1048577)
             with self.assertRaises(ValueError):read(path)
 
+    def test_reader_refuses_file_changed_during_read(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import os
+        read=self.owner('read_push_bytes')
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'push.log';path.write_bytes(LINE)
+            before=path.stat()
+            after=SimpleNamespace(st_size=before.st_size,st_mtime_ns=before.st_mtime_ns+1,
+                                  st_ctime_ns=before.st_ctime_ns)
+            with patch.object(os,'fstat',side_effect=[before,after]),self.assertRaises(ValueError):read(path)
+
 
 if __name__ == '__main__':unittest.main()

@@ -266,6 +266,40 @@ class ManagedEvidenceTests(unittest.TestCase):
                 value=project(root,ROOT,context,0)
                 self.assertEqual(value['outcomes']['remote_publication'],'unknown')
 
+    def test_anchor_size_child_size_and_candidate_config_are_independent_checks(self):
+        project=self.implementation()['project']
+        for defect in ('anchor-size','child-size','candidate-config','raw-platform'):
+            with self.subTest(defect=defect),tempfile.TemporaryDirectory() as d:
+                root=Path(d);context=fixture(root)
+                if defect=='candidate-config':
+                    manifest=json.loads((root/'remote-platform.json').read_text())
+                    manifest['config']['digest']=CONTROLLER
+                    put(root,'remote-platform.json',manifest)
+                    meta=json.loads((root/'build-metadata.json').read_text())
+                    meta['containerimage.config.digest']=CONTROLLER
+                    put(root,'build-metadata.json',meta)
+                platform='sha256:'+digest(root/'remote-platform.json')
+                size=(root/'remote-platform.json').stat().st_size
+                put(root,'remote-index.json',dict(schemaVersion=2,manifests=[dict(digest=platform,
+                    size=size+(1 if defect=='child-size' else 0),platform=dict(os='linux',architecture='amd64'))]))
+                top='sha256:'+digest(root/'remote-index.json')
+                pub=json.loads((root/'publication.json').read_text())
+                pub.update(reference=REPOSITORY+'@'+top,platform_manifest=platform,
+                           config_digest=CONTROLLER if defect=='candidate-config' else CONFIG)
+                put(root,'publication.json',pub)
+                pkg=json.loads((root/'published/validated.json').read_text());pkg['digest']=top
+                put(root,'published/validated.json',pkg);push_fixture(root)
+                if defect=='anchor-size':
+                    anchor=json.loads((root/'push-receipt.json').read_text());anchor['manifest_size']+=1
+                    raw=f'managed-{SOURCE}: digest: {top} size: {anchor["manifest_size"]}\n'.encode()
+                    (root/'push.log').write_bytes(raw);anchor['transcript_sha256']=hashlib.sha256(raw).hexdigest()
+                    put(root,'push-receipt.json',anchor)
+                if defect=='raw-platform':
+                    with (root/'remote-platform.json').open('a') as stream:stream.write(' ')
+                value=project(root,ROOT,context,0)
+                self.assertEqual(value['outcomes']['remote_publication'],'unknown')
+                self.assertEqual(value['outcomes']['qualification'],'pass')
+
     def test_explicit_timeout_does_not_bypass_typed_profile_or_timing(self):
         project=self.implementation()['project']
         for defect in [None,'version','timeout','timing']:
