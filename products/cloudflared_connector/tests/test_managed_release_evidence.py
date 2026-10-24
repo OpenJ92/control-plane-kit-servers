@@ -338,7 +338,7 @@ class ManagedEvidenceTests(unittest.TestCase):
             source=Path(d);nested=source/'ignored-temp';nested.mkdir()
             context=dict(schema='cpk.managed-release-context.v1',source_commit=SOURCE,source_tree=TREE,run_id='123',attempt='1')
             with patch.dict(prepare.__globals__,clean_context=lambda *args:context):
-                for temp in (source,nested):
+                for temp in (source,nested,Path('/'+str(nested))):
                     with self.subTest(temp=temp),self.assertRaisesRegex(ValueError,'^Invalid release evidence$'):
                         prepare(source,temp,'123','1')
             self.assertEqual(list(nested.iterdir()),[])
