@@ -47,22 +47,32 @@ def scan_refused_lock_pid(logs: bytes, *, truncated: bool = False) -> dict[str, 
     # when the requested line limit is reached, even if exactly 128 lines existed.
     if len(lines) >= 128:
         return dict(result, lock_pid_status="truncated")
-    hints = [line for line in lines if b"Is another " in line]
+    hints = [(index, line) for index, line in enumerate(lines) if b"Is another " in line]
+    refusals = [(index, line) for index, line in enumerate(lines)
+                if FAILURE_LOG_MARKERS["native_lock_refusal"] in line]
     if not hints:
         return result
-    if len(hints) != 1 or hints[0].count(b"Is another ") != 1:
+    if len(hints) != 1 or hints[0][1].count(b"Is another ") != 1 or len(refusals) > 1:
         return dict(result, lock_pid_status="ambiguous")
-    line = hints[0]
-    if len(line) > 1024 or any(byte < 32 or byte > 126 for byte in line):
+    if len(refusals) != 1 or hints[0][0] != refusals[0][0] + 1:
         return dict(result, lock_pid_status="invalid")
+    line, refusal = hints[0][1], refusals[0][1]
+    if any(len(value) > 1024 or any(byte < 32 or byte > 126 for byte in value)
+           for value in (line, refusal)):
+        return dict(result, lock_pid_status="invalid")
+    # Selected native default stderr prefix: UTC timestamp and emitting PID.
+    # Other formats are unknown, never searched for an embedded HINT substring.
+    prefix = (rb'[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}'
+              rb'(?:\.[0-9]{3})? UTC \[([1-9][0-9]{0,9})\] ')
+    fatal = re.fullmatch(prefix + rb'FATAL: +lock file "postmaster\.pid" already exists', refusal)
     match = re.fullmatch(
-        rb'[ -~]*HINT: +Is another (?:postmaster|postgres) \(PID ([1-9][0-9]{0,9})\) '
+        prefix + rb'HINT: +Is another (?:postmaster|postgres) \(PID ([1-9][0-9]{0,9})\) '
         rb'running in data directory "[^"\r\n]*"\?', line,
     )
-    if match is None or FAILURE_LOG_MARKERS["native_lock_refusal"] not in logs:
+    if fatal is None or match is None or fatal.group(1) != match.group(1):
         return dict(result, lock_pid_status="invalid")
-    pid = int(match.group(1))
-    if pid > 2147483647:
+    pid = int(match.group(2))
+    if pid > 2147483647 or int(match.group(1)) > 2147483647:
         return dict(result, lock_pid_status="invalid")
     return {"lock_pid_status": "one", "refused_lock_pid": pid}
 

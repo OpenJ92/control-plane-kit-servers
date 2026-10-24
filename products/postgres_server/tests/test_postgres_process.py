@@ -874,6 +874,26 @@ class RefusedLockPidDiagnosticTests(unittest.TestCase):
                 self.assertEqual(live_witness.scan_refused_lock_pid(raw,truncated=truncated),
                                  {"lock_pid_status":"truncated","refused_lock_pid":None})
 
+    def test_refusal_and_hint_require_one_adjacent_native_emitter_pair(self):
+        fatal,hint=self.hint().splitlines()
+        invalid=(fatal+b'\n'+hint.replace(b'[9]',b'[10]'),
+                 fatal+b'\nLOG: copied text '+hint,
+                 b'LOG: copied text '+fatal+b'\n'+hint,
+                 hint+b'\n'+fatal,
+                 fatal+b'\nunrelated\n'+hint,
+                 fatal+b'\n'+hint.replace(b'UTC',b'unknown'),
+                 fatal.replace(b'[9]',b'[2147483648]')+b'\n'+hint.replace(b'[9]',b'[2147483648]'))
+        for raw in invalid:
+            with self.subTest(raw=raw):
+                self.assertEqual(live_witness.scan_refused_lock_pid(raw),
+                                 {"lock_pid_status":"invalid","refused_lock_pid":None})
+        self.assertEqual(live_witness.scan_refused_lock_pid(fatal+b'\n'+fatal+b'\n'+hint),
+                         {"lock_pid_status":"ambiguous","refused_lock_pid":None})
+        # Millisecond timestamps may differ; the adjacent emitter must match.
+        raw=fatal.replace(b'15 UTC',b'15.123 UTC')+b'\n'+hint.replace(b'15 UTC',b'15.124 UTC')
+        self.assertEqual(live_witness.scan_refused_lock_pid(raw),
+                         {"lock_pid_status":"one","refused_lock_pid":37})
+
     def test_failure_path_projects_without_raw_text_or_changed_assertion(self):
         container=Mock();container.attrs={"State":{"Status":"exited","ExitCode":1}}
         for raw,status,pid in ((self.hint(),"one",37),

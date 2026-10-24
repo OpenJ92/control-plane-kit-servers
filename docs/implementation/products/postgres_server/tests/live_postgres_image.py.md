@@ -16,7 +16,10 @@ The existing capped failure tail also projects a numeric refused lock PID from
 one strictly parsed native hint. States are absent, one, ambiguous, invalid,
 truncated or unavailable; only one carries a PID. Parsing requires printable
 ASCII, a bounded line and decimal PID range, the data-lock refusal marker and
-the exact hint grammar. Duplicate hints never select one. Reaching the requested
+the exact hint grammar. One adjacent native FATAL/HINT pair must use the supported
+UTC timestamp/emitter prefix and the same emitting PID. Embedded/copied hints,
+different emitters, reordered/unassociated records and unsupported formats refuse
+projection; multiple refusal or hint records never select one. Reaching the requested
 128-line tail limit conservatively reports truncated because prior hints may
 have been omitted; byte truncation also forbids a unique PID claim.
 
