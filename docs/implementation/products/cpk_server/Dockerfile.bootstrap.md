@@ -30,3 +30,11 @@ product modules, prepares isolated fixture trust and decodes both real receiving
 artifacts and checks installed direct_url.json provenance for the full cohort
 before continuing legacy launcher plan/apply/public-setup checks.
 No service image, published digest or product catalogue coordinate changes here.
+# Managed PostgreSQL driver dependency (#327)
+
+The external driver also copies the PostgreSQL product's authoring/readiness
+package and adds it to its PYTHONPATH. This supports managed descriptor validation
+and the existing bounded SQL invocation. It does not alter the running CPK or
+Secrets images, install a PostgreSQL server into the driver, change pins, or
+publish an image. The existing actual-driver witness imports this image-owned
+package and plans a managed PostgreSQL installation with public fixture trust.

@@ -30,3 +30,17 @@ fixed-field mappings persisted under observations.host_bindings[node_id], while
 start remains pending; the existing observed() then clears it. Errors preserve
 uncertainty. Pre-start image/mount checks and the website-absent branch remain
 unchanged. This proves local publication only, not external reachability.
+# Managed PostgreSQL startup (#327)
+
+The validated managed password-file contract selects authenticated SQL startup.
+The driver uses the PostgreSQL owner's `psql_invocation`, with the resolved
+password only in the exec environment, stderr disabled, and exact exit-zero /
+`1\n` evidence. A listening port or successful `pg_isready` is insufficient.
+SQL startup is distinct from signed wrapper readiness. Native startup is unchanged.
+
+Product SQL/connect timeouts bound database work. Polling has a 60-second budget;
+an in-flight Docker RPC still uses the existing 30-second client timeout, so this
+is not a hard 60-second execution deadline. An uncertain RPC is redacted and
+stops without automatic retry. No stdout/stderr/password is saved in receipts.
+Existing image-derived UID secret delivery, volume conflict refusal, retained
+data ownership, pending observations and no-automatic-replay rules remain.

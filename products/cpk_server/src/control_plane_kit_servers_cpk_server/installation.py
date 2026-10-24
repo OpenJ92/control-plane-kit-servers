@@ -42,7 +42,7 @@ from control_plane_kit_core.secrets import (
     SecretReference,
     SecretUseIntent,
 )
-from control_plane_kit_core.verification import PostgresQueryCheck
+from control_plane_kit_core.verification import PostgresPasswordAuthentication, PostgresQueryCheck
 
 
 _INSTALLATION_ID = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*\Z")
@@ -197,6 +197,14 @@ class DockerCpkInstallation:
         _selected_product(self.cpk_product, "cpk-server-docker-cloudflare")
         _selected_product(self.postgres_product, "postgres-server")
         _selected_product(self.secrets_product, "secrets-server")
+        configuration = _managed_postgres_configuration(self.postgres_product.product.runtime_contract)
+        if configuration is not None:
+            target = configuration.target
+            if (target.workspace_id.value != self.workspace_id
+                    or target.runtime_id.value != self.installation_id + "-docker"
+                    or target.node_id.value != self.postgres_node_id
+                    or target.provider_socket_name.value != "management"):
+                raise ValueError("installation PostgreSQL receiving target is invalid")
         _managed_health_artifact(self)
         _website_parts(self)
 
@@ -384,6 +392,15 @@ def _managed_health_artifact(value: DockerCpkInstallation) -> ConfigurationArtif
 def _postgres_variant(value: DockerCpkInstallation) -> ContainerServerProduct:
     base = value.postgres_product.product
     contract = base.runtime_contract
+    if _managed_postgres_configuration(contract) is not None:
+        # The managed source contract advertises signed health. Installation
+        # startup additionally requires semantic SQL using the same credential.
+        check = PostgresQueryCheck(check_id="installation-postgres-ready", provider_socket="postgres",
+            authentication=PostgresPasswordAuthentication("cpk", "cpk", value.postgres_password))
+        contract = replace(contract,
+            verification=replace(contract.verification, checks=(check,)),
+            secret_deliveries=(replace(contract.secret_deliveries[0], reference=value.postgres_password),))
+        return _variant(value.postgres_product, "postgres", contract)
     environment = {item.name: item.value for item in contract.public_environment}
     checks = []
     for check in contract.verification.checks:
@@ -433,6 +450,8 @@ def _selected_product(document: ProductDescriptorDocument | None, name: str) -> 
     if ProductDescriptorCodec().encode_document(document.product).content != document.content:
         raise ValueError("installation product document must match its canonical contract")
     contract = document.product.runtime_contract
+    if name == "postgres-server" and _managed_postgres_configuration(contract) is not None:
+        return document.product
     environment = {item.name: item.value for item in contract.public_environment}
     if name == "cpk-server-docker-cloudflare":
         required_settings = {
@@ -484,6 +503,28 @@ def _selected_product(document: ProductDescriptorDocument | None, name: str) -> 
     if not compatible_deliveries:
         raise ValueError("installation requires the base product secret delivery contract")
     return document.product
+
+
+def _managed_postgres_configuration(contract: ProductRuntimeContract):
+    """Admit the explicit managed variant without importing it for native roots.
+
+    The PostgreSQL product owns its closed file, socket, data and declaration
+    contract. Only the password reference is installation-specific at intake.
+    """
+    if not any(port.provider_socket == "management" for port in contract.provider_ports):
+        return None
+    from control_plane_kit_servers_postgres_server.configuration import (
+        decode_postgres_control_configuration, postgres_source_runtime_contract,
+    )
+    if len(contract.configuration_artifacts) != 1 or len(contract.secret_deliveries) != 1:
+        raise ValueError("installation managed PostgreSQL contract is invalid")
+    artifact = contract.configuration_artifacts[0]
+    expected = postgres_source_runtime_contract(artifact)
+    expected = replace(expected, secret_deliveries=(replace(expected.secret_deliveries[0],
+        reference=contract.secret_deliveries[0].reference),))
+    if expected != contract:
+        raise ValueError("installation managed PostgreSQL contract is invalid")
+    return decode_postgres_control_configuration(artifact.content.encode("utf-8"))
 
 
 def _workspace_grants_json(grants: tuple[WorkspaceGrant, ...]) -> str:

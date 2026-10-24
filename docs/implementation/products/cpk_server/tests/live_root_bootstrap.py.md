@@ -39,3 +39,13 @@ both artifact descriptors survive exactly. A second fixed public success line
 is printed only after the child passes every assertion. The synthetic website
 image is never pulled or served. All original commissioning and legacy launcher
 checks remain; this source packaging evidence cannot qualify production images.
+# Managed PostgreSQL driver planning witness (#327)
+
+The existing image-owned commissioning subprocess now verifies that PostgreSQL
+authoring code is included in the actual driver and composes its managed contract
+using an explicit fixture receiver and the existing public verifier families.
+The old two-role commissioning output and exact reuse remain unchanged. Assertions
+cover the projected public artifact, password file and absence of a published
+PostgreSQL port. This is driver packaging/planning evidence, not managed-image
+startup or published-digest qualification. The existing native acquisition and
+separate PostgreSQL product readiness/storage witnesses retain their meaning.

@@ -412,7 +412,13 @@ def _acquire(plan, material, state):
                 _save(state, receipt)
             observed()
             if node["node_id"] == plan["postgres_node_id"]:
-                effect("observe-postgres-readiness", lambda: _postgres_ready(container))
+                password = None
+                if any(entry["target"] == "/run/secrets/postgres/password" for entry in node["secret_files"]):
+                    reference = plan["input"]["installation"]["references"]["postgres_password"]
+                    # Match the managed product's protected-file reader. Never
+                    # include the value in argv, observations or error output.
+                    password = material[reference].encode("utf-8").rstrip(b"\n")
+                effect("observe-postgres-readiness", lambda: _postgres_ready(container, password=password))
                 observed()
             for probe in node["http_checks"]:
                 check = probe["check"]
@@ -490,7 +496,25 @@ def _acquire(plan, material, state):
         client.close()
 
 
-def _postgres_ready(container):
+def _postgres_ready(container, *, password=None):
+    if password is not None:
+        from control_plane_kit_servers_postgres_server.readiness import psql_invocation
+        invocation = psql_invocation(password)
+        deadline = time.monotonic() + 60
+        for _ in range(60):
+            # SQL and connection work have product-owned timeouts. The Docker
+            # RPC retains the client's timeout; this is not a hard exec deadline.
+            try:
+                result = container.exec_run(list(invocation.argv), environment=dict(invocation.environ),
+                                            stderr=False)
+            except Exception:
+                raise RootBootstrapHold("bootstrap PostgreSQL SQL observation requires investigation") from None
+            if result.exit_code == 0 and result.output == b"1\n":
+                return
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(1)
+        raise RootBootstrapHold("bootstrap PostgreSQL authenticated SQL readiness was not observed")
     for _ in range(60):
         if container.exec_run(["pg_isready", "-h", "127.0.0.1"]).exit_code == 0:
             return

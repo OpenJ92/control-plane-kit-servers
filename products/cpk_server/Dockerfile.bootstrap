@@ -12,6 +12,7 @@ RUN python -m pip install --no-cache-dir --force-reinstall \
     "control-plane-kit-secrets @ https://github.com/OpenJ92/control-plane-kit-secrets/archive/78a2ed7c8abee6da31f8661993ed4c5426edd7ee.zip"
 COPY products/cpk_server/src /app/products/cpk_server/src
 COPY products/secrets_server/src /app/products/secrets_server/src
-ENV PYTHONPATH=/app/products/cpk_server/src:/app/products/cpk_local_gateway/src:/app/products/secrets_server/src
+COPY products/postgres_server/src /app/products/postgres_server/src
+ENV PYTHONPATH=/app/products/cpk_server/src:/app/products/cpk_local_gateway/src:/app/products/secrets_server/src:/app/products/postgres_server/src
 # Commissioning overrides USER explicitly to the approved operator UID/GID.
 CMD ["python", "-m", "control_plane_kit_servers_cpk_server.bootstrap_cli"]
