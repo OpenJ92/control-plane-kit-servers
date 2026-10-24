@@ -4,8 +4,9 @@ Explicit routes from the owning test.sh: daemon-free PostgreSQL unit tests,
 source-image lifecycle, or separately authorized actual-digest qualification. All require an existing
 immutable controller and new private receipt directory. Published mode passes
 only the four explicit product selection variables, source/fixture mounts and
-daemon socket to the existing witness. No controller/product pull or build is
-performed. Exit status and logs are retained; there is no retry.
+daemon socket to the existing witness. Published mode performs no controller or
+product pull/build; source mode preserves its witness-owned product build.
+Exit status and logs are retained; there is no retry.
 Published mode allocates a random run identity with mktemp under the private
 receipt directory and retains `run.id`; receipt basename is never the identity.
 See [artifact procedure](../../managed-postgres-artifacts.md).

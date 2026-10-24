@@ -31,7 +31,7 @@ elif a[:2]==['network','create']:
     if failure=='ambiguous-create': sys.exit(1)
     print(net)
 elif a[:2]==['network','inspect']:
-    n=s['network']; endpoints=1 if failure=='foreign-endpoint' else int('container' in s)
+    n=s['network']; endpoints=1 if failure=='foreign-endpoint' or (failure=='cleanup-endpoint' and s.get('started')) else int('container' in s)
     owner=n['labels'].get('org.openj92.cpk.controller-run','')
     if failure=='foreign-owner': owner='foreign'
     print(net+'|'+n['name']+'|'+str(n['internal']).lower()+'|'+owner+'|'+str(endpoints))
@@ -45,16 +45,26 @@ elif a[0]=='create':
     run=env['CPK_POSTGRES_TEST_RUN']; n=s['network']
     assert run not in n['name']
     assert n['labels'].get('org.openj92.cpk.test-run')!=run
-    s['container']={'name':opt('--name'),'labels':labels(),'image':image}; save()
+    mounts=[a[i+1] for i,x in enumerate(a) if x=='--mount']
+    witness=next(m for m in mounts if 'target=/witness' in m)
+    fixture_path=dict(part.split('=',1) for part in witness.split(','))['source']
+    s['container']={'name':opt('--name'),'labels':labels(),'image':image,'fixtures':fixture_path}; save()
     pathlib.Path(opt('--cidfile')).write_text(cid)
     print(cid)
 elif a[0]=='start':
+    s['started']=True
+    fixtures=pathlib.Path(s['container']['fixtures'])
+    for name in ('control.json','password','10-witness.sql'): (fixtures/name).write_text('dummy fixture')
+    (fixtures/'wrong-owner-data').mkdir()
+    save()
     if failure=='interrupt': os.kill(os.getppid(),15)
     sys.exit(7 if failure=='controller' else 0)
 elif a[0]=='ps':
     if 'container' in s: print(cid)
 elif a[:2]==['container','inspect']:
-    c=s['container']; print(cid+'|/'+c['name']+'|'+c['labels']['org.openj92.cpk.controller-run']+'|'+c['image'])
+    if failure=='cleanup-inspect': sys.exit(1)
+    c=s['container']; owner='foreign' if failure=='cleanup-controller-owner' else c['labels']['org.openj92.cpk.controller-run']
+    print(cid+'|/'+c['name']+'|'+owner+'|'+c['image'])
 elif a[:2]==['container','rm']:
     s.pop('container'); save()
 elif a[0]=='run':
@@ -92,7 +102,7 @@ class PostgresArtifactShellTests(unittest.TestCase):
             with self.subTest(mode=mode):
                 result, receipt, calls, state=self.invoke(mode)
                 self.assertEqual(result.returncode,0,result.stderr)
-                self.assertEqual(state,{})
+                self.assertNotIn('network',state); self.assertNotIn('container',state)
                 self.assertFalse((receipt/'fixtures').exists())
                 self.assertEqual((receipt/'qualification.exit').read_text().strip(),'0')
                 creates=[c for c in calls if c[0]=='create']
@@ -109,7 +119,8 @@ class PostgresArtifactShellTests(unittest.TestCase):
             with self.subTest(failure=failure):
                 result, receipt, calls, state=self.invoke(failure=failure)
                 self.assertNotEqual(result.returncode,0)
-                self.assertEqual(state,{})
+                self.assertNotIn('network',state); self.assertNotIn('container',state)
+                self.assertFalse((receipt/'fixtures').exists())
                 self.assertNotEqual((receipt/'qualification.exit').read_text().strip(),'0')
 
     def test_uncertain_or_foreign_resources_are_not_force_cleaned(self):
@@ -125,6 +136,26 @@ class PostgresArtifactShellTests(unittest.TestCase):
         result, _, calls, _=self.invoke('source',extra={'CPK_POSTGRES_IMAGE':'borrowed'})
         self.assertNotEqual(result.returncode,0)
         self.assertEqual(calls,[])
+
+    def test_cleanup_refuses_foreign_controller_and_unknown_inspection(self):
+        for failure in ('cleanup-controller-owner','cleanup-inspect'):
+            with self.subTest(failure=failure):
+                result, receipt, calls, state=self.invoke('source',failure)
+                self.assertNotEqual(result.returncode,0)
+                self.assertTrue(state['started'])
+                self.assertTrue((receipt/'fixtures/password').exists())
+                self.assertFalse(any(c[:2] in (['container','rm'],['network','rm'],['network','disconnect']) for c in calls))
+                self.assertNotEqual((receipt/'qualification.exit').read_text().strip(),'0')
+
+    def test_cleanup_removes_owned_controller_but_preserves_foreign_endpoint(self):
+        result, receipt, calls, state=self.invoke('source','cleanup-endpoint')
+        self.assertNotEqual(result.returncode,0)
+        self.assertTrue(state['started'])
+        self.assertNotIn('container',state); self.assertIn('network',state)
+        self.assertTrue(any(c[:2]==['container','rm'] for c in calls))
+        self.assertFalse(any(c[:2] in (['network','rm'],['network','disconnect']) for c in calls))
+        self.assertTrue((receipt/'fixtures/password').exists())
+        self.assertNotEqual((receipt/'qualification.exit').read_text().strip(),'0')
 
     def test_unit_mode_remains_daemon_free_and_network_none(self):
         result, _, calls, _=self.invoke('unit')
