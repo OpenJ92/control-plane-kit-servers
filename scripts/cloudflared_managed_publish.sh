@@ -67,6 +67,7 @@ STAGE=controller-acquisition
 CONTROLLER="$(cat "$RECEIPTS/controller/image.id")"
 policy() {
   docker run --pull never --rm --network none --read-only --cap-drop ALL \
+    --user "$(id -u):$(id -g)" \
     --security-opt no-new-privileges -e PYTHONDONTWRITEBYTECODE=1 \
     --mount "type=bind,source=$ROOT,target=/source,readonly" \
     --mount "type=bind,source=$RECEIPTS,target=/evidence,readonly" \
