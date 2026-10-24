@@ -115,7 +115,27 @@ The existing witness owns a fresh labelled volume and internal network, temporar
 password/control/init fixtures, and its own containers. Its unchanged ladder
 checks authenticated management, initial unknown then healthy readiness, retained
 row query, graceful stop, same-volume restart, native-child failure, SIGKILL
-recovery and wrong-owner refusal. Retained starts preserve #279's native-listener
+recovery and wrong-owner refusal. The negative ownership fixture uses a separate
+fresh local Docker volume with NoCopy on every mount, never a host ownership
+assumption. Two fixed short-lived probes use the selected product image at UID70
+with a read-only fixture mount, read-only root, no network/socket/secret mounts,
+dropped capabilities and no-new-privileges. They verify observed UID0/GID0/mode0755,
+empty data and the installed PGDATA guard's rejection before and after ordinary
+product startup. No root setup/chown/repair is attempted. Both inspector and normal
+container image/user/mount configuration and runtime mount identity are checked;
+the normal product command and read/write data mount are unchanged.
+
+The negative leg requires complete bounded output with the existing startup-failure
+record and redacted failure line, not arbitrary exit1. Poststate must remain empty
+and unchanged. This combines installed guard evidence, tested main ordering and
+normal startup/nonmutation; it is not a direct live PID/spawn trace or diagnosis of
+a historical failure. Missing/extra/oversized/ambiguous evidence fails. Only an
+exact owned negative volume verified unchanged and empty is removed after its
+owned users. Unknown or changed negative storage is retained for inspection with
+a failing result, separately from the positive database's intentional teardown.
+Existing retained host residue is never an input or cleanup target.
+
+Retained starts preserve #279's native-listener
 observation before SQL. No user database or retained installation is accepted as
 an input. This does not prove the historical PID-lock cause.
 

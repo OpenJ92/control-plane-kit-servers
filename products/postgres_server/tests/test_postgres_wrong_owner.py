@@ -22,7 +22,7 @@ REFUSAL = (process.LIFECYCLE_PREFIX + '{"native_exit_code":null,"reason":"startu
 
 def container_attrs(inspection=False):
     return dict(Image=IMAGE, Config=dict(User='70:70', Entrypoint=[],
-        Cmd=['python3','-c','fixed probe'] if inspection else ['python3','-m','control_plane_kit_servers_postgres_server.process']),
+        Cmd=['python3','-c',getattr(witness,'WRONG_OWNER_INSPECTION','fixed probe')] if inspection else ['python3','-m','control_plane_kit_servers_postgres_server.process']),
         HostConfig=dict(Mounts=[dict(Type='volume',Source=VOLUME,Target=PATH,
             ReadOnly=inspection,VolumeOptions={'NoCopy':True})], ReadonlyRootfs=inspection,
             NetworkMode='none' if inspection else 'test-network'),
