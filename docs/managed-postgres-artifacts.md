@@ -127,7 +127,11 @@ the normal product command and read/write data mount are unchanged.
 
 The negative leg requires complete bounded output with the existing startup-failure
 record and redacted failure line, not arbitrary exit1. Poststate must remain empty
-and unchanged. This combines installed guard evidence, tested main ordering and
+and unchanged. The product-local reader enforces a synchronous acquisition/read
+deadline, validates complete Docker log frame headers and bodies, rejects protocol
+errors/oversize rather than accepting a decoded prefix, and closes its response.
+It refuses an unavailable main-thread timer boundary and restores the previous
+handler; no background observer is introduced. This combines installed guard evidence, tested main ordering and
 normal startup/nonmutation; it is not a direct live PID/spawn trace or diagnosis of
 a historical failure. Missing/extra/oversized/ambiguous evidence fails. Only an
 exact owned negative volume verified unchanged and empty is removed after its

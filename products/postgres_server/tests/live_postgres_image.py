@@ -11,6 +11,9 @@ import re
 import socket
 import time
 import runpy
+import signal
+import struct
+import threading
 
 import docker
 
@@ -27,6 +30,7 @@ PASSWORD = "postgres-source-witness-password"
 MAX_FAILURE_LOG_BYTES = 65536
 WRONG_OWNER_PATH = "/var/lib/postgresql/data"
 WRONG_OWNER_MAX_BYTES = 4096
+WRONG_OWNER_LOG_SECONDS = 5.0
 # Fixed, read-only probe of the selected artifact; never runs normal startup or
 # receives credentials/socket/network. Unexpected errors are not guard proof.
 WRONG_OWNER_INSPECTION = """
@@ -432,20 +436,55 @@ def wrong_owner_observation(raw: bytes) -> dict:
     return value
 
 
+class _WrongOwnerLogDeadline(BaseException):
+    """Interrupt SDK/HTTP reads without being swallowed as ordinary stream EOF."""
+
+
 def read_wrong_owner_logs(container) -> bytes:
-    # Read from the beginning, never a tail that could hide earlier native output.
-    stream = container.logs(stdout=True, stderr=True, stream=True, follow=False)
+    # SDK log iterators disable socket timeouts and can swallow protocol errors
+    # as EOF. Read this small non-TTY response strictly under a Linux CLI timer.
+    require(threading.current_thread() is threading.main_thread()
+            and signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0), "fixture observation deadline unavailable")
+    previous = signal.getsignal(signal.SIGALRM)
+    response = None
     output = bytearray()
+
+    def expired(_signum, _frame):
+        raise _WrongOwnerLogDeadline
+
+    signal.signal(signal.SIGALRM, expired)
     try:
-        for chunk in stream:
-            require(type(chunk) is bytes, "invalid fixture output")
-            require(len(output) + len(chunk) <= WRONG_OWNER_MAX_BYTES, "fixture output exceeds bound")
+        signal.setitimer(signal.ITIMER_REAL, WRONG_OWNER_LOG_SECONDS)
+        api = container.client.api
+        response = api._get(api._url("/containers/{0}/logs", container.id),
+                            params={"stdout": 1, "stderr": 1, "follow": 0}, stream=True)
+        api._raise_for_status(response)
+        while True:
+            header = response.raw.read(8)
+            if header == b"":
+                break
+            require(type(header) is bytes and len(header) == 8, "incomplete fixture log header")
+            channel, padding, length = struct.unpack(">B3sI", header)
+            require(channel in (1, 2) and padding == b"\0\0\0"
+                    and length <= WRONG_OWNER_MAX_BYTES - len(output), "invalid fixture log frame")
+            chunk = response.raw.read(length) if length else b""
+            require(type(chunk) is bytes and len(chunk) == length, "incomplete fixture log body")
             output.extend(chunk)
+        return bytes(output)
+    except (_WrongOwnerLogDeadline, Exception):
+        raise AssertionError("complete bounded fixture output unavailable") from None
     finally:
-        close = getattr(stream, "close", None)
-        if close is not None:
-            close()
-    return bytes(output)
+        try:
+            if response is not None:
+                try:
+                    response.close()
+                except (_WrongOwnerLogDeadline, Exception):
+                    raise AssertionError("fixture response cleanup unknown") from None
+        finally:
+            try:
+                signal.setitimer(signal.ITIMER_REAL, 0)
+            finally:
+                signal.signal(signal.SIGALRM, previous)
 
 
 def wrong_owner_refusal(raw: bytes) -> None:
@@ -463,7 +502,8 @@ def verify_wrong_owner_container(container, image_id: str, volume_name: str, *, 
     attrs = container.attrs
     config, host = attrs["Config"], attrs["HostConfig"]
     require(attrs["Image"] == image_id and config["User"] == "70:70"
-            and config.get("Entrypoint") in (None, []), "fixture container identity changed")
+            and config.get("Entrypoint") in (None, []) and config.get("Tty", False) is False,
+            "fixture container identity changed")
     expected_cmd = (["python3", "-c", WRONG_OWNER_INSPECTION] if inspection else
                     ["python3", "-m", "control_plane_kit_servers_postgres_server.process"])
     require(config["Cmd"] == expected_cmd, "fixture command changed")
