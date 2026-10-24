@@ -1,5 +1,11 @@
 # Managed PostgreSQL artifacts (#191)
 
+Current release rule: package visibility must match the actual owning source
+repository (public→public, private→private). This supersedes the earlier
+private-only requirement. It changes neither credentials nor package write/admin
+permissions, secret handling or CPK authentication. The failed05e84a3 publication
+and its authorized deletion remain historical failed evidence.
+
 The native `products/postgres_server/product.cpk.json` remains the historical
 official PostgreSQL descriptor. The managed wrapper is a separate selection of
 the same product lane: `products/postgres_server/Dockerfile`, Linux/amd64,
@@ -11,12 +17,15 @@ the native descriptor's image is not a valid managed installation.
 
 After separate approval of the exact source and effects, the existing publisher
 accepts `postgres-server-managed managed-<full source commit>`. It requires a
-clean checkout and the already-existing private package
-`ghcr.io/openj92/control-plane-kit-servers/postgres-server`. Package access errors,
-absent/public packages and occupied source tags stop before build/push. It never
+clean checkout and the already-existing package
+`ghcr.io/openj92/control-plane-kit-servers/postgres-server`. Independent metadata
+from `repos/OpenJ92/control-plane-kit-servers` must identify that exact repository
+and report public/private visibility consistent with its private flag. The package
+must match that repository ID/name and visibility. Access errors, absence,
+visibility mismatch and occupied source tags stop before build/push. It never
 creates a package or repairs permissions. Build context is the tracked Git archive,
 with source revision and Dockerfile SHA256 labels. Platform, user and labels are
-checked before the single push; privacy and unique tag/digest association are
+checked before the single push; visibility match and unique tag/digest association are
 checked afterward. A failed push or verification stops without retry or rollback.
 The local built image remains available for inspection.
 
@@ -28,16 +37,16 @@ Neither this source change nor ordinary CI authorizes dispatching publication.
 ## Explicit first publication
 
 `postgres-server-managed-first managed-<full source commit>` is a distinct opt-in
-selection for creating the real managed image's private package on its first push.
-The default `postgres-server-managed` selection still requires an existing private
-package and refuses404. There is no automatic fallback between these modes.
+selection for creating the real managed image's package on its first push.
+The default `postgres-server-managed` selection still requires an existing
+matching-visibility package and refuses404. There is no automatic fallback between modes.
 
 Before selecting first publication, the reviewed execution plan must contain
 Jacob's explicit attestation that the exact package does not already exist, or
 equivalent owner-authoritative absence evidence, and one-attempt authorization
 for the exact integrated source/tree/tag/destination. A404 plus a visible-list
 miss is absent-or-inaccessible and cannot substitute for that attestation.
-Authorization must include new private-package creation and the normal automatic
+Authorization must include package creation matching repository visibility and normal automatic
 association/access of `OpenJ92/control-plane-kit-servers`, using that repository's
 reviewed workflow and its existing GITHUB_TOKEN (`contents:read`, `packages:write`).
 The workflow's existing credential wiring establishes this constraint; environment
@@ -53,14 +62,21 @@ switching to existing mode. No dummy image or package is created.
 The same tracked-archive build adds the explicit owning-repository source label
 and verifies it alongside revision, recipe, Linux/amd64 and user70:70. After the
 single push it checks the unchanged candidate and these fields again, then requires
-the exact private package to be associated with `OpenJ92/control-plane-kit-servers`
+the exact matching-visibility package to be associated with `OpenJ92/control-plane-kit-servers`
 and its source tag to identify the exact repository digest. Package/version IDs
 are not added to stdout. Temporary metadata stays in the private staging directory;
 any separately retained copy must remain private unless its disclosure is approved.
 
-GitHub documents default-private initial publication and automatic repository
-linkage with the workflow token in its [GHCR documentation](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry).
-Those defaults do not prove absence. Exclude concurrent writers in the execution
+Repository metadata is checked before build, immediately before push and after
+push; unavailable/malformed/foreign metadata or observed repository ID/visibility drift stops.
+The producer line reports matching visibility, never private package/version IDs.
+No caller-controlled visibility override is accepted.
+
+GitHub's [workflow-specific creation rule](https://docs.github.com/en/packages/managing-github-packages-using-github-actions-workflows/publishing-and-installing-a-package-with-github-actions#default-permissions-and-access-settings-for-packages-modified-through-workflows)
+inherits the publishing repository's visibility model for a new package created
+with GITHUB_TOKEN. The generic private-default statement was insufficient for the
+earlier public-repository workflow. Current policy verifies the actual match rather
+than assuming either visibility. These defaults do not prove absence. Exclude concurrent writers in the execution
 plan, and preserve the non-atomic read/push limitation: there is no transactional
 create-if-absent guarantee. If push or post-check fails, a package/image may exist
 with unverified state. Stop without another push, deletion, relabel, visibility

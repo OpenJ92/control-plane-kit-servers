@@ -19,6 +19,10 @@ ID='sha256:'+'c'*64
 REFERENCE='ghcr.io/openj92/control-plane-kit-servers/postgres-server@sha256:'+'d'*64
 
 
+def repository(visibility='public'):
+    return dict(id=41,full_name='OpenJ92/control-plane-kit-servers',visibility=visibility,private=visibility=='private')
+
+
 def attrs():
     return dict(Id=ID,RepoDigests=[REFERENCE],Os='linux',Architecture='amd64',
         Config=dict(User='70:70',Entrypoint=[],Cmd=['python3','-m','control_plane_kit_servers_postgres_server.process'],
@@ -38,15 +42,28 @@ class PostgresPublicationTests(unittest.TestCase):
                                   ('openj92','other','managed-'+SOURCE),('openj92','control-plane-kit-servers','latest')]:
             with self.assertRaises(ValueError):select(owner,package,tag,SOURCE)
 
-    def test_private_package_and_absent_tag_are_required(self):
+    def test_repository_visibility_match_and_absent_tag_are_required(self):
         check=self.policy()['package_check']
-        package=dict(id=7,name='control-plane-kit-servers/postgres-server',package_type='container',visibility='private')
-        check(package,[[]],SOURCE)
         version=dict(id=8,name=REFERENCE.split('@')[1],metadata={'container':{'tags':['managed-'+SOURCE]}})
-        with self.assertRaises(ValueError):check(package,[[version]],SOURCE)
-        check(package,[[version]],SOURCE,REFERENCE)
-        for value in (None,dict(package,visibility='public'),dict(package,name='other')):
-            with self.assertRaises(ValueError):check(value,[[]],SOURCE)
+        for visibility in ('public','private'):
+            repo=repository(visibility)
+            package=dict(id=7,name='control-plane-kit-servers/postgres-server',package_type='container',
+                         visibility=visibility,repository=repo)
+            check(package,[[]],SOURCE,repository=repo)
+            with self.assertRaises(ValueError):check(package,[[version]],SOURCE,repository=repo)
+            check(package,[[version]],SOURCE,REFERENCE,repository=repo)
+            for value in (None,dict(package,visibility='private' if visibility=='public' else 'public'),
+                          dict(package,name='other'),dict(package,repository=dict(repo,id=42))):
+                with self.assertRaises(ValueError):check(value,[[]],SOURCE,repository=repo)
+
+    def test_repository_visibility_requires_actual_exact_consistent_repository(self):
+        check=self.policy()['repository_visibility']
+        for visibility in ('public','private'):
+            self.assertEqual(check(repository(visibility)),visibility)
+        for value in (None,{},dict(repository(),full_name='OpenJ92/other'),dict(repository(),id=True),
+                      dict(repository(),visibility='internal'),dict(repository(),private=True),
+                      dict(repository(),private='false')):
+            with self.assertRaises(ValueError):check(value)
 
     def test_first_publication_requires_exact_not_found_response_and_failed_http_exit(self):
         policy=self.policy()
@@ -68,11 +85,12 @@ class PostgresPublicationTests(unittest.TestCase):
         self.assertIn('first_published_package',policy)
         check=policy['first_published_package']
         package=dict(id=7,name='control-plane-kit-servers/postgres-server',package_type='container',visibility='private',
-                     repository={'full_name':'OpenJ92/control-plane-kit-servers'})
+                     repository=repository('private'))
         version=dict(id=8,name=REFERENCE.split('@')[1],metadata={'container':{'tags':['managed-'+SOURCE]}})
-        check(package,[[version]],SOURCE,REFERENCE)
-        for repository in (None,{}, {'full_name':'OpenJ92/other'}):
-            with self.assertRaises(ValueError):check(dict(package,repository=repository),[[version]],SOURCE,REFERENCE)
+        check(package,[[version]],SOURCE,REFERENCE,repository=repository('private'))
+        for associated in (None,{}, {'full_name':'OpenJ92/other','id':41},dict(repository(),id=42)):
+            with self.assertRaises(ValueError):
+                check(dict(package,repository=associated),[[version]],SOURCE,REFERENCE,repository=repository('private'))
 
     def test_published_identity_requires_exact_repository_source_recipe_platform_and_user(self):
         check=self.policy()['published_image']
@@ -169,6 +187,16 @@ if name=='git':
     elif args[0]=='archive':sys.stdout.write('fake tracked archive')
 elif name=='gh':
     pushed='docker push ' in calls
+    expected_visibility='private' if fail=='private-match' else 'public'
+    if args[-1]=='repos/OpenJ92/control-plane-kit-servers':
+        if fail=='repo-unavailable':sys.exit(1)
+        visibility=expected_visibility
+        reads=calls.count('gh api --method GET repos/OpenJ92/control-plane-kit-servers')
+        if (fail=='repo-drift' and reads==2) or (fail=='post-repo-drift' and reads==3):visibility='private'
+        repo_id=42 if (fail=='repo-id-drift' and reads==2) or (fail=='post-repo-id-drift' and reads==3) else 41
+        print(json.dumps(dict(id=repo_id,full_name='OpenJ92/other' if fail=='repo-identity' else 'OpenJ92/control-plane-kit-servers',
+            visibility=visibility,private=True if fail=='repo-inconsistent' else visibility=='private')))
+        sys.exit(0)
     if '--include' in args:
         assert args[-1]=='users/OpenJ92/packages/container/control-plane-kit-servers%2Fpostgres-server'
         if fail=='transport':sys.exit(1)
@@ -187,8 +215,8 @@ elif name=='gh':
         print(json.dumps([[version]] if pushed or fail=='used' else [[]]))
     else:
         print(json.dumps(dict(id=7,name='control-plane-kit-servers/postgres-server',package_type='container',
-            repository={'full_name':'OpenJ92/other' if fail=='post-repository' else 'OpenJ92/control-plane-kit-servers'},
-            visibility='public' if fail=='public' or (pushed and fail=='post-private') else 'private')))
+            repository={'id':41,'full_name':'OpenJ92/other' if fail=='post-repository' else 'OpenJ92/control-plane-kit-servers'},
+            visibility='private' if fail=='mismatch' or (pushed and fail=='post-mismatch') else expected_visibility)))
 elif name=='docker':
     if '/policy/release.py' in args:
         mounts=[a for a in args if ':/evidence:ro' in a]
@@ -213,10 +241,13 @@ elif name=='docker':
         else:sys.exit(2)
 else:sys.exit(2)
 '''
-        cases=[('postgres-server-managed',failure) for failure in ('none','public','absent','used','build','push','post-private')]
+        cases=[('postgres-server-managed',failure) for failure in ('none','private-match','mismatch','absent','used','build','push','post-mismatch')]
         cases += [('postgres-server-managed-first',failure) for failure in (
-            'none','existing','public','used','appeared','401','403','500','transport','malformed','zero-exit-404',
-            'build','push','post-private','post-repository','post-digest','post-tag','post-image','versions-404')]
+            'none','private-match','existing','public','used','appeared','401','403','500','transport','malformed','zero-exit-404',
+            'build','push','post-mismatch','post-repository','post-digest','post-tag','post-image','versions-404')]
+        cases += [(product,failure) for product in ('postgres-server-managed','postgres-server-managed-first')
+                  for failure in ('repo-unavailable','repo-identity','repo-inconsistent','repo-drift','post-repo-drift',
+                                  'repo-id-drift','post-repo-id-drift')]
         for product,failure in cases:
             with self.subTest(product=product,failure=failure), tempfile.TemporaryDirectory() as directory:
                 root=Path(directory);(root/'bin').mkdir();(root/'scripts').mkdir()
@@ -232,13 +263,18 @@ else:sys.exit(2)
                 result=subprocess.run(['sh',str(root/'scripts/publish_product_image.sh'),
                                        product,'managed-'+SOURCE],env=env,capture_output=True,text=True)
                 calls=(root/'calls').read_text()
-                self.assertEqual(result.returncode==0,failure=='none',result.stderr)
-                pushed=failure in ('none','push','post-private','post-repository','post-digest','post-tag','post-image','versions-404')
+                success=failure in ('none','private-match')
+                self.assertEqual(result.returncode==0,success,result.stderr)
+                pushed=failure in ('none','private-match','push','post-mismatch','post-repository','post-digest',
+                                   'post-tag','post-image','versions-404','post-repo-drift','post-repo-id-drift')
                 self.assertEqual(calls.count('docker push '),int(pushed))
                 if product.endswith('-first'):
-                    self.assertEqual(calls.count('gh api --include'),2 if pushed or failure=='appeared' else 1)
-                    self.assertEqual(calls.count('docker build '),int(pushed or failure in ('appeared','build')))
-                if failure=='none':self.assertIn('reference='+REFERENCE,result.stdout)
+                    expected_reads=0 if failure in ('repo-unavailable','repo-identity','repo-inconsistent') else (2 if pushed or failure=='appeared' else 1)
+                    self.assertEqual(calls.count('gh api --include'),expected_reads)
+                    self.assertEqual(calls.count('docker build '),int(pushed or failure in ('appeared','build','repo-drift','repo-id-drift')))
+                if success:
+                    self.assertIn('reference='+REFERENCE,result.stdout)
+                    self.assertIn('visibility='+('private' if failure=='private-match' else 'public'),result.stdout)
                 else:self.assertNotIn('postgres-server-managed reference=',result.stdout)
 
     def test_existing_named_or_labelled_resources_refuse_without_adoption_or_cleanup(self):
