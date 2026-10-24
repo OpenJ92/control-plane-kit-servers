@@ -1,60 +1,82 @@
-name: publish-product-image
+name: managed-package-access-probe
 
 on:
   workflow_dispatch:
-    inputs:
-      product_id:
-        description: Product id to publish
-        required: true
-        default: cpk-server
-      tag:
-        description: OCI tag to publish
-        required: true
-        default: extract-f
 
 permissions:
   contents: read
   packages: write
 
 jobs:
-  publish:
+  observe:
     runs-on: ubuntu-latest
+    timeout-minutes: 2
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Publish product image
-        if: inputs.product_id != 'cloudflared-connector-managed'
+      - name: Observe local admission and exact package GET
         env:
-          PRODUCT_ID: ${{ inputs.product_id }}
-          IMAGE_TAG: ${{ inputs.tag }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: sh scripts/publish_product_image.sh "$PRODUCT_ID" "$IMAGE_TAG"
-      - name: Prepare managed release evidence
-        id: managed-evidence
-        if: inputs.product_id == 'cloudflared-connector-managed'
-        env:
-          IMAGE_TAG: ${{ inputs.tag }}
-        run: python3 products/cloudflared_connector/release_evidence.py prepare
-      - name: Publish selected managed product
-        if: inputs.product_id == 'cloudflared-connector-managed'
-        env:
-          ATTEMPT: ${{ steps.managed-evidence.outputs.attempt }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 products/cloudflared_connector/release_evidence.py run --attempt "$ATTEMPT"
-      - name: Project managed release evidence
-        if: always() && inputs.product_id == 'cloudflared-connector-managed' && steps.managed-evidence.outcome == 'success'
-        env:
-          ATTEMPT: ${{ steps.managed-evidence.outputs.attempt }}
-        run: python3 products/cloudflared_connector/release_evidence.py export --attempt "$ATTEMPT"
-      - name: Retain closed managed release evidence
-        if: always() && inputs.product_id == 'cloudflared-connector-managed' && steps.managed-evidence.outcome == 'success'
-        uses: actions/upload-artifact@v4
-        with:
-          name: managed-release-evidence-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ steps.managed-evidence.outputs.attempt }}/public/managed-release-evidence.json
-          retention-days: 30
-          if-no-files-found: error
+        shell: bash
+        run: |
+          set +x
+          python3 - <<'PY'
+          import json
+          import os
+          import tempfile
+          import urllib.error
+          import urllib.request
+
+          result = {"schema": "cpk.managed-package-access-probe.v1",
+                    "local_temp": "failure", "package_get": "not-attempted",
+                    "http_status": None}
+          temporary = None
+          try:
+              root = os.environ["RUNNER_TEMP"]
+              workspace = os.path.realpath(os.environ["GITHUB_WORKSPACE"])
+              if (not os.path.isabs(root) or os.path.realpath(root) != root
+                      or os.path.commonpath((root, workspace)) == workspace):
+                  raise ValueError()
+              temporary = tempfile.TemporaryDirectory(prefix="cpk-package-access-", dir=root)
+              result["local_temp"] = "success"
+          except Exception:
+              pass
+
+          if result["local_temp"] == "success":
+              try:
+                  token = os.environ["GH_TOKEN"]
+                  if not token:
+                      raise ValueError()
+                  request = urllib.request.Request(
+                      "https://api.github.com/users/OpenJ92/packages/container/"
+                      "control-plane-kit-servers%2Fcloudflared-connector",
+                      headers={"Authorization": "Bearer " + token,
+                               "Accept": "application/vnd.github+json",
+                               "X-GitHub-Api-Version": "2022-11-28"},
+                      method="GET")
+                  # Refuse redirects: only the exact selected endpoint receives the token.
+                  class NoRedirect(urllib.request.HTTPRedirectHandler):
+                      def redirect_request(self, req, fp, code, msg, headers, newurl):
+                          return None
+                  opener = urllib.request.build_opener(NoRedirect())
+                  try:
+                      with opener.open(request, timeout=20) as response:
+                          result["http_status"] = response.status
+                          result["package_get"] = "http-response"
+                          # No response body is read; no header/body/error values are logged or retained.
+                  except urllib.error.HTTPError as response:
+                      result["http_status"] = response.code
+                      result["package_get"] = "http-response"
+                      response.close()
+              except (urllib.error.URLError, TimeoutError, OSError):
+                  result["package_get"] = "transport-failure"
+              except Exception:
+                  result["package_get"] = "local-request-failure"
+
+          if temporary is not None:
+              try:
+                  temporary.cleanup()
+              except Exception:
+                  result["local_temp"] = "cleanup-failure"
+          print(json.dumps(result, sort_keys=True))
+          raise SystemExit(0 if result["local_temp"] == "success"
+                           and result["http_status"] == 200 else 1)
+          PY

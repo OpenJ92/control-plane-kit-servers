@@ -309,27 +309,32 @@ class ManagedEvidenceTests(unittest.TestCase):
                 self.assertNotIn(CANARY,artifact.read_text()+err.getvalue())
 
     def test_workflow_selectors_and_upload_contract(self):
-        # Inspect the small authored mapping, not runner execution or upload success.
+        # This temporary branch intentionally replaces the release workflow.
+        # Exact declarative envelope ensures no residual release jobs or inputs.
         workflow=(ROOT/'.github/workflows/publish-product-image.yml').read_text()
-        steps={}
-        for chunk in workflow.split('      - name: ')[1:]:
-            lines=chunk.splitlines();steps[lines[0]]='\n'.join(lines[1:])
-        ordinary=steps['Publish product image']
-        self.assertIn("if: inputs.product_id != 'cloudflared-connector-managed'",ordinary)
-        self.assertIn('run: sh scripts/publish_product_image.sh "$PRODUCT_ID" "$IMAGE_TAG"',ordinary)
-        managed="inputs.product_id == 'cloudflared-connector-managed'"
-        for name in ['Prepare managed release evidence','Publish selected managed product']:
-            self.assertIn('if: '+managed,steps[name])
-        condition="if: always() && "+managed+" && steps.managed-evidence.outcome == 'success'"
-        for name in ['Project managed release evidence','Retain closed managed release evidence']:
-            self.assertIn(condition,steps[name])
-        upload=steps['Retain closed managed release evidence']
-        self.assertIn('uses: actions/upload-artifact@v4',upload)
-        paths=[line.strip() for line in upload.splitlines() if line.strip().startswith('path:')]
-        self.assertEqual(paths,['path: ${{ steps.managed-evidence.outputs.attempt }}/public/managed-release-evidence.json'])
-        self.assertIn('retention-days: 30',upload)
-        self.assertIn('if-no-files-found: error',upload)
-        self.assertNotIn('continue-on-error',workflow)
+        self.assertEqual(workflow.split('          python3',1)[0],'''name: managed-package-access-probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Observe local admission and exact package GET
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set +x
+''')
+        self.assertEqual(workflow.count('        run: |'),1)
+        self.assertTrue(workflow.endswith('          PY\n'))
 
     def test_prepare_refuses_temp_inside_checkout_before_creating_attempt(self):
         from unittest.mock import patch
