@@ -7,6 +7,7 @@ from http.client import HTTPConnection
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import time
 import runpy
@@ -34,6 +35,36 @@ FAILURE_LOG_MARKERS = {
     "native_panic": b"PANIC:",
 }
 LIFECYCLE_REASONS = {"native_exit", "management_exit", "readiness_fatal", "startup_failure"}
+
+
+def scan_refused_lock_pid(logs: bytes, *, truncated: bool = False) -> dict[str, object]:
+    """Project a native hint, never a process owner or inferred failure cause."""
+    result = {"lock_pid_status": "absent", "refused_lock_pid": None}
+    if truncated or len(logs) > MAX_FAILURE_LOG_BYTES:
+        return dict(result, lock_pid_status="truncated")
+    lines = logs.splitlines()
+    # The Docker tail may have discarded earlier matches. Do not claim uniqueness
+    # when the requested line limit is reached, even if exactly 128 lines existed.
+    if len(lines) >= 128:
+        return dict(result, lock_pid_status="truncated")
+    hints = [line for line in lines if b"Is another " in line]
+    if not hints:
+        return result
+    if len(hints) != 1 or hints[0].count(b"Is another ") != 1:
+        return dict(result, lock_pid_status="ambiguous")
+    line = hints[0]
+    if len(line) > 1024 or any(byte < 32 or byte > 126 for byte in line):
+        return dict(result, lock_pid_status="invalid")
+    match = re.fullmatch(
+        rb'[ -~]*HINT: +Is another (?:postmaster|postgres) \(PID ([1-9][0-9]{0,9})\) '
+        rb'running in data directory "[^"\r\n]*"\?', line,
+    )
+    if match is None or FAILURE_LOG_MARKERS["native_lock_refusal"] not in logs:
+        return dict(result, lock_pid_status="invalid")
+    pid = int(match.group(1))
+    if pid > 2147483647:
+        return dict(result, lock_pid_status="invalid")
+    return {"lock_pid_status": "one", "refused_lock_pid": pid}
 
 
 def require(condition: bool, message: str) -> None:
@@ -113,6 +144,11 @@ def raise_container_failure(container, message: str) -> None:
         logs_unavailable = True
     logs_truncated = len(logs) > MAX_FAILURE_LOG_BYTES
     logs = logs[-MAX_FAILURE_LOG_BYTES:]
+    try:
+        lock_pid = (dict(lock_pid_status="unavailable", refused_lock_pid=None)
+                    if logs_unavailable else scan_refused_lock_pid(logs, truncated=logs_truncated))
+    except Exception:
+        lock_pid = dict(lock_pid_status="invalid", refused_lock_pid=None)
     if state_refresh_available:
         error = str(state.get("Error", "")).encode("utf-8", errors="replace")
         state_values = {
@@ -157,6 +193,7 @@ def raise_container_failure(container, message: str) -> None:
             name: marker in logs for name, marker in FAILURE_LOG_MARKERS.items()
         },
         **lifecycle,
+        **lock_pid,
     }}
     try:
         print(json.dumps(event, sort_keys=True), flush=True)
