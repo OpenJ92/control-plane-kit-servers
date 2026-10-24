@@ -3,6 +3,27 @@ set -eu
 
 IMAGE="${CPK_SERVER_IMAGE:-localhost/control-plane-kit-servers/cpk-server:local}"
 BUILD_IMAGE="${CPK_SERVER_BUILD_IMAGE:-1}"
+PROFILE="${CPK_SERVER_SMOKE_PROFILE:-wrapped-source}"
+PRODUCT_PULL_POLICY=missing
+CONTROL_RECORDS=""
+MISSING_CONTROL_CONTAINER=""
+RECEIVER_RECORDS=""
+case "$PROFILE" in
+  wrapped-source)
+    : "${CPK_SERVERS_TEST_IMAGE:?wrapped-source requires the owning test/controller image}"
+    ;;
+  wrapped-artifact)
+    [ "$BUILD_IMAGE" = 0 ] || { echo 'current root artifact input is invalid' >&2; exit 2; }
+    : "${CPK_SERVERS_TEST_IMAGE:?wrapped-artifact requires the owning test/controller image}"
+    . ./scripts/root_artifact_shell.sh
+    root_artifact_admit cpk-server "$IMAGE" "$CPK_SERVERS_TEST_IMAGE"
+    IMAGE="$ROOT_ARTIFACT_IMAGE_ID"
+    CPK_SERVERS_TEST_IMAGE="$ROOT_ARTIFACT_CONTROLLER"
+    PRODUCT_PULL_POLICY=never
+    ;;
+  published-baseline) ;;
+  *) echo "cpk-server image smoke: invalid profile" >&2; exit 1 ;;
+esac
 CONTAINER=""
 POSTGRES_CONTAINER=""
 NETWORK="cpk-server-smoke-$$"
@@ -24,7 +45,28 @@ STATIC_WORKSPACE_GRANTS_JSON="${CPK_CONTROL_AUTH_STATIC_WORKSPACE_GRANTS_JSON:-{
 HEALTH_ATTEMPTS="${CPK_SERVER_HEALTH_ATTEMPTS:-30}"
 REQUEST_HOST="${CPK_SERVER_SMOKE_HOST:-127.0.0.1}"
 
+cleanup_control_fixture() {
+  if [ -n "$CONTROL_RECORDS" ]; then
+    rm -f "$CONTROL_RECORDS/control.json" "$CONTROL_RECORDS/surface.headers" \
+      "$CONTROL_RECORDS/health.headers" "$CONTROL_RECORDS/surface.json" \
+      "$CONTROL_RECORDS/health.json" "$CONTROL_RECORDS/denied.json" \
+      "$CONTROL_RECORDS/artifact-provenance.json" "$CONTROL_RECORDS/artifact-provenance.status" \
+      "$CONTROL_RECORDS/artifact-pid1.status" "$CONTROL_RECORDS/artifact-pid1.exit" || return 1
+    rmdir "$CONTROL_RECORDS" || return 1
+    [ ! -e "$CONTROL_RECORDS" ] || return 1
+    CONTROL_RECORDS=""
+  fi
+}
+
 cleanup() {
+  receiver_cleanup_status=0
+  cleanup_receiver_fixture || {
+    echo "receiver acceptance cleanup incomplete; records=$RECEIVER_RECORDS" >&2
+    receiver_cleanup_status=1
+  }
+  if [ -n "$MISSING_CONTROL_CONTAINER" ]; then
+    docker rm -f "$MISSING_CONTROL_CONTAINER" >/dev/null 2>&1 || true
+  fi
   rm -f "$MISSING_CONFIG_OUTPUT" "$IMPORT_BODY" "$UNAUTHORIZED_BODY" \
     "$MCP_UNAUTHORIZED_BODY" "$HOST_CURL_ERROR"
   if [ -n "$CONTAINER" ]; then
@@ -34,6 +76,41 @@ cleanup() {
     docker rm -f "$POSTGRES_CONTAINER" >/dev/null 2>&1 || true
   fi
   docker network rm "$NETWORK" >/dev/null 2>&1 || true
+  return "$receiver_cleanup_status"
+}
+
+cleanup_receiver_fixture() {
+  [ -n "$RECEIVER_RECORDS" ] || return 0
+  receiver_name="${RECEIVER_NAME:-$NETWORK-receiver-acceptance}"
+  if [ -f "$RECEIVER_RECORDS/ownership.json" ] && [ ! -f "$RECEIVER_RECORDS/managed-resources-absent" ]; then
+    echo "Docker image fixture cleanup is uncertain; preserved records=$RECEIVER_RECORDS" >&2
+    return 1
+  fi
+  receiver_id=""
+  if [ -s "$RECEIVER_RECORDS/container" ]; then
+    receiver_id="$(cat "$RECEIVER_RECORDS/container")" || return 1
+    observed="$(docker container ls -aq --no-trunc --filter "id=$receiver_id")" || return 1
+    [ -z "$observed" ] || [ "$observed" = "$receiver_id" ] || return 1
+  else
+    # A create interrupted before returning its ID is resolved by exact name
+    # and the unique run label; no retry of the allocation is attempted.
+    observed="$(docker container ls -aq --no-trunc --filter "name=^/$receiver_name$")" || return 1
+    receiver_id="$observed"
+  fi
+  if [ -n "$observed" ]; then
+    owner="$(docker inspect --format '{{index .Config.Labels "org.openj92.cpk.test-run"}}' "$receiver_id")" || return 1
+    [ "$owner" = "$NETWORK" ] || return 1
+    docker rm -f "$receiver_id" >/dev/null || return 1
+    observed="$(docker container ls -aq --no-trunc --filter "id=$receiver_id")" || return 1
+    [ -z "$observed" ] || return 1
+  fi
+  observed="$(docker container ls -aq --filter "name=^/$receiver_name$")" || return 1
+  [ -z "$observed" ] || return 1
+  rm -f "$RECEIVER_RECORDS/container" "$RECEIVER_RECORDS/ownership.json" \
+    "$RECEIVER_RECORDS/managed-resources-absent" || return 1
+  rmdir "$RECEIVER_RECORDS" || return 1
+  RECEIVER_RECORDS=""
+  echo "receiver acceptance witness container absence verified"
 }
 
 finish() {
@@ -50,7 +127,8 @@ finish() {
       docker logs --tail 40 "$POSTGRES_CONTAINER" >&2 || true
     fi
   fi
-  cleanup
+  cleanup || status=1
+  cleanup_control_fixture || status=1
   exit "$status"
 }
 
@@ -169,7 +247,7 @@ if [ "$BUILD_IMAGE" = "1" ]; then
 fi
 
 phase "reject missing bootstrap configuration"
-if docker run --rm "$IMAGE" >"$MISSING_CONFIG_OUTPUT" 2>&1; then
+if docker run --pull "$PRODUCT_PULL_POLICY" --rm "$IMAGE" >"$MISSING_CONFIG_OUTPUT" 2>&1; then
   echo "cpk-server started without required configuration" >&2
   exit 1
 fi
@@ -205,11 +283,21 @@ if [ "$POSTGRES_READY" != "1" ]; then
   exit 1
 fi
 
+# Generate after image/Postgres preparation so the240-second grants cover only
+# startup and the immediate protected reads. No private key leaves the process.
+if [ "$PROFILE" != "published-baseline" ]; then
+  phase "prepare synthetic source control authority"
+  CONTROL_RECORDS="$(mktemp -d)"
+  chmod 700 "$CONTROL_RECORDS"
+  docker run --rm --network none --user "$(id -u):$(id -g)" \
+    -e PYTHONDONTWRITEBYTECODE=1 \
+    --mount "type=bind,source=$CONTROL_RECORDS,target=/fixture" \
+    "$CPK_SERVERS_TEST_IMAGE" \
+    python products/cpk_server/tests/source_control_fixture.py generate /fixture
+fi
+
 phase "start configured cpk-server"
-CONTAINER="$(docker run -d \
-  --label "$LABEL" \
-  --network "$NETWORK" \
-  -p 127.0.0.1::8080 \
+set -- \
   -e CPK_SERVER_MODE=execution-capable \
   -e CPK_CONTROL_AUTH_VERIFIER=static-development \
   -e CPK_CONTROL_AUTH_STATIC_CREDENTIAL=valid-token \
@@ -219,8 +307,40 @@ CONTAINER="$(docker run -d \
   -e CPK_WORKPLACE_DATABASE_URL="$WORKPLACE_DATABASE_URL" \
   -e CPK_ACTIVITY_HISTORY_DATABASE_URL="$ACTIVITY_HISTORY_DATABASE_URL" \
   -e CPK_OBSERVER_STATE_DATABASE_URL="$OBSERVER_STATE_DATABASE_URL" \
-  -e CPK_GRAPH_TOPOLOGY_DATABASE_URL="$GRAPH_TOPOLOGY_DATABASE_URL" \
-  "$IMAGE")"
+  -e CPK_GRAPH_TOPOLOGY_DATABASE_URL="$GRAPH_TOPOLOGY_DATABASE_URL"
+if [ "$PROFILE" != "published-baseline" ]; then
+  phase "reject missing required source control file"
+  MISSING_CONTROL_CONTAINER="$(docker create --label "$LABEL" --pull "$PRODUCT_PULL_POLICY" \
+    --label "org.openj92.cpk.test-run=$NETWORK" --name "$NETWORK-missing-control" \
+    --network "$NETWORK" "$@" "$IMAGE")"
+  docker start "$MISSING_CONTROL_CONTAINER" >/dev/null
+  MISSING_CONTROL_EXITED=0
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    missing_state="$(docker inspect --format '{{.State.Status}}|{{.State.ExitCode}}' "$MISSING_CONTROL_CONTAINER")"
+    if [ "${missing_state%%|*}" = "exited" ]; then
+      MISSING_CONTROL_EXITED=1
+      break
+    fi
+    sleep 1
+  done
+  docker logs --tail 10 "$MISSING_CONTROL_CONTAINER" 2>&1 | head -c 4096 >"$MISSING_CONFIG_OUTPUT"
+  if [ "$MISSING_CONTROL_EXITED" != "1" ] || [ "${missing_state#*|}" -eq 0 ]; then
+    echo "cpk-server missing-control rejection did not exit with failure" >&2
+    exit 1
+  fi
+  grep -q 'CPK control configuration is invalid' "$MISSING_CONFIG_OUTPUT"
+  set -- "$@" --mount "type=bind,source=$CONTROL_RECORDS/control.json,target=/etc/cpk/cpk-server/control.json,readonly"
+fi
+CONTAINER="$(docker run --pull "$PRODUCT_PULL_POLICY" -d \
+  --label "$LABEL" \
+  --network "$NETWORK" \
+  -p 127.0.0.1::8080 \
+  "$@" "$IMAGE")"
+
+if [ "$PROFILE" = wrapped-artifact ]; then
+  root_artifact_verify_container "$CONTAINER" "$CONTROL_RECORDS"
+fi
+
 
 PORT_BINDING="$(docker port "$CONTAINER" 8080/tcp)"
 PORT_BINDING_LINES="$(printf '%s\n' "$PORT_BINDING" | wc -l | tr -d ' ')"
@@ -244,6 +364,34 @@ phase "wait for cpk-server liveness"
 if ! live="$(liveness_with_diagnostics "$BASE/health/live")"; then
   echo "cpk-server did not become live" >&2
   exit 1
+fi
+
+if [ "$PROFILE" != "published-baseline" ]; then
+  phase "verify authenticated source control health"
+  (
+    umask 077
+    curl --connect-timeout 1 --max-time 3 --max-filesize 65536 --fail --silent --show-error \
+      -H "@$CONTROL_RECORDS/surface.headers" \
+      -o "$CONTROL_RECORDS/surface.json" "$BASE/__control/capabilities"
+    curl --connect-timeout 1 --max-time 3 --max-filesize 65536 --fail --silent --show-error \
+      -H "@$CONTROL_RECORDS/health.headers" \
+      -o "$CONTROL_RECORDS/health.json" "$BASE/__control/health/liveness"
+    for path in capabilities health/liveness; do
+      denied="$(curl --connect-timeout 1 --max-time 3 --max-filesize 65536 --silent --show-error \
+        -o "$CONTROL_RECORDS/denied.json" -w '%{http_code}' "$BASE/__control/$path")"
+      [ "$denied" = "401" ]
+    done
+    denied="$(curl --connect-timeout 1 --max-time 3 --max-filesize 65536 --silent --show-error \
+      -H "@$CONTROL_RECORDS/surface.headers" -o "$CONTROL_RECORDS/denied.json" \
+      -w '%{http_code}' "$BASE/__control/health/liveness")"
+    [ "$denied" = "401" ]
+  )
+  docker run --rm --network none --user "$(id -u):$(id -g)" \
+    -e PYTHONDONTWRITEBYTECODE=1 \
+    --mount "type=bind,source=$CONTROL_RECORDS,target=/fixture,readonly" \
+    "$CPK_SERVERS_TEST_IMAGE" \
+    python products/cpk_server/tests/source_control_fixture.py verify /fixture
+  echo "cpk-server authenticated source control health passed"
 fi
 
 phase "verify cpk-server readiness"
@@ -438,8 +586,66 @@ assert status == 200 and message["result"] == detail, (status, message)
 print("packaged empty revision history HTTP/MCP composition passed")
 PY
 
+if [ "$PROFILE" = wrapped-source ]; then
+  phase "receiver acceptance owner composition"
+  frozen_controller="$(docker image inspect --format '{{.Id}}' "$CPK_SERVERS_TEST_IMAGE")"
+  examples="$(pwd)/products/cpk_server/examples/unlisted_sdk"
+  [ -d "$examples" ]
+  RECEIVER_RECORDS="$(mktemp -d)"
+  observed="$(docker container ls -aq --filter "name=^/$NETWORK-receiver-acceptance$")"
+  [ -z "$observed" ]
+  receiver_id="$(docker create --name "$NETWORK-receiver-acceptance" \
+    --cidfile "$RECEIVER_RECORDS/container" --label "$LABEL" \
+    --label "org.openj92.cpk.test-run=$NETWORK" --network "$NETWORK" \
+    -e CPK_RECEIVER_ACCEPTANCE_DATABASE_URL=postgresql://cpk:cpk@cpk-postgres:5432/cpk \
+    -e "CPK_FROZEN_CONTROLLER_IMAGE=$frozen_controller" \
+    -e CPK_UNLISTED_EXAMPLES=/external-sdk-examples \
+    -v "$examples:/external-sdk-examples:ro" \
+    "$frozen_controller" sh -ec 'python products/cpk_server/tests/live_receiver_acceptance.py
+exec python products/cpk_server/tests/live_unlisted_receiver.py')"
+  [ "$receiver_id" = "$(cat "$RECEIVER_RECORDS/container")" ]
+  docker start -a "$receiver_id"
+  [ "$(docker inspect --format '{{.State.ExitCode}}' "$receiver_id")" = 0 ]
+  [ "$(docker inspect --format '{{.Image}}' "$receiver_id")" = "$frozen_controller" ]
+  [ "$(docker image inspect --format '{{.Id}}' "$CPK_SERVERS_TEST_IMAGE")" = "$frozen_controller" ]
+  cleanup_receiver_fixture
+  for docker_scenario in image-update receiver-reintroduction; do
+  phase "public Docker $docker_scenario"
+  # The previous phase's cleanup must finish before allocating another record.
+  [ -z "$RECEIVER_RECORDS" ]
+  RECEIVER_NAME="$NETWORK-docker-$docker_scenario"
+  RECEIVER_RECORDS="$(mktemp -d)"
+  [ -z "$(docker container ls -aq --filter "name=^/$RECEIVER_NAME$")" ]
+  case "$(docker context inspect --format '{{.Endpoints.docker.Host}}')" in
+    unix:///var/run/docker.sock) ;;
+    *) echo 'Docker image witness requires the owning local Unix daemon' >&2; exit 1 ;;
+  esac
+  image_witness_daemon="$(docker info --format '{{.ID}}')"
+  receiver_id="$(docker create --name "$RECEIVER_NAME" \
+    --cidfile "$RECEIVER_RECORDS/container" --label "$LABEL" \
+    --label "org.openj92.cpk.test-run=$NETWORK" --network "$NETWORK" \
+    --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
+    --mount "type=bind,source=$RECEIVER_RECORDS,target=/witness" \
+    -e CPK_RECEIVER_ACCEPTANCE_DATABASE_URL=postgresql://cpk:cpk@cpk-postgres:5432/cpk \
+    -e "CPK_FROZEN_CONTROLLER_IMAGE=$frozen_controller" \
+    -e "CPK_DOCKER_WITNESS_DAEMON=$image_witness_daemon" \
+    -e "CPK_DOCKER_WITNESS_NAME=$RECEIVER_NAME" \
+    -e "CPK_DOCKER_WITNESS_RUN=$NETWORK" -e CPK_DOCKER_WITNESS_RECORDS=/witness \
+    -e PYTHONPATH=/app \
+    -e DOCKER_CONFIG=/tmp/cpk-image-empty-docker-config \
+    "$frozen_controller" python products/cpk_server/tests/live_docker_image_update.py "$docker_scenario")"
+  [ "$receiver_id" = "$(cat "$RECEIVER_RECORDS/container")" ]
+  docker start -a "$receiver_id"
+  [ "$(docker inspect --format '{{.State.ExitCode}}' "$receiver_id")" = 0 ]
+  [ "$(docker inspect --format '{{.Image}}' "$receiver_id")" = "$frozen_controller" ]
+  cleanup_receiver_fixture
+  done
+fi
+
 phase "clean owned smoke resources"
 cleanup
+cleanup_control_fixture
+echo "cpk-server synthetic control fixture cleanup passed"
 CONTAINER=""
 POSTGRES_CONTAINER=""
 
@@ -448,3 +654,4 @@ sh scripts/docker_residue_audit.sh
 
 phase "complete"
 echo "cpk-server image smoke passed"
+if [ "$PROFILE" = wrapped-artifact ]; then root_artifact_pass; fi

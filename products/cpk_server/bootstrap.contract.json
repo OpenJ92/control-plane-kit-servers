@@ -34,7 +34,7 @@
       "name": "CPK_PORT",
       "required": true,
       "allowed_values": [
-        "1..65535"
+        "8080"
       ]
     },
     {
@@ -43,6 +43,20 @@
       "allowed_values": [
         "none",
         "docker"
+      ]
+    },
+    {
+      "name": "CPK_MANAGED_HEALTH",
+      "required": false,
+      "allowed_values": [
+        "docker-unix-v1"
+      ]
+    },
+    {
+      "name": "CPK_MANAGED_HEALTH_CONFIGURATION_FILE",
+      "required": false,
+      "allowed_values": [
+        "/etc/cpk/cpk-server/managed-health.json"
       ]
     },
     {
@@ -131,6 +145,7 @@
     "authorization credential and static-development verifier credential are runtime-supplied and never echoed",
     "static-development workspace grants are explicit exact-workspace authority and never inferred from request payloads",
     "runtime interpreter authority is selected explicitly and never inferred",
+    "managed health is optional; docker-unix-v1 requires its explicit public configuration file, Docker runtime and provider material mode; managed scopes remain separately admitted",
     "ingress interpreter authority is selected explicitly and never inferred",
     "gateway probe signing authority is selected explicitly and resolves only its secret reference at dispatch",
     "public DNS resolution uses bounded fresh queries against a trusted process-bootstrap endpoint that is never echoed",
@@ -139,5 +154,27 @@
     "provider bootstrap credentials are mounted files read only by the provider client and are never recursively resolved through operations",
     "product secret authority is admitted by operations and resolved only at interpreter dispatch",
     "local-development secret maps are explicit fixtures and are not selected by production descriptors"
+  ],
+  "configuration_files": [
+    {
+      "artifact_id": "cpk-control",
+      "path": "/etc/cpk/cpk-server/control.json",
+      "required": true,
+      "profile": "cpk-control-configuration.v1",
+      "media_type": "application/json",
+      "file_mode": "0444",
+      "maximum_bytes": 65536,
+      "trust": "Authorized parent supplies target/runtime and separate static/health public verification keys; no private keys or default trust."
+    },
+    {
+      "artifact_id": "cpk-managed-health",
+      "path": "/etc/cpk/cpk-server/managed-health.json",
+      "required": false,
+      "profile": "cpk-server.managed-health.v1",
+      "media_type": "application/json",
+      "file_mode": "0444",
+      "maximum_bytes": 1048576,
+      "trust": "Explicit public Unix policy, managed scope references and reviewed product documents; no credentials or inferred authority. Topology delivery has a separate 262144-byte artifact bound."
+    }
   ]
 }

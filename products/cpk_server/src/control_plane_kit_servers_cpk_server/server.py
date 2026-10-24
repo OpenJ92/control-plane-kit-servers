@@ -2,22 +2,25 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
 import time
-from typing import Mapping
+from typing import Callable, Mapping, TYPE_CHECKING
 from urllib.parse import urlsplit
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+
 import psycopg
 import uvicorn
 from control_plane_kit_core.identity import (
+    AuthenticatedPrincipal,
     CredentialVerifier,
+    PrincipalAuthorizer,
     PrincipalKind,
     WorkspaceGrant,
 )
@@ -75,16 +78,29 @@ from control_plane_kit_operations.postgres import PostgresUnitOfWork, install_sc
 
 from control_plane_kit_operations.desired_topology_drafts import DesiredTopologyDraftCommandService
 
+from .control_configuration import (
+    CpkControlConfigurationError,
+    cpk_control_configuration_artifact, read_cpk_control_configuration,
+)
+from .http_host import install_operator_http_routes
+from .request_body import MCP_ENVELOPE_MAX_BYTES, RequestBodyTooLarge, collect_request_body
+from control_plane_kit_operations.health_receiver_trust import HealthReceiverDecoders
+from .operations_application import OperationsApplicationFactory, OperationsEffectPorts, OperationsIdFactories
+from .managed_health import ManagedHealthBootstrap
+from control_plane_kit_core.receiver_configuration import ReceiverNodeControlConfiguration
+from control_plane_kit_server_sdk.fastapi import install_cpk_wrapper
 from .boundary import (
     CpkServerApplicationBoundary,
     CpkServerHttpProcessBoundary,
     CpkServerMcpProcessBoundary,
 )
 from .authentication import (
+    ConfiguredPrincipalAuthorizer,
     StaticDevelopmentCredentialVerifier,
     StaticDevelopmentMultiCredentialVerifier,
     StaticDevelopmentPrincipalCredential,
     static_development_principal,
+    _static_operator_identity,
 )
 from .composition import (
     CpkServerCompositionError,
@@ -94,6 +110,10 @@ from .composition import (
 
 
 _DEFAULT_PUBLIC_DNS_RESOLVER_ENDPOINT = "https://1.1.1.1/dns-query"
+_MANAGED_HEALTH_INVALID = "managed health process configuration is invalid"
+
+if TYPE_CHECKING:
+    from .managed_health_configuration import ManagedHealthProcessConfiguration
 
 
 class BootstrapConfigurationError(ValueError):
@@ -179,11 +199,38 @@ class CpkServerBootstrapConfiguration:
     control_auth_static_principals: tuple[
         StaticDevelopmentPrincipalCredential, ...
     ] = field(default=(), repr=False, compare=False, hash=False)
+    managed_health: ManagedHealthBootstrap | None = field(default=None, repr=False, compare=False)
+    managed_health_process: ManagedHealthProcessConfiguration | None = field(
+        default=None, repr=False, compare=False)
 
     @classmethod
     def from_environment(
         cls,
         environ: Mapping[str, str] | None = None,
+    ) -> "CpkServerBootstrapConfiguration":
+        values = dict(os.environ if environ is None else environ)
+        mode = values.get("CPK_MANAGED_HEALTH", "disabled")
+        path_key = "CPK_MANAGED_HEALTH_CONFIGURATION_FILE"
+        if mode == "disabled" and path_key not in values:
+            return cls._from_environment(values)
+        try:
+            if mode != "docker-unix-v1" or path_key not in values:
+                raise ValueError
+            from .managed_health_configuration import read_managed_health_process_configuration
+
+            process = read_managed_health_process_configuration(values[path_key])
+            config = replace(cls._from_environment(values), managed_health_process=process)
+            _validate_managed_health_process(config)
+            return config
+        except (ValueError, TypeError, AttributeError, KeyError, OverflowError,
+                RecursionError, ModuleNotFoundError):
+            failure = BootstrapConfigurationError(_MANAGED_HEALTH_INVALID)
+        raise failure
+
+    @classmethod
+    def _from_environment(
+        cls,
+        environ: Mapping[str, str],
     ) -> "CpkServerBootstrapConfiguration":
         values = dict(os.environ if environ is None else environ)
         mode = _required(values, "CPK_SERVER_MODE")
@@ -459,24 +506,21 @@ class CpkServerBootstrapConfiguration:
 def create_app(
     config: CpkServerBootstrapConfiguration,
     credential_verifier: CredentialVerifier,
+    *, control: ReceiverNodeControlConfiguration,
+    clock: Callable[[], int] = lambda: int(time.time()),
+    principal_authorizer: PrincipalAuthorizer | None = None,
 ) -> FastAPI:
     """Create the hosted cpk-server FastAPI application."""
 
+    _validate_managed_health_process(config)
+    cpk_control_configuration_artifact(control)
     composition = create_cpk_server_composition(config.process_configuration())
-    application = CpkServerApplicationBoundary(
-        _operations_application(config).services,
-        credential_verifier,
-    )
-    http_boundary = CpkServerHttpProcessBoundary(composition, application)
-    mcp_boundary = CpkServerMcpProcessBoundary(composition, application)
     app = FastAPI(
         title="cpk-server",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
     )
-    app.state.http_boundary = http_boundary
-    app.state.mcp_boundary = mcp_boundary
 
     @app.get("/health/live")
     async def live() -> JSONResponse:
@@ -502,7 +546,12 @@ def create_app(
 
     @app.post("/mcp")
     async def mcp(request: Request) -> JSONResponse:
-        body = await request.body()
+        try:
+            body = await collect_request_body(request.stream(), MCP_ENVELOPE_MAX_BYTES)
+        except RequestBodyTooLarge:
+            return _json_response(
+                413, {"error": {"status": 413, "message": "request body too large"}},
+            )
         try:
             message = json.loads(body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -510,23 +559,33 @@ def create_app(
                 400,
                 {"error": {"status": 400, "message": "invalid JSON request body"}},
             )
-        response = mcp_boundary.handle(
+        response = await mcp_boundary.handle_async(
             headers=request.headers,
             message=message,
         )
         return _json_response(response.status, response.body)
 
-    @app.api_route("/{path:path}", methods=["GET", "POST"])
-    async def http(path: str, request: Request) -> JSONResponse:
-        response = http_boundary.handle(
+    async def http(request: Request) -> JSONResponse:
+        response = await http_boundary.handle_stream_async(
             method=request.method,
             path=request.url.path,
             headers=request.headers,
-            body=await request.body(),
+            body=request.stream(),
             query_string=request.scope["query_string"],
         )
         return _json_response(response.status, response.body)
 
+    install_operator_http_routes(app, composition.http_api, http)
+    install_cpk_wrapper(app, configuration=control, clock=clock)
+    # No application/listener escapes before both admitted routes and existing
+    # Operations schema/services are ready. Callbacks never perform schema work.
+    application = CpkServerApplicationBoundary(
+        _operations_application(config, principal_authorizer=principal_authorizer).services,
+        credential_verifier)
+    http_boundary = CpkServerHttpProcessBoundary(composition, application)
+    mcp_boundary = CpkServerMcpProcessBoundary(composition, application)
+    app.state.http_boundary = http_boundary
+    app.state.mcp_boundary = mcp_boundary
     return app
 
 
@@ -534,12 +593,17 @@ def main() -> int:
     try:
         config = CpkServerBootstrapConfiguration.from_environment()
         credential_verifier = _credential_verifier(config)
-    except (BootstrapConfigurationError, CpkServerCompositionError) as error:
+        control = read_cpk_control_configuration()
+        if config.port != 8080:
+            raise BootstrapConfigurationError("CPK_PORT must be 8080")
+        app = create_app(config, credential_verifier, control=control,
+                         principal_authorizer=_configured_principal_authorizer(config))
+    except (BootstrapConfigurationError, CpkServerCompositionError, CpkControlConfigurationError) as error:
         print(f"cpk-server bootstrap error: {error}", flush=True)
         return 2
     print(f"cpk-server listening on 0.0.0.0:{config.port}", flush=True)
     uvicorn.run(
-        create_app(config, credential_verifier),
+        app,
         host="0.0.0.0",
         port=config.port,
         access_log=False,
@@ -563,6 +627,18 @@ def _credential_verifier(
     raise BootstrapConfigurationError(
         "no credential verifier is configured for cpk-server"
     )
+
+
+def _configured_principal_authorizer(config: CpkServerBootstrapConfiguration) -> ConfiguredPrincipalAuthorizer:
+    """Project startup policies without retaining credentials or the config."""
+    if config.control_auth_verifier != "static-development":
+        raise BootstrapConfigurationError("no configured principal authority is available")
+    if config.control_auth_static_principals:
+        principals = tuple(item.principal for item in config.control_auth_static_principals)
+    else:
+        principals = (AuthenticatedPrincipal(_static_operator_identity(),
+                                             config.control_auth_static_workspace_grants),)
+    return ConfiguredPrincipalAuthorizer(principals)
 
 
 def _validated_bootstrap_mapping_json(value: str) -> dict[str, str]:
@@ -738,115 +814,61 @@ def _static_principals(
 
 def _operations_application(
     config: CpkServerBootstrapConfiguration,
+    *, principal_authorizer: PrincipalAuthorizer | None = None,
 ) -> CpkServerOperationsApplication:
+    _validate_managed_health_process(config)
     database_url = config.operations_database_url()
     _install_operations_schema(database_url)
 
     def unit_of_work() -> PostgresUnitOfWork:
         return PostgresUnitOfWork(lambda: psycopg.connect(database_url))
 
-    lifecycle = RunLifecycleCommandService(
-        unit_of_work,
+    provider = _secret_provider_composition(config)
+    return OperationsApplicationFactory(unit_of_work, _operations_effect_ports(config, provider),
+        OperationsIdFactories(_id, _lifecycle_id, _start_id, _fold_id, _coordinator_id),
         clock=_clock,
-        id_factory=_lifecycle_id,
-    )
-    secret_use_authorizer = SecretUseAuthorizationService(unit_of_work)
-    secret_provider = _secret_provider_composition(config)
-    adapter = _activity_adapter(
-        config,
-        unit_of_work,
-        secret_use_authorizer,
-        secret_provider,
-    )
-    observer = _runtime_observer(
-        config,
-        secret_provider=secret_provider,
-    )
-    fold_service = EffectAttemptFoldService(
-        unit_of_work,
-        id_factory=_fold_id,
-    )
-    start_service = EffectAttemptStartService(
-        unit_of_work,
-        id_factory=_start_id,
-    )
-    reconciliation_service = EffectAttemptReconciliationService(
-        unit_of_work,
-        observer,
-        fold_service,
-    )
-    execution = ExecutionCoordinator(
-        unit_of_work,
-        lifecycle=lifecycle,
-        adapter=adapter,
-        start_service=start_service,
-        fold_service=fold_service,
-        reconciliation_service=reconciliation_service,
-        clock=_clock,
-        id_factory=_coordinator_id,
-    )
-    return CpkServerOperationsApplication(
-        cpk_server_services(
-            unit_of_work_factory=unit_of_work,
-            planning=ActivityPlanningCommandService(
-                unit_of_work,
-                clock=_clock,
-                id_factory=_id,
-            ),
-            workspaces=WorkspaceCommandService(
-                unit_of_work,
-                clock=_clock,
-                id_factory=_id,
-            ),
-            products=ProductRegistrationService(unit_of_work),
-            image_pull_authorities=ImagePullAuthorityRegistrationService(unit_of_work),
-            runtime_authorities=RuntimeAuthorityRegistrationService(unit_of_work),
-            ingress_authorities=IngressAuthorityRegistrationService(unit_of_work),
-            secret_providers=SecretProviderRegistrationService(unit_of_work),
-            delegation_signing_keys=DelegationSigningKeyRegistrationService(
-                unit_of_work
-            ),
-            desired_topology_drafts=DesiredTopologyDraftCommandService(
-                unit_of_work,
-                clock=_clock,
-                id_factory=_id,
-            ),
-            desired_graphs=DesiredGraphCommandService(
-                unit_of_work,
-                clock=_clock,
-                id_factory=_id,
-            ),
-            approval=ApprovalCommandService(
-                unit_of_work,
-                clock=_clock,
-                id_factory=_id,
-            ),
-            admission=ExecutionAdmissionCommandService(
-                unit_of_work,
-                clock=_clock,
-                id_factory=_id,
-            ),
-            lifecycle=lifecycle,
-            operations=OperationCommandService(
-                unit_of_work,
-                clock=_clock,
-                id_factory=_id,
-            ),
-            execution=execution,
-            advancement=CurrentGraphAdvancementCommandService(
-                unit_of_work,
-                clock=_clock,
-                id_factory=_id,
-            ),
-            gateway_probes=_gateway_probe_service(
-                config,
-                unit_of_work,
-                secret_use_authorizer,
-                secret_provider,
-            ),
-            clock=lambda: datetime.now(timezone.utc),
+        principal_authorizer=principal_authorizer,
+        gateway_probe_factory=lambda uow, authorizer: _gateway_probe_service(
+            config, uow, authorizer, provider))()
+
+
+def _operations_effect_ports(config, provider):
+    _validate_managed_health_process(config)
+    runtimes = None
+    if config.runtime_dispatcher.enabled:
+        if config.runtime_dispatcher.runtime_kinds != (RuntimeKind.DOCKER,):
+            raise BootstrapConfigurationError("runtime effects require exactly one Docker provider")
+        interpreter = _docker_runtime_interpreter(config, provider)
+        if provider.metadata_reader is not None:
+            from control_plane_kit_operations.runtime_adapter_registration import RuntimeAdapterRegistration
+            interpreter = RuntimeAdapterRegistration(interpreter,
+                exact_version_execute=True, exact_version_execute_with_authority=True)
+        runtimes = {RuntimeKind.DOCKER: interpreter}
+    ingress = (_ingress_interpreters(config, provider) if config.ingress_interpreters.enabled else None)
+    health = None
+    decoders = HealthReceiverDecoders(())
+    bootstrap = config.managed_health
+    process = getattr(config, "managed_health_process", None)
+    if process is not None:
+        from .managed_native_connection import DockerManagedNativeConnection
+
+        bootstrap = ManagedHealthBootstrap(
+            gateway_documents=process.gateway_documents,
+            provider_clients=process.provider_clients,
+            endpoints=None,
+            native=DockerManagedNativeConnection(process.provider_clients,
+                process.native_product_document, clock=lambda: datetime.now(timezone.utc)),
         )
-    )
+    if bootstrap is not None:
+        if type(bootstrap) is not ManagedHealthBootstrap:
+            raise BootstrapConfigurationError("managed health composition is invalid")
+        health = bootstrap.build(provider.authorized_resolver)
+        decoders = health.decoders
+    return OperationsEffectPorts(runtimes, ingress, health, decoders,
+        _runtime_observer(config, secret_provider=provider), _UnsupportedExecutionAdapter(),
+        secret_metadata_reader=provider.metadata_reader,
+        delegation_key_generator=provider.delegation_key_generator,
+        secret_custodian=provider.secret_custodian)
 
 
 def _gateway_probe_service(
@@ -1170,6 +1192,7 @@ def _docker_runtime_observer(
     config: CpkServerBootstrapConfiguration,
     secret_provider: "_SecretProviderComposition | None" = None,
 ):
+    _validate_managed_health_process(config)
     try:
         from control_plane_kit_interpreters.docker import (
             DockerLocalAmbientClientConfig,
@@ -1182,6 +1205,12 @@ def _docker_runtime_observer(
             "control-plane-kit-interpreters[docker]"
         ) from error
     provider = secret_provider or _secret_provider_composition(config)
+    process = getattr(config, "managed_health_process", None)
+    if process is not None:
+        return DockerRuntimeEffectObserver(
+            local_client_config=process.local_client_config,
+            authorized_secret_resolver=provider.authorized_resolver,
+        )
     return DockerRuntimeEffectObserver(
         DockerSdkClient.from_authority(
             DockerLocalAmbientClientConfig(),
@@ -1195,6 +1224,7 @@ def _docker_runtime_interpreter(
     config: CpkServerBootstrapConfiguration,
     secret_provider: "_SecretProviderComposition | None" = None,
 ):
+    _validate_managed_health_process(config)
     try:
         from control_plane_kit_interpreters.docker import (
             DockerLocalAmbientClientConfig,
@@ -1207,6 +1237,12 @@ def _docker_runtime_interpreter(
             "control-plane-kit-interpreters[docker]"
         ) from error
     provider = secret_provider or _secret_provider_composition(config)
+    process = getattr(config, "managed_health_process", None)
+    if process is not None:
+        return DockerRuntimeInterpreter(
+            local_client_config=process.local_client_config,
+            authorized_secret_resolver=provider.authorized_resolver,
+        )
     return DockerRuntimeInterpreter(
         DockerSdkClient.from_authority(
             DockerLocalAmbientClientConfig(),
@@ -1327,11 +1363,48 @@ def _cloudflare_ingress_interpreter(
 
 
 @dataclass(frozen=True, repr=False)
+class _SecretVersionMetadataBridge:
+    """Associate validated provider metadata with an Operations request, without authority."""
+    reader: object = field(repr=False)
+
+    def read_version(self, request):
+        from control_plane_kit_operations.graph_authoring import (
+            GraphAuthoringError, SecretVersionMetadataRequest, SecretVersionMetadata,
+        )
+        from control_plane_kit_interpreters.secret_provider import SecretProviderVersionMetadata
+        try:
+            if type(request) is not SecretVersionMetadataRequest:
+                raise ValueError
+            SecretVersionMetadataRequest.__post_init__(request)
+            selection = request.selection
+            observed = self.reader.read_version(workspace_id=request.workspace_id,
+                endpoint_reference=request.endpoint_reference,
+                credential_reference=request.credential_reference, reference=selection.reference,
+                version_id=selection.version_id, intent=selection.intent)
+            if (type(observed) is not SecretProviderVersionMetadata
+                    or observed.reference != selection.reference
+                    or observed.version_id != selection.version_id or observed.status != "active"
+                    or observed.labels.get("intent") != selection.intent.value):
+                raise ValueError
+            # Concrete IO checks workspace; its existing observation has no workspace field.
+            # These fields are local association, not provider-signed receipt evidence.
+            return SecretVersionMetadata(request.correlation_id, request.provider_registration_id,
+                request.reference_registration_id, selection, True)
+        except Exception:
+            raise GraphAuthoringError("secret metadata observation is unavailable") from None
+
+    def __repr__(self):
+        return "SecretVersionMetadataBridge(<redacted>)"
+
+
+@dataclass(frozen=True, repr=False)
 class _SecretProviderComposition:
     authorized_resolver: object | None = field(default=None, repr=False)
     secret_custodian: object | None = field(default=None, repr=False)
     bootstrap_registry: object | None = field(default=None, repr=False)
     transport: object | None = field(default=None, repr=False)
+    metadata_reader: object | None = field(default=None, repr=False)
+    delegation_key_generator: object | None = field(default=None, repr=False)
 
     def __repr__(self) -> str:
         return (
@@ -1363,6 +1436,50 @@ class _LocalDevelopmentAuthorizedSecretResolver:
 
     def __repr__(self) -> str:
         return "LocalDevelopmentAuthorizedSecretResolver(<redacted>)"
+
+
+def _provider_bootstrap_registry(config):
+    """Pure structural validation; credential files are not opened here."""
+    from control_plane_kit_core.secrets import SecretProviderEndpointReference
+    from control_plane_kit_interpreters.secret_provider import SecretProviderBootstrapRegistry
+
+    return SecretProviderBootstrapRegistry(
+        endpoints={
+            SecretProviderEndpointReference(reference_id): endpoint
+            for reference_id, endpoint in _validated_bootstrap_mapping_json(
+                config.material_provider_routes_json
+            ).items()
+        },
+        credential_files={
+            SecretReference(reference_id): Path(path)
+            for reference_id, path in _validated_bootstrap_mapping_json(
+                config.material_provider_bootstrap_files_json
+            ).items()
+        },
+    )
+
+
+def _validate_managed_health_process(config):
+    process = getattr(config, "managed_health_process", None)
+    if process is None:
+        return
+    try:
+        from .managed_health_configuration import ManagedHealthProcessConfiguration
+
+        if (type(process) is not ManagedHealthProcessConfiguration
+                or config.managed_health is not None
+                or config.mode != "execution-capable"
+                or config.runtime_dispatcher.runtime_kinds != (RuntimeKind.DOCKER,)
+                or config.product_material_resolver != "provider"
+                or config.product_secret_values_json is not None):
+            raise ValueError
+        process.__post_init__()
+        _provider_bootstrap_registry(config)
+        return
+    except (ValueError, TypeError, AttributeError, KeyError, OverflowError,
+            RecursionError, ModuleNotFoundError):
+        failure = BootstrapConfigurationError(_MANAGED_HEALTH_INVALID)
+    raise failure
 
 
 def _secret_provider_composition(
@@ -1398,34 +1515,18 @@ def _secret_provider_composition(
     ):
         raise AssertionError("provider bootstrap registries validated")
     try:
-        from control_plane_kit_core.secrets import (
-            SecretProviderEndpointReference,
-        )
         from control_plane_kit_interpreters.secret_provider import (
             ControlPlaneKitSecretsCustodian,
             ControlPlaneKitSecretsResolver,
+            ControlPlaneKitSecretsMetadataReader,
             SecretProviderBootstrapError,
-            SecretProviderBootstrapRegistry,
         )
     except ModuleNotFoundError:
         raise BootstrapConfigurationError(
             "secret provider integration is unavailable"
         ) from None
     try:
-        registry = SecretProviderBootstrapRegistry(
-            endpoints={
-                SecretProviderEndpointReference(reference_id): endpoint
-                for reference_id, endpoint in _validated_bootstrap_mapping_json(
-                    config.material_provider_routes_json
-                ).items()
-            },
-            credential_files={
-                SecretReference(reference_id): Path(path)
-                for reference_id, path in _validated_bootstrap_mapping_json(
-                    config.material_provider_bootstrap_files_json
-                ).items()
-            },
-        )
+        registry = _provider_bootstrap_registry(config)
     except (
         SecretProviderBootstrapError,
         SecretResolutionError,
@@ -1435,17 +1536,20 @@ def _secret_provider_composition(
         raise BootstrapConfigurationError(
             "secret provider bootstrap configuration is unavailable"
         ) from None
+    from .delegation_key_generation import _ProviderDelegationKeyGenerator
+    custodian = ControlPlaneKitSecretsCustodian(registry, transport=transport)
     return _SecretProviderComposition(
         authorized_resolver=ControlPlaneKitSecretsResolver(
             registry,
             transport=transport,
         ),
-        secret_custodian=ControlPlaneKitSecretsCustodian(
-            registry,
-            transport=transport,
-        ),
+        secret_custodian=custodian,
         bootstrap_registry=registry,
         transport=transport,
+        metadata_reader=_SecretVersionMetadataBridge(
+            ControlPlaneKitSecretsMetadataReader(registry, transport=transport)),
+        delegation_key_generator=_ProviderDelegationKeyGenerator(
+            registry, policy=custodian.policy, transport=transport),
     )
 
 

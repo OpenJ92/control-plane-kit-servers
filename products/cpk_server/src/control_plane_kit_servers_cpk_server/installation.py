@@ -6,18 +6,20 @@ does not resolve secrets, admit authority, contact providers, or execute a plan.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import hashlib
 import json
 import re
 from urllib.parse import urlsplit
 
 from control_plane_kit_core.algebra import DeploymentTopology, DockerRuntime, SocketConnection
+from control_plane_kit_core.configuration import ConfigurationArtifact
 from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
 from control_plane_kit_core.identity import WorkspaceGrant
 from control_plane_kit_core.lifecycle import ResourcePersistence
 from control_plane_kit_core.products import (
     ContainerServerProduct,
+    OciImageReference,
     ProductDescriptorCodec,
     ProductDescriptorDocument,
     ProductIdentity,
@@ -40,7 +42,7 @@ from control_plane_kit_core.secrets import (
     SecretReference,
     SecretUseIntent,
 )
-from control_plane_kit_core.verification import PostgresQueryCheck
+from control_plane_kit_core.verification import PostgresPasswordAuthentication, PostgresQueryCheck
 
 
 _INSTALLATION_ID = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*\Z")
@@ -49,6 +51,7 @@ _WORKSPACE_ID = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}\Z")
 _STORES = ("activity-history-store", "graph-topology-store", "observer-state-store",
            "workplace-store")
 _PROVIDER_CLIENT_FILE = "/run/secrets/cpk-installation/provider-client"
+_INVALID_WEBSITE = "installation website configuration is invalid"
 
 
 @dataclass(frozen=True)
@@ -105,6 +108,18 @@ class ExternalInstallationIngress:
             raise ValueError("external installation endpoint port is invalid")
 
 
+@dataclass(frozen=True, kw_only=True, repr=False)
+class DockerCpkWebsite:
+    """Explicit website image and exposure intent; upstream comes from the API."""
+
+    image: OciImageReference
+    ingress: ExternalInstallationIngress | NamedPublicIngress
+    connector_product: ProductDescriptorDocument | None = None
+
+    def __post_init__(self) -> None:
+        _website_input(self)
+
+
 @dataclass(frozen=True, kw_only=True)
 class DockerCpkInstallation:
     """Immutable desired values; all credential inputs are unresolved references.
@@ -138,6 +153,8 @@ class DockerCpkInstallation:
     ingress: ExternalInstallationIngress | NamedPublicIngress
     connector_product: ProductDescriptorDocument | None
     control_auth: SingleOperatorControlAuth | MultiPrincipalControlAuth = SingleOperatorControlAuth()
+    managed_health_configuration: ConfigurationArtifact | None = field(default=None, repr=False)
+    website: DockerCpkWebsite | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.control_auth, (SingleOperatorControlAuth, MultiPrincipalControlAuth)):
@@ -180,6 +197,16 @@ class DockerCpkInstallation:
         _selected_product(self.cpk_product, "cpk-server-docker-cloudflare")
         _selected_product(self.postgres_product, "postgres-server")
         _selected_product(self.secrets_product, "secrets-server")
+        configuration = _managed_postgres_configuration(self.postgres_product.product.runtime_contract)
+        if configuration is not None:
+            target = configuration.target
+            if (target.workspace_id.value != self.workspace_id
+                    or target.runtime_id.value != self.installation_id + "-docker"
+                    or target.node_id.value != self.postgres_node_id
+                    or target.provider_socket_name.value != "management"):
+                raise ValueError("installation PostgreSQL receiving target is invalid")
+        _managed_health_artifact(self)
+        _website_parts(self)
 
     @property
     def cpk_node_id(self) -> str:
@@ -193,6 +220,10 @@ class DockerCpkInstallation:
     def secrets_node_id(self) -> str:
         return f"{self.installation_id}-secrets"
 
+    @property
+    def website_node_id(self) -> str:
+        return f"{self.installation_id}-website"
+
 
 def compose_docker_cpk_installation(installation: DockerCpkInstallation) -> DeploymentTopology:
     """Declare existing product contracts and return an ordinary topology tree."""
@@ -201,6 +232,7 @@ def compose_docker_cpk_installation(installation: DockerCpkInstallation) -> Depl
     postgres = _postgres_variant(installation)
     cpk = _cpk_variant(installation, postgres)
     secrets = _secrets_variant(installation)
+    website_parts = _website_parts(installation)
     children = [
         instantiate_product(product, node_id, ProductInstanceConfiguration.from_contract(product.runtime_contract))
         for product, node_id in ((postgres, installation.postgres_node_id),
@@ -215,6 +247,15 @@ def compose_docker_cpk_installation(installation: DockerCpkInstallation) -> Depl
         children.append(instantiate_product(connector, installation.ingress.connector_node_id,
                         ProductInstanceConfiguration.from_contract(connector.runtime_contract)))
         public_ingresses = (installation.ingress,)
+    if website_parts is not None:
+        website, connector = website_parts
+        children.append(instantiate_product(website, installation.website_node_id,
+                        ProductInstanceConfiguration.from_contract(website.runtime_contract)))
+        if connector is not None:
+            ingress = installation.website.ingress
+            children.append(instantiate_product(connector, ingress.connector_node_id,
+                            ProductInstanceConfiguration.from_contract(connector.runtime_contract)))
+            public_ingresses += (ingress,)
     children.extend(SocketConnection(installation.postgres_node_id, "postgres",
                     installation.cpk_node_id, requirement) for requirement in _STORES)
     return DeploymentTopology(
@@ -226,9 +267,65 @@ def compose_docker_cpk_installation(installation: DockerCpkInstallation) -> Depl
     )
 
 
+def _website_input(value: DockerCpkWebsite) -> tuple[str, ContainerServerProduct | None]:
+    """Validate enabled-only inputs using the existing frontend owners."""
+    from .client.frontend import _canonical_origin, _selected_frontend_connector
+
+    try:
+        if not isinstance(value, DockerCpkWebsite) or not isinstance(value.image, OciImageReference):
+            raise ValueError(_INVALID_WEBSITE)
+        if isinstance(value.ingress, NamedPublicIngress):
+            connector = _selected_frontend_connector(value.connector_product)
+            return _canonical_origin("https://" + value.ingress.hostname), connector
+        if isinstance(value.ingress, ExternalInstallationIngress) and value.connector_product is None:
+            return _canonical_origin(value.ingress.endpoint), None
+        raise ValueError(_INVALID_WEBSITE)
+    except (ValueError, TypeError, AttributeError, KeyError):
+        error = ValueError(_INVALID_WEBSITE)
+    # Raise outside the handler: rejected input must not survive as context.
+    raise error
+
+
+def _website_parts(value: DockerCpkInstallation) -> tuple[
+    ContainerServerProduct, ContainerServerProduct | None,
+] | None:
+    if value.website is None:
+        return None
+    from .client.frontend import _canonical_origin, _selected_frontend_connector, frontend_product
+
+    try:
+        origin, connector = _website_input(value.website)
+        ingress = value.website.ingress
+        if isinstance(value.ingress, NamedPublicIngress) and isinstance(ingress, NamedPublicIngress):
+            _selected_frontend_connector(value.connector_product)
+            product_ids = {value.cpk_node_id, value.postgres_node_id,
+                           value.secrets_node_id, value.website_node_id}
+            connector_ids = {value.ingress.connector_node_id, ingress.connector_node_id}
+            if (ingress.target != PublicIngressTarget(value.website_node_id, "http")
+                    or value.ingress.target != PublicIngressTarget(value.cpk_node_id, "http-api")
+                    or len(connector_ids) != 2 or product_ids & connector_ids
+                    or ingress.ingress_id == value.ingress.ingress_id):
+                raise ValueError(_INVALID_WEBSITE)
+            upstream = _canonical_origin("https://" + value.ingress.hostname)
+        elif (isinstance(value.ingress, ExternalInstallationIngress)
+                and isinstance(ingress, ExternalInstallationIngress)
+                and value.connector_product is None):
+            upstream = _canonical_origin(value.ingress.endpoint)
+        else:
+            raise ValueError(_INVALID_WEBSITE)
+        # Compare host identity only; preserve both original origin strings.
+        if urlsplit(upstream).hostname.removesuffix(".") == urlsplit(origin).hostname.removesuffix("."):
+            raise ValueError(_INVALID_WEBSITE)
+        return frontend_product(value.website.image, upstream=upstream, port=8080), connector
+    except (ValueError, TypeError, AttributeError, KeyError):
+        error = ValueError(_INVALID_WEBSITE)
+    raise error
+
+
 def _cpk_variant(value: DockerCpkInstallation, postgres: ContainerServerProduct) -> ContainerServerProduct:
     base = value.cpk_product.product
     contract = base.runtime_contract
+    managed_health = _managed_health_artifact(value)
     if set(contract.sockets.requirement_names()) != set(_STORES):
         raise ValueError("CPK installation requires all four PostgreSQL store sockets")
     postgres_environment = {item.name: item.value for item in postgres.runtime_contract.public_environment}
@@ -243,6 +340,13 @@ def _cpk_variant(value: DockerCpkInstallation, postgres: ContainerServerProduct)
         "PGUSER": postgres_environment["POSTGRES_USER"],
         "PGDATABASE": postgres_environment["POSTGRES_DB"],
     }
+    if managed_health is not None:
+        additions.update({
+            "CPK_MANAGED_HEALTH": "docker-unix-v1",
+            "CPK_MANAGED_HEALTH_CONFIGURATION_FILE": managed_health.target_path,
+        })
+        contract = replace(contract,
+            configuration_artifacts=(*contract.configuration_artifacts, managed_health))
     environment.update({name: PublicStaticEnvironmentBinding(name, item) for name, item in additions.items()})
     auth_delivery = SecretEnvironmentDelivery("CPK_CONTROL_AUTH_STATIC_CREDENTIAL", value.control_credential,
                                              SecretUseIntent.APPLICATION_CONTROL_TOKEN)
@@ -264,9 +368,39 @@ def _cpk_variant(value: DockerCpkInstallation, postgres: ContainerServerProduct)
     return _variant(value.cpk_product, "cpk", contract)
 
 
+def _managed_health_artifact(value: DockerCpkInstallation) -> ConfigurationArtifact | None:
+    artifact = value.managed_health_configuration
+    if artifact is None:
+        return None
+    # Disabled installation planning must not import optional Docker adapters.
+    from .managed_health_configuration import (
+        MANAGED_HEALTH_ARTIFACT_ID, MANAGED_HEALTH_CONFIGURATION_PATH,
+        _INVALID_INSTALLATION, _managed_health_configuration_from_artifact,
+    )
+    process = _managed_health_configuration_from_artifact(artifact)
+    contract = value.cpk_product.product.runtime_contract
+    if (process.local_client_config.socket_path != "/var/run/docker.sock"
+            or any(item.name in {"CPK_MANAGED_HEALTH", "CPK_MANAGED_HEALTH_CONFIGURATION_FILE"}
+                   for item in contract.public_environment)
+            or any(item.artifact_id == MANAGED_HEALTH_ARTIFACT_ID
+                   or item.target_path == MANAGED_HEALTH_CONFIGURATION_PATH
+                   for item in (*contract.configuration_artifacts, *contract.configuration_requirements))):
+        raise ValueError(_INVALID_INSTALLATION)
+    return artifact
+
+
 def _postgres_variant(value: DockerCpkInstallation) -> ContainerServerProduct:
     base = value.postgres_product.product
     contract = base.runtime_contract
+    if _managed_postgres_configuration(contract) is not None:
+        # The managed source contract advertises signed health. Installation
+        # startup additionally requires semantic SQL using the same credential.
+        check = PostgresQueryCheck(check_id="installation-postgres-ready", provider_socket="postgres",
+            authentication=PostgresPasswordAuthentication("cpk", "cpk", value.postgres_password))
+        contract = replace(contract,
+            verification=replace(contract.verification, checks=(check,)),
+            secret_deliveries=(replace(contract.secret_deliveries[0], reference=value.postgres_password),))
+        return _variant(value.postgres_product, "postgres", contract)
     environment = {item.name: item.value for item in contract.public_environment}
     checks = []
     for check in contract.verification.checks:
@@ -316,6 +450,8 @@ def _selected_product(document: ProductDescriptorDocument | None, name: str) -> 
     if ProductDescriptorCodec().encode_document(document.product).content != document.content:
         raise ValueError("installation product document must match its canonical contract")
     contract = document.product.runtime_contract
+    if name == "postgres-server" and _managed_postgres_configuration(contract) is not None:
+        return document.product
     environment = {item.name: item.value for item in contract.public_environment}
     if name == "cpk-server-docker-cloudflare":
         required_settings = {
@@ -367,6 +503,28 @@ def _selected_product(document: ProductDescriptorDocument | None, name: str) -> 
     if not compatible_deliveries:
         raise ValueError("installation requires the base product secret delivery contract")
     return document.product
+
+
+def _managed_postgres_configuration(contract: ProductRuntimeContract):
+    """Admit the explicit managed variant without importing it for native roots.
+
+    The PostgreSQL product owns its closed file, socket, data and declaration
+    contract. Only the password reference is installation-specific at intake.
+    """
+    if not any(port.provider_socket == "management" for port in contract.provider_ports):
+        return None
+    from control_plane_kit_servers_postgres_server.configuration import (
+        decode_postgres_control_configuration, postgres_source_runtime_contract,
+    )
+    if len(contract.configuration_artifacts) != 1 or len(contract.secret_deliveries) != 1:
+        raise ValueError("installation managed PostgreSQL contract is invalid")
+    artifact = contract.configuration_artifacts[0]
+    expected = postgres_source_runtime_contract(artifact)
+    expected = replace(expected, secret_deliveries=(replace(expected.secret_deliveries[0],
+        reference=contract.secret_deliveries[0].reference),))
+    if expected != contract:
+        raise ValueError("installation managed PostgreSQL contract is invalid")
+    return decode_postgres_control_configuration(artifact.content.encode("utf-8"))
 
 
 def _workspace_grants_json(grants: tuple[WorkspaceGrant, ...]) -> str:

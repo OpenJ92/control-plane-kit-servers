@@ -2,6 +2,7 @@
 
 from .installation import (
     DockerCpkInstallation,
+    DockerCpkWebsite,
     ExternalInstallationIngress,
     compose_docker_cpk_installation,
 )
@@ -30,6 +31,7 @@ from .composition import (
 
 __all__ = (
     "DockerCpkInstallation",
+    "DockerCpkWebsite",
     "ExternalInstallationIngress",
     "compose_docker_cpk_installation",
     "CpkServerApplicationBoundary",

@@ -80,6 +80,49 @@ and verifies `0400` delivery into read-only mounts. The driver image uses UID0 f
 the existing SDK archive helper. Public setup instead uses the inspected CPK UID,
 shares the exact CPK container's network namespace, and receives no Docker socket.
 
+Compiled public configuration artifacts appear in each node's
+`configuration_files` plan entries, with their complete descriptor, target path,
+content digest and deterministic owned volume name. Apply delivers those exact
+artifacts through the existing SDK, verifies their bytes, and checks the complete
+secret/configuration read-only mount set before starting each recipient. The SDK
+creates root-owned configuration files: `0444` supports numeric nonroot readers;
+`0400` requires a root image user and is refused for nonroot recipients before
+network or volume acquisition. Bootstrap never broadens the declared mode.
+Configuration volumes remain in the acquisition receipt on success or HOLD.
+Changed saved projections must be regenerated and reviewed; apply never upgrades
+an old saved plan silently.
+
+For an explicitly enabled managed-health installation, add the full Core
+artifact descriptor as `installation.managed_health_configuration` in the input.
+For example, when preparing that input in the normal package environment:
+
+```python
+from control_plane_kit_servers_cpk_server.managed_health_configuration import (
+    managed_health_configuration_artifact,
+)
+
+document["installation"]["managed_health_configuration"] = (
+    managed_health_configuration_artifact(reviewed_bytes).descriptor()
+)
+```
+
+Use the [closed process format](../../../docs/managed-health-startup.md) with
+explicit scope references and reviewed canonical product documents. The only
+default is an absent field; explicit `null` is invalid. This field accepts all
+seven Core artifact descriptor fields, including both digests, rather than a
+filename or resolved secret. Original content bytes and valid source metadata
+survive projection into the ordinary `configuration_files` entries. The helper
+does not add a mount path or provider to the acquisition runtime.
+
+The installation requires the configured Docker socket to be
+`/var/run/docker.sock`, matching its existing declared delivery. Managed scope
+references need independent admission. Configuration has a 262,144-byte artifact
+bound and must also fit within the complete Core product's 262,144-byte document
+bound. Both root input and the repeated/escaped plan have a separate 1,048,576-byte
+limit. Review the new plan; old receipts and no-redispatch rules remain unchanged.
+This source path does not demonstrate that the historical image above supports
+the new mode. Published-image and live startup acceptance remain separate.
+
 The private receipt records intent before nontransactional Docker or public-setup
 stages and observations afterward. Any previous receipt stops apply; it is not
 an idempotent repair command. Pending work, conflicting resources, permission

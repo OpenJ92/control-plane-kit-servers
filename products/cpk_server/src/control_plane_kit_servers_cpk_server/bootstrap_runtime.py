@@ -12,8 +12,10 @@ import os
 from pathlib import Path
 import re
 import secrets
+import signal
 import stat
 import tarfile
+import threading
 import time
 
 from .bootstrap import (
@@ -55,6 +57,14 @@ def _material(plan, index_path):
             if "\x00" in value:
                 raise ValueError("encoding")
             values[reference] = value
+        postgres = next(node for node in plan["resources"]["nodes"]
+                        if node["node_id"] == plan["postgres_node_id"])
+        if any(entry["target"] == "/run/secrets/postgres/password" for entry in postgres["secret_files"]):
+            reference = plan["input"]["installation"]["references"]["postgres_password"]
+            # The product file reader strips LF but environment delivery does
+            # not. Reject ambiguous shared credentials before any acquisition.
+            if values[reference].endswith("\n"):
+                raise ValueError("managed password has trailing LF")
         return values
     except (RootBootstrapError, ValueError, TypeError, KeyError, OSError):
         raise RootBootstrapError("bootstrap material could not be verified") from None
@@ -215,11 +225,14 @@ def acquire_root(plan, index_path, state):
 def _acquire(plan, material, state):
     with bootstrap_stage(BootstrapStage.LOAD_RUNTIME_DEPENDENCIES):
         import docker
+        from control_plane_kit_core.configuration import ConfigurationFileMode
         from control_plane_kit_core.secrets import (
             LocalDevelopmentSecretResolver, SecretFileMode, SecretProviderAuthority, SecretReference, SecretValue,
         )
         from control_plane_kit_core.topology import GraphDescriptorCodec
-        from control_plane_kit_interpreters.docker import DockerSdkClient, DockerSdkSecretMount, DockerRegistryAuthConfig
+        from control_plane_kit_interpreters.docker import (
+            DockerSdkClient, DockerSdkConfigurationMount, DockerSdkSecretMount, DockerRegistryAuthConfig,
+        )
         from control_plane_kit_interpreters.secrets import parse_image_pull_credential, resolve_secret_deliveries
 
     with bootstrap_stage(BootstrapStage.DECODE_GRAPH):
@@ -300,7 +313,7 @@ def _acquire(plan, material, state):
             network_name = resources["network"]["name"]
             setup_name = network_name + "-setup"
             volume_names = [entry["name"] for node in resources["nodes"]
-                            for entry in (*node["data_volumes"], *node["secret_files"])] + [setup_name + "-plan", setup_name + "-credential"]
+                            for entry in (*node["data_volumes"], *node["secret_files"], *node["configuration_files"])] + [setup_name + "-plan", setup_name + "-credential"]
             if (client.networks.list(names=[network_name])
                     or any(client.containers.list(all=True, filters={"name": "^/" + name + "$"})
                            for name in [n["name"] for n in resources["nodes"]] + [setup_name])
@@ -323,6 +336,12 @@ def _acquire(plan, material, state):
                 owner = protected_file_owner(node["secret_files"], image)
                 if owner is not None:
                     file_owners[node["node_id"]] = owner
+                # The existing configuration archive is root-owned. Preserve
+                # its declared mode; do not make private files world-readable.
+                if (any(artifact.file_mode is ConfigurationFileMode.OWNER_READ_ONLY
+                        for artifact in graph.node(node["node_id"]).configuration_artifacts)
+                        and image.secret_file_owner_uid() != 0):
+                    raise RootBootstrapHold("bootstrap configuration mode is unreadable by recipient")
             if node["node_id"] == plan["secrets_node_id"]:
                 with bootstrap_stage(BootstrapStage.VERIFY_PROVIDER_IMAGE):
                     configured = dict(entry.split("=", 1) for entry in client.images.get(image.image_id).attrs["Config"].get("Env", []) if "=" in entry)
@@ -346,12 +365,28 @@ def _acquire(plan, material, state):
                 value = next(item.value for item in files if item.target_path == entry["target"])
                 file_volume(entry["name"], value, file_owners[node["node_id"]])
                 mounts.append(dict(DockerSdkSecretMount(entry["target"], entry["name"]).docker_mount()))
+            for entry in node["configuration_files"]:
+                artifact = next(item for item in graph.node(node["node_id"]).configuration_artifacts
+                                if item.target_path == entry["target"])
+                volume(entry["name"])
+                effect("materialize-configuration:" + entry["name"],
+                       lambda: sdk.materialize_configuration_artifact(entry["name"], artifact))
+                if sdk.configuration_artifact_digest(entry["name"]) != entry["sha256"]:
+                    raise RootBootstrapHold("bootstrap configuration delivery could not be verified")
+                receipt["observations"].setdefault("configuration_files", {})[entry["name"]] = {
+                    "sha256": entry["sha256"], "digest_verified": True}
+                observed()
+                mounts.append(dict(DockerSdkConfigurationMount(artifact, entry["name"]).docker_mount()))
             options = {}
             if node["local_docker_access"] is not None:
                 socket_path = node["local_docker_access"]["socket"]
                 mounts.append(docker.types.Mount(socket_path, socket_path, type="bind"))
                 options["group_add"] = [str(os.stat(socket_path).st_gid)]
-            if node["node_id"] == plan["cpk_node_id"]:
+            if "host_bindings" in plan:
+                for binding in plan["host_bindings"]:
+                    if binding["node_id"] == node["node_id"]:
+                        options["ports"] = {"8080/tcp": (binding["address"], binding["port"])}
+            elif node["node_id"] == plan["cpk_node_id"]:
                 binding = plan["input"]["host_binding"]
                 options["ports"] = {"8080/tcp": (binding["address"], binding["port"])}
             container = effect("create-container:" + node["node_id"], lambda: client.containers.create(
@@ -364,16 +399,36 @@ def _acquire(plan, material, state):
             inspection = sdk.inspect_container(container.id)
             if (inspection is None or inspection.image_id != image.image_id
                     or {(item.target_path, item.volume_name) for item in inspection.readonly_secret_mounts}
-                    != {(item["target"], item["name"]) for item in node["secret_files"]}):
+                    != {(item["target"], item["name"]) for item in (*node["secret_files"], *node["configuration_files"])}):
                 raise RootBootstrapHold("bootstrap recipient mounts could not be verified")
             observed()
             effect("start-container:" + node["node_id"], container.start)
             container.reload()
             if not container.attrs["State"]["Running"]:
                 raise RootBootstrapHold("bootstrap container failed to start")
+            if "host_bindings" in plan:
+                from control_plane_kit_core.types import Transport
+                from control_plane_kit_interpreters.docker.sdk import DockerSdkPublishedPort
+                expected = tuple(DockerSdkPublishedPort(binding["container_port"], Transport.TCP,
+                    binding["address"], binding["port"]) for binding in plan["host_bindings"]
+                    if binding["node_id"] == node["node_id"])
+                inspection = sdk.inspect_container(container.id)
+                if inspection is None or sorted(inspection.published_ports) != sorted(expected):
+                    raise RootBootstrapHold("bootstrap published mappings could not be verified")
+                receipt["observations"].setdefault("host_bindings", {})[node["node_id"]] = [
+                    {"container_port": port.container_port, "transport": port.transport.value,
+                     "host_address": port.host_address, "host_port": port.host_port}
+                    for port in sorted(inspection.published_ports)]
+                _save(state, receipt)
             observed()
             if node["node_id"] == plan["postgres_node_id"]:
-                effect("observe-postgres-readiness", lambda: _postgres_ready(container))
+                password = None
+                if any(entry["target"] == "/run/secrets/postgres/password" for entry in node["secret_files"]):
+                    reference = plan["input"]["installation"]["references"]["postgres_password"]
+                    # Material admission guarantees the same effective bytes
+                    # for PostgreSQL's file, CPK's environment and this probe.
+                    password = material[reference].encode("utf-8")
+                effect("observe-postgres-readiness", lambda: _postgres_ready(container, password=password))
                 observed()
             for probe in node["http_checks"]:
                 check = probe["check"]
@@ -451,7 +506,55 @@ def _acquire(plan, material, state):
         client.close()
 
 
-def _postgres_ready(container):
+_POSTGRES_OBSERVATION_SECONDS = 10.0
+
+
+class _PostgresObservationDeadline(BaseException):
+    """Unwind the attached reader even through ordinary SDK error handlers."""
+
+
+def _postgres_sql_observation(container, invocation, timeout):
+    """Interrupt this Linux CLI's attached SDK read, retaining remote uncertainty."""
+    if (threading.current_thread() is not threading.main_thread()
+            or signal.getitimer(signal.ITIMER_REAL) != (0.0, 0.0) or timeout <= 0):
+        raise RootBootstrapHold("bootstrap PostgreSQL SQL observation boundary is unavailable")
+    previous = signal.getsignal(signal.SIGALRM)
+
+    def expired(_signum, _frame):
+        raise _PostgresObservationDeadline
+
+    signal.signal(signal.SIGALRM, expired)
+    try:
+        signal.setitimer(signal.ITIMER_REAL, timeout)
+        # stream=False closes the SDK response in its finally block when the
+        # signal interrupts poll/select. This does not cancel the remote exec.
+        return container.exec_run(list(invocation.argv), environment=dict(invocation.environ), stderr=False)
+    except (_PostgresObservationDeadline, Exception):
+        raise RootBootstrapHold("bootstrap PostgreSQL SQL observation requires investigation") from None
+    finally:
+        try:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+        finally:
+            signal.signal(signal.SIGALRM, previous)
+
+
+def _postgres_ready(container, *, password=None):
+    if password is not None:
+        from control_plane_kit_servers_postgres_server.readiness import psql_invocation
+        invocation = psql_invocation(password)
+        deadline = time.monotonic() + 60
+        for _ in range(60):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            result = _postgres_sql_observation(container, invocation,
+                min(_POSTGRES_OBSERVATION_SECONDS, remaining))
+            if result.exit_code == 0 and result.output == b"1\n":
+                return
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(1)
+        raise RootBootstrapHold("bootstrap PostgreSQL authenticated SQL readiness was not observed")
     for _ in range(60):
         if container.exec_run(["pg_isready", "-h", "127.0.0.1"]).exit_code == 0:
             return

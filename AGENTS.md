@@ -85,6 +85,43 @@ contracts, process handoff contracts, and tests. Core never imports servers.
 
 ## Issue Loop
 
+After inspecting governing tests and extracting applicable behavioral laws,
+begin design and source dry runs by reading the actual selected source, imports,
+immutable dependency coordinates, and related implementation companions. Trace
+one concrete input through validation and transformations, authority decisions,
+effects, and output/durable history. Give a short human-readable account with
+function/file anchors, including where the path stops or remains unknown.
+
+Distinguish selected behavior, merged but unselected code, proposed changes, and
+separately verified live behavior. A checkout or dependency pin does not prove
+what is running. Name the last working boundary and smallest missing connection
+before proposing an interface or issue change; reuse existing owners. Do not
+treat issue ordering or evidence labels as missing code. Keep this within the
+existing dry run, not a new checklist or issue-creation step.
+
+### Source Traversal Cadence
+
+Do substantial source traversal at decision points, not on every turn:
+
+- At parent-to-child issue design, trace the relevant computation to establish
+  ownership, missing connections, and child boundaries. Record source anchors,
+  selected dependency versions, and remaining unknowns in the existing issue.
+- At child implementation planning, reuse that recorded trace, confirm the
+  selected source and dependencies, and inspect the child's affected path.
+  Do not repeat an unchanged full traversal. If no usable trace exists, create
+  the relevant trace within this planning step.
+- During implementation and review, reread affected paths when source or selected
+  dependencies change, a failure contradicts the trace, or a review finding
+  exposes an unknown. Expand the traversal only as far as needed to resolve it,
+  and update the existing record with the changed understanding.
+
+Routine status updates, commits, CI notifications, handoffs, and documentation
+edits do not independently require a full traversal. Reviewers still inspect
+changed code and relevant boundaries independently; they need not repeat the
+implementer's entire trace. This cadence does not waive required tests, security
+review, or approval boundaries. Reuse evidence, not unverified assumptions; do
+not add a separate report, gate, or approval round for the traversal itself.
+
 For every non-trivial issue, use this calibrated loop:
 
 ```text

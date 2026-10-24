@@ -7,6 +7,21 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 
 cd "$ROOT"
 
+case "${1:-}" in
+  --postgres-release-tests|--postgres-published-image)
+    exec sh scripts/postgres_artifact_shell.sh "$@"
+    ;;
+  --managed-connector-controller|--managed-connector-release-tests)
+    exec sh scripts/cloudflared_release_shell.sh "$@"
+    ;;
+  --managed-connector-candidate)
+    exec sh scripts/cloudflared_managed_witness.sh "$@"
+    ;;
+esac
+
+. ./scripts/root_artifact_shell.sh
+root_artifact_selection
+
 docker run --rm \
   -v "$ROOT:/source:ro" \
   -e PYTHONDONTWRITEBYTECODE=1 \
@@ -39,13 +54,116 @@ docker run --rm "$IMAGE"
 docker run --rm "$IMAGE" \
   sh -c 'cd /tmp && python -c "import control_plane_kit_servers; print(\"control-plane-kit-servers import ok\")"'
 
-# Source-built Secrets and CPK file witnesses. Only this bounded controller receives
+# Exercise the actual Docker renderer in default mode, before product effects.
+(
+  INSPECTION_RECORDS="$(mktemp -d)"
+  finish_inspection() {
+    inspection_result=$?
+    trap - EXIT INT TERM
+    rm -f "$INSPECTION_RECORDS/inspection.json" "$INSPECTION_RECORDS/inspection.status" || inspection_result=1
+    rmdir "$INSPECTION_RECORDS" || inspection_result=1
+    if [ "$inspection_result" = 0 ]; then
+      echo 'root artifact inspection serialization passed'
+    else
+      echo 'root artifact inspection serialization failed' >&2
+    fi
+    exit "$inspection_result"
+  }
+  trap finish_inspection EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  INSPECTION_CONTROLLER_ID="$(docker image inspect "$IMAGE" --format '{{.Id}}')"
+  # The existing preloader verifies this cached image's identity/revision label.
+  INSPECTION_REFERENCE="$(docker run --pull never --rm --network none --read-only --cap-drop ALL \
+    --security-opt no-new-privileges --user "$(id -u):$(id -g)" \
+    "$INSPECTION_CONTROLLER_ID" python -B -c \
+    'import json; print(json.load(open("products/cpk_server/tests/docker_image_update_images.json"))["hello_family"]["reference"])')"
+  INSPECTION_IMAGE_ID="$(docker image inspect "$INSPECTION_REFERENCE" --format '{{.Id}}')"
+  umask 077
+  : > "$INSPECTION_RECORDS/inspection.json"
+  : > "$INSPECTION_RECORDS/inspection.status"
+  if (
+    set +e
+    root_artifact_inspection "$INSPECTION_IMAGE_ID" 2>/dev/null
+    inspection_producer_status=$?
+    printf '%s\n' "$inspection_producer_status" > "$INSPECTION_RECORDS/inspection.status"
+  ) | head -c 65537 > "$INSPECTION_RECORDS/inspection.json"; then :; else
+    echo 'root artifact inspection capture failed' >&2; exit 1
+  fi
+  [ -s "$INSPECTION_RECORDS/inspection.status" ] || {
+    echo 'root artifact inspection producer status missing' >&2; exit 1;
+  }
+  inspection_status="$(cat "$INSPECTION_RECORDS/inspection.status")" || {
+    echo 'root artifact inspection producer status unreadable' >&2; exit 1;
+  }
+  [ "$inspection_status" = 0 ] || {
+    echo 'root artifact inspection renderer failed' >&2; exit 1;
+  }
+  inspection_size="$(wc -c < "$INSPECTION_RECORDS/inspection.json")" || {
+    echo 'root artifact inspection size observation failed' >&2; exit 1;
+  }
+  [ "$inspection_size" -le 65536 ] || {
+    echo 'root artifact inspection output exceeds bound' >&2; exit 1;
+  }
+  docker run --pull never --rm --network none --read-only --cap-drop ALL \
+    --security-opt no-new-privileges --user "$(id -u):$(id -g)" -i \
+    --mount "type=bind,source=$INSPECTION_RECORDS,target=/inspection,readonly" \
+    "$INSPECTION_CONTROLLER_ID" python -B - "$INSPECTION_IMAGE_ID" <<'PY'
+import json
+import sys
+from scripts.root_artifact_inputs import identity, read_json, require, RootArtifactError
+
+try:
+    with open("/inspection/inspection.json", "rb") as source:
+        observed = read_json(source)
+    require(type(observed) is dict and set(observed) == {
+        "Id", "RepoDigests", "Os", "Architecture", "Config"})
+    require(identity(sys.argv[1]) and observed["Id"] == sys.argv[1])
+    digests = observed["RepoDigests"]
+    require(digests is None or (type(digests) is list and all(type(value) is str for value in digests)))
+    require(type(observed["Os"]) is str and type(observed["Architecture"]) is str)
+    config = observed["Config"]
+    require(type(config) is dict and set(config) == {"User", "Labels"})
+    require(type(config["User"]) is str)
+    labels = config["Labels"]
+    require(type(labels) is dict and set(labels) == {"org.opencontainers.image.revision"})
+    revision = labels["org.opencontainers.image.revision"]
+    require(revision is None or type(revision) is str)
+except json.JSONDecodeError:
+    print("root artifact inspection JSON parse failed", file=sys.stderr)
+    raise SystemExit(1)
+except (RootArtifactError, ValueError, TypeError, KeyError, OSError):
+    print("root artifact inspection contract failed", file=sys.stderr)
+    raise SystemExit(1)
+PY
+)
+
+# Source-built file and wrapper witnesses. Only this isolated controller receives
 # local daemon authority; the ordinary package suite above remains socket-free.
 (
+  WRAPPER_MODE="${CPK_WRAPPER_ARTIFACT_MODE:-source-built}"
+  case "$WRAPPER_MODE" in
+    source-built) ;;
+    published-digest)
+      for reference in "${CPK_WRAPPER_HELLO_A:?select exact Hello A digest}" \
+          "${CPK_WRAPPER_HELLO_B:?select exact Hello B digest}" \
+          "${CPK_WRAPPER_GATEWAY:?select exact gateway digest}"; do
+        case "$reference" in ghcr.io/openj92/control-plane-kit-servers/*@sha256:*) ;;
+          *) echo 'wrapper qualification requires the reviewed GHCR digest tuple' >&2; exit 1 ;;
+        esac
+        # Preload is a separate authorized producer action on this same daemon.
+        docker image inspect "$reference" >/dev/null
+      done
+      [ "$CPK_WRAPPER_HELLO_A" != "$CPK_WRAPPER_HELLO_B" ] || exit 1
+      ;;
+    *) echo 'unsupported wrapper artifact qualification mode' >&2; exit 1 ;;
+  esac
   RECORDS="$(mktemp -d)"
   RUN="cpk-numeric-$(basename "$RECORDS")"
   TAG="control-plane-kit-secrets-numeric:$RUN"
   CPK_TAG="control-plane-kit-cpk-numeric:$RUN"
+  HELLO_TAG="control-plane-kit-hello-wrapper:$RUN"
+  GATEWAY_TAG="control-plane-kit-gateway-wrapper:$RUN"
   cleanup_numeric_bootstrap() {
     failed=0
     if [ -s "$RECORDS/controller" ]; then
@@ -72,9 +190,10 @@ docker run --rm "$IMAGE" \
         [ -z "$observed" ] || failed=1
       fi
     fi
-    for record in image cpk-image; do
+    for record in image cpk-image hello-image gateway-image; do
       if [ -s "$RECORDS/$record" ]; then
-        case "$record" in image) image_tag="$TAG" ;; cpk-image) image_tag="$CPK_TAG" ;; esac
+        case "$record" in image) image_tag="$TAG" ;; cpk-image) image_tag="$CPK_TAG" ;;
+          hello-image) image_tag="$HELLO_TAG" ;; gateway-image) image_tag="$GATEWAY_TAG" ;; esac
         identity="$(cat "$RECORDS/$record")" || return 1
         observed="$(docker image inspect --format '{{.Id}}' "$image_tag")" || return 1
         owner="$(docker image inspect --format '{{index .Config.Labels "org.openj92.cpk.test-run"}}' "$identity")" || return 1
@@ -85,7 +204,8 @@ docker run --rm "$IMAGE" \
       fi
     done
     [ "$failed" = 0 ] || return 1
-    rm -f "$RECORDS/controller" "$RECORDS/network" "$RECORDS/image" "$RECORDS/cpk-image"
+    rm -f "$RECORDS/controller" "$RECORDS/network" "$RECORDS/image" "$RECORDS/cpk-image" \
+      "$RECORDS/hello-image" "$RECORDS/gateway-image"
     rmdir "$RECORDS"
   }
   trap 'result=$?; trap - 0; cleanup_numeric_bootstrap || { echo "numeric bootstrap cleanup incomplete; records=$RECORDS" >&2; result=1; }; exit "$result"' 0
@@ -108,6 +228,10 @@ docker run --rm "$IMAGE" \
   [ -z "$EXISTING" ] || { echo 'numeric bootstrap image tag already exists' >&2; exit 1; }
   EXISTING="$(docker image ls -q --no-trunc --filter "reference=$CPK_TAG")"
   [ -z "$EXISTING" ] || { echo 'numeric CPK image tag already exists' >&2; exit 1; }
+  for image_tag in "$HELLO_TAG" "$GATEWAY_TAG"; do
+    EXISTING="$(docker image ls -q --no-trunc --filter "reference=$image_tag")"
+    [ -z "$EXISTING" ] || { echo 'wrapper source image tag already exists' >&2; exit 1; }
+  done
   docker build -f products/secrets_server/Dockerfile \
     --label "org.openj92.cpk.test-run=$RUN" \
     --iidfile "$RECORDS/image" -t "$TAG" .
@@ -116,6 +240,14 @@ docker run --rm "$IMAGE" \
     --label "org.openj92.cpk.test-run=$RUN" \
     --iidfile "$RECORDS/cpk-image" -t "$CPK_TAG" .
   CPK_PRODUCT_IMAGE_ID="$(cat "$RECORDS/cpk-image")"
+  docker build -f products/hello_server/Dockerfile \
+    --label "org.openj92.cpk.test-run=$RUN" \
+    --iidfile "$RECORDS/hello-image" -t "$HELLO_TAG" .
+  HELLO_IMAGE_ID="$(cat "$RECORDS/hello-image")"
+  docker build -f products/cpk_local_gateway/Dockerfile \
+    --label "org.openj92.cpk.test-run=$RUN" \
+    --iidfile "$RECORDS/gateway-image" -t "$GATEWAY_TAG" .
+  GATEWAY_IMAGE_ID="$(cat "$RECORDS/gateway-image")"
   HELPER_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
   docker network create --internal \
     --label "org.openj92.cpk.test-run=$RUN" \
@@ -127,25 +259,53 @@ docker run --rm "$IMAGE" \
     --network "$NETWORK_ID" \
     --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
     -e DOCKER_HOST=unix:///var/run/docker.sock \
-    -e PYTHONPATH=/app \
+    -e PYTHONPATH=/app:/app/products/cpk_local_gateway/tests \
+    -e DOCKER_CONFIG=/tmp/cpk-wrapper-empty-docker-config \
     -e "CPK_SECRET_TEST_RUN=$RUN" \
     -e "CPK_SECRET_PRODUCT_IMAGE=$PRODUCT_IMAGE_ID" \
     -e "CPK_NUMERIC_PRODUCT_IMAGE=$CPK_PRODUCT_IMAGE_ID" \
+    -e "CPK_WRAPPER_HELLO_IMAGE=$HELLO_IMAGE_ID" \
+    -e "CPK_WRAPPER_GATEWAY_IMAGE=$GATEWAY_IMAGE_ID" \
+    -e "CPK_WRAPPER_ARTIFACT_MODE=$WRAPPER_MODE" \
+    -e "CPK_WRAPPER_HELLO_A=${CPK_WRAPPER_HELLO_A:-}" \
+    -e "CPK_WRAPPER_HELLO_B=${CPK_WRAPPER_HELLO_B:-}" \
+    -e "CPK_WRAPPER_GATEWAY=${CPK_WRAPPER_GATEWAY:-}" \
     -e "CPK_SECRET_HELPER_IMAGE=$HELPER_IMAGE_ID" \
     -e "CPK_SECRET_ENGINE_ID=$ENGINE_ID" \
     -e "CPK_SECRET_NETWORK=$NETWORK_ID" \
     "$HELPER_IMAGE_ID" python products/secrets_server/tests/live_numeric_bootstrap.py
 )
 
+CPK_SECRETS_SMOKE_PROFILE=wrapped-source \
+CPK_SECRETS_BUILD_CONTROLLER=0 \
+CPK_SERVERS_TEST_IMAGE="$IMAGE" \
+CPK_SECRETS_IMAGE="${CPK_SECRETS_SOURCE_IMAGE:-localhost/control-plane-kit-servers/secrets-server:local}" \
+CPK_SECRETS_BUILD_IMAGE=1 sh scripts/secrets_server_image_smoke.sh
 SECRETS_IMAGE="$(docker run --rm "$IMAGE" python scripts/product_image_coordinate.py secrets-server)"
+CPK_SECRETS_SMOKE_PROFILE=published-baseline \
 CPK_SECRETS_BUILD_IMAGE=0 \
 CPK_SECRETS_BUILD_CONTROLLER=0 \
 CPK_SERVERS_TEST_IMAGE="$IMAGE" \
 CPK_SECRETS_IMAGE="$SECRETS_IMAGE" \
   sh scripts/secrets_server_image_smoke.sh
+CPK_SERVER_SMOKE_PROFILE=wrapped-source CPK_SERVERS_TEST_IMAGE="$IMAGE" \
 CPK_SERVER_BUILD_IMAGE=1 sh scripts/cpk_server_image_smoke.sh
 CPK_IMAGE="$(docker run --rm "$IMAGE" python scripts/product_image_coordinate.py cpk-server)"
 CPK_SERVER_IMAGE="$CPK_IMAGE" sh scripts/cpk_server_published_image_smoke.sh
+
+# Additional current immutable pair; neither source nor historical coverage is
+# replaced. Producer-side preload and publication are separately authorized.
+if [ "${CPK_ROOT_ARTIFACT_MODE:-source-built}" = published-digest ]; then
+  ROOT_ARTIFACT_GATE_SOURCE="$(git rev-parse HEAD)"
+  printf 'current root artifact qualification gate_source=%s producer_source=%s\n' \
+    "$ROOT_ARTIFACT_GATE_SOURCE" "$CPK_ROOT_SOURCE_REVISION"
+  CPK_SECRETS_SMOKE_PROFILE=wrapped-artifact CPK_SECRETS_BUILD_IMAGE=0 \
+    CPK_SECRETS_BUILD_CONTROLLER=0 CPK_SERVERS_TEST_IMAGE="$IMAGE" \
+    CPK_SECRETS_IMAGE="$CPK_ROOT_SECRETS_IMAGE" sh scripts/secrets_server_image_smoke.sh
+  CPK_SERVER_SMOKE_PROFILE=wrapped-artifact CPK_SERVER_BUILD_IMAGE=0 \
+    CPK_SERVERS_TEST_IMAGE="$IMAGE" CPK_SERVER_IMAGE="$CPK_ROOT_CPK_IMAGE" \
+    sh scripts/cpk_server_image_smoke.sh
+fi
 # Real external-root launcher: canonical products, isolated test workspace, no
 # provider/DNS exposure or retained acceptance installation.
 (
@@ -199,5 +359,28 @@ CPK_SERVER_IMAGE="$CPK_IMAGE" sh scripts/cpk_server_published_image_smoke.sh
     --mount "type=bind,source=$RECORDS,target=/witness,readonly" \
     -e PYTHONPATH=/source:/app/products/cpk_server/src "$DRIVER" \
     python /source/products/cpk_server/tests/live_root_bootstrap.py unchanged "$RUN"
+)
+sh scripts/cloudflared_connection_witness.sh
+sh scripts/cloudflared_managed_witness.sh
+
+# PostgreSQL source image: exact non-root wrapper, retained native data and
+# bounded failure/stop behavior. The controller owns only its labeled resources.
+(
+  RECORDS="$(mktemp -d)"
+  RUN="cpk-postgres-$(basename "$RECORDS")"
+  cleanup_postgres_records() {
+    rm -f "$RECORDS/control.json" "$RECORDS/password" "$RECORDS/10-witness.sql"
+    rmdir "$RECORDS/wrong-owner-data"
+    rmdir "$RECORDS"
+  }
+  trap 'result=$?; trap - 0; cleanup_postgres_records || result=1; exit "$result"' 0
+  docker run --rm \
+    --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
+    --mount "type=bind,source=$ROOT,target=/source,readonly" \
+    --mount "type=bind,source=$RECORDS,target=/witness" \
+    -e PYTHONPATH=/source/products/postgres_server/src:/source/products/postgres_server/tests \
+    -e "CPK_POSTGRES_TEST_RUN=$RUN" \
+    -e "CPK_POSTGRES_HOST_RECORDS=$RECORDS" \
+    "$IMAGE" python /source/products/postgres_server/tests/live_postgres_image.py
 )
 sh scripts/docker_residue_audit.sh

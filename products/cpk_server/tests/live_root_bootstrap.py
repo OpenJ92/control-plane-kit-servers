@@ -9,7 +9,9 @@ from pathlib import Path
 import secrets
 import signal
 import stat
+import subprocess
 import sys
+from tempfile import TemporaryDirectory
 from typing import NamedTuple
 
 from products.cpk_server.examples.root_bootstrap_input import example_input
@@ -156,10 +158,18 @@ def retain_authority_evidence(run, container, inspection, node, receipt, engine_
 
 def prepare(run):
     os.umask(0o077)
+    commissioning_driver_witness(run)
     port_text = os.environ.get("CPK_ROOT_TEST_PORT", "18089")
     if not port_text.isascii() or not port_text.isdecimal() or not 1 <= int(port_text) <= 65535:
         raise ValueError("CPK_ROOT_TEST_PORT must be an integer from 1 to 65535")
     document = example_input(installation_id=run, workspace_id=run, port=int(port_text))
+    from control_plane_kit_core.configuration import ConfigurationArtifact, ConfigurationFileMode, ConfigurationMediaType
+    # This is an inert delivery witness on historical images, not current-source
+    # control configuration or qualification of a new receiving protocol.
+    for role in ("cpk", "secrets"):
+        artifact = ConfigurationArtifact("bootstrap-file-witness", "/etc/cpk/bootstrap-witness.json",
+            ConfigurationMediaType.JSON, json.dumps({"recipient": role, "run": run}), ConfigurationFileMode.READ_ONLY)
+        document["installation"]["products"][role]["product"]["runtime_contract"]["configuration_artifacts"] = [artifact.descriptor()]
     input_path = ROOT / "input.json"
     input_path.write_text(json.dumps(document))
     # The real launcher must plan from the documented invoking-user private input.
@@ -186,6 +196,138 @@ def prepare(run):
     (material / "index.json").write_text(json.dumps({"schema": "cpk.root-bootstrap.material.v1", "files": files}))
     (material / "index.json").chmod(0o400)
     (ROOT / "state").mkdir(mode=0o700)
+
+
+COMMISSIONING_STAGES = ("imports", "provenance", "plan", "prepare", "decode", "reuse", "complete-plan")
+COMMISSIONING_SUCCESS = "root commissioning: actual driver factories and exact reuse PASS"
+
+
+def report_commissioning_driver_result(completed):
+    """Project only a closed, ordered stage prefix; discard all child errors."""
+    markers = tuple("commissioning-stage:" + stage for stage in COMMISSIONING_STAGES)
+    lines = completed.stdout.strip().splitlines()
+    if completed.returncode == 0 and lines == [*markers, COMMISSIONING_SUCCESS]:
+        print(COMMISSIONING_SUCCESS, flush=True)
+        return
+    stage = "unknown"
+    if 0 < len(lines) <= len(markers) and tuple(lines) == markers[:len(lines)]:
+        stage = COMMISSIONING_STAGES[len(lines) - 1]
+    raise AssertionError("root commissioning actual driver witness failed; stage=" + stage)
+
+
+def commissioning_driver_witness(run):
+    """Use image-owned modules in the actual driver, not the full unit image."""
+    # test.sh supplies /source for its fixture entrypoint. The subprocess may
+    # load product implementations only from the driver's copied /app paths.
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = ":".join("/app/products/" + name + "/src"
+        for name in ("cpk_server", "cpk_local_gateway", "secrets_server", "postgres_server"))
+    with TemporaryDirectory(prefix="commissioning-fixture-", dir=ROOT) as directory:
+        state = Path(directory)
+        document = {"schema": "cpk.root-commissioning.intent.v1", "installation_id": run,
+            "workspace_id": run, "profile": "operator-offline-read-trust",
+            "custody": {"host_directory": str(state), "uid": os.geteuid(), "gid": os.getegid()}}
+        # Synthetic immutable ID binds this isolated library witness. It is not
+        # image qualification; the existing launcher separately checks its ID.
+        selected = json.loads((Path(__file__).resolve().parents[3] / "coordinates/server-products.json").read_text())["upstreams"]
+        payload = json.dumps({"intent": document, "preparer": "sha256:" + "a" * 64, "upstreams": selected,
+            "bootstrap_input": example_input(installation_id=run, workspace_id=run)})
+        program = """
+print("commissioning-stage:imports", flush=True)
+import importlib, importlib.metadata, json, pathlib, sys
+from control_plane_kit_core.configuration import ConfigurationArtifact
+from control_plane_kit_secrets.control import decode_secrets_control_configuration
+from control_plane_kit_servers_cpk_server.control_configuration import decode_cpk_control_configuration
+from control_plane_kit_servers_cpk_server.root_commissioning import plan_root_commissioning, prepare_root_commissioning
+print("commissioning-stage:provenance", flush=True)
+for name, product in (("control_plane_kit_servers_cpk_server.root_commissioning", "cpk_server"),
+                      ("control_plane_kit_servers_secrets_server.configuration", "secrets_server"),
+                      ("control_plane_kit_servers_postgres_server.configuration", "postgres_server")):
+    loaded = pathlib.Path(importlib.import_module(name).__file__).resolve()
+    assert loaded.is_relative_to(pathlib.Path("/app/products") / product / "src")
+payload = json.loads(sys.stdin.read())
+for name in ("core", "operations", "server_sdk", "interpreters", "secrets"):
+    distribution = "control-plane-kit-" + name.replace("_", "-")
+    repository = "control-plane-kit" if name in ("core", "operations") else distribution
+    selected = payload["upstreams"]["control_plane_kit_" + name + "_commit"]
+    direct = json.loads(importlib.metadata.distribution(distribution).read_text("direct_url.json"))
+    assert direct["url"] == f"https://github.com/OpenJ92/{repository}/archive/{selected}.zip"
+    assert direct.get("subdirectory") == (distribution if name in ("core", "operations") else None)
+print("commissioning-stage:plan", flush=True)
+plan = plan_root_commissioning(payload["intent"], preparer_image_id=payload["preparer"])
+state = pathlib.Path(payload["intent"]["custody"]["host_directory"])
+print("commissioning-stage:prepare", flush=True)
+result = prepare_root_commissioning(plan, expected_digest=plan["digest"],
+    preparer_image_id=payload["preparer"], state_directory=state)
+print("commissioning-stage:decode", flush=True)
+assert set(result["artifacts"]) == {"cpk", "secrets"}
+for role, decode in (("cpk", decode_cpk_control_configuration), ("secrets", decode_secrets_control_configuration)):
+    artifact = ConfigurationArtifact.from_descriptor(result["artifacts"][role])
+    configured = decode(artifact.content.encode())
+    assert configured.target.receiver_id == result["receiver_ids"][role]
+    assert {family.purpose.value for family in configured.verifiers} == {
+        "workload-node-control-surface-read", "workload-node-health-read"}
+print("commissioning-stage:reuse", flush=True)
+assert prepare_root_commissioning(plan, expected_digest=plan["digest"],
+    preparer_image_id=payload["preparer"], state_directory=state) == result
+assert "PRIVATE KEY" not in json.dumps(result)
+print("commissioning-stage:complete-plan", flush=True)
+from dataclasses import replace
+from control_plane_kit_core.products import OciImageReference, ProductDescriptorCodec
+from control_plane_kit_core.topology import GraphDescriptorCodec
+from control_plane_kit_servers_cpk_server.bootstrap import plan_root_bootstrap
+from control_plane_kit_servers_cpk_server.control_configuration import CpkSourceVariant, cpk_source_runtime_contract
+from control_plane_kit_servers_secrets_server.configuration import secrets_source_runtime_contract
+from control_plane_kit_servers_postgres_server.configuration import (
+    postgres_control_configuration_artifact, postgres_control_declaration, postgres_source_runtime_contract)
+document = payload["bootstrap_input"]
+codec = ProductDescriptorCodec()
+for role in ("cpk", "secrets"):
+    artifact = ConfigurationArtifact.from_descriptor(result["artifacts"][role])
+    contract = (cpk_source_runtime_contract(CpkSourceVariant.DOCKER_CLOUDFLARE, artifact)
+        if role == "cpk" else secrets_source_runtime_contract(artifact))
+    selected = codec.decode_document(document["installation"]["products"][role])
+    document["installation"]["products"][role] = json.loads(codec.encode_document(
+        replace(selected.product, runtime_contract=contract)).content)
+# Public-only authoring for a third, explicitly supplied fixture receiver. The
+# original two-role commissioning result and its exact reuse remain unchanged.
+import control_plane_kit_core as core
+cpk = decode_cpk_control_configuration(result["artifacts"]["cpk"]["content"].encode())
+roles = core.NodeControlGraphReferenceRole
+postgres = replace(cpk, target=replace(cpk.target,
+    node_id=core.NodeControlGraphReference(roles.NODE, document["installation"]["installation_id"] + "-postgres"),
+    provider_socket_name=core.NodeControlGraphReference(roles.PROVIDER_SOCKET, "management"),
+    receiver_id="f" * 32), declaration=postgres_control_declaration())
+postgres_artifact = postgres_control_configuration_artifact(postgres)
+selected = codec.decode_document(document["installation"]["products"]["postgres"])
+document["installation"]["products"]["postgres"] = json.loads(codec.encode_document(replace(selected.product,
+    image=OciImageReference("example.invalid", "fixture/managed-postgres", "sha256:" + "e" * 64),
+    runtime_contract=postgres_source_runtime_contract(postgres_artifact))).content)
+document["installation"]["website"] = {
+    "image": OciImageReference("example.invalid", "fixture/website", "sha256:" + "a" * 64).descriptor(),
+    "external_endpoint": "https://web.example.test", "host_binding": {"address": "127.0.0.1", "port": 18081}}
+complete = plan_root_bootstrap(document, driver_image_id=payload["preparer"])
+assert len(GraphDescriptorCodec().decode(complete["graph"]).nodes) == 4
+assert len(complete["host_bindings"]) == 2
+assert len(complete["setup_products"]) == 4
+assert complete["setup_routes"].count("command.product.import") == 4
+for role in ("cpk", "secrets"):
+    node = next(node for node in complete["resources"]["nodes"] if node["node_id"] == document["installation"]["installation_id"] + "-" + role)
+    assert node["configuration_files"][0]["artifact"] == result["artifacts"][role]
+postgres_node = next(node for node in complete["resources"]["nodes"]
+    if node["node_id"] == document["installation"]["installation_id"] + "-postgres")
+assert postgres_node["configuration_files"][0]["artifact"] == postgres_artifact.descriptor()
+assert postgres_node["secret_files"][0]["target"] == "/run/secrets/postgres/password"
+assert not any(binding["node_id"] == postgres_node["node_id"] for binding in complete["host_bindings"])
+for name in ("control_plane_kit_servers_cpk_server.bootstrap", "control_plane_kit_servers_cpk_server.client.frontend"):
+    assert pathlib.Path(importlib.import_module(name).__file__).resolve().is_relative_to(pathlib.Path("/app/products/cpk_server/src"))
+print("root commissioning: actual driver factories and exact reuse PASS")
+"""
+        completed = subprocess.run([sys.executable, "-c", program], input=payload,
+            text=True, capture_output=True, env=environment, cwd="/app", check=False)
+        # Do not print arbitrary child exceptions or private fixture payloads.
+        report_commissioning_driver_result(completed)
+        print("root bootstrap: actual driver complete plan PASS", flush=True)
 
 
 def check(run):
@@ -244,10 +386,38 @@ def check(run):
                 assert inspection.bind_mounts == ()
                 assert inspection.supplementary_groups == ()
             assert {(entry.target_path, entry.volume_name) for entry in inspection.readonly_secret_mounts} == {
-                (entry["target"], entry["name"]) for entry in node["secret_files"]}
+                (entry["target"], entry["name"]) for entry in node["secret_files"] + node["configuration_files"]}
             for entry in node["secret_files"]:
                 assert receipt["observations"]["protected_files"][entry["name"]] == {
                     "uid": image.secret_file_owner_uid(), "mode": "0400", "verified": True}
+            for entry in node["configuration_files"]:
+                assert entry["name"] in receipt["resources"]["volumes"]
+                expected = {"path": entry["target"], "sha256": entry["sha256"],
+                    "uid": image.secret_file_owner_uid(), "mode": int(entry["artifact"]["file_mode"], 8)}
+                probe = '''
+import hashlib, json, os, stat
+from pathlib import Path
+path = Path(EXPECTED["path"])
+metadata = path.stat()
+assert os.geteuid() == EXPECTED["uid"] and os.geteuid() != 0
+assert stat.S_ISREG(metadata.st_mode) and metadata.st_uid == 0
+assert stat.S_IMODE(metadata.st_mode) == EXPECTED["mode"] == 0o444
+with path.open("rb") as stream:
+    raw = stream.read(4097)
+assert len(raw) <= 4096 and hashlib.sha256(raw).hexdigest() == EXPECTED["sha256"]
+try:
+    with path.open("ab") as stream:
+        stream.write(b"unexpected-write")
+except OSError:
+    denied = True
+else:
+    denied = False
+assert denied
+print(json.dumps({"numeric_read": True, "mode": True, "bytes": True, "write_denied": True}))
+'''
+                result = container.exec_run(["python", "-I", "-c", "EXPECTED=" + repr(expected) + "\n" + probe])
+                assert result.exit_code == 0 and len(result.output) <= 256, "configuration numeric recipient witness failed"
+                assert json.loads(result.output) == {"numeric_read": True, "mode": True, "bytes": True, "write_denied": True}
             for value_path in (ROOT / "material").iterdir():
                 if value_path.name != "index.json":
                     assert value_path.read_bytes() not in container.logs(tail=1000), "secret in product logs"
