@@ -8,6 +8,9 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 cd "$ROOT"
 
 case "${1:-}" in
+  --postgres-release-tests|--postgres-published-image)
+    exec sh scripts/postgres_artifact_shell.sh "$@"
+    ;;
   --managed-connector-controller|--managed-connector-release-tests)
     exec sh scripts/cloudflared_release_shell.sh "$@"
     ;;
