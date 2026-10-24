@@ -330,22 +330,23 @@ else:sys.exit(2)
                         getattr(client,collection).create.assert_not_called()
 
     def test_same_basename_receipts_get_distinct_random_run_identities(self):
+        from test_postgres_artifact_shell import DOCKER, IMAGE
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);(root/'bin').mkdir()
             docker=root/'bin/docker'
-            docker.write_text('#!/bin/sh\nif [ "$1" = image ]; then printf "%s\\n" "'+ID+'"; fi\n')
+            docker.write_text(DOCKER)
             docker.chmod(0o755)
             git=root/'bin/git'
             git.write_text('#!/bin/sh\nif [ "$1" = rev-parse ]; then printf "%s\\n" "'+SOURCE+'"; fi\n')
             git.chmod(0o755)
-            env=dict(os.environ,PATH=str(root/'bin')+':'+os.environ['PATH'],
+            env=dict(os.environ,PATH=str(root/'bin')+':'+os.environ['PATH'],FAKE_STATE=str(root),
                      CPK_POSTGRES_ARTIFACT_MODE='published-digest',CPK_POSTGRES_IMAGE=REFERENCE,
                      CPK_POSTGRES_SOURCE_REVISION=SOURCE,CPK_POSTGRES_RECIPE_SHA256=RECIPE)
             identities=[]
             for parent in ('a','b'):
                 (root/parent).mkdir();receipt=root/parent/'receipts'
                 result=subprocess.run(['sh',str(ROOT/'scripts/postgres_artifact_shell.sh'),
-                    '--postgres-published-image','--controller-image-id',ID,'--receipt-dir',str(receipt)],
+                    '--postgres-published-image','--controller-image-id',IMAGE,'--receipt-dir',str(receipt)],
                     env=env,capture_output=True,text=True)
                 self.assertEqual(result.returncode,0,result.stderr)
                 identities.append((receipt/'run.id').read_text().strip())

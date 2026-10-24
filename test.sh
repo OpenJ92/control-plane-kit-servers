@@ -8,7 +8,7 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 cd "$ROOT"
 
 case "${1:-}" in
-  --postgres-release-tests|--postgres-published-image)
+  --postgres-release-tests|--postgres-published-image|--postgres-source-image)
     exec sh scripts/postgres_artifact_shell.sh "$@"
     ;;
   --managed-connector-controller|--managed-connector-release-tests)
@@ -367,20 +367,8 @@ sh scripts/cloudflared_managed_witness.sh
 # bounded failure/stop behavior. The controller owns only its labeled resources.
 (
   RECORDS="$(mktemp -d)"
-  RUN="cpk-postgres-$(basename "$RECORDS")"
-  cleanup_postgres_records() {
-    rm -f "$RECORDS/control.json" "$RECORDS/password" "$RECORDS/10-witness.sql"
-    rmdir "$RECORDS/wrong-owner-data"
-    rmdir "$RECORDS"
-  }
-  trap 'result=$?; trap - 0; cleanup_postgres_records || result=1; exit "$result"' 0
-  docker run --rm \
-    --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
-    --mount "type=bind,source=$ROOT,target=/source,readonly" \
-    --mount "type=bind,source=$RECORDS,target=/witness" \
-    -e PYTHONPATH=/source/products/postgres_server/src:/source/products/postgres_server/tests \
-    -e "CPK_POSTGRES_TEST_RUN=$RUN" \
-    -e "CPK_POSTGRES_HOST_RECORDS=$RECORDS" \
-    "$IMAGE" python /source/products/postgres_server/tests/live_postgres_image.py
+  CONTROLLER="$(docker image inspect "$IMAGE" --format '{{.Id}}')"
+  sh scripts/postgres_artifact_shell.sh --postgres-source-image \
+    --controller-image-id "$CONTROLLER" --receipt-dir "$RECORDS/receipts"
 )
 sh scripts/docker_residue_audit.sh
