@@ -148,3 +148,17 @@ For source validation only, `./test.sh --postgres-release-tests` with the same
 controller/receipt options runs the PostgreSQL unit suite with no network or daemon.
 Normal CI retains the existing source-built runtime witness and global residue
 audit. Neither path earns published-digest or installed-driver acceptance.
+
+The source lifecycle now uses `--postgres-source-image` through the same owning
+shell as published qualification, replacing the former direct controller launch.
+Both start the controller on a fresh shell-owned internal bootstrap network so it
+can join the witness's internal test network without default-bridge egress.
+Controller and bootstrap ownership use a separate namespace from lifecycle
+resources; existing freshness/adoption refusal is unchanged. Cleanup removes the
+verified owned controller before the exact owned empty bootstrap network.
+Unexpected endpoints or uncertain creation/cleanup stop with private receipts;
+there is no forced foreign disconnection, automatic retry or SIGKILL cleanup
+guarantee. Source mode rejects published selection inputs and retains source image
+build/removal. Published mode retains borrowed images. The shell removes only its
+exact fixture files after shell resource cleanup succeeds. Source CI proves this
+launch composition with source evidence, not artifact qualification.
