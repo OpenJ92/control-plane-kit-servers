@@ -193,5 +193,42 @@ else:sys.exit(2)
                 if failure=='none':self.assertIn('reference='+REFERENCE,result.stdout)
                 else:self.assertNotIn('postgres-server-managed reference=',result.stdout)
 
+    def test_existing_named_or_labelled_resources_refuse_without_adoption_or_cleanup(self):
+        witness=self.witness()
+        for kind in ('containers','volumes','networks'):
+            for matched_by in ('label','name'):
+                with self.subTest(kind=kind,matched_by=matched_by):
+                    client=Mock();existing=Mock()
+                    for collection in ('containers','volumes','networks'):
+                        getattr(client,collection).list.return_value=[]
+                    getattr(client,kind).list.side_effect=lambda **kw: [existing] if matched_by in kw['filters'] else []
+                    with patch.object(witness,'prepare_files') as prepare:
+                        with self.assertRaises(AssertionError):witness.exercise(client,Mock())
+                    prepare.assert_not_called();existing.remove.assert_not_called()
+                    for collection in ('containers','volumes','networks'):
+                        getattr(client,collection).create.assert_not_called()
+
+    def test_same_basename_receipts_get_distinct_random_run_identities(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);(root/'bin').mkdir()
+            docker=root/'bin/docker'
+            docker.write_text('#!/bin/sh\nif [ "$1" = image ]; then printf "%s\\n" "'+ID+'"; fi\n')
+            docker.chmod(0o755)
+            git=root/'bin/git'
+            git.write_text('#!/bin/sh\nif [ "$1" = rev-parse ]; then printf "%s\\n" "'+SOURCE+'"; fi\n')
+            git.chmod(0o755)
+            env=dict(os.environ,PATH=str(root/'bin')+':'+os.environ['PATH'],
+                     CPK_POSTGRES_ARTIFACT_MODE='published-digest',CPK_POSTGRES_IMAGE=REFERENCE,
+                     CPK_POSTGRES_SOURCE_REVISION=SOURCE,CPK_POSTGRES_RECIPE_SHA256=RECIPE)
+            identities=[]
+            for parent in ('a','b'):
+                (root/parent).mkdir();receipt=root/parent/'receipts'
+                result=subprocess.run(['sh',str(ROOT/'scripts/postgres_artifact_shell.sh'),
+                    '--postgres-published-image','--controller-image-id',ID,'--receipt-dir',str(receipt)],
+                    env=env,capture_output=True,text=True)
+                self.assertEqual(result.returncode,0,result.stderr)
+                identities.append((receipt/'run.id').read_text().strip())
+            self.assertNotEqual(*identities)
+
 
 if __name__=='__main__':unittest.main()

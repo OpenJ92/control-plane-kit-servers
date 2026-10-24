@@ -52,7 +52,9 @@ case "$MODE" in
   ;;
  --postgres-published-image)
   mkdir -m 700 "$RECEIPTS/fixtures"
-  RUN="cpk-postgres-published-$(basename "$RECEIPTS")"
+  RUN_RECORD="$(mktemp -d "$RECEIPTS/run.XXXXXXXXXX")"
+  RUN="cpk-postgres-published-$(basename "$RUN_RECORD")"
+  printf '%s\n' "$RUN" > "$RECEIPTS/run.id"
   set +e
   docker run --pull never --rm --network none --read-only --tmpfs /tmp:exec \
     --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \

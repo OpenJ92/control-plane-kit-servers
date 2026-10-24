@@ -46,6 +46,12 @@ fixtures or resources. Every lifecycle container uses the resulting immutable
 image ID. Missing/mismatched artifacts fail; no implicit pull, build or alternative
 tag exists. The borrowed product image is never deleted.
 
+Published invocations allocate a random run identity inside the new private
+receipt directory and retain it as `run.id`. Before fixtures or lifecycle effects,
+the witness refuses any existing container, volume or network matching its name
+or label. It does not adopt a prior volume returned by Docker's create operation.
+Only successfully created objects enter cleanup lists.
+
 The existing witness owns a fresh labelled volume and internal network, temporary
 password/control/init fixtures, and its own containers. Its unchanged ladder
 checks authenticated management, initial unknown then healthy readiness, retained

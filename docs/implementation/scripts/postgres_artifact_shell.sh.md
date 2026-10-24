@@ -6,4 +6,6 @@ immutable controller and new private receipt directory. Published mode passes
 only the four explicit product selection variables, source/fixture mounts and
 daemon socket to the existing witness. No controller/product pull or build is
 performed. Exit status and logs are retained; there is no retry.
+Published mode allocates a random run identity with mktemp under the private
+receipt directory and retains `run.id`; receipt basename is never the identity.
 See [artifact procedure](../../managed-postgres-artifacts.md).

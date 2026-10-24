@@ -5,3 +5,6 @@ immutable artifact admission, no fallback and borrowed-image preservation,
 and cleanup-before-success ordering. The publisher test uses command fakes to
 exercise its real shell and pure policy across preflight/build/push/post-check
 failures without Docker or registry effects. These tests do not qualify an image.
+Review regressions prove same-basename receipt paths receive distinct random
+identities and existing named/labelled resources refuse before creation, fixture
+mutation or removal.

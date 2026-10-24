@@ -371,7 +371,17 @@ def cleanup_files():
         directory.rmdir()
 
 
+def require_fresh_resources(client):
+    # Docker volume create may return an existing volume. Refuse adoption before
+    # writing fixtures or creating anything; a new receipt path is not ownership.
+    for filters in ({"label": "org.openj92.cpk.test-run=" + RUN}, {"name": RUN}):
+        require(not client.containers.list(all=True, filters=filters), "existing PostgreSQL test container")
+        require(not client.volumes.list(filters=filters), "existing PostgreSQL test volume")
+        require(not client.networks.list(filters=filters), "existing PostgreSQL test network")
+
+
 def exercise(client, image) -> None:
+    require_fresh_resources(client)
     network = None
     controller = None
     controller_connected = False
