@@ -132,6 +132,43 @@ def witness_value(raw):
     records=[]
     for line in lines:
         require(0<len(line)<=SMALL);records.append(decode(line))
+    if not any(type(r) is dict and r.get('outcome')=='package_pass' for r in records):
+        seen=set()
+        for r in records:
+            require(type(r) is dict)
+            stage=r.get('stage')
+            marker=(stage,r.get('role'))
+            require(marker not in seen);seen.add(marker)
+            if stage=='managed_cloudflared_controller_failure':
+                keys(r,('stage','outcome','role','phase','operation','helper_mode'))
+                require(r['outcome']=='unqualified' and r['role'] in ('primary','cleanup'))
+                require(r['phase'] in ('setup','artifact','profile','fatal','cleanup'))
+                require(r['operation'] in ('initialize','inputs','connect','owner','image_inspect','prepare_files','absence_check','create','record','start','reload','result_read','resolve_profile','stop','logs','events','kill','wait','remove','close','report'))
+                require(r['helper_mode'] in (None,'contents'))
+            elif stage=='managed_cloudflared_helper':
+                keys(r,('stage','mode','exit_code','result'),('reason',))
+                require(r['mode']=='contents');integer(r['exit_code'],1,255)
+                require(r['result'] in ('invalid','unavailable','deadline_exhausted','valid_error'))
+                require(('reason' in r)==(r['result']=='valid_error'))
+                if 'reason' in r:require(r['reason'] in ('native_version','installed_source_coordinate','notice_source','notice_path','notice_blob','dependency_license_metadata','numeric_uid','helper_output_bound','helper_output_path','helper_output_write','helper_exception'))
+            elif stage=='managed_cloudflared_controller':
+                keys(r,('stage','outcome','reason','states'))
+                require(r['outcome']=='unqualified');text(r['reason'])
+                require(type(r['states']) is list and len(r['states'])<=100)
+                ids=set()
+                for state in r['states']:
+                    keys(state,('id','status'),('exit_code','pid'))
+                    hexadecimal(state['id'],64);require(state['id'] not in ids);ids.add(state['id'])
+                    require(state['status'] in ('created','running','paused','restarting','removing','exited','dead','observation_unavailable'))
+                    if state['status']=='observation_unavailable':require(set(state)=={'id','status'})
+                    else:integer(state['exit_code']);integer(state['pid'])
+            elif stage=='stop_profile_inputs':
+                keys(r,('stage','container_id','engine_id','engine_version','engine_commit','platform','docker_sdk','configured_signal','configured_timeout'))
+                hexadecimal(r['container_id'],64)
+                for field in ('engine_id','engine_version','engine_commit','platform','docker_sdk','configured_signal'):text(r[field])
+                if r['configured_timeout'] is not None:integer(r['configured_timeout'])
+            else:require(False)
+        return None
     # A successful owner emits precisely these two records. Partial logs remain
     # unverified; no recovery or reason text is projected from failed witnesses.
     require(len(records)==2)
@@ -234,7 +271,11 @@ def project(receipts, source_root, context, producer_exit):
         require(q is not None)
         raw=read(root/'qualification/witness.log',LARGE)
         require(q[0].get('witness_log_sha256')==sha(raw))
-        value=witness_value(raw);result['stop']=value;result['native_version']='2026.6.1'
+        value=witness_value(raw)
+        if value is None:
+            require(q[0]['status']!='pass')
+            return None
+        result['stop']=value;result['native_version']='2026.6.1'
         if q[0]['status']=='pass' and q[0]['cleanup']=='verified' and q[0]['candidate_retained'] and q[0].get('platform')=='linux/amd64':
             result['outcomes']['qualification']='pass'
         return value
@@ -328,8 +369,11 @@ def run_attempt(attempt,source_root):
         raise ValueError('Invalid release evidence') from None
 
 
-def export(receipts,source_root,context,producer_exit,destination):
+def export(receipts,source_root,context,producer_exit,destination,*,invalid_exit=False):
     value=project(receipts,source_root,context,producer_exit)
+    if invalid_exit:
+        value['outcomes']['projection']='invalid'
+        value['failure']='invalid-evidence'
     destination=Path(destination)
     try:
         fd=directory(destination.parent);os.close(fd)
@@ -362,9 +406,13 @@ def main():
         if args.mode=='run':return run_attempt(path,source)
         context=context_value(decode(read(path/'context.json')))
         require(clean_context(source,context['run_id'],context['attempt'])==context)
-        try:code=exit_code(read(path/'producer.exit',8))
+        invalid_exit=False
+        try:raw=read(path/'producer.exit',SMALL)
         except FileNotFoundError:code=None
-        value=export(path/'receipts',source,context,code,path/'public')
+        else:
+            try:code=exit_code(raw)
+            except ValueError:code=None;invalid_exit=True
+        value=export(path/'receipts',source,context,code,path/'public',invalid_exit=invalid_exit)
         return 0 if value['outcomes']['projection']=='complete' else 1
     except Exception:
         print('Managed release evidence unavailable',file=sys.stderr)
