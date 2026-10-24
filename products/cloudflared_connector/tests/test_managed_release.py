@@ -1,5 +1,6 @@
 """Release orchestration laws; command doubles do not qualify an OCI artifact."""
 from pathlib import Path
+import json
 import os
 import subprocess
 import tempfile
