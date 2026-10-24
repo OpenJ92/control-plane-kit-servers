@@ -204,7 +204,8 @@ class ManagedCandidateOwnershipTests(unittest.TestCase):
 
 
 class ManagedProducerOrderingTests(unittest.TestCase):
-    def producer(self, fail_qualification=False, substitute=False):
+    def producer(self, fail_qualification=False, substitute=False, *, failure='', complete=False,
+                 diagnostic_write_failure=False, diagnostic=False):
         import json
         import shutil
         with tempfile.TemporaryDirectory() as directory:
@@ -217,17 +218,34 @@ class ManagedProducerOrderingTests(unittest.TestCase):
             source = 'a'*40
             candidate = 'sha256:'+'b'*64
             controller = 'sha256:'+'c'*64
+            manifest = json.dumps({'schemaVersion':2,'config':{'digest':'sha256:'+'d'*64},'layers':[]})
+            import hashlib
+            remote_digest = 'sha256:'+hashlib.sha256(manifest.encode()).hexdigest()
+            (root/'manifest').write_text(manifest)
+            (root/'metadata').write_text(json.dumps({'containerimage.digest':remote_digest,'containerimage.config.digest':'sha256:'+'d'*64}))
+            (root/'remote-config').write_text(json.dumps({'os':'linux','architecture':'amd64','config':{'Labels':{'org.opencontainers.image.revision':source}}}))
             (binary/'git').write_text('#!/bin/sh\ncase "$1" in status|ls-files|ls-tree|cat-file) exit 0;; archive) echo exact-source-context;; rev-parse) printf "%s\\n" "$SOURCE";; *) exit 92;; esac\n')
-            (binary/'gh').write_text('#!/bin/sh\ncase "$*" in *versions*) echo "[[]]";; *) echo \'{"name":"control-plane-kit-servers/cloudflared-connector","package_type":"container","visibility":"private"}\';; esac\n')
+            (binary/'gh').write_text('''#!/bin/sh
+printf 'gh metadata\n' >> "$CALLS"
+case "$*" in
+ *versions*) [ "$FAILURE" != versions ] || { echo PRIVATE-DIAGNOSTIC-CANARY >&2; exit 23; }; echo '[[]]';;
+ *) [ "$FAILURE" != package ] || { echo PRIVATE-DIAGNOSTIC-CANARY >&2; exit 23; }; echo '{"name":"control-plane-kit-servers/cloudflared-connector","package_type":"container","visibility":"private"}';;
+esac
+''')
             (binary/'tar').write_text('#!/bin/sh\nexit 0\n')
             (root/'test.sh').write_text('''#!/bin/sh
 printf 'test %s\n' "$1" >> "$CALLS"
 case "$1" in
  --managed-connector-controller)
+   [ "$FAILURE" != controller ] || exit 23
    mkdir -p "$3"
+   if [ "$BREAK_DIAGNOSTIC" = 1 ]; then mkdir "$CPK_MANAGED_RELEASE_RECEIPTS/producer-diagnostic.json"; echo preserve > "$CPK_MANAGED_RELEASE_RECEIPTS/producer-diagnostic.json/owned"; fi
    printf '%s\n' "$CONTROLLER" > "$3/image.id"
    echo '{}' > "$3/controller.json";;
- --managed-connector-candidate) exit "$QUALIFICATION_EXIT";;
+ --managed-connector-candidate)
+   mkdir -p "$CPK_MANAGED_RELEASE_RECEIPTS/qualification"
+   echo '{}' > "$CPK_MANAGED_RELEASE_RECEIPTS/qualification/qualification.json"
+   exit "$QUALIFICATION_EXIT";;
  *) exit 93;;
 esac
 ''')
@@ -235,10 +253,11 @@ esac
 printf 'docker %s\n' "$*" >> "$CALLS"
 case "$1 $2" in
  'buildx build')
+  [ "$FAILURE" != build ] || exit 23
   shift 2
   while [ "$#" -gt 0 ]; do
    case "$1" in --iidfile) printf '%s\n' "$CANDIDATE" > "$2"; shift;;
-   --metadata-file) echo '{}' > "$2"; shift;; esac
+   --metadata-file) cat "$CASE_ROOT/metadata" > "$2"; shift;; esac
    shift
   done;;
  'image inspect')
@@ -246,7 +265,10 @@ case "$1 $2" in
    *) if [ "$SUBSTITUTE" = 1 ] && [ -f "$CASE_ROOT/tagged" ]; then echo 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'; else printf '%s\n' "$CANDIDATE"; fi;; esac;;
  'tag '*) touch "$CASE_ROOT/tagged";;
  'run '*) exit 0;;
- 'push '*) exit 94;;
+ 'push '*) [ "$COMPLETE" = 1 ] || exit 94;;
+ 'buildx imagetools')
+   case "$*" in *--raw*) cat "$CASE_ROOT/manifest";;
+   *) [ "$FAILURE" != remote ] || exit 23; cat "$CASE_ROOT/remote-config";; esac;;
  *) exit 95;;
 esac
 ''')
@@ -255,11 +277,55 @@ esac
             env = dict(os.environ, PATH=str(binary)+os.pathsep+os.environ['PATH'],
                        SOURCE=source,CANDIDATE=candidate,CONTROLLER=controller,CALLS=str(calls),
                        CASE_ROOT=str(root),SUBSTITUTE='1' if substitute else '0',
+                       FAILURE=failure,COMPLETE='1' if complete else '0',
+                       BREAK_DIAGNOSTIC='1' if diagnostic_write_failure else '0',
                        QUALIFICATION_EXIT='7' if fail_qualification else '0',
                        CPK_MANAGED_RELEASE_RECEIPTS=str(root/'evidence'))
-            result = subprocess.run(['sh',str(root/'scripts/cloudflared_managed_publish.sh'),'managed-'+source],
+            tag='wrong' if failure=='admission' else 'managed-'+source
+            result = subprocess.run(['sh',str(root/'scripts/cloudflared_managed_publish.sh'),tag],
                                     cwd=root,env=env,capture_output=True,text=True,timeout=10)
-            return result, calls.read_text()
+            observed_calls=calls.read_text() if calls.exists() else ''
+            if diagnostic:
+                record=root/'evidence/producer-diagnostic.json'
+                value=json.loads(record.read_text()) if record.is_file() else None
+                if diagnostic_write_failure:self.assertEqual((record/'owned').read_text(),'preserve\n')
+                return result,observed_calls,value
+            return result, observed_calls
+
+    def test_terminal_diagnostic_names_entered_boundary_without_private_text(self):
+        for failure,stage in [('package','preflight-package-read'),('versions','preflight-versions-read'),
+                              ('controller','controller-acquisition'),('build','candidate-build'),
+                              ('remote','remote-verification')]:
+            with self.subTest(failure=failure):
+                result,calls,record=self.producer(failure=failure,complete=True,diagnostic=True)
+                self.assertEqual(result.returncode,23)
+                self.assertEqual(record,dict(schema='cpk.cloudflared-managed-producer-diagnostic.v1',source_commit='a'*40,stage=stage,exit_code=23))
+                self.assertNotIn('PRIVATE-DIAGNOSTIC-CANARY',json.dumps(record))
+                if failure in ('package','versions','controller','build'):self.assertNotIn('docker push ',calls)
+
+    def test_terminal_diagnostic_preserves_qualification_push_and_success_outcomes(self):
+        for options,stage,code in [({'fail_qualification':True},'candidate-qualification',7),
+                                   ({},'push',94),({'complete':True},'complete',0)]:
+            with self.subTest(stage=stage):
+                result,calls,record=self.producer(**options,diagnostic=True)
+                self.assertEqual(result.returncode,code)
+                self.assertIsNotNone(record)
+                self.assertEqual((record['stage'],record['exit_code']),(stage,code))
+                self.assertEqual(calls.count('docker push '),0 if code==7 else 1)
+
+    def test_diagnostic_write_failure_preserves_original_success_and_failure(self):
+        for complete,code in [(False,94),(True,0)]:
+            with self.subTest(complete=complete):
+                result,calls,record=self.producer(complete=complete,diagnostic_write_failure=True,diagnostic=True)
+                self.assertEqual(result.returncode,code)
+                self.assertIsNone(record)
+                self.assertEqual(calls.count('docker push '),1)
+
+    def test_pre_admission_failure_has_no_invented_terminal_record(self):
+        result,calls,record=self.producer(failure='admission',diagnostic=True)
+        self.assertNotEqual(result.returncode,0)
+        self.assertEqual(calls,'')
+        self.assertIsNone(record)
 
     def test_qualification_failure_never_tags_or_pushes(self):
         result, calls = self.producer(fail_qualification=True)
