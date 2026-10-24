@@ -289,7 +289,9 @@ esac
             if diagnostic:
                 record=root/'evidence/producer-diagnostic.json'
                 value=json.loads(record.read_text()) if record.is_file() else None
-                if diagnostic_write_failure:self.assertEqual((record/'owned').read_text(),'preserve\n')
+                if diagnostic_write_failure:
+                    self.assertEqual((record/'owned').read_text(),'preserve\n')
+                    self.assertEqual([p.name for p in record.iterdir()],['owned'])
                 return result,observed_calls,value
             return result, observed_calls
 
