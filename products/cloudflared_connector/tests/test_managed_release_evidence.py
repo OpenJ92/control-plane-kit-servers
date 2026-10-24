@@ -275,7 +275,7 @@ class ManagedEvidenceTests(unittest.TestCase):
             root=Path(d);context=fixture(root)
             records=[dict(stage='managed_cloudflared_helper',mode='contents',exit_code=1,result='valid_error',reason='native_version'),
                 dict(stage='managed_cloudflared_controller_failure',outcome='unqualified',role='primary',phase='artifact',operation='result_read',helper_mode='contents'),
-                dict(stage='managed_cloudflared_controller',outcome='unqualified',reason='package_inspection_failed',states={})]
+                dict(stage='managed_cloudflared_controller',outcome='unqualified',reason='package_inspection_failed',states=[])]
             log=root/'qualification/witness.log';log.write_text(''.join(json.dumps(r)+'\n' for r in records))
             q=json.loads((root/'qualification/qualification.json').read_text())
             q.update(status='fail',witness_log_sha256=digest(log));put(root,'qualification/qualification.json',q)
