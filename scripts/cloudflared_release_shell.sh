@@ -132,7 +132,7 @@ docker run --pull never --rm --network none --read-only --cap-drop ALL \
   --security-opt no-new-privileges --tmpfs /tmp:exec \
   --mount "type=bind,source=$ROOT,target=/source,readonly" \
   --workdir /source -e PYTHONDONTWRITEBYTECODE=1 \
-  "$CONTROLLER" sh -c 'python -m unittest discover -s products/cloudflared_connector/tests -p test_managed_release.py -v && python -m unittest discover -s products/cloudflared_connector/tests -p test_managed_witness_diagnostics.py -v' \
+  "$CONTROLLER" sh -c 'python -m unittest discover -s products/cloudflared_connector/tests -p "test_managed_release*.py" -v && python -m unittest discover -s products/cloudflared_connector/tests -p test_managed_witness_diagnostics.py -v' \
   > "$RECEIPTS/tests.log" 2>&1
 RESULT=$?
 set -e
