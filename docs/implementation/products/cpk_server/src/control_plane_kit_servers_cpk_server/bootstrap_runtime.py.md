@@ -38,9 +38,20 @@ password only in the exec environment, stderr disabled, and exact exit-zero /
 `1\n` evidence. A listening port or successful `pg_isready` is insufficient.
 SQL startup is distinct from signed wrapper readiness. Native startup is unchanged.
 
-Product SQL/connect timeouts bound database work. Polling has a 60-second budget;
-an in-flight Docker RPC still uses the existing 30-second client timeout, so this
-is not a hard 60-second execution deadline. An uncertain RPC is redacted and
-stops without automatic retry. No stdout/stderr/password is saved in receipts.
+Product SQL/connect timeouts bound database work, but Docker's attached stream
+does not inherit a reliable HTTP read timeout. This synchronous Linux CLI uses a
+scoped raising SIGALRM to interrupt each managed SQL observation after at most
+10 seconds or the remaining 60-second polling budget. It refuses a non-main
+thread or existing real timer before exec, then disarms/restores the prior signal
+handler in finally. SDK stream=False closes its response during unwinding.
+An interrupted observation is a redacted HOLD without another exec or acquisition
+advancement. It does not prove the remote SQL command was cancelled. No
+stdout/stderr/password is saved in receipts.
 Existing image-derived UID secret delivery, volume conflict refusal, retained
 data ownership, pending observations and no-automatic-replay rules remain.
+
+Before acquisition, managed shared password material rejects trailing LF,
+in addition to existing empty/NUL/invalid-encoding refusal. The product's generic
+file reader strips LF while CPK environment delivery preserves it; rejecting this
+ambiguous bootstrap input keeps PostgreSQL, CPK and probe bytes identical without
+rewriting the shared secret map. Native-root material behavior is unchanged.

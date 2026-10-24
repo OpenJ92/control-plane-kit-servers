@@ -3,6 +3,12 @@ import copy
 from dataclasses import replace
 import importlib
 import json
+from pathlib import Path
+import signal
+import socket
+from tempfile import TemporaryDirectory
+import threading
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -136,6 +142,61 @@ class ManagedPostgresInstallationTests(unittest.TestCase):
         self.assertEqual(delivery.environment_name, "POSTGRES_PASSWORD")
         self.assertEqual(plan, self.plan(installation_input()))
 
+    def material_index(self, plan, password):
+        root = Path(self.enterContext(TemporaryDirectory(dir=Path.cwd())))
+        reference = plan["input"]["installation"]["references"]["postgres_password"]
+        files = {}
+        for number, selected in enumerate(plan["required_material"]):
+            name = "material-" + str(number)
+            path = root / name
+            path.write_bytes(password if selected == reference else b"fixture-private-material")
+            path.chmod(0o400)
+            files[selected] = name
+        index = root / "index.json"
+        index.write_text(json.dumps({"schema": "cpk.root-bootstrap.material.v1", "files": files}))
+        index.chmod(0o400)
+        return index
+
+    def test_ambiguous_managed_shared_password_is_refused_before_acquisition(self):
+        runtime = importlib.import_module("control_plane_kit_servers_cpk_server.bootstrap_runtime")
+        plan = self.plan()
+        for password in (b"private-canary\n", b"private-canary\n\n", b"", b"private\x00canary", b"\xff"):
+            index = self.material_index(plan, password)
+            state = index.parent / "state"
+            with patch.object(runtime, "_acquire") as acquire:
+                with self.assertRaises(self.bootstrap.RootBootstrapError) as raised:
+                    self.bootstrap.apply_root_bootstrap(plan, expected_digest=plan["digest"],
+                        driver_image_id=DRIVER, index_path=index, state_directory=state)
+                acquire.assert_not_called()
+            self.assertNotIn("canary", str(raised.exception))
+            self.assertFalse((state / "receipt.json").exists())
+
+    def test_shared_credential_resolution_preserves_identical_recipient_and_probe_bytes(self):
+        from control_plane_kit_core.secrets import (
+            LocalDevelopmentSecretResolver, SecretEnvironmentDelivery,
+            SecretProviderAuthority,
+        )
+        from control_plane_kit_interpreters.secrets import resolve_secret_deliveries
+        from control_plane_kit_servers_postgres_server.readiness import psql_invocation
+        runtime = importlib.import_module("control_plane_kit_servers_cpk_server.bootstrap_runtime")
+        for managed, password in ((True, b"private-password-canary"), (False, b"native-password\n")):
+            plan = self.plan() if managed else self.plan(installation_input())
+            material = runtime._material(plan, self.material_index(plan, password))
+            graph = GraphDescriptorCodec().decode(plan["graph"])
+            pg_delivery, = graph.node("root-a-postgres").secret_deliveries
+            reference = pg_delivery.reference
+            resolver = LocalDevelopmentSecretResolver(SecretProviderAuthority(reference.provider_id, (reference.path,)),
+                {reference.reference_id: material[reference.reference_id]})
+            cpk_delivery, = tuple(delivery for delivery in graph.node("root-a-cpk").secret_deliveries
+                if isinstance(delivery, SecretEnvironmentDelivery) and delivery.environment_name == "PGPASSWORD")
+            cpk = resolve_secret_deliveries((cpk_delivery,), resolver=resolver).environment["PGPASSWORD"]
+            pg = resolve_secret_deliveries((pg_delivery,), resolver=resolver)
+            pg_value = pg.files[0].value.reveal() if managed else pg.environment["POSTGRES_PASSWORD"]
+            self.assertEqual(cpk.encode(), password)
+            self.assertEqual(pg_value, cpk)
+            if managed:
+                self.assertEqual(psql_invocation(material[reference.reference_id].encode()).environ["PGPASSWORD"], cpk)
+
 
 class ManagedPostgresStartupTests(unittest.TestCase):
     def setUp(self):
@@ -147,7 +208,7 @@ class ManagedPostgresStartupTests(unittest.TestCase):
                        SimpleNamespace(exit_code=1, output=b"private-error-canary"),
                        SimpleNamespace(exit_code=0, output=b"2\n")):
             self.container.exec_run.return_value = result
-            with patch.object(self.runtime.time, "sleep"), patch.object(self.runtime.time, "monotonic", side_effect=[0, 61]):
+            with patch.object(self.runtime.time, "sleep"), patch.object(self.runtime.time, "monotonic", side_effect=[0, 0, 61]):
                 with self.assertRaises(self.runtime.RootBootstrapHold) as raised:
                     self.runtime._postgres_ready(self.container, password=b"private-password-canary")
             self.assertNotIn("canary", str(raised.exception))
@@ -157,6 +218,7 @@ class ManagedPostgresStartupTests(unittest.TestCase):
             self.assertFalse(kwargs["stderr"])
 
     def test_only_exact_authenticated_select_one_succeeds(self):
+        previous = signal.getsignal(signal.SIGALRM)
         self.container.exec_run.side_effect = [SimpleNamespace(exit_code=1, output=b""),
                                               SimpleNamespace(exit_code=0, output=b"1\n")]
         with patch.object(self.runtime.time, "sleep"):
@@ -165,6 +227,8 @@ class ManagedPostgresStartupTests(unittest.TestCase):
         args, kwargs = self.container.exec_run.call_args
         self.assertIn("SET statement_timeout = '2s'; SELECT 1;", args[0])
         self.assertEqual(kwargs["environment"]["PGCONNECT_TIMEOUT"], "2")
+        self.assertIs(signal.getsignal(signal.SIGALRM), previous)
+        self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0.0, 0.0))
 
     def test_native_readiness_remains_the_existing_command(self):
         self.container.exec_run.return_value = SimpleNamespace(exit_code=0)
@@ -172,8 +236,68 @@ class ManagedPostgresStartupTests(unittest.TestCase):
         self.container.exec_run.assert_called_once_with(["pg_isready", "-h", "127.0.0.1"])
 
     def test_uncertain_daemon_call_is_redacted_and_not_retried(self):
+        previous = signal.getsignal(signal.SIGALRM)
         self.container.exec_run.side_effect = TimeoutError("private-error-canary")
         with self.assertRaises(self.runtime.RootBootstrapHold) as raised:
             self.runtime._postgres_ready(self.container, password=b"private-password-canary")
         self.assertNotIn("canary", str(raised.exception))
         self.container.exec_run.assert_called_once()
+        self.assertIs(signal.getsignal(signal.SIGALRM), previous)
+        self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0.0, 0.0))
+
+    def test_stalled_sdk_frame_read_is_interrupted_closed_and_never_replayed(self):
+        from docker.api.client import APIClient
+        reader, writer = socket.socketpair()
+        response = SimpleNamespace(close=Mock(side_effect=reader.close))
+        client = SimpleNamespace(_get_raw_response_socket=lambda _response: reader)
+        # Exercise the actual SDK's unbounded poll/select reader. The peer sends
+        # no frames. A watchdog only prevents a broken test from hanging CI.
+        def blocked(*_args, **_kwargs):
+            output = APIClient._read_from_socket(client, response, stream=False, tty=False)
+            return SimpleNamespace(exit_code=0, output=output)
+        self.container.exec_run.side_effect = blocked
+        watchdog = threading.Timer(2, writer.close)
+        watchdog.start()
+        previous = signal.getsignal(signal.SIGALRM)
+        started = time.monotonic()
+        try:
+            with patch.object(self.runtime, "_POSTGRES_OBSERVATION_SECONDS", 0.05):
+                with self.assertRaises(self.runtime.RootBootstrapHold) as raised:
+                    self.runtime._postgres_ready(self.container, password=b"private-password-canary")
+            self.assertLess(time.monotonic() - started, 1)
+            self.assertNotIn("canary", str(raised.exception))
+            self.container.exec_run.assert_called_once()
+            response.close.assert_called_once()
+            self.assertEqual(reader.fileno(), -1)
+            self.assertIs(signal.getsignal(signal.SIGALRM), previous)
+            self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0.0, 0.0))
+        finally:
+            watchdog.cancel()
+            watchdog.join(timeout=1)
+            writer.close()
+            reader.close()
+        self.assertFalse(watchdog.is_alive())
+
+    def test_existing_timer_is_preserved_and_refuses_before_exec(self):
+        try:
+            signal.setitimer(signal.ITIMER_REAL, 30)
+            with self.assertRaises(self.runtime.RootBootstrapHold):
+                self.runtime._postgres_ready(self.container, password=b"private-password-canary")
+            self.container.exec_run.assert_not_called()
+            self.assertGreater(signal.getitimer(signal.ITIMER_REAL)[0], 0)
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+
+    def test_non_main_thread_refuses_before_exec(self):
+        failures = []
+        def observe():
+            try:
+                self.runtime._postgres_ready(self.container, password=b"private-password-canary")
+            except self.runtime.RootBootstrapHold:
+                failures.append("held")
+        thread = threading.Thread(target=observe)
+        thread.start()
+        thread.join(timeout=1)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(failures, ["held"])
+        self.container.exec_run.assert_not_called()
