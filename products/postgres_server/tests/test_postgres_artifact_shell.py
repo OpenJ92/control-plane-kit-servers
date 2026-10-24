@@ -25,6 +25,7 @@ def labels(): return dict(a[i+1].split('=',1) for i,x in enumerate(a) if x=='--l
 if a[:2]==['image','inspect']: print(image)
 elif a[:2]==['network','ls']:
     if failure=='collision': print('foreign')
+    elif opt('--filter').startswith('id=') and 'network' in s: print(net)
 elif a[:2]==['network','create']:
     s['network']={'name':a[-1], 'labels':labels(), 'internal':'--internal' in a}; save()
     if failure=='ambiguous-create': sys.exit(1)
@@ -94,7 +95,9 @@ class PostgresArtifactShellTests(unittest.TestCase):
                 self.assertEqual(state,{})
                 self.assertFalse((receipt/'fixtures').exists())
                 self.assertEqual((receipt/'qualification.exit').read_text().strip(),'0')
-                create=next(c for c in calls if c[0]=='create')
+                creates=[c for c in calls if c[0]=='create']
+                self.assertEqual(len(creates),1)
+                create=creates[0]
                 self.assertEqual(create[create.index('--network')+1],NETWORK)
                 self.assertNotIn('build',[c[0] for c in calls]); self.assertNotIn('pull',[c[0] for c in calls])
                 self.assertLess(next(i for i,c in enumerate(calls) if c[:2]==['container','rm']),
