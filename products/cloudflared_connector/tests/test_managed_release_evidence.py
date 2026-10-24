@@ -10,7 +10,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 SOURCE, TREE = 'a' * 40, 'b' * 40
 CANDIDATE, CONTROLLER = 'sha256:' + 'c' * 64, 'sha256:' + 'd' * 64
-CONFIG = 'sha256:' + 'e' * 64
+CONFIG = CANDIDATE
 REPOSITORY = 'ghcr.io/openj92/control-plane-kit-servers/cloudflared-connector'
 CANARY = 'PRIVATE-OWNER-CANARY'
 
@@ -24,6 +24,21 @@ def put(root, name, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value))
     return path
+
+
+def push_fixture(root):
+    from test_managed_release_push import VERSION, INFO
+    raw=(root/'remote-index.json').read_bytes()
+    transcript=f'managed-{SOURCE}: digest: sha256:{hashlib.sha256(raw).hexdigest()} size: {len(raw)}\n'.encode()
+    (root/'push.log').write_bytes(transcript)
+    for phase in ('before','after'):
+        put(root,f'push-version-{phase}.json',VERSION)
+        put(root,f'push-info-{phase}.json',INFO)
+        (root/f'push-candidate-{phase}.id').write_text(CANDIDATE+'\n')
+    put(root,'push-receipt.json',dict(schema='cpk.cloudflared-managed-push.v1',
+        source_commit=SOURCE,source_tree=TREE,candidate_id=CANDIDATE,
+        destination=REPOSITORY+':managed-'+SOURCE,manifest_digest='sha256:'+hashlib.sha256(raw).hexdigest(),
+        manifest_size=len(raw),transcript_sha256=hashlib.sha256(transcript).hexdigest()))
 
 
 def fixture(root):
@@ -69,6 +84,7 @@ def fixture(root):
     (root/'candidate.id').write_text(CANDIDATE+'\n')
     for path in ['build.exit','push.exit','qualification/controller.exit']:
         (root/path).write_text('0\n')
+    push_fixture(root)
     return context
 
 
@@ -93,13 +109,13 @@ class ManagedEvidenceTests(unittest.TestCase):
             self.assertNotIn('created_containers',json.dumps(value))
             self.assertNotIn('engine_id',json.dumps(value))
 
-    def test_later_producer_failure_and_push_exit_absence_do_not_erase_proved_publication(self):
+    def test_missing_push_exit_cannot_establish_same_push_publication(self):
         project=self.implementation()['project']
         with tempfile.TemporaryDirectory() as d:
             root=Path(d); context=fixture(root)
             (root/'push.exit').unlink()
             value=project(root,ROOT,context,7)
-            self.assertEqual(value['outcomes']['remote_publication'],'verified')
+            self.assertEqual(value['outcomes']['remote_publication'],'unknown')
             self.assertEqual(value['outcomes']['producer_exit'],7)
             self.assertIsNone(value['outcomes']['push_command_exit'])
 
@@ -194,13 +210,61 @@ class ManagedEvidenceTests(unittest.TestCase):
             index=put(root,'remote-index.json',dict(schemaVersion=2,mediaType='application/vnd.oci.image.index.v1+json',
                 manifests=[dict(mediaType='application/vnd.oci.image.manifest.v1+json',digest=platform,size=10,
                                 platform=dict(os='linux',architecture='amd64'))]))
+            index_value=json.loads(index.read_text())
+            index_value['manifests'][0]['size']=(root/'remote-platform.json').stat().st_size
+            put(root,'remote-index.json',index_value)
             index_digest='sha256:'+digest(index)
             meta=json.loads((root/'build-metadata.json').read_text());meta['containerimage.digest']=index_digest;put(root,'build-metadata.json',meta)
             pub=json.loads((root/'publication.json').read_text());pub['reference']=REPOSITORY+'@'+index_digest;put(root,'publication.json',pub)
             pkg=json.loads((root/'published/validated.json').read_text());pkg['digest']=index_digest;put(root,'published/validated.json',pkg)
+            push_fixture(root)
             result=project(root,ROOT,context,0)
             self.assertEqual(result['outcomes']['remote_publication'],'verified')
             self.assertEqual(result['artifacts']['platform_manifest'],platform)
+
+    def test_different_local_export_is_accepted_only_against_same_push_anchor(self):
+        project=self.implementation()['project']
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);context=fixture(root)
+            meta=json.loads((root/'build-metadata.json').read_text())
+            meta['containerimage.digest']='sha256:'+'f'*64
+            meta['containerimage.descriptor']={'digest':meta['containerimage.digest']}
+            put(root,'build-metadata.json',meta)
+            value=project(root,ROOT,context,0)
+            self.assertEqual(value['outcomes']['remote_publication'],'verified')
+
+    def test_changed_layers_same_config_and_consistent_registry_refuses_original_push(self):
+        project=self.implementation()['project']
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);context=fixture(root)
+            manifest=json.loads((root/'remote-platform.json').read_text())
+            manifest['layers']=[{'digest':'sha256:'+'f'*64,'size':12}]
+            path=put(root,'remote-platform.json',manifest)
+            (root/'remote-index.json').write_bytes(path.read_bytes())
+            changed='sha256:'+digest(path)
+            meta=json.loads((root/'build-metadata.json').read_text());meta['containerimage.digest']=changed
+            put(root,'build-metadata.json',meta)
+            pkg=json.loads((root/'published/validated.json').read_text());pkg['digest']=changed
+            put(root,'published/validated.json',pkg)
+            pub=json.loads((root/'publication.json').read_text());pub.update(reference=REPOSITORY+'@'+changed,platform_manifest=changed)
+            put(root,'publication.json',pub)
+            value=project(root,ROOT,context,0)
+            self.assertEqual(value['outcomes']['remote_publication'],'unknown')
+
+    def test_push_receipt_exit_profile_or_transcript_substitution_refuses(self):
+        project=self.implementation()['project']
+        for target in ('push.exit','push.log','push-receipt.json','push-info-after.json','push-candidate-after.id'):
+            with self.subTest(target=target),tempfile.TemporaryDirectory() as d:
+                root=Path(d);context=fixture(root)
+                if target=='push.exit':(root/target).write_text('1\n')
+                elif target=='push.log':(root/target).write_bytes((root/target).read_bytes()*2)
+                elif target.endswith('.id'):(root/target).write_text(CONTROLLER+'\n')
+                else:
+                    value=json.loads((root/target).read_text())
+                    value['source_commit' if target=='push-receipt.json' else 'ID']='f'*40
+                    put(root,target,value)
+                value=project(root,ROOT,context,0)
+                self.assertEqual(value['outcomes']['remote_publication'],'unknown')
 
     def test_explicit_timeout_does_not_bypass_typed_profile_or_timing(self):
         project=self.implementation()['project']
