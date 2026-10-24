@@ -344,7 +344,9 @@ def clean_context(source_root,run_id,attempt):
 
 def prepare(source_root,runner_temp,run_id,attempt):
     context=clean_context(source_root,run_id,attempt)
+    fd=directory(source_root);os.close(fd)
     fd=directory(runner_temp);os.close(fd)
+    require(not Path(runner_temp).is_relative_to(Path(source_root)))
     path=Path(tempfile.mkdtemp(prefix='cpk-managed-release-',dir=runner_temp))
     os.chmod(path,0o700)
     with (path/'context.json').open('x') as stream:json.dump(context,stream)
