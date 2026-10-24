@@ -206,7 +206,7 @@ class ManagedCandidateOwnershipTests(unittest.TestCase):
 
 class ManagedProducerOrderingTests(unittest.TestCase):
     def producer(self, fail_qualification=False, substitute=False, *, failure='', complete=False,
-                 diagnostic_write_failure=False, diagnostic=False):
+                 diagnostic_write_failure=False, diagnostic=False, policy_identity=None):
         import json
         import shutil
         with tempfile.TemporaryDirectory() as directory:
@@ -234,6 +234,35 @@ case "$*" in
 esac
 ''')
             (binary/'tar').write_text('#!/bin/sh\nexit 0\n')
+            if policy_identity is not None:
+                # A command double models an image user different from the receipt
+                # owner. It checks the invocation contract, not kernel isolation.
+                (root/'policy-double.py').write_text('''import os, pathlib, stat, sys
+args = sys.argv[1:]
+root = pathlib.Path(os.environ['CPK_MANAGED_RELEASE_RECEIPTS'])
+owner = root.stat()
+selected = args[args.index('--user') + 1] if '--user' in args else '65534:65534'
+if selected != f'{owner.st_uid}:{owner.st_gid}':
+    sys.exit(77)
+assert stat.S_IMODE(owner.st_mode) == 0o700
+for phase in ('preflight', 'before-push', 'published'):
+    directory = root / phase
+    if directory.exists():
+        assert stat.S_IMODE(directory.stat().st_mode) == 0o700
+        for name in ('package.json', 'versions.json'):
+            path = directory / name
+            assert stat.S_IMODE(path.stat().st_mode) == 0o600
+            assert path.read_text()
+assert args[args.index('--network') + 1] == 'none'
+assert '--read-only' in args
+assert args[args.index('--cap-drop') + 1] == 'ALL'
+assert '--cap-add' not in args
+assert args[args.index('--security-opt') + 1] == 'no-new-privileges'
+mounts = [args[i+1] for i, value in enumerate(args) if value == '--mount']
+assert len(mounts) == 2 and all(m.endswith(',readonly') for m in mounts)
+''')
+                if policy_identity == 'mismatch':
+                    (binary/'id').write_text('#!/bin/sh\necho 65534\n')
             (root/'test.sh').write_text('''#!/bin/sh
 printf 'test %s\n' "$1" >> "$CALLS"
 case "$1" in
@@ -265,7 +294,9 @@ case "$1 $2" in
    case "$*" in *revision*) printf '%s\n' "$SOURCE";;
    *) if [ "$SUBSTITUTE" = 1 ] && [ -f "$CASE_ROOT/tagged" ]; then echo 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'; else printf '%s\n' "$CANDIDATE"; fi;; esac;;
  'tag '*) touch "$CASE_ROOT/tagged";;
- 'run '*) exit 0;;
+ 'run '*)
+   if [ -f "$CASE_ROOT/policy-double.py" ]; then exec python "$CASE_ROOT/policy-double.py" "$@"; fi
+   exit 0;;
  'push '*) [ "$COMPLETE" = 1 ] || exit 94;;
  'buildx imagetools')
    case "$*" in *--raw*) cat "$CASE_ROOT/manifest";;
@@ -294,6 +325,19 @@ esac
                     self.assertEqual([p.name for p in record.iterdir()],['owned'])
                 return result,observed_calls,value
             return result, observed_calls
+
+    def test_policy_uses_receipt_owner_without_relaxing_private_inputs(self):
+        result, calls = self.producer(complete=True, policy_identity='match')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls.count('docker run '), 4)
+
+    def test_mismatched_policy_identity_stops_before_candidate_build(self):
+        result, calls, record = self.producer(
+            complete=True, policy_identity='mismatch', diagnostic=True)
+        self.assertEqual(result.returncode, 77, result.stderr)
+        self.assertEqual(record['stage'], 'preflight-policy')
+        self.assertNotIn('docker buildx build ', calls)
+        self.assertNotIn('docker push ', calls)
 
     def test_terminal_diagnostic_names_entered_boundary_without_private_text(self):
         for failure,stage in [('package','preflight-package-read'),('versions','preflight-versions-read'),
