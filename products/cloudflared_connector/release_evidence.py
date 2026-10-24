@@ -9,6 +9,9 @@ import stat
 import subprocess
 import sys
 import tempfile
+import runpy
+
+_push_anchor = runpy.run_path(str(Path(__file__).with_name('release.py')))['push_anchor']
 
 SMALL, LARGE = 65536, 1048576
 REPOSITORY = 'ghcr.io/openj92/control-plane-kit-servers/cloudflared-connector'
@@ -309,6 +312,7 @@ def project(receipts, source_root, context, producer_exit):
         packages[phase]=attempt(package)
     def publication():
         pub=js('publication.json')
+        require(push == 0)
         keys(pub,('schema','reference','candidate_id','source_commit','platform_manifest','config_digest','qualification_sha256','visibility','status'))
         require(pub['schema']=='cpk.cloudflared-managed-publication.v1' and pub['source_commit']==source['commit'] and
                 candidate_id is not None and pub['candidate_id']==candidate_id and c is not None and q is not None and w is not None)
@@ -317,17 +321,25 @@ def project(receipts, source_root, context, producer_exit):
         require(exit_code(read(root/'build.exit',8))==0 and exit_code(read(root/'qualification/controller.exit',8))==0)
         meta=js('build-metadata.json',LARGE)
         keys(meta,('containerimage.digest','containerimage.config.digest'),('buildx.build.ref','containerimage.descriptor','buildx.build.provenance','buildx.build.warnings','containerimage.buildinfo','containerimage.buildinfo.digest'))
-        index_digest=identity(meta['containerimage.digest']);config=identity(meta['containerimage.config.digest'])
-        if 'containerimage.descriptor' in meta:require(meta['containerimage.descriptor']['digest']==index_digest)
-        raw=read(root/'remote-index.json',LARGE);require('sha256:'+sha(raw)==index_digest)
+        local_digest=identity(meta['containerimage.digest']);config=identity(meta['containerimage.config.digest'])
+        if 'containerimage.descriptor' in meta:require(meta['containerimage.descriptor']['digest']==local_digest)
+        require(config==candidate_id)
+        anchor=_push_anchor(root,source['commit'],source['tree'],candidate_id,REPOSITORY+':'+tag)
+        require(js('push-receipt.json')==anchor)
+        index_digest=identity(anchor['manifest_digest'])
+        raw=read(root/'remote-index.json',LARGE)
+        require('sha256:'+sha(raw)==index_digest and len(raw)==anchor['manifest_size'])
         index=decode(raw);manifest_keys=('schemaVersion','mediaType','manifests','config','layers','annotations','artifactType','subject')
         keys(index,('schemaVersion',),manifest_keys);require(type(index['schemaVersion']) is int and index['schemaVersion']==2)
         platform_digest=index_digest
+        platform_size=len(raw)
         if 'manifests' in index:
             require(type(index['manifests']) is list)
             selected=[m for m in index['manifests'] if m.get('platform',{}).get('os')=='linux' and m.get('platform',{}).get('architecture')=='amd64']
             require(len(selected)==1);platform_digest=identity(selected[0]['digest'])
-        platform_raw=read(root/'remote-platform.json',LARGE);require('sha256:'+sha(platform_raw)==platform_digest)
+            platform_size=integer(selected[0]['size'],1,LARGE)
+        platform_raw=read(root/'remote-platform.json',LARGE)
+        require('sha256:'+sha(platform_raw)==platform_digest and len(platform_raw)==platform_size)
         manifest=decode(platform_raw);keys(manifest,('schemaVersion','config','layers'),manifest_keys)
         require(type(manifest['schemaVersion']) is int and manifest['schemaVersion']==2 and manifest['config']['digest']==config)
         def descriptor(v):

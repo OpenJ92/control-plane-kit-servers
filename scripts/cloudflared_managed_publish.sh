@@ -8,6 +8,7 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 cd "$ROOT"
 TAG="${1:?source-bound tag required}"
 SOURCE="$(git rev-parse HEAD)"
+SOURCE_TREE="$(git rev-parse HEAD^{tree})"
 [ -z "$(git status --porcelain)" ]
 # Policy executes from mounted source; archive-only build inputs are separate.
 IGNORED="$(git ls-files --others --ignored --exclude-standard -- products scripts src tests)"
@@ -103,14 +104,23 @@ STAGE=candidate-qualification
 policy qualified /evidence/qualification/qualification.json "$CANDIDATE" "$SOURCE"
 STAGE=candidate-check
 [ "$(docker image inspect "$CANDIDATE" --format '{{.Id}}')" = "$CANDIDATE" ]
+[ "$(jq -er '.["containerimage.config.digest"]' "$RECEIPTS/build-metadata.json")" = "$CANDIDATE" ]
 [ "$(docker image inspect "$CANDIDATE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$SOURCE" ]
 [ -z "$(git status --porcelain)" ] && [ "$(git rev-parse HEAD)" = "$SOURCE" ]
+push_profile() {
+  docker version --format '{"Version":{{json .Server.Version}},"GitCommit":{{json .Server.GitCommit}},"Os":{{json .Server.Os}},"Arch":{{json .Server.Arch}}}' > "$RECEIPTS/push-version-$1.json"
+  docker info --format '{"ID":{{json .ID}},"ServerVersion":{{json .ServerVersion}},"OSType":{{json .OSType}},"Driver":{{json .Driver}},"DriverStatus":{{json .DriverStatus}}}' > "$RECEIPTS/push-info-$1.json"
+}
+# Refuse an unknown producer/image-store path before publication.
+push_profile before
+policy producer-profile /evidence
 metadata before-push
 STAGE=before-push-policy
 policy package /evidence/before-push "$SOURCE" > "$RECEIPTS/before-push/validated.json"
 STAGE=tag-candidate
 docker tag "$CANDIDATE" "$DESTINATION"
-[ "$(docker image inspect "$DESTINATION" --format '{{.Id}}')" = "$CANDIDATE" ]
+docker image inspect "$DESTINATION" --format '{{.Id}}' > "$RECEIPTS/push-candidate-before.id"
+[ "$(cat "$RECEIPTS/push-candidate-before.id")" = "$CANDIDATE" ]
 STAGE=push
 set +e
 docker push "$DESTINATION" > "$RECEIPTS/push.log" 2>&1
@@ -119,25 +129,32 @@ set -e
 printf '%s\n' "$RESULT" > "$RECEIPTS/push.exit"
 [ "$RESULT" = 0 ] || exit "$RESULT"
 STAGE=remote-verification
-[ "$(docker image inspect "$DESTINATION" --format '{{.Id}}')" = "$CANDIDATE" ]
-# Resolve the actual remote tag, then verify immutable bytes against build output.
-docker buildx imagetools inspect --raw "$DESTINATION" > "$RECEIPTS/remote-index.json"
-DIGEST="sha256:$(hash_file "$RECEIPTS/remote-index.json" | cut -d ' ' -f 1)"
-[ "$DIGEST" = "$(jq -r '.["containerimage.digest"]' "$RECEIPTS/build-metadata.json")" ]
+docker image inspect "$DESTINATION" --format '{{.Id}}' > "$RECEIPTS/push-candidate-after.id"
+[ "$(cat "$RECEIPTS/push-candidate-after.id")" = "$CANDIDATE" ]
+push_profile after
+policy push-anchor /evidence "$SOURCE" "$SOURCE_TREE" "$CANDIDATE" "$DESTINATION" > "$RECEIPTS/push-receipt.json"
+# The same push anchors the whole manifest, including layer descriptors.
+DIGEST="$(jq -er .manifest_digest "$RECEIPTS/push-receipt.json")"
 REFERENCE="$REPOSITORY@$DIGEST"
+docker buildx imagetools inspect --raw "$REFERENCE" > "$RECEIPTS/remote-index.json"
+[ "sha256:$(hash_file "$RECEIPTS/remote-index.json" | cut -d ' ' -f 1)" = "$DIGEST" ]
+[ "$(wc -c < "$RECEIPTS/remote-index.json")" -eq "$(jq -er .manifest_size "$RECEIPTS/push-receipt.json")" ]
 metadata published
 STAGE=published-policy
 policy package /evidence/published "$SOURCE" "$DIGEST" > "$RECEIPTS/published/validated.json"
 STAGE=remote-verification
 if jq -e '.manifests' "$RECEIPTS/remote-index.json" >/dev/null; then
   PLATFORM="$(jq -er '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")] | if length == 1 then .[0].digest else error("platform") end' "$RECEIPTS/remote-index.json")"
+  PLATFORM_SIZE="$(jq -er '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")][0].size | select(type == "number" and . == floor and . > 0 and . <= 1048576)' "$RECEIPTS/remote-index.json")"
   docker buildx imagetools inspect --raw "$REPOSITORY@$PLATFORM" > "$RECEIPTS/remote-platform.json"
   [ "sha256:$(hash_file "$RECEIPTS/remote-platform.json" | cut -d ' ' -f 1)" = "$PLATFORM" ]
+  [ "$(wc -c < "$RECEIPTS/remote-platform.json")" -eq "$PLATFORM_SIZE" ]
 else
   PLATFORM="$DIGEST"
   cp "$RECEIPTS/remote-index.json" "$RECEIPTS/remote-platform.json"
 fi
 CONFIG="$(jq -er .config.digest "$RECEIPTS/remote-platform.json")"
+[ "$CONFIG" = "$CANDIDATE" ]
 [ "$CONFIG" = "$(jq -r '.["containerimage.config.digest"]' "$RECEIPTS/build-metadata.json")" ]
 docker buildx imagetools inspect "$REPOSITORY@$PLATFORM" --format '{{json .Image}}' > "$RECEIPTS/remote-config.json"
 jq -e --arg source "$SOURCE" '.os == "linux" and .architecture == "amd64" and .config.Labels["org.opencontainers.image.revision"] == $source' "$RECEIPTS/remote-config.json" >/dev/null

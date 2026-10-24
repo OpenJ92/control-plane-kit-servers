@@ -219,11 +219,11 @@ class ManagedProducerOrderingTests(unittest.TestCase):
             source = 'a'*40
             candidate = 'sha256:'+'b'*64
             controller = 'sha256:'+'c'*64
-            manifest = json.dumps({'schemaVersion':2,'config':{'digest':'sha256:'+'d'*64},'layers':[]})
+            manifest = json.dumps({'schemaVersion':2,'config':{'digest':candidate},'layers':[]})
             import hashlib
             remote_digest = 'sha256:'+hashlib.sha256(manifest.encode()).hexdigest()
             (root/'manifest').write_text(manifest)
-            (root/'metadata').write_text(json.dumps({'containerimage.digest':remote_digest,'containerimage.config.digest':'sha256:'+'d'*64}))
+            (root/'metadata').write_text(json.dumps({'containerimage.digest':remote_digest,'containerimage.config.digest':candidate}))
             (root/'remote-config').write_text(json.dumps({'os':'linux','architecture':'amd64','config':{'Labels':{'org.opencontainers.image.revision':source}}}))
             (binary/'git').write_text('#!/bin/sh\ncase "$1" in status|ls-files|ls-tree|cat-file) exit 0;; archive) echo exact-source-context;; rev-parse) printf "%s\\n" "$SOURCE";; *) exit 92;; esac\n')
             (binary/'gh').write_text('''#!/bin/sh
@@ -282,6 +282,9 @@ esac
             (binary/'docker').write_text('''#!/bin/sh
 printf 'docker %s\n' "$*" >> "$CALLS"
 case "$1 $2" in
+ 'version '*)
+   if [ "$FAILURE" = producer ]; then echo '{}'; else echo '{"Version":"28.0.4","GitCommit":"6430e49","Os":"linux","Arch":"amd64"}'; fi;;
+ 'info '*) echo '{"ID":"test-daemon","ServerVersion":"28.0.4","OSType":"linux","Driver":"overlay2","DriverStatus":[["Backing Filesystem","extfs"]]}' ;;
  'buildx build')
   [ "$FAILURE" != build ] || exit 23
   shift 2
@@ -295,9 +298,15 @@ case "$1 $2" in
    *) if [ "$SUBSTITUTE" = 1 ] && [ -f "$CASE_ROOT/tagged" ]; then echo 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'; else printf '%s\n' "$CANDIDATE"; fi;; esac;;
  'tag '*) touch "$CASE_ROOT/tagged";;
  'run '*)
-   if [ -f "$CASE_ROOT/policy-double.py" ]; then exec python "$CASE_ROOT/policy-double.py" "$@"; fi
-   exit 0;;
- 'push '*) [ "$COMPLETE" = 1 ] || exit 94;;
+   if [ -f "$CASE_ROOT/policy-double.py" ]; then python "$CASE_ROOT/policy-double.py" "$@" || exit $?; fi
+   case "$*" in
+    *' producer-profile '*) exec python "$RELEASE_OWNER" producer-profile "$CPK_MANAGED_RELEASE_RECEIPTS";;
+    *' push-anchor '*) exec python "$RELEASE_OWNER" push-anchor "$CPK_MANAGED_RELEASE_RECEIPTS" "$SOURCE" "$SOURCE" "$CANDIDATE" "ghcr.io/openj92/control-plane-kit-servers/cloudflared-connector:managed-$SOURCE";;
+    *) exit 0;;
+   esac;;
+ 'push '*)
+   [ "$COMPLETE" = 1 ] || exit 94
+   printf 'managed-%s: digest: %s size: %s\n' "$SOURCE" "$REMOTE_DIGEST" "$(wc -c < "$CASE_ROOT/manifest")";;
  'buildx imagetools')
    case "$*" in *--raw*) cat "$CASE_ROOT/manifest";;
    *) [ "$FAILURE" != remote ] || exit 23; cat "$CASE_ROOT/remote-config";; esac;;
@@ -308,6 +317,7 @@ esac
                 path.chmod(0o755)
             env = dict(os.environ, PATH=str(binary)+os.pathsep+os.environ['PATH'],
                        SOURCE=source,CANDIDATE=candidate,CONTROLLER=controller,CALLS=str(calls),
+                       RELEASE_OWNER=str(ROOT/'products/cloudflared_connector/release.py'),REMOTE_DIGEST=remote_digest,
                        CASE_ROOT=str(root),SUBSTITUTE='1' if substitute else '0',
                        FAILURE=failure,COMPLETE='1' if complete else '0',
                        BREAK_DIAGNOSTIC='1' if diagnostic_write_failure else '0',
@@ -329,7 +339,12 @@ esac
     def test_policy_uses_receipt_owner_without_relaxing_private_inputs(self):
         result, calls = self.producer(complete=True, policy_identity='match')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(calls.count('docker run '), 4)
+        self.assertEqual(calls.count('docker run '), 6)
+
+    def test_unknown_push_producer_refuses_before_publication(self):
+        result,calls=self.producer(failure='producer',complete=True)
+        self.assertNotEqual(result.returncode,0)
+        self.assertNotIn('docker push ',calls)
 
     def test_mismatched_policy_identity_stops_before_candidate_build(self):
         result, calls, record = self.producer(

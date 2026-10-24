@@ -10,6 +10,7 @@ import stat
 import sys
 
 REPOSITORY = 'ghcr.io/openj92/control-plane-kit-servers/cloudflared-connector'
+PUSH_LIMIT = 1048576
 
 
 def require(condition):
@@ -28,6 +29,91 @@ def identity(value):
 def destination(source, tag):
     require(hexadecimal(source, 40) and tag == 'managed-' + source)
     return REPOSITORY + ':' + tag
+
+
+def read_push_bytes(path, limit=PUSH_LIMIT):
+    """Bounded stable regular bytes; never follow a file or ancestor symlink."""
+    path = Path(path)
+    require(path.is_absolute() and path.anchor == '/' and '..' not in path.parts)
+    fd = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in path.parts[1:-1]:
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd); fd = child
+        file_fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+        try:
+            before = os.fstat(file_fd)
+            require(stat.S_ISREG(before.st_mode) and before.st_size <= limit)
+            with os.fdopen(file_fd, 'rb', closefd=False) as stream:
+                raw = stream.read(limit + 1)
+            after = os.fstat(file_fd)
+            require(len(raw) == before.st_size and len(raw) <= limit and
+                    (before.st_size, before.st_mtime_ns, before.st_ctime_ns) ==
+                    (after.st_size, after.st_mtime_ns, after.st_ctime_ns))
+            return raw
+        finally:
+            os.close(file_fd)
+    finally:
+        os.close(fd)
+
+
+def producer_profile(version, info):
+    """Only the reviewed Moby classic layer-store push path is supported."""
+    require(type(version) is dict and version == dict(
+        Version='28.0.4', GitCommit='6430e49', Os='linux', Arch='amd64'))
+    require(type(info) is dict and set(info) == {'ID','ServerVersion','OSType','Driver','DriverStatus'})
+    require(info['ServerVersion'] == version['Version'] and info['OSType'] == 'linux'
+            and info['Driver'] == 'overlay2')
+    require(type(info['ID']) is str and re.fullmatch(r'[A-Za-z0-9:-]{1,128}', info['ID']))
+    status = info['DriverStatus']
+    require(type(status) is list and 0 < len(status) <= 32)
+    for pair in status:
+        require(type(pair) is list and len(pair) == 2 and all(type(v) is str and len(v) <= 256 for v in pair))
+        require(pair[0] != 'driver-type')  # containerd snapshotter path is unreviewed.
+    require(len({p[0] for p in status}) == len(status))
+    return dict(version=version, info=info)
+
+
+def push_receipt(raw, exit_code, source, tree, candidate, selected_destination):
+    require(type(exit_code) is int and exit_code == 0)
+    require(hexadecimal(tree, 40) and identity(candidate))
+    require(selected_destination == destination(source, 'managed-' + source))
+    require(type(raw) is bytes and 0 < len(raw) <= PUSH_LIMIT and raw.endswith(b'\n'))
+    require(all(b == 10 or 32 <= b <= 126 for b in raw))
+    lines = raw[:-1].split(b'\n')  # No trimming, newline normalization or loose digest search.
+    terminal = re.fullmatch(rb'managed-([0-9a-f]{40}): digest: (sha256:[0-9a-f]{64}) size: ([1-9][0-9]{0,6})', lines[-1])
+    require(terminal is not None and terminal[1].decode() == source)
+    size = int(terminal[3]); require(size <= PUSH_LIMIT)
+    header = ('The push refers to repository [' + REPOSITORY + ']').encode()
+    for number, line in enumerate(lines[:-1]):
+        require((number == 0 and line == header) or re.fullmatch(
+            rb'[0-9a-f]{12}: (Preparing|Waiting|Pushed|Layer already exists|Mounted from [A-Za-z0-9._/-]+)', line))
+    return dict(schema='cpk.cloudflared-managed-push.v1', source_commit=source,
+                source_tree=tree, candidate_id=candidate, destination=selected_destination,
+                manifest_digest=terminal[2].decode(), manifest_size=size,
+                transcript_sha256=hashlib.sha256(raw).hexdigest())
+
+
+def read_push_json(path):
+    def unique(pairs):
+        value = {}
+        for key, item in pairs:
+            require(key not in value); value[key] = item
+        return value
+    return json.loads(read_push_bytes(path, 65536), object_pairs_hook=unique)
+
+
+def push_anchor(root, source, tree, candidate, selected_destination):
+    """Re-derive from original private evidence, not a trusted summary receipt."""
+    root = Path(root)
+    profiles = []
+    for phase in ('before','after'):
+        profiles.append(producer_profile(read_push_json(root/f'push-version-{phase}.json'),
+                                         read_push_json(root/f'push-info-{phase}.json')))
+        require(read_push_bytes(root/f'push-candidate-{phase}.id', 128) == (candidate+'\n').encode())
+    require(profiles[0] == profiles[1])
+    require(read_push_bytes(root/'push.exit', 8) == b'0\n')
+    return push_receipt(read_push_bytes(root/'push.log'), 0, source, tree, candidate, selected_destination)
 
 
 def read_json(path, limit=65536):
@@ -230,6 +316,13 @@ def main():
     elif mode == 'qualified':
         path, candidate, source = args
         qualified_candidate(read_json(path), candidate, source)
+    elif mode == 'producer-profile':
+        root, = args
+        producer_profile(read_push_json(Path(root)/'push-version-before.json'),
+                         read_push_json(Path(root)/'push-info-before.json'))
+    elif mode == 'push-anchor':
+        root, source, tree, candidate, selected_destination = args
+        print(json.dumps(push_anchor(root, source, tree, candidate, selected_destination)))
     elif mode == 'qualify':
         require(not args)
         qualify()

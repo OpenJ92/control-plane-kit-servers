@@ -19,7 +19,7 @@ INFO = dict(ID='test-daemon', ServerVersion='28.0.4', OSType='linux', Driver='ov
 class SamePushAnchorTests(unittest.TestCase):
     def owner(self, name):
         api=runpy.run_path(str(ROOT/'products/cloudflared_connector/release.py'))
-        self.assertIn(name, api, 'Same-push integrity owner is not implemented')
+        self.assertTrue(name in api, 'Same-push integrity owner is not implemented')
         return api[name]
 
     def test_exact_terminal_result_binds_source_candidate_destination_and_bytes(self):
@@ -57,7 +57,7 @@ class SamePushAnchorTests(unittest.TestCase):
                              (VERSION,dict(INFO,DriverStatus=None))]:
             with self.subTest(version=version,info=info),self.assertRaises(ValueError):profile(version,info)
 
-    def test_private_reader_refuses_symlinks_oversize_and_unstable_file(self):
+    def test_private_reader_refuses_symlinks_and_oversize(self):
         read=self.owner('read_push_bytes')
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);path=root/'push.log';path.write_bytes(LINE)
