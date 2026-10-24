@@ -119,6 +119,15 @@ recovery and wrong-owner refusal. Retained starts preserve #279's native-listene
 observation before SQL. No user database or retained installation is accepted as
 an input. This does not prove the historical PID-lock cause.
 
+Image admission treats an omitted, null or empty-list `Config.Entrypoint` as
+empty, consistent with the publication policy and Docker's
+[optional empty inspect fields](https://docs.docker.com/engine/deprecated/#emptynil-fields-in-image-config-from-inspect-api).
+Nonempty or malformed entrypoints remain forbidden. The lifecycle admission
+regression reaches this check after image reload, before resource creation;
+testing only initial artifact selection would miss this boundary. A witness-only
+correction does not change the product image: record its runner source separately
+from the published producer source when a later qualification is authorized.
+
 Failure summaries can project one numeric refused PID from the existing bounded
 native log tail. Missing, malformed, duplicate or truncated evidence retains an
 explicit uncertainty state and no PID. No raw hint or path is exposed, and this

@@ -438,7 +438,7 @@ def exercise(client, image) -> None:
         value = prepare_files()
         image.reload()
         require(image.attrs["Config"]["User"] == "70:70", "image is not uid/gid 70")
-        require(image.attrs["Config"]["Entrypoint"] in (None, []), "upstream entrypoint remains active")
+        require(image.attrs["Config"].get("Entrypoint") in (None, []), "upstream entrypoint remains active")
         require("5432/tcp" in image.attrs["Config"]["ExposedPorts"], "native port missing")
         require("8000/tcp" in image.attrs["Config"]["ExposedPorts"], "management port missing")
 

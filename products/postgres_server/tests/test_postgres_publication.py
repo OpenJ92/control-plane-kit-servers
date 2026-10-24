@@ -277,6 +277,43 @@ else:sys.exit(2)
                     self.assertIn('visibility='+('private' if failure=='private-match' else 'public'),result.stdout)
                 else:self.assertNotIn('postgres-server-managed reference=',result.stdout)
 
+    def test_lifecycle_admission_accepts_omitted_null_or_empty_entrypoint(self):
+        witness=self.witness()
+        for entrypoint in ('omitted',None,[]):
+            with self.subTest(entrypoint=entrypoint):
+                client=Mock();image=Mock();image.attrs=attrs()
+                image.attrs['Config']['ExposedPorts']={'5432/tcp':{},'8000/tcp':{}}
+                if entrypoint=='omitted':image.attrs['Config'].pop('Entrypoint')
+                else:image.attrs['Config']['Entrypoint']=entrypoint
+                for collection in ('containers','volumes','networks'):
+                    getattr(client,collection).list.return_value=[]
+                # Stop at the first resource call: reaching it proves the real
+                # second admission passed, without simulating the lifecycle.
+                boundary=RuntimeError('resource boundary reached')
+                client.networks.create.side_effect=boundary
+                with patch.object(witness,'prepare_files'):
+                    with self.assertRaises(RuntimeError) as caught:witness.exercise(client,image)
+                self.assertIs(caught.exception,boundary)
+                image.reload.assert_called_once()
+                client.networks.create.assert_called_once()
+                client.volumes.create.assert_not_called()
+                client.containers.create.assert_not_called()
+
+    def test_lifecycle_admission_refuses_nonempty_or_malformed_entrypoint_before_resources(self):
+        witness=self.witness()
+        for entrypoint in (['docker-entrypoint.sh'],[''],[None],'',{},False,0):
+            with self.subTest(entrypoint=entrypoint):
+                client=Mock();image=Mock();image.attrs=attrs()
+                image.attrs['Config']['Entrypoint']=entrypoint
+                image.attrs['Config']['ExposedPorts']={'5432/tcp':{},'8000/tcp':{}}
+                for collection in ('containers','volumes','networks'):
+                    getattr(client,collection).list.return_value=[]
+                with patch.object(witness,'prepare_files'):
+                    with self.assertRaisesRegex(AssertionError,'upstream entrypoint remains active'):
+                        witness.exercise(client,image)
+                for collection in ('containers','volumes','networks'):
+                    getattr(client,collection).create.assert_not_called()
+
     def test_existing_named_or_labelled_resources_refuse_without_adoption_or_cleanup(self):
         witness=self.witness()
         for kind in ('containers','volumes','networks'):
