@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import socket
 import time
+import runpy
 
 import docker
 
@@ -333,21 +334,61 @@ def create(client, image_id: str, network_name: str, volume_name: str, suffix: s
     )
 
 
-def main() -> int:
-    client = docker.from_env()
-    image = None
+def select_image(client, tag):
+    mode = os.environ.get("CPK_POSTGRES_ARTIFACT_MODE", "source-built")
+    names = ("CPK_POSTGRES_IMAGE", "CPK_POSTGRES_SOURCE_REVISION", "CPK_POSTGRES_RECIPE_SHA256")
+    if mode == "published-digest":
+        reference, source, recipe = (os.environ[name] for name in names)
+        policy = runpy.run_path(str(Path(__file__).resolve().parents[1] / "release.py"))
+        policy["published_reference"](reference)
+        image = client.images.get(reference)
+        image.reload()
+        identity = policy["published_image"](image.attrs, reference, source, recipe)
+        require(image.id == identity, "published image identity changed")
+        return image, False
+    require(mode == "source-built" and not any(name in os.environ for name in names),
+            "invalid PostgreSQL artifact selection")
+    image, _ = client.images.build(
+        path="/source", dockerfile="products/postgres_server/Dockerfile", tag=tag,
+        labels=LABELS, rm=True,
+    )
+    return image, True
+
+
+def cleanup_image(client, image, tag, owned):
+    if owned:
+        image.reload()
+        require(image.labels.get("org.openj92.cpk.test-run") == RUN, "foreign image cleanup refused")
+        require(client.images.get(tag).id == image.id, "source image tag changed")
+        client.images.remove(tag, force=True)
+
+
+def cleanup_files():
+    for name in ("control.json", "password", "10-witness.sql"):
+        (RECORDS / name).unlink(missing_ok=True)
+    directory = RECORDS / "wrong-owner-data"
+    if directory.exists():
+        directory.rmdir()
+
+
+def require_fresh_resources(client):
+    # Docker volume create may return an existing volume. Refuse adoption before
+    # writing fixtures or creating anything; a new receipt path is not ownership.
+    for filters in ({"label": "org.openj92.cpk.test-run=" + RUN}, {"name": RUN}):
+        require(not client.containers.list(all=True, filters=filters), "existing PostgreSQL test container")
+        require(not client.volumes.list(filters=filters), "existing PostgreSQL test volume")
+        require(not client.networks.list(filters=filters), "existing PostgreSQL test network")
+
+
+def exercise(client, image) -> None:
+    require_fresh_resources(client)
     network = None
     controller = None
     controller_connected = False
     volumes = []
     containers = []
-    tag = f"control-plane-kit-postgres-source:{RUN}"
     try:
         value = prepare_files()
-        image, _ = client.images.build(
-            path="/source", dockerfile="products/postgres_server/Dockerfile", tag=tag,
-            labels=LABELS, rm=True,
-        )
         image.reload()
         require(image.attrs["Config"]["User"] == "70:70", "image is not uid/gid 70")
         require(image.attrs["Config"]["Entrypoint"] in (None, []), "upstream entrypoint remains active")
@@ -420,7 +461,6 @@ def main() -> int:
         refused.start()
         wait_exit(refused, 1)
         require(PASSWORD.encode() not in refused.logs(stdout=True, stderr=True), "password reached refusal logs")
-        return 0
     finally:
         for container in reversed(containers):
             container.reload()
@@ -436,10 +476,30 @@ def main() -> int:
             network.reload()
             require(network.attrs["Labels"].get("org.openj92.cpk.test-run") == RUN, "foreign network cleanup refused")
             network.remove()
-        if image is not None:
-            image.reload()
-            require(image.labels.get("org.openj92.cpk.test-run") == RUN, "foreign image cleanup refused")
-            client.images.remove(tag, force=True)
+
+
+def main() -> int:
+    client = docker.from_env()
+    tag = f"control-plane-kit-postgres-source:{RUN}"
+    image, owned = select_image(client, tag)
+    try:
+        exercise(client, image)
+    finally:
+        try:
+            if not owned:
+                cleanup_files()
+        finally:
+            cleanup_image(client, image, tag, owned)
+    if not owned:
+        print(json.dumps({"postgres_published_qualification": {
+            "reference": os.environ["CPK_POSTGRES_IMAGE"],
+            "source": os.environ["CPK_POSTGRES_SOURCE_REVISION"],
+            "recipe_sha256": os.environ["CPK_POSTGRES_RECIPE_SHA256"],
+            "image_id": image.id, "platform": "linux/amd64", "configured_user": "70:70",
+            "qualification": "PASS", "owned_cleanup": "VERIFIED",
+            "borrowed_image_removed": False,
+        }}, sort_keys=True), flush=True)
+    return 0
 
 
 if __name__ == "__main__":

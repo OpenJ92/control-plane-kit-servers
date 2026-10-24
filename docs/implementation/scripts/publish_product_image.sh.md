@@ -1,5 +1,24 @@
 Please update alongside [publish_product_image.sh](../../../scripts/publish_product_image.sh).
 
+## Managed PostgreSQL (#191)
+
+`postgres-server-managed managed-<source>` selects the managed PostgreSQL recipe
+explicitly. The tracked archive, revision/recipe labels, Linux/amd64 and user70:70
+are checked; existing private package and absent tag are required before effects,
+with privacy/tag/digest association checked after the single push. It leaves the
+native descriptor unchanged. See [procedure and limits](../../managed-postgres-artifacts.md).
+
+`postgres-server-managed-first` is an explicit first-publication alternative;
+the existing selector's preflight remains unchanged. The new selector observes
+only the exact package GET's included HTTP response and exit status before build
+and before push. Its product policy accepts404 only;200 and all other failures
+stop. Post-push checks additionally bind the private package to the owning
+repository and recheck candidate fields, including its source label. It creates
+the real image directly, never a dummy prerequisite. Owner attestation and
+one-attempt authorization are external execution-plan prerequisites, not values
+the script invents or authenticates. IDs from private package/version metadata
+are not printed. See the same procedure for token wiring and concurrency limits.
+
 ## Current CPK/Secrets producer metadata (#191)
 
 These two existing branches gain clean-checkout admission, Linux/amd64, actual
