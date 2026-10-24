@@ -11,6 +11,9 @@ import re
 import socket
 import time
 import runpy
+import signal
+import struct
+import threading
 
 import docker
 
@@ -25,6 +28,34 @@ RECORDS = Path("/witness")
 LABELS = {"org.openj92.cpk.test-run": RUN, "org.openj92.project": "control-plane-kit-servers"}
 PASSWORD = "postgres-source-witness-password"
 MAX_FAILURE_LOG_BYTES = 65536
+WRONG_OWNER_PATH = "/var/lib/postgresql/data"
+WRONG_OWNER_MAX_BYTES = 4096
+WRONG_OWNER_LOG_SECONDS = 5.0
+# Fixed, read-only probe of the selected artifact; never runs normal startup or
+# receives credentials/socket/network. Unexpected errors are not guard proof.
+WRONG_OWNER_INSPECTION = """
+import json, os, stat
+from control_plane_kit_servers_postgres_server.process import validate_pgdata, PostgresProcessError
+try:
+    path = '/var/lib/postgresql/data'
+    observed = os.lstat(path)
+    refused = False
+    try:
+        validate_pgdata(path)
+    except PostgresProcessError:
+        refused = True
+    with os.scandir(path) as entries:
+        empty = next(entries, None) is None
+    value = dict(runtime_uid=os.getuid(), runtime_gid=os.getgid(),
+                 uid=observed.st_uid, gid=observed.st_gid,
+                 mode=stat.S_IMODE(observed.st_mode),
+                 is_directory=stat.S_ISDIR(observed.st_mode),
+                 empty=empty, guard_refused=refused)
+    print(json.dumps(value, sort_keys=True))
+except Exception:
+    print('{"error":"fixture_inspection_failed"}')
+    raise SystemExit(1)
+"""
 
 FAILURE_LOG_MARKERS = {
     "wrapper_failure": b"postgres-server startup or lifecycle failure",
@@ -219,7 +250,6 @@ def prepare_files():
     control = RECORDS / "control.json"
     secret = RECORDS / "password"
     init = RECORDS / "10-witness.sql"
-    wrong_owner_data = RECORDS / "wrong-owner-data"
     control.write_text(artifact.content, encoding="utf-8")
     control.chmod(0o444)
     secret.write_text(PASSWORD + "\n", encoding="utf-8")
@@ -231,10 +261,6 @@ def prepare_files():
         encoding="utf-8",
     )
     init.chmod(0o444)
-    wrong_owner_data.mkdir()
-    wrong_owner_data.chmod(0o755)
-    os.chown(wrong_owner_data, 0, 0)
-    require(wrong_owner_data.stat().st_uid == 0, "wrong-owner bind setup was not root-owned")
     return value
 
 
@@ -371,14 +397,187 @@ def mounts(data_source: str, *, init: bool) -> dict[str, dict[str, str]]:
     return values
 
 
-def create(client, image_id: str, network_name: str, volume_name: str, suffix: str, *, init: bool = False):
+def create(client, image_id: str, network_name: str, volume_name: str, suffix: str, *, init: bool = False, no_copy: bool = False):
+    bindings = mounts(volume_name, init=init)
+    options = {}
+    if no_copy:
+        bindings.pop(volume_name)
+        options["mounts"] = [docker.types.Mount(WRONG_OWNER_PATH, volume_name, type="volume", no_copy=True)]
     return client.containers.create(
         image_id,
         name=f"{RUN}-{suffix}",
         labels=LABELS,
         network=network_name,
-        volumes=mounts(volume_name, init=init),
+        volumes=bindings,
+        **options,
     )
+
+
+def wrong_owner_observation(raw: bytes) -> dict:
+    require(type(raw) is bytes and len(raw) <= WRONG_OWNER_MAX_BYTES, "fixture evidence exceeds bound")
+
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError
+            result[key] = value
+        return result
+
+    try:
+        value = json.loads(raw, object_pairs_hook=unique)
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        raise AssertionError("invalid fixture evidence") from None
+    expected = dict(runtime_uid=70, runtime_gid=70, uid=0, gid=0, mode=0o755,
+                    is_directory=True, empty=True, guard_refused=True)
+    require(type(value) is dict and set(value) == set(expected), "invalid fixture evidence shape")
+    require(all(type(value[key]) is type(item) and value[key] == item
+                for key, item in expected.items()), "wrong-owner fixture prerequisite failed")
+    return value
+
+
+class _WrongOwnerLogDeadline(BaseException):
+    """Interrupt SDK/HTTP reads without being swallowed as ordinary stream EOF."""
+
+
+def read_wrong_owner_logs(container) -> bytes:
+    # SDK log iterators disable socket timeouts and can swallow protocol errors
+    # as EOF. Read this small non-TTY response strictly under a Linux CLI timer.
+    require(threading.current_thread() is threading.main_thread()
+            and signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0), "fixture observation deadline unavailable")
+    previous = signal.getsignal(signal.SIGALRM)
+    response = None
+    output = bytearray()
+
+    def expired(_signum, _frame):
+        raise _WrongOwnerLogDeadline
+
+    signal.signal(signal.SIGALRM, expired)
+    try:
+        signal.setitimer(signal.ITIMER_REAL, WRONG_OWNER_LOG_SECONDS)
+        api = container.client.api
+        response = api._get(api._url("/containers/{0}/logs", container.id),
+                            params={"stdout": 1, "stderr": 1, "follow": 0}, stream=True)
+        api._raise_for_status(response)
+        while True:
+            header = response.raw.read(8)
+            if header == b"":
+                break
+            require(type(header) is bytes and len(header) == 8, "incomplete fixture log header")
+            channel, padding, length = struct.unpack(">B3sI", header)
+            require(channel in (1, 2) and padding == b"\0\0\0"
+                    and length <= WRONG_OWNER_MAX_BYTES - len(output), "invalid fixture log frame")
+            chunk = response.raw.read(length) if length else b""
+            require(type(chunk) is bytes and len(chunk) == length, "incomplete fixture log body")
+            output.extend(chunk)
+        return bytes(output)
+    except (_WrongOwnerLogDeadline, Exception):
+        raise AssertionError("complete bounded fixture output unavailable") from None
+    finally:
+        try:
+            if response is not None:
+                try:
+                    response.close()
+                except (_WrongOwnerLogDeadline, Exception):
+                    raise AssertionError("fixture response cleanup unknown") from None
+        finally:
+            try:
+                signal.setitimer(signal.ITIMER_REAL, 0)
+            finally:
+                signal.signal(signal.SIGALRM, previous)
+
+
+def wrong_owner_refusal(raw: bytes) -> None:
+    require(type(raw) is bytes and len(raw) <= WRONG_OWNER_MAX_BYTES, "refusal evidence exceeds bound")
+    lines = raw.splitlines()
+    require(len(lines) == 2 and lines[0].startswith(LIFECYCLE_PREFIX.encode())
+            and lines[1] == b"postgres-server startup or lifecycle failure", "unexpected refusal output")
+    evidence = scan_lifecycle_record(raw)
+    require(evidence["lifecycle_record_valid"] and evidence["lifecycle_reason"] == "startup_failure"
+            and evidence["native_exit_code"] is None, "ownership refusal was not startup-bounded")
+
+
+def verify_wrong_owner_container(container, image_id: str, volume_name: str, *, inspection: bool) -> None:
+    container.reload()
+    attrs = container.attrs
+    config, host = attrs["Config"], attrs["HostConfig"]
+    require(attrs["Image"] == image_id and config["User"] == "70:70"
+            and config.get("Entrypoint") in (None, []) and config.get("Tty", False) is False,
+            "fixture container identity changed")
+    expected_cmd = (["python3", "-c", WRONG_OWNER_INSPECTION] if inspection else
+                    ["python3", "-m", "control_plane_kit_servers_postgres_server.process"])
+    require(config["Cmd"] == expected_cmd, "fixture command changed")
+    configured = host.get("Mounts", [])
+    require(len(configured) == 1, "unexpected fixture volume mounts")
+    mount = configured[0]
+    require(mount.get("Type") == "volume" and mount.get("Source") == volume_name
+            and mount.get("Target") == WRONG_OWNER_PATH
+            and mount.get("ReadOnly", False) is inspection
+            and mount.get("VolumeOptions", {}).get("NoCopy") is True, "fixture NoCopy mount changed")
+    runtime = [item for item in attrs["Mounts"] if item.get("Destination") == WRONG_OWNER_PATH]
+    require(len(runtime) == 1 and runtime[0].get("Type") == "volume"
+            and runtime[0].get("Name") == volume_name and runtime[0].get("RW") is (not inspection),
+            "runtime fixture mount changed")
+    if inspection:
+        require(len(attrs["Mounts"]) == 1 and not host.get("Binds")
+                and host.get("ReadonlyRootfs") is True and host.get("NetworkMode") == "none",
+                "inspection isolation changed")
+
+
+def inspect_wrong_owner_fixture(client, image, volume_name: str, containers: list, stage: str) -> dict:
+    probe = client.containers.create(
+        image.id, command=["python3", "-c", WRONG_OWNER_INSPECTION],
+        name=f"{RUN}-wrong-owner-{stage}", labels=LABELS,
+        network_mode="none", user="70:70", read_only=True,
+        cap_drop=["ALL"], security_opt=["no-new-privileges"],
+        mounts=[docker.types.Mount(WRONG_OWNER_PATH, volume_name, type="volume", no_copy=True, read_only=True)],
+    )
+    containers.append(probe)
+    verify_wrong_owner_container(probe, image.id, volume_name, inspection=True)
+    probe.start()
+    wait_exit(probe, 0)
+    return wrong_owner_observation(read_wrong_owner_logs(probe))
+
+
+def exercise_wrong_owner(client, image, network_name: str) -> None:
+    name = f"{RUN}-wrong-owner-data"
+    require(not client.volumes.list(filters={"name": name}), "existing negative fixture volume")
+    volume = None
+    containers = []
+    verified_empty = False
+
+    def verify_volume():
+        volume.reload()
+        attrs = volume.attrs
+        require(volume.name == name and attrs.get("Name") == name and attrs.get("Driver") == "local"
+                and attrs.get("Options") in (None, {}) and attrs.get("Labels") == LABELS,
+                "negative fixture volume identity changed")
+
+    try:
+        volume = client.volumes.create(name=name, driver="local", labels=LABELS)
+        verify_volume()
+        before = inspect_wrong_owner_fixture(client, image, name, containers, "before")
+        refused = create(client, image.id, network_name, name, "wrong-owner", no_copy=True)
+        containers.append(refused)
+        verify_wrong_owner_container(refused, image.id, name, inspection=False)
+        refused.start()
+        wait_exit(refused, 1)
+        wrong_owner_refusal(read_wrong_owner_logs(refused))
+        after = inspect_wrong_owner_fixture(client, image, name, containers, "after")
+        require(after == before, "negative fixture changed")
+        verified_empty = True
+    finally:
+        for container in reversed(containers):
+            container.reload()
+            require(container.labels.get("org.openj92.cpk.test-run") == RUN, "foreign negative container cleanup refused")
+            container.remove(force=True)
+        if volume is not None and verified_empty:
+            verify_volume()
+            volume.remove()
+        else:
+            # Unlike the intentional positive database, unexpected negative data
+            # is evidence. No recursive/forced deletion or replacement fixture.
+            print(json.dumps({"postgres_wrong_owner_fixture": {"volume": name, "cleanup": "retained_unknown"}}), flush=True)
 
 
 def select_image(client, tag):
@@ -413,9 +612,6 @@ def cleanup_image(client, image, tag, owned):
 def cleanup_files():
     for name in ("control.json", "password", "10-witness.sql"):
         (RECORDS / name).unlink(missing_ok=True)
-    directory = RECORDS / "wrong-owner-data"
-    if directory.exists():
-        directory.rmdir()
 
 
 def require_fresh_resources(client):
@@ -502,12 +698,7 @@ def exercise(client, image) -> None:
         recovered.remove()
         containers.remove(recovered)
 
-        refused = create(client, image.id, network.name,
-                         str(HOST_RECORDS / "wrong-owner-data"), "wrong-owner")
-        containers.append(refused)
-        refused.start()
-        wait_exit(refused, 1)
-        require(PASSWORD.encode() not in refused.logs(stdout=True, stderr=True), "password reached refusal logs")
+        exercise_wrong_owner(client, image, network.name)
     finally:
         for container in reversed(containers):
             container.reload()
