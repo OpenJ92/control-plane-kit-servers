@@ -5,6 +5,12 @@ import runpy
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
+import io
+from contextlib import redirect_stdout
+import shutil
+import subprocess
+import sys
+import tempfile
 
 ROOT=Path(__file__).resolve().parents[3]
 SOURCE='a'*40
@@ -71,6 +77,121 @@ class PostgresPublicationTests(unittest.TestCase):
         client.images.get.assert_called_once_with(REFERENCE);client.images.build.assert_not_called()
         witness.cleanup_image(client,image,'owned-test-tag',owned)
         client.images.remove.assert_not_called()
+
+    def test_identity_failure_precedes_fixtures_and_never_builds_or_deletes(self):
+        witness=self.witness();client=Mock()
+        value=attrs();value['Config']['User']='0'
+        client.images.get.return_value=Mock(id=ID,attrs=value)
+        env=dict(CPK_POSTGRES_ARTIFACT_MODE='published-digest',CPK_POSTGRES_IMAGE=REFERENCE,
+                 CPK_POSTGRES_SOURCE_REVISION=SOURCE,CPK_POSTGRES_RECIPE_SHA256=RECIPE)
+        with patch.dict(os.environ,env), patch.object(witness.docker,'from_env',return_value=client), \
+                patch.object(witness,'prepare_files') as prepare:
+            with self.assertRaises(ValueError):witness.main()
+        prepare.assert_not_called();client.images.build.assert_not_called()
+        client.images.remove.assert_not_called();client.images.pull.assert_not_called()
+
+    def test_borrowed_success_is_reported_only_after_resource_and_fixture_cleanup(self):
+        witness=self.witness()
+        env=dict(CPK_POSTGRES_ARTIFACT_MODE='published-digest',CPK_POSTGRES_IMAGE=REFERENCE,
+                 CPK_POSTGRES_SOURCE_REVISION=SOURCE,CPK_POSTGRES_RECIPE_SHA256=RECIPE)
+        for failure in (None,'exercise','fixtures'):
+            with self.subTest(failure=failure):
+                client=Mock();client.images.get.return_value=Mock(id=ID,attrs=attrs())
+                output=io.StringIO();order=[]
+                def exercise(*args):
+                    order.append('resource cleanup')
+                    self.assertEqual(output.getvalue(),'')
+                    if failure=='exercise':raise RuntimeError('resource cleanup failed')
+                def cleanup():
+                    order.append('fixture cleanup')
+                    self.assertEqual(output.getvalue(),'')
+                    if failure=='fixtures':raise RuntimeError('fixture cleanup failed')
+                with patch.dict(os.environ,env), patch.object(witness.docker,'from_env',return_value=client), \
+                        patch.object(witness,'exercise',side_effect=exercise), \
+                        patch.object(witness,'cleanup_files',side_effect=cleanup), redirect_stdout(output):
+                    if failure:
+                        with self.assertRaises(RuntimeError):witness.main()
+                    else:self.assertEqual(witness.main(),0)
+                self.assertEqual(order,['resource cleanup','fixture cleanup'])
+                if failure:self.assertEqual(output.getvalue(),'')
+                else:self.assertIn('"owned_cleanup": "VERIFIED"',output.getvalue())
+                client.images.remove.assert_not_called();client.images.pull.assert_not_called()
+                client.images.build.assert_not_called()
+
+    def test_missing_borrowed_image_and_mixed_modes_have_no_fallback(self):
+        witness=self.witness();client=Mock();client.images.get.side_effect=RuntimeError('missing')
+        env=dict(CPK_POSTGRES_ARTIFACT_MODE='published-digest',CPK_POSTGRES_IMAGE=REFERENCE,
+                 CPK_POSTGRES_SOURCE_REVISION=SOURCE,CPK_POSTGRES_RECIPE_SHA256=RECIPE)
+        with patch.dict(os.environ,env):
+            with self.assertRaises(RuntimeError):witness.select_image(client,'tag')
+        for mode in ('source-built','unknown'):
+            with patch.dict(os.environ,dict(env,CPK_POSTGRES_ARTIFACT_MODE=mode)):
+                with self.assertRaises(AssertionError):witness.select_image(client,'tag')
+        client.images.build.assert_not_called();client.images.pull.assert_not_called()
+        client.images.remove.assert_not_called()
+
+    def test_publisher_stops_before_push_on_preflight_or_build_failure(self):
+        """Run the real publisher with command fakes; never contact Docker/GH."""
+        fake = '''import json, os, pathlib, subprocess, sys
+name=pathlib.Path(sys.argv[0]).name;args=sys.argv[1:]
+root=pathlib.Path(os.environ['FAKE_ROOT']);log=root/'calls'
+with log.open('a') as out:out.write(name+' '+ ' '.join(args)+'\\n')
+calls=log.read_text();fail=os.environ['FAIL_AT'];source='a'*40
+repo='ghcr.io/openj92/control-plane-kit-servers/postgres-server'
+if name=='git':
+    if args==['rev-parse','HEAD']:print(source)
+    elif args[0]=='archive':sys.stdout.write('fake tracked archive')
+elif name=='gh':
+    pushed='docker push ' in calls
+    if fail=='absent':sys.exit(1)
+    if '--paginate' in args:
+        version=dict(id=8,name='sha256:'+'d'*64,metadata={'container':{'tags':['managed-'+source]}})
+        print(json.dumps([[version]] if pushed or fail=='used' else [[]]))
+    else:
+        print(json.dumps(dict(id=7,name='control-plane-kit-servers/postgres-server',package_type='container',
+            visibility='public' if fail=='public' or (pushed and fail=='post-private') else 'private')))
+elif name=='docker':
+    if '/policy/release.py' in args:
+        mounts=[a for a in args if ':/evidence:ro' in a]
+        evidence=mounts[0].split(':/evidence:ro')[0]
+        tail=args[args.index('/policy/release.py')+1:]
+        tail=[evidence if a=='/evidence' else a for a in tail]
+        sys.exit(subprocess.run([sys.executable,str(root/'products/postgres_server/release.py'),*tail]).returncode)
+    elif args[0] in ('build','push'):
+        if args[0]=='build':sys.stdin.read()
+        if fail==args[0]:sys.exit(1)
+    elif args[:2]==['image','inspect']:
+        fmt=args[args.index('--format')+1]
+        if fmt=='{{.Id}}':print('sha256:'+'c'*64)
+        elif fmt=='{{.Os}}/{{.Architecture}}':print('linux/amd64')
+        elif fmt=='{{.Config.User}}':print('70:70')
+        elif 'revision' in fmt:print(source)
+        elif 'recipe.sha256' in fmt:
+            import hashlib
+            print(hashlib.sha256((root/'products/postgres_server/Dockerfile').read_bytes()).hexdigest())
+        elif 'RepoDigests' in fmt:print(repo+'@sha256:'+'d'*64)
+        else:sys.exit(2)
+else:sys.exit(2)
+'''
+        for failure in ('none','public','absent','used','build','push','post-private'):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                root=Path(directory);(root/'bin').mkdir();(root/'scripts').mkdir()
+                (root/'products/postgres_server').mkdir(parents=True)
+                for relative in ('scripts/publish_product_image.sh','scripts/select_repository_digest.sh',
+                                 'products/postgres_server/release.py','products/postgres_server/Dockerfile'):
+                    shutil.copyfile(ROOT/relative,root/relative)
+                for command in ('git','gh','docker'):
+                    path=root/'bin'/command
+                    path.write_text('#!'+sys.executable+'\n'+fake);path.chmod(0o755)
+                env=dict(os.environ,PATH=str(root/'bin')+':'+os.environ['PATH'],FAKE_ROOT=str(root),FAIL_AT=failure,
+                         GHCR_OWNER='openj92',GHCR_PACKAGE='control-plane-kit-servers')
+                result=subprocess.run(['sh',str(root/'scripts/publish_product_image.sh'),
+                                       'postgres-server-managed','managed-'+SOURCE],env=env,capture_output=True,text=True)
+                calls=(root/'calls').read_text()
+                self.assertEqual(result.returncode==0,failure=='none',result.stderr)
+                self.assertEqual(calls.count('docker push '),int(failure in ('none','push','post-private')))
+                if failure=='none':self.assertIn('reference='+REFERENCE,result.stdout)
+                else:self.assertNotIn('postgres-server-managed reference=',result.stdout)
 
 
 if __name__=='__main__':unittest.main()

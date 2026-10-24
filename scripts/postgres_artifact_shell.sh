@@ -5,6 +5,13 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 cd "$ROOT"
 MODE="${1:?mode required}"
 shift
+case "$MODE" in --postgres-release-tests|--postgres-published-image) ;; *) exit 2 ;; esac
+if [ "$MODE" = --postgres-published-image ]; then
+  [ "${CPK_POSTGRES_ARTIFACT_MODE:-}" = published-digest ]
+  : "${CPK_POSTGRES_IMAGE:?exact pre-pulled repository digest required}"
+  : "${CPK_POSTGRES_SOURCE_REVISION:?expected source required}"
+  : "${CPK_POSTGRES_RECIPE_SHA256:?expected recipe hash required}"
+fi
 CONTROLLER='' RECEIPTS=''
 while [ "$#" -gt 0 ]; do
   [ "$#" -ge 2 ] || exit 2
@@ -35,12 +42,34 @@ case "$MODE" in
     --security-opt no-new-privileges --tmpfs /tmp:exec \
     --mount "type=bind,source=$ROOT,target=/source,readonly" --workdir /source \
     -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONPATH=/source/products/postgres_server/src \
-    "$CONTROLLER" python -m unittest discover -s products/postgres_server/tests -p 'test_postgres_publication.py' -v \
+    "$CONTROLLER" python -m unittest discover -s products/postgres_server/tests -p 'test_postgres*.py' -v \
     > "$RECEIPTS/tests.log" 2>&1
   RESULT=$?
   set -e
   printf '%s\n' "$RESULT" > "$RECEIPTS/tests.exit"
   cat "$RECEIPTS/tests.log"
+  exit "$RESULT"
+  ;;
+ --postgres-published-image)
+  mkdir -m 700 "$RECEIPTS/fixtures"
+  RUN="cpk-postgres-published-$(basename "$RECEIPTS")"
+  set +e
+  docker run --pull never --rm --network none --read-only --tmpfs /tmp:exec \
+    --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
+    --mount "type=bind,source=$ROOT,target=/source,readonly" --workdir /source \
+    --mount "type=bind,source=$RECEIPTS/fixtures,target=/witness" \
+    -e PYTHONDONTWRITEBYTECODE=1 \
+    -e PYTHONPATH=/source/products/postgres_server/src:/source/products/postgres_server/tests \
+    -e "CPK_POSTGRES_TEST_RUN=$RUN" -e "CPK_POSTGRES_HOST_RECORDS=$RECEIPTS/fixtures" \
+    -e CPK_POSTGRES_ARTIFACT_MODE -e CPK_POSTGRES_IMAGE \
+    -e CPK_POSTGRES_SOURCE_REVISION -e CPK_POSTGRES_RECIPE_SHA256 \
+    "$CONTROLLER" python /source/products/postgres_server/tests/live_postgres_image.py \
+    > "$RECEIPTS/qualification.log" 2>&1
+  RESULT=$?
+  set -e
+  rmdir "$RECEIPTS/fixtures" || RESULT=1
+  printf '%s\n' "$RESULT" > "$RECEIPTS/qualification.exit"
+  cat "$RECEIPTS/qualification.log"
   exit "$RESULT"
   ;;
  *) echo 'PostgreSQL artifact route is unavailable' >&2; exit 2 ;;

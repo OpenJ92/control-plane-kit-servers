@@ -43,11 +43,46 @@ case "$PRODUCT_ID" in
     DOCKERFILE="products/secrets_server/Dockerfile"
     IMAGE_NAME="secrets-server"
     ;;
+  postgres-server-managed)
+    DOCKERFILE="products/postgres_server/Dockerfile"
+    IMAGE_NAME="postgres-server"
+    ;;
   *)
     echo "unsupported product id: $PRODUCT_ID" >&2
     exit 2
     ;;
 esac
+
+if [ "$PRODUCT_ID" = postgres-server-managed ]; then
+  umask 077
+  SOURCE_COMMIT="$(git rev-parse HEAD)"
+  [ -z "$(git status --porcelain)" ]
+  PG_RECORDS="$(mktemp -d)"
+  cleanup_postgres_publication() {
+    rm -f "$PG_RECORDS/package.json" "$PG_RECORDS/versions.json" "$PG_RECORDS/source.tar"
+    rmdir "$PG_RECORDS"
+  }
+  trap cleanup_postgres_publication EXIT
+  postgres_policy() {
+    docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+      --user "$(id -u):$(id -g)" -e PYTHONDONTWRITEBYTECODE=1 \
+      -v "$ROOT/products/postgres_server:/policy:ro" -v "$PG_RECORDS:/evidence:ro" \
+      "$POLICY_IMAGE" python /policy/release.py "$@"
+  }
+  IMAGE="$(postgres_policy destination "$OWNER" "$PACKAGE" "$TAG" "$SOURCE_COMMIT")"
+  postgres_package_check() {
+    gh api 'users/OpenJ92/packages/container/control-plane-kit-servers%2Fpostgres-server' > "$PG_RECORDS/package.json"
+    gh api --paginate --slurp 'users/OpenJ92/packages/container/control-plane-kit-servers%2Fpostgres-server/versions?per_page=100' > "$PG_RECORDS/versions.json"
+    postgres_policy package /evidence "$SOURCE_COMMIT" "$@"
+  }
+  postgres_package_check
+  git archive --format=tar "$SOURCE_COMMIT" > "$PG_RECORDS/source.tar"
+  if command -v sha256sum >/dev/null 2>&1; then
+    PG_RECIPE="$(sha256sum "$DOCKERFILE" | cut -d ' ' -f 1)"
+  else
+    PG_RECIPE="$(shasum -a 256 "$DOCKERFILE" | cut -d ' ' -f 1)"
+  fi
+fi
 
 IMAGE="ghcr.io/$OWNER/$PACKAGE/$IMAGE_NAME:$TAG"
 ROOT_PRODUCT=0
@@ -84,6 +119,18 @@ if [ "$PRODUCT_ID" = hello-server ]; then
   [ "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMAGE")" = "$SOURCE_COMMIT" ]
   # Recheck immediately before the consequential step; no retry on ambiguity.
   sh scripts/check_hello_package.sh before-push "$SOURCE_COMMIT"
+elif [ "$PRODUCT_ID" = postgres-server-managed ]; then
+  docker build --platform linux/amd64 \
+    --label "org.opencontainers.image.revision=$SOURCE_COMMIT" \
+    --label "org.openj92.cpk.recipe.sha256=$PG_RECIPE" \
+    -f "$DOCKERFILE" -t "$IMAGE" - < "$PG_RECORDS/source.tar"
+  [ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$IMAGE")" = linux/amd64 ]
+  [ "$(docker image inspect --format '{{.Config.User}}' "$IMAGE")" = 70:70 ]
+  [ "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMAGE")" = "$SOURCE_COMMIT" ]
+  [ "$(docker image inspect --format '{{index .Config.Labels "org.openj92.cpk.recipe.sha256"}}' "$IMAGE")" = "$PG_RECIPE" ]
+  PG_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+  [ -z "$(git status --porcelain)" ] && [ "$(git rev-parse HEAD)" = "$SOURCE_COMMIT" ]
+  postgres_package_check
 elif [ "$ROOT_PRODUCT" = 1 ]; then
   docker build --platform linux/amd64 \
     --label "org.opencontainers.image.revision=$SOURCE_COMMIT" \
@@ -108,6 +155,15 @@ if [ "$PRODUCT_ID" = hello-server ]; then
   sh scripts/check_hello_package.sh published "$SOURCE_COMMIT" "$REFERENCE"
   printf 'hello-server reference=%s image_id=%s source=%s platform=linux/amd64 configured_user=hello recipe_uid=10002\n' "$REFERENCE" "$HELLO_IMAGE_ID" "$SOURCE_COMMIT"
   echo "Qualify this actual pulled-by-digest Hello artifact with both declarations before installed use. Source startup evidence does not qualify this rebuilt image. Historical catalogue coordinates remain unchanged." >&2
+elif [ "$PRODUCT_ID" = postgres-server-managed ]; then
+  [ "$(docker image inspect --format '{{.Id}}' "$IMAGE")" = "$PG_IMAGE_ID" ]
+  REPOSITORY="${IMAGE%:*}"
+  REPO_DIGESTS="$(docker image inspect "$PG_IMAGE_ID" --format '{{range .RepoDigests}}{{println .}}{{end}}')"
+  REFERENCE="$(printf '%s\n' "$REPO_DIGESTS" | sh scripts/select_repository_digest.sh "$REPOSITORY")"
+  postgres_package_check "$REFERENCE"
+  printf 'postgres-server-managed reference=%s image_id=%s source=%s recipe_sha256=%s platform=linux/amd64 configured_user=70:70\n' \
+    "$REFERENCE" "$PG_IMAGE_ID" "$SOURCE_COMMIT" "$PG_RECIPE"
+  echo 'Publication is not qualification. Qualify this exact pre-pulled digest with the PostgreSQL owning witness before managed installation; native descriptor is unchanged.' >&2
 elif [ "$ROOT_PRODUCT" = 1 ]; then
   [ "$(docker image inspect --format '{{.Id}}' "$IMAGE")" = "$ROOT_IMAGE_ID" ]
   REPOSITORY="${IMAGE%:*}"

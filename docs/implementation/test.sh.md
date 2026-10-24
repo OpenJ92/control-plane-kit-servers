@@ -1,6 +1,12 @@
 Source: [test.sh](../../test.sh).
 Maintain with the normal Docker-backed owning gate and prerequisite effects.
 
+#191 adds explicit PostgreSQL source-test and published-image routes through
+`scripts/postgres_artifact_shell.sh`. The latter borrows an already-present exact
+digest and reuses the existing product witness. It requires separate runtime
+authorization and is never selected by default CI. See
+[managed PostgreSQL artifacts](../managed-postgres-artifacts.md).
+
 #306 adds one unconditional representation regression after the existing
 controller/package/import checks and before product runtime effects. It calls
 the actual sourced `root_artifact_inspection` function on the cached `hello_family`
