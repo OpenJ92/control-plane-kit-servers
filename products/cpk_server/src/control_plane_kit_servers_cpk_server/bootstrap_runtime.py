@@ -12,8 +12,10 @@ import os
 from pathlib import Path
 import re
 import secrets
+import signal
 import stat
 import tarfile
+import threading
 import time
 
 from .bootstrap import (
@@ -55,6 +57,14 @@ def _material(plan, index_path):
             if "\x00" in value:
                 raise ValueError("encoding")
             values[reference] = value
+        postgres = next(node for node in plan["resources"]["nodes"]
+                        if node["node_id"] == plan["postgres_node_id"])
+        if any(entry["target"] == "/run/secrets/postgres/password" for entry in postgres["secret_files"]):
+            reference = plan["input"]["installation"]["references"]["postgres_password"]
+            # The product file reader strips LF but environment delivery does
+            # not. Reject ambiguous shared credentials before any acquisition.
+            if values[reference].endswith("\n"):
+                raise ValueError("managed password has trailing LF")
         return values
     except (RootBootstrapError, ValueError, TypeError, KeyError, OSError):
         raise RootBootstrapError("bootstrap material could not be verified") from None
@@ -412,7 +422,13 @@ def _acquire(plan, material, state):
                 _save(state, receipt)
             observed()
             if node["node_id"] == plan["postgres_node_id"]:
-                effect("observe-postgres-readiness", lambda: _postgres_ready(container))
+                password = None
+                if any(entry["target"] == "/run/secrets/postgres/password" for entry in node["secret_files"]):
+                    reference = plan["input"]["installation"]["references"]["postgres_password"]
+                    # Material admission guarantees the same effective bytes
+                    # for PostgreSQL's file, CPK's environment and this probe.
+                    password = material[reference].encode("utf-8")
+                effect("observe-postgres-readiness", lambda: _postgres_ready(container, password=password))
                 observed()
             for probe in node["http_checks"]:
                 check = probe["check"]
@@ -490,7 +506,55 @@ def _acquire(plan, material, state):
         client.close()
 
 
-def _postgres_ready(container):
+_POSTGRES_OBSERVATION_SECONDS = 10.0
+
+
+class _PostgresObservationDeadline(BaseException):
+    """Unwind the attached reader even through ordinary SDK error handlers."""
+
+
+def _postgres_sql_observation(container, invocation, timeout):
+    """Interrupt this Linux CLI's attached SDK read, retaining remote uncertainty."""
+    if (threading.current_thread() is not threading.main_thread()
+            or signal.getitimer(signal.ITIMER_REAL) != (0.0, 0.0) or timeout <= 0):
+        raise RootBootstrapHold("bootstrap PostgreSQL SQL observation boundary is unavailable")
+    previous = signal.getsignal(signal.SIGALRM)
+
+    def expired(_signum, _frame):
+        raise _PostgresObservationDeadline
+
+    signal.signal(signal.SIGALRM, expired)
+    try:
+        signal.setitimer(signal.ITIMER_REAL, timeout)
+        # stream=False closes the SDK response in its finally block when the
+        # signal interrupts poll/select. This does not cancel the remote exec.
+        return container.exec_run(list(invocation.argv), environment=dict(invocation.environ), stderr=False)
+    except (_PostgresObservationDeadline, Exception):
+        raise RootBootstrapHold("bootstrap PostgreSQL SQL observation requires investigation") from None
+    finally:
+        try:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+        finally:
+            signal.signal(signal.SIGALRM, previous)
+
+
+def _postgres_ready(container, *, password=None):
+    if password is not None:
+        from control_plane_kit_servers_postgres_server.readiness import psql_invocation
+        invocation = psql_invocation(password)
+        deadline = time.monotonic() + 60
+        for _ in range(60):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            result = _postgres_sql_observation(container, invocation,
+                min(_POSTGRES_OBSERVATION_SECONDS, remaining))
+            if result.exit_code == 0 and result.output == b"1\n":
+                return
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(1)
+        raise RootBootstrapHold("bootstrap PostgreSQL authenticated SQL readiness was not observed")
     for _ in range(60):
         if container.exec_run(["pg_isready", "-h", "127.0.0.1"]).exit_code == 0:
             return

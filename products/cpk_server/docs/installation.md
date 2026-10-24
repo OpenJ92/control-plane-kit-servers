@@ -287,3 +287,31 @@ or `{"kind":"single-operator"}`; omitted root input preserves the default.
 Graphs contain references, never resolved credential documents. Resolved secret
 environment remains visible to trusted Docker/host administrators. Each cluster
 retains its own CPK, PostgreSQL, Secrets instance and credential documents.
+# Selecting managed PostgreSQL
+
+Supply an explicit `postgres-server` descriptor whose immutable image is the
+qualified managed PostgreSQL artifact and whose contract is authored with
+`postgres_source_runtime_contract(postgres_control_configuration_artifact(configuration))`.
+Do not replace the image on the historical native descriptor: it describes a
+different process contract.
+
+The public configuration names this installation's workspace, `<installation>-docker`
+runtime, `<installation>-postgres` node, `management` socket and a distinct
+receiver ID. It requires the product's surface/health verifier families and may
+reuse existing public verifier keys. The original two-role commissioning receipt
+does not establish this third receiver; supply and review it separately. Never
+put private signing keys in configuration.
+
+Composition preserves PostgreSQL 5432, private management 8000, the read-only
+control artifact, retained data and the owner-only password file. The installation
+password reference serves both PostgreSQL and the CPK client; DB/user remain
+`cpk`. Startup requires authenticated `SELECT 1`, independently of signed health.
+Managed shared password input must be nonempty valid UTF-8 without NUL or trailing
+LF. Bootstrap rejects ambiguous trailing LF before acquisition rather than giving
+the file reader and CPK environment different effective credentials. Native-root
+input semantics remain unchanged. The synchronous Linux driver bounds attached
+SQL observation with a scoped signal deadline; expiration holds the pending
+acquisition without retry and does not claim remote-command cancellation.
+The external driver includes the managed product authoring code; the accepted
+CPK/Secrets runtime images can remain selected. Fresh acquisition still refuses
+existing resources: this is not a native-volume migration, adoption or repair.

@@ -31,3 +31,11 @@ Absent input passes no new constructor argument, imports no enabled-only owner,
 adds no fields and retains the original three-import count before digesting.
 This source branch comparison, not the target self-roundtrip alone, establishes
 the intended historical byte preservation; the full owning gate remains required.
+# Managed PostgreSQL receiving configuration (#327)
+
+Managed PostgreSQL target/contract admission belongs to the shared installation
+composer and applies even without a website. Complete-root validation also
+requires its receiver ID to differ from the CPK and Secrets receivers. Existing
+CPK/Secrets artifact validation and native-root plan semantics remain intact.
+The input supplies an explicit PostgreSQL descriptor; the old two-role
+commissioning receipt does not commission a third receiver.

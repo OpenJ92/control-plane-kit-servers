@@ -221,7 +221,7 @@ def commissioning_driver_witness(run):
     # load product implementations only from the driver's copied /app paths.
     environment = dict(os.environ)
     environment["PYTHONPATH"] = ":".join("/app/products/" + name + "/src"
-        for name in ("cpk_server", "cpk_local_gateway", "secrets_server"))
+        for name in ("cpk_server", "cpk_local_gateway", "secrets_server", "postgres_server"))
     with TemporaryDirectory(prefix="commissioning-fixture-", dir=ROOT) as directory:
         state = Path(directory)
         document = {"schema": "cpk.root-commissioning.intent.v1", "installation_id": run,
@@ -241,7 +241,8 @@ from control_plane_kit_servers_cpk_server.control_configuration import decode_cp
 from control_plane_kit_servers_cpk_server.root_commissioning import plan_root_commissioning, prepare_root_commissioning
 print("commissioning-stage:provenance", flush=True)
 for name, product in (("control_plane_kit_servers_cpk_server.root_commissioning", "cpk_server"),
-                      ("control_plane_kit_servers_secrets_server.configuration", "secrets_server")):
+                      ("control_plane_kit_servers_secrets_server.configuration", "secrets_server"),
+                      ("control_plane_kit_servers_postgres_server.configuration", "postgres_server")):
     loaded = pathlib.Path(importlib.import_module(name).__file__).resolve()
     assert loaded.is_relative_to(pathlib.Path("/app/products") / product / "src")
 payload = json.loads(sys.stdin.read())
@@ -277,6 +278,8 @@ from control_plane_kit_core.topology import GraphDescriptorCodec
 from control_plane_kit_servers_cpk_server.bootstrap import plan_root_bootstrap
 from control_plane_kit_servers_cpk_server.control_configuration import CpkSourceVariant, cpk_source_runtime_contract
 from control_plane_kit_servers_secrets_server.configuration import secrets_source_runtime_contract
+from control_plane_kit_servers_postgres_server.configuration import (
+    postgres_control_configuration_artifact, postgres_control_declaration, postgres_source_runtime_contract)
 document = payload["bootstrap_input"]
 codec = ProductDescriptorCodec()
 for role in ("cpk", "secrets"):
@@ -286,6 +289,20 @@ for role in ("cpk", "secrets"):
     selected = codec.decode_document(document["installation"]["products"][role])
     document["installation"]["products"][role] = json.loads(codec.encode_document(
         replace(selected.product, runtime_contract=contract)).content)
+# Public-only authoring for a third, explicitly supplied fixture receiver. The
+# original two-role commissioning result and its exact reuse remain unchanged.
+import control_plane_kit_core as core
+cpk = decode_cpk_control_configuration(result["artifacts"]["cpk"]["content"].encode())
+roles = core.NodeControlGraphReferenceRole
+postgres = replace(cpk, target=replace(cpk.target,
+    node_id=core.NodeControlGraphReference(roles.NODE, document["installation"]["installation_id"] + "-postgres"),
+    provider_socket_name=core.NodeControlGraphReference(roles.PROVIDER_SOCKET, "management"),
+    receiver_id="f" * 32), declaration=postgres_control_declaration())
+postgres_artifact = postgres_control_configuration_artifact(postgres)
+selected = codec.decode_document(document["installation"]["products"]["postgres"])
+document["installation"]["products"]["postgres"] = json.loads(codec.encode_document(replace(selected.product,
+    image=OciImageReference("example.invalid", "fixture/managed-postgres", "sha256:" + "e" * 64),
+    runtime_contract=postgres_source_runtime_contract(postgres_artifact))).content)
 document["installation"]["website"] = {
     "image": OciImageReference("example.invalid", "fixture/website", "sha256:" + "a" * 64).descriptor(),
     "external_endpoint": "https://web.example.test", "host_binding": {"address": "127.0.0.1", "port": 18081}}
@@ -297,6 +314,11 @@ assert complete["setup_routes"].count("command.product.import") == 4
 for role in ("cpk", "secrets"):
     node = next(node for node in complete["resources"]["nodes"] if node["node_id"] == document["installation"]["installation_id"] + "-" + role)
     assert node["configuration_files"][0]["artifact"] == result["artifacts"][role]
+postgres_node = next(node for node in complete["resources"]["nodes"]
+    if node["node_id"] == document["installation"]["installation_id"] + "-postgres")
+assert postgres_node["configuration_files"][0]["artifact"] == postgres_artifact.descriptor()
+assert postgres_node["secret_files"][0]["target"] == "/run/secrets/postgres/password"
+assert not any(binding["node_id"] == postgres_node["node_id"] for binding in complete["host_bindings"])
 for name in ("control_plane_kit_servers_cpk_server.bootstrap", "control_plane_kit_servers_cpk_server.client.frontend"):
     assert pathlib.Path(importlib.import_module(name).__file__).resolve().is_relative_to(pathlib.Path("/app/products/cpk_server/src"))
 print("root commissioning: actual driver factories and exact reuse PASS")

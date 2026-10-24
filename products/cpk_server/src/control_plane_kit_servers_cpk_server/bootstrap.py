@@ -247,7 +247,7 @@ def _installation(document):
 
 
 def _complete_control_configuration(installation, products):
-    """Bind actual public receiving contracts to the installation's two roles."""
+    """Bind actual public receiving contracts to distinct installation roles."""
     from control_plane_kit_core.configuration import ConfigurationFileMode, ConfigurationMediaType
     from control_plane_kit_core.receiver_configuration import select_receiver_node_control_configuration_artifact
     from control_plane_kit_secrets.control import decode_secrets_control_configuration
@@ -279,7 +279,11 @@ def _complete_control_configuration(installation, products):
                 or target.node_id.value != node_id or target.provider_socket_name.value != socket):
             raise RootBootstrapError("bootstrap receiving configuration is invalid")
         receivers.append(target.receiver_id)
-    if len(set(receivers)) != 2:
+    from .installation import _managed_postgres_configuration
+    postgres = _managed_postgres_configuration(products["postgres"].product.runtime_contract)
+    if postgres is not None:
+        receivers.append(postgres.target.receiver_id)
+    if len(set(receivers)) != len(receivers):
         raise RootBootstrapError("bootstrap receiving configuration is invalid")
 
 

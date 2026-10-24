@@ -43,3 +43,14 @@ credentials, process authority, readiness claim or external effect is introduced
 The 16 reviewed `test_installation_website.py` methods protect these laws. Source
 and owning-suite evidence belong to PR #300; image and live acceptance remain
 separate.
+# Managed PostgreSQL installation (#327)
+
+The historical native descriptor remains supported. A descriptor with the
+management provider must equal the PostgreSQL product owner's explicit managed
+source contract, allowing its password reference to vary. Socket presence alone
+does not admit an image. The target must name this installation's workspace,
+runtime, PostgreSQL node and management socket. The contract keeps its public
+receiver artifact, retained data, two providers and protected password file.
+The installation variant changes the password reference and adds authenticated
+`PostgresQueryCheck` for cpk/cpk. It never converts that file into an environment
+delivery. Imports of PostgreSQL authoring code are lazy on this selected path.
