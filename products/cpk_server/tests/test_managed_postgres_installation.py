@@ -288,6 +288,16 @@ class ManagedPostgresStartupTests(unittest.TestCase):
         finally:
             signal.setitimer(signal.ITIMER_REAL, 0)
 
+    def test_timer_setup_failure_restores_handler_and_refuses_before_exec(self):
+        previous = signal.getsignal(signal.SIGALRM)
+        with patch.object(self.runtime.signal, "setitimer", side_effect=[ValueError("private-canary"), None]):
+            with self.assertRaises(self.runtime.RootBootstrapHold) as raised:
+                self.runtime._postgres_ready(self.container, password=b"private-password-canary")
+        self.assertNotIn("canary", str(raised.exception))
+        self.container.exec_run.assert_not_called()
+        self.assertIs(signal.getsignal(signal.SIGALRM), previous)
+        self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0.0, 0.0))
+
     def test_non_main_thread_refuses_before_exec(self):
         failures = []
         def observe():

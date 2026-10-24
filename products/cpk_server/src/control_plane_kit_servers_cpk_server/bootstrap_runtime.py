@@ -532,8 +532,10 @@ def _postgres_sql_observation(container, invocation, timeout):
     except (_PostgresObservationDeadline, Exception):
         raise RootBootstrapHold("bootstrap PostgreSQL SQL observation requires investigation") from None
     finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, previous)
+        try:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+        finally:
+            signal.signal(signal.SIGALRM, previous)
 
 
 def _postgres_ready(container, *, password=None):
