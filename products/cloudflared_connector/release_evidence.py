@@ -55,7 +55,7 @@ def sha(raw):
 def directory(path):
     """Resolve every directory component without following any symlink."""
     path=Path(path)
-    require(path.is_absolute() and '..' not in path.parts)
+    require(path.is_absolute() and path.anchor=='/' and '..' not in path.parts)
     fd=os.open('/',os.O_RDONLY|os.O_DIRECTORY)
     try:
         for part in path.parts[1:]:
