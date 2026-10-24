@@ -13,6 +13,13 @@ import tempfile
 SMALL, LARGE = 65536, 1048576
 REPOSITORY = 'ghcr.io/openj92/control-plane-kit-servers/cloudflared-connector'
 CONTEXT = 'cpk.managed-release-context.v1'
+PRODUCER_STAGES = frozenset((
+    'preflight-package-read','preflight-versions-read','preflight-package-check','preflight-tag-check',
+    'controller-acquisition','preflight-policy','source-archive','candidate-build','candidate-qualification',
+    'candidate-check','before-push-package-read','before-push-versions-read','before-push-policy',
+    'tag-candidate','push','remote-verification','published-package-read','published-versions-read',
+    'published-policy','publication-record','complete',
+))
 FIXED = {'28.0.4':'6430e49a55babd9b8f4d08e70ecb2b68900770fe',
          '28.5.1':'f8215cc266744ef195a50a70d427c345da2acdbb'}
 
@@ -217,12 +224,12 @@ def project(receipts, source_root, context, producer_exit):
     except Exception:
         raise ValueError('Invalid release evidence') from None
     tag='managed-'+source['commit']
-    result=dict(schema='cpk.cloudflared-managed-evidence.v1',source=source,
+    result=dict(schema='cpk.cloudflared-managed-evidence.v2',source=source,
         workflow=dict(run_id=context['run_id'],attempt=context['attempt']),
         outcomes=dict(producer_exit=producer_exit,push_command_exit=None,remote_publication='unknown',qualification='unknown',
             cleanup='unverified',candidate_retained_before_runner_disposal=None,projection='incomplete',retention='pending-upload'),
         artifacts=dict(candidate_id=None,controller_id=None,intended_tag=tag,reference=None,index_digest=None,platform_manifest=None,config_digest=None),
-        controller_receipt_sha256=None,qualification_receipt_sha256=None,stop=None,native_version=None,
+        controller_receipt_sha256=None,qualification_receipt_sha256=None,stop=None,native_version=None,producer_diagnostic=None,
         package_checks=dict(preflight='unknown',before_push='unknown',published='unknown'),failure='missing-evidence')
     invalid=False
     def attempt(fn):
@@ -231,6 +238,16 @@ def project(receipts, source_root, context, producer_exit):
         except FileNotFoundError:return None
         except Exception:invalid=True;return None
     def js(name,limit=SMALL):return decode(read(root/name,limit))
+    def producer_diagnostic():
+        value=js('producer-diagnostic.json',1024)
+        keys(value,('schema','source_commit','stage','exit_code'))
+        require(value['schema']=='cpk.cloudflared-managed-producer-diagnostic.v1' and value['source_commit']==source['commit'])
+        require(type(value['stage']) is str and value['stage'] in PRODUCER_STAGES)
+        code=integer(value['exit_code'],0,255)
+        require((value['stage']=='complete')==(code==0))
+        require(producer_exit is None or producer_exit==code)
+        result['producer_diagnostic']=dict(stage=value['stage'],exit_code=code)
+    attempt(producer_diagnostic)
     push=attempt(lambda:exit_code(read(root/'push.exit',8)))
     result['outcomes']['push_command_exit']=push
     def controller():

@@ -180,7 +180,7 @@ class ManagedEvidenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);value=project(root,ROOT,fixture(root),0)
             self.assertEqual(set(value),{'schema','source','workflow','outcomes','artifacts',
-                'controller_receipt_sha256','qualification_receipt_sha256','stop','native_version','package_checks','failure'})
+                'controller_receipt_sha256','qualification_receipt_sha256','stop','native_version','package_checks','failure','producer_diagnostic'})
             self.assertEqual(set(value['outcomes']),{'producer_exit','push_command_exit','remote_publication',
                 'qualification','cleanup','candidate_retained_before_runner_disposal','projection','retention'})
             self.assertEqual(set(value['stop']),{'engine_version','engine_commit','reviewed_engine_source','docker_sdk',
@@ -342,3 +342,54 @@ class ManagedEvidenceTests(unittest.TestCase):
                     with self.subTest(temp=temp),self.assertRaisesRegex(ValueError,'^Invalid release evidence$'):
                         prepare(source,temp,'123','1')
             self.assertEqual(list(nested.iterdir()),[])
+
+    def test_v2_terminal_diagnostic_is_optional_and_independent_of_publication(self):
+        project=self.implementation()['project']
+        for code,wrapper,stage in [(0,0,'complete'),(23,23,'preflight-package-read'),(23,None,'push')]:
+            with self.subTest(stage=stage),tempfile.TemporaryDirectory() as d:
+                root=Path(d);context=fixture(root)
+                put(root,'producer-diagnostic.json',dict(schema='cpk.cloudflared-managed-producer-diagnostic.v1',source_commit=SOURCE,stage=stage,exit_code=code))
+                value=project(root,ROOT,context,wrapper)
+                self.assertEqual(value['schema'],'cpk.cloudflared-managed-evidence.v2')
+                self.assertEqual(value.get('producer_diagnostic'),dict(stage=stage,exit_code=code))
+                self.assertEqual(value['outcomes']['producer_exit'],wrapper)
+                self.assertEqual(value['outcomes']['remote_publication'],'verified')
+                self.assertEqual(value['outcomes']['cleanup'],'verified')
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);context=fixture(root);value=project(root,ROOT,context,0)
+            self.assertIn('producer_diagnostic',value)
+            self.assertIsNone(value['producer_diagnostic'])
+            self.assertEqual(value['outcomes']['projection'],'complete')
+
+    def test_invalid_terminal_diagnostic_cannot_erase_independent_remote_facts(self):
+        project=self.implementation()['project']
+        for defect in ['source','unknown-key','stage','boolean','complete-nonzero','failure-zero','wrapper-disagrees','duplicate','symlink']:
+            with self.subTest(defect=defect),tempfile.TemporaryDirectory() as d:
+                root=Path(d);context=fixture(root)
+                record=dict(schema='cpk.cloudflared-managed-producer-diagnostic.v1',source_commit=SOURCE,stage='push',exit_code=23)
+                if defect=='source':record['source_commit']='f'*40
+                elif defect=='unknown-key':record[CANARY]=CANARY
+                elif defect=='stage':record['stage']=CANARY
+                elif defect=='boolean':record['exit_code']=True
+                elif defect=='complete-nonzero':record['stage']='complete'
+                elif defect=='failure-zero':record['exit_code']=0
+                path=put(root,'producer-diagnostic.json',record)
+                if defect=='duplicate':path.write_text('{"stage":"push","stage":"complete"}')
+                if defect=='symlink':path.unlink();path.symlink_to(root/'publication.json')
+                value=project(root,ROOT,context,0 if defect=='wrapper-disagrees' else 23)
+                self.assertEqual(value['outcomes']['projection'],'invalid')
+                self.assertIsNone(value.get('producer_diagnostic'))
+                self.assertEqual(value['outcomes']['remote_publication'],'verified')
+                self.assertEqual(value['outcomes']['cleanup'],'verified')
+                self.assertNotIn(CANARY,json.dumps(value))
+
+    def test_terminal_stage_does_not_settle_missing_remote_or_cleanup_facts(self):
+        project=self.implementation()['project']
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);context=dict(schema='cpk.managed-release-context.v1',source_commit=SOURCE,source_tree=TREE,run_id='123',attempt='1')
+            put(root,'producer-diagnostic.json',dict(schema='cpk.cloudflared-managed-producer-diagnostic.v1',source_commit=SOURCE,stage='push',exit_code=23))
+            value=project(root,ROOT,context,None)
+            self.assertEqual(value.get('producer_diagnostic'),dict(stage='push',exit_code=23))
+            self.assertIsNone(value['outcomes']['producer_exit'])
+            self.assertEqual(value['outcomes']['remote_publication'],'unknown')
+            self.assertEqual(value['outcomes']['cleanup'],'unverified')
