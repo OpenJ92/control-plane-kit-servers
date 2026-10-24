@@ -32,11 +32,24 @@ def published_reference(reference):
     return reference
 
 
-def package_check(package,pages,source,reference=None):
+def repository_visibility(repository):
+    require(type(repository) is dict and repository.get('full_name')==SOURCE_REPOSITORY
+            and type(repository.get('id')) is int and repository['id']>0
+            and repository.get('visibility') in ('public','private')
+            and type(repository.get('private')) is bool
+            and repository['private']==(repository['visibility']=='private'))
+    return repository['visibility']
+
+
+def package_check(package,pages,source,reference=None,*,repository):
     publication_destination('openj92','control-plane-kit-servers','managed-'+source,source)
+    visibility=repository_visibility(repository)
     require(type(package) is dict and package.get('name')=='control-plane-kit-servers/postgres-server'
-            and package.get('package_type')=='container' and package.get('visibility')=='private'
+            and package.get('package_type')=='container' and package.get('visibility')==visibility
             and type(package.get('id')) is int and package['id']>0)
+    associated=package.get('repository')
+    require(type(associated) is dict and associated.get('full_name')==SOURCE_REPOSITORY
+            and type(associated.get('id')) is int and associated['id']==repository['id'])
     require(type(pages) is list and len(pages)>0)
     found=[];ids=set()
     for page in pages:
@@ -67,10 +80,8 @@ def first_publication_check(raw,exit_status):
             and value.get('message') in ('Not Found','Package not found.'))
 
 
-def first_published_package(package,pages,source,reference):
-    package_check(package,pages,source,reference)
-    repository=package.get('repository')
-    require(type(repository) is dict and repository.get('full_name')==SOURCE_REPOSITORY)
+def first_published_package(package,pages,source,reference,*,repository):
+    package_check(package,pages,source,reference,repository=repository)
 
 
 def published_image(attrs,reference,source,recipe):
@@ -109,6 +120,11 @@ def bounded_json(path,limit):
 def main():
     mode,*args=sys.argv[1:]
     if mode=='destination':print(publication_destination(*args))
+    elif mode=='repository':
+        root,=args
+        repository=bounded_json(Path(root)/'repository.json',65536)
+        visibility=repository_visibility(repository)
+        print(str(repository['id'])+':'+visibility)
     elif mode=='first-preflight':
         root,status=args
         first_publication_check(bounded_bytes(Path(root)/'package.response',65536),status)
@@ -117,7 +133,8 @@ def main():
         require(len(reference)<=1)
         check=first_published_package if mode=='first-published' else package_check
         check(bounded_json(Path(root)/'package.json',65536),
-              bounded_json(Path(root)/'versions.json',4194304),source,*reference)
+              bounded_json(Path(root)/'versions.json',4194304),source,*reference,
+              repository=bounded_json(Path(root)/'repository.json',65536))
     else:require(False)
 
 

@@ -65,6 +65,7 @@ if [ "$PG_MANAGED" = 1 ]; then
   cleanup_postgres_publication() {
     rm -f "$PG_RECORDS/package.json" "$PG_RECORDS/versions.json" "$PG_RECORDS/source.tar"
     rm -f "$PG_RECORDS/package.response" "$PG_RECORDS/package.error"
+    rm -f "$PG_RECORDS/repository.json"
     rmdir "$PG_RECORDS"
   }
   trap cleanup_postgres_publication EXIT
@@ -75,6 +76,17 @@ if [ "$PG_MANAGED" = 1 ]; then
       "$POLICY_IMAGE" python /policy/release.py "$@"
   }
   IMAGE="$(postgres_policy destination "$OWNER" "$PACKAGE" "$TAG" "$SOURCE_COMMIT")"
+  PG_REPOSITORY_STATE=''
+  postgres_repository_check() {
+    gh api --method GET 'repos/OpenJ92/control-plane-kit-servers' > "$PG_RECORDS/repository.json"
+    PG_OBSERVED_REPOSITORY="$(postgres_policy repository /evidence)"
+    if [ -z "$PG_REPOSITORY_STATE" ]; then
+      PG_REPOSITORY_STATE="$PG_OBSERVED_REPOSITORY"
+      PG_VISIBILITY="${PG_REPOSITORY_STATE#*:}"
+    else
+      [ "$PG_OBSERVED_REPOSITORY" = "$PG_REPOSITORY_STATE" ]
+    fi
+  }
   postgres_package_check() {
     gh api 'users/OpenJ92/packages/container/control-plane-kit-servers%2Fpostgres-server' > "$PG_RECORDS/package.json"
     gh api --paginate --slurp 'users/OpenJ92/packages/container/control-plane-kit-servers%2Fpostgres-server/versions?per_page=100' > "$PG_RECORDS/versions.json"
@@ -85,6 +97,7 @@ if [ "$PG_MANAGED" = 1 ]; then
     fi
   }
   postgres_preflight() {
+    postgres_repository_check
     if [ "$PG_FIRST" = 1 ]; then
       # Owner attestation and one-attempt authorization belong to the reviewed
       # execution plan. A 404 observation or this selector cannot grant them.
@@ -198,9 +211,10 @@ elif [ "$PG_MANAGED" = 1 ]; then
   REPOSITORY="${IMAGE%:*}"
   REPO_DIGESTS="$(docker image inspect "$PG_IMAGE_ID" --format '{{range .RepoDigests}}{{println .}}{{end}}')"
   REFERENCE="$(printf '%s\n' "$REPO_DIGESTS" | sh scripts/select_repository_digest.sh "$REPOSITORY")"
+  postgres_repository_check
   postgres_package_check "$REFERENCE"
-  printf 'postgres-server-managed reference=%s image_id=%s source=%s recipe_sha256=%s platform=linux/amd64 configured_user=70:70\n' \
-    "$REFERENCE" "$PG_IMAGE_ID" "$SOURCE_COMMIT" "$PG_RECIPE"
+  printf 'postgres-server-managed reference=%s image_id=%s source=%s recipe_sha256=%s platform=linux/amd64 configured_user=70:70 visibility=%s\n' \
+    "$REFERENCE" "$PG_IMAGE_ID" "$SOURCE_COMMIT" "$PG_RECIPE" "$PG_VISIBILITY"
   echo 'Publication is not qualification. Qualify this exact pre-pulled digest with the PostgreSQL owning witness before managed installation; native descriptor is unchanged.' >&2
 elif [ "$ROOT_PRODUCT" = 1 ]; then
   [ "$(docker image inspect --format '{{.Id}}' "$IMAGE")" = "$ROOT_IMAGE_ID" ]
