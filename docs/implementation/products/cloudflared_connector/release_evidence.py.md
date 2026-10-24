@@ -52,3 +52,27 @@ The preceding v1 design and acceptance records describe immutable historical art
 Read producer-diagnostic.json at a 1024-byte bound using existing safe file/JSON parsing. Exact private record keys schema/source_commit/stage/exit_code; fixed diagnostic schema and source match; stage must be a closed producer boundary; integer0..255, no booleans. complete iff zero. A known wrapper exit must agree. Invalid record yields null diagnostic and categorical invalid projection while independently proved remote publication/cleanup remain. Missing record is optional unknown; a valid diagnostic with missing wrapper exit does not synthesize that exit. Stage never settles publication, cleanup or retry authority.
 
 Planning review: Kepler PASS on issue191 comment6380825000, including original exit preservation, post-helper stage reset, safe missing/interrupted behavior and explicit v2 disclosure delta. Focused red1e1eed6 (/private/tmp/cpk-191-diagnostic-red):39 methods,33 pass,23 intended assertions across6 methods fail for missing records/v2/schema/validation; no errors. Later assertions after a failure and diagnostic suite were unreached. Test-only d5a1063 adds a global json import for deeper canary assertions, not reached during red. No real product/release was invoked. This future diagnostic cannot recover the historical failed attempt's cause.
+
+## Same-push whole-manifest anchor successor
+
+For future attempts publication now requires explicit push.exit0 and rederivation
+of the exact private push receipt using release.py's single owner. This is a
+stronger requirement than the historical allowance for missing push exit with
+other remote evidence. No existing failed receipt is rewritten or reclassified.
+
+Registry top bytes must hash AND size-match the independently derived same-push
+anchor; tag/package correspondence must match it too. Local build manifest digest
+and its optional descriptor remain mutually consistent local evidence, distinct
+from registry serialization. Selected index child bytes must match descriptor
+hash AND size. Registry config == local build config == qualified candidate.
+Formatted config source/platform is still a projection; no original config/layer
+byte verification is claimed. Whole pushed manifest/layer-descriptor integrity
+is anchored to the trusted producer's result, not a later registry assertion.
+Public v2 keys/categories and exact-file30day upload are unchanged.
+
+New-law red aefb9f8:48 methods,12 failing assertions across8 methods/subtests,
+no errors; diagnostics unreached. Failures expose absent same-push owner/parser,
+missing successful-exit/receipt/profile enforcement, acceptance of changed layers
+with unchanged config, and rejection of differing export representations. First
+green1a18ca8:49 release/evidence+12 diagnostic methods PASS. Follow-up size/stable
+read negatives have no preimplementation red claim. No registry effects occurred.
