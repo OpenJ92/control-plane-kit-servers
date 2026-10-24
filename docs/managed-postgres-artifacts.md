@@ -119,6 +119,13 @@ recovery and wrong-owner refusal. Retained starts preserve #279's native-listene
 observation before SQL. No user database or retained installation is accepted as
 an input. This does not prove the historical PID-lock cause.
 
+Failure summaries can project one numeric refused PID from the existing bounded
+native log tail. Missing, malformed, duplicate or truncated evidence retains an
+explicit uncertainty state and no PID. No raw hint or path is exposed, and this
+message projection does not establish PID ownership, liveness or failure cause.
+The original failure and cleanup remain authoritative; diagnostics authorize no
+retry, lock removal or data repair.
+
 The JSON success record follows successful lifecycle and resource/fixture-file
 cleanup. The shell additionally requires controller completion and removal of the
 empty fixture directory; `qualification.exit` must be zero for the whole invocation

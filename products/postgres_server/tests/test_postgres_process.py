@@ -829,6 +829,117 @@ class WitnessFailureRecordTests(unittest.TestCase):
         self.assertNotIn(process.LIFECYCLE_PREFIX, event_text)
 
 
+class RefusedLockPidDiagnosticTests(unittest.TestCase):
+    def hint(self, pid=b"37"):
+        return (b'2026-10-24 20:05:15 UTC [9] FATAL:  lock file "postmaster.pid" already exists\n'
+                b'2026-10-24 20:05:15 UTC [9] HINT:  Is another postmaster (PID ' + pid
+                + b') running in data directory "/RAW_PRIVATE_PATH"?\n')
+
+    def test_unique_ascii_pid_projects_only_closed_numeric_fields(self):
+        for pid in (b"1",b"37",b"2147483647"):
+            for role in (b"postmaster",b"postgres"):
+                with self.subTest(pid=pid,role=role):
+                    raw=self.hint(pid).replace(b'Is another postmaster',b'Is another '+role)
+                    self.assertEqual(live_witness.scan_refused_lock_pid(raw),
+                                     {"lock_pid_status":"one","refused_lock_pid":int(pid)})
+
+    def test_absent_and_ambiguous_never_select_a_pid(self):
+        self.assertEqual(live_witness.scan_refused_lock_pid(b'ordinary log'),
+                         {"lock_pid_status":"absent","refused_lock_pid":None})
+        for raw in (self.hint()+self.hint(),self.hint()+self.hint(b"38"),
+                    self.hint().replace(b'HINT:',b'Is another HINT:')):
+            with self.subTest(raw=raw):
+                self.assertEqual(live_witness.scan_refused_lock_pid(raw),
+                                 {"lock_pid_status":"ambiguous","refused_lock_pid":None})
+
+    def test_malformed_or_unassociated_hints_are_invalid_and_redacted(self):
+        invalid=[self.hint(pid) for pid in
+                 (b"0",b"-1",b"+1",b"01",b"2147483648",b"9"*11,b"37x",b"\xff",b"\t37")]
+        invalid += [self.hint().replace(b'HINT:',b'INFO:'),
+                    self.hint().replace(b'already exists',b'is empty'),
+                    self.hint().replace(b'"?\n',b'"'),
+                    self.hint().replace(b'/RAW_PRIVATE_PATH',b'x'*1024)]
+        for raw in invalid:
+            with self.subTest(raw=raw[:100]):
+                self.assertEqual(live_witness.scan_refused_lock_pid(raw),
+                                 {"lock_pid_status":"invalid","refused_lock_pid":None})
+
+    def test_byte_line_and_explicit_truncation_refuse_unique_pid(self):
+        cases=((self.hint(),True),
+               (b'x'*live_witness.MAX_FAILURE_LOG_BYTES+self.hint(),False),
+               (b'ordinary\n'*126+self.hint(),False),
+               (self.hint().splitlines()[1],True))
+        for raw,truncated in cases:
+            with self.subTest(size=len(raw),truncated=truncated):
+                self.assertEqual(live_witness.scan_refused_lock_pid(raw,truncated=truncated),
+                                 {"lock_pid_status":"truncated","refused_lock_pid":None})
+
+    def test_refusal_and_hint_require_one_adjacent_native_emitter_pair(self):
+        fatal,hint=self.hint().splitlines()
+        invalid=(fatal+b'\n'+hint.replace(b'[9]',b'[10]'),
+                 fatal+b'\nLOG: copied text '+hint,
+                 b'LOG: copied text '+fatal+b'\n'+hint,
+                 hint+b'\n'+fatal,
+                 fatal+b'\nunrelated\n'+hint,
+                 fatal+b'\n'+hint.replace(b'UTC',b'unknown'),
+                 fatal.replace(b'[9]',b'[2147483648]')+b'\n'+hint.replace(b'[9]',b'[2147483648]'))
+        for raw in invalid:
+            with self.subTest(raw=raw):
+                self.assertEqual(live_witness.scan_refused_lock_pid(raw),
+                                 {"lock_pid_status":"invalid","refused_lock_pid":None})
+        self.assertEqual(live_witness.scan_refused_lock_pid(fatal+b'\n'+fatal+b'\n'+hint),
+                         {"lock_pid_status":"ambiguous","refused_lock_pid":None})
+        # Millisecond timestamps may differ; the adjacent emitter must match.
+        raw=fatal.replace(b'15 UTC',b'15.123 UTC')+b'\n'+hint.replace(b'15 UTC',b'15.124 UTC')
+        self.assertEqual(live_witness.scan_refused_lock_pid(raw),
+                         {"lock_pid_status":"one","refused_lock_pid":37})
+
+    def test_failure_path_projects_without_raw_text_or_changed_assertion(self):
+        container=Mock();container.attrs={"State":{"Status":"exited","ExitCode":1}}
+        for raw,status,pid in ((self.hint(),"one",37),
+                               (b'x'*live_witness.MAX_FAILURE_LOG_BYTES+self.hint(),"truncated",None)):
+            container.logs.return_value=raw
+            output=io.StringIO()
+            with redirect_stdout(output),self.assertRaisesRegex(AssertionError,'original failure'):
+                live_witness.raise_container_failure(container,'original failure')
+            event=json.loads(output.getvalue())['postgres_source_failure']
+            self.assertEqual((event['lock_pid_status'],event['refused_lock_pid']),(status,pid))
+            self.assertNotIn('RAW_PRIVATE_PATH',output.getvalue())
+            self.assertNotIn('Is another',output.getvalue())
+            container.logs.assert_called_with(stdout=True,stderr=True,tail=128)
+        container.logs.side_effect=OSError('RAW_LOG_ERROR')
+        output=io.StringIO()
+        with redirect_stdout(output),self.assertRaisesRegex(AssertionError,'original failure'):
+            live_witness.raise_container_failure(container,'original failure')
+        event=json.loads(output.getvalue())['postgres_source_failure']
+        self.assertEqual(event['lock_pid_status'],'unavailable')
+        self.assertIsNone(event['refused_lock_pid'])
+        self.assertNotIn('RAW_LOG_ERROR',output.getvalue())
+
+    def test_parser_exception_preserves_main_failure_and_borrowed_cleanup(self):
+        container=Mock();container.attrs={"State":{"Status":"exited","ExitCode":1}}
+        container.logs.return_value=self.hint()
+        image=Mock()
+        output=io.StringIO()
+        with patch.object(live_witness,'select_image',return_value=(image,False)), \
+                patch.object(live_witness.docker,'from_env'), \
+                patch.object(live_witness,'exercise',side_effect=lambda *_:
+                             live_witness.raise_container_failure(container,'original failure')), \
+                patch.object(live_witness,'scan_refused_lock_pid',side_effect=RuntimeError('RAW_PARSER_ERROR')), \
+                patch.object(live_witness,'cleanup_files') as files, \
+                patch.object(live_witness,'cleanup_image') as cleanup, \
+                redirect_stdout(output),self.assertRaisesRegex(AssertionError,'original failure'):
+            live_witness.main()
+        files.assert_called_once()
+        self.assertIs(cleanup.call_args.args[1],image)
+        self.assertFalse(cleanup.call_args.args[3])
+        event=json.loads(output.getvalue())['postgres_source_failure']
+        self.assertEqual(event['lock_pid_status'],'invalid')
+        self.assertIsNone(event['refused_lock_pid'])
+        self.assertNotIn('RAW_PARSER_ERROR',output.getvalue())
+        self.assertNotIn('PASS',output.getvalue())
+
+
 class ImageDefinitionTests(unittest.TestCase):
     def test_image_is_exact_official_postgres_nonroot_pid1_wrapper(self):
         dockerfile = Path(__file__).resolve().parents[1] / "Dockerfile"
