@@ -37,3 +37,11 @@ urlencode(..., quote_via=quote), matching the existing transport target. JSON
 values, identities, expected responses and production decoding remain unchanged;
 this also preserves spaces and literal plus signs inside values. Inspect/revoke/
 restart and the complete witness still require a successful subsequent run.
+
+Run40585946487 proved the strict-percent inspection and revision1/scopes result,
+then reached a malformed MCP revoke payload: the accepted API requires exact
+scopes to remove. The witness now supplies the actually inspected record's scopes,
+retaining target/revision/idempotency and all expected results. The production
+contract is unchanged. Post-revoke denial, restart preservation and final PASS
+remain unvalidated. Remaining request shapes are checked against the selected
+public owners before retry, without recreating their state transitions here.

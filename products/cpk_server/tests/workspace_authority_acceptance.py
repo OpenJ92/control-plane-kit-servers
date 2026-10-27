@@ -129,6 +129,7 @@ def workspace_authority_acceptance(database_url):
             record = invoke(client, "http", "read.workspace-permission", {"target": operator.descriptor()})
             assert record["revision"] == 1 and record["scopes"] == grant["scopes"]
             invoke(client, "mcp", "command.workspace-permission.revoke", {"target": operator.descriptor(),
+                "scopes": record["scopes"],
                 "expected_revision": record["revision"], "idempotency_key": "revoke-workspace-b"})
             for surface in ("http", "mcp"):
                 invoke(client, surface, "read.current-graph", token=credentials[1], status=403)
