@@ -19,6 +19,10 @@ from control_plane_kit_interpreters.probes.security import ProbeAddressPolicy
 from control_plane_kit_operations.runtime_authorities import (
     LocalDockerSocketAuthority, RegisteredRuntimeAuthority, RegisteredRuntimeAuthorityStatus,
 )
+from control_plane_kit_operations.managed_runtime_assignments import (
+    ManagedRuntimeCapability, ManagedRuntimeCapabilityPolicy, ManagedRuntimeSelection,
+    ManagedRuntimeSelectionService,
+)
 
 
 class GatewayPlacementUnavailable(RuntimeError):
@@ -65,8 +69,33 @@ class DockerRuntimePolicyBinding:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class DockerRuntimeCapabilityBinding:
+    """One installer-owned acquisition policy behind an opaque capability value."""
+    capability: ManagedRuntimeCapability
+    local_client_config: DockerUnixSocketClientConfig = field(repr=False)
+
+    def __post_init__(self):
+        invalid = False
+        try:
+            if (type(self.capability) is not ManagedRuntimeCapability
+                    or type(self.local_client_config) is not DockerUnixSocketClientConfig):
+                raise ValueError
+            self.capability.__post_init__()
+            self.local_client_config.__post_init__()
+        except (ValueError, TypeError, AttributeError):
+            invalid = True
+        if invalid:
+            raise ValueError("installed runtime capability binding is invalid")
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class DockerRuntimeClientSelector:
     bindings: tuple[DockerRuntimeClientBinding | DockerRuntimePolicyBinding, ...]
+    capability_policy: ManagedRuntimeCapabilityPolicy | None = field(default=None, kw_only=True)
+    capability_bindings: tuple[DockerRuntimeCapabilityBinding, ...] = field(default=(), kw_only=True)
+    unit_of_work_factory: Callable | None = field(default=None, kw_only=True, repr=False, compare=False)
+    _selection_service: ManagedRuntimeSelectionService | None = field(
+        default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self):
         if (type(self.bindings) is not tuple or len(self.bindings) > 64
@@ -80,6 +109,34 @@ class DockerRuntimeClientSelector:
             if scope in seen:
                 raise ValueError("runtime client selection is invalid")
             seen.add(scope)
+        if self.capability_policy is None:
+            if (type(self.capability_bindings) is not tuple or self.capability_bindings
+                    or self.unit_of_work_factory is not None):
+                raise ValueError("runtime client selection is invalid")
+            return
+        invalid = False
+        try:
+            if (self.bindings or type(self.capability_policy) is not ManagedRuntimeCapabilityPolicy
+                    or not callable(self.unit_of_work_factory)
+                    or type(self.capability_bindings) is not tuple or len(self.capability_bindings) > 64
+                    or any(type(value) is not DockerRuntimeCapabilityBinding for value in self.capability_bindings)):
+                raise ValueError
+            self.capability_policy.__post_init__()
+            for capability in self.capability_policy.capabilities:
+                capability.__post_init__()
+            for binding in self.capability_bindings:
+                binding.__post_init__()
+            capabilities = tuple(binding.capability for binding in self.capability_bindings)
+            if (len({value.capability_id for value in capabilities}) != len(capabilities)
+                    or set(capabilities) != set(self.capability_policy.capabilities)):
+                raise ValueError
+        except (ValueError, TypeError, AttributeError):
+            invalid = True
+        if invalid:
+            raise ValueError("runtime client selection is invalid")
+        # This composes the existing owner; construction does not open its UoW.
+        object.__setattr__(self, "_selection_service", ManagedRuntimeSelectionService(
+            self.unit_of_work_factory, capability_policy=self.capability_policy))
 
     def select(self, *, workspace_id, runtime_id, authority):
         # Configured capability only: no provider connection or transport proof.
@@ -89,6 +146,22 @@ class DockerRuntimeClientSelector:
                 or authority.runtime_kind is not RuntimeKind.DOCKER
                 or type(authority.authority) is not LocalDockerSocketAuthority):
             return None
+        if self._selection_service is not None:
+            try:
+                selected = self._selection_service.select(workspace_id=workspace_id,
+                    runtime_id=runtime_id, authority=authority)
+                if type(selected) is not ManagedRuntimeSelection:
+                    return None
+                selected.__post_init__()
+                installed = next(value for value in self.capability_bindings
+                    if value.capability.capability_id == selected.capability_id)
+                # This is transport selection, not the admission/revision receipt.
+                # Effect dispatch must bind its acquired capability to admission.
+                return DockerRuntimePolicyBinding(selected.workspace_id, selected.runtime_id,
+                    selected.authority_ref, installed.local_client_config)
+            except Exception:
+                # Unavailable current truth cannot fall back to a static binding.
+                return None
         values = tuple(value for value in self.bindings
             if (value.workspace_id, value.runtime_id, value.authority_ref)
                 == (workspace_id, runtime_id, authority.authority_ref))
