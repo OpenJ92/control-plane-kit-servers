@@ -11,7 +11,9 @@ from psycopg.conninfo import make_conninfo
 
 from control_plane_kit_core.identity import AuthenticatedPrincipal, PrincipalIdentity, PrincipalKind, WorkspaceGrant
 from control_plane_kit_core.policies import PolicyScope
-from control_plane_kit_operations.managed_runtime_assignments import ManagedRuntimeCapabilityPolicy
+from control_plane_kit_operations.managed_runtime_assignments import (
+    ManagedRuntimeCapability, ManagedRuntimeCapabilityPolicy,
+)
 from control_plane_kit_operations.workflows import IdempotencyKey
 from control_plane_kit_operations.workspace_permissions import (
     WorkspaceAdministrationContext, WorkspaceAdministrationPolicy, WorkspacePermissionCommandService,
@@ -35,7 +37,9 @@ def workspace_authority_acceptance(database_url):
     other_kind = replace(operator, kind=PrincipalKind.WORKER)
     known = (administrator, operator, other_issuer, other_kind)
     policy = WorkspaceAdministrationPolicy("enrollment-installation", (administrator,), known)
-    authority = WorkspaceAuthorityConfiguration(policy, ManagedRuntimeCapabilityPolicy(policy.installation_id, ()))
+    authority = WorkspaceAuthorityConfiguration(policy, ManagedRuntimeCapabilityPolicy(policy.installation_id,
+        (ManagedRuntimeCapability("installed-management-capability-a"),
+         ManagedRuntimeCapability("installed-management-capability-b"))))
     credentials = ("synthetic-enrollment-admin", "synthetic-enrollment-operator",
         "synthetic-enrollment-other-issuer", "synthetic-enrollment-other-kind")
     # A startup grant must not bypass a missing/revoked durable dynamic grant.
@@ -141,5 +145,8 @@ def workspace_authority_acceptance(database_url):
                 invoke(client, surface, "read.current-graph", token=credentials[1], status=403)
             record = invoke(client, "http", "read.workspace-permission", {"target": operator.descriptor()})
             assert record["revision"] == 2 and record["scopes"] == []
+            from managed_provider_selection_acceptance import managed_provider_selection_acceptance
+            managed_provider_selection_acceptance(client, invoke, schema, authority)
         assert len(responses) < 50
     print("workspace authority: real startup receipt, public grant/revoke, full identity and restart preservation passed", flush=True)
+    print("management selection: public grants, current assignment and authority revocation, no Docker construction passed", flush=True)

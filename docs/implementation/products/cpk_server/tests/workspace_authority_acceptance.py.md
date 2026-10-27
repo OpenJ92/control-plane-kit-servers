@@ -45,3 +45,10 @@ retaining target/revision/idempotency and all expected results. The production
 contract is unchanged. Post-revoke denial, restart preservation and final PASS
 remain unvalidated. Remaining request shapes are checked against the selected
 public owners before retry, without recreating their state transitions here.
+
+The next selector target adds two existing opaque capabilities to this trusted
+installation policy and calls managed_provider_selection_acceptance after the
+original restart/empty-permission assertions. All original assertions remain.
+The helper uses the same actual app, public request transport and isolated schema;
+its separate marker is printed after enclosing cleanup. This extension is
+unvalidated and does not rewrite the accepted factory/startup run40587396766.
