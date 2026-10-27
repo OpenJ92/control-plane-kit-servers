@@ -3,6 +3,7 @@ from dataclasses import replace
 import json
 from unittest import TestCase
 from unittest.mock import patch
+from urllib.parse import quote, urlencode
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -82,7 +83,9 @@ def workspace_authority_acceptance(database_url):
                 if route.method.value == "GET":
                     query = {key: json.dumps(value) if isinstance(value, dict) else value
                         for key, value in payload.items()}
-                    response = client.get(location, params=query, headers=headers)
+                    if query:
+                        location += "?" + urlencode(query, quote_via=quote)
+                    response = client.get(location, headers=headers)
                 else:
                     response = client.post(location, json=payload, headers=headers)
             else:

@@ -28,3 +28,12 @@ No package target or this witness ran. The narrow correction uses standard
 `unittest.TestCase.assertRaises` and retains the no-provider-call assertion;
 wrong exceptions and unexpected success still fail. The integrity rule and
 runner are unchanged. A corrected owning attempt remains unvalidated.
+
+Implementation run40584390699 passed all package tests and reached this witness's
+permission inspect, which returned400. Its TestClient params used form-style
+plus signs for JSON spaces, while the established strict percent decoder retains
+literal plus signs. GET requests now build a percent-encoded URL with the standard
+urlencode(..., quote_via=quote), matching the existing transport target. JSON
+values, identities, expected responses and production decoding remain unchanged;
+this also preserves spaces and literal plus signs inside values. Inspect/revoke/
+restart and the complete witness still require a successful subsequent run.
