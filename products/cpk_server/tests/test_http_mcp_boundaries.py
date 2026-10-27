@@ -164,14 +164,27 @@ class CpkServerHttpMcpBoundaryTests(unittest.TestCase):
         self.assertEqual(mcp.handle(headers=headers, message=message).status, 413)
         service = services[ControlPlaneServiceRole.AUTHORIZATION]
         self.assertEqual(service.requests, [])
-        # The service has returned; an oversized response is not a rollback claim.
-        service.handle = lambda request: {"value": "x" * 65536}
         message["params"]["arguments"] = {}
-        for response in (mcp.handle(headers=headers, message=message),
-                http.handle(method="POST", path="/administration/workspaces",
-                    headers={"Authorization": "Bearer valid-token"}, body=b"{}")):
-            self.assertEqual(response.status, 503)
-            self.assertLess(len(json.dumps(response.body).encode()), 1024)
+        for result, expected_status in (({"value": "small"}, 200), ({"value": "x" * 65536}, 503)):
+            calls = []
+            def returned_result(request):
+                calls.append((request.route_id, request.surface))
+                return result
+            service.handle = returned_result
+            for surface, invoke in (
+                ("mcp", lambda: mcp.handle(headers=headers, message=message)),
+                ("http", lambda: http.handle(method="POST", path="/administration/workspaces",
+                    headers={"Authorization": "Bearer valid-token"}, body=b"{}")),
+            ):
+                with self.subTest(surface=surface, expected_status=expected_status):
+                    before = len(calls)
+                    response = invoke()
+                    self.assertEqual(calls[before:], [("command.workspace-administration.create", surface)])
+                    self.assertEqual(response.status, expected_status)
+                    if expected_status == 200:
+                        self.assertEqual(response.body["result"] if surface == "mcp" else response.body, result)
+                    else:
+                        self.assertLess(len(json.dumps(response.body).encode()), 1024)
 
     @staticmethod
     def _read_events_message(arguments: dict[str, object]) -> dict[str, object]:
