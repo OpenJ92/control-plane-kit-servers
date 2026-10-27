@@ -5,10 +5,10 @@ FROM ${CPK_IMAGE}
 # drops to the inspected CPK image UID and receives no Docker socket.
 USER 0
 RUN python -m pip install --no-cache-dir --force-reinstall \
-    "control-plane-kit-core @ https://github.com/OpenJ92/control-plane-kit/archive/879efb9576ac0580a6236d0a7372c036537b4dfe.zip#subdirectory=control-plane-kit-core" \
-    "control-plane-kit-operations @ https://github.com/OpenJ92/control-plane-kit/archive/879efb9576ac0580a6236d0a7372c036537b4dfe.zip#subdirectory=control-plane-kit-operations" \
+    "control-plane-kit-core @ https://github.com/OpenJ92/control-plane-kit/archive/4cc1716bef4d7548ddb4cd343e53fa06bb447104.zip#subdirectory=control-plane-kit-core" \
+    "control-plane-kit-operations @ https://github.com/OpenJ92/control-plane-kit/archive/4cc1716bef4d7548ddb4cd343e53fa06bb447104.zip#subdirectory=control-plane-kit-operations" \
     "control-plane-kit-server-sdk[fastapi] @ https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/43838fd0f4391428cfffa87f8c4dbd5cc6d5eab1.zip" \
-    "control-plane-kit-interpreters[cloudflare,docker,gateway,public-dns] @ https://github.com/OpenJ92/control-plane-kit-interpreters/archive/6faf6698e47381476fb2f09058894eab16f0c768.zip" \
+    "control-plane-kit-interpreters[cloudflare,docker,gateway,public-dns] @ https://github.com/OpenJ92/control-plane-kit-interpreters/archive/c8ec929efe648408d247ac5462a1f4be96fb8c11.zip" \
     "control-plane-kit-secrets @ https://github.com/OpenJ92/control-plane-kit-secrets/archive/78a2ed7c8abee6da31f8661993ed4c5426edd7ee.zip"
 COPY products/cpk_server/src /app/products/cpk_server/src
 COPY products/secrets_server/src /app/products/secrets_server/src
