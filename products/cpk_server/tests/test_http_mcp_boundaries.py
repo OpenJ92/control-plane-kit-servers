@@ -93,6 +93,86 @@ class CpkServerHttpMcpBoundaryTests(unittest.TestCase):
             "HTTP boundary does not accept the raw ASGI query string",
         )
 
+    def test_configured_dynamic_application_is_retained_on_http_and_mcp(self):
+        """A failed current lookup cannot become a successful static dispatch."""
+        import asyncio
+        from control_plane_kit_operations import CpkServerOperationsApplication
+        from control_plane_kit_operations.workspace_permissions import WorkspaceContextResolver
+        from control_plane_kit_servers_cpk_server import (
+            CpkServerApplicationBoundary, CpkServerHttpProcessBoundary, CpkServerMcpProcessBoundary,
+        )
+
+        composition, services, _, verifier = self._application()
+        attempts = []
+        def unavailable():
+            attempts.append(True)
+            raise RuntimeError("synthetic private store detail")
+        configured = CpkServerOperationsApplication(services, authority_mode="dynamic",
+            workspace_context_resolver=WorkspaceContextResolver(unavailable, installation_id="installation-a"))
+        application = CpkServerApplicationBoundary(configured, verifier)
+        http = CpkServerHttpProcessBoundary(composition, application)
+        mcp = CpkServerMcpProcessBoundary(composition, application)
+        http_arguments = dict(method="GET", path="/workspaces/workspace-a/runs/run-a/events",
+            headers={"Authorization": "Bearer valid-token"}, body=b"")
+        mcp_arguments = dict(headers=self._mcp_read_headers(),
+            message=self._read_events_message({"workspace_id": "workspace-a", "run_id": "run-a"}))
+        for response in (http.handle(**http_arguments), mcp.handle(**mcp_arguments),
+                asyncio.run(http.handle_async(**http_arguments)),
+                asyncio.run(mcp.handle_async(**mcp_arguments))):
+            self.assertEqual(response.status, 503)
+            self.assertNotIn("synthetic private", json.dumps(response.body))
+        self.assertEqual(len(attempts), 4)
+        self.assertTrue(all(not service.requests for service in services.values()))
+
+    def test_administration_read_query_preserves_typed_owner_arguments(self):
+        from control_plane_kit_servers_cpk_server import CpkServerHttpProcessBoundary
+        composition, services, application, _ = self._application()
+        http = CpkServerHttpProcessBoundary(composition, application)
+        target = {"issuer": "issuer-a", "subject_id": "operator-a", "kind": "operator"}
+        encoded = quote_from_bytes(json.dumps(target).encode(), safe="").encode()
+        response = http.handle(method="GET", path="/workspaces/workspace-a/permissions/inspect",
+            headers={"Authorization": "Bearer valid-token"}, body=b"", query_string=b"target=" + encoded)
+        self.assertEqual(response.status, 200)
+        self.assertEqual(services[ControlPlaneServiceRole.AUTHORIZATION].requests[-1].payload,
+                         {"target": target})
+        response = http.handle(method="GET", path="/workspaces/workspace-a/runtime-management/inspect",
+            headers={"Authorization": "Bearer valid-token"}, body=b"",
+            query_string=b"runtime_id=runtime-a&authority_ref=authority-a")
+        self.assertEqual(response.status, 200)
+        self.assertEqual(services[ControlPlaneServiceRole.AUTHORIZATION].requests[-1].payload,
+                         {"runtime_id": "runtime-a", "authority_ref": "authority-a"})
+
+    def test_administration_command_rejects_ambiguous_json_before_service(self):
+        from control_plane_kit_servers_cpk_server import CpkServerHttpProcessBoundary
+        composition, services, application, _ = self._application()
+        http = CpkServerHttpProcessBoundary(composition, application)
+        for body in (b'{"name":"first","name":"second"}', b'{"metadata":{"x":NaN}}',
+                     b'{"metadata":{"x":1e999}}', b'{"metadata":' + b'[' * 65 + b'0' + b']' * 65 + b'}'):
+            with self.subTest(body=body):
+                response = http.handle(method="POST", path="/administration/workspaces",
+                    headers={"Authorization": "Bearer valid-token"}, body=body)
+                self.assertEqual(response.status, 400)
+        self.assertEqual(services[ControlPlaneServiceRole.AUTHORIZATION].requests, [])
+
+    def test_administration_mcp_input_and_both_output_budgets_are_enforced(self):
+        from control_plane_kit_servers_cpk_server import CpkServerHttpProcessBoundary, CpkServerMcpProcessBoundary
+        composition, services, application, _ = self._application()
+        http, mcp = CpkServerHttpProcessBoundary(composition, application), CpkServerMcpProcessBoundary(composition, application)
+        headers = {**self._mcp_read_headers(), "Mcp-Method": "tools/call"}
+        message = {"jsonrpc": "2.0", "id": "admin", "method": "tools/call", "params": {
+            "name": "create_workspace_as_administrator", "arguments": {"name": "x" * 65536}}}
+        self.assertEqual(mcp.handle(headers=headers, message=message).status, 413)
+        service = services[ControlPlaneServiceRole.AUTHORIZATION]
+        self.assertEqual(service.requests, [])
+        # The service has returned; an oversized response is not a rollback claim.
+        service.handle = lambda request: {"value": "x" * 65536}
+        message["params"]["arguments"] = {}
+        for response in (mcp.handle(headers=headers, message=message),
+                http.handle(method="POST", path="/administration/workspaces",
+                    headers={"Authorization": "Bearer valid-token"}, body=b"{}")):
+            self.assertEqual(response.status, 503)
+            self.assertLess(len(json.dumps(response.body).encode()), 1024)
+
     @staticmethod
     def _read_events_message(arguments: dict[str, object]) -> dict[str, object]:
         return {
