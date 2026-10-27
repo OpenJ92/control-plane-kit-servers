@@ -1,5 +1,12 @@
 # Managed cloudflared package witness
 
+For #341, the current source recipe and this witness select accepted Core
+`4cc1716bef4d7548ddb4cd343e53fa06bb447104` and SDK
+`464df26c568971362eb3a08abaf9dfc227a4ddbb`. Only the two provenance constants
+advance; native version, notices, predicates, fixtures and cleanup are unchanged.
+The released Servers gate must establish this source composition. Historical
+image identities and the earlier #313 evidence below remain unchanged.
+
 Source: [packaged_managed_witness.py](../../../../../products/cloudflared_connector/tests/packaged_managed_witness.py).
 
 ## #313 current-source dependency adoption

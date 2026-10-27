@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[3]
 PRODUCT = ROOT / "products" / "secrets_server"
 PATH = "/etc/cpk/secrets-server/control.json"
 ENVIRONMENT = "CPK_WRAPPER_CONFIGURATION_FILE"
-ACCEPTED_SECRETS = "78a2ed7c8abee6da31f8661993ed4c5426edd7ee"
+ACCEPTED_SECRETS = "067678fbaa297d3206ff13d018c69bc14387e46c"
 
 
 class SecretsSourceControlProductTests(unittest.TestCase):
