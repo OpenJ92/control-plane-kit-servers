@@ -73,6 +73,20 @@ class OperationsApplicationFactoryTests(unittest.TestCase):
                 workspace_authority=authority, principal_authorizer=Mock())()
         unit_of_work.assert_not_called()
 
+    def test_default_factory_clock_satisfies_administration_receipt_contract(self):
+        from control_plane_kit_operations.workspace_permissions import WorkspaceAdministrationReceipt
+        composition = importlib.import_module("control_plane_kit_servers_cpk_server.operations_application")
+        authority = self.workspace_authority()
+        factory = composition.OperationsApplicationFactory(Mock(), self.disabled_ports(composition),
+            composition.OperationsIdFactories(*(lambda: "unused-id" for _ in range(5))),
+            workspace_authority=authority)
+        receipt = WorkspaceAdministrationReceipt(
+            installation_id=authority.administration_policy.installation_id,
+            actor=authority.administration_policy.administrators[0], workspace_id="workspace-a",
+            idempotency_key="create-workspace-a", initialized=True,
+            observed_current_graph_id="empty-graph", occurred_at=factory.clock())
+        self.assertEqual(WorkspaceAdministrationReceipt.from_descriptor(receipt.descriptor()), receipt)
+
     def test_dynamic_startup_checks_existing_receipt_before_effect_composition(self):
         from dataclasses import replace
         from control_plane_kit_operations.workspace_permissions import (
@@ -198,6 +212,7 @@ class OperationsApplicationFactoryTests(unittest.TestCase):
         self.assertIs(witness.SharedOperationsApplicationFactory, composition.OperationsApplicationFactory)
         config = Mock()
         config.managed_health_process = None
+        config.workspace_authority = None
         with patch.object(server, "_install_operations_schema") as schema, \
                 patch.object(server, "_secret_provider_composition") as provider, \
                 patch.object(server, "_operations_effect_ports") as effect_ports, \

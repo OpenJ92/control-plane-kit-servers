@@ -85,7 +85,10 @@ from .control_configuration import (
 from .http_host import install_operator_http_routes
 from .request_body import MCP_ENVELOPE_MAX_BYTES, RequestBodyTooLarge, collect_request_body
 from control_plane_kit_operations.health_receiver_trust import HealthReceiverDecoders
-from .operations_application import OperationsApplicationFactory, OperationsEffectPorts, OperationsIdFactories
+from .operations_application import (
+    OperationsApplicationFactory, OperationsEffectPorts, OperationsIdFactories,
+    WorkspaceAuthorityConfiguration,
+)
 from .managed_health import ManagedHealthBootstrap
 from control_plane_kit_core.receiver_configuration import ReceiverNodeControlConfiguration
 from control_plane_kit_server_sdk.fastapi import install_cpk_wrapper
@@ -202,6 +205,7 @@ class CpkServerBootstrapConfiguration:
     managed_health: ManagedHealthBootstrap | None = field(default=None, repr=False, compare=False)
     managed_health_process: ManagedHealthProcessConfiguration | None = field(
         default=None, repr=False, compare=False)
+    workspace_authority: WorkspaceAuthorityConfiguration | None = None
 
     @classmethod
     def from_environment(
@@ -622,8 +626,11 @@ def _credential_verifier(
     )
 
 
-def _configured_principal_authorizer(config: CpkServerBootstrapConfiguration) -> ConfiguredPrincipalAuthorizer:
+def _configured_principal_authorizer(config: CpkServerBootstrapConfiguration) -> ConfiguredPrincipalAuthorizer | None:
     """Project startup policies without retaining credentials or the config."""
+    if config.workspace_authority is not None:
+        # The shared factory supplies the current durable authorizer in dynamic mode.
+        return None
     if config.control_auth_verifier != "static-development":
         raise BootstrapConfigurationError("no configured principal authority is available")
     if config.control_auth_static_principals:
@@ -810,17 +817,43 @@ def _operations_application(
     *, principal_authorizer: PrincipalAuthorizer | None = None,
 ) -> CpkServerOperationsApplication:
     _validate_managed_health_process(config)
+    authority = config.workspace_authority
+    if authority is not None:
+        invalid = False
+        try:
+            if type(authority) is not WorkspaceAuthorityConfiguration or principal_authorizer is not None:
+                raise ValueError
+            authority.__post_init__()
+        except (ValueError, TypeError, AttributeError):
+            invalid = True
+        if invalid:
+            raise BootstrapConfigurationError("workspace authority configuration is invalid")
     database_url = config.operations_database_url()
     _install_operations_schema(database_url)
 
     def unit_of_work() -> PostgresUnitOfWork:
         return PostgresUnitOfWork(lambda: psycopg.connect(database_url))
 
+    if authority is not None:
+        from control_plane_kit_operations.workspace_permissions import (
+            WorkspaceAdministrationContext, WorkspacePermissionReadService,
+        )
+        policy = authority.administration_policy
+        unavailable = False
+        try:
+            WorkspacePermissionReadService(unit_of_work, administration_policy=policy).installation(
+                WorkspaceAdministrationContext(policy.administrators[0], policy.installation_id))
+        except Exception:
+            unavailable = True
+        if unavailable:
+            raise BootstrapConfigurationError("workspace authority installation is unavailable")
+
     provider = _secret_provider_composition(config)
     return OperationsApplicationFactory(unit_of_work, _operations_effect_ports(config, provider),
         OperationsIdFactories(_id, _lifecycle_id, _start_id, _fold_id, _coordinator_id),
         clock=_clock,
         principal_authorizer=principal_authorizer,
+        workspace_authority=authority,
         gateway_probe_factory=lambda uow, authorizer: _gateway_probe_service(
             config, uow, authorizer, provider))()
 

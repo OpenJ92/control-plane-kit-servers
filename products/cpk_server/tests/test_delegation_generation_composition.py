@@ -108,6 +108,7 @@ class GenerationFactoryAvailabilityTests(unittest.TestCase):
                       "production assembly has no explicit authority input")
         config = Mock()
         config.managed_health_process = None
+        config.workspace_authority = None
         explicit = object()
         for arguments, expected in (({}, None), ({"principal_authorizer": explicit}, explicit)):
             with self.subTest(explicit=expected is not None):

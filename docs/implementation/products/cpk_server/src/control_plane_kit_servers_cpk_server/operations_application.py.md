@@ -1,5 +1,33 @@
 Source: [operations_application.py](../../../../../../products/cpk_server/src/control_plane_kit_servers_cpk_server/operations_application.py).
 
+## #341 typed dynamic composition
+
+`WorkspaceAuthorityConfiguration` holds existing administration/capability
+policies with one matching installation ID. The factory rejects competing static
+principal authority and constructs the existing durable authorizer, current
+workspace resolver and administrative command/read owners. The ordinary and
+administrative routes share the same WorkspaceCommandService. Generation and
+provision consume the durable authorizer when their existing ports are present.
+
+One CurrentWorkspaceEffectPolicy feeds effect start, execution invocation,
+ingress invocation, reconciliation and coordinator composition. Reconciliation
+and coordinator share the same ExecutionInvocationService. The factory performs
+no lookup or initialization during assembly. Static callers retain the prior
+owner/default path. Existing owner type guards remain active; no policy or
+invocation state machine is implemented here.
+
+The factory default clock now emits canonical UTC ending in Z, matching the
+existing server clock and accepted receipt contracts. Explicit caller clocks
+are still forwarded unchanged. Independent review caught the inherited +00:00
+default newly connected to strict administration receipt owners; the production
+startup witness's explicit clock would otherwise hide that defect.
+
+Corrected target run40582892453 established only the absent configuration
+interface. This implementation is unvalidated pending review and the ordinary
+gate. Runtime adapter capability/forwarding, management client selection and
+trusted file/environment authoring remain later #341 work; this slice does not
+claim those effects or an independently deployable dynamic installation.
+
 This is the shared production and maintained-witness assembly of Operations
 owners. `OperationsEffectPorts.secret_metadata_reader` carries the existing
 Operations protocol into `DesiredGraphCommandService(secret_metadata_reader=...)`.

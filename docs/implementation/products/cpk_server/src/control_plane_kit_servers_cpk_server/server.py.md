@@ -1,14 +1,31 @@
 Source: [server.py](../../../../../../products/cpk_server/src/control_plane_kit_servers_cpk_server/server.py).
 Maintain with the process composition and operational ownership boundary.
 
+## #341 typed startup readiness
+
+Bootstrap configuration can carry the trusted WorkspaceAuthorityConfiguration
+value into the real shared factory. Dynamic startup validates the policy and
+rejects competing static authority, retains existing schema install/verification,
+then calls WorkspacePermissionReadService.installation with a configured admin
+context. Missing, mismatched or unavailable receipts become a fixed bootstrap
+error outside the caught exception context, before provider/effect composition.
+Startup never initializes the receipt or seeds grants. Empty owned schema DDL
+may already have committed; this is not a zero-mutation promise.
+
+Main's startup-policy projection returns no static authorizer for dynamic mode;
+the shared factory supplies the durable one. Typed configuration is the current
+source input only: file/environment authoring and installed-client selection
+remain later work, with no live enablement claim. The implementation is pending
+owning green evidence; corrected red40582892453 reached only the missing type.
+
 #341 passes the actual configured Operations application into the shared boundary,
 preserving its resolver and authority mode instead of extracting its service map.
 The MCP host collects at the existing envelope budget and forwards raw bytes to
 the boundary, where headers/authentication precede strict JSON decoding. Duplicate
-members are therefore not lost in an earlier permissive host parse. This source
-slice awaits its owning gate and does not yet configure dynamic factory/startup
-or managed invocation composition. The static authority account below remains
-the existing production factory behavior until those later changes.
+members are therefore not lost in an earlier permissive host parse. That transport
+slice passed the owning Linux gate in run40576182119. The typed dynamic factory
+and startup additions above still await their green gate. The following account
+describes the retained static-mode behavior.
 
 #315 explicitly projects configured static-development principals into a
 credential-free ConfiguredPrincipalAuthorizer. Main passes it to create_app,
@@ -20,7 +37,7 @@ No constructor opens provider credential files. Generation needs both ports.
 #317 forwards the same existing provider custodian through the optional effect
 port; the shared factory enables provision only with independent authority too.
 Disabled/local-development custody remains absent. No provider adapter, service
-policy or credential format is added. Permission changes require a new
+policy or credential format is added to that static path. Its permission changes require a new
 process, with no hot reload or token/session revocation claim. See
 [configured authority](../../../../../deployment-input-authority.md).
 

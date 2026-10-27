@@ -1,5 +1,19 @@
 # Configured authority for deployment inputs
 
+The #341 source factory now also accepts typed trusted
+`WorkspaceAuthorityConfiguration`: existing administration and managed-runtime
+capability policies for one installation. In that dynamic mode, the factory
+supplies the existing durable principal authorizer for generation/provision and
+the current workspace resolver for HTTP/MCP. Supplying a separate static
+principal authorizer at the same time is rejected. Startup requires an existing
+matching installation receipt before provider clients; it does not initialize
+the receipt or seed grants. Ordinary empty-schema creation can precede refusal.
+
+This typed source connection is pending owning green validation. Trusted
+file/environment authoring, installed-client selection and complete invocation
+forwarding remain later #341 work. It is not a dynamic live-enablement recipe.
+The static mode described below remains the environment-configured path.
+
 The CPK process composes provider-backed delegation-key generation and protected
 HTTP material provision when the corresponding provider port and an explicit
 current-principal authorizer are present. Main derives
@@ -72,10 +86,10 @@ instance artifacts hold trust. Preparation records plan/session/history and asks
 for approval without advancing current graph or executing activities. The ingress
 authority consumes an admitted reference; this is not invented version pinning.
 
-Selected source cohort: Core/Operations `879efb9576ac0580a6236d0a7372c036537b4dfe`,
-SDK `43838fd0f4391428cfffa87f8c4dbd5cc6d5eab1`,
-Secrets `78a2ed7c8abee6da31f8661993ed4c5426edd7ee`,
-Interpreters `6faf6698e47381476fb2f09058894eab16f0c768`.
+Selected source cohort: Core/Operations `4cc1716bef4d7548ddb4cd343e53fa06bb447104`,
+SDK `464df26c568971362eb3a08abaf9dfc227a4ddbb`,
+Secrets `067678fbaa297d3206ff13d018c69bc14387e46c`,
+Interpreters `bd08b931ae9241878ce4f4b7072f95ccebfa3536`.
 Downstream #225 must additionally select reviewed Servers/image identities,
 installation API/site bindings, protected credential custody, complete real graph,
 separate application and management ingress, exact approval/execution and owned

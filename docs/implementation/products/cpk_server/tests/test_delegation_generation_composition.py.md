@@ -1,5 +1,10 @@
 Source: [test_delegation_generation_composition.py](../../../../../products/cpk_server/tests/test_delegation_generation_composition.py).
 
+For #341, the existing static assembly fixture explicitly sets
+`config.workspace_authority = None`, like its existing managed-health default.
+This prevents an unrestricted Mock from inventing dynamic configuration. Its
+explicit/default principal-authorizer forwarding assertions remain unchanged.
+
 #315 target tests for the small provider bridge and real owner factory. A typed
 Operations grant and real registry select the public client's configuration;
 the client double proves exact arguments, one call, unchanged result and no retry.
