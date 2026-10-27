@@ -1,6 +1,7 @@
 """Actual factory and HTTP/MCP enrollment over the existing isolated Postgres owner."""
 from dataclasses import replace
 import json
+from unittest import TestCase
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -54,12 +55,8 @@ def workspace_authority_acceptance(database_url):
 
         def require_startup_refusal(value):
             with patch.object(server, "_secret_provider_composition") as provider:
-                try:
+                with TestCase().assertRaises(server.BootstrapConfigurationError):
                     server.create_app(value, verifier, control=control, clock=lambda: 150)
-                except server.BootstrapConfigurationError:
-                    pass
-                else:
-                    raise AssertionError("dynamic startup accepted an absent or mismatched installation receipt")
                 provider.assert_not_called()
 
         require_startup_refusal(config)

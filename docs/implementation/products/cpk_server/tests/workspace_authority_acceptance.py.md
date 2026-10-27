@@ -21,3 +21,10 @@ The witness is unvalidated at the test-only checkpoint. It proves no management
 transport selection, provider execution, retained-installation upgrade, physical
 daemon identity or live deployment. The normal Docker gate must actually reach
 it before any public composition credit is claimed.
+
+The initial test-only run40582411630 stopped at package-integrity after 26 support
+tests: the expected-refusal helper used an exception handler containing `pass`.
+No package target or this witness ran. The narrow correction uses standard
+`unittest.TestCase.assertRaises` and retains the no-provider-call assertion;
+wrong exceptions and unexpected success still fail. The integrity rule and
+runner are unchanged. A corrected owning attempt remains unvalidated.
