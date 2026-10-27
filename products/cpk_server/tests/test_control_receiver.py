@@ -7,7 +7,6 @@ from pathlib import Path
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
-from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -55,7 +54,8 @@ class CpkControlReceiverTests(unittest.TestCase):
         self.assertEqual(vars(caught.exception),{})
 
     def app(self, control=None):
-        with patch.object(self.server,"_operations_application",return_value=SimpleNamespace(services=self.services)):
+        with patch.object(self.server,"_operations_application",
+                return_value=self.server.CpkServerOperationsApplication(self.services)):
             return self.server.create_app(self.bootstrap,self.verifier,control=self.control if control is None else control,clock=lambda:150)
 
     def test_real_receiving_artifact_and_all_three_complete_source_contracts(self):

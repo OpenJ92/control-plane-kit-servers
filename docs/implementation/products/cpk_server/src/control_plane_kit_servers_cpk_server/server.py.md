@@ -1,6 +1,15 @@
 Source: [server.py](../../../../../../products/cpk_server/src/control_plane_kit_servers_cpk_server/server.py).
 Maintain with the process composition and operational ownership boundary.
 
+#341 passes the actual configured Operations application into the shared boundary,
+preserving its resolver and authority mode instead of extracting its service map.
+The MCP host collects at the existing envelope budget and forwards raw bytes to
+the boundary, where headers/authentication precede strict JSON decoding. Duplicate
+members are therefore not lost in an earlier permissive host parse. This source
+slice awaits its owning gate and does not yet configure dynamic factory/startup
+or managed invocation composition. The static authority account below remains
+the existing production factory behavior until those later changes.
+
 #315 explicitly projects configured static-development principals into a
 credential-free ConfiguredPrincipalAuthorizer. Main passes it to create_app,
 which forwards it through _operations_application into the shared factory.

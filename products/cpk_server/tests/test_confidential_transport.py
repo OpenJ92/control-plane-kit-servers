@@ -165,9 +165,11 @@ class ConfidentialTransportTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(self.host.verifier.credentials, [])
                 self.assert_no_dispatch()
 
-    async def test_mcp_below_cap_parse_header_auth_order_and_overflow_precedence(self):
+    async def test_mcp_below_cap_header_auth_parse_order_and_overflow_precedence(self):
         cases = (
-            ([b"invalid JSON"], {"Authorization": "Bearer rejected"}, 400, "invalid JSON request body", []),
+            ([b"invalid JSON"], {"Authorization": "Bearer rejected"}, 400, "missing MCP Accept header", []),
+            ([b"invalid JSON"], mcp_headers("rejected"), 401, "invalid credential", [b"rejected"]),
+            ([b"invalid JSON"], mcp_headers(), 400, "invalid JSON request body", [b"valid-token"]),
             ([json.dumps(read_message()).encode()], {}, 400, "missing MCP Accept header", []),
             ([json.dumps(read_message()).encode()], mcp_headers("rejected", "resources/read"), 401, "invalid credential", [b"rejected"]),
             ([b"x" * (MCP_LIMIT + 1), b"trailing"], {}, 413, "request body too large", []),

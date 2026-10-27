@@ -2,7 +2,7 @@
 import importlib
 import json
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from control_plane_kit_core.identity import (
     AuthenticatedPrincipal, IdentityContractError, PrincipalIdentity,
@@ -141,7 +141,7 @@ class ConfiguredAuthorityStartupTests(unittest.TestCase):
         services = {role: RecordingService(role.value) for role in ControlPlaneServiceRole}
         with patch.object(server.CpkServerBootstrapConfiguration, "from_environment", return_value=config), \
                 patch.object(server, "read_cpk_control_configuration", return_value=fixture().config), \
-                patch.object(server, "_operations_application", return_value=Mock(services=services)) as application, \
+                patch.object(server, "_operations_application", return_value=server.CpkServerOperationsApplication(services)) as application, \
                 patch.object(server.uvicorn, "run") as run:
             self.assertEqual(server.main(), 0)
         authority = application.call_args.kwargs.get("principal_authorizer")
@@ -154,7 +154,7 @@ class ConfiguredAuthorityStartupTests(unittest.TestCase):
         server, config = self.config()
         services = {role: RecordingService(role.value) for role in ControlPlaneServiceRole}
         verifier = server._credential_verifier(config)
-        with patch.object(server, "_operations_application", return_value=Mock(services=services)) as application:
+        with patch.object(server, "_operations_application", return_value=server.CpkServerOperationsApplication(services)) as application:
             server.create_app(config, verifier, control=fixture().config)
             self.assertIsNone(application.call_args.kwargs.get("principal_authorizer"))
             authority = self.configured(server, config)

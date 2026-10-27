@@ -552,16 +552,9 @@ def create_app(
             return _json_response(
                 413, {"error": {"status": 413, "message": "request body too large"}},
             )
-        try:
-            message = json.loads(body.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            return _json_response(
-                400,
-                {"error": {"status": 400, "message": "invalid JSON request body"}},
-            )
-        response = await mcp_boundary.handle_async(
+        response = await mcp_boundary.handle_bytes_async(
             headers=request.headers,
-            message=message,
+            body=body,
         )
         return _json_response(response.status, response.body)
 
@@ -580,7 +573,7 @@ def create_app(
     # No application/listener escapes before both admitted routes and existing
     # Operations schema/services are ready. Callbacks never perform schema work.
     application = CpkServerApplicationBoundary(
-        _operations_application(config, principal_authorizer=principal_authorizer).services,
+        _operations_application(config, principal_authorizer=principal_authorizer),
         credential_verifier)
     http_boundary = CpkServerHttpProcessBoundary(composition, application)
     mcp_boundary = CpkServerMcpProcessBoundary(composition, application)

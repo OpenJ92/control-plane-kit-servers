@@ -39,3 +39,9 @@ Meridian also retained two distinct original laws explicitly: the public config
 repr does not expose public-key fields, and a typed runtime reference with NODE
 role refuses at the Core receiver-target constructor. Neither is substituted by
 the separate private-material or malformed receiver-ID negatives.
+
+For #341, the effectful factory replacement returns a real static
+CpkServerOperationsApplication over the existing recording services instead of a
+namespace/mock carrying only a service map. The host now preserves that configured
+application. Existing credential, receiving, forwarding and no-effect assertions
+are unchanged. Validation is pending the owning Docker gate.
