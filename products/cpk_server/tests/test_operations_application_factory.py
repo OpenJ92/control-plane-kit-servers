@@ -7,6 +7,101 @@ from unittest.mock import Mock, patch
 
 
 class OperationsApplicationFactoryTests(unittest.TestCase):
+    def workspace_authority(self):
+        from control_plane_kit_core.identity import PrincipalIdentity, PrincipalKind
+        from control_plane_kit_operations.workspace_permissions import WorkspaceAdministrationPolicy
+        from control_plane_kit_operations.managed_runtime_assignments import ManagedRuntimeCapabilityPolicy
+        composition = importlib.import_module("control_plane_kit_servers_cpk_server.operations_application")
+        configuration = getattr(composition, "WorkspaceAuthorityConfiguration", None)
+        self.assertIsNotNone(configuration, "shared factory has no trusted dynamic authority configuration")
+        administrator = PrincipalIdentity("issuer-a", "administrator-a", PrincipalKind.OPERATOR)
+        operator = PrincipalIdentity("issuer-a", "operator-a", PrincipalKind.OPERATOR)
+        return configuration(
+            WorkspaceAdministrationPolicy("installation-a", (administrator,), (administrator, operator)),
+            ManagedRuntimeCapabilityPolicy("installation-a", ()))
+
+    def disabled_ports(self, composition):
+        from control_plane_kit_operations.health_receiver_trust import HealthReceiverDecoders
+        from control_plane_kit_servers_cpk_server.server import _UnsupportedExecutionAdapter
+        return composition.OperationsEffectPorts(None, None, None, HealthReceiverDecoders(()),
+            object(), disabled_runtime_adapter=_UnsupportedExecutionAdapter())
+
+    def test_dynamic_factory_uses_real_administration_and_current_lookup_owners(self):
+        from control_plane_kit_core.identity import AuthenticatedPrincipal
+        from control_plane_kit_servers_cpk_server import (
+            CpkServerApplicationBoundary, CpkServerHttpProcessBoundary,
+        )
+        from test_http_mcp_boundaries import CpkServerHttpMcpBoundaryTests
+        authority = self.workspace_authority()
+        composition = importlib.import_module("control_plane_kit_servers_cpk_server.operations_application")
+        unit_of_work = Mock(side_effect=RuntimeError("synthetic private policy-store detail"))
+        app = composition.OperationsApplicationFactory(unit_of_work, self.disabled_ports(composition),
+            composition.OperationsIdFactories(*(lambda: "unused-id" for _ in range(5))),
+            workspace_authority=authority)()
+        unit_of_work.assert_not_called()
+        contract, _, _, _ = CpkServerHttpMcpBoundaryTests()._application()
+        identities = authority.administration_policy.known_identities
+        verifier = Mock()
+        boundary = CpkServerHttpProcessBoundary(contract, CpkServerApplicationBoundary(app, verifier))
+        verifier.authenticate.return_value = AuthenticatedPrincipal(identities[1])
+        denied = boundary.handle(method="POST", path="/administration/workspaces",
+            headers={"Authorization": "Bearer synthetic"}, body=b'{}')
+        self.assertEqual(denied.status, 403)
+        unit_of_work.assert_not_called()
+        verifier.authenticate.return_value = AuthenticatedPrincipal(identities[0])
+        unavailable = boundary.handle(method="POST", path="/administration/workspaces",
+            headers={"Authorization": "Bearer synthetic"}, body=b'{"workspace_id":"a","name":"A","idempotency_key":"create-a"}')
+        self.assertEqual(unavailable.status, 503)
+        self.assertNotIn("synthetic private", repr(unavailable))
+        verifier.authenticate.return_value = AuthenticatedPrincipal(identities[1])
+        unavailable = boundary.handle(method="GET", path="/workspaces/a/graphs/current",
+            headers={"Authorization": "Bearer synthetic"}, body=b"")
+        self.assertEqual(unavailable.status, 503)
+        self.assertNotIn("synthetic private", repr(unavailable))
+        self.assertEqual(unit_of_work.call_count, 2)
+
+    def test_dynamic_configuration_rejects_mismatched_installations_and_static_authorizer(self):
+        from control_plane_kit_operations.managed_runtime_assignments import ManagedRuntimeCapabilityPolicy
+        authority = self.workspace_authority()
+        composition = importlib.import_module("control_plane_kit_servers_cpk_server.operations_application")
+        with self.assertRaises(ValueError):
+            type(authority)(authority.administration_policy, ManagedRuntimeCapabilityPolicy("other-installation", ()))
+        unit_of_work = Mock()
+        with self.assertRaises(ValueError):
+            composition.OperationsApplicationFactory(unit_of_work, self.disabled_ports(composition),
+                composition.OperationsIdFactories(*(lambda: "unused-id" for _ in range(5))),
+                workspace_authority=authority, principal_authorizer=Mock())()
+        unit_of_work.assert_not_called()
+
+    def test_dynamic_startup_checks_existing_receipt_before_effect_composition(self):
+        from dataclasses import replace
+        from control_plane_kit_operations.workspace_permissions import (
+            WorkspacePermissionNotFound, WorkspacePermissionReadService,
+        )
+        from control_plane_kit_servers_cpk_server import server
+        from test_secret_provider_bootstrap import _base_environment
+        authority = self.workspace_authority()
+        config = replace(server.CpkServerBootstrapConfiguration.from_environment(_base_environment()),
+            workspace_authority=authority)
+        for failure in (WorkspacePermissionNotFound("missing installation"),
+                RuntimeError("synthetic private database detail")):
+            with self.subTest(failure=type(failure).__name__), \
+                    patch.object(server, "_install_operations_schema") as schema, \
+                    patch.object(WorkspacePermissionReadService, "installation", side_effect=failure) as receipt, \
+                    patch.object(server, "_secret_provider_composition") as provider, \
+                    patch.object(server, "_operations_effect_ports") as effects:
+                with self.assertRaises(server.BootstrapConfigurationError) as caught:
+                    server._operations_application(config)
+                schema.assert_called_once_with(config.operations_database_url())
+                receipt.assert_called_once()
+                context = receipt.call_args.args[0]
+                self.assertEqual(context.installation_id, "installation-a")
+                self.assertEqual(context.identity, authority.administration_policy.administrators[0])
+                self.assertNotIn("synthetic private", str(caught.exception))
+                self.assertIsNone(caught.exception.__context__)
+                provider.assert_not_called()
+                effects.assert_not_called()
+
     def test_shared_factory_preserves_owner_sharing_and_id_domains(self):
         name = "control_plane_kit_servers_cpk_server.operations_application"
         self.assertIsNotNone(importlib.util.find_spec(name),

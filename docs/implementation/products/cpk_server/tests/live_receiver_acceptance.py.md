@@ -1,6 +1,19 @@
 Source: [products/cpk_server/tests/live_receiver_acceptance.py](../../../../../products/cpk_server/tests/live_receiver_acceptance.py).
 Maintain this companion alongside its source and selected dependencies.
 
+## #341 factory and startup target checkpoint
+
+The existing run sequence now calls `workspace_authority_acceptance` in a worker
+thread before the established preparation/receiver scenarios. That helper uses
+the same isolated PostgreSQL schema owner and actual server factory, with
+context-managed HTTP/MCP clients. No runner, selected dependency, provider or
+Docker configuration changes. The new witness is unvalidated and may remain
+unreached when earlier unit targets stop the ordinary gate.
+
+Transport at `73c152b` passed the complete existing Linux gate in run40576182119.
+That accepted result supersedes the cohort retry status below; it does not
+validate this new factory/startup witness or complete dynamic composition.
+
 ## #341 accepted dependency cohort
 
 The selected source cohort is Core/Operations `4cc1716b`, Interpreters
