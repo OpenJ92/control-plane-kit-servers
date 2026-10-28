@@ -171,9 +171,25 @@ def admitted_manifest(input_fd, reference):
     return platform_raw, source_config, source_layers
 
 
+def account_config_diff_ids(config, source, layer_count):
+    """Validate the account prerequisites, not full runtime-config equivalence."""
+    require(config.get("os") == "linux" and config.get("architecture") == "amd64")
+    configured = config.get("config")
+    require(type(configured) is dict and configured.get("User") == "10001")
+    require(type(configured.get("Labels")) is dict
+        and configured["Labels"].get("org.opencontainers.image.revision") == source)
+    rootfs = config.get("rootfs")
+    require(type(rootfs) is dict and rootfs.get("type") == "layers")
+    diffs = rootfs.get("diff_ids")
+    require(type(diffs) is list and len(diffs) == layer_count and all(digest(value) for value in diffs))
+    return tuple(diffs)
+
+
 def verify_layout(input_fd, reference, source):
     require(type(source) is str and re.fullmatch(r"[0-9a-f]{40}", source) is not None)
     platform_raw, source_config, source_layers = admitted_manifest(input_fd, reference)
+    source_configuration = document(read_file(input_fd, "source-config.json", JSON_LIMIT, expected=source_config))
+    source_diff_ids = account_config_diff_ids(source_configuration, source, len(source_layers))
     with directory(input_fd, "layout") as layout:
         require(document(read_file(layout, "oci-layout", JSON_LIMIT)) == {"imageLayoutVersion": "1.0.0"})
         index = document(read_file(layout, "index.json", JSON_LIMIT))
@@ -188,7 +204,6 @@ def verify_layout(input_fd, reference, source):
             require(type(normalized.get("schemaVersion")) is int and normalized["schemaVersion"] == 2
                 and normalized.get("mediaType") == OCI + "manifest.v1+json")
             config_descriptor = descriptor(normalized.get("config"), {OCI + "config.v1+json"}, JSON_LIMIT)
-            require(all(config_descriptor[key] == source_config[key] for key in ("digest", "size")))
             layers = normalized.get("layers")
             require(type(layers) is list and len(layers) == len(source_layers))
             for actual, expected in zip(layers, source_layers):
@@ -199,18 +214,11 @@ def verify_layout(input_fd, reference, source):
                 require(all(actual[key] == expected[key] for key in ("digest", "size")))
                 blob(blobs, actual, collect=False)
             config = document(blob(blobs, config_descriptor))
-            require(config.get("os") == "linux" and config.get("architecture") == "amd64")
-            configured = config.get("config")
-            require(type(configured) is dict and configured.get("User") == "10001")
-            require(type(configured.get("Labels")) is dict
-                and configured["Labels"].get("org.opencontainers.image.revision") == source)
-            rootfs = config.get("rootfs")
-            require(type(rootfs) is dict and rootfs.get("type") == "layers")
-            diffs = rootfs.get("diff_ids")
-            require(type(diffs) is list and len(diffs) == len(layers) and all(digest(value) for value in diffs))
+            require(account_config_diff_ids(config, source, len(layers)) == source_diff_ids)
     return {"image_reference": reference, "source_revision": source,
         "platform_manifest_digest": sha(platform_raw), "normalized_manifest_digest": sha(normalized_raw),
-        "config_digest": config_descriptor["digest"], "layer_count": len(layers), "platform": "linux/amd64"}
+        "source_config_digest": source_config["digest"], "normalized_config_digest": config_descriptor["digest"],
+        "layer_count": len(layers), "platform": "linux/amd64"}
 
 
 def number(value):

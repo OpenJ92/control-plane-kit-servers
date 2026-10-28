@@ -44,3 +44,10 @@ and be admitted. A fifth retained-route method covers failed matching output,
 failed empty output, successful wrong platform and successful allowed platform.
 Only the last reaches the single deliberately failed pull double; every refused
 observation remains preparation HOLD with no pull, run, cleanup or raw error leak.
+
+The raw-config capture method exercises the actual metadata helper with a Skopeo
+process double. It requires both `--raw` and `--config`, zero retries and the exact
+immutable target, preserves supplied bytes only in the private output, and refuses
+a failed producer even with plausible output, empty output and output above 1 MiB.
+A private config canary must not enter stdout/stderr. This proves bounded transport
+and status handling, not actual Skopeo conversion or registry behavior.

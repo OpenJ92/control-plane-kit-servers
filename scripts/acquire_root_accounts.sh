@@ -53,6 +53,23 @@ admit_daemon_platform() {
     *) return 1 ;;
   esac
 }
+capture_metadata() {
+  local target="$1" output="$2" kind="${3:-manifest}"
+  local statuses
+  local config_args=()
+  case "$kind" in
+    manifest) ;;
+    config) config_args=(--config) ;;
+    *) refuse ;;
+  esac
+  set +e
+  skopeo inspect --retry-times 0 --tls-verify=true --authfile "$AUTH" --raw "${config_args[@]}" \
+    "docker://$target" 2> "$WORK/metadata.error" | head -c 1048577 > "$output"
+  statuses=("${PIPESTATUS[@]}")
+  set -e
+  if [ "${statuses[0]}" != 0 ] || [ "${statuses[1]}" != 0 ]; then refuse; fi
+  [ -s "$output" ] && [ "$(wc -c < "$output")" -le 1048576 ]
+}
 cleanup_acquisition() {
   local remaining mounts backing_after associated
   remaining="$(docker ps -a --filter "label=org.openj92.cpk.account-acquisition=$RUN" --format '{{.ID}}')" || return 1
@@ -126,17 +143,6 @@ if [ "${1:-}" = --acquire ]; then
   printf '%s' "$GH_TOKEN" | skopeo login --authfile "$AUTH" --username "$GITHUB_ACTOR" \
     --password-stdin ghcr.io > "$WORK/login.log" 2>&1
   chmod 0600 "$AUTH"
-  capture_manifest() {
-    local target="$1" output="$2"
-    local statuses
-    set +e
-    skopeo inspect --retry-times 0 --tls-verify=true --authfile "$AUTH" --raw \
-      "docker://$target" 2> "$WORK/manifest.error" | head -c 1048577 > "$output"
-    statuses=("${PIPESTATUS[@]}")
-    set -e
-    if [ "${statuses[0]}" != 0 ] || [ "${statuses[1]}" != 0 ]; then refuse; fi
-    [ "$(wc -c < "$output")" -le 1048576 ]
-  }
   project_manifest() {
     local phase="$1" name="$RUN-$1" remaining
     remaining="$(docker ps -a --filter "name=^/$name$" --format '{{.ID}}')"
@@ -155,11 +161,13 @@ if [ "${1:-}" = --acquire ]; then
     remaining="$(docker ps -a --filter "name=^/$name$" --format '{{.ID}}')"
     [ -z "$remaining" ]
   }
-  capture_manifest "$REFERENCE" "$INPUT/original.json"
+  capture_metadata "$REFERENCE" "$INPUT/original.json"
   project_manifest select
   PLATFORM="$(jq -er '.platform_manifest_digest | select(test("^sha256:[0-9a-f]{64}$"))' "$WORK/select.json")"
-  capture_manifest "${REFERENCE%@*}@$PLATFORM" "$INPUT/platform.json"
+  capture_metadata "${REFERENCE%@*}@$PLATFORM" "$INPUT/platform.json"
   project_manifest admit
+  # --config alone returns a converted object. Preserve exact original bytes.
+  capture_metadata "${REFERENCE%@*}@$PLATFORM" "$INPUT/source-config.json" config
   # Metadata admission precedes blob acquisition. No overlay logic lives here.
   skopeo --override-os linux --override-arch amd64 copy --retry-times 0 \
     --src-authfile "$AUTH" --src-tls-verify=true --format oci \

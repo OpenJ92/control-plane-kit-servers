@@ -110,6 +110,75 @@ class RootAccountProjectionTests(unittest.TestCase):
         self.assertNotIn("private-original-config-canary", json.dumps(result))
         self.assertNotIn("uid", result)  # Still no account seal or unpack claim.
 
+    def test_source_config_requires_actual_bounded_descriptor_bytes(self):
+        for failure in ("missing", "corrupt", "oversized", "descriptor-size", "duplicate-key"):
+            def change(original, normalized, config):
+                if failure == "descriptor-size":
+                    original["config"]["size"] += 1
+                elif failure == "duplicate-key":
+                    raw = self.encoded(config).replace(b'"os": "linux"', b'"os": "linux", "os": "linux"')
+                    original["config"] = self.write_blob(raw, "application/vnd.docker.container.image.v1+json")
+            reference = self.fixture(schema2=True, rewrite_config=True, change=change)
+            path = self.root / "source-config.json"
+            if failure == "missing":
+                path.unlink()
+            elif failure == "corrupt":
+                path.write_bytes(b"x" * path.stat().st_size)
+            elif failure == "oversized":
+                path.write_bytes(b"x" * (self.owner.JSON_LIMIT + 1))
+            with self.subTest(failure=failure), self.assertRaises((self.owner.AccountInspectionError, OSError)):
+                self.verify(reference)
+
+    def test_both_configurations_must_satisfy_account_and_filesystem_contract(self):
+        changes = (
+            lambda value: value.update(os="windows"),
+            lambda value: value.update(architecture="arm64"),
+            lambda value: value["config"].update(User="0"),
+            lambda value: value["config"]["Labels"].update({"org.opencontainers.image.revision": "b" * 40}),
+            lambda value: value["rootfs"].update(type="other"),
+            lambda value: value["rootfs"].update(diff_ids=[]),
+            lambda value: value["rootfs"].update(diff_ids=[True]),
+        )
+        for side in ("source", "normalized", "both"):
+            for mutate in changes:
+                def change(original, normalized, config):
+                    for selected, media in ((original, "application/vnd.docker.container.image.v1+json"),
+                            (normalized, self.owner.OCI + "config.v1+json")):
+                        if side == "both" or (selected is original) == (side == "source"):
+                            altered = copy.deepcopy(config)
+                            mutate(altered)
+                            selected["config"] = self.write_blob(self.encoded(altered), media)
+                reference = self.fixture(schema2=True, rewrite_config=True, change=change)
+                with self.subTest(side=side), self.assertRaises(self.owner.AccountInspectionError):
+                    self.verify(reference)
+
+    def test_normalized_config_bytes_and_ordered_diff_ids_remain_bound(self):
+        reference = self.fixture(schema2=True, rewrite_config=True)
+        entry = json.loads((self.root / "layout" / "index.json").read_bytes())["manifests"][0]
+        blobs = self.root / "layout" / "blobs" / "sha256"
+        descriptor = json.loads((blobs / entry["digest"][7:]).read_bytes())["config"]
+        (blobs / descriptor["digest"][7:]).write_bytes(b"x" * descriptor["size"])
+        with self.assertRaises(self.owner.AccountInspectionError):
+            self.verify(reference)
+        for normalized_diffs in ("changed", "reversed"):
+            def change(original, normalized, config):
+                second = self.write_blob(b"second-synthetic-layer", self.owner.OCI + "layer.v1.tar+gzip")
+                original["layers"].append({**second, "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip"})
+                normalized["layers"].append(second)
+                source_config = copy.deepcopy(config)
+                source_config["rootfs"]["diff_ids"].append(self.owner.sha(b"second-uncompressed-layer"))
+                original["config"] = self.write_blob(self.encoded(source_config),
+                    "application/vnd.docker.container.image.v1+json")
+                converted = copy.deepcopy(source_config)
+                if normalized_diffs == "reversed":
+                    converted["rootfs"]["diff_ids"].reverse()
+                else:
+                    converted["rootfs"]["diff_ids"][0] = self.owner.sha(b"different-uncompressed-layer")
+                normalized["config"] = self.write_blob(self.encoded(converted), self.owner.OCI + "config.v1+json")
+            reference = self.fixture(schema2=True, rewrite_config=True, change=change)
+            with self.subTest(normalized_diffs=normalized_diffs), self.assertRaises(self.owner.AccountInspectionError):
+                self.verify(reference)
+
     def test_pre_copy_selection_binds_the_exact_original_and_unique_platform(self):
         reference = self.fixture()
         raw = (self.root / "original.json").read_bytes()
@@ -182,7 +251,9 @@ class RootAccountProjectionTests(unittest.TestCase):
         )
         for change in changes:
             reference = self.fixture(change=change)
-            with self.assertRaises(self.owner.AccountInspectionError):
+            # A different normalized descriptor may identify a missing blob;
+            # digest inequality alone is not a refusal after valid conversion.
+            with self.assertRaises((self.owner.AccountInspectionError, OSError)):
                 self.verify(reference)
         reference = self.fixture()
         layer = json.loads((self.root / "platform.json").read_bytes())["layers"][0]

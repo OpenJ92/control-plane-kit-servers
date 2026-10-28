@@ -111,3 +111,14 @@ The retained-mode daemon platform observation must exit successfully before its
 stdout is allowlisted. Matching platform text from a failed `docker info` call
 does not admit a pull. Raw observation errors remain in the private attempt
 directory; the public result stays preparation HOLD with no effect/cleanup credit.
+
+The config-correspondence correction captures one additional selected-platform
+metadata object using both `skopeo inspect --raw --config` flags. `--config` alone
+returns a converted object and cannot prove original bytes. The shared metadata
+capture requires successful producer and bounded-reader statuses and nonempty
+output no larger than 1 MiB. This private raw config uses the existing 3 GiB
+filesystem and 600-second worker budget. Final offline verification binds its
+actual size/hash to the original manifest descriptor independently of the
+normalized config. Raw config is never uploaded or printed. This source change
+does not release that additional registry read or another diagnostic attempt;
+both require a new exact execution packet and approval.

@@ -34,4 +34,15 @@ The real verifier must return separate source/normalized config identities, neve
 the private source-config content. The fixture stores raw source-config bytes
 separately for the proposed descriptor binding. This does not run or reimplement
 Skopeo; the maintained source establishes that such a conversion is permitted.
-The target is initially unrun against unchanged60a4386 inspection tooling.
+At checkpoint d635171, run40774219942 reached this witness and failed at the
+unchanged60a4386 verifier's config digest/size equality check. Independent review
+confirmed intended target-red evidence, not a fixture or apparatus failure.
+
+Three additional methods bind actual source config bytes and descriptor size,
+reject missing/corrupt/oversized/duplicate-key source input, require both configs
+to satisfy the account/filesystem prerequisites, and reject corrupt normalized
+bytes or changed/reordered diff IDs. The existing altered-descriptor case may
+refuse with a missing-file error because a different normalized config digest is
+now valid only when its corresponding verified blob exists. Digest inequality
+alone is no longer a refusal. These synthetic checks do not establish the exact
+live failure predicate or successful unpack.

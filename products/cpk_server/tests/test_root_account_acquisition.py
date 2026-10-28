@@ -67,6 +67,10 @@ elif name == "skopeo":
         sys.stdin.read()
         pathlib.Path(args[args.index("--authfile") + 1]).write_text("{}")
     elif args[0] == "inspect":
+        if "TEST_INSPECT_FILE" in os.environ:
+            sys.stdout.buffer.write(pathlib.Path(os.environ["TEST_INSPECT_FILE"]).read_bytes())
+            sys.stdout.flush()
+            sys.exit(int(os.environ.get("TEST_INSPECT_STATUS", "0")))
         print("{}")  # The metadata controller must not execute in this double.
     else:
         sys.exit(99)
@@ -366,3 +370,33 @@ else:
                 self.assertEqual([args[0] for name, args in events], ["info", "pull"] if admitted else ["info"])
                 self.assertTrue(all(name == "docker" for name, args in events))
                 self.assertFalse((root / "public" / "account-seal.json").exists())
+
+    def test_raw_config_capture_preserves_bounded_bytes_and_producer_failure(self):
+        raw = b'{"config":{"Env":["private-config-canary"]}}'
+        for content, producer_status, accepted in ((raw, 0, True), (raw, 23, False),
+                (b"", 0, False), (b"x" * (1024 * 1024 + 1), 0, False)):
+            with self.subTest(size=len(content), producer_status=producer_status), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                env = self.commands(root, "run")
+                work = root / "work"
+                work.mkdir()
+                supplied = root / "supplied-config"
+                supplied.write_bytes(content)
+                env.update(WORK=str(work), REFERENCE=REFERENCE, TEST_INSPECT_FILE=str(supplied),
+                    TEST_INSPECT_STATUS=str(producer_status))
+                result = subprocess.run(["bash", "-c", 'source "$1"; AUTH="$WORK/auth.json"; '
+                    'capture_metadata "$REFERENCE" "$WORK/source-config.json" config', "test", str(SCRIPT)],
+                    env=env, capture_output=True, text=True, timeout=5, check=False)
+                self.assertEqual(result.returncode == 0, accepted)
+                self.assertNotIn("private-config-canary", result.stdout + result.stderr)
+                self.assertEqual(result.stdout, "")
+                if accepted:
+                    self.assertEqual((work / "source-config.json").read_bytes(), content)
+                events = [json.loads(line) for line in (root / "events").read_text().splitlines()]
+                self.assertEqual(len(events), 1)
+                name, args = events[0]
+                self.assertEqual(name, "skopeo")
+                self.assertIn("--raw", args)
+                self.assertIn("--config", args)
+                self.assertEqual(args[args.index("--retry-times") + 1], "0")
+                self.assertEqual(args[-1], "docker://" + REFERENCE)

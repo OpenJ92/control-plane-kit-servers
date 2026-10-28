@@ -6,7 +6,7 @@ and owning gate. It verifies one CPK immutable
 reference, original index/platform manifest, configuration and ordered layers
 against a separately prepared OCI layout. Duplicate JSON keys, ambiguous platform
 selection, unsupported media/foreign URLs, invalid sizes, platform/user/revision
-mismatch, normalization drift, blob corruption and unequal layer/diff-ID counts
+mismatch, account/filesystem correspondence drift, blob corruption and unequal layer/diff-ID counts
 refuse before unpack. Original and OCI-normalized manifest identities stay
 distinct. Actual referenced bytes are hashed, with a 2 GiB compressed-layer sum
 ceiling. This is not a bound on the earlier registry acquisition operation.
@@ -50,4 +50,21 @@ one fixed phase marker. Exception text, paths, command output and account conten
 are never interpolated. Unclassified exceptions still return1. The wrapper must
 validate the whole marker together with the exit; an exit alone is insufficient.
 These labels locate a failed boundary, not its root cause, successful unpack,
-observed container absence or cleanup. The success result schema is unchanged.
+observed container absence or cleanup. These phase labels did not change the
+success result schema; the later config correction below adds distinct identities.
+
+Docker-schema2 to OCI conversion can legitimately reserialize the configuration
+and omit Docker-only fields. The verifier now hashes and size-checks private
+`source-config.json` against the original platform manifest's config descriptor,
+and independently verifies the normalized config against its OCI descriptor.
+Both must declare Linux/amd64, User `10001`, the exact producer revision label,
+rootfs type `layers`, and valid ordered diff IDs matching the layer count. Their
+ordered diff-ID sequences must match. Existing ordered layer digest, size, media
+and actual-byte checks remain in force; maintained umoci still verifies actual
+uncompressed diff IDs while unpacking. This proves account/filesystem
+correspondence, not full runtime-configuration equivalence.
+
+The result replaces ambiguous `config_digest` with `source_config_digest` and
+`normalized_config_digest`. Raw configuration never enters the result. Source
+proof of this defect does not establish the exact cause of the retained-image
+attempt's layout-validation failure; its private configs have not been inspected.
