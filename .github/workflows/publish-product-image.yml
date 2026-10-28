@@ -15,6 +15,10 @@ on:
         description: Separately approved account inspection after CPK publication, in this same job
         type: boolean
         default: false
+      inspect_retained_cpk:
+        description: Inspect only the fixed retained CPK image; skip all publication
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -22,6 +26,7 @@ permissions:
 
 jobs:
   publish:
+    if: ${{ !inputs.inspect_retained_cpk }}
     runs-on: ${{ inputs.inspect_cpk_accounts && 'ubuntu-24.04' || 'ubuntu-latest' }}
     timeout-minutes: ${{ inputs.inspect_cpk_accounts && 30 || 360 }}
     env:
@@ -104,5 +109,47 @@ jobs:
         with:
           name: managed-release-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.managed-evidence.outputs.attempt }}/public/managed-release-evidence.json
+          retention-days: 30
+          if-no-files-found: error
+  inspect-retained-cpk:
+    if: ${{ inputs.inspect_retained_cpk }}
+    permissions:
+      contents: read
+      packages: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Inspect the separately approved retained CPK publication
+        id: accounts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CPK_INSPECT_RETAINED_CPK: ${{ inputs.inspect_retained_cpk }}
+          CPK_INSPECT_CPK_ACCOUNTS: ${{ inputs.inspect_cpk_accounts }}
+          # Historical publication: run40756067917/job123055193422, not this job.
+          PUBLISHED_REFERENCE: ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:337c8cf44d1ccf624663c866f8084655ead7e8f5c62c121424c9d15f7650e370
+          PRODUCER_SOURCE: 94ecb34d7d692c23a0ec017fdc0cac984fd9dccf
+        run: |
+          bash scripts/acquire_root_accounts.sh --retained "$GITHUB_SHA" \
+            "$PUBLISHED_REFERENCE" "$PRODUCER_SOURCE" \
+            "$RUNNER_TEMP/cpk-account-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+      - name: Retain bounded prior-publication and inspection outcome
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpk-account-diagnostic-outcome-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/cpk-account-${{ github.run_id }}-${{ github.run_attempt }}/public/status.json
+            ${{ runner.temp }}/cpk-account-${{ github.run_id }}-${{ github.run_attempt }}/public/provenance.json
+          retention-days: 30
+          if-no-files-found: warn
+      - name: Retain candidate only after inspection and observed owned cleanup
+        if: steps.accounts.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpk-account-diagnostic-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cpk-account-${{ github.run_id }}-${{ github.run_attempt }}/public/account-seal.json
           retention-days: 30
           if-no-files-found: error

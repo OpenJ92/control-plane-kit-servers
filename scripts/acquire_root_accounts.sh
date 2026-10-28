@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Opt-in diagnostic in the SAME successful CPK producer job; never publishes.
+# Opt-in account diagnostic: same producer job or the fixed retained publication.
 set -euo pipefail
 umask 077
 ROOT="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -10,6 +10,39 @@ refuse() { echo 'Published CPK image remains published; account inspection HOLD'
 valid_inputs() {
   . "$ROOT/scripts/root_artifact_shell.sh"
   root_artifact_reference cpk-server "$REFERENCE" && [[ "$SOURCE" =~ ^[0-9a-f]{40}$ ]]
+}
+retained_publication() {
+  [ "$REFERENCE" = 'ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:337c8cf44d1ccf624663c866f8084655ead7e8f5c62c121424c9d15f7650e370' ] &&
+    [ "$SOURCE" = '94ecb34d7d692c23a0ec017fdc0cac984fd9dccf' ]
+}
+admit_sources() {
+  local checkout source_status
+  [[ "$DIAGNOSTIC_SOURCE" =~ ^[0-9a-f]{40}$ ]] || return 1
+  case "$MODE" in
+    same-job) [ "$DIAGNOSTIC_SOURCE" = "$SOURCE" ] || return 1 ;;
+    retained)
+      retained_publication || return 1
+      # The reviewed workflow owns the read-only job permission declaration.
+      [ "${GITHUB_WORKFLOW:-}" = publish-product-image ] || return 1
+      [ "${GITHUB_JOB:-}" = inspect-retained-cpk ] || return 1
+      [ "${CPK_INSPECT_RETAINED_CPK:-}" = true ] || return 1
+      [ "${CPK_INSPECT_CPK_ACCOUNTS:-}" = false ] || return 1
+      [ "${GITHUB_SHA:-}" = "$DIAGNOSTIC_SOURCE" ] || return 1 ;;
+    *) return 1 ;;
+  esac
+  checkout="$(git -C "$ROOT" rev-parse HEAD)" || return 1
+  [ "$checkout" = "$DIAGNOSTIC_SOURCE" ] || return 1
+  source_status="$(git -C "$ROOT" status --porcelain)" || return 1
+  [ -z "$source_status" ]
+}
+acquire_controller() {
+  [ "$MODE" = retained ] || return 0
+  STAGE=controller-acquisition
+  status hold
+  # This separately released pull uses hosted Docker storage without a hard
+  # quota. CLI timeout does not prove daemon download/extraction has stopped.
+  timeout --signal=TERM --kill-after=15s 300s docker pull --quiet --platform linux/amd64 \
+    "$POLICY" > "$RECORDS/controller-pull.log" 2>&1
 }
 cleanup_acquisition() {
   local remaining mounts backing_after associated
@@ -35,9 +68,12 @@ cleanup_acquisition() {
 }
 status() {
   jq -n --arg reference "$REFERENCE" --arg source "$SOURCE" --arg controller "$CONTROLLER" \
+    --arg diagnostic "${DIAGNOSTIC_SOURCE:-$SOURCE}" --arg publication_run "${PUBLICATION_RUN:-}" \
+    --arg run "${GITHUB_RUN_ID:-}" --arg attempt "${GITHUB_RUN_ATTEMPT:-1}" \
     --arg stage "$STAGE" --arg result "$1" \
     '{schema:"cpk.root-account-attempt.v1",publication:"succeeded",image_reference:$reference,
-      source_revision:$source,controller_image_id:$controller,inspection:$result,stage:$stage}' \
+      source_revision:$source,diagnostic_source_revision:$diagnostic,publication_run_id:$publication_run,
+      run_id:$run,run_attempt:$attempt,controller_image_id:$controller,inspection:$result,stage:$stage}' \
     > "$RECORDS/public/status.json"
 }
 inspect_accounts() {
@@ -131,14 +167,25 @@ if [ "${1:-}" = --acquire ]; then
   [ ! -e "$AUTH" ] && [ ! -L "$AUTH" ]
   exit 0
 fi
+MODE=same-job
+DIAGNOSTIC_SOURCE=''
+if [ "${1:-}" = --retained ]; then
+  [ "$#" = 5 ] || refuse
+  MODE=retained
+  DIAGNOSTIC_SOURCE="$2"
+  shift 2
+fi
 [ "$#" = 3 ] || refuse
 REFERENCE="$1" SOURCE="$2" RECORDS="$3"
+DIAGNOSTIC_SOURCE="${DIAGNOSTIC_SOURCE:-$SOURCE}"
 valid_inputs || refuse
+if [ "$MODE" = retained ]; then retained_publication || refuse; fi
 [ "${GITHUB_ACTIONS:-}" = true ] && [ -n "${GITHUB_RUN_ID:-}" ] || refuse
 [ -n "${GITHUB_ACTOR:-}" ] && [ -n "${GH_TOKEN:-}" ] || refuse
-[ "$(git -C "$ROOT" rev-parse HEAD)" = "$SOURCE" ] || refuse
-SOURCE_STATUS="$(git -C "$ROOT" status --porcelain)" || refuse
-[ -z "$SOURCE_STATUS" ] || refuse
+[[ "$GITHUB_RUN_ID" =~ ^[0-9]+$ ]] && [[ "${GITHUB_RUN_ATTEMPT:-1}" =~ ^[0-9]+$ ]] || refuse
+[[ "$DIAGNOSTIC_SOURCE" =~ ^[0-9a-f]{40}$ ]] || refuse
+PUBLICATION_RUN="$GITHUB_RUN_ID"
+if [ "$MODE" = retained ]; then PUBLICATION_RUN=40756067917; fi
 [ "$(uname -s)/$(uname -m)" = Linux/x86_64 ] && [ "$(id -u)" != 0 ] || refuse
 command -v jq >/dev/null || refuse
 mkdir -m 700 -- "$RECORDS"
@@ -163,12 +210,44 @@ finish() {
 }
 trap finish EXIT
 status hold
-for tool in docker timeout skopeo curl sha256sum truncate mkfs.ext4 losetup findmnt sudo dpkg-query; do
+# Minimal bounded provenance survives a preparation or controller-pull failure.
+# These are selected identities; successful admission is required before effects.
+jq -n --arg reference "$REFERENCE" --arg source "$SOURCE" --arg diagnostic "$DIAGNOSTIC_SOURCE" \
+  --arg publication_run "$PUBLICATION_RUN" --arg run "$GITHUB_RUN_ID" --arg attempt "${GITHUB_RUN_ATTEMPT:-1}" \
+  --arg controller "$POLICY" --arg mode "$MODE" \
+  '{image_reference:$reference,source_revision:$source,diagnostic_source_revision:$diagnostic,
+    publication_run_id:$publication_run,run_id:$run,run_attempt:$attempt,mode:$mode,
+    controller_reference:$controller,source_admitted:false}' > "$RECORDS/public/provenance.json"
+admit_sources || refuse
+for tool in docker timeout skopeo curl sha256sum truncate mkfs.ext4 losetup findmnt sudo dpkg-query cmp; do
   command -v "$tool" >/dev/null || refuse
 done
 [ -n "${ImageOS:-}" ] && [ -n "${ImageVersion:-}" ] || refuse
+[ "$MODE" != retained ] || [ "$ImageOS" = ubuntu24 ] || refuse
 [ "$(skopeo --version)" = 'skopeo version 1.13.3' ] || refuse
-# Borrow only the policy image acquired by this same producer job. Never pull.
+if [ "$MODE" = retained ]; then
+  case "$(docker info --format '{{.OSType}}/{{.Architecture}}')" in
+    linux/x86_64|linux/amd64) ;;
+    *) refuse ;;
+  esac
+fi
+SKOPEO_HASH="$(sha256sum "$(command -v skopeo)" | cut -d ' ' -f 1)"
+SKOPEO_PACKAGE="$(dpkg-query -W -f='${Version}' skopeo)"
+jq -n --arg runner_image "$ImageOS" --arg runner_version "$ImageVersion" \
+  --arg package "$SKOPEO_PACKAGE" --arg skopeo "$SKOPEO_HASH" --arg umoci "$UMOCI_SHA" \
+  --arg controller "$POLICY" --arg source "$SOURCE" \
+  --arg diagnostic "$DIAGNOSTIC_SOURCE" --arg publication_run "$PUBLICATION_RUN" \
+  --arg run "$GITHUB_RUN_ID" --arg attempt "${GITHUB_RUN_ATTEMPT:-1}" --arg mode "$MODE" \
+  '{runner_image:$runner_image,runner_version:$runner_version,skopeo_version:"1.13.3",
+    skopeo_package:$package,skopeo_sha256:$skopeo,umoci_version:"0.6.0",umoci_sha256:$umoci,
+    controller_reference:$controller,source_revision:$source,diagnostic_source_revision:$diagnostic,
+    publication_run_id:$publication_run,run_id:$run,run_attempt:$attempt,mode:$mode,source_admitted:true,
+    controller_storage_hard_limit_bytes:null,acquisition_limit_bytes:3221225472,
+    acquisition_timeout_seconds:600,unpack_limit_bytes:4294967296}' > "$RECORDS/public/provenance.json"
+acquire_controller
+STAGE=controller-verification
+status hold
+# Same-job mode only borrows the producer cache; retained mode acquired explicitly.
 CONTROLLER="$(docker image inspect "$POLICY" --format '{{.Id}}')" || refuse
 [[ "$CONTROLLER" =~ ^sha256:[0-9a-f]{64}$ ]] || refuse
 [ "$(docker image inspect "$CONTROLLER" --format '{{.Os}}/{{.Architecture}}')" = linux/amd64 ] || refuse
@@ -193,15 +272,6 @@ sudo -n chmod 0700 "$MOUNT"
 # Tools execute only after pinned-byte verification; unpacked rootfs is noexec.
 STAGE=acquisition
 status hold
-SKOPEO_HASH="$(sha256sum "$(command -v skopeo)" | cut -d ' ' -f 1)"
-SKOPEO_PACKAGE="$(dpkg-query -W -f='${Version}' skopeo)"
-jq -n --arg runner_image "${ImageOS:-unknown}" --arg runner_version "${ImageVersion:-unknown}" \
-  --arg package "$SKOPEO_PACKAGE" --arg skopeo "$SKOPEO_HASH" --arg umoci "$UMOCI_SHA" \
-  --arg controller "$POLICY" --arg source "$SOURCE" \
-  '{runner_image:$runner_image,runner_version:$runner_version,skopeo_version:"1.13.3",
-    skopeo_package:$package,skopeo_sha256:$skopeo,umoci_version:"0.6.0",umoci_sha256:$umoci,
-    controller_reference:$controller,source_revision:$source,acquisition_limit_bytes:3221225472,
-    acquisition_timeout_seconds:600,unpack_limit_bytes:4294967296}' > "$RECORDS/public/provenance.json"
 # timeout owns the worker process group; no automatic retry follows a timeout.
 timeout --signal=TERM --kill-after=15s 600s bash "$0" --acquire \
   "$REFERENCE" "$SOURCE" "$WORK" "$CONTROLLER" "$RUN" > "$WORK/acquisition.log" 2>&1

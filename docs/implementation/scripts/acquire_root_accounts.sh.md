@@ -1,14 +1,15 @@
 Source: [acquire_root_accounts.sh](../../../scripts/acquire_root_accounts.sh).
 
-Opt-in #347 diagnostic entrypoint. It is called after a
-successful CPK publication in the same hosted job, with its actual immutable
-reference and producer source. It never publishes. Source/ref/job admission,
-required installed tools and the exact borrowed policy image are checked before
-acquisition. Missing or drifted cache stops; no controller pull/build/load exists.
+Opt-in #347 diagnostic entrypoint. Its default path is called after a successful
+CPK publication in the same hosted job, with its actual immutable reference and
+producer source. It never publishes. Source/ref/job admission, required installed
+tools and the exact borrowed policy image are checked before target acquisition.
+The default path still stops on missing/drifted cache and never pulls/builds/loads
+a controller. The separately released retained-publication mode is described below.
 The immutable Python policy reference is the one selected by the producer's
 existing override. This does not cap that producer's earlier image/build storage.
 
-The same job has packages-write authority. Acquisition performs registry reads
+The default same-producer job has packages-write authority. Acquisition performs registry reads
 using its own temporary 0600 auth file; no per-step token downscoping is claimed.
 The file is removed before offline execution and never mounted into any controller.
 Failure cleanup removes only that exact private auth file when present. Other
@@ -69,3 +70,39 @@ are observations of the failed boundary, not inferred causes or cleanup evidence
 The schema and all candidate promotion conditions remain unchanged. Sourceable
 inspection/status functions let the owning Docker suite test propagation using
 process doubles without entering acquisition or performing provider effects.
+
+`--retained DIAGNOSTIC_REVISION REFERENCE PRODUCER_REVISION OUTPUT` admits only
+the recorded337c8cf manifest produced at94ecb34 in publication run40756067917.
+The diagnostic revision must match the clean checkout and GitHub workflow source;
+the mode requires the reviewed `inspect-retained-cpk` job in the registered
+`publish-product-image` workflow, with retained inspection selected and same-job
+inspection disabled. Selecting both stops in preparation. That job's explicit
+permission declaration owns contents-read/packages-read authority; the
+script does not infer token scope from an environment string. The existing
+same-job mode still requires diagnostic and producer revisions to be identical.
+The producer revision continues to govern image configuration verification.
+
+The existing fresh output directory is created once. Bounded preparation HOLD
+and minimal provenance are recorded before clean-source/prerequisite admission;
+selected identities are not marked admitted until the checks succeed. Thus an
+ordinary dirty-source or missing-tool stop cannot imply inspection or cleanup.
+Invalid invocation/context, missing jq, or failure to create the fresh output
+still stops without fabricating an artifact. Once admission passes, actual runner
+and Skopeo provenance are recorded before the new controller acquisition phase.
+Status/provenance retain producer and diagnostic revisions, current run/attempt,
+and the historical publication run separately. This job asserts prior publication
+from that fixed reviewed receipt; it does not publish or relabel the image.
+
+Retained mode makes one explicit pull of the fixed public Python reference for
+Linux/amd64, with a300-second CLI deadline and15-second TERM-to-KILL grace. The
+controller ID/platform/repository digest are observed afterward; all inspection
+containers still run by that verified ID with pull disabled. Default mode skips
+this pull entirely. Failure/timeout stays controller-acquisition HOLD and does
+not enter inspection or cleanup. A CLI timeout does not prove the Docker daemon
+stopped downloading/extracting. There is no re-pull, fallback or prune.
+
+North accepted this fixed controller pull in the fresh hosted runner's disposable
+Docker storage as separately scoped exposure, **without an enforced image-store
+quota**. Provenance records its hard limit as null. The3GiB acquisition filesystem
+and4GiB unpack tmpfs bound their respective phases only; they are not a total job
+budget. Source/design acceptance is not permission to execute the new workflow.

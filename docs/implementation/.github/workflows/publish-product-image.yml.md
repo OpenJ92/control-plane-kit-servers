@@ -29,3 +29,32 @@ This is source wiring, not a dispatch or acceptance receipt. A concrete joint
 release must identify final source, exact new tags, recipe/cohort/provenance,
 actual produced references and the bounded inspection/cleanup actions. Existing
 source CI cannot establish actual published-image account evidence.
+
+The default-false typed `inspect_retained_cpk` input selects a separate
+`inspect-retained-cpk` job and skips the entire `publish` job, including its managed
+product path. This reuses the existing workflow registration; it does not replay
+the producer. GitHub requires workflow_dispatch registration on the default branch,
+so a new unregistered workflow file would introduce a separate release prerequisite.
+The whole workflow is not read-only: only the diagnostic job explicitly overrides
+permissions to contents-read/packages-read. Its checkout disables credential
+persistence; it has no dependency on the publisher and no login/build/push/Secrets
+step. Normal producer behavior remains selected when the new input is false.
+
+The diagnostic job fixes the retained CPK337c8cf reference and producer94ecb34,
+historical publication run40756067917/job123055193422. Product/tag inputs do not
+select another diagnostic target. It passes the distinct exact diagnostic
+GitHub revision to the existing entrypoint's retained mode. Both inspection
+booleans are passed as data; retained=true with same-job=true stops in preparation
+and cannot schedule publication. The entrypoint admits source, target and
+prerequisites, records bounded initial status/provenance, then explicitly acquires
+the fixed public Python controller. Preparation/pull failure does not fabricate a
+candidate or cleanup; only the existing allowlisted public artifacts are uploaded.
+
+The fixed controller pull uses disposable hosted Docker storage without an enforced
+image-store quota, a separately accepted source/design exposure. Its300-second
+CLI deadline plus15-second grace does not prove daemon work stops after timeout.
+Existing3GiB target-acquisition and4GiB unpack phase limits are not a total job
+storage cap. No retry, fallback or prune is authorized by a failed pull.
+Execution still needs a concrete reviewed packet at the final source, naming
+the diagnostic job and expected skipped publisher inventory. Source CI does not
+authorize that attempt or establish the retained image's account evidence.

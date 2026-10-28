@@ -24,3 +24,17 @@ nonempty output and observed container absence. The success-transport fixture is
 an explicitly opaque synthetic receipt, not successful unpack/account evidence.
 The parser consumes at most128 bytes of private diagnostics and exports only
 fixed labels. These additions require their own source review and owning gate.
+
+The retained-publication connection adds four synthetic methods. Source admission
+requires the fixed target/producer and a distinct exact clean diagnostic checkout,
+while preserving the same-job equality rule. A failed controller pull is attempted
+once, records a bounded HOLD with separate source/run identities, and cannot
+inspect/promote/clean up; same-job mode makes no pull. The real entrypoint's dirty
+preparation path leaves bounded prior-publication/provenance records before any
+controller call. Git/Docker are process doubles inside the owning Docker suite;
+they do not prove an actual pull, token scope, quota, successful unpack or cleanup.
+The fourth checks the actual mutually exclusive job-selection and explicit
+read-only diagnostic permission declarations, then exercises all four retained/
+same-job boolean combinations through source admission. Only retained=true with
+same-job=false is admitted; the other combinations cannot enter that diagnostic.
+Static workflow declarations do not constitute an executed GitHub job inventory.

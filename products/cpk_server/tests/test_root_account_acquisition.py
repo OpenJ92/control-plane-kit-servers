@@ -1,6 +1,7 @@
 """Diagnostic command admission only; never acquires images, tools or a mount."""
 import os
 import json
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -26,6 +27,9 @@ failure = os.environ["FAILURE"]
 if name == "id":
     print("1001")
 elif name == "docker":
+    if args[0] == "pull":
+        print("private-pull-error-canary", file=sys.stderr)
+        sys.exit(21)  # Acquisition uncertainty must stop; never simulate a pull.
     if args[0] == "ps":
         if failure == "remaining" and pathlib.Path(os.environ["EVENTS"] + ".ran").exists():
             print("synthetic-owned-container")
@@ -62,10 +66,17 @@ elif name == "skopeo":
         print("{}")  # The metadata controller must not execute in this double.
     else:
         sys.exit(99)
+elif name == "git":
+    if "rev-parse" in args:
+        print(os.environ["TEST_HEAD"])
+    elif "status" in args:
+        print(os.environ.get("TEST_DIRTY", ""), end="")
+    else:
+        sys.exit(99)
 else:
     sys.exit(99)
 '''
-        for name in ("docker", "sudo", "findmnt", "id", "skopeo"):
+        for name in ("docker", "sudo", "findmnt", "id", "skopeo", "git"):
             path = commands / name
             path.write_text("#!" + sys.executable + "\n" + program)
             path.chmod(0o700)
@@ -210,3 +221,123 @@ else:
                 self.assertEqual(seal.exists(), promoted)
                 if promoted:
                     self.assertEqual(seal.read_text(), output)
+
+    def test_retained_target_requires_distinct_exact_clean_diagnostic_source(self):
+        retained = "ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:337c8cf44d1ccf624663c866f8084655ead7e8f5c62c121424c9d15f7650e370"
+        producer = "94ecb34d7d692c23a0ec017fdc0cac984fd9dccf"
+        diagnostic = "d" * 40
+        cases = (
+            ("retained", retained, producer, diagnostic, diagnostic, "", True),
+            ("retained", retained, producer, diagnostic, producer, "", False),
+            ("retained", retained, producer, diagnostic, diagnostic, " M scripts/example", False),
+            ("retained", REFERENCE, producer, diagnostic, diagnostic, "", False),
+            ("retained", retained, SOURCE, diagnostic, diagnostic, "", False),
+            ("retained", retained, producer, "short", "short", "", False),
+            ("same-job", REFERENCE, SOURCE, diagnostic, diagnostic, "", False),
+            ("same-job", REFERENCE, SOURCE, SOURCE, SOURCE, "", True),
+        )
+        for mode, reference, source, selected, head, dirty, admitted in cases:
+            with self.subTest(mode=mode, head=head, dirty=bool(dirty), reference=reference), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                env = self.commands(root, "run")
+                env.update(MODE=mode, REFERENCE=reference, SOURCE=source, DIAGNOSTIC_SOURCE=selected,
+                    TEST_HEAD=head, TEST_DIRTY=dirty, GITHUB_WORKFLOW="publish-product-image", GITHUB_SHA=selected,
+                    GITHUB_JOB="inspect-retained-cpk", CPK_INSPECT_RETAINED_CPK="true", CPK_INSPECT_CPK_ACCOUNTS="false")
+                result = subprocess.run(["bash", "-c", 'source "$1"; admit_sources', "test", str(SCRIPT)],
+                    env=env, capture_output=True, text=True, timeout=5, check=False)
+                self.assertEqual(result.returncode == 0, admitted)
+                if (root / "events").exists():
+                    events = [json.loads(line) for line in (root / "events").read_text().splitlines()]
+                    self.assertTrue(all(name == "git" for name, args in events))
+
+    def test_retained_controller_pull_failure_is_one_attempt_with_bounded_public_hold(self):
+        for mode in ("same-job", "retained"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                env = self.commands(root, "run")
+                (root / "public").mkdir()
+                env.update(MODE=mode, REFERENCE=REFERENCE, SOURCE=SOURCE, DIAGNOSTIC_SOURCE="d" * 40,
+                    RECORDS=str(root), CONTROLLER="", STAGE="preparation", GITHUB_RUN_ID="123",
+                    GITHUB_RUN_ATTEMPT="1", PUBLICATION_RUN="40756067917")
+                result = subprocess.run(["bash", "-c",
+                    'source "$1"; if acquire_controller; then exit 0; else status hold; exit 1; fi',
+                    "test", str(SCRIPT)], env=env, capture_output=True, text=True, timeout=5, check=False)
+                self.assertNotIn("private-pull-error-canary", result.stdout + result.stderr)
+                if mode == "same-job":
+                    self.assertEqual(result.returncode, 0)
+                    self.assertFalse((root / "events").exists())
+                else:
+                    self.assertNotEqual(result.returncode, 0)
+                    public = (root / "public" / "status.json").read_text()
+                    status = json.loads(public)
+                    self.assertEqual(status["stage"], "controller-acquisition")
+                    self.assertEqual(status["inspection"], "hold")
+                    self.assertEqual(status["source_revision"], SOURCE)
+                    self.assertEqual(status["diagnostic_source_revision"], "d" * 40)
+                    self.assertEqual(status["publication_run_id"], "40756067917")
+                    self.assertNotIn("private-pull-error-canary", public)
+                    events = [json.loads(line) for line in (root / "events").read_text().splitlines()]
+                    self.assertEqual(events, [["docker", ["pull", "--quiet", "--platform", "linux/amd64",
+                        "docker.io/library/python@sha256:cd89c30eda26ee911a4611b18680086e0ea42e6f5f8cbe653d07fa7958c9cec8"]]])
+                    self.assertFalse((root / "public" / "account-seal.json").exists())
+
+    def test_retained_preparation_failure_records_prior_publication_without_controller_effects(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = self.commands(root, "run")
+            diagnostic = "d" * 40
+            env.update(GITHUB_ACTIONS="true", GITHUB_RUN_ID="123", GITHUB_RUN_ATTEMPT="1",
+                GITHUB_ACTOR="synthetic", GH_TOKEN="private-token-canary",
+                GITHUB_WORKFLOW="publish-product-image", GITHUB_JOB="inspect-retained-cpk", GITHUB_SHA=diagnostic,
+                CPK_INSPECT_RETAINED_CPK="true", CPK_INSPECT_CPK_ACCOUNTS="false",
+                TEST_HEAD=diagnostic, TEST_DIRTY=" M scripts/example")
+            output = root / "output"
+            result = subprocess.run(["bash", str(SCRIPT), "--retained", diagnostic,
+                "ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:337c8cf44d1ccf624663c866f8084655ead7e8f5c62c121424c9d15f7650e370",
+                "94ecb34d7d692c23a0ec017fdc0cac984fd9dccf", str(output)],
+                env=env, capture_output=True, text=True, timeout=5, check=False)
+            self.assertNotEqual(result.returncode, 0)
+            public = (output / "public" / "status.json").read_text()
+            status = json.loads(public)
+            self.assertEqual((status["publication"], status["inspection"], status["stage"]),
+                ("succeeded", "hold", "preparation"))
+            self.assertEqual(status["publication_run_id"], "40756067917")
+            provenance = (output / "public" / "provenance.json").read_text()
+            self.assertFalse(json.loads(provenance)["source_admitted"])
+            self.assertNotIn("private-token-canary", public + provenance + result.stdout + result.stderr)
+            events = [json.loads(line) for line in (root / "events").read_text().splitlines()]
+            self.assertTrue(all(name in ("id", "git") for name, args in events))
+            self.assertFalse((output / "public" / "account-seal.json").exists())
+
+    def test_retained_workflow_selection_and_read_only_job_boundary(self):
+        workflow = (SCRIPT.parents[1] / ".github/workflows/publish-product-image.yml").read_text()
+        selection = workflow.split("      inspect_retained_cpk:\n", 1)[1].split("\npermissions:", 1)[0]
+        self.assertIn("        type: boolean\n", selection)
+        self.assertIn("        default: false\n", selection)
+        # Review the actual job permission/selection declarations. This does not
+        # simulate GitHub's scheduler or establish a token's runtime permissions.
+        jobs = re.split(r"^  ([a-z-]+):\n", workflow.split("jobs:\n", 1)[1], flags=re.MULTILINE)
+        declarations = dict(zip(jobs[1::2], jobs[2::2]))
+        self.assertEqual(set(declarations), {"publish", "inspect-retained-cpk"})
+        self.assertIn("    if: ${{ !inputs.inspect_retained_cpk }}\n", declarations["publish"])
+        diagnostic = declarations["inspect-retained-cpk"]
+        self.assertIn("    if: ${{ inputs.inspect_retained_cpk }}\n", diagnostic)
+        self.assertIn("    permissions:\n      contents: read\n      packages: read\n", diagnostic)
+        self.assertIn("persist-credentials: false", diagnostic)
+        for forbidden in ("packages: write", "needs:", "docker/login-action", "publish_product_image.sh", "release_evidence.py"):
+            self.assertNotIn(forbidden, diagnostic)
+        self.assertIn("CPK_INSPECT_RETAINED_CPK: ${{ inputs.inspect_retained_cpk }}", diagnostic)
+        self.assertIn("CPK_INSPECT_CPK_ACCOUNTS: ${{ inputs.inspect_cpk_accounts }}", diagnostic)
+        for retained in ("true", "false"):
+            for same_job in ("true", "false"):
+                with self.subTest(retained=retained, same_job=same_job), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    env = self.commands(root, "run")
+                    env.update(MODE="retained", DIAGNOSTIC_SOURCE="d" * 40, TEST_HEAD="d" * 40,
+                        SOURCE="94ecb34d7d692c23a0ec017fdc0cac984fd9dccf",
+                        REFERENCE="ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:337c8cf44d1ccf624663c866f8084655ead7e8f5c62c121424c9d15f7650e370",
+                        GITHUB_WORKFLOW="publish-product-image", GITHUB_JOB="inspect-retained-cpk", GITHUB_SHA="d" * 40,
+                        CPK_INSPECT_RETAINED_CPK=retained, CPK_INSPECT_CPK_ACCOUNTS=same_job)
+                    result = subprocess.run(["bash", "-c", 'source "$1"; admit_sources', "test", str(SCRIPT)],
+                        env=env, capture_output=True, text=True, timeout=5, check=False)
+                    self.assertEqual(result.returncode == 0, retained == "true" and same_job == "false")
