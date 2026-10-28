@@ -236,10 +236,6 @@ def acquire_root(plan, index_path, state):
             if (state / "receipt.json").exists() or (state / "receipt.new").exists():
                 raise RootBootstrapHold("bootstrap prior acquisition requires investigation")
         try:
-            if workspace_intent is not None:
-                # #346/#347 must compose initialization and authenticated setup
-                # before this entrance can acquire any dynamic resources.
-                raise RootBootstrapHold("dynamic bootstrap initialization and setup are unavailable")
             return _acquire(plan, material, state, workspace_intent=workspace_intent)
         except (RootBootstrapError, RootBootstrapHold):
             raise

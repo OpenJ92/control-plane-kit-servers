@@ -253,3 +253,18 @@ their limitations. Planning/Markdown verification requires `git diff --check`;
 new executable fixture/guard changes require independent review and the owning
 Docker gate. Publication, current-artifact qualification, live #225 and G/#342
 remain distinct permissions and acceptance boundaries.
+
+### Integrated source candidate after authoring review
+
+Meridian passed the bounded authored-input checkpoint988b9aa, explicitly noting
+that its original target reconstructed material after authoring. The subsequent
+candidate reuses `workspace_intent_commitment` and adds an actual prepare-writer
+to admission target. It wires the additional optional-tuple shell invocation,
+actual helper absence/PID1/private policy custody, public revocation, owned
+container restart, retained initialization inspection and exact cleanup. It also
+removes the intermediate public apply guard in that same candidate. These changes
+are unrun and under independent review, not an accepted usable deployment.
+
+The current-image account seal and final gate revision remain unresolved. Only
+the historical account row exists; new references refuse before acquisition.
+No image publication or inspection is implied by preparing the source candidate.

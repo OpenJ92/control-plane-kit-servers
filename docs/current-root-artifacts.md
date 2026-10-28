@@ -85,13 +85,14 @@ tunnel, DNS, production key or retained root is changed by this source capabilit
 
 ## Dynamic launcher boundary under #347
 
-The existing optional pair currently adds artifact ABI smoke checks. Its later
-root launcher still uses historical canonical images; it does not yet run fresh
-dynamic initialization/enrollment against the optional pair. #347's reviewed
-source and HTTP/PostgreSQL component results do not close that gap, and full
-dynamic apply remains guarded.
+Accepted source at25bf669a adds optional artifact ABI smoke checks but keeps its
+root launcher on historical images. The subsequent #347 source candidate adds
+the dynamic launcher described below and removes the intermediate apply guard.
+That candidate is unvalidated: source/component PASS at the earlier commit does
+not qualify it or a new image pair. Only the historical account baseline exists,
+so a new pair refuses before dynamic acquisition until its seal is reviewed.
 
-The planned extension reuses `test.sh` and `live_root_bootstrap.py` for one
+The candidate extension reuses `test.sh` and `live_root_bootstrap.py` for one
 additional isolated dynamic case. It keeps the mandatory historical static case,
 existing tuple admission, native PostgreSQL selection and exact-owned cleanup.
 The current pair needs actual source-owned CPK/Secrets runtime contracts and
@@ -99,7 +100,11 @@ commissioning artifacts, not the historical fixture's inert file witness. It
 must exercise ordinary `bootstrap.sh plan/apply`, private initialization,
 authenticated public enrollment, retained policy custody and actual process
 restart with revoked permissions still revoked. No direct store grants or
-private deployment call may substitute for the public path.
+private deployment call may substitute for the public path. It invokes the
+existing `bootstrap.sh inspect-initialization` after restart to compare the
+retained binding, then proves a repeated apply refuses without receipt changes.
+Successful resource cleanup removes the fixture's credential/commissioning
+directories; failures retain private diagnostic evidence. Borrowed images remain.
 
 The existing numeric socket witness has an exact historical CPK image-account
 baseline. Before extending it to another digest, review that image's independent

@@ -1,6 +1,18 @@
 Source: [test.sh](../../test.sh).
 Maintain with the normal Docker-backed owning gate and prerequisite effects.
 
+#347's integrated source candidate wraps the existing root case in a shell
+function, always runs the historical static invocation, and adds one dynamic
+invocation for the existing admitted published pair. It passes actual driver and
+tuple coordinates into the real input writer, uses normal plan/apply, performs
+public revocation/owned restart and normal initialization inspection, then retains
+the existing reapply refusal and exact resource cleanup. Successful dynamic
+cleanup also removes its owned credential and commissioning trees. Published
+images are borrowed; only the run-labelled driver tag is removed. This source is
+unvalidated and a new pair cannot run without its independent account baseline.
+The existing workflow timeout, native PostgreSQL, historical catalogue and fixed
+Hello/gateway prerequisites are unchanged.
+
 #191 adds explicit PostgreSQL source-test and published-image routes through
 `scripts/postgres_artifact_shell.sh`. The latter borrows an already-present exact
 digest and reuses the existing product witness. It requires separate runtime

@@ -4,6 +4,7 @@ from dataclasses import replace
 import hashlib
 import importlib
 import json
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -115,6 +116,37 @@ class DynamicRootBootstrapTests(unittest.TestCase):
             with self.assertRaisesRegex(AssertionError, "no reviewed image account baseline"):
                 witness.prepare_dynamic_document(installation_input(), selection, DRIVER)
         self.assertFalse((self.root / "commissioning").exists())
+
+    def test_dynamic_launcher_emitted_private_files_are_admitted_together(self):
+        from products.cpk_server.tests import live_root_bootstrap as witness
+        from products.cpk_server.examples.root_bootstrap_input import example_input
+        source = Path(__file__).resolve().parents[3]
+        environment = {"CPK_ROOT_ARTIFACT_MODE": "published-digest",
+            "CPK_ROOT_CPK_IMAGE": witness.CPK_IMAGE_ACCOUNT.image_reference,
+            "CPK_ROOT_SECRETS_IMAGE": "ghcr.io/openj92/control-plane-kit-servers/secrets-server@sha256:" + "a" * 64,
+            "CPK_ROOT_SOURCE_REVISION": "a" * 40, "CPK_ROOT_DRIVER_IMAGE_ID": DRIVER}
+        old_umask = os.umask(0o077)
+        try:
+            # Only the separate image-packaging subprocess is outside this
+            # writer target; commissioning and all emitted material are real.
+            with patch.object(witness, "ROOT", self.root), patch.dict(os.environ, environment), \
+                    patch.object(witness, "commissioning_driver_witness"), \
+                    patch.object(witness, "example_input", side_effect=lambda **kw: example_input(source, **kw)):
+                witness.prepare("root-writer")
+        finally:
+            os.umask(old_umask)
+        document = json.loads((self.root / "input.json").read_bytes())
+        plan = self.plan(document)
+        index = self.root / "material" / "index.json"
+        runtime = importlib.import_module("control_plane_kit_servers_cpk_server.bootstrap_runtime")
+        material, admitted = runtime._material(plan, index)
+        self.assertEqual(admitted.policy_bytes, (self.root / "material" / "workspace-authority.json").read_bytes())
+        self.assertEqual(json.loads(index.read_bytes())["dynamic_workspace"]["plan_digest"], plan["digest"])
+        installation = document["installation"]
+        principals = json.loads(material[installation["control_auth"]["principals_document"]])
+        self.assertEqual(principals[0]["credential"], material[installation["references"]["control_credential"]])
+        for path in (self.root / "material").iterdir():
+            self.assertEqual(path.stat().st_mode & 0o777, 0o400)
 
     def material(self, plan, policy_bytes, private, *, bearer=TOKEN, principal_subject=None):
         files = {}
@@ -259,13 +291,17 @@ class DynamicRootBootstrapTests(unittest.TestCase):
         path, _ = self.material(plan, policy_bytes, private)
         self.refused_before_docker(plan, path, "material-refused")
 
-    def test_actual_setup_bearer_mapping_is_checked_before_incomplete_path_refusal(self):
+    def test_actual_setup_bearer_mapping_is_checked_before_acquisition(self):
         for multiple in (False, True):
             with self.subTest(multiple=multiple):
                 document, policy_bytes, private = self.inputs(multiple=multiple)
                 plan = self.plan(document)
                 path, _ = self.material(plan, policy_bytes, private)
-                self.refused_before_docker(plan, path, "dynamic-bootstrap-incomplete")
+                with patch("docker.DockerClient", side_effect=RuntimeError("synthetic provider unavailable")) as client:
+                    with self.assertRaises(self.api.RootBootstrapError):
+                        self.api.apply_root_bootstrap(plan, expected_digest=plan["digest"], driver_image_id=DRIVER,
+                            index_path=path, state_directory=self.root / "state")
+                client.assert_called_once()
                 if multiple:
                     path, _ = self.material(plan, policy_bytes, private, bearer="unverified-private-token")
                     self.refused_before_docker(plan, path, "material-refused")
@@ -331,7 +367,11 @@ class DynamicRootBootstrapTests(unittest.TestCase):
         self.assertEqual(routes[routes.index("command.runtime-authority.register") + 1],
             "command.managed-runtime-access.grant")
         path, _ = self.material(plan, policy_bytes, private)
-        self.refused_before_docker(plan, path, "dynamic-bootstrap-incomplete")
+        runtime = importlib.import_module("control_plane_kit_servers_cpk_server.bootstrap_runtime")
+        with patch("docker.DockerClient") as client:
+            _, admitted = runtime._material(plan, path)
+        client.assert_not_called()
+        self.assertEqual(admitted.policy_bytes, policy_bytes)
         private["administration"]["management_grant"]["registration_id"] = "fabricated-registration"
         self.bind_intent(document, policy_bytes, private)
         plan = self.plan(document)

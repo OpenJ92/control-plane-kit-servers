@@ -49,3 +49,10 @@ configuration artifacts and explicit ordinary/management routes. Synthetic image
 selection is authoring evidence only. An unknown account baseline must refuse
 before commissioning creates private state. These new methods are unrun at this
 source checkpoint; the earlier CI result applies to its exact earlier source.
+
+The integrated candidate adds a real `prepare()` writer-to-admission target:
+only the separately owned driver-packaging subprocess is replaced, while real
+commissioning, generated credentials/principals, protected files, index and public
+plan are consumed together. This does not replace normal launcher plan/apply
+evidence. The intermediate valid-input refusal becomes a provider-entrance target;
+invalid credentials, fabricated registration and existing-receipt refusals remain.

@@ -71,17 +71,19 @@ consumes the admitted byte snapshot, never reopens the private policy filename.
 Only safe UID/mode/verified observations are recorded. The installation policy
 volume is not one of the disposable setup plan/credential volumes.
 
-Public dynamic apply still returns `dynamic-bootstrap-incomplete` before Docker
-construction, after valid private admission. This intentionally leaves delivery
-unreachable through apply until #346/#347 are composed. Source inspection and the
-existing numeric protected-file fixture establish component obligations; they do
-not establish full dynamic installation acceptance or execution history.
+At the intermediate #345 boundary, public dynamic apply returned
+`dynamic-bootstrap-incomplete` after valid private admission and before Docker.
+The final #347 source candidate removes that intermediate guard and uses the
+existing initialization/public setup composition. Invalid material and prior
+receipts still refuse before acquisition. The candidate remains unvalidated;
+source inspection and earlier component results do not establish current-image
+dynamic installation acceptance or execution history.
 
 #346 reserves initialization helper names during dynamic occupancy inspection and
 records absence of the exact PostgreSQL data volumes. After authenticated database
 readiness, the private controller path invokes explicit schema/binding initialization
-before any application node. The public dynamic-apply guard stays in place until
-#347 public setup composition; this hook alone is not a usable bootstrap release.
+before any application node. The #346 hook alone was not a usable bootstrap
+release; the #347 integrated source and actual-image gate own that connection.
 The existing receipt remains the owner of pending and bounded helper observations.
 
 #347 stages the minimized public-helper files from the admitted snapshot. Their
@@ -90,4 +92,5 @@ mounts and exact completed-helper cleanup. No acquisition target or database
 password is delivered to public setup. The progress reader admits bounded receipt,
 assignment and observed-graph identifiers, nonnegative exact-integer revisions
 and closed active/revoked states; private identities, keys and policy remain absent.
-The full dynamic-apply guard remains pending integrated source acceptance.
+The integrated guard change requires independent review and the current-image
+launcher gate before acceptance. It creates no additional live authority.

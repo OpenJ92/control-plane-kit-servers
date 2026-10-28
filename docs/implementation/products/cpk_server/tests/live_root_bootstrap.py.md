@@ -80,7 +80,18 @@ material uses the existing v2 index and protected files; the static path retains
 its original fixture.
 
 This is source under review, not a qualified image pair. Only the historical
-account baseline exists. The shell's additional invocation, dynamic custody and
-restart checks and integrated guard change remain to be completed before the
-optional current-image launcher can run. No account seal is copied to a new
-digest, and no new producer or runtime evidence is implied.
+account baseline exists. No account seal is copied to a new digest, and no new
+producer or runtime evidence is implied.
+
+The next integrated candidate uses the existing commitment owner and adds actual
+prepare-writer admission evidence. Its root check includes installer-file mounts,
+exact tuple/source/execution and actual PID1 identity, real helper absence and
+private policy readability/write denial. Authenticated HTTP revokes the fixture's
+ordinary permission and management assignment; only its exact owned CPK container
+is restarted. The post-restart reads require preserved revoked revisions and
+registration binding, deny ordinary access and recheck private mount custody.
+The normal bootstrap initialization inspection then verifies the retained binding
+and timestamp. Existing pending/no-redispatch and exact resource cleanup remain.
+After successful resource cleanup, only the owned material/commissioning trees
+are removed; failures retain private diagnostic evidence. These new paths are
+unrun and require independent source review and an actual qualified-pair gate.

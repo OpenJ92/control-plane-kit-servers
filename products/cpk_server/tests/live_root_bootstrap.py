@@ -61,6 +61,7 @@ def prepare_dynamic_document(document, selection, driver):
     from control_plane_kit_core.configuration import ConfigurationArtifact
     from control_plane_kit_core.products import OciImageReference, ProductDescriptorCodec
     from control_plane_kit_servers_cpk_server.bootstrap import canonical
+    from control_plane_kit_servers_cpk_server.bootstrap_workspace import workspace_intent_commitment
     from control_plane_kit_servers_cpk_server.control_configuration import CpkSourceVariant, cpk_source_runtime_contract
     from control_plane_kit_servers_cpk_server.root_commissioning import plan_root_commissioning, prepare_root_commissioning
     from control_plane_kit_servers_secrets_server.configuration import secrets_source_runtime_contract
@@ -107,12 +108,10 @@ def prepare_dynamic_document(document, selection, driver):
     private = {"policy": {"file": "workspace-authority.json", "sha256": hashlib.sha256(policy).hexdigest()},
         "installer": installer, "initialization_idempotency_key": "fixture-initialize",
         "administration": administration}
-    binding = {"policy_sha256": private["policy"]["sha256"], "installer": installer,
-        "initialization_idempotency_key": private["initialization_idempotency_key"],
-        "setup_sha256": hashlib.sha256(canonical({"public_setup": document["setup"],
-            "administration": administration})).hexdigest()}
     installation["workspace_authority"] = {"mode": "dynamic-v1",
-        "private_intent_sha256": hashlib.sha256(canonical(binding)).hexdigest()}
+        "private_intent_sha256": workspace_intent_commitment(policy_bytes=policy, installer=installer,
+            initialization_idempotency_key=private["initialization_idempotency_key"],
+            public_setup=document["setup"], administration=administration)}
     return policy, private
 
 
@@ -249,6 +248,7 @@ def prepare(run):
             document["installation"]["products"][role]["product"]["runtime_contract"]["configuration_artifacts"] = [artifact.descriptor()]
     else:
         policy, private = prepare_dynamic_document(document, selection, driver)
+        (ROOT / "artifact-selection.json").write_text(json.dumps(selection))
     input_path = ROOT / "input.json"
     input_path.write_text(json.dumps(document))
     # The real launcher must plan from the documented invoking-user private input.
@@ -544,6 +544,18 @@ def check(run):
             image = sdk.inspect_image(node["image"])
             assert image is not None and matches_image_reference(node["image"], image.repo_digests)
             assert container.attrs["Image"] == image.image_id and container.attrs["State"]["Running"]
+            if (ROOT / "artifact-selection.json").exists() and node["node_id"] in (
+                    plan["cpk_node_id"], plan["input"]["installation"]["installation_id"] + "-secrets"):
+                from scripts.root_artifact_inputs import qualify_root_artifact, require_root_artifact_process_uid
+                selection = json.loads((ROOT / "artifact-selection.json").read_bytes())
+                role = "cpk-server" if node["node_id"] == plan["cpk_node_id"] else "secrets-server"
+                assert node["image"] == selection["images"][role]
+                qualify_root_artifact(role=role, reference=node["image"], source_revision=selection["source_revision"],
+                    image_attrs=engine.images.get(node["image"]).attrs, expected_execution_id=container.attrs["Image"])
+                process = container.exec_run(["python", "-B", "-c",
+                    'import sys; f=open("/proc/1/status","rb"); sys.stdout.buffer.write(f.read(65537))'])
+                assert process.exit_code == 0 and len(process.output) <= 65536
+                require_root_artifact_process_uid(role=role, pid1_status=process.output.decode("ascii"))
             inspection = sdk.inspect_container(container.id)
             assert inspection is not None
             if node["node_id"] == plan["cpk_node_id"]:
@@ -576,8 +588,9 @@ def check(run):
                 assert inspection.bind_mounts == ()
                 assert inspection.supplementary_groups == ()
             assert {(entry.target_path, entry.volume_name) for entry in inspection.readonly_secret_mounts} == {
-                (entry["target"], entry["name"]) for entry in node["secret_files"] + node["configuration_files"]}
-            for entry in node["secret_files"]:
+                (entry["target"], entry["name"]) for entry in
+                (*node["secret_files"], *node["configuration_files"], *node.get("installer_files", []))}
+            for entry in (*node["secret_files"], *node.get("installer_files", [])):
                 assert receipt["observations"]["protected_files"][entry["name"]] == {
                     "uid": image.secret_file_owner_uid(), "mode": "0400", "verified": True}
             for entry in node["configuration_files"]:
@@ -634,11 +647,143 @@ with tempfile.TemporaryDirectory() as directory:
 '''
         outcome = cpk.exec_run(["python", "-c", "WORKSPACE=" + repr(run) + "\n" + probe])
         assert outcome.exit_code == 0, "wrong-credential witness failed"
+        if plan["input"]["installation"].get("workspace_authority", {}).get("mode") == "dynamic-v1":
+            dynamic_restart_witness(engine, cpk, plan, receipt)
         before = (ROOT / "state" / "receipt.json").read_bytes()
         (ROOT / "receipt-before").write_bytes(before)
         print("root bootstrap: real launcher, canonical images, numeric delivery, public setup, denial PASS; external unverified")
     finally:
         engine.close()
+
+
+def dynamic_restart_witness(engine, cpk, plan, receipt):
+    """Public revocation and actual retained process restart, without reseeding."""
+    import docker
+    from control_plane_kit_servers_cpk_server.bootstrap_runtime import _material
+
+    _, intent = _material(plan, ROOT / "material" / "index.json")
+    initialized = receipt["observations"]["initialization"]
+    assert initialized["schema_acknowledged"] and initialized["initialization"] == "matching"
+    assert initialized["pending"] is None
+    helper = receipt["initialization_helper"]
+    assert helper["cleanup"] == "complete" and helper["helper_removed"]
+    assert receipt["setup_helper_removed"]
+    for identity in (helper["helper_id"], receipt["setup_helper_id"]):
+        try:
+            engine.containers.get(identity)
+        except docker.errors.NotFound:
+            pass
+        else:
+            raise AssertionError("completed dynamic helper remains")
+    for value in (*helper["temporary_volumes"].values(),
+                  *receipt["observations"]["removed_setup_volumes"].values()):
+        assert value["removed"]
+        try:
+            engine.volumes.get(value["id"])
+        except docker.errors.NotFound:
+            pass
+        else:
+            raise AssertionError("completed dynamic helper input remains")
+    node = next(value for value in plan["resources"]["nodes"] if value["node_id"] == plan["cpk_node_id"])
+    policy, = node["installer_files"]
+    expected = {"workspace": plan["input"]["installation"]["workspace_id"],
+        "runtime": plan["input"]["installation"]["installation_id"] + "-docker",
+        "authority": plan["input"]["installation"]["runtime_authority"],
+        "policy_path": policy["target"], "policy_sha256": hashlib.sha256(intent.policy_bytes).hexdigest()}
+    program = '''
+import hashlib, json, os, stat, tempfile, time
+from pathlib import Path
+from control_plane_kit_servers_cpk_server.client.profile import ClientProfile
+from control_plane_kit_servers_cpk_server.client.transport import PublicHttpTransport, ClientAuthorizationError, ClientTransportError
+def main():
+    path = Path(EXPECTED["policy_path"])
+    metadata = path.stat()
+    assert os.geteuid() == metadata.st_uid == 10001 and stat.S_IMODE(metadata.st_mode) == 0o400
+    with path.open("rb") as stream:
+        raw = stream.read(65537)
+    assert len(raw) <= 65536 and hashlib.sha256(raw).hexdigest() == EXPECTED["policy_sha256"]
+    policy = json.loads(raw)
+    try:
+        with path.open("ab") as stream:
+            stream.write(b"unexpected-write")
+    except OSError:
+        pass
+    else:
+        raise AssertionError("policy write permitted")
+    target, = policy["administrators"]
+    principal, = json.loads(os.environ["CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON"])
+    assert principal["subject_id"] == target["subject_id"]
+    with tempfile.TemporaryDirectory() as directory:
+        credential = Path(directory) / "credential"
+        credential.write_text(principal["credential"])
+        credential.chmod(0o400)
+        profile = ClientProfile("http://127.0.0.1:8080", EXPECTED["workspace"],
+            {role: credential for role in ("operator", "approver", "worker")}, Path(directory))
+        transport = PublicHttpTransport(profile, timeout_seconds=3)
+        def call(route, payload, **coordinates):
+            return transport.call(route, path_parameters={"workspace_id": EXPECTED["workspace"], **coordinates},
+                payload=payload, credential_role="operator")
+        # Readiness retries are reads only; every mutation below is sent once.
+        for attempt in range(30):
+            try:
+                permission = call("read.workspace-permission", {"target": target})
+                break
+            except ClientTransportError:
+                if attempt == 29:
+                    raise
+                time.sleep(1)
+        query = {"runtime_id": EXPECTED["runtime"], "authority_ref": EXPECTED["authority"]}
+        assignment = call("read.managed-runtime-assignment", query)
+        if MODE == "revoke":
+            authority = call("read.runtime-authority-detail", {}, authority_ref=EXPECTED["authority"])["runtime_authority"]
+            assert assignment["registration_id"] == authority["registration_id"]
+            assert assignment["status"] == "active" and permission["scopes"]
+            call("read.current-graph", {})
+            call("command.workspace-permission.revoke", {"target": target,
+                "scopes": permission["scopes"], "expected_revision": permission["revision"],
+                "idempotency_key": "fixture-revoke-ordinary"})
+            call("command.managed-runtime-access.revoke", {**query,
+                "expected_revision": assignment["revision"], "idempotency_key": "fixture-revoke-management"})
+        else:
+            assert permission["scopes"] == [] and assignment["status"] == "revoked"
+            try:
+                call("read.current-graph", {})
+            except ClientAuthorizationError:
+                pass
+            else:
+                raise AssertionError("ordinary access restored")
+        return {"permission_revision": permission["revision"], "management_revision": assignment["revision"],
+            "registration_sha256": hashlib.sha256(assignment["registration_id"].encode()).hexdigest()}
+try:
+    result = main()
+except Exception:
+    raise SystemExit(1) from None
+print(json.dumps(result, sort_keys=True))
+'''
+    def observe(mode):
+        result = cpk.exec_run(["python", "-B", "-c",
+            "EXPECTED=" + repr(expected) + "\nMODE=" + repr(mode) + "\n" + program])
+        assert result.exit_code == 0 and len(result.output) <= 512, "dynamic public restart witness failed"
+        value = json.loads(result.output)
+        assert set(value) == {"permission_revision", "management_revision", "registration_sha256"}
+        assert all(type(value[key]) is int and value[key] >= 0 for key in ("permission_revision", "management_revision"))
+        return value
+
+    before = observe("revoke")
+    cpk.reload()
+    assert cpk.id == receipt["resources"]["containers"][plan["cpk_node_id"]]["id"]
+    assert cpk.attrs["Image"] == receipt["observations"]["images"][plan["cpk_node_id"]]
+    assert all(cpk.attrs["Config"]["Labels"].get(key) == value for key, value in receipt["labels"].items())
+    mounts = cpk.attrs["Mounts"]
+    started = cpk.attrs["State"]["StartedAt"]
+    cpk.restart(timeout=20)
+    cpk.reload()
+    assert cpk.attrs["State"]["Running"] and cpk.attrs["State"]["StartedAt"] != started
+    assert cpk.attrs["Mounts"] == mounts
+    after = observe("verify")
+    assert after == {**before, "permission_revision": before["permission_revision"] + 1,
+        "management_revision": before["management_revision"] + 1}
+    print("dynamic root launcher: private custody, public revocation and retained process restart PASS", flush=True)
 
 
 def verify_numeric_socket_read(container, socket_group, engine_id, image_reference):
@@ -647,7 +792,8 @@ def verify_numeric_socket_read(container, socket_group, engine_id, image_referen
     Candidate review seals the complete image account baseline before release.
     Image account data supplies expected identity, never process observations.
     """
-    expected_groups = CPK_IMAGE_ACCOUNT.expected_groups(image_reference, int(socket_group))
+    baseline = reviewed_image_account(image_reference)
+    expected_groups = baseline.expected_groups(image_reference, int(socket_group))
     probe = '''
 import hashlib, http.client, io, json, os, pwd, signal, socket, stat, time
 
@@ -719,8 +865,8 @@ except Exception as error:
     raise SystemExit(1)
 '''
     source = (inspect.getsource(numeric_group_check)
-              + "EXPECTED_UID=" + repr(CPK_IMAGE_ACCOUNT.uid) + "\n"
-              + "EXPECTED_PRIMARY_GID=" + repr(CPK_IMAGE_ACCOUNT.primary_gid) + "\n"
+              + "EXPECTED_UID=" + repr(baseline.uid) + "\n"
+              + "EXPECTED_PRIMARY_GID=" + repr(baseline.primary_gid) + "\n"
               + "EXPECTED_GROUPS=" + repr(tuple(sorted(expected_groups))) + "\n"
               + "EXPECTED_SOCKET_GID=" + repr(int(socket_group)) + "\n"
               + "EXPECTED_ENGINE_DIGEST=" + repr(hashlib.sha256(engine_id.encode()).hexdigest()) + "\n" + probe)
@@ -807,6 +953,45 @@ def cleanup(run):
         engine.close()
 
 
+def initialization_after_restart(run):
+    result = json.loads((ROOT / "initialization-after.json").read_bytes())
+    original = json.loads((ROOT / "result.json").read_bytes())["receipt"]
+    assert result["status"] == "observed-initialization"
+    receipt = result["receipt"]
+    assert receipt["labels"]["org.openj92.cpk.installation"] == run
+    assert receipt["resources"] == original["resources"]
+    assert receipt["observations"] == original["observations"]
+    inspection = receipt["initialization_inspection"]
+    assert inspection["pending"] is None and inspection["cleanup"] == "complete" and inspection["helper_removed"]
+    assert all(value["removed"] for value in inspection["temporary_volumes"].values())
+    observed = inspection["observation"]
+    initialized = original["observations"]["initialization"]
+    assert observed["initialization"] == "matching" and observed["pending"] is None
+    for key in ("plan_digest", "installation_id", "operations_commit", "schema_sha256", "occurred_at"):
+        assert observed[key] == initialized[key]
+    saved = (ROOT / "state" / "receipt.json").read_bytes()
+    assert json.loads(saved) == receipt
+    (ROOT / "receipt-before").write_bytes(saved)
+    print("dynamic root launcher: retained initialization binding inspection PASS", flush=True)
+
+
+def cleanup_private(run):
+    """Successful fixture cleanup removes only its two secret-bearing trees."""
+    import shutil
+    receipt = json.loads((ROOT / "state" / "receipt.json").read_bytes())
+    assert receipt["labels"]["org.openj92.cpk.installation"] == run
+    assert receipt["phase"] == "complete" and receipt["pending"] is None
+    directories = (ROOT / "material", ROOT / "commissioning")
+    for directory in directories:
+        assert directory.is_dir() and not directory.is_symlink()
+        for entry in directory.rglob("*"):
+            assert not entry.is_symlink() and (entry.is_file() or entry.is_dir())
+    for directory in directories:
+        shutil.rmtree(directory)
+        assert not directory.exists()
+    print("dynamic root launcher: owned credential and commissioning private-file cleanup PASS", flush=True)
+
+
 if __name__ == "__main__":
     action, run = sys.argv[1:]
     if action == "prepare":
@@ -815,6 +1000,10 @@ if __name__ == "__main__":
         check(run)
     elif action == "cleanup":
         cleanup(run)
+    elif action == "initialization-after":
+        initialization_after_restart(run)
+    elif action == "cleanup-private":
+        cleanup_private(run)
     elif action == "digest":
         print(json.loads((ROOT / "plan.json").read_text())["digest"])
     elif action == "unchanged":

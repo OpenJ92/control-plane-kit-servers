@@ -202,8 +202,9 @@ established by this acceptance witness.
 
 ## Explicit dynamic initialization and enrollment (#346/#347)
 
-Full dynamic apply remains guarded while #347's current-image launcher evidence
-is unfinished. The reviewed initialization and public-enrollment source has
+The accepted25bf669a source keeps full dynamic apply guarded. The later #347
+source candidate connects it to initialization and enrollment, but has not yet
+passed the current-image launcher gate. The reviewed earlier source has
 separate package and HTTP/PostgreSQL component evidence; that does not qualify
 the historical images used by the static example above. The initializer uses a separate fixed-input,
 socket-free helper after fresh PostgreSQL readiness and before application
