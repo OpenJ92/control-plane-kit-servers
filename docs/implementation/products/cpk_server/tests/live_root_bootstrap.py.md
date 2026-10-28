@@ -61,3 +61,10 @@ checks exact labels/IDs and verifies absence. Unexpected outcomes retain resourc
 and pending evidence. No database, initialization replay, alternative runner or
 full dynamic-bootstrap acceptance is involved. This regression is unrun until
 the owning Servers gate reaches it.
+
+Run 40702354559 stopped at test integrity before package tests: two removal
+probes used bare `except NotFound: pass`, prohibited as swallowed exceptions.
+The fixture now records and asserts explicit absence booleans, matching the
+existing cleanup witness. Unexpected exceptions still propagate and retain
+pending evidence. Production and the integrity policy are unchanged. This
+correction is unrun until the next normal owning gate.

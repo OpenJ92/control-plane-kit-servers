@@ -402,23 +402,23 @@ raise SystemExit(int(sys.argv[2]))
         assert helper.id == record["helper_id"] and helper.attrs["State"]["Running"] is False
         assert all(helper.attrs["Config"]["Labels"].get(key) == value for key, value in labels.items())
         helper.remove()
+        helper_absent = False
         try:
             engine.containers.get(record["helper_id"])
         except docker.errors.NotFound:
-            pass
-        else:
-            raise AssertionError("progress helper removal unverified")
+            helper_absent = True
+        assert helper_absent, "progress helper removal unverified"
         record["pending"] = "remove-volume"
         _save(state, record)
         volume = engine.volumes.get(record["volume_id"])
         assert volume.id == name and volume.attrs["Labels"] == labels
         volume.remove()
+        volume_absent = False
         try:
             engine.volumes.get(record["volume_id"])
         except docker.errors.NotFound:
-            pass
-        else:
-            raise AssertionError("progress volume removal unverified")
+            volume_absent = True
+        assert volume_absent, "progress volume removal unverified"
         record.update(pending=None, cleanup="complete")
         _save(state, record)
     print("root bootstrap: stopped-helper progress and partial acknowledgement retention PASS", flush=True)
