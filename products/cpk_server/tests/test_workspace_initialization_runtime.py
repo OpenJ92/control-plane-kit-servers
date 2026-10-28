@@ -48,7 +48,8 @@ class WorkspaceInitializationRuntimeTests(unittest.TestCase):
                     "RW": category == "data_volumes"})
         postgres = Mock()
         postgres.id = target["postgres_container_id"]
-        postgres.attrs = {"Image": target["postgres_image_id"], "Config": {"Labels": labels},
+        image_labels = {"org.opencontainers.image.revision": "1" * 40}
+        postgres.attrs = {"Image": target["postgres_image_id"], "Config": {"Labels": {**image_labels, **labels}},
             "State": {"Running": True}, "Mounts": mounts}
         containers[postgres.id] = postgres
         if fault == "foreign-data":
@@ -91,7 +92,7 @@ class WorkspaceInitializationRuntimeTests(unittest.TestCase):
                 self.assertEqual(saved["initialization_inspection"]["pending"], "create-initialization-helper")
                 helper = Mock()
                 helper.id = "e" * 64
-                helper.attrs = {"Image": image, "Config": {"Labels": labels, "User": options["user"],
+                helper.attrs = {"Image": image, "Config": {"Labels": {**image_labels, **labels}, "User": options["user"],
                     "Cmd": options["command"]}, "State": {"Running": False}, "HostConfig": {
                     "NetworkMode": options["network_mode"], "Privileged": False, "ReadonlyRootfs": True,
                     "CapDrop": options["cap_drop"], "SecurityOpt": options["security_opt"],

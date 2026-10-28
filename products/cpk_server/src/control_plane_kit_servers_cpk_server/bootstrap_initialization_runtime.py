@@ -42,7 +42,8 @@ def _target(plan, receipt, client):
     container = client.containers.get(identity)
     container.reload()
     if (container.id != identity or container.attrs["Image"] != receipt["observations"]["images"][pg["node_id"]]
-            or container.attrs["Config"].get("Labels") != labels
+            or not isinstance(container.attrs["Config"].get("Labels"), dict)
+            or any(container.attrs["Config"]["Labels"].get(key) != value for key, value in labels.items())
             or container.attrs["State"].get("Running") is not True):
         raise RootBootstrapHold("bootstrap initialization target differs")
     expected = [(item["name"], item["target"], True) for item in pg["data_volumes"]]
@@ -84,7 +85,8 @@ def _verify_helper(helper, plan, target, record, mounts, *, stopped=False):
     command = ["python", "-m", "control_plane_kit_servers_cpk_server.bootstrap_cli",
         "inspect-workspace-initialization" if "pending" in record else "initialize-workspace"]
     if (helper.id != record["helper_id"] or attrs["Image"] != plan["driver_image_id"]
-            or attrs["Config"].get("Labels") != target["labels"]
+            or not isinstance(attrs["Config"].get("Labels"), dict)
+            or any(attrs["Config"]["Labels"].get(key) != value for key, value in target["labels"].items())
             or attrs["Config"].get("User") != str(record["uid"]) or attrs["Config"].get("Cmd") != command
             or host.get("NetworkMode") != "container:" + target["postgres_container_id"]
             or host.get("Privileged") is not False or host.get("ReadonlyRootfs") is not True
