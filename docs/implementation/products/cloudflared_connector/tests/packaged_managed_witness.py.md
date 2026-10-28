@@ -193,3 +193,12 @@ installed `direct_url.json` URL. The new expected commits do not strengthen that
 predicate into exact URL/subdirectory equality or artifact authentication.
 Controlled-process package diagnostics remain distinct from the mandatory
 connected-native/authenticated-receiver live laws under #284/#188.
+
+
+## #349 aligned Components dependency cohort
+
+Current generated dependencies and provenance expectations follow accepted
+Core/Operations fec0816, SDK cd4722f, Secrets 46e0718 and Interpreters 27457ca
+in `coordinates/server-products.json`. Predicates, extras, runtime behavior and
+historical product identities are unchanged. The canonical coordinate companion
+records the resolved packaging blocker; the owning Servers gate remains pending.

@@ -250,3 +250,27 @@ The canonical field, package/Dockerfile mirrors and installed provenance
 expectation advance together. Generator check and actual dependency resolution
 remain obligations of the existing Docker suite; there is no resolver override,
 image publication, deployment or compatibility-success claim in this pin edit.
+
+#349 selects accepted Core and Operations `fec0816281aeb83ede98616adcc4f96dfe5777a8`
+through the existing coordinate generator. The tuple adds authorized workspace
+product list/detail while preserving the accepted optional fresh-only schema
+admission. The initial unchanged SDK, Secrets and Interpreters pins caused a
+resolver conflict; the accepted aligned cohort below supersedes them. This source selection
+is not a published-image or live-adoption claim. Concurrent bootstrap integration
+must retain newer accepted pins and initialization behavior.
+
+
+## #349 aligned Components dependency cohort
+
+Current source selects accepted Core/Operations `fec0816281aeb83ede98616adcc4f96dfe5777a8`,
+SDK `cd4722fbfb942e7c2467a39b3cd0e32ded4a90ac`,
+Secrets `46e0718664c425d002f2420a6ad1f996be62b2c5` and
+Interpreters `27457ca5eab6ae96d78146e7ea0c998b986feab3`.
+SDK #72, Secrets #77 and Interpreters #230 passed their owning gates and
+independent review before acceptance. Existing generation and current-source
+provenance expectations advance together without changing predicates, extras,
+runtime source or historical published-product identities. The previous #349
+Core-only adoption failed at dependency resolution before collection; this
+aligned cohort awaits the owning Servers gate. No resolver override, policy
+roadmap adoption, image publication or live deployment is included. Earlier
+cohort accounts above are historical; acceptance is recorded in the issue/PR.

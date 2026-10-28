@@ -146,3 +146,12 @@ images, runtime/license inputs, assertion strength and published product
 source/image/descriptor/catalogue identities remain unchanged. The existing
 coordinate generator and Docker-backed owning gate must verify the prepared
 source; no validation result is claimed here.
+
+
+## #349 aligned Components dependency cohort
+
+Current generated dependencies and provenance expectations follow accepted
+Core/Operations fec0816, SDK cd4722f, Secrets 46e0718 and Interpreters 27457ca
+in `coordinates/server-products.json`. Predicates, extras, runtime behavior and
+historical product identities are unchanged. The canonical coordinate companion
+records the resolved packaging blocker; the owning Servers gate remains pending.

@@ -72,3 +72,10 @@ actual HTTP authentication, query decoding, owner services and PostgreSQL remain
 in the path. MCP and negative HTTP checks retain the existing fixture entrance.
 This extension first executes in the next owning green gate; it is not covered
 by the earlier target-red stop. Existing exact schema/temp-file owners clean up.
+
+#349 invokes components_acceptance after the existing restart/revocation and
+management assertions. It reuses the actual restarted app, verifier, administrator
+and operator identities within the same isolated schema, creating a separate
+workspace through public commands. It leaves the earlier response-count and
+authority assertions unchanged. The owning gate must reach this witness before
+claiming Components composition acceptance.

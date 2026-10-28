@@ -12,7 +12,7 @@ WORKDIR /app
 
 RUN apk add --no-cache python3 py3-pip \
     && python3 -m pip install --break-system-packages --no-cache-dir \
-      "control-plane-kit-server-sdk[verification] @ https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/464df26c568971362eb3a08abaf9dfc227a4ddbb.zip"
+      "control-plane-kit-server-sdk[verification] @ https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/cd4722fbfb942e7c2467a39b3cd0e32ded4a90ac.zip"
 
 COPY products/postgres_server/src ./products/postgres_server/src
 

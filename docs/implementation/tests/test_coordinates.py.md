@@ -231,3 +231,12 @@ Servers #301 adds the bootstrap recipe to the existing synthetic dependency
 destination matrix. This is required because the generator now owns that recipe;
 the unchanged full-byte assertion continues to check every destination. The new
 causally reviewed bootstrap-specific target lives in the CPK product suite.
+
+
+## #349 aligned Components dependency cohort
+
+Current generated dependencies and provenance expectations follow accepted
+Core/Operations fec0816, SDK cd4722f, Secrets 46e0718 and Interpreters 27457ca
+in `coordinates/server-products.json`. Predicates, extras, runtime behavior and
+historical product identities are unchanged. The canonical coordinate companion
+records the resolved packaging blocker; the owning Servers gate remains pending.

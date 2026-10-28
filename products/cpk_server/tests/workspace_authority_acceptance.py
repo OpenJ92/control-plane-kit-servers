@@ -206,5 +206,8 @@ def workspace_authority_acceptance(database_url):
             from managed_provider_selection_acceptance import managed_provider_selection_acceptance
             managed_provider_selection_acceptance(client, invoke, schema, authority)
         assert len(responses) < 50
+        with TestClient(restarted) as client:
+            from components_acceptance import components_acceptance
+            components_acceptance(client, restarted, credentials[0], credentials[1], operator)
     print("workspace authority: real process policy/verifier and startup receipt, public client grant/revoke reads, full identity and restart preservation passed", flush=True)
     print("management selection: public grants, current assignment and authority revocation, no Docker construction passed", flush=True)

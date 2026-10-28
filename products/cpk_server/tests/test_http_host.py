@@ -7,6 +7,7 @@ import re
 import sys
 import unittest
 from unittest.mock import patch
+from urllib.parse import quote, urlencode
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -52,6 +53,37 @@ class CpkHttpHostTests(unittest.TestCase):
 
     def assert_no_service_work(self):
         self.assertEqual([request for service in self.services.values() for request in service.requests], [])
+
+    def test_component_reads_use_the_actual_authenticated_host_and_mcp_catalogue(self):
+        digest = 'a' * 64
+        cursor = {'format_version': 1, 'collection': 'registered-products',
+                  'scope': {'workspace_id': 'workspace-a'}, 'position': {'item_id': digest}}
+        with TestClient(self.app) as client:
+            for path, route_id in (
+                ('/workspaces/workspace-a/products', 'read.products'),
+                ('/workspaces/workspace-a/products/' + digest, 'read.product-detail'),
+            ):
+                with self.subTest(route=route_id):
+                    refused = client.get(path, headers={'Authorization': 'Bearer rejected'})
+                    self.assertEqual(refused.status_code, 401)
+                    payload = {'limit': '1', 'after': json.dumps(cursor)} if route_id == 'read.products' else {}
+                    location = path + ('?' + urlencode(payload, quote_via=quote) if payload else '')
+                    response = client.get(location, headers={'Authorization': 'Bearer valid-token'})
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(response.json()['route_id'], route_id)
+                    if route_id == 'read.products':
+                        self.assertEqual(response.json()['payload'], {'limit': 1, 'after': cursor})
+                    binding = next(item for item in self.app.state.http_boundary.composition.handoff.projection_parity.projections
+                                   if item.http_route_id == route_id)
+                    arguments = {'workspace_id': 'workspace-a', **({'limit': 1, 'after': cursor}
+                        if route_id == 'read.products' else {'descriptor_sha256': digest})}
+                    mcp = client.post('/mcp', headers={'Authorization': 'Bearer valid-token',
+                        'Accept': 'application/json', 'MCP-Protocol-Version': '2025-06-18',
+                        'Mcp-Method': 'resources/read'}, json={'jsonrpc': '2.0', 'id': 'components',
+                        'method': 'resources/read', 'params': {'name': binding.mcp_tool_name, 'arguments': arguments}})
+                    self.assertEqual(mcp.status_code, 200)
+                    self.assertEqual(mcp.json()['result']['route_id'], route_id)
+                    self.assertEqual(mcp.json()['result']['payload'], arguments)
 
     def test_every_operator_contract_reaches_unchanged_auth_boundary(self):
         routes = self.app.state.http_boundary.composition.http_api.routes

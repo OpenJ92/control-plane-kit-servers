@@ -19,3 +19,12 @@ Core `879efb9576ac0580a6236d0a7372c036537b4dfe`. Base image, package subset, use
 environment, entrypoint and ports are unchanged. The normal source-product gate
 must prove build/composition compatibility; this recipe edit does not publish an
 image or change historical product source/tag/digest/descriptor coordinates.
+
+
+## #349 aligned Components dependency cohort
+
+Current generated dependencies and provenance expectations follow accepted
+Core/Operations fec0816, SDK cd4722f, Secrets 46e0718 and Interpreters 27457ca
+in `coordinates/server-products.json`. Predicates, extras, runtime behavior and
+historical product identities are unchanged. The canonical coordinate companion
+records the resolved packaging blocker; the owning Servers gate remains pending.

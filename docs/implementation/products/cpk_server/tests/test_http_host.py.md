@@ -73,3 +73,15 @@ Servers200 supplies the actual required CpkControlConfiguration and fixed test
 clock to create_app. The product app now installs SDK itself; only the reference
 app uses the fixture installer. All199 compatibility assertions remain, including
 full JSON parity and zero operator work for protected routes.
+
+#349 explicitly exercises product list/detail admission at the real host and MCP
+catalogue, credential refusal, integer limit and scoped JSON cursor mapping.
+Recording services prove transport only; components_acceptance.py owns actual
+factory/Operations-store composition. Target-red94cfc2a failed both missing routes
+with404 instead of401 under old pins (661 tests, two failures); no apparatus error.
+
+The aligned-cohort run reached the list mapping but failed because this new
+fixture used form-plus encoding for JSON whitespace. The fixture now uses
+`urlencode(..., quote_via=quote)`, matching the maintained client and existing
+workspace witness. Strict percent decoding and every mapping assertion remain
+unchanged; the failed attempt does not establish real Components behavior.
