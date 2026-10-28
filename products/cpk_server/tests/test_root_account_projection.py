@@ -34,7 +34,7 @@ class RootAccountProjectionTests(unittest.TestCase):
         (self.root / "layout" / "blobs" / "sha256" / digest[7:]).write_bytes(raw)
         return {"mediaType": media, "digest": digest, "size": len(raw)}
 
-    def fixture(self, *, schema2=False, change=None):
+    def fixture(self, *, schema2=False, rewrite_config=False, change=None):
         owner = self.owner
         (self.root / "layout" / "blobs" / "sha256").mkdir(parents=True, exist_ok=True)
         config = {"os": "linux", "architecture": "amd64", "config": {"User": "10001",
@@ -49,10 +49,19 @@ class RootAccountProjectionTests(unittest.TestCase):
             original["mediaType"] = owner.DOCKER + "manifest.v2+json"
             original["config"]["mediaType"] = "application/vnd.docker.container.image.v1+json"
             original["layers"][0]["mediaType"] = "application/vnd.docker.image.rootfs.diff.tar.gzip"
+            if rewrite_config:
+                original["config"] = self.write_blob(self.encoded({**config, "docker_version": "synthetic",
+                    "container_config": {"Env": ["private-original-config-canary"]}}),
+                    "application/vnd.docker.container.image.v1+json")
         normalized = copy.deepcopy(original)
         normalized["mediaType"] = owner.OCI + "manifest.v1+json"
         normalized["config"]["mediaType"] = owner.OCI + "config.v1+json"
         normalized["layers"][0]["mediaType"] = owner.OCI + "layer.v1.tar+gzip"
+        if rewrite_config:
+            # Representative maintained conversion output: Docker-only fields
+            # are absent and JSON is reserialized. This does not run Skopeo.
+            normalized["config"] = self.write_blob(json.dumps(config, separators=(",", ":")).encode(),
+                owner.OCI + "config.v1+json")
         if change is not None:
             change(original, normalized, config)
         normalized_entry = self.write_blob(self.encoded(normalized), owner.OCI + "manifest.v1+json")
@@ -67,6 +76,8 @@ class RootAccountProjectionTests(unittest.TestCase):
             "manifests": [original_entry]})
         (self.root / "original.json").write_bytes(index)
         (self.root / "platform.json").write_bytes(platform)
+        (self.root / "source-config.json").write_bytes(
+            (self.root / "layout" / "blobs" / "sha256" / original["config"]["digest"][7:]).read_bytes())
         return "ghcr.io/openj92/control-plane-kit-servers/cpk-server@" + owner.sha(index)
 
     def verify(self, reference):
@@ -86,6 +97,18 @@ class RootAccountProjectionTests(unittest.TestCase):
                 self.assertEqual(result["layer_count"], 1)
                 self.assertEqual(result["platform_manifest_digest"] == result["normalized_manifest_digest"], not schema2)
                 self.assertNotIn("uid", result)  # Correspondence is not an account seal.
+
+    def test_schema2_config_conversion_preserves_account_correspondence_with_distinct_identities(self):
+        reference = self.fixture(schema2=True, rewrite_config=True)
+        original = json.loads((self.root / "platform.json").read_bytes())["config"]
+        result = self.verify(reference)
+        self.assertEqual(result["source_config_digest"], original["digest"])
+        self.assertNotEqual(result["source_config_digest"], result["normalized_config_digest"])
+        self.assertEqual(result["image_reference"], reference)
+        self.assertEqual(result["platform"], "linux/amd64")
+        self.assertEqual(result["layer_count"], 1)
+        self.assertNotIn("private-original-config-canary", json.dumps(result))
+        self.assertNotIn("uid", result)  # Still no account seal or unpack claim.
 
     def test_pre_copy_selection_binds_the_exact_original_and_unique_platform(self):
         reference = self.fixture()

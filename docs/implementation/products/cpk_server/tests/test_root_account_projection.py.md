@@ -25,3 +25,13 @@ and process doubles. It requires the exact fixed refusal/phase record, reserved
 exit, no stdout result and no later unpack/account call after an earlier failure.
 Private exception canaries cannot enter diagnostics. Every case fails; no
 successful unpack or account seal is synthesized as acceptance evidence.
+
+The config-correspondence correction begins with a target-red witness: a
+representative Docker-schema2 original configuration includes Docker-only fields,
+while the normalized OCI config omits them and uses different serialized bytes.
+Both preserve the same account/filesystem-relevant values and layer descriptors.
+The real verifier must return separate source/normalized config identities, never
+the private source-config content. The fixture stores raw source-config bytes
+separately for the proposed descriptor binding. This does not run or reimplement
+Skopeo; the maintained source establishes that such a conversion is permitted.
+The target is initially unrun against unchanged60a4386 inspection tooling.
