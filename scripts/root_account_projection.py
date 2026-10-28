@@ -98,7 +98,7 @@ def blob(blobs, value, *, collect=True):
     return read_file(blobs, value["digest"][7:], value["size"], expected=value, collect=collect)
 
 
-def selected_manifest(original, platform_raw, reference):
+def manifest_selection(original, reference):
     require(type(reference) is str and re.fullmatch(
         r"ghcr\.io/openj92/control-plane-kit-servers/cpk-server@sha256:[0-9a-f]{64}", reference) is not None)
     require(sha(original) == reference.split("@", 1)[1])
@@ -116,17 +116,23 @@ def selected_manifest(original, platform_raw, reference):
                 require(platform.get("variant") in (None, ""))
                 selected.append(entry)
         require(len(selected) == 1)
-        require(len(platform_raw) == selected[0]["size"] and sha(platform_raw) == selected[0]["digest"])
+        return selected[0]
     else:
-        require(root.get("mediaType") in MANIFESTS and platform_raw == original)
+        require(root.get("mediaType") in MANIFESTS)
+        return {"digest": sha(original), "size": len(original), "mediaType": root["mediaType"]}
+
+
+def selected_manifest(original, platform_raw, reference):
+    selected = manifest_selection(original, reference)
+    require(len(platform_raw) == selected["size"] and sha(platform_raw) == selected["digest"])
     manifest = document(platform_raw)
     require(type(manifest.get("schemaVersion")) is int and manifest["schemaVersion"] == 2
         and manifest.get("mediaType") in MANIFESTS)
     return manifest
 
 
-def verify_layout(input_fd, reference, source):
-    require(type(source) is str and re.fullmatch(r"[0-9a-f]{40}", source) is not None)
+def admitted_manifest(input_fd, reference):
+    """Admit the exact source descriptors before the acquisition owner copies blobs."""
     original = read_file(input_fd, "original.json", JSON_LIMIT)
     platform_raw = read_file(input_fd, "platform.json", JSON_LIMIT)
     original_manifest = selected_manifest(original, platform_raw, reference)
@@ -141,6 +147,12 @@ def verify_layout(input_fd, reference, source):
     require(all(layer["mediaType"] in ({OCI + "layer.v1.tar", OCI + "layer.v1.tar+gzip"} if is_oci
         else {"application/vnd.docker.image.rootfs.diff.tar.gzip"}) for layer in source_layers))
     require(sum(layer["size"] for layer in source_layers) <= COMPRESSED_LIMIT)
+    return platform_raw, source_config, source_layers
+
+
+def verify_layout(input_fd, reference, source):
+    require(type(source) is str and re.fullmatch(r"[0-9a-f]{40}", source) is not None)
+    platform_raw, source_config, source_layers = admitted_manifest(input_fd, reference)
     with directory(input_fd, "layout") as layout:
         require(document(read_file(layout, "oci-layout", JSON_LIMIT)) == {"imageLayoutVersion": "1.0.0"})
         index = document(read_file(layout, "index.json", JSON_LIMIT))
@@ -250,7 +262,20 @@ def inspect_offline(reference, source):
 if __name__ == "__main__":
     try:
         require(len(sys.argv) == 3)
-        result = inspect_offline(sys.argv[1], sys.argv[2])
+        if sys.argv[1] in ("--select", "--admit"):
+            input_fd = os.open("/input", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                if sys.argv[1] == "--select":
+                    result = {"platform_manifest_digest": manifest_selection(
+                        read_file(input_fd, "original.json", JSON_LIMIT), sys.argv[2])["digest"]}
+                else:
+                    raw, config, layers = admitted_manifest(input_fd, sys.argv[2])
+                    result = {"platform_manifest_digest": sha(raw), "layer_count": len(layers),
+                        "compressed_bytes": sum(layer["size"] for layer in layers)}
+            finally:
+                os.close(input_fd)
+        else:
+            result = inspect_offline(sys.argv[1], sys.argv[2])
         rendered = json.dumps(result, sort_keys=True, separators=(",", ":"))
         require(len(rendered) <= 4096)
     except Exception:

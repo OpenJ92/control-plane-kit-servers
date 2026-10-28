@@ -1,7 +1,8 @@
 Source: [inspect_root_accounts.sh](../../../scripts/inspect_root_accounts.sh).
 
-Prepared #347 offline invocation, unrun and not effect-authorized. Arguments are
-the reviewed existing owning test image ID, exact acquired input directory,
+Prepared #347 offline invocation, actual unpack unrun and not effect-authorized.
+Its source/synthetic laws passed ac144857's normal gate. Arguments are
+the reviewed existing controller image ID, exact acquired input directory,
 exact directory containing the pinned umoci binary, a new private output
 directory, immutable CPK reference and producer revision. Required input names
 are original.json, platform.json and layout/ (tag inspected). Acquisition remains
@@ -27,5 +28,6 @@ input cleanup is a distinct exact-path action in the execution packet.
 
 This source is not a new package test runner or a general controller framework.
 It is a diagnostic prerequisite whose projection tests use ordinary ./test.sh.
-Neither the wrapper nor the new tests have executed at this checkpoint. The
-active source CI at5c495895 predates these files and cannot validate them.
+The wrapper has not performed actual account unpacking. The same-producer
+acquisition candidate supplies the already-used policy image by verified ID;
+it must not acquire a new controller or mistake source CI for an account seal.

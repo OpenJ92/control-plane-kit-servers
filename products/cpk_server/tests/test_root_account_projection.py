@@ -83,6 +83,45 @@ class RootAccountProjectionTests(unittest.TestCase):
                 self.assertEqual(result["platform_manifest_digest"] == result["normalized_manifest_digest"], not schema2)
                 self.assertNotIn("uid", result)  # Correspondence is not an account seal.
 
+    def test_pre_copy_selection_binds_the_exact_original_and_unique_platform(self):
+        reference = self.fixture()
+        raw = (self.root / "original.json").read_bytes()
+        selected = self.owner.manifest_selection(raw, reference)
+        self.assertEqual(selected["digest"], self.owner.sha((self.root / "platform.json").read_bytes()))
+        single = (self.root / "platform.json").read_bytes()
+        self.assertEqual(self.owner.manifest_selection(single,
+            reference.split("@")[0] + "@" + self.owner.sha(single))["digest"], self.owner.sha(single))
+        original = json.loads(raw)
+        original["manifests"] *= 2
+        ambiguous = self.encoded(original)
+        with self.assertRaises(self.owner.AccountInspectionError):
+            self.owner.manifest_selection(ambiguous, reference.split("@")[0] + "@" + self.owner.sha(ambiguous))
+        with self.assertRaises(self.owner.AccountInspectionError):
+            self.owner.manifest_selection(raw, reference[:-1] + ("0" if reference[-1] != "0" else "1"))
+
+    def test_pre_copy_admission_refuses_foreign_and_oversized_sources_without_layout(self):
+        for change in (None,
+                lambda original, normalized, config: original["layers"][0].update(urls=["https://example.invalid/foreign"]),
+                lambda original, normalized, config: original["layers"][0].update(size=self.owner.COMPRESSED_LIMIT + 1)):
+            reference = self.fixture(change=change)
+            # Admission reads only original/platform metadata, before any OCI copy.
+            layout = self.root / "layout"
+            held = self.root / "not-acquired"
+            layout.rename(held)
+            fd = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                if change is None:
+                    raw, config, layers = self.owner.admitted_manifest(fd, reference)
+                    self.assertEqual(raw, (self.root / "platform.json").read_bytes())
+                    self.assertEqual(len(layers), 1)
+                    self.assertTrue(self.owner.digest(config["digest"]))
+                else:
+                    with self.assertRaises(self.owner.AccountInspectionError):
+                        self.owner.admitted_manifest(fd, reference)
+            finally:
+                os.close(fd)
+                held.rename(layout)
+
     def test_ambiguous_index_duplicate_keys_and_wrong_reference_refuse(self):
         reference = self.fixture()
         with self.assertRaises(self.owner.AccountInspectionError):
