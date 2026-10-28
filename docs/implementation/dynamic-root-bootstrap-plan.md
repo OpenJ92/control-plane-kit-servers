@@ -229,8 +229,9 @@ removal cannot substitute for actual successful evidence. Until that gate passes
 
 ### Producer and gate sequencing
 
-Candidate common producer source is source-gate-qualified `25bf669a`, still
-subject to North's separate publication release. Both products
+The initial common producer proposal was source-gate-qualified `25bf669a`.
+It is superseded by the accepted #349 cohort integration described below and
+must not be published for the combined gate. Both products
 use the existing `publish-product-image.yml` / `publish_product_image.sh` path,
 which builds Linux/amd64 and records numeric user, source label, execution ID and
 actual repository digest. Concrete destinations, proposed unused tags and recipe
@@ -238,7 +239,7 @@ hashes belong in the #347 proposal. No publication is authorized by this plan.
 
 After publication, review the actual immutable tuple and independent CPK account
 evidence before adding its baseline. The final launcher gate source cannot yet
-be named: its fixture/guard delta is still to be implemented and reviewed. Compare
+be named: it must include the reviewed actual-image account baseline. Compare
 the candidate producer with that exact final revision across coordinates,
 recipes, copied source and entrypoints. In particular, the external driver's
 Dockerfile copies current bootstrap modules over its CPK base; that selected
@@ -262,9 +263,34 @@ candidate reuses `workspace_intent_commitment` and adds an actual prepare-writer
 to admission target. It wires the additional optional-tuple shell invocation,
 actual helper absence/PID1/private policy custody, public revocation, owned
 container restart, retained initialization inspection and exact cleanup. It also
-removes the intermediate public apply guard in that same candidate. These changes
-are unrun and under independent review, not an accepted usable deployment.
+removes the intermediate public apply guard in that same candidate. Corrected
+source `5c495895` passed independent source review and the complete default gate.
+The later offline account projection source `ac144857` also passed independent
+review and default gate 40738175098, including seven synthetic projection laws.
+Neither default run selected a current pair or establishes a usable deployment.
 
 The current-image account seal and final gate revision remain unresolved. Only
 the historical account row exists; new references refuse before acquisition.
 No image publication or inspection is implied by preparing the source candidate.
+
+### Reconciliation after accepted #349 first merge
+
+PR #350 merged first as `fc4cd5b3379b2d38dd06319a997f7ad894dfcca8` into the same
+roadmap destination. The combined #348 source retains that accepted aligned
+cohort and Components HTTP/MCP witness alongside #346 initialization and #347
+authenticated setup. Core/Operations `fec0816281aeb83ede98616adcc4f96dfe5777a8`
+descends from the earlier selected `a487fc0`; its schema installer, initialization,
+permission and management owners are unchanged. Its server dispatcher adds the
+product list/detail read routes without changing the administration decoder.
+The existing `server.py::create_app` installs those owner routes. The receiver
+fixture runs initialization, setup and then workspace authority, whose restarted
+factory invokes `components_acceptance` against the same owning PostgreSQL suite.
+
+Conflict resolution retains #349 coordinate/recipe/provenance values and both
+branches' fixture composition. No permission, initializer, public setup or
+Components algorithm is reimplemented. Existing source evidence remains tied to
+its original tree; the combined source needs independent review and the unchanged
+owning Docker gate. The old producer/recipe equivalence no longer applies. Use
+the reviewed and source-tested combined commit for a refreshed publication packet;
+actual publication, account inspection, current-pair qualification and live
+deployment remain separately released effects.

@@ -44,3 +44,20 @@ and the existing bounded SQL invocation. It does not alter the running CPK or
 Secrets images, install a PostgreSQL server into the driver, change pins, or
 publish an image. The existing actual-driver witness imports this image-owned
 package and plans a managed PostgreSQL installation with public fixture trust.
+
+#349 selects accepted Core and Operations `fec0816281aeb83ede98616adcc4f96dfe5777a8`
+through the existing coordinate generator. The tuple adds authorized workspace
+product list/detail while preserving the accepted optional fresh-only schema
+admission. The initial unchanged SDK, Secrets and Interpreters pins caused a
+resolver conflict; the accepted aligned cohort below supersedes them. This source selection
+is not a published-image or live-adoption claim. Concurrent bootstrap integration
+must retain newer accepted pins and initialization behavior.
+
+
+## #349 aligned Components dependency cohort
+
+Current generated dependencies and provenance expectations follow accepted
+Core/Operations fec0816, SDK cd4722f, Secrets 46e0718 and Interpreters 27457ca
+in `coordinates/server-products.json`. Predicates, extras, runtime behavior and
+historical product identities are unchanged. The canonical coordinate companion
+records the resolved packaging blocker; the owning Servers gate remains pending.

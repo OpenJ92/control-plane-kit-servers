@@ -85,12 +85,14 @@ tunnel, DNS, production key or retained root is changed by this source capabilit
 
 ## Dynamic launcher boundary under #347
 
-Accepted source at25bf669a adds optional artifact ABI smoke checks but keeps its
-root launcher on historical images. The subsequent #347 source candidate adds
-the dynamic launcher described below and removes the intermediate apply guard.
-That candidate is unvalidated: source/component PASS at the earlier commit does
-not qualify it or a new image pair. Only the historical account baseline exists,
-so a new pair refuses before dynamic acquisition until its seal is reviewed.
+Source at `ac144857` adds the dynamic launcher described below and removes the
+intermediate apply guard. Its complete default source gate passed in
+[run 40738175098](https://github.com/OpenJ92/control-plane-kit-servers/actions/runs/40738175098),
+including the seven synthetic account-projection laws. That run did not select
+a current image pair or execute the offline unpacker. Only the historical account
+baseline exists, so a new pair refuses before dynamic acquisition until its seal
+is reviewed. The subsequent reconciliation with accepted #349 merge `fc4cd5b`
+changes the dependency cohort and needs independent combined source validation.
 
 The candidate extension reuses `test.sh` and `live_root_bootstrap.py` for one
 additional isolated dynamic case. It keeps the mandatory historical static case,
@@ -122,3 +124,22 @@ present in an older image. Publication, artifact ABI qualification and complete
 dynamic launcher acceptance are distinct results. Exact producer destinations,
 tags and revisions, then the resulting immutable pair and final gate revision,
 belong in #347 before their respective released actions.
+
+## Producer refresh after #349 integration
+
+The proposed `25bf669a` producer and its proposed tags are superseded. Accepted
+#349 selects Core/Operations `fec0816281aeb83ede98616adcc4f96dfe5777a8`, SDK
+`cd4722fbfb942e7c2467a39b3cd0e32ded4a90ac`, Secrets
+`46e0718664c425d002f2420a6ad1f996be62b2c5` and Interpreters
+`27457ca5eab6ae96d78146e7ea0c998b986feab3`. Both product recipes now select that
+aligned cohort. The earlier producer is therefore not equivalent to the combined
+source, even though the ordinary server source files are unchanged.
+
+Use the reviewed, owning-tested combined source as the new common producer.
+Record its exact commit, unique private destination tags and recipe hashes in
+#347 before publication release. After publication, the actual immutable pair
+and independent account seal still precede a baseline update and the optional
+current-pair gate. The original historical row remains separate. Acquisition
+tool provenance, enforced acquisition storage/time limits, the exact offline
+controller and owned failure cleanup remain explicit execution-packet
+prerequisites; source CI does not supply them.
