@@ -1,6 +1,6 @@
 Source: [acquire_root_accounts.sh](../../../scripts/acquire_root_accounts.sh).
 
-Opt-in #347 diagnostic entrypoint, source candidate only. It is called after a
+Opt-in #347 diagnostic entrypoint. It is called after a
 successful CPK publication in the same hosted job, with its actual immutable
 reference and producer source. It never publishes. Source/ref/job admission,
 required installed tools and the exact borrowed policy image are checked before
@@ -55,4 +55,17 @@ The public outcome always distinguishes known publication success from inspectio
 HOLD/candidate. Only allowlisted status/provenance and a successful candidate are
 uploaded; raw errors, auth, manifests/layers and account files are excluded. An
 inspection failure cannot undo or authorize replay of publication. Actual effects
-and independent seal acceptance remain separately released and unexecuted.
+remain separately released. The first source94 attempt published CPK but failed
+at offline-inspection; successful unpack, final container absence and acquisition
+cleanup were not established. Secrets remained undispatched.
+
+The diagnostic correction preserves a closed failure classification from the
+offline wrapper in the existing public status.json stage field. Reserved projection
+codes become fixed offline input/layout/tool/unpack/account/serialization labels;
+the wrapper accepts them only with a matching complete bounded marker. Outer
+timeout, killed-or-timeout, outer execution failure and unknown controller failure
+remain distinct; other wrapper failures use offline-wrapper-failure. These labels
+are observations of the failed boundary, not inferred causes or cleanup evidence.
+The schema and all candidate promotion conditions remain unchanged. Sourceable
+inspection/status functions let the owning Docker suite test propagation using
+process doubles without entering acquisition or performing provider effects.

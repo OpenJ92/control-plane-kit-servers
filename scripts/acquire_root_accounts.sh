@@ -33,7 +33,41 @@ cleanup_acquisition() {
   rm -- "$BACKING" || return 1
   rmdir "$MOUNT"
 }
-# Sourcing exposes this narrow cleanup owner to its ordinary-suite failure tests.
+status() {
+  jq -n --arg reference "$REFERENCE" --arg source "$SOURCE" --arg controller "$CONTROLLER" \
+    --arg stage "$STAGE" --arg result "$1" \
+    '{schema:"cpk.root-account-attempt.v1",publication:"succeeded",image_reference:$reference,
+      source_revision:$source,controller_image_id:$controller,inspection:$result,stage:$stage}' \
+    > "$RECORDS/public/status.json"
+}
+inspect_accounts() {
+  local result
+  STAGE=offline-inspection
+  status hold
+  if sh "$ROOT/scripts/inspect_root_accounts.sh" "$CONTROLLER" "$WORK/input" "$WORK/tools" \
+      "$RECORDS/inspection" "$REFERENCE" "$SOURCE"; then
+    return 0
+  else
+    result="$?"
+  fi
+  case "$result" in
+    40) STAGE=offline-input-setup ;;
+    41) STAGE=offline-layout-validation ;;
+    42) STAGE=offline-tool-validation ;;
+    43) STAGE=offline-unpack-launch ;;
+    44) STAGE=offline-unpack-timeout ;;
+    45) STAGE=offline-unpack-nonzero ;;
+    46) STAGE=offline-account-projection ;;
+    47) STAGE=offline-result-serialization ;;
+    60) STAGE=offline-outer-timeout ;;
+    61) STAGE=offline-controller-killed-or-timeout ;;
+    62) STAGE=offline-outer-execution-failure ;;
+    65) STAGE=offline-unknown-controller-failure ;;
+    *) STAGE=offline-wrapper-failure ;;
+  esac
+  return 1
+}
+# Sourcing exposes narrow inspection/status/cleanup owners to ordinary-suite tests.
 if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then return 0; fi
 # The worker is invoked only by the parent under its whole-phase timeout.
 if [ "${1:-}" = --acquire ]; then
@@ -112,13 +146,6 @@ RECORDS="$(CDPATH= cd -- "$RECORDS" && pwd)"
 mkdir "$RECORDS/public"
 STAGE=preparation
 WORK='' LOOP='' BACKING='' MOUNT='' CONTROLLER=''
-status() {
-  jq -n --arg reference "$REFERENCE" --arg source "$SOURCE" --arg controller "$CONTROLLER" \
-    --arg stage "$STAGE" --arg result "$1" \
-    '{schema:"cpk.root-account-attempt.v1",publication:"succeeded",image_reference:$reference,
-      source_revision:$source,controller_image_id:$controller,inspection:$result,stage:$stage}' \
-    > "$RECORDS/public/status.json"
-}
 finish() {
   local result="$?"
   trap - EXIT
@@ -181,10 +208,7 @@ timeout --signal=TERM --kill-after=15s 600s bash "$0" --acquire \
 [ ! -e "$WORK/auth.json" ] && [ ! -L "$WORK/auth.json" ]
 sudo -n mount -o remount,ro "$MOUNT"
 [ "$(docker image inspect "$POLICY" --format '{{.Id}}')" = "$CONTROLLER" ]
-STAGE=offline-inspection
-status hold
-sh "$ROOT/scripts/inspect_root_accounts.sh" "$CONTROLLER" "$WORK/input" "$WORK/tools" \
-  "$RECORDS/inspection" "$REFERENCE" "$SOURCE"
+inspect_accounts
 STAGE=cleanup
 status hold
 # An uncertain inventory or different owner blocks cleanup. No force/lazy mount.

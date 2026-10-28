@@ -1,5 +1,5 @@
 """Bounded CPK account evidence; maintained umoci owns all filesystem unpacking."""
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 import hashlib
 import json
 import os
@@ -21,11 +21,32 @@ JSON_LIMIT = 1024 * 1024
 ACCOUNT_LIMIT = 65536
 COMPRESSED_LIMIT = 2 * 1024**3
 UMOCI_SHA256 = "b51c267ec394499e42c6fde47f240b7b7dba57ea49df0b5acd304378b82a3b71"
+OFFLINE_STAGES = {
+    40: "input-setup", 41: "layout-validation", 42: "tool-validation",
+    43: "unpack-launch", 44: "unpack-timeout", 45: "unpack-nonzero",
+    46: "account-projection", 47: "result-serialization",
+}
 
 
 class AccountInspectionError(ValueError):
     def __init__(self):
         super().__init__("root image account inspection refused")
+
+
+class OfflineStageError(AccountInspectionError):
+    def __init__(self, code):
+        super().__init__()
+        self.code = code
+
+
+@contextmanager
+def offline_stage(code):
+    try:
+        yield
+    except OfflineStageError:
+        raise
+    except Exception:
+        raise OfflineStageError(code) from None
 
 
 def require(value):
@@ -233,52 +254,70 @@ def project_accounts(bundle_fd):
 
 def inspect_offline(reference, source):
     """Fixed mounts supplied by the separately released bounded invocation."""
-    input_fd = os.open("/input", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    tools_fd = os.open("/tools", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    try:
-        evidence = verify_layout(input_fd, reference, source)
-        require(read_file(tools_fd, "umoci", 32 * 1024**2, collect=False) == UMOCI_SHA256)
+    with ExitStack() as resources:
+        with offline_stage(40):
+            input_fd = os.open("/input", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            resources.callback(os.close, input_fd)
+            tools_fd = os.open("/tools", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            resources.callback(os.close, tools_fd)
+        with offline_stage(41):
+            evidence = verify_layout(input_fd, reference, source)
+        with offline_stage(42):
+            require(read_file(tools_fd, "umoci", 32 * 1024**2, collect=False) == UMOCI_SHA256)
         # /inspection must be a bounded, private, noexec tmpfs in the reviewed
         # invocation. No caller-supplied account path or success flag is accepted.
-        parent = Path(tempfile.mkdtemp(prefix="cpk-account-", dir="/inspection"))
-        bundle = parent / "bundle"
-        completed = subprocess.run(["/tools/umoci", "unpack", "--rootless", "--image",
-            "/input/layout:inspected", str(bundle)], stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=180, check=False)
-        require(completed.returncode == 0)
-        parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        try:
+        with offline_stage(40):
+            parent = Path(tempfile.mkdtemp(prefix="cpk-account-", dir="/inspection"))
+            bundle = parent / "bundle"
+        with offline_stage(43):
+            try:
+                completed = subprocess.run(["/tools/umoci", "unpack", "--rootless", "--image",
+                    "/input/layout:inspected", str(bundle)], stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=180, check=False)
+            except subprocess.TimeoutExpired:
+                raise OfflineStageError(44) from None
+        with offline_stage(45):
+            require(completed.returncode == 0)
+        with offline_stage(46):
+            parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            resources.callback(os.close, parent_fd)
             with directory(parent_fd, "bundle") as bundle_fd:
                 accounts = project_accounts(bundle_fd)
-        finally:
-            os.close(parent_fd)
         return {**evidence, **accounts, "umoci_version": "0.6.0", "umoci_sha256": UMOCI_SHA256,
             "unpack": "complete", "layer_diff_ids": "verified-by-umoci"}
-    finally:
-        os.close(tools_fd)
-        os.close(input_fd)
 
 
-if __name__ == "__main__":
+def main(arguments):
     try:
-        require(len(sys.argv) == 3)
-        if sys.argv[1] in ("--select", "--admit"):
+        with offline_stage(40):
+            require(len(arguments) == 2)
+        if arguments[0] in ("--select", "--admit"):
             input_fd = os.open("/input", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
             try:
-                if sys.argv[1] == "--select":
+                if arguments[0] == "--select":
                     result = {"platform_manifest_digest": manifest_selection(
-                        read_file(input_fd, "original.json", JSON_LIMIT), sys.argv[2])["digest"]}
+                        read_file(input_fd, "original.json", JSON_LIMIT), arguments[1])["digest"]}
                 else:
-                    raw, config, layers = admitted_manifest(input_fd, sys.argv[2])
+                    raw, config, layers = admitted_manifest(input_fd, arguments[1])
                     result = {"platform_manifest_digest": sha(raw), "layer_count": len(layers),
                         "compressed_bytes": sum(layer["size"] for layer in layers)}
             finally:
                 os.close(input_fd)
         else:
-            result = inspect_offline(sys.argv[1], sys.argv[2])
-        rendered = json.dumps(result, sort_keys=True, separators=(",", ":"))
-        require(len(rendered) <= 4096)
+            result = inspect_offline(arguments[0], arguments[1])
+        with offline_stage(47):
+            rendered = json.dumps(result, sort_keys=True, separators=(",", ":"))
+            require(len(rendered) <= 4096)
+            print(rendered)
+    except OfflineStageError as error:
+        print("root image account inspection refused", file=sys.stderr)
+        print("cpk-root-account-stage-v1:" + OFFLINE_STAGES[error.code], file=sys.stderr)
+        return error.code
     except Exception:
         print("root image account inspection refused", file=sys.stderr)
-        raise SystemExit(1) from None
-    print(rendered)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

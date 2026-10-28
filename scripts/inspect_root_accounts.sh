@@ -29,6 +29,7 @@ umask 077
 ACCOUNT_RUN="cpk-account-$(date +%s)-$$"
 ACCOUNT_LABEL="org.openj92.cpk.account-inspection=$ACCOUNT_RUN"
 command -v timeout >/dev/null
+command -v cmp >/dev/null
 [ "$(docker image inspect "$ACCOUNT_CONTROLLER" --format '{{.Id}}')" = "$ACCOUNT_CONTROLLER" ]
 [ "$(docker image inspect "$ACCOUNT_CONTROLLER" --format '{{.Os}}/{{.Architecture}}')" = linux/amd64 ]
 [ -z "$(docker ps -a --filter "name=^/$ACCOUNT_RUN$" --format '{{.ID}}')" ]
@@ -51,8 +52,35 @@ timeout --foreground --signal=TERM --kill-after=15s 300s \
 ACCOUNT_STATUS=$?
 set -e
 if [ "$ACCOUNT_STATUS" != 0 ]; then
+  # A Docker/timeout exit alone does not prove the projection executed. Match
+  # its complete fixed record, with at most 128 bytes read from private stderr.
+  ACCOUNT_PHASE=''
+  case "$ACCOUNT_STATUS" in
+    40) ACCOUNT_PHASE=input-setup ;;
+    41) ACCOUNT_PHASE=layout-validation ;;
+    42) ACCOUNT_PHASE=tool-validation ;;
+    43) ACCOUNT_PHASE=unpack-launch ;;
+    44) ACCOUNT_PHASE=unpack-timeout ;;
+    45) ACCOUNT_PHASE=unpack-nonzero ;;
+    46) ACCOUNT_PHASE=account-projection ;;
+    47) ACCOUNT_PHASE=result-serialization ;;
+  esac
+  ACCOUNT_FAILURE=65
+  if [ -n "$ACCOUNT_PHASE" ]; then
+    if printf 'root image account inspection refused\ncpk-root-account-stage-v1:%s\n' "$ACCOUNT_PHASE" |
+        cmp -s -n 128 - "$ACCOUNT_OUTPUT/private-error"; then
+      ACCOUNT_FAILURE="$ACCOUNT_STATUS"
+    fi
+  else
+    # These describe the outer observation, never an inferred inner phase.
+    case "$ACCOUNT_STATUS" in
+      124) ACCOUNT_FAILURE=60 ;;  # timeout reported its deadline
+      125|126|127) ACCOUNT_FAILURE=62 ;;  # timeout or Docker execution failure
+      137) ACCOUNT_FAILURE=61 ;;  # killed process or timeout's KILL escalation
+    esac
+  fi
   echo 'root account inspection HOLD; preserve exact private evidence and inspect owned container' >&2
-  exit 1
+  exit "$ACCOUNT_FAILURE"
 fi
 # A failed inventory is not absence; never delete/retry an ambiguous attempt.
 ACCOUNT_REMAINS="$(docker ps -a --no-trunc --filter "label=$ACCOUNT_LABEL" --format '{{.ID}}')" || exit 1

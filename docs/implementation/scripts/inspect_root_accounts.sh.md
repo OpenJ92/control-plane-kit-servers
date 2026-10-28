@@ -1,7 +1,8 @@
 Source: [inspect_root_accounts.sh](../../../scripts/inspect_root_accounts.sh).
 
-Prepared #347 offline invocation, actual unpack unrun and not effect-authorized.
-Its source/synthetic laws passed ac144857's normal gate. Arguments are
+#347 offline invocation. Source94's actual attempt failed at offline-inspection;
+successful unpack and final container absence remain unproved. A retry is not
+authorized by this source correction. Arguments are
 the reviewed existing controller image ID, exact acquired input directory,
 exact directory containing the pinned umoci binary, a new private output
 directory, immutable CPK reference and producer revision. Required input names
@@ -30,6 +31,17 @@ input cleanup is a distinct exact-path action in the execution packet.
 
 This source is not a new package test runner or a general controller framework.
 It is a diagnostic prerequisite whose projection tests use ordinary ./test.sh.
-The wrapper has not performed actual account unpacking. The same-producer
+The wrapper has not demonstrated successful actual account unpacking. The same-producer
 acquisition candidate supplies the already-used policy image by verified ID;
 it must not acquire a new controller or mistake source CI for an account seal.
+
+Failure exits40–47 are preserved only when private stderr is exactly the two-line
+fixed refusal/phase record emitted by the projection, matching that reserved code.
+`cmp -s -n 128` compares at most128 bytes; every permitted record is shorter, so
+extra bytes, a missing newline, duplicates or embedded markers fail the comparison.
+Comparison errors also fail closed. Raw stderr is never copied into a public
+label, shell variable or log by this parser. Missing/mismatched records and unknown
+codes return65 (unknown-controller-failure). Outer status124 maps to60 (timeout),
+137 to61 (killed-or-timeout), and125/126/127 to62 (outer execution failure).
+Those observations do not distinguish Docker from timeout's own errors or prove
+an inner phase ran. Failure still cannot promote a candidate or claim cleanup.

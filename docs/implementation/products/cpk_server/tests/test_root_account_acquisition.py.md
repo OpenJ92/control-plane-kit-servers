@@ -14,3 +14,13 @@ error also blocks loop detach. Separate metadata/offline invocation tests captur
 actual Docker arguments using a failing process double and require the narrow
 script-only source mount. They never simulate a successful unpack or read real
 credentials. These synthetic targets run inside the normal Docker suite.
+
+Three diagnostic methods exercise the actual offline wrapper and parent status
+writer with process doubles: every allowed phase and conservative outer failure
+must reach existing status.json as HOLD without a candidate or cleanup; absent,
+mismatched, embedded, duplicate, truncated and oversized markers must remain
+unknown; and candidate promotion still requires successful execution, bounded
+nonempty output and observed container absence. The success-transport fixture is
+an explicitly opaque synthetic receipt, not successful unpack/account evidence.
+The parser consumes at most128 bytes of private diagnostics and exports only
+fixed labels. These additions require their own source review and owning gate.

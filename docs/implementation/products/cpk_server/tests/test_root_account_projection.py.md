@@ -18,3 +18,10 @@ and unique platform selection, and pre-copy descriptor/size refusal with no OCI
 layout present. This proves metadata can be admitted before blob acquisition;
 it does not prove actual Skopeo, registry authentication, quotas or controller
 lifecycle. The original seven methods passed ac144857; these additions are unrun.
+
+The diagnostic correction adds one parameterized method exercising all eight
+offline failure boundaries through the real CLI main function with filesystem
+and process doubles. It requires the exact fixed refusal/phase record, reserved
+exit, no stdout result and no later unpack/account call after an earlier failure.
+Private exception canaries cannot enter diagnostics. Every case fails; no
+successful unpack or account seal is synthesized as acceptance evidence.

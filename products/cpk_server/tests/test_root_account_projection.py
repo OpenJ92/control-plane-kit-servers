@@ -1,12 +1,16 @@
 """Bounded correspondence/account projection; no image acquisition or unpack."""
 import copy
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 import hashlib
+import io
 import importlib.util
 import json
 import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
+import subprocess
 
 
 SOURCE = "a" * 40
@@ -207,3 +211,47 @@ class RootAccountProjectionTests(unittest.TestCase):
         etc.symlink_to("saved-etc", target_is_directory=True)
         with self.assertRaises(OSError):
             self.project()
+
+    def test_offline_cli_reports_only_the_reached_failure_boundary(self):
+        # These are process/filesystem boundary doubles, not an unpacker or a
+        # successful account seal. Every case fails before any result is emitted.
+        cases = (
+            (40, "input-setup", "open", OSError("private-path-canary")),
+            (41, "layout-validation", "verify_layout", ValueError("private-config-canary")),
+            (42, "tool-validation", "read_file", OSError("private-tool-canary")),
+            (43, "unpack-launch", "run", OSError("private-command-canary")),
+            (44, "unpack-timeout", "run", subprocess.TimeoutExpired("private-command-canary", 180)),
+            (45, "unpack-nonzero", "nonzero", None),
+            (46, "account-projection", "project_accounts", ValueError("private-account-canary")),
+            (47, "result-serialization", "dumps", ValueError("private-result-canary")),
+        )
+        for code, label, failing, error in cases:
+            with self.subTest(label=label), ExitStack() as stack:
+                targets = {
+                    "open": (self.owner.os, "open", 10),
+                    "verify_layout": (self.owner, "verify_layout", {}),
+                    "read_file": (self.owner, "read_file", self.owner.UMOCI_SHA256),
+                    "run": (self.owner.subprocess, "run", subprocess.CompletedProcess([], 0)),
+                    "project_accounts": (self.owner, "project_accounts", {}),
+                    "dumps": (self.owner.json, "dumps", "{}"),
+                }
+                mocks = {}
+                for name, (target, attribute, value) in targets.items():
+                    mocks[name] = stack.enter_context(patch.object(target, attribute, return_value=value))
+                stack.enter_context(patch.object(self.owner.os, "close"))
+                stack.enter_context(patch.object(self.owner.tempfile, "mkdtemp", return_value="/inspection/synthetic"))
+                if failing == "nonzero":
+                    mocks["run"].return_value = subprocess.CompletedProcess([], 17)
+                else:
+                    mocks[failing].side_effect = error
+                output, errors = io.StringIO(), io.StringIO()
+                with redirect_stdout(output), redirect_stderr(errors):
+                    result = self.owner.main(["ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:" + "b" * 64, SOURCE])
+                self.assertEqual(result, code)
+                self.assertEqual(output.getvalue(), "")
+                self.assertEqual(errors.getvalue(), "root image account inspection refused\n"
+                    + "cpk-root-account-stage-v1:" + label + "\n")
+                if code < 43:
+                    mocks["run"].assert_not_called()
+                if code < 46:
+                    mocks["project_accounts"].assert_not_called()

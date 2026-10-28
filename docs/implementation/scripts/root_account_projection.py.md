@@ -40,3 +40,14 @@ invocation. Data stays on its owned tmpfs until container removal. A successful
 helper result is a candidate, not accepted account evidence or runtime identity.
 Independent review must bind the actual producer, source/controller/tool records
 and published digest before installing a new baseline row.
+
+The failed actual account attempt at source94 reached only the public
+offline-inspection boundary; its inner cause remains unknown. The diagnostic
+correction reserves exits40–47 for input/setup, layout validation, tool validation,
+unpack launch, unpack timeout, unpack nonzero, account projection and result
+serialization. Each recognized failure emits the same fixed refusal text plus
+one fixed phase marker. Exception text, paths, command output and account content
+are never interpolated. Unclassified exceptions still return1. The wrapper must
+validate the whole marker together with the exit; an exit alone is insufficient.
+These labels locate a failed boundary, not its root cause, successful unpack,
+observed container absence or cleanup. The success result schema is unchanged.
