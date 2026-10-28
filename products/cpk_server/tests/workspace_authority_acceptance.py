@@ -1,9 +1,14 @@
 """Actual factory and HTTP/MCP enrollment over the existing isolated Postgres owner."""
 from dataclasses import replace
+import io
 import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch
-from urllib.parse import quote, urlencode
+from urllib.error import HTTPError
+from urllib.parse import quote, urlencode, urlsplit
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -31,8 +36,9 @@ from test_secret_provider_bootstrap import _base_environment
 def workspace_authority_acceptance(database_url):
     from control_plane_kit_servers_cpk_server.operations_application import WorkspaceAuthorityConfiguration
 
-    administrator = PrincipalIdentity("urn:cpk:enrollment", "administrator", PrincipalKind.OPERATOR)
-    operator = PrincipalIdentity("urn:cpk:enrollment", "operator", PrincipalKind.OPERATOR)
+    issuer = "urn:control-plane-kit:static-development"
+    administrator = PrincipalIdentity(issuer, "administrator", PrincipalKind.OPERATOR)
+    operator = PrincipalIdentity(issuer, "operator", PrincipalKind.OPERATOR)
     other_issuer = replace(operator, issuer="urn:cpk:other-issuer")
     other_kind = replace(operator, kind=PrincipalKind.WORKER)
     known = (administrator, operator, other_issuer, other_kind)
@@ -42,21 +48,49 @@ def workspace_authority_acceptance(database_url):
          ManagedRuntimeCapability("installed-management-capability-b"))))
     credentials = ("synthetic-enrollment-admin", "synthetic-enrollment-operator",
         "synthetic-enrollment-other-issuer", "synthetic-enrollment-other-kind")
-    # A startup grant must not bypass a missing/revoked durable dynamic grant.
-    verifier = StaticDevelopmentMultiCredentialVerifier(tuple(
-        StaticDevelopmentPrincipalCredential(token.encode(), AuthenticatedPrincipal(identity,
-            () if identity == administrator else (WorkspaceGrant("workspace-b", (PolicyScope.INSTANCE_WORKSPACE_READ,)),)))
-        for token, identity in zip(credentials, known, strict=True)))
+    # Preserve the separately attributed foreign-issuer/stale-grant witness.
+    # Main credential construction below uses only actual process inputs.
+    foreign_verifier = StaticDevelopmentMultiCredentialVerifier((
+        StaticDevelopmentPrincipalCredential(credentials[2].encode(), AuthenticatedPrincipal(other_issuer,
+            (WorkspaceGrant("workspace-b", (PolicyScope.INSTANCE_WORKSPACE_READ,)),))),))
     control = fixture("enrollment-root-bootstrap").config
 
-    with IsolatedOperationsSchema(database_url, "cpk_1912_" + uuid4().hex) as schema:
+    with TemporaryDirectory() as directory, IsolatedOperationsSchema(database_url, "cpk_1912_" + uuid4().hex) as schema:
+        root = Path(directory)
+        policy_path = root / "workspace-policy.json"
+        policy_path.write_text(json.dumps({"schema": "cpk-server.workspace-authority.v1",
+            "installation_id": policy.installation_id,
+            "administrators": [identity.descriptor() for identity in policy.administrators],
+            "known_identities": [identity.descriptor() for identity in policy.known_identities],
+            "capabilities": [value.capability_id for value in authority.capability_policy.capabilities]}))
+        credential_paths = {}
+        for index, token in enumerate(credentials):
+            path = root / ("credential-" + str(index))
+            path.write_text(token, encoding="ascii")
+            path.chmod(0o600)
+            credential_paths[token] = path
         scoped_url = make_conninfo(database_url, options=f"-csearch_path={schema.schema}")
         environment = {**_base_environment(), "CPK_RUNTIME_INTERPRETERS": "none"}
         for name in tuple(environment):
             if name.endswith("_DATABASE_URL"):
                 environment[name] = scoped_url
-        config = replace(server.CpkServerBootstrapConfiguration.from_environment(environment),
-            workspace_authority=authority)
+        environment.update(CPK_WORKSPACE_AUTHORITY="dynamic-v1",
+            CPK_WORKSPACE_AUTHORITY_CONFIGURATION_FILE=str(policy_path),
+            CPK_CONTROL_AUTH_VERIFIER="static-development",
+            CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON=json.dumps([
+                {"credential": credentials[index], "subject_id": known[index].subject_id,
+                    "kind": known[index].kind.value, "workspace_grants": (
+                        {"workspace-b": [PolicyScope.INSTANCE_WORKSPACE_READ.value]} if index == 1 else {})}
+                for index in (0, 1, 3)]))
+        config = server.CpkServerBootstrapConfiguration.from_environment(environment)
+        assert config.workspace_authority == authority
+        authority = config.workspace_authority
+        policy = authority.administration_policy
+        verifier = server._credential_verifier(config)
+        assert all(verifier.authenticate(credentials[index].encode()).workspace_grants == () for index in (0, 3))
+        assert verifier.authenticate(credentials[1].encode()).workspace_grants == (
+            WorkspaceGrant("workspace-b", (PolicyScope.INSTANCE_WORKSPACE_READ,)),)
+        assert server._configured_principal_authorizer(config) is None
 
         def require_startup_refusal(value):
             with patch.object(server, "_secret_provider_composition") as provider:
@@ -85,6 +119,25 @@ def workspace_authority_acceptance(database_url):
             if surface == "http":
                 location = route.path_template.replace("{workspace_id}", workspace)
                 if route.method.value == "GET":
+                    if status == 200:
+                        from control_plane_kit_servers_cpk_server.client.profile import ClientProfile
+                        from control_plane_kit_servers_cpk_server.client import transport as client_transport
+                        def open_request(request, *, timeout):
+                            parts = urlsplit(request.full_url)
+                            response = client.request(request.get_method(), parts.path + ("?" + parts.query if parts.query else ""),
+                                headers=dict(request.header_items()), content=request.data)
+                            body = io.BytesIO(response.content)
+                            if response.status_code >= 400:
+                                raise HTTPError(request.full_url, response.status_code, "public refusal", None, body)
+                            return body
+                        profile = ClientProfile("http://127.0.0.1:8080", workspace,
+                            {role: credential_paths[token] for role in ("operator", "approver", "worker")}, root / "state")
+                        with patch.object(client_transport, "build_opener", return_value=SimpleNamespace(open=open_request)):
+                            result = client_transport.PublicHttpTransport(profile).call(route_id,
+                                path_parameters={"workspace_id": workspace}, payload=payload, credential_role="operator")
+                        assert all(secret not in json.dumps(result) for secret in credentials)
+                        responses.append(result)
+                        return result
                     query = {key: json.dumps(value) if isinstance(value, dict) else value
                         for key, value in payload.items()}
                     if query:
@@ -111,6 +164,7 @@ def workspace_authority_acceptance(database_url):
             return result["result"] if surface == "mcp" and status == 200 else result
 
         with TestClient(app) as client:
+            invoke(client, "http", "read.current-graph", token="synthetic-incorrect-credential", status=401)
             for surface, workspace in (("http", "workspace-a"), ("mcp", "workspace-b")):
                 invoke(client, surface, "command.workspace-administration.create", {
                     "workspace_id": workspace, "name": workspace, "idempotency_key": "create-" + workspace})
@@ -128,8 +182,12 @@ def workspace_authority_acceptance(database_url):
             for surface in ("http", "mcp"):
                 invoke(client, surface, "read.current-graph", token=credentials[1])
                 invoke(client, surface, "read.current-graph", token=credentials[1], workspace="workspace-a", status=403)
-                for token in credentials[2:]:
-                    invoke(client, surface, "read.current-graph", token=token, status=403)
+                invoke(client, surface, "read.current-graph", token=credentials[3], status=403)
+            # The existing credential format has one fixed issuer. Preserve the
+            # foreign-issuer law separately through the trusted test verifier.
+            with TestClient(server.create_app(config, foreign_verifier, control=control, clock=lambda: 150)) as foreign:
+                for surface in ("http", "mcp"):
+                    invoke(foreign, surface, "read.current-graph", token=credentials[2], status=403)
             record = invoke(client, "http", "read.workspace-permission", {"target": operator.descriptor()})
             assert record["revision"] == 1 and record["scopes"] == grant["scopes"]
             invoke(client, "mcp", "command.workspace-permission.revoke", {"target": operator.descriptor(),
@@ -139,7 +197,7 @@ def workspace_authority_acceptance(database_url):
                 invoke(client, surface, "read.current-graph", token=credentials[1], status=403)
 
         # Reconstruct through the real startup/factory without rewriting the verifier or receipt.
-        restarted = server.create_app(config, verifier, control=control, clock=lambda: 150)
+        restarted = server.create_app(config, server._credential_verifier(config), control=control, clock=lambda: 150)
         with TestClient(restarted) as client:
             for surface in ("http", "mcp"):
                 invoke(client, surface, "read.current-graph", token=credentials[1], status=403)
@@ -148,5 +206,5 @@ def workspace_authority_acceptance(database_url):
             from managed_provider_selection_acceptance import managed_provider_selection_acceptance
             managed_provider_selection_acceptance(client, invoke, schema, authority)
         assert len(responses) < 50
-    print("workspace authority: real startup receipt, public grant/revoke, full identity and restart preservation passed", flush=True)
+    print("workspace authority: real process policy/verifier and startup receipt, public client grant/revoke reads, full identity and restart preservation passed", flush=True)
     print("management selection: public grants, current assignment and authority revocation, no Docker construction passed", flush=True)

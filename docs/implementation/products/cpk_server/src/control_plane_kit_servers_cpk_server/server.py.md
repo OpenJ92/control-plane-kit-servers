@@ -138,3 +138,18 @@ The three focused dynamic-composition targets exposed missing registrations and
 wrapper keywords in corrected target run40637645793. Green validation remains
 pending. Full public lifecycle/partial-result denial evidence remains mandatory
 under G/#342 per decision341comment6461257447; component success is not that proof.
+
+The process/client continuation adds explicitly selected installer workspace
+policy and managed-health v2 input. Workspace policy is decoded and validated
+before the existing credential parser may accept explicitly empty legacy grants.
+Single and multi credentials keep their existing fixed full identity and validation;
+missing/malformed grants remain distinct from empty, static mode still requires
+nonempty grants, and dynamic request authority never unions or falls back to them.
+
+Managed-health mode/schema pairs and the whole installed capability catalogue
+must agree with workspace authority. The raw v2 value carries no UoW. Only the
+existing post-receipt factory path supplies its actual UoW to effect composition,
+which builds one selector shared by bridge/native consumers. Executor/observer
+retain the same installed local Docker policy. No startup initialization, seed,
+assignment write or provider permission is introduced. Process-file v2 does not
+widen the separately guarded v1-only topology artifact delivery path.

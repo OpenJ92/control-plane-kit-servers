@@ -33,3 +33,17 @@ decoder before installation use, catching corrupted digest metadata. Distinct
 valid source digests survive as metadata, not authenticity claims. Delivery
 errors use the separate fixed installation message outside caught context;
 the accepted standalone decoder and reader behavior remain unchanged.
+
+#341 adds a separate closed v2 process schema with capability_ids instead of
+static workspace/runtime/authority scopes. The immutable value keeps exact
+DockerRuntimeCapabilityBinding values sharing the installed local policy and
+provider_clients=None. It has no UoW or callable placeholder. The process
+composition binds the existing dynamic selector to its actual UoW only after
+the installation receipt guard. Existing v1 inputs retain their static selector.
+
+Both public artifact authoring and artifact consumption explicitly remain v1-only:
+the existing topology installation helper emits v1 and cannot deliver the new
+workspace policy. It therefore refuses v2 rather than silently mislabeling it.
+Supported v2 bootstrap authoring/trusted-policy delivery requires an owning
+handoff before final F handoff or G execution. Process-file support does not prove
+that installation delivery, and no private workaround is authorized.

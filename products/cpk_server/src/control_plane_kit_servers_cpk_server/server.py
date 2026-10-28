@@ -213,17 +213,34 @@ class CpkServerBootstrapConfiguration:
         environ: Mapping[str, str] | None = None,
     ) -> "CpkServerBootstrapConfiguration":
         values = dict(os.environ if environ is None else environ)
+        authority = None
+        authority_mode = values.get("CPK_WORKSPACE_AUTHORITY", "disabled")
+        authority_path = "CPK_WORKSPACE_AUTHORITY_CONFIGURATION_FILE"
+        if authority_mode != "disabled" or authority_path in values:
+            try:
+                if authority_mode != "dynamic-v1" or authority_path not in values:
+                    raise ValueError
+                from .workspace_authority_configuration import read_workspace_authority_configuration
+                authority = read_workspace_authority_configuration(values[authority_path])
+            except (ValueError, TypeError, AttributeError, KeyError, OverflowError, RecursionError):
+                authority_failure = BootstrapConfigurationError("workspace authority process configuration is invalid")
+            else:
+                authority_failure = None
+            if authority_failure is not None:
+                raise authority_failure
         mode = values.get("CPK_MANAGED_HEALTH", "disabled")
         path_key = "CPK_MANAGED_HEALTH_CONFIGURATION_FILE"
         if mode == "disabled" and path_key not in values:
-            return cls._from_environment(values)
+            return cls._from_environment(values, workspace_authority=authority)
         try:
-            if mode != "docker-unix-v1" or path_key not in values:
+            if mode not in {"docker-unix-v1", "docker-unix-v2"} or path_key not in values:
                 raise ValueError
             from .managed_health_configuration import read_managed_health_process_configuration
 
             process = read_managed_health_process_configuration(values[path_key])
-            config = replace(cls._from_environment(values), managed_health_process=process)
+            if (process.provider_clients is None) != (mode == "docker-unix-v2"):
+                raise ValueError
+            config = replace(cls._from_environment(values, workspace_authority=authority), managed_health_process=process)
             _validate_managed_health_process(config)
             return config
         except (ValueError, TypeError, AttributeError, KeyError, OverflowError,
@@ -235,7 +252,20 @@ class CpkServerBootstrapConfiguration:
     def _from_environment(
         cls,
         environ: Mapping[str, str],
+        *,
+        workspace_authority: WorkspaceAuthorityConfiguration | None = None,
     ) -> "CpkServerBootstrapConfiguration":
+        if workspace_authority is not None:
+            try:
+                if type(workspace_authority) is not WorkspaceAuthorityConfiguration:
+                    raise ValueError
+                workspace_authority.__post_init__()
+            except (ValueError, TypeError, AttributeError):
+                authority_failure = BootstrapConfigurationError("workspace authority process configuration is invalid")
+            else:
+                authority_failure = None
+            if authority_failure is not None:
+                raise authority_failure
         values = dict(os.environ if environ is None else environ)
         mode = _required(values, "CPK_SERVER_MODE")
         control_auth_verifier = values.get("CPK_CONTROL_AUTH_VERIFIER", "none")
@@ -313,7 +343,7 @@ class CpkServerBootstrapConfiguration:
                         "with single static credential configuration"
                     )
                 control_auth_static_principals = _static_principals(
-                    control_auth_static_principals_text
+                    control_auth_static_principals_text, allow_empty_grants=workspace_authority is not None,
                 )
             elif not control_auth_static_credential_text:
                 raise BootstrapConfigurationError(
@@ -341,7 +371,7 @@ class CpkServerBootstrapConfiguration:
                         "CPK_CONTROL_AUTH_STATIC_WORKSPACE_GRANTS_JSON"
                     )
                 control_auth_static_workspace_grants = _static_workspace_grants(
-                    control_auth_static_workspace_grants_text
+                    control_auth_static_workspace_grants_text, allow_empty=workspace_authority is not None,
                 )
         elif control_auth_static_credential_text is not None:
             raise BootstrapConfigurationError(
@@ -469,6 +499,7 @@ class CpkServerBootstrapConfiguration:
             )
         return cls(
             mode=mode,
+            workspace_authority=workspace_authority,
             control_auth_verifier=control_auth_verifier,
             control_auth_static_credential=control_auth_static_credential,
             control_auth_static_principals=control_auth_static_principals,
@@ -699,7 +730,7 @@ def _bounded_ascii(value: str | None, name: str, *, maximum: int = 256) -> str:
     return value
 
 
-def _static_workspace_grants(value: str) -> tuple[WorkspaceGrant, ...]:
+def _static_workspace_grants(value: str, *, allow_empty: bool = False) -> tuple[WorkspaceGrant, ...]:
     if not isinstance(value, str) or not 1 <= len(value) <= 65_536:
         raise BootstrapConfigurationError(
             "CPK_CONTROL_AUTH_STATIC_WORKSPACE_GRANTS_JSON must be bounded JSON"
@@ -711,11 +742,11 @@ def _static_workspace_grants(value: str) -> tuple[WorkspaceGrant, ...]:
         raise BootstrapConfigurationError(
             "CPK_CONTROL_AUTH_STATIC_WORKSPACE_GRANTS_JSON must be bounded JSON"
         ) from error
-    return _static_workspace_grants_from_mapping(raw)
+    return _static_workspace_grants_from_mapping(raw, allow_empty=allow_empty)
 
 
-def _static_workspace_grants_from_mapping(raw: object) -> tuple[WorkspaceGrant, ...]:
-    if not isinstance(raw, Mapping) or not raw or len(raw) > 64:
+def _static_workspace_grants_from_mapping(raw: object, *, allow_empty: bool = False) -> tuple[WorkspaceGrant, ...]:
+    if not isinstance(raw, Mapping) or (not raw and not allow_empty) or len(raw) > 64:
         raise BootstrapConfigurationError(
             "static workspace grants must map exact workspace ids to scopes"
         )
@@ -752,6 +783,8 @@ def _static_workspace_grants_from_mapping(raw: object) -> tuple[WorkspaceGrant, 
 
 def _static_principals(
     value: str,
+    *,
+    allow_empty_grants: bool = False,
 ) -> tuple[StaticDevelopmentPrincipalCredential, ...]:
     if not isinstance(value, str) or not 1 <= len(value) <= 131_072:
         raise BootstrapConfigurationError(
@@ -788,7 +821,7 @@ def _static_principals(
             raise BootstrapConfigurationError(
                 "static principal kind must be operator, service, or worker"
             ) from error
-        grants = _static_workspace_grants_from_mapping(item.get("workspace_grants"))
+        grants = _static_workspace_grants_from_mapping(item.get("workspace_grants"), allow_empty=allow_empty_grants)
         try:
             principals.append(
                 StaticDevelopmentPrincipalCredential(
@@ -849,7 +882,10 @@ def _operations_application(
             raise BootstrapConfigurationError("workspace authority installation is unavailable")
 
     provider = _secret_provider_composition(config)
-    return OperationsApplicationFactory(unit_of_work, _operations_effect_ports(config, provider),
+    process = config.managed_health_process
+    effect_options = ({"unit_of_work_factory": unit_of_work}
+        if process is not None and process.provider_clients is None else {})
+    return OperationsApplicationFactory(unit_of_work, _operations_effect_ports(config, provider, **effect_options),
         OperationsIdFactories(_id, _lifecycle_id, _start_id, _fold_id, _coordinator_id),
         clock=_clock,
         principal_authorizer=principal_authorizer,
@@ -858,7 +894,7 @@ def _operations_application(
             config, uow, authorizer, provider))()
 
 
-def _operations_effect_ports(config, provider):
+def _operations_effect_ports(config, provider, *, unit_of_work_factory=None):
     _validate_managed_health_process(config)
     dynamic = getattr(config, "workspace_authority", None) is not None
     runtimes = None
@@ -885,12 +921,18 @@ def _operations_effect_ports(config, provider):
     process = getattr(config, "managed_health_process", None)
     if process is not None:
         from .managed_native_connection import DockerManagedNativeConnection
-
+        selector = process.provider_clients
+        if selector is None:
+            from .managed_health_placement import DockerRuntimeClientSelector
+            if not callable(unit_of_work_factory):
+                raise BootstrapConfigurationError("managed health composition is invalid")
+            selector = DockerRuntimeClientSelector((), capability_policy=config.workspace_authority.capability_policy,
+                capability_bindings=process.capability_bindings, unit_of_work_factory=unit_of_work_factory)
         bootstrap = ManagedHealthBootstrap(
             gateway_documents=process.gateway_documents,
-            provider_clients=process.provider_clients,
+            provider_clients=selector,
             endpoints=None,
-            native=DockerManagedNativeConnection(process.provider_clients,
+            native=DockerManagedNativeConnection(selector,
                 process.native_product_document, clock=lambda: datetime.now(timezone.utc)),
         )
     if bootstrap is not None:
@@ -1541,6 +1583,15 @@ def _validate_managed_health_process(config):
                 or config.product_secret_values_json is not None):
             raise ValueError
         process.__post_init__()
+        authority = getattr(config, "workspace_authority", None)
+        if (process.provider_clients is None) != (authority is not None):
+            raise ValueError
+        if authority is not None:
+            if type(authority) is not WorkspaceAuthorityConfiguration:
+                raise ValueError
+            authority.__post_init__()
+            if set(binding.capability for binding in process.capability_bindings) != set(authority.capability_policy.capabilities):
+                raise ValueError
         _provider_bootstrap_registry(config)
         return
     except (ValueError, TypeError, AttributeError, KeyError, OverflowError,

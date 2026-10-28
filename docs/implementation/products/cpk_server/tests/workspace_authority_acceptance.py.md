@@ -52,3 +52,23 @@ original restart/empty-permission assertions. All original assertions remain.
 The helper uses the same actual app, public request transport and isolated schema;
 its separate marker is printed after enclosing cleanup. This extension is
 unvalidated and does not rewrite the accepted factory/startup run40587396766.
+
+The process/client continuation obtains the policy through the real bounded
+installer file and from_environment, and credentials through the real configured
+single-issuer multi verifier. Administrator/worker have explicitly empty legacy
+grants. The operator retains the prior deliberately stale grant, now parsed from
+the actual credential input; missing/revoked durable permission must still deny.
+Wrong credentials refuse. Restart reconstructs the actual verifier from the same
+configuration, preserving the old non-resurrection assertions.
+
+The actual static credential format has one fixed issuer. The previous foreign-
+issuer negative remains a separately attributed trusted-fixture-verifier request
+against the same real Operations store/application; it is not represented as a
+new supported credential issuer. No owner policy or history is substituted.
+
+Successful public HTTP reads now enter through actual PublicHttpTransport and
+its credential file reader. Only its socket is adapted to the existing TestClient;
+actual HTTP authentication, query decoding, owner services and PostgreSQL remain
+in the path. MCP and negative HTTP checks retain the existing fixture entrance.
+This extension first executes in the next owning green gate; it is not covered
+by the earlier target-red stop. Existing exact schema/temp-file owners clean up.
