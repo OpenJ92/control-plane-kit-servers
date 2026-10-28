@@ -118,6 +118,7 @@ class DynamicRootBootstrapTests(unittest.TestCase):
         for private_value in (TOKEN, "grant-target-private", "private-grant-key", "private-initialize-key"):
             self.assertNotIn(private_value, rendered)
         self.assertFalse((state / "receipt.json").exists())
+        return caught.exception
 
     def test_dynamic_public_plan_declares_retained_private_delivery_without_private_intent(self):
         document, policy_bytes, private = self.inputs()
@@ -336,3 +337,35 @@ class DynamicRootBootstrapTests(unittest.TestCase):
         self.private_write(path, self.api.canonical(original))
         (self.root / private["policy"]["file"]).chmod(0o644)
         self.refused_before_docker(plan, path, "material-refused")
+
+    def test_malformed_owner_keys_refuse_without_private_exception_context(self):
+        from control_plane_kit_operations.workflows import InvalidOperationCommand
+        for site in ("initialization", "workspace-create", "permission-grant", "management-grant"):
+            with self.subTest(site=site):
+                document, policy_bytes, private = self.inputs(health=True)
+                administration = private["administration"]
+                canary = "private-invalid-key-canary-" * 10
+                if site == "initialization":
+                    private["initialization_idempotency_key"] = canary
+                elif site == "workspace-create":
+                    administration["workspace_creation_idempotency_key"] = canary
+                elif site == "permission-grant":
+                    administration["permission_grants"][0]["idempotency_key"] = canary
+                else:
+                    document["setup"]["administration"]["management_grant"] = True
+                    administration["management_grant"] = {
+                        "runtime_id": document["installation"]["installation_id"] + "-docker",
+                        "authority_ref": document["installation"]["runtime_authority"],
+                        "capability_id": "installed-management", "expected_revision": 0,
+                        "idempotency_key": canary, "registration_from": "command.runtime-authority.register"}
+                # Rebind correctly: this must exercise owner validation, not hash drift.
+                self.bind_intent(document, policy_bytes, private)
+                plan = self.plan(document)
+                path, _ = self.material(plan, policy_bytes, private)
+                error = self.refused_before_docker(plan, path, "material-refused")
+                while error is not None:
+                    self.assertNotIsInstance(error, InvalidOperationCommand)
+                    self.assertIsInstance(error, self.api.RootBootstrapError)
+                    self.assertNotIn("private-invalid-key-canary", str(error) + repr(error))
+                    self.assertIsNone(error.__cause__)
+                    error = error.__context__

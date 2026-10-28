@@ -6,7 +6,7 @@ import hashlib
 from control_plane_kit_core.identity import PrincipalIdentity, PrincipalKind
 from control_plane_kit_core.policies import PolicyScope
 from control_plane_kit_core.runtime_authority import RuntimeAuthorityReference
-from control_plane_kit_operations.workflows import IdempotencyKey
+from control_plane_kit_operations.workflows import IdempotencyKey, InvalidOperationCommand
 from control_plane_kit_operations.workspace_permissions import (
     GrantWorkspacePermissions, WorkspaceAdministrationContext, _key, _revision, _text,
 )
@@ -42,6 +42,14 @@ def workspace_intent_commitment(*, policy_bytes, installer, initialization_idemp
 def _identity(value):
     _closed(value, {"issuer", "subject_id", "kind"})
     return PrincipalIdentity(value["issuer"], value["subject_id"], PrincipalKind(value["kind"]))
+
+
+def _command_key(value):
+    try:
+        return _key(IdempotencyKey(value))
+    except InvalidOperationCommand:
+        failure = ValueError("private command key is invalid")
+    raise failure
 
 
 def admit_workspace_intent(plan, private, policy_bytes, credentials):
@@ -85,10 +93,10 @@ def admit_workspace_intent(plan, private, policy_bytes, credentials):
     if verified.identity != _identity(private["installer"]):
         raise ValueError("installer credential differs")
     context = authority.administration_policy.authorize(verified)
-    initialization_key = _key(IdempotencyKey(private["initialization_idempotency_key"]))
+    initialization_key = _command_key(private["initialization_idempotency_key"])
     administration = private["administration"]
     _closed(administration, {"workspace_creation_idempotency_key", "permission_grants", "management_grant"})
-    _key(IdempotencyKey(administration["workspace_creation_idempotency_key"]))
+    _command_key(administration["workspace_creation_idempotency_key"])
     grants = administration["permission_grants"]
     summary = setup["administration"]
     if (type(grants) is not list or len(grants) != summary["permission_grant_count"]
@@ -102,7 +110,7 @@ def admit_workspace_intent(plan, private, policy_bytes, credentials):
             raise ValueError("invalid scopes")
         GrantWorkspacePermissions(context, installation["workspace_id"], target,
             tuple(PolicyScope(scope) for scope in grant["scopes"]), grant["expected_revision"],
-            IdempotencyKey(grant["idempotency_key"]))
+            _command_key(grant["idempotency_key"]))
     management = administration["management_grant"]
     if management is not None:
         _closed(management, {"runtime_id", "authority_ref", "capability_id", "expected_revision",
@@ -112,7 +120,7 @@ def admit_workspace_intent(plan, private, policy_bytes, credentials):
         _reference(RuntimeAuthorityReference(management["authority_ref"]))
         authority.capability_policy.require(management["capability_id"])
         _revision(management["expected_revision"])
-        _key(IdempotencyKey(management["idempotency_key"]))
+        _command_key(management["idempotency_key"])
         if (management["registration_from"] != "command.runtime-authority.register"
                 or management["runtime_id"] != installation["installation_id"] + "-docker"
                 or management["authority_ref"] != installation["runtime_authority"]):

@@ -18,3 +18,9 @@ The admitted snapshot hides fields from repr and keeps exact policy bytes and
 canonical private administration bytes separate from credential references.
 The caller translates every rejected private input into the fixed material-refused
 classification without retaining private parser exception context.
+
+The owner IdempotencyKey constructor raises InvalidOperationCommand rather than
+ValueError. A narrow adapter translates that specific exception outside its
+handler at all four private key sites. The private material boundary then emits
+material-refused without retaining the owner exception; arbitrary RuntimeError
+is not swallowed.

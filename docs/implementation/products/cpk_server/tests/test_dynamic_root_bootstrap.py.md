@@ -33,3 +33,10 @@ private byte admission, and closed/private file input refusal. These are source
 changes awaiting the owning Docker suite; the earlier seven-method red run only
 reached the missing public field entrance. Numeric staging and retained restart
 belong to the existing live numeric component fixture, not these unit assertions.
+
+A fifth added method rebinds the commitment after corrupting each of the four
+private command keys, reaches actual owner key validation, and requires fixed
+material-refused, no Docker/receipt, and a context chain containing only bounded
+bootstrap errors. Existing static authentication and PostgreSQL tests unpack the
+separate intent result, require None, and retain their original credential and
+recipient/probe-byte assertions. There are now 12 dynamic methods.
