@@ -179,3 +179,10 @@ images, runtime/license inputs, assertion strength and published product
 source/image/descriptor/catalogue identities remain unchanged. The existing
 coordinate generator and Docker-backed owning gate must verify the prepared
 source; no validation result is claimed here.
+
+#349 selects accepted Core and Operations `fec0816281aeb83ede98616adcc4f96dfe5777a8`
+through the existing coordinate generator. The tuple adds authorized workspace
+product list/detail while preserving the accepted optional fresh-only schema
+admission. SDK, Secrets and Interpreters pins are unchanged. This source selection
+is not a published-image or live-adoption claim. Concurrent bootstrap integration
+must retain newer accepted pins and initialization behavior.
