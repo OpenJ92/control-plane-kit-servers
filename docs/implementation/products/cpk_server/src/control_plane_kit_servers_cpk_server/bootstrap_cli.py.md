@@ -9,3 +9,9 @@ An interrupted fourth import leaves pending progress; a returned mismatched
 reference cannot complete setup. This source change does not qualify serving
 images, establish external readiness or add credentials/runtime access to the
 website.
+
+#346 exposes fixed-input initialize-workspace and inspect-workspace-initialization
+helper subcommands, without database/schema/actor override flags. The separate
+inspect-initialization controller requires the reviewed plan/driver/digest,
+private index and existing state. Ordinary setup stays static until #347 adapts
+its public administration protocol; the full dynamic-apply guard remains.

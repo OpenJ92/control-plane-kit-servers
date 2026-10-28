@@ -21,3 +21,10 @@ evidence. The connection seam asserts exactly one production public namespace
 option plus bounded connect/statement/lock timeouts before making exactly one
 substitution for the fixture-owned namespace. Missing or drifted options fail
 before connecting; no default-schema fallback can mutate unrelated state.
+
+The source-stage witness additionally closes only its fixture-owned connection
+after DDL and before the actual owner's COMMIT. It requires failure with no
+schema acknowledgement or initialization connection, and independently observes
+no committed relations. Read-only inspection then remains unknown because the
+schema is unavailable. This transport-loss case is distinct from os.replace
+acknowledgement failures, which leave actual committed schema/binding visible.

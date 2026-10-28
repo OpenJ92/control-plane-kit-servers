@@ -76,3 +76,10 @@ construction, after valid private admission. This intentionally leaves delivery
 unreachable through apply until #346/#347 are composed. Source inspection and the
 existing numeric protected-file fixture establish component obligations; they do
 not establish full dynamic installation acceptance or execution history.
+
+#346 reserves initialization helper names during dynamic occupancy inspection and
+records absence of the exact PostgreSQL data volumes. After authenticated database
+readiness, the private controller path invokes explicit schema/binding initialization
+before any application node. The public dynamic-apply guard stays in place until
+#347 public setup composition; this hook alone is not a usable bootstrap release.
+The existing receipt remains the owner of pending and bounded helper observations.

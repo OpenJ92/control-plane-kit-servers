@@ -333,11 +333,20 @@ def _acquire(plan, material, state, *, workspace_intent=None):
             volume_names = [entry["name"] for node in resources["nodes"]
                             for entry in (*node["data_volumes"], *node["secret_files"], *node["configuration_files"],
                                           *node.get("installer_files", []))] + [setup_name + "-plan", setup_name + "-credential"]
+            helper_containers = [setup_name]
+            if workspace_intent is not None:
+                from .bootstrap_initialization_runtime import helper_names
+                initialization_name, initialization_files = helper_names(plan)
+                helper_containers.append(initialization_name)
+                volume_names.extend(initialization_files.values())
             if (client.networks.list(names=[network_name])
                     or any(client.containers.list(all=True, filters={"name": "^/" + name + "$"})
-                           for name in [n["name"] for n in resources["nodes"]] + [setup_name])
+                           for name in [n["name"] for n in resources["nodes"]] + helper_containers)
                     or any(sdk.inspect_volume(name) is not None for name in volume_names)):
                 raise RootBootstrapHold("bootstrap resource already exists; adoption is not supported")
+            if workspace_intent is not None:
+                pg = next(node for node in resources["nodes"] if node["node_id"] == plan["postgres_node_id"])
+                receipt["observations"]["fresh_postgres_volumes"] = [entry["name"] for entry in pg["data_volumes"]]
         images = {}
         file_owners = {}
         for node in resources["nodes"]:
@@ -458,6 +467,9 @@ def _acquire(plan, material, state, *, workspace_intent=None):
                     password = material[reference].encode("utf-8")
                 effect("observe-postgres-readiness", lambda: _postgres_ready(container, password=password))
                 observed()
+                if workspace_intent is not None:
+                    from .bootstrap_initialization_runtime import initialize_acquired_workspace
+                    initialize_acquired_workspace(plan, material, workspace_intent, state, receipt, client, sdk)
             for probe in node["http_checks"]:
                 check = probe["check"]
                 policy = check["policy"]

@@ -199,3 +199,28 @@ the invoking host user; receipt files written by apply are private driver-owned
 evidence, read through `bootstrap.sh inspect`. Rootless/user-remapped daemons,
 remote daemons and network filesystems that restrict root bind access are not
 established by this acceptance witness.
+
+## Explicit dynamic initialization (#346, source under validation)
+
+Dynamic apply remains unavailable until the public administration setup sequence
+is composed under #347. The initializer source uses a separate fixed-input,
+socket-free helper after fresh PostgreSQL readiness and before application
+writers. It admits the real installer credential/private intent, requires an
+empty namespace under the Operations owner's lock, commits schema, then binds
+the installation in a separate transaction. Ordinary startup never performs
+this binding or grants workspace access.
+
+For an interrupted initializer acquisition, the separate reviewed command is:
+
+```sh
+./bootstrap.sh inspect-initialization DRIVER PLAN DIGEST INDEX STATE
+```
+
+It requires the original reviewed plan and private input index. It creates one
+bounded temporary helper, performs only owner receipt reads, and preserves the
+original acquisition's pending phase. Matching receipt evidence does not resume
+apply. Missing or unavailable evidence does not make retry safe. Uncertain helper
+creation/removal retains evidence and refuses another dispatch. Confirmed cleanup
+removes only the exact temporary helper and its input copies, retaining database
+and installation policy. No live installation or image publication is implied by
+this source workflow, and historical receipts are not proof that resources exist.

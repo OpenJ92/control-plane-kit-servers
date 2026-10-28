@@ -461,3 +461,11 @@ def apply_root_bootstrap(plan, *, expected_digest: str, driver_image_id: str,
 def inspect_root_bootstrap(*, state_directory: Path) -> dict:
     from .bootstrap_runtime import inspect_root
     return inspect_root(Path(state_directory))
+
+
+def inspect_root_initialization(plan, *, expected_digest: str, driver_image_id: str,
+                                index_path: Path, state_directory: Path) -> dict:
+    with bootstrap_stage(BootstrapStage.VERIFY_PLAN):
+        plan = verified_plan(plan, expected_digest, driver_image_id)
+    from .bootstrap_initialization_runtime import inspect_initialization
+    return inspect_initialization(plan, Path(index_path), Path(state_directory))

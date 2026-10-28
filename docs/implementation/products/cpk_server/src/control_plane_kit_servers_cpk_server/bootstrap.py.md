@@ -49,3 +49,8 @@ lifetime. Exact policy identities, grants, command keys and private filenames
 remain outside the public plan. Static plans receive no added installer fields.
 The reviewed wire contract and correspondence formula are in
 [the parent implementation plan](../../../../dynamic-root-bootstrap-plan.md).
+
+#346 adds inspect_root_initialization as a distinct plan-verified entrance to the
+bounded inspection controller. Ordinary inspect and dynamic apply's existing
+pre-Docker incomplete guard remain unchanged. Inspection creates a temporary
+read helper; it is not a zero-effect provider read or authority to resume apply.

@@ -23,3 +23,10 @@ The owning test executes this actual shell with a recording Docker CLI boundary;
 real mapped CLI and actual driver imports/factories are separate owning checks.
 No new validation runner, provider deployment or production authorization is
 introduced by these commands.
+
+#346 adds `inspect-initialization DRIVER PLAN DIGEST INDEX STATE` alongside the
+existing apply/inspect commands. It uses the same explicit local driver and
+reviewed plan/private material/state mounts as apply, with existing engine
+binding, but dispatches only the bounded read-helper controller. This command
+creates temporary Docker resources while reading database truth; it never
+replays schema or initialization and does not release full dynamic apply.

@@ -12,7 +12,7 @@ import time
 
 from .bootstrap import (
     RootBootstrapError, apply_root_bootstrap, canonical, decode_document,
-    inspect_root_bootstrap, plan_root_bootstrap, verified_plan, bootstrap_failure,
+    inspect_root_bootstrap, inspect_root_initialization, plan_root_bootstrap, verified_plan, bootstrap_failure,
 )
 
 
@@ -199,6 +199,14 @@ def main():
     apply_parser.add_argument("--state", type=Path, required=True)
     inspect_parser = sub.add_parser("inspect")
     inspect_parser.add_argument("--state", type=Path, required=True)
+    initialization_parser = sub.add_parser("inspect-initialization")
+    initialization_parser.add_argument("--plan", type=Path, required=True)
+    initialization_parser.add_argument("--driver", required=True)
+    initialization_parser.add_argument("--digest", required=True)
+    initialization_parser.add_argument("--index", type=Path, required=True)
+    initialization_parser.add_argument("--state", type=Path, required=True)
+    sub.add_parser("initialize-workspace")
+    sub.add_parser("inspect-workspace-initialization")
     sub.add_parser("setup")
     args = parser.parse_args()
     try:
@@ -213,6 +221,14 @@ def main():
                                           index_path=args.index, state_directory=args.state)
         elif args.command == "inspect":
             result = inspect_root_bootstrap(state_directory=args.state)
+        elif args.command == "inspect-initialization":
+            with args.plan.open("rb") as stream:
+                plan = decode_document(stream.read(1_048_577))
+            result = inspect_root_initialization(plan, expected_digest=args.digest, driver_image_id=args.driver,
+                index_path=args.index, state_directory=args.state)
+        elif args.command in ("initialize-workspace", "inspect-workspace-initialization"):
+            from .bootstrap_initialization import run_workspace_initialization
+            result = run_workspace_initialization(inspect_only=args.command == "inspect-workspace-initialization")
         else:
             from .bootstrap_runtime import private_read
             result = public_setup(decode_document(private_read(Path("/bootstrap/plan.json"))), Path("/bootstrap/credential"))

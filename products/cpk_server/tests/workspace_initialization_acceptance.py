@@ -1,5 +1,6 @@
 """Actual initializer/owner composition on the owning gate's isolated PostgreSQL."""
 import json
+from contextlib import contextmanager
 from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
@@ -19,7 +20,7 @@ def workspace_initialization_acceptance(database_url):
     try:
         fixture, module, plan, index, root, target, intent = initialization_inputs(test)
         policy = intent.authority.administration_policy
-        for fault in (None, "schema-ack", "initialization-ack", "receipt-conflict"):
+        for fault in (None, "schema-commit", "schema-ack", "initialization-ack", "receipt-conflict"):
             with IsolatedOperationsSchema(database_url, "cpk_1912_" + uuid4().hex,
                     install_current=fault == "receipt-conflict") as schema:
                 commands = WorkspacePermissionCommandService(schema.unit_of_work,
@@ -28,7 +29,7 @@ def workspace_initialization_acceptance(database_url):
                 progress = fixture.root / ("progress-" + str(fault))
                 connections = []
 
-                def require_committed_schema():
+                def require_committed_schema(*, present=True):
                     # A bounded MVCC catalogue read cannot wait on the schema
                     # installer's advisory lock. Uncommitted relations are not
                     # visible to this separate connection.
@@ -39,7 +40,10 @@ def workspace_initialization_acceptance(database_url):
                             "SELECT count(*) FROM pg_catalog.pg_class AS c "
                             "JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace "
                             "WHERE n.nspname = %s AND c.relkind = 'r'", (schema.schema,)).fetchone()
-                    test.assertGreater(count, 0, "schema commit is not independently visible")
+                    if present:
+                        test.assertGreater(count, 0, "schema commit is not independently visible")
+                    else:
+                        test.assertEqual(count, 0, "failed commit left visible schema relations")
 
                 def connection(**options):
                     # The component fixture replaces only the actual connection
@@ -64,9 +68,31 @@ def workspace_initialization_acceptance(database_url):
                         # Independent connection sees committed schema before the
                         # initialization UoW can open. No local schema simulator.
                         require_committed_schema()
-                    return psycopg.connect(database_url, autocommit=options["autocommit"],
+                    actual = psycopg.connect(database_url, autocommit=options["autocommit"],
                         connect_timeout=options["connect_timeout"],
                         options=fixture_options)
+                    if fault != "schema-commit" or not options["autocommit"]:
+                        return actual
+
+                    class InterruptedCommitConnection:
+                        # Close this fixture-owned transport after DDL but before
+                        # the real owner's transaction context sends COMMIT.
+                        # PostgreSQL rolls the uncommitted schema back itself.
+                        def __getattr__(self, name):
+                            return getattr(actual, name)
+
+                        def __enter__(self):
+                            return self
+
+                        def __exit__(self, *args):
+                            actual.close()
+
+                        @contextmanager
+                        def transaction(self):
+                            with actual.transaction():
+                                yield
+                                actual.close()
+                    return InterruptedCommitConnection()
 
                 if fault == "receipt-conflict":
                     commands.initialize(intent.installer, idempotency_key=IdempotencyKey("other-command-key"))
@@ -93,27 +119,35 @@ def workspace_initialization_acceptance(database_url):
                             test.assertNotIn("synthetic-private-ack-error", str(caught.exception))
                             test.assertIsNone(caught.exception.__context__)
                     test.assertTrue(connections[0]["autocommit"])
-                    if fault == "schema-ack":
+                    if fault in ("schema-commit", "schema-ack"):
                         test.assertEqual(len(connections), 1)
                         test.assertFalse(read_progress(progress)["schema_acknowledged"])
-                        with test.assertRaises(WorkspacePermissionNotFound):
-                            reads.installation(intent.installer)
+                        if fault == "schema-ack":
+                            with test.assertRaises(WorkspacePermissionNotFound):
+                                reads.installation(intent.installer)
                     else:
                         receipt = reads.installation(intent.installer)
                         test.assertEqual(receipt.actor, intent.installer.identity)
                         test.assertEqual(receipt.idempotency_key, intent.initialization_key.value)
-                    # Both acknowledgement failures still left the schema commit
-                    # visible; neither is represented as a schema rollback.
-                    require_committed_schema()
+                    # Transport loss before COMMIT differs from a lost schema
+                    # acknowledgement: only the latter has committed relations.
+                    require_committed_schema(present=fault != "schema-commit")
                 previous = None if not progress.exists() else (progress / "progress.json").read_bytes()
                 inspection = fixture.root / ("inspection-" + str(fault))
                 with patch.object(module, "connect", side_effect=connection), \
                         patch.object(module, "install_schema", side_effect=AssertionError("inspection installed schema")), \
                         patch.object(WorkspacePermissionCommandService, "initialize",
                             side_effect=AssertionError("inspection initialized policy")):
-                    observed = module.run_workspace_initialization(input_directory=root,
-                        progress_directory=inspection, inspect_only=True)
+                    if fault == "schema-commit":
+                        with test.assertRaises(fixture.api.RootBootstrapError):
+                            module.run_workspace_initialization(input_directory=root,
+                                progress_directory=inspection, inspect_only=True)
+                        observed = read_progress(inspection)
+                    else:
+                        observed = module.run_workspace_initialization(input_directory=root,
+                            progress_directory=inspection, inspect_only=True)
                 test.assertEqual(observed["initialization"], "missing" if fault == "schema-ack" else
+                    "unknown" if fault == "schema-commit" else
                     "conflict" if fault == "receipt-conflict" else "matching")
                 test.assertIn("default_transaction_read_only=on", connections[-1]["options"])
                 if previous is not None:
