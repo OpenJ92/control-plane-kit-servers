@@ -106,3 +106,8 @@ Docker storage as separately scoped exposure, **without an enforced image-store
 quota**. Provenance records its hard limit as null. The3GiB acquisition filesystem
 and4GiB unpack tmpfs bound their respective phases only; they are not a total job
 budget. Source/design acceptance is not permission to execute the new workflow.
+
+The retained-mode daemon platform observation must exit successfully before its
+stdout is allowlisted. Matching platform text from a failed `docker info` call
+does not admit a pull. Raw observation errors remain in the private attempt
+directory; the public result stays preparation HOLD with no effect/cleanup credit.

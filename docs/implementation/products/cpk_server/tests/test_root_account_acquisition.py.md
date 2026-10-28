@@ -38,3 +38,9 @@ read-only diagnostic permission declarations, then exercises all four retained/
 same-job boolean combinations through source admission. Only retained=true with
 same-job=false is admitted; the other combinations cannot enter that diagnostic.
 Static workflow declarations do not constitute an executed GitHub job inventory.
+
+Independent review found a failed daemon-platform query could emit matching text
+and be admitted. A fifth retained-route method covers failed matching output,
+failed empty output, successful wrong platform and successful allowed platform.
+Only the last reaches the single deliberately failed pull double; every refused
+observation remains preparation HOLD with no pull, run, cleanup or raw error leak.

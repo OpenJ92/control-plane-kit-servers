@@ -27,6 +27,10 @@ failure = os.environ["FAILURE"]
 if name == "id":
     print("1001")
 elif name == "docker":
+    if args[0] == "info":
+        print(os.environ.get("TEST_DAEMON_PLATFORM", ""))
+        print("private-daemon-error-canary", file=sys.stderr)
+        sys.exit(int(os.environ.get("TEST_DAEMON_STATUS", "23")))
     if args[0] == "pull":
         print("private-pull-error-canary", file=sys.stderr)
         sys.exit(21)  # Acquisition uncertainty must stop; never simulate a pull.
@@ -341,3 +345,24 @@ else:
                     result = subprocess.run(["bash", "-c", 'source "$1"; admit_sources', "test", str(SCRIPT)],
                         env=env, capture_output=True, text=True, timeout=5, check=False)
                     self.assertEqual(result.returncode == 0, retained == "true" and same_job == "false")
+
+    def test_failed_platform_query_never_admits_matching_output_before_pull(self):
+        for platform, code, admitted in (("linux/x86_64", 23, False), ("", 23, False),
+                ("windows/amd64", 0, False), ("linux/amd64", 0, True)):
+            with self.subTest(platform=platform, code=code), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                env = self.commands(root, "run")
+                (root / "public").mkdir()
+                env.update(MODE="retained", REFERENCE=REFERENCE, SOURCE=SOURCE, RECORDS=str(root),
+                    CONTROLLER="", STAGE="preparation", TEST_DAEMON_PLATFORM=platform, TEST_DAEMON_STATUS=str(code))
+                result = subprocess.run(["bash", "-c", 'source "$1"; '
+                    'if admit_daemon_platform; then if acquire_controller; then exit 99; fi; fi; status hold; exit 1',
+                    "test", str(SCRIPT)], env=env, capture_output=True, text=True, timeout=5, check=False)
+                self.assertEqual(result.returncode, 1)
+                public = (root / "public" / "status.json").read_text()
+                self.assertEqual(json.loads(public)["stage"], "controller-acquisition" if admitted else "preparation")
+                self.assertNotIn("private-daemon-error-canary", public + result.stdout + result.stderr)
+                events = [json.loads(line) for line in (root / "events").read_text().splitlines()]
+                self.assertEqual([args[0] for name, args in events], ["info", "pull"] if admitted else ["info"])
+                self.assertTrue(all(name == "docker" for name, args in events))
+                self.assertFalse((root / "public" / "account-seal.json").exists())

@@ -44,6 +44,15 @@ acquire_controller() {
   timeout --signal=TERM --kill-after=15s 300s docker pull --quiet --platform linux/amd64 \
     "$POLICY" > "$RECORDS/controller-pull.log" 2>&1
 }
+admit_daemon_platform() {
+  local platform
+  platform="$(docker info --format '{{.OSType}}/{{.Architecture}}' \
+    2> "$RECORDS/controller-platform.error")" || return 1
+  case "$platform" in
+    linux/x86_64|linux/amd64) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 cleanup_acquisition() {
   local remaining mounts backing_after associated
   remaining="$(docker ps -a --filter "label=org.openj92.cpk.account-acquisition=$RUN" --format '{{.ID}}')" || return 1
@@ -226,10 +235,7 @@ done
 [ "$MODE" != retained ] || [ "$ImageOS" = ubuntu24 ] || refuse
 [ "$(skopeo --version)" = 'skopeo version 1.13.3' ] || refuse
 if [ "$MODE" = retained ]; then
-  case "$(docker info --format '{{.OSType}}/{{.Architecture}}')" in
-    linux/x86_64|linux/amd64) ;;
-    *) refuse ;;
-  esac
+  admit_daemon_platform || refuse
 fi
 SKOPEO_HASH="$(sha256sum "$(command -v skopeo)" | cut -d ' ' -f 1)"
 SKOPEO_PACKAGE="$(dpkg-query -W -f='${Version}' skopeo)"
