@@ -11,7 +11,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN python -m pip install --no-cache-dir \
-    "control-plane-kit-server-sdk[verification] @ https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/464df26c568971362eb3a08abaf9dfc227a4ddbb.zip"
+    "control-plane-kit-server-sdk[verification] @ https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/cd4722fbfb942e7c2467a39b3cd0e32ded4a90ac.zip"
 
 COPY --from=native /usr/local/bin/cloudflared /usr/local/bin/cloudflared
 COPY --from=notices /licenses/cloudflared /usr/share/licenses/cloudflared

@@ -91,3 +91,12 @@ existing coordinate generator. The recipe bytes remain at the reviewed target
 checkpoint's accepted SDK/Core selection. The managed image has not yet been
 rebuilt at this source checkpoint; the previous target run built only the main
 package test image and stopped before product/image witnesses.
+
+
+## #349 aligned Components dependency cohort
+
+Current generated dependencies and provenance expectations follow accepted
+Core/Operations fec0816, SDK cd4722f, Secrets 46e0718 and Interpreters 27457ca
+in `coordinates/server-products.json`. Predicates, extras, runtime behavior and
+historical product identities are unchanged. The canonical coordinate companion
+records the resolved packaging blocker; the owning Servers gate remains pending.

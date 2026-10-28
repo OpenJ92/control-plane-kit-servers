@@ -9,11 +9,11 @@ ENV PIP_DEFAULT_TIMEOUT=120 \
 WORKDIR /app
 
 RUN python -m pip install --no-cache-dir \
-    "control-plane-kit-server-sdk[fastapi] @ https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/464df26c568971362eb3a08abaf9dfc227a4ddbb.zip" \
+    "control-plane-kit-server-sdk[fastapi] @ https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/cd4722fbfb942e7c2467a39b3cd0e32ded4a90ac.zip" \
     "uvicorn>=0.30" \
     "control-plane-kit-core @ https://github.com/OpenJ92/control-plane-kit/archive/fec0816281aeb83ede98616adcc4f96dfe5777a8.zip#subdirectory=control-plane-kit-core" \
     "control-plane-kit-operations @ https://github.com/OpenJ92/control-plane-kit/archive/fec0816281aeb83ede98616adcc4f96dfe5777a8.zip#subdirectory=control-plane-kit-operations" \
-    "control-plane-kit-interpreters[cloudflare,docker,gateway,public-dns] @ https://github.com/OpenJ92/control-plane-kit-interpreters/archive/bd08b931ae9241878ce4f4b7072f95ccebfa3536.zip"
+    "control-plane-kit-interpreters[cloudflare,docker,gateway,public-dns] @ https://github.com/OpenJ92/control-plane-kit-interpreters/archive/27457ca5eab6ae96d78146e7ea0c998b986feab3.zip"
 
 COPY products/cpk_server/src ./products/cpk_server/src
 COPY products/cpk_local_gateway/src ./products/cpk_local_gateway/src

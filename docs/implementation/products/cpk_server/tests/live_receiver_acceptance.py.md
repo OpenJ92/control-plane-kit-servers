@@ -249,3 +249,12 @@ placed `purposes` in the payload. The existing HTTP read contract and maintained
 client put it in path parameters. The bounded correction follows that convention
 without changing production guards or assertions. Actual gateway construction
 and preparation were not reached; complete owning validation remains pending.
+
+
+## #349 aligned Components dependency cohort
+
+Current generated dependencies and provenance expectations follow accepted
+Core/Operations fec0816, SDK cd4722f, Secrets 46e0718 and Interpreters 27457ca
+in `coordinates/server-products.json`. Predicates, extras, runtime behavior and
+historical product identities are unchanged. The canonical coordinate companion
+records the resolved packaging blocker; the owning Servers gate remains pending.
