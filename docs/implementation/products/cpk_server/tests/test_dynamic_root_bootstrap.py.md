@@ -40,3 +40,12 @@ material-refused, no Docker/receipt, and a context chain containing only bounded
 bootstrap errors. Existing static authentication and PostgreSQL tests unpack the
 separate intent result, require None, and retain their original credential and
 recipient/probe-byte assertions. There are now 12 dynamic methods.
+## #347 launcher authoring targets
+
+Two additional methods exercise actual commissioning/runtime-contract authoring
+through the existing live fixture, then real public planning and private input
+admission. They require three nodes, the selected immutable references, actual
+configuration artifacts and explicit ordinary/management routes. Synthetic image
+selection is authoring evidence only. An unknown account baseline must refuse
+before commissioning creates private state. These new methods are unrun at this
+source checkpoint; the earlier CI result applies to its exact earlier source.

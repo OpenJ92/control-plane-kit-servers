@@ -46,6 +46,76 @@ CPK_IMAGE_ACCOUNT = ImageAccountBaseline(
 )
 
 
+def reviewed_image_account(reference):
+    # Extend only with a separately reviewed final-filesystem seal for the exact
+    # published candidate. A syntactically valid tuple is not an account seal.
+    for baseline in (CPK_IMAGE_ACCOUNT,):
+        if baseline.image_reference == reference:
+            return baseline
+    raise AssertionError("root bootstrap candidate has no reviewed image account baseline")
+
+
+def prepare_dynamic_document(document, selection, driver):
+    """Author fixture intent through the existing commissioning/descriptor owners."""
+    from dataclasses import replace
+    from control_plane_kit_core.configuration import ConfigurationArtifact
+    from control_plane_kit_core.products import OciImageReference, ProductDescriptorCodec
+    from control_plane_kit_servers_cpk_server.bootstrap import canonical
+    from control_plane_kit_servers_cpk_server.control_configuration import CpkSourceVariant, cpk_source_runtime_contract
+    from control_plane_kit_servers_cpk_server.root_commissioning import plan_root_commissioning, prepare_root_commissioning
+    from control_plane_kit_servers_secrets_server.configuration import secrets_source_runtime_contract
+
+    reviewed_image_account(selection["images"]["cpk-server"])
+    installation = document["installation"]
+    state = ROOT / "commissioning"
+    state.mkdir(mode=0o700)
+    intent = {"schema": "cpk.root-commissioning.intent.v1",
+        "installation_id": installation["installation_id"], "workspace_id": installation["workspace_id"],
+        "profile": "operator-offline-read-trust",
+        "custody": {"host_directory": str(state), "uid": os.geteuid(), "gid": os.getegid()}}
+    commissioning = plan_root_commissioning(intent, preparer_image_id=driver)
+    public = prepare_root_commissioning(commissioning, expected_digest=commissioning["digest"],
+        preparer_image_id=driver, state_directory=state)
+    codec = ProductDescriptorCodec()
+    for role in ("cpk", "secrets"):
+        artifact = ConfigurationArtifact.from_descriptor(public["artifacts"][role])
+        contract = (cpk_source_runtime_contract(CpkSourceVariant.DOCKER_CLOUDFLARE, artifact)
+            if role == "cpk" else secrets_source_runtime_contract(artifact))
+        registry_path, digest = selection["images"][role + "-server"].split("@")
+        registry, repository = registry_path.split("/", 1)
+        original = codec.decode_document(installation["products"][role])
+        installation["products"][role] = json.loads(codec.encode_document(replace(original.product,
+            image=OciImageReference(registry, repository, digest), runtime_contract=contract)).content)
+    installer = {"issuer": "urn:control-plane-kit:static-development",
+        "subject_id": "dynamic-root-fixture-installer", "kind": "operator"}
+    policy = canonical({"schema": "cpk-server.workspace-authority.v1",
+        "installation_id": installation["installation_id"], "administrators": [installer],
+        "known_identities": [installer], "capabilities": ["installed-management"]})
+    scopes = [scope for grant in installation["workspace_grants"] for scope in grant["scopes"]
+        if scope != "hub:instance:create"]
+    installation["workspace_grants"] = []
+    installation["control_auth"] = {"kind": "multi-principal",
+        "principals_document": "secret://bootstrap/" + installation["installation_id"] + "/principals"}
+    administration = {"workspace_creation_idempotency_key": "fixture-create",
+        "permission_grants": [{"target": installer, "scopes": scopes,
+            "expected_revision": 0, "idempotency_key": "fixture-ordinary-grant"}],
+        "management_grant": {"runtime_id": installation["installation_id"] + "-docker",
+            "authority_ref": installation["runtime_authority"], "capability_id": "installed-management",
+            "expected_revision": 0, "idempotency_key": "fixture-management-grant",
+            "registration_from": "command.runtime-authority.register"}}
+    document["setup"]["administration"] = {"permission_grant_count": 1, "management_grant": True}
+    private = {"policy": {"file": "workspace-authority.json", "sha256": hashlib.sha256(policy).hexdigest()},
+        "installer": installer, "initialization_idempotency_key": "fixture-initialize",
+        "administration": administration}
+    binding = {"policy_sha256": private["policy"]["sha256"], "installer": installer,
+        "initialization_idempotency_key": private["initialization_idempotency_key"],
+        "setup_sha256": hashlib.sha256(canonical({"public_setup": document["setup"],
+            "administration": administration})).hexdigest()}
+    installation["workspace_authority"] = {"mode": "dynamic-v1",
+        "private_intent_sha256": hashlib.sha256(canonical(binding)).hexdigest()}
+    return policy, private
+
+
 def numeric_group_check(primary_gid, supplementary_gids, expected_groups, socket_gid):
     observed = {primary_gid, *supplementary_gids}
     expected = set(expected_groups)
@@ -158,6 +228,12 @@ def retain_authority_evidence(run, container, inspection, node, receipt, engine_
 
 def prepare(run):
     os.umask(0o077)
+    from scripts.root_artifact_inputs import identity, select_root_artifacts
+    selection = select_root_artifacts(dict(os.environ))
+    driver = os.environ.get("CPK_ROOT_DRIVER_IMAGE_ID")
+    if selection is not None:
+        assert identity(driver), "dynamic root fixture requires the actual driver image ID"
+        reviewed_image_account(selection["images"]["cpk-server"])
     commissioning_driver_witness(run)
     port_text = os.environ.get("CPK_ROOT_TEST_PORT", "18089")
     if not port_text.isascii() or not port_text.isdecimal() or not 1 <= int(port_text) <= 65535:
@@ -166,10 +242,13 @@ def prepare(run):
     from control_plane_kit_core.configuration import ConfigurationArtifact, ConfigurationFileMode, ConfigurationMediaType
     # This is an inert delivery witness on historical images, not current-source
     # control configuration or qualification of a new receiving protocol.
-    for role in ("cpk", "secrets"):
-        artifact = ConfigurationArtifact("bootstrap-file-witness", "/etc/cpk/bootstrap-witness.json",
-            ConfigurationMediaType.JSON, json.dumps({"recipient": role, "run": run}), ConfigurationFileMode.READ_ONLY)
-        document["installation"]["products"][role]["product"]["runtime_contract"]["configuration_artifacts"] = [artifact.descriptor()]
+    if selection is None:
+        for role in ("cpk", "secrets"):
+            artifact = ConfigurationArtifact("bootstrap-file-witness", "/etc/cpk/bootstrap-witness.json",
+                ConfigurationMediaType.JSON, json.dumps({"recipient": role, "run": run}), ConfigurationFileMode.READ_ONLY)
+            document["installation"]["products"][role]["product"]["runtime_contract"]["configuration_artifacts"] = [artifact.descriptor()]
+    else:
+        policy, private = prepare_dynamic_document(document, selection, driver)
     input_path = ROOT / "input.json"
     input_path.write_text(json.dumps(document))
     # The real launcher must plan from the documented invoking-user private input.
@@ -185,6 +264,9 @@ def prepare(run):
             "grants": [{"action": "secret.resolve", "workspace_id": run,
                         "intents": ["postgres.password", "application.control-token"]}]}]),
     }
+    if selection is not None:
+        values["principals_document"] = json.dumps([{"credential": values["control_credential"],
+            "subject_id": private["installer"]["subject_id"], "kind": "operator", "workspace_grants": {}}])
     material = ROOT / "material"
     material.mkdir(mode=0o700)
     files = {}
@@ -192,8 +274,19 @@ def prepare(run):
         path = material / name
         path.write_text(value)
         path.chmod(0o400)
-        files[document["installation"]["references"][name]] = name
-    (material / "index.json").write_text(json.dumps({"schema": "cpk.root-bootstrap.material.v1", "files": files}))
+        reference = (document["installation"]["control_auth"]["principals_document"]
+            if name == "principals_document" else document["installation"]["references"][name])
+        files[reference] = name
+    index = {"schema": "cpk.root-bootstrap.material.v1", "files": files}
+    if selection is not None:
+        from control_plane_kit_servers_cpk_server.bootstrap import plan_root_bootstrap
+        plan = plan_root_bootstrap(document, driver_image_id=driver)
+        policy_path = material / private["policy"]["file"]
+        policy_path.write_bytes(policy)
+        policy_path.chmod(0o400)
+        index.update(schema="cpk.root-bootstrap.material.v2",
+            dynamic_workspace={**private, "plan_digest": plan["digest"]})
+    (material / "index.json").write_text(json.dumps(index))
     (material / "index.json").chmod(0o400)
     (ROOT / "state").mkdir(mode=0o700)
 

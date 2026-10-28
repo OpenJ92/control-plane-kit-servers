@@ -68,3 +68,19 @@ The fixture now records and asserts explicit absence booleans, matching the
 existing cleanup witness. Unexpected exceptions still propagate and retain
 pending evidence. Production and the integrity policy are unchanged. This
 correction is unrun until the next normal owning gate.
+## #347 dynamic authoring checkpoint
+
+The existing prepare owner now admits the optional tuple using
+`scripts.root_artifact_inputs`, refuses an image without an independently
+reviewed account baseline before commissioning, and authors the three-node
+dynamic fixture with actual commissioning and CPK/Secrets runtime-contract
+factories. It binds explicit ordinary/management grant intent and private policy
+to the public setup commitment, actual driver ID and final plan digest. Private
+material uses the existing v2 index and protected files; the static path retains
+its original fixture.
+
+This is source under review, not a qualified image pair. Only the historical
+account baseline exists. The shell's additional invocation, dynamic custody and
+restart checks and integrated guard change remain to be completed before the
+optional current-image launcher can run. No account seal is copied to a new
+digest, and no new producer or runtime evidence is implied.

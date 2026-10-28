@@ -146,8 +146,11 @@ Reuse the #347 route/input traces and independent source/component dispositions
 on its governing issue. The local changed path passed 1,138 package and 26 support
 tests plus actual initialization/public HTTP/PostgreSQL composition. A later
 unchanged literal Docker-endpoint guard stopped that local owning gate. Existing
-GitHub run40724897642 tests this exact checkpoint; this plan does not change its
-source or claim its pending result.
+GitHub run40724897642 subsequently passed at this exact checkpoint, including
+later image/receiver stages, historical root cleanup and the final residue audit.
+Meridian independently confirmed SOURCE-BUILT OWNING GATE PASS. The
+[terminal receipt](https://github.com/OpenJ92/control-plane-kit-servers/issues/347#issuecomment-6474938152)
+records its scope; current-image dynamic launcher qualification remains open.
 
 ### Selected behavior and remaining connection
 
@@ -226,8 +229,8 @@ removal cannot substitute for actual successful evidence. Until that gate passes
 
 ### Producer and gate sequencing
 
-Candidate common producer source is the reviewed `25bf669a` checkpoint, subject
-to its full owning result and North's separate publication release. Both products
+Candidate common producer source is source-gate-qualified `25bf669a`, still
+subject to North's separate publication release. Both products
 use the existing `publish-product-image.yml` / `publish_product_image.sh` path,
 which builds Linux/amd64 and records numeric user, source label, execution ID and
 actual repository digest. Concrete destinations, proposed unused tags and recipe

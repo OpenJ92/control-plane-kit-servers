@@ -82,6 +82,40 @@ class DynamicRootBootstrapTests(unittest.TestCase):
     def plan(self, document):
         return self.api.plan_root_bootstrap(document, driver_image_id=DRIVER)
 
+    def test_dynamic_launcher_authoring_uses_real_contracts_and_admissible_private_intent(self):
+        from products.cpk_server.tests import live_root_bootstrap as witness
+        document = installation_input()
+        # Authoring evidence only: historical CPK account coordinates and an
+        # inert Secrets reference do not qualify this pair for execution.
+        selection = {"images": {"cpk-server": witness.CPK_IMAGE_ACCOUNT.image_reference,
+            "secrets-server": "ghcr.io/openj92/control-plane-kit-servers/secrets-server@sha256:" + "a" * 64}}
+        with patch.object(witness, "ROOT", self.root):
+            policy, private = witness.prepare_dynamic_document(document, selection, DRIVER)
+        plan = self.plan(document)
+        path, _ = self.material(plan, policy, private)
+        runtime = importlib.import_module("control_plane_kit_servers_cpk_server.bootstrap_runtime")
+        _, admitted = runtime._material(plan, path)
+        self.assertEqual(admitted.policy_bytes, policy)
+        self.assertEqual(len(plan["resources"]["nodes"]), 3)
+        self.assertNotIn("website", document["installation"])
+        for role in ("cpk", "secrets"):
+            node = next(node for node in plan["resources"]["nodes"]
+                if node["node_id"] == document["installation"]["installation_id"] + "-" + role)
+            self.assertEqual(node["image"], selection["images"][role + "-server"])
+            self.assertTrue(node["configuration_files"])
+        self.assertEqual(plan["setup_routes"][:2], ["command.workspace-administration.create",
+            "command.workspace-permission.grant"])
+        self.assertIn("command.managed-runtime-access.grant", plan["setup_routes"])
+
+    def test_dynamic_launcher_unknown_account_baseline_refuses_before_commissioning(self):
+        from products.cpk_server.tests import live_root_bootstrap as witness
+        selection = {"images": {"cpk-server":
+            "ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:" + "b" * 64}}
+        with patch.object(witness, "ROOT", self.root):
+            with self.assertRaisesRegex(AssertionError, "no reviewed image account baseline"):
+                witness.prepare_dynamic_document(installation_input(), selection, DRIVER)
+        self.assertFalse((self.root / "commissioning").exists())
+
     def material(self, plan, policy_bytes, private, *, bearer=TOKEN, principal_subject=None):
         files = {}
         installation = plan["input"]["installation"]

@@ -136,6 +136,8 @@ class DynamicRootSetupTests(unittest.TestCase):
             self.assertIn("command.workspace-permission.grant", [value["route"] for value in saved["commands"]])
             if fault == "lost-management-reply":
                 self.assertEqual(saved["pending"], "command.managed-runtime-access.grant")
+        elif fault in ("desired-assignment", "desired-identity"):
+            self.assertEqual(calls[-1], "read.desired-graph")
 
     def test_dynamic_setup_uses_actual_administration_results_and_exact_registration_binding(self):
         self.exercise()
