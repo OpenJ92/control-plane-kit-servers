@@ -18,17 +18,27 @@ class WorkspaceInitializationTests(unittest.TestCase):
                 self.fail("supported workspace initializer is absent")
             raise
 
-    def test_private_helper_rechecks_real_administrator_before_database_access(self):
+    def test_unknown_and_authenticated_nonadmin_credentials_refuse_before_database_access(self):
         fixture, module, plan, index, root, target, intent = self.inputs()
-        fixture.private_write(root / "credential", b"synthetic-nonadministrator-canary")
-        with patch.object(module, "connect") as connection:
-            with self.assertRaises(fixture.api.RootBootstrapError) as caught:
-                module.run_workspace_initialization(input_directory=root,
-                    progress_directory=fixture.root / "progress")
-        connection.assert_not_called()
-        self.assertNotIn("synthetic-nonadministrator-canary", str(caught.exception))
-        self.assertIsNone(caught.exception.__context__)
-        self.assertFalse((fixture.root / "progress").exists())
+        principals = json.loads((root / "principals.json").read_bytes())
+        policy = json.loads((root / "workspace-authority.json").read_bytes())
+        target_identity = next(value for value in policy["known_identities"]
+            if value not in policy["administrators"])
+        principals.append({"credential": "synthetic-known-nonadmin-canary",
+            "subject_id": target_identity["subject_id"], "kind": target_identity["kind"],
+            "workspace_grants": {}})
+        fixture.private_write(root / "principals.json", fixture.api.canonical(principals))
+        for bearer in ("synthetic-unknown-credential-canary", "synthetic-known-nonadmin-canary"):
+            with self.subTest(bearer= bearer):
+                fixture.private_write(root / "credential", bearer.encode())
+                with patch.object(module, "connect") as connection:
+                    with self.assertRaises(fixture.api.RootBootstrapError) as caught:
+                        module.run_workspace_initialization(input_directory=root,
+                            progress_directory=fixture.root / "progress")
+                connection.assert_not_called()
+                self.assertNotIn(bearer, str(caught.exception))
+                self.assertIsNone(caught.exception.__context__)
+                self.assertFalse((fixture.root / "progress").exists())
 
     def test_helper_refuses_mismatched_target_package_or_private_intent_without_io(self):
         fixture, module, plan, index, root, target, intent = self.inputs()

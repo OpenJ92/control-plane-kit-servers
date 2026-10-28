@@ -12,3 +12,8 @@ The protected synthetic input fixture reuses #345's authored installation and
 actual private admission. Target and production evidence are separate: these
 new targets have not executed at their initial checkpoint. The actual database
 boundary is covered by workspace_initialization_acceptance in the owning gate.
+
+Target review distinguishes unknown credentials from a real verified known
+non-administrator. The latter is present in the actual principals document and
+policy known identities, but not its administrators. Both must refuse before
+database access/progress and return bounded context-free errors.

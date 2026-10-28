@@ -6,8 +6,6 @@ from unittest.mock import patch
 from uuid import uuid4
 
 import psycopg
-from control_plane_kit_operations.postgres import install_schema
-from control_plane_kit_operations.postgres.schema import SchemaInstallationError
 from control_plane_kit_operations.workflows import IdempotencyKey
 from control_plane_kit_operations.workspace_permissions import (
     WorkspacePermissionCommandService, WorkspacePermissionNotFound, WorkspacePermissionReadService,
@@ -30,24 +28,45 @@ def workspace_initialization_acceptance(database_url):
                 progress = fixture.root / ("progress-" + str(fault))
                 connections = []
 
+                def require_committed_schema():
+                    # A bounded MVCC catalogue read cannot wait on the schema
+                    # installer's advisory lock. Uncommitted relations are not
+                    # visible to this separate connection.
+                    with psycopg.connect(database_url, autocommit=True, connect_timeout=5,
+                            options="-cstatement_timeout=1000 -clock_timeout=1000 "
+                                "-cdefault_transaction_read_only=on") as observer:
+                        count, = observer.execute(
+                            "SELECT count(*) FROM pg_catalog.pg_class AS c "
+                            "JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace "
+                            "WHERE n.nspname = %s AND c.relkind = 'r'", (schema.schema,)).fetchone()
+                    test.assertGreater(count, 0, "schema commit is not independently visible")
+
                 def connection(**options):
                     # The component fixture replaces only the actual connection
                     # destination with its existing disposable schema boundary.
                     # Production fixed target validation still runs first.
                     test.assertEqual(options["host"], "127.0.0.1")
                     test.assertEqual(options["port"], 5432)
+                    test.assertIs(type(options["connect_timeout"]), int)
+                    test.assertTrue(0 < options["connect_timeout"] <= 10)
+                    tokens = options["options"].split()
+                    test.assertEqual(tokens.count("-csearch_path=public"), 1)
+                    for setting in ("statement_timeout", "lock_timeout"):
+                        matches = [token for token in tokens if token.startswith("-c" + setting + "=")]
+                        test.assertEqual(len(matches), 1)
+                        test.assertTrue(0 < int(matches[0].split("=", 1)[1]) <= 15000)
+                    fixture_options = options["options"].replace("-csearch_path=public",
+                        "-csearch_path=" + schema.schema, 1)
                     connections.append(options)
                     if (not options["autocommit"] and fault != "receipt-conflict"
                             and "default_transaction_read_only=on" not in options["options"]):
                         test.assertTrue(read_progress(progress)["schema_acknowledged"])
                         # Independent connection sees committed schema before the
                         # initialization UoW can open. No local schema simulator.
-                        with schema.connect() as observer:
-                            with test.assertRaises(SchemaInstallationError):
-                                install_schema(observer, require_empty=True)
+                        require_committed_schema()
                     return psycopg.connect(database_url, autocommit=options["autocommit"],
                         connect_timeout=options["connect_timeout"],
-                        options=options["options"].replace("search_path=public", "search_path=" + schema.schema))
+                        options=fixture_options)
 
                 if fault == "receipt-conflict":
                     commands.initialize(intent.installer, idempotency_key=IdempotencyKey("other-command-key"))
@@ -85,9 +104,7 @@ def workspace_initialization_acceptance(database_url):
                         test.assertEqual(receipt.idempotency_key, intent.initialization_key.value)
                     # Both acknowledgement failures still left the schema commit
                     # visible; neither is represented as a schema rollback.
-                    with schema.connect() as observer:
-                        with test.assertRaises(SchemaInstallationError):
-                            install_schema(observer, require_empty=True)
+                    require_committed_schema()
                 previous = None if not progress.exists() else (progress / "progress.json").read_bytes()
                 inspection = fixture.root / ("inspection-" + str(fault))
                 with patch.object(module, "connect", side_effect=connection), \
