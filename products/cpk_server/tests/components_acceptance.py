@@ -25,7 +25,7 @@ def components_acceptance(client, app, administrator_credential, operator_creden
                 path = path.replace('{descriptor_sha256}', quote(digest, safe=''))
             if route.method.value == 'GET':
                 query = {key: json.dumps(value) if isinstance(value, dict) else value for key, value in payload.items()}
-                response = client.get(path + ('?' + urlencode(query) if query else ''), headers=headers)
+                response = client.get(path + ('?' + urlencode(query, quote_via=quote) if query else ''), headers=headers)
             else:
                 response = client.post(path, json=payload, headers=headers)
         else:

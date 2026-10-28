@@ -20,3 +20,9 @@ invalid credentials. Existing schema cleanup owns the disposable records. No
 provider, image fetch, deployment, or Library authority is introduced. This is
 application adapter composition evidence only once the owning gate executes it;
 the standalone recording-service host test proves mapping, not durable semantics.
+
+Query arguments use `urlencode(..., quote_via=quote)`, matching the maintained
+client and existing workspace-authority fixture. Default form-plus encoding of
+JSON whitespace was invalid under the strict percent-decoded query contract;
+the aligned host-test failure exposed the same defect here before this witness
+was reached. Paging, rejection assertions and production decoding are unchanged.

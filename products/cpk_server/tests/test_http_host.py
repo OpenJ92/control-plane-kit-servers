@@ -7,6 +7,7 @@ import re
 import sys
 import unittest
 from unittest.mock import patch
+from urllib.parse import quote, urlencode
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -66,7 +67,8 @@ class CpkHttpHostTests(unittest.TestCase):
                     refused = client.get(path, headers={'Authorization': 'Bearer rejected'})
                     self.assertEqual(refused.status_code, 401)
                     payload = {'limit': '1', 'after': json.dumps(cursor)} if route_id == 'read.products' else {}
-                    response = client.get(path, params=payload, headers={'Authorization': 'Bearer valid-token'})
+                    location = path + ('?' + urlencode(payload, quote_via=quote) if payload else '')
+                    response = client.get(location, headers={'Authorization': 'Bearer valid-token'})
                     self.assertEqual(response.status_code, 200)
                     self.assertEqual(response.json()['route_id'], route_id)
                     if route_id == 'read.products':
