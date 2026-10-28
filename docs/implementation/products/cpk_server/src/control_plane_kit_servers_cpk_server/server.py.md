@@ -108,3 +108,25 @@ entrances remain available for existing callers; the hosted routes use the
 awaited path. The optional managed-health composition now joins that path through
 the explicit #294 startup value; root-launcher delivery and live acceptance
 remain separate from this source-process wiring.
+
+Dynamic workspace composition explicitly registers the actual Docker executor,
+separate original-request observer, managed-health bridge and Cloudflare wrapper
+with the accepted Operations invocation profiles. Ordinary verification support
+is explicit on the executor; metadata-backed exact-version execution remains
+separate and no exact-version observation support is inferred. Runtime-disabled
+composition does not qualify its unsupported observer. Static mode retains its
+existing registrations and constructor call shapes.
+
+Actual dynamic Docker and Cloudflare interpreters require invocation ports before
+effects. Cloudflare create/teardown preserve the original bound port across pure
+nominal translations; the Interpreter owns admission, control propagation and
+partial-result semantics. Missing ports cannot select a legacy dynamic path.
+The authenticated startup guard still validates workspace authority before these
+private composition helpers; a non-null malformed authority is never interpreted
+as static mode. No policy lookup, owner state machine or credential is added here.
+The existing process-port mock explicitly declares static workspace authority.
+
+The three focused dynamic-composition targets exposed missing registrations and
+wrapper keywords in corrected target run40637645793. Green validation remains
+pending. Full public lifecycle/partial-result denial evidence remains mandatory
+under G/#342 per decision341comment6461257447; component success is not that proof.

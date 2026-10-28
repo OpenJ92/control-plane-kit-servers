@@ -860,17 +860,25 @@ def _operations_application(
 
 def _operations_effect_ports(config, provider):
     _validate_managed_health_process(config)
+    dynamic = getattr(config, "workspace_authority", None) is not None
     runtimes = None
     if config.runtime_dispatcher.enabled:
         if config.runtime_dispatcher.runtime_kinds != (RuntimeKind.DOCKER,):
             raise BootstrapConfigurationError("runtime effects require exactly one Docker provider")
         interpreter = _docker_runtime_interpreter(config, provider)
-        if provider.metadata_reader is not None:
+        if dynamic or provider.metadata_reader is not None:
             from control_plane_kit_operations.runtime_adapter_registration import RuntimeAdapterRegistration
             interpreter = RuntimeAdapterRegistration(interpreter,
-                exact_version_execute=True, exact_version_execute_with_authority=True)
+                exact_version_execute=provider.metadata_reader is not None,
+                exact_version_execute_with_authority=provider.metadata_reader is not None,
+                invocation_profile="cpk.semantic-invocations.v1" if dynamic else None,
+                ordinary_verification_invocations=dynamic)
         runtimes = {RuntimeKind.DOCKER: interpreter}
     ingress = (_ingress_interpreters(config, provider) if config.ingress_interpreters.enabled else None)
+    if dynamic and ingress is not None:
+        from control_plane_kit_operations.ingress_realization import IngressProviderRegistration
+        ingress = {kind: IngressProviderRegistration(adapter, "cpk.ingress-invocations.v1")
+            for kind, adapter in ingress.items()}
     health = None
     decoders = HealthReceiverDecoders(())
     bootstrap = config.managed_health
@@ -890,8 +898,17 @@ def _operations_effect_ports(config, provider):
             raise BootstrapConfigurationError("managed health composition is invalid")
         health = bootstrap.build(provider.authorized_resolver)
         decoders = health.decoders
+        if dynamic:
+            from control_plane_kit_operations.coordinator import ManagedHealthAdapterRegistration
+            health = ManagedHealthAdapterRegistration(health, "cpk.semantic-invocations.v1")
+    observer = _runtime_observer(config, secret_provider=provider)
+    if dynamic and config.runtime_dispatcher.enabled:
+        from control_plane_kit_operations.runtime_adapter_registration import RuntimeAdapterRegistration
+        observer = RuntimeAdapterRegistration(observer,
+            invocation_profile="cpk.semantic-invocations.v1",
+            original_runtime_observation_invocations=True)
     return OperationsEffectPorts(runtimes, ingress, health, decoders,
-        _runtime_observer(config, secret_provider=provider), _UnsupportedExecutionAdapter(),
+        observer, _UnsupportedExecutionAdapter(),
         secret_metadata_reader=provider.metadata_reader,
         delegation_key_generator=provider.delegation_key_generator,
         secret_custodian=provider.secret_custodian)
@@ -1231,11 +1248,14 @@ def _docker_runtime_observer(
             "control-plane-kit-interpreters[docker]"
         ) from error
     provider = secret_provider or _secret_provider_composition(config)
+    invocation_options = ({"require_invocations": True}
+        if getattr(config, "workspace_authority", None) is not None else {})
     process = getattr(config, "managed_health_process", None)
     if process is not None:
         return DockerRuntimeEffectObserver(
             local_client_config=process.local_client_config,
             authorized_secret_resolver=provider.authorized_resolver,
+            **invocation_options,
         )
     return DockerRuntimeEffectObserver(
         DockerSdkClient.from_authority(
@@ -1243,6 +1263,7 @@ def _docker_runtime_observer(
             connect_on_init=False,
         ),
         authorized_secret_resolver=provider.authorized_resolver,
+        **invocation_options,
     )
 
 
@@ -1263,11 +1284,14 @@ def _docker_runtime_interpreter(
             "control-plane-kit-interpreters[docker]"
         ) from error
     provider = secret_provider or _secret_provider_composition(config)
+    invocation_options = ({"require_invocations": True}
+        if getattr(config, "workspace_authority", None) is not None else {})
     process = getattr(config, "managed_health_process", None)
     if process is not None:
         return DockerRuntimeInterpreter(
             local_client_config=process.local_client_config,
             authorized_secret_resolver=provider.authorized_resolver,
+            **invocation_options,
         )
     return DockerRuntimeInterpreter(
         DockerSdkClient.from_authority(
@@ -1275,6 +1299,7 @@ def _docker_runtime_interpreter(
             connect_on_init=False,
         ),
         authorized_secret_resolver=provider.authorized_resolver,
+        **invocation_options,
     )
 
 
@@ -1327,6 +1352,7 @@ def _cloudflare_ingress_interpreter(
             self._inner = CloudflareNamedIngressInterpreter(
                 authorized_secret_resolver=provider.authorized_resolver,
                 secret_custodian=provider.secret_custodian,
+                require_invocations=getattr(config, "workspace_authority", None) is not None,
             )
 
         def create(
@@ -1338,6 +1364,7 @@ def _cloudflare_ingress_interpreter(
             origin_service_url: str,
             secret_resolution_grant,
             secret_custody_grant,
+            invocations=None,
         ):
             return self._inner.create(
                 ingress,
@@ -1346,6 +1373,7 @@ def _cloudflare_ingress_interpreter(
                 origin_service_url=origin_service_url,
                 secret_resolution_grant=secret_resolution_grant,
                 secret_custody_grant=secret_custody_grant,
+                **({"invocations": invocations} if invocations is not None else {}),
             )
 
         def teardown(
@@ -1355,12 +1383,14 @@ def _cloudflare_ingress_interpreter(
             resources: CloudflareOwnedIngressResource,
             secret_resolution_grant,
             secret_custody_grant,
+            invocations=None,
         ) -> None:
             return self._inner.teardown(
                 authority=self._authority(authority),
                 resources=self._resources(resources),
                 secret_resolution_grant=secret_resolution_grant,
                 secret_custody_grant=secret_custody_grant,
+                **({"invocations": invocations} if invocations is not None else {}),
             )
 
         @staticmethod
