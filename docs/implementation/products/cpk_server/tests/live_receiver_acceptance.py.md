@@ -256,3 +256,6 @@ covers committed schema, separate initialization, lost acknowledgements and
 read-only exact receipt classification. Its connection destination is the
 existing disposable schema; it does not claim Docker acquisition or full
 public dynamic bootstrap, which remain separately attributable.
+
+#347 invokes workspace_setup_acceptance beside the existing initialization and
+workspace-authority components, using the same owning PostgreSQL fixture.

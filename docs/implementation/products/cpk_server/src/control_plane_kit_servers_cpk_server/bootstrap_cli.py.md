@@ -15,3 +15,13 @@ helper subcommands, without database/schema/actor override flags. The separate
 inspect-initialization controller requires the reviewed plan/driver/digest,
 private index and existing state. Ordinary setup stays static until #347 adapts
 its public administration protocol; the full dynamic-apply guard remains.
+
+#347 adds a dynamic path: re-admit the fixed private intent and actual bearer before
+transport construction, progress creation or readiness. Administration and grant
+commands carry reviewed explicit keys and actual owner payloads; reads use the
+existing public query encoder. Management is sent only after exact registration
+response/readback. The receipt provides current-graph attribution; final workspace
+read supplies desired graph, and both graph reads must agree. Static setup keeps
+its legacy route and direct-call error behavior. Dynamic failures drop private
+exception context. Returned safe coordinates are persisted before later validation;
+an acknowledged response is not a verified readback or completion.

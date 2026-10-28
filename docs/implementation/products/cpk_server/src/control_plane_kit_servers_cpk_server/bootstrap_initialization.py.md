@@ -38,3 +38,8 @@ it and writing schema acknowledgement. Unverified completion leaves schema pendi
 and does not enter initialization. The existing real-connection loss target and
 independent catalogue assertion are unchanged; no new SQL, owner API, retry or
 claim of independent durable verification is introduced. Correction is unrun.
+
+#347 reuses the shared fixed private input projection/admission. Database target,
+password, installed schema correlation and initialization transaction behavior
+remain specific to this helper. Accepted #346 evidence is recorded on its issue;
+new shared-source changes require their own owning gate.

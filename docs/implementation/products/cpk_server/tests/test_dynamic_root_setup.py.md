@@ -12,3 +12,9 @@ earlier missing entrance from being mislabeled a deeper fault proof.
 These targets do not prove real owner authorization or a current-image launcher.
 The existing PostgreSQL/public-process composition and qualified current-image
 dynamic root remain required. Target checkpoint is unrun until the owning gate.
+
+The pre-I/O refusal target also binds a valid known non-administrator identity to
+its actual credential and private commitment; authentication alone is insufficient.
+Produced partial/complete checkpoints round-trip through the controller's existing
+bounded archive decoder. The archive transport is synthetic, not Docker custody
+proof; the existing numeric/file and final current-image gates own that evidence.

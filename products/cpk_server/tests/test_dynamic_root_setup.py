@@ -1,8 +1,11 @@
 """Public setup wire composition and bounded partial acknowledgement targets."""
 import copy
 import importlib
+import io
 import json
 from pathlib import Path
+import tarfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -97,6 +100,21 @@ class DynamicRootSetupTests(unittest.TestCase):
         self.assertTrue(calls, "dynamic setup never reached its public administration entrance")
         self.assertEqual(calls[0], "command.workspace-administration.create")
         saved = json.loads((progress / "progress.json").read_bytes())
+        runtime = importlib.import_module("control_plane_kit_servers_cpk_server.bootstrap_runtime")
+        raw = (progress / "progress.json").read_bytes()
+        archive = io.BytesIO()
+        with tarfile.open(fileobj=archive, mode="w") as stream:
+            entry = tarfile.TarInfo("progress.json")
+            entry.uid, entry.mode, entry.size = 10001, 0o600, len(raw)
+            stream.addfile(entry, io.BytesIO(raw))
+        helper = SimpleNamespace(id="setup-helper", attrs={"Image": plan["driver_image_id"]}, labels={},
+            get_archive=lambda path: ([archive.getvalue()], {}))
+        client = SimpleNamespace(info=lambda: {"ID": "synthetic-engine"},
+            containers=SimpleNamespace(get=lambda identity: helper))
+        inspected = runtime._setup_progress(client, {"engine_id": "synthetic-engine", "setup_helper_id": helper.id,
+            "driver_image_id": plan["driver_image_id"], "labels": {}, "setup_uid": 10001,
+            "plan_digest": plan["digest"], "setup_workspace_id": workspace, "setup_routes": plan["setup_routes"]})
+        self.assertEqual(inspected, saved)
         self.assertEqual(saved["status"], "complete" if fault is None else "in-progress")
         serialized = json.dumps(saved)
         for secret in ("installer-private", "private-create-key", "private-setup-grant-key", "private-management-key",
@@ -129,14 +147,26 @@ class DynamicRootSetupTests(unittest.TestCase):
                 self.exercise(fault)
 
     def test_private_commitment_or_credential_refusal_precedes_http_and_progress(self):
-        for fault in ("intent", "credential"):
+        for fault in ("intent", "credential", "known-nonadmin"):
             with self.subTest(fault=fault):
                 fixture, plan, root, private, _, _ = setup_inputs(self)
                 if fault == "intent":
                     private["administration"]["workspace_creation_idempotency_key"] = "changed-private-key"
                     fixture.private_write(root / "workspace-intent.json", fixture.api.canonical(private))
-                else:
+                elif fault == "credential":
                     fixture.private_write(root / "credential", b"unknown-private-credential")
+                else:
+                    policy = json.loads((root / "workspace-authority.json").read_bytes())
+                    private["installer"] = policy["known_identities"][1]
+                    document = copy.deepcopy(plan["input"])
+                    fixture.bind_intent(document, (root / "workspace-authority.json").read_bytes(), private)
+                    plan = fixture.plan(document)
+                    private["plan_digest"] = plan["digest"]
+                    fixture.private_write(root / "plan.json", fixture.api.canonical(plan))
+                    fixture.private_write(root / "workspace-intent.json", fixture.api.canonical(private))
+                    principals = json.loads((root / "principals.json").read_bytes())
+                    principals[0]["subject_id"] = private["installer"]["subject_id"]
+                    fixture.private_write(root / "principals.json", fixture.api.canonical(principals))
                 cli = importlib.import_module("control_plane_kit_servers_cpk_server.bootstrap_cli")
                 progress = fixture.root / "setup-progress"
                 with patch.object(cli, "Path", side_effect=lambda path: progress if path == "/tmp/cpk-bootstrap-progress" else Path(path)), \

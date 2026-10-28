@@ -5,3 +5,7 @@ fixture and real admitted private intent. Acquisition IDs are explicitly synthet
 component inputs, not live ownership evidence. No production credentials enter
 these fixtures. Actual package correlation is loaded from the installed owner;
 only the existing real-PostgreSQL witness replaces its connection destination.
+
+The synthetic controller target projection is shared with the public-enrollment
+component so both use the installed Operations/schema correlation and the same
+existing isolated PostgreSQL ownership boundary.

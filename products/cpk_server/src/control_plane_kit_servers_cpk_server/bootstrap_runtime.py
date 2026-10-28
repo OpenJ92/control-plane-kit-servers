@@ -166,7 +166,14 @@ def _setup_progress(client, receipt):
                 continue
             if key == "reference":
                 ProductReferenceCodec().decode(value)
-            elif (key not in {"workspace_id", "current_graph_id", "desired_graph_id", "registration_id", "delivery_id", "authority_id"}
+            elif key == "revision":
+                if type(value) is not int or value < 0:
+                    raise RootBootstrapHold("bootstrap progress revision is invalid")
+            elif key == "status":
+                if value not in ("active", "revoked"):
+                    raise RootBootstrapHold("bootstrap progress state is invalid")
+            elif (key not in {"workspace_id", "current_graph_id", "desired_graph_id", "registration_id", "delivery_id", "authority_id",
+                    "receipt_id", "assignment_id", "observed_current_graph_id"}
                     or not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", value)):
                 raise RootBootstrapHold("bootstrap progress contains unsupported coordinates")
     pending = progress["pending"]
@@ -330,9 +337,16 @@ def _acquire(plan, material, state, *, workspace_intent=None):
             resources = plan["resources"]
             network_name = resources["network"]["name"]
             setup_name = network_name + "-setup"
+            installation = plan["input"]["installation"]
+            setup_inputs = {"plan.json": canonical(plan),
+                "credential": material[installation["references"]["control_credential"]].encode("utf-8")}
+            if workspace_intent is not None:
+                from .bootstrap_workspace import workspace_helper_input_bytes
+                setup_inputs = workspace_helper_input_bytes(plan, workspace_intent, material)
+            setup_volumes = {name: setup_name + "-" + name.removesuffix(".json") for name in setup_inputs}
             volume_names = [entry["name"] for node in resources["nodes"]
                             for entry in (*node["data_volumes"], *node["secret_files"], *node["configuration_files"],
-                                          *node.get("installer_files", []))] + [setup_name + "-plan", setup_name + "-credential"]
+                                          *node.get("installer_files", []))] + list(setup_volumes.values())
             helper_containers = [setup_name]
             if workspace_intent is not None:
                 from .bootstrap_initialization_runtime import helper_names
@@ -488,16 +502,16 @@ def _acquire(plan, material, state, *, workspace_intent=None):
                 else:
                     raise RootBootstrapHold("bootstrap declared HTTP readiness was not observed")
         setup_uid = file_owners[plan["cpk_node_id"]]
-        file_volume(setup_name + "-plan", SecretValue(canonical(plan).decode()), setup_uid)
-        file_volume(setup_name + "-credential", SecretValue(material[plan["input"]["installation"]["references"]["control_credential"]]), setup_uid)
+        for name, raw in setup_inputs.items():
+            file_volume(setup_volumes[name], SecretValue(raw.decode("utf-8")), setup_uid)
         cpk_id = receipt["resources"]["containers"][plan["cpk_node_id"]]["id"]
         receipt.update(setup_uid=setup_uid, setup_workspace_id=plan["input"]["installation"]["workspace_id"],
                        setup_routes=plan["setup_routes"])
         helper = effect("create-public-setup-helper", lambda: client.containers.create(
             plan["driver_image_id"], name=setup_name, user=str(setup_uid), labels=receipt["labels"], network_mode="container:" + cpk_id,
             command=["python", "-m", "control_plane_kit_servers_cpk_server.bootstrap_cli", "setup"],
-            mounts=[dict(DockerSdkSecretMount("/bootstrap/" + target, setup_name + "-" + suffix).docker_mount())
-                    for target, suffix in (("plan.json", "plan"), ("credential", "credential"))],
+            mounts=[dict(DockerSdkSecretMount("/bootstrap/" + target, volume).docker_mount())
+                    for target, volume in setup_volumes.items()],
             cap_drop=["ALL"], security_opt=["no-new-privileges:true"],
             log_config=docker.types.LogConfig(type="json-file", config={"max-size": "1m", "max-file": "1"})))
         receipt["setup_helper_id"] = helper.id
@@ -523,7 +537,7 @@ def _acquire(plan, material, state, *, workspace_intent=None):
         effect("remove-completed-setup-helper", helper.remove)
         receipt["setup_helper_removed"] = True
         observed()
-        for name in (setup_name + "-plan", setup_name + "-credential"):
+        for name in setup_volumes.values():
             identity = receipt["resources"]["volumes"][name]["id"]
             staging = client.volumes.get(identity)
             if staging.id != identity or staging.attrs.get("Labels") != receipt["labels"]:

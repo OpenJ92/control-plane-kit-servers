@@ -83,3 +83,11 @@ readiness, the private controller path invokes explicit schema/binding initializ
 before any application node. The public dynamic-apply guard stays in place until
 #347 public setup composition; this hook alone is not a usable bootstrap release.
 The existing receipt remains the owner of pending and bounded helper observations.
+
+#347 stages the minimized public-helper files from the admitted snapshot. Their
+exact names join conflict detection, numeric-owned protected delivery, read-only
+mounts and exact completed-helper cleanup. No acquisition target or database
+password is delivered to public setup. The progress reader admits bounded receipt,
+assignment and observed-graph identifiers, nonnegative exact-integer revisions
+and closed active/revoked states; private identities, keys and policy remain absent.
+The full dynamic-apply guard remains pending integrated source acceptance.

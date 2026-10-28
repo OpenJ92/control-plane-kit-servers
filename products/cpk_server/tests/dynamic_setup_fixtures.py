@@ -15,7 +15,7 @@ from control_plane_kit_operations.managed_runtime_assignments import (
 from test_dynamic_root_bootstrap import DynamicRootBootstrapTests, TOKEN
 
 
-def setup_inputs(test, *, management=True, grants=True):
+def setup_inputs(test, *, management=True, grants=True, management_revision=0):
     fixture = DynamicRootBootstrapTests()
     fixture.setUp()
     test.addCleanup(fixture.doCleanups)
@@ -28,13 +28,15 @@ def setup_inputs(test, *, management=True, grants=True):
             "runtime-authority:register", "runtime-authority:read",
             "runtime-authority-delivery:register", "runtime-authority-delivery:read",
             "secret-provider:register", "secret-provider:read"],
-        "expected_revision": 0, "idempotency_key": "private-setup-grant-key"}] if grants else [])
+        "expected_revision": 0, "idempotency_key": "private-setup-grant-key"}])
+    if not grants:
+        private["administration"]["permission_grants"][0]["scopes"] = ["instance:workspace:read"]
     private["administration"]["management_grant"] = ({
         "runtime_id": installation["installation_id"] + "-docker",
         "authority_ref": installation["runtime_authority"], "capability_id": "installed-management",
-        "expected_revision": 0, "idempotency_key": "private-management-key",
+        "expected_revision": management_revision, "idempotency_key": "private-management-key",
         "registration_from": "command.runtime-authority.register"} if management else None)
-    document["setup"]["administration"] = {"permission_grant_count": int(grants), "management_grant": management}
+    document["setup"]["administration"] = {"permission_grant_count": 1, "management_grant": management}
     fixture.bind_intent(document, policy, private)
     plan = fixture.plan(document)
     index, _ = fixture.material(plan, policy, private)

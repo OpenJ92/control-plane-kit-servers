@@ -21,7 +21,7 @@ from control_plane_kit_operations.workspace_permissions import (
 
 from .bootstrap import RootBootstrapError, RootBootstrapHold, canonical, decode_document, verified_plan
 from .bootstrap_runtime import private_read
-from .bootstrap_workspace import admit_workspace_intent
+from .bootstrap_workspace import load_workspace_helper_intent, workspace_helper_input_bytes
 
 
 PROGRESS_VOLUME_PATH = "/cpk-initialization"
@@ -71,36 +71,16 @@ def database_target(plan):
 def helper_input_bytes(plan, intent, material, target):
     """Project the admitted immutable intent into only this helper's private files."""
     installation = plan["input"]["installation"]
-    private = {"plan_digest": plan["digest"],
-        "policy": {"file": "workspace-authority.json", "sha256": hashlib.sha256(intent.policy_bytes).hexdigest()},
-        "installer": intent.installer.identity.descriptor(),
-        "initialization_idempotency_key": intent.initialization_key.value,
-        "administration": decode_document(intent.administration_bytes)}
-    result = {"plan.json": canonical(plan), "workspace-intent.json": canonical(private),
-        "workspace-authority.json": intent.policy_bytes,
-        "credential": material[installation["references"]["control_credential"]].encode("utf-8"),
+    return {**workspace_helper_input_bytes(plan, intent, material),
         "database-password": material[installation["references"]["postgres_password"]].encode("utf-8"),
         "acquisition.json": canonical(target)}
-    auth = installation.get("control_auth", {"kind": "single-operator"})
-    if auth["kind"] == "multi-principal":
-        result["principals.json"] = material[auth["principals_document"]].encode("utf-8")
-    return result
 
 
 def _load_inputs(root):
     plan = decode_document(private_read(root / "plan.json"))
     plan = verified_plan(plan, plan["digest"], plan["driver_image_id"])
     installation = plan["input"]["installation"]
-    if "workspace_authority" not in installation:
-        raise ValueError("dynamic installation required")
-    private = decode_document(private_read(root / "workspace-intent.json"))
-    policy = private_read(root / "workspace-authority.json")
-    credentials = {installation["references"]["control_credential"]:
-        private_read(root / "credential").decode("utf-8")}
-    auth = installation.get("control_auth", {"kind": "single-operator"})
-    if auth["kind"] == "multi-principal":
-        credentials[auth["principals_document"]] = private_read(root / "principals.json").decode("utf-8")
-    intent = admit_workspace_intent(plan, private, policy, credentials)
+    intent = load_workspace_helper_intent(plan, root)
     target = decode_document(private_read(root / "acquisition.json"))
     if set(target) != {"schema", "plan_digest", "driver_image_id", "installation_id", "engine_id",
             "postgres_container_id", "postgres_image_id", "labels", "data_volumes", "database", "username",

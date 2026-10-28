@@ -12,7 +12,7 @@ from control_plane_kit_operations.workspace_permissions import (
 )
 from control_plane_kit_operations.managed_runtime_assignments import _reference
 
-from .bootstrap import _closed, canonical
+from .bootstrap import _closed, canonical, decode_document
 from .operations_application import WorkspaceAuthorityConfiguration
 from .workspace_authority_configuration import decode_workspace_authority_configuration
 
@@ -26,6 +26,40 @@ class AdmittedWorkspaceIntent:
     installer: WorkspaceAdministrationContext = field(repr=False)
     initialization_key: IdempotencyKey = field(repr=False)
     administration_bytes: bytes = field(repr=False)
+
+
+def workspace_helper_input_bytes(plan, intent, material):
+    """Fixed private inputs shared by initialization and public enrollment."""
+    installation = plan["input"]["installation"]
+    private = {"plan_digest": plan["digest"],
+        "policy": {"file": "workspace-authority.json", "sha256": hashlib.sha256(intent.policy_bytes).hexdigest()},
+        "installer": intent.installer.identity.descriptor(),
+        "initialization_idempotency_key": intent.initialization_key.value,
+        "administration": decode_document(intent.administration_bytes)}
+    result = {"plan.json": canonical(plan), "workspace-intent.json": canonical(private),
+        "workspace-authority.json": intent.policy_bytes,
+        "credential": material[installation["references"]["control_credential"]].encode("utf-8")}
+    auth = installation.get("control_auth", {"kind": "single-operator"})
+    if auth["kind"] == "multi-principal":
+        result["principals.json"] = material[auth["principals_document"]].encode("utf-8")
+    return result
+
+
+def load_workspace_helper_intent(plan, root):
+    """Read only fixed protected files and authenticate before helper effects."""
+    from .bootstrap_runtime import private_read
+
+    installation = plan["input"]["installation"]
+    if "workspace_authority" not in installation:
+        raise ValueError("dynamic installation required")
+    private = decode_document(private_read(root / "workspace-intent.json"))
+    policy = private_read(root / "workspace-authority.json")
+    credentials = {installation["references"]["control_credential"]:
+        private_read(root / "credential").decode("utf-8")}
+    auth = installation.get("control_auth", {"kind": "single-operator"})
+    if auth["kind"] == "multi-principal":
+        credentials[auth["principals_document"]] = private_read(root / "principals.json").decode("utf-8")
+    return admit_workspace_intent(plan, private, policy, credentials)
 
 
 def workspace_intent_commitment(*, policy_bytes, installer, initialization_idempotency_key,

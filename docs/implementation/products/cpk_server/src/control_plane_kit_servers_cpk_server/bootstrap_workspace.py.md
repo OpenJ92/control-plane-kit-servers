@@ -24,3 +24,9 @@ ValueError. A narrow adapter translates that specific exception outside its
 handler at all four private key sites. The private material boundary then emits
 material-refused without retaining the owner exception; arbitrary RuntimeError
 is not swallowed.
+
+#347 shares the pure fixed-input projection between initialization and enrollment.
+The public helper receives only plan, credential, private intent, policy and
+optional principals. The distinct loader performs bounded protected-file reads
+and delegates to the same pure admission function; no database or provider I/O
+occurs here. Initialization adds its own target/password separately.

@@ -268,6 +268,8 @@ async def failed_update(database_url, fault):
 async def run(database_url):
     from workspace_initialization_acceptance import workspace_initialization_acceptance
     await asyncio.to_thread(workspace_initialization_acceptance, database_url)
+    from workspace_setup_acceptance import workspace_setup_acceptance
+    await asyncio.to_thread(workspace_setup_acceptance, database_url)
     from workspace_authority_acceptance import workspace_authority_acceptance
     await asyncio.to_thread(workspace_authority_acceptance, database_url)
     from protected_input_preparation import protected_input_preparation
