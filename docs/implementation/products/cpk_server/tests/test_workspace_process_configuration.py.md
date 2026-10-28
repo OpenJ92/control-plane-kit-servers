@@ -6,6 +6,12 @@ They enter through the real from_environment/bootstrap composition, retaining
 the Operations policy and selection owners. Files and identities are synthetic.
 
 The new workspace policy file must be closed, bounded, regular and redacted.
+Policy limits use unique identity/capability values so duplicate rejection cannot
+stand in for collection bounds. Catalogue mismatch includes overlapping subset
+and superset cases. Actual single/multi credential parsing and _credential_verifier
+must accept explicitly empty legacy grants only with valid dynamic policy, retain
+the existing fixed full identity, refuse wrong credentials, and preserve static,
+missing-grants and invalid/missing-policy refusals. This adds no credential lifecycle.
 Managed-health v2 is raw immutable installer input with no selector/UoW placeholder;
 the production factory binds the exact real UoW only after its installation receipt
 guard. Focused composition substitutes schema/database receipt/provider effects,

@@ -69,6 +69,53 @@ class WorkspaceProcessConfigurationTests(unittest.TestCase):
         ambient.assert_not_called()
         connect.assert_not_called()
 
+    def test_real_single_and_multi_verifiers_accept_empty_grants_only_with_valid_dynamic_policy(self):
+        from control_plane_kit_servers_cpk_server.authentication import CredentialAuthenticationError
+        issuer = "urn:control-plane-kit:static-development"
+        for multiple in (False, True):
+            with self.subTest(multiple=multiple):
+                identity = PrincipalIdentity(issuer,
+                    "installer-a" if multiple else "local-development-operator", PrincipalKind.OPERATOR)
+                policy = {**self.policy_document, "administrators": [identity.descriptor()],
+                    "known_identities": [identity.descriptor()]}
+                self.write(self.policy_path, policy)
+                environment = {**self.environment(), "CPK_CONTROL_AUTH_VERIFIER": "static-development"}
+                principal_document = {"credential": "synthetic-process-token", "subject_id": identity.subject_id,
+                    "kind": identity.kind.value, "workspace_grants": {}}
+                if multiple:
+                    environment["CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON"] = json.dumps([principal_document])
+                else:
+                    environment.update(CPK_CONTROL_AUTH_STATIC_CREDENTIAL="synthetic-process-token",
+                        CPK_CONTROL_AUTH_STATIC_WORKSPACE_GRANTS_JSON="{}")
+                config = self.server.CpkServerBootstrapConfiguration.from_environment(environment)
+                self.assertIsNotNone(config.workspace_authority)
+                verifier = self.server._credential_verifier(config)
+                principal = verifier.authenticate(b"synthetic-process-token")
+                self.assertEqual(principal.identity, identity)
+                self.assertEqual(principal.workspace_grants, ())
+                self.assertEqual(config.workspace_authority.administration_policy.administrators, (identity,))
+                self.assertIsNone(self.server._configured_principal_authorizer(config))
+                with self.assertRaises(CredentialAuthenticationError):
+                    verifier.authenticate(b"incorrect-process-token")
+                static = {name: value for name, value in environment.items()
+                    if not name.startswith("CPK_WORKSPACE_AUTHORITY")}
+                with self.assertRaises(self.server.BootstrapConfigurationError):
+                    self.server.CpkServerBootstrapConfiguration.from_environment(static)
+                absent = dict(environment)
+                if multiple:
+                    absent["CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON"] = json.dumps([
+                        {name: value for name, value in principal_document.items() if name != "workspace_grants"}])
+                else:
+                    absent.pop("CPK_CONTROL_AUTH_STATIC_WORKSPACE_GRANTS_JSON")
+                with self.assertRaises(self.server.BootstrapConfigurationError):
+                    self.server.CpkServerBootstrapConfiguration.from_environment(absent)
+                self.write(self.policy_path, {**policy, "schema": "invalid"})
+                with self.assertRaises(self.server.BootstrapConfigurationError):
+                    self.server.CpkServerBootstrapConfiguration.from_environment(environment)
+                self.policy_path.unlink()
+                with self.assertRaises(self.server.BootstrapConfigurationError):
+                    self.server.CpkServerBootstrapConfiguration.from_environment(environment)
+
     def test_workspace_mode_and_policy_input_are_closed_bounded_and_redacted(self):
         environment = self.environment()
         alternatives = ({**environment, "CPK_WORKSPACE_AUTHORITY": "other"},
@@ -79,13 +126,21 @@ class WorkspaceProcessConfigurationTests(unittest.TestCase):
             with self.subTest(mode=value.get("CPK_WORKSPACE_AUTHORITY")):
                 with self.assertRaises(self.server.BootstrapConfigurationError):
                     self.server.CpkServerBootstrapConfiguration.from_environment(value)
+        identities = [self.administrator.descriptor(), *(replace(self.administrator,
+            subject_id="identity-" + str(index)).descriptor() for index in range(1024))]
         documents = (
+            {**self.policy_document, "schema": "unknown"},
             {**self.policy_document, "workspace_grants": "private-input"},
+            {**self.policy_document, "installation_id": float("nan")},
             {**self.policy_document, "administrators": []},
             {**self.policy_document, "known_identities": []},
             {**self.policy_document, "known_identities": self.policy_document["known_identities"] * 2},
+            {**self.policy_document, "known_identities": identities},
+            {**self.policy_document, "administrators": identities, "known_identities": identities},
             {**self.policy_document, "administrators": [replace(self.administrator, subject_id="unknown").descriptor()]},
+            {**self.policy_document, "administrators": [{**self.administrator.descriptor(), "extra": True}]},
             {**self.policy_document, "capabilities": ["installed-management-a"] * 2},
+            {**self.policy_document, "capabilities": ["capability-" + str(index) for index in range(65)]},
         )
         raws = [json.dumps(value) for value in documents]
         raws.extend((" " * (1_048_576 + 1),
@@ -180,10 +235,13 @@ class WorkspaceProcessConfigurationTests(unittest.TestCase):
             if not name.startswith("CPK_WORKSPACE_AUTHORITY")}
         with self.assertRaises(self.server.BootstrapConfigurationError):
             self.server.CpkServerBootstrapConfiguration.from_environment(without_workspace_policy)
-        wrong_policy = {**self.policy_document, "capabilities": ["installed-management-b"]}
-        self.write(self.policy_path, wrong_policy)
-        with self.assertRaises(self.server.BootstrapConfigurationError):
-            self.configuration(health=True)
+        a, b = "installed-management-a", "installed-management-b"
+        for installed, workspace in (((a,), (b,)), ((a,), (a, b)), ((a, b), (a,))):
+            self.write(self.health_path, {**self.health_document, "capability_ids": installed})
+            self.write(self.policy_path, {**self.policy_document, "capabilities": workspace})
+            with self.subTest(installed=installed, workspace=workspace):
+                with self.assertRaises(self.server.BootstrapConfigurationError):
+                    self.configuration(health=True)
         self.write(self.policy_path, self.policy_document)
         raw = json.dumps(self.health_document).encode()
         artifact = ConfigurationArtifact(self.health_api.MANAGED_HEALTH_ARTIFACT_ID,
