@@ -27,6 +27,7 @@ from control_plane_kit_core.verification import HttpCheck
 
 from .installation import (
     ControlAuthCodec,
+    DynamicWorkspaceAuthority, WORKSPACE_AUTHORITY_PATH, WORKSPACE_AUTHORITY_SCHEMA,
     DockerCpkInstallation, ExternalInstallationIngress, compose_docker_cpk_installation,
 )
 
@@ -68,6 +69,7 @@ class BootstrapReason(Enum):
     PLAN_REFUSED = "plan-refused"
     DRIVER_REFUSED = "driver-refused"
     MATERIAL_REFUSED = "material-refused"
+    DYNAMIC_BOOTSTRAP_INCOMPLETE = "dynamic-bootstrap-incomplete"
     PRIOR_ACQUISITION = "prior-acquisition"
     STATE_REFUSED = "state-refused"
     DAEMON_CONTEXT_MISMATCH = "daemon-context-mismatch"
@@ -85,6 +87,7 @@ _FIXED_REASONS = {
     "bootstrap driver image identity is invalid": BootstrapReason.DRIVER_REFUSED,
     "bootstrap driver image does not match the plan": BootstrapReason.DRIVER_REFUSED,
     "bootstrap material could not be verified": BootstrapReason.MATERIAL_REFUSED,
+    "dynamic bootstrap initialization and setup are unavailable": BootstrapReason.DYNAMIC_BOOTSTRAP_INCOMPLETE,
     "bootstrap receipt exists; inspect without redispatch": BootstrapReason.PRIOR_ACQUISITION,
     "bootstrap prior acquisition requires investigation": BootstrapReason.PRIOR_ACQUISITION,
     "bootstrap acquisition is already locked": BootstrapReason.PRIOR_ACQUISITION,
@@ -209,7 +212,14 @@ def _installation(document):
     item = document["installation"]
     _closed(item, {"installation_id", "workspace_id", "runtime_authority", "runtime_access",
         "products", "references", "workspace_grants", "provider_endpoint_ref", "external_endpoint"},
-        {"control_auth", "managed_health_configuration", "website"})
+        {"control_auth", "managed_health_configuration", "website", "workspace_authority"})
+    workspace_authority = None
+    if "workspace_authority" in item:
+        authority = item["workspace_authority"]
+        _closed(authority, {"mode", "private_intent_sha256"})
+        if authority["mode"] != "dynamic-v1" or item["workspace_grants"] != []:
+            raise RootBootstrapError("bootstrap dynamic workspace input is invalid")
+        workspace_authority = DynamicWorkspaceAuthority(authority["private_intent_sha256"])
     _closed(item["products"], {"cpk", "postgres", "secrets"})
     _closed(item["references"], {"control_credential", "postgres_password", "custody_root_key",
         "provider_credentials_document", "provider_client_credential", "provider_bootstrap_credential_ref"})
@@ -233,6 +243,7 @@ def _installation(document):
         runtime_access=RuntimeAuthorityAccessDeliveryCodec().decode(item["runtime_access"]),
         cpk_product=products["cpk"], postgres_product=products["postgres"], secrets_product=products["secrets"],
         workspace_grants=tuple(grants),
+        workspace_authority=workspace_authority,
         control_auth=ControlAuthCodec().decode(item.get("control_auth", {"kind": "single-operator"})),
         managed_health_configuration=(ConfigurationArtifact.from_descriptor(item["managed_health_configuration"])
             if "managed_health_configuration" in item else None),
@@ -304,7 +315,16 @@ def plan_root_bootstrap(document: Mapping[str, object], *, driver_image_id: str)
                     or not 1024 <= website_binding["port"] <= 65535 or website_binding["port"] == binding["port"]):
                 raise RootBootstrapError("bootstrap website binding must be distinct explicit loopback")
         setup = document["setup"]
-        _closed(setup, {"workspace_name", "provider", "secret_references", "image_pull_authorities", "ingress_authorities"})
+        dynamic = installation.workspace_authority is not None
+        _closed(setup, {"workspace_name", "provider", "secret_references", "image_pull_authorities", "ingress_authorities"}
+                | ({"administration"} if dynamic else set()))
+        if dynamic:
+            summary = setup["administration"]
+            _closed(summary, {"permission_grant_count", "management_grant"})
+            if (type(summary["permission_grant_count"]) is not int
+                    or not 1 <= summary["permission_grant_count"] <= 32
+                    or type(summary["management_grant"]) is not bool):
+                raise RootBootstrapError("bootstrap administration summary is invalid")
         _text(setup["workspace_name"])
         provider = setup["provider"]
         _closed(provider, {"provider_id", "allowed_reference_prefixes", "allowed_intents"})
@@ -378,6 +398,10 @@ def plan_root_bootstrap(document: Mapping[str, object], *, driver_image_id: str)
                                         if node.runtime_authority_deliveries else None),
                 "data_volumes": [{"name": f"{name}-{mount.resource_id}", "target": mount.target_path}
                                  for mount in product.runtime_contract.retained_data_mounts]})
+            if dynamic and node_id == installation.cpk_node_id:
+                nodes[-1]["installer_files"] = [{"role": "workspace-authority",
+                    "schema": WORKSPACE_AUTHORITY_SCHEMA, "target": WORKSPACE_AUTHORITY_PATH,
+                    "name": f"{name}-workspace-authority", "lifetime": "installation"}]
         plan = {"schema": "cpk.root-bootstrap.plan.v1", "input": document,
             "driver_image_id": driver_image_id, "graph": GraphDescriptorCodec().encode(graph),
             "resources": {"network": {"name": topology.root.network_name}, "labels": labels, "nodes": nodes},
@@ -398,6 +422,12 @@ def plan_root_bootstrap(document: Mapping[str, object], *, driver_image_id: str)
                 {"node_id": installation.website_node_id, "provider_socket": "http", "container_port": 8080, **website_binding}]
             website_document = ProductDescriptorCodec().encode_document(products[installation.website_node_id])
             plan["setup_products"] = [*document["installation"]["products"].values(), json.loads(website_document.content)]
+        if dynamic:
+            plan["setup_routes"][:1] = ["command.workspace-administration.create",
+                *(["command.workspace-permission.grant"] * summary["permission_grant_count"])]
+            if summary["management_grant"]:
+                position = plan["setup_routes"].index("command.runtime-authority.register") + 1
+                plan["setup_routes"].insert(position, "command.managed-runtime-access.grant")
         plan["digest"] = hashlib.sha256(canonical(plan)).hexdigest()
         return plan
     except RootBootstrapError:

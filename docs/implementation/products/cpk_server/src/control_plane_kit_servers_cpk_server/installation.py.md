@@ -54,3 +54,18 @@ receiver artifact, retained data, two providers and protected password file.
 The installation variant changes the password reference and adds authenticated
 `PostgresQueryCheck` for cpk/cpk. It never converts that file into an environment
 delivery. Imports of PostgreSQL authoring code are lazy on this selected path.
+
+# Dynamic installer input (#345)
+
+`DynamicWorkspaceAuthority` is an installation-local SHA256 commitment to the
+reviewed private intent. It is not a secret reference or generic file delivery.
+Explicit dynamic input requires empty legacy grants, reserves the fixed policy
+path and environment names, and emits dynamic-v1. Policy stays outside Core
+configuration artifacts. Only this installer entrance can select health v2;
+static and standalone artifact helpers retain their v1 behavior. Enabled health
+must use the matching mode and the existing Core artifact bounds.
+
+The root plan declares the separate private file obligation. An ordinary composed
+graph does not deliver it; dynamic root apply remains incomplete until the
+initialization and enrollment children are composed. No usable installation or
+published-image adoption is claimed by this authoring slice.

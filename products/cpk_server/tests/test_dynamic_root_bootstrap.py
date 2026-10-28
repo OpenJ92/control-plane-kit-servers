@@ -1,5 +1,6 @@
 """Root public planning and pre-acquisition admission of private installer intent."""
 import copy
+from dataclasses import replace
 import hashlib
 import importlib
 import json
@@ -9,6 +10,8 @@ import unittest
 from unittest.mock import patch
 
 from control_plane_kit_core.configuration import ConfigurationArtifact, ConfigurationMediaType
+from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
+from control_plane_kit_core.products import ProductDescriptorCodec
 from managed_native_material import NativeMaterial
 from test_root_bootstrap import DRIVER, installation_input
 
@@ -259,3 +262,77 @@ class DynamicRootBootstrapTests(unittest.TestCase):
         files.assert_not_called()
         self.assertEqual(self.api.bootstrap_failure(caught.exception)["reason"], "prior-acquisition")
         self.assertEqual(receipt.read_bytes(), before)
+
+    def test_dynamic_reserved_environment_and_policy_path_cannot_be_supplied_by_product(self):
+        codec = ProductDescriptorCodec()
+        for conflict in ("environment", "file", "parent-file"):
+            with self.subTest(conflict=conflict):
+                document, _, _ = self.inputs()
+                selected = codec.decode_document(document["installation"]["products"]["cpk"])
+                contract = selected.product.runtime_contract
+                if conflict == "environment":
+                    contract = replace(contract, public_environment=(*contract.public_environment,
+                        PublicStaticEnvironmentBinding("CPK_WORKSPACE_AUTHORITY", "disabled")))
+                else:
+                    artifact = ConfigurationArtifact("unrelated", POLICY_PATH if conflict == "file" else
+                        "/etc/cpk/cpk-server", ConfigurationMediaType.JSON, "{}")
+                    contract = replace(contract, configuration_artifacts=(*contract.configuration_artifacts, artifact))
+                document["installation"]["products"]["cpk"] = json.loads(codec.encode_document(
+                    replace(selected.product, runtime_contract=contract)).content)
+                with self.assertRaises(self.api.RootBootstrapError):
+                    self.plan(document)
+
+    def test_valid_health_and_management_intent_is_admitted_without_registration_effect(self):
+        document, policy_bytes, private = self.inputs(health=True)
+        document["setup"]["administration"]["management_grant"] = True
+        private["administration"]["management_grant"] = {
+            "runtime_id": document["installation"]["installation_id"] + "-docker",
+            "authority_ref": document["installation"]["runtime_authority"],
+            "capability_id": "installed-management", "expected_revision": 0,
+            "idempotency_key": "private-management-key", "registration_from": "command.runtime-authority.register"}
+        self.bind_intent(document, policy_bytes, private)
+        plan = self.plan(document)
+        routes = plan["setup_routes"]
+        self.assertEqual(routes[routes.index("command.runtime-authority.register") + 1],
+            "command.managed-runtime-access.grant")
+        path, _ = self.material(plan, policy_bytes, private)
+        self.refused_before_docker(plan, path, "dynamic-bootstrap-incomplete")
+        private["administration"]["management_grant"]["registration_id"] = "fabricated-registration"
+        self.bind_intent(document, policy_bytes, private)
+        plan = self.plan(document)
+        path, _ = self.material(plan, policy_bytes, private)
+        self.refused_before_docker(plan, path, "material-refused")
+
+    def test_policy_read_retains_admitted_bytes_and_hides_private_context(self):
+        document, policy_bytes, private = self.inputs()
+        plan = self.plan(document)
+        path, _ = self.material(plan, policy_bytes, private)
+        runtime = importlib.import_module("control_plane_kit_servers_cpk_server.bootstrap_runtime")
+        with patch("docker.DockerClient") as client:
+            credentials, admitted = runtime._material(plan, path)
+        client.assert_not_called()
+        self.private_write(self.root / private["policy"]["file"], b"changed after admission")
+        self.assertEqual(admitted.policy_bytes, policy_bytes)
+        self.assertEqual(set(credentials), set(plan["required_material"]))
+        for value in ("grant-target-private", "private-initialize-key", "private-grant-key"):
+            self.assertNotIn(value, repr(admitted))
+        self.refused_before_docker(plan, path, "material-refused")
+
+    def test_private_schema_unknown_fields_and_unsafe_or_public_policy_file_are_refused(self):
+        document, policy_bytes, private = self.inputs()
+        plan = self.plan(document)
+        path, original = self.material(plan, policy_bytes, private)
+        changes = []
+        for field, value in (("schema", "cpk.root-bootstrap.material.v1"), ("extra", True)):
+            candidate = copy.deepcopy(original)
+            candidate[field] = value
+            changes.append(candidate)
+        candidate = copy.deepcopy(original)
+        candidate["dynamic_workspace"]["policy"]["file"] = "../outside-policy"
+        changes.append(candidate)
+        for candidate in changes:
+            self.private_write(path, self.api.canonical(candidate))
+            self.refused_before_docker(plan, path, "material-refused")
+        self.private_write(path, self.api.canonical(original))
+        (self.root / private["policy"]["file"]).chmod(0o644)
+        self.refused_before_docker(plan, path, "material-refused")

@@ -107,3 +107,27 @@ Focused targets cover: unchanged static plans; closed dynamic shape and exact pr
 3. The previous local Docker prerequisite stop remains unresolved (required `/var/run/docker.sock` versus the host Docker Desktop socket). North explicitly retains the hold: no repair, retry, host Python or alternate runner. Use established Linux `tests.yml`/`./test.sh` for executable validation. Ordered child source/test review remains required, but do not require a ceremonial full red and green run per child. Use causal red where needed, distinguish intended missing behavior from apparatus/fixture defects, and use actual automatically triggered owning evidence. Final parent acceptance requires an unchanged complete green gate; failed checks cannot be accepted. New architecture/data boundaries still stop for review.
 
 Next boundary: the reviewed docs/target checkpoint and shared draft PR before production implementation within the released #345 ceiling. The initial public-entrypoint targets name `dynamic-bootstrap-incomplete` as the bounded diagnostic reason for valid admitted input whose later initialization/setup path is unavailable; invalid private admission retains `material-refused`, and prior acquisition retains `prior-acquisition`. Later source review must also verify admitted-byte staging, numeric ownership and exact mounts. This plan is source-only and not authority to run initialization, acquire live resources or deploy.
+
+### Authoring example for the #345 source boundary
+
+Start with an existing valid static root input and reviewed public setup. Keep
+its selected products, credential references and host binding. Change
+`installation.workspace_grants` to `[]`, add the two-field
+`setup.administration` summary, and prepare the exact protected policy and
+administration objects shown above. The pure
+`bootstrap_workspace.workspace_intent_commitment` helper accepts `policy_bytes`,
+`installer`, `initialization_idempotency_key`, `public_setup`, and `administration`;
+put its result in `installation.workspace_authority.private_intent_sha256` with
+`mode: dynamic-v1`. It performs no file reads or authority decision.
+
+Call the existing pure `plan_root_bootstrap` with the reviewed driver image.
+Only after that plan is reviewed, bind its `digest` in the private v2 material
+index. Use safe sibling names and owner-only file permissions for all private
+material, including the policy. Single-operator mode must name the existing
+fixed verifier identity; multi-principal mode uses the existing private principal
+document and explicit separate setup bearer. Synthetic examples are shapes,
+never default identities, credentials or granted access.
+
+At the #345 intermediate boundary, applying this valid input returns
+`dynamic-bootstrap-incomplete` before Docker. That is expected: this example
+qualifies authoring and private admission, not a usable root deployment.

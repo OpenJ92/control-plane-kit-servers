@@ -13,11 +13,11 @@ values are synthetic. Private test files use the same bounded private-file input
 contract; fixture rewrites explicitly restore owner write permission before
 changing bytes. No real credential is used.
 
-No executable result is claimed at this checkpoint. The selected production
-planner does not yet admit the new installation field, so positive planning is
-expected to stop before deeper private-admission assertions. Report actual
-reached failures from the owning Docker suite, without describing unreached
-assertions as causal red. The valid-input incomplete-path refusal distinguishes
+The target-only CI checkpoint reached the expected missing installation field,
+with eight errors across seven methods and no reported existing CPK failure.
+See [the bounded receipt](https://github.com/OpenJ92/control-plane-kit-servers/issues/345#issuecomment-6464294700).
+Deeper assertions were not independently red. The source implementation and
+four added methods await executable validation. The valid-input incomplete-path refusal distinguishes
 admitted private input from malformed input, and neither may contact Docker.
 The changed target in the drift loop is also unknown to policy; scope/key drift
 provides the clearer isolated commitment check without that additional refusal.
@@ -26,3 +26,10 @@ These targets do not establish actual numeric staging, retained mount readback,
 admitted-byte reuse or full fresh bootstrap. Those remain implementation/component
 review and the parent integrated gate, using existing staging and process owners.
 The complete dynamic apply path stays unavailable until #346/#347 are composed.
+
+Implementation adds four methods for reserved product environment/path collisions,
+valid health plus management intent without a fabricated registration, immutable
+private byte admission, and closed/private file input refusal. These are source
+changes awaiting the owning Docker suite; the earlier seven-method red run only
+reached the missing public field entrance. Numeric staging and retained restart
+belong to the existing live numeric component fixture, not these unit assertions.

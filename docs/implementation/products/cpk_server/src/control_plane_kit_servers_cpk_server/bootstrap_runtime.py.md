@@ -55,3 +55,24 @@ in addition to existing empty/NUL/invalid-encoding refusal. The product's generi
 file reader strips LF while CPK environment delivery preserves it; rejecting this
 ambiguous bootstrap input keeps PostgreSQL, CPK and probe bytes identical without
 rewriting the shared secret map. Native-root material behavior is unchanged.
+
+# Protected dynamic admission and delivery (#345)
+
+The dynamic-only v2 material index adds a protected policy sibling and private
+administration intent. Static input still requires v1. Private admission returns
+credentials separately from a repr-hidden snapshot, verifies the plan/commitment,
+whole policy catalogue and actual setup bearer through the process verifier,
+and uses Operations administration/grant validators. Rejected private parser
+context is discarded. A prior acquisition receipt still wins before file reads.
+
+`installer_files` joins occupancy checks, image numeric-UID selection, protected
+0400 staging and the complete recipient read-only mount comparison. Staging
+consumes the admitted byte snapshot, never reopens the private policy filename.
+Only safe UID/mode/verified observations are recorded. The installation policy
+volume is not one of the disposable setup plan/credential volumes.
+
+Public dynamic apply still returns `dynamic-bootstrap-incomplete` before Docker
+construction, after valid private admission. This intentionally leaves delivery
+unreachable through apply until #346/#347 are composed. Source inspection and the
+existing numeric protected-file fixture establish component obligations; they do
+not establish full dynamic installation acceptance or execution history.

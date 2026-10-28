@@ -174,6 +174,7 @@ def managed_health_configuration_artifact(raw: bytes) -> ConfigurationArtifact:
 
 def _managed_health_configuration_from_artifact(
     artifact: ConfigurationArtifact,
+    *, dynamic_workspace: bool = False,
 ) -> ManagedHealthProcessConfiguration:
     """Revalidate caller-owned metadata and content before installation use."""
     try:
@@ -187,8 +188,8 @@ def _managed_health_configuration_from_artifact(
         # syntax. A distinct source_digest is metadata, not authenticated origin.
         checked = ConfigurationArtifact.from_descriptor(artifact.descriptor())
         process = decode_managed_health_process_configuration(checked.content.encode("utf-8"))
-        # The existing installation author emits v1 and has no workspace-policy delivery.
-        if process.provider_clients is None:
+        # Only the explicit installer entrance supplies the private policy file.
+        if (process.provider_clients is None) != dynamic_workspace:
             raise ValueError
         return process
     except _INPUT_ERRORS:
