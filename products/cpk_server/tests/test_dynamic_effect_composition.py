@@ -130,7 +130,7 @@ class DynamicEffectCompositionTests(unittest.TestCase):
         api_reference = SecretReference("secret://fixture/cloudflare/api")
         prefix = SecretReference("secret://fixture/generated")
         authority = CloudflareZoneIngressAuthority("account-a", "zone-a", "example.invalid",
-            api_reference, "*.example.invalid", "provider-a", prefix)
+            api_reference, "gateway.example.invalid", "provider-a", prefix)
         ingress = NamedPublicIngress("ingress-a", IngressAuthorityReference("zone-a"),
             PublicIngressTarget("gateway", "control"), "connector", "gateway.example.invalid")
         resources = SimpleNamespace(tunnel_id="tunnel-a", dns_record_id="dns-a",
