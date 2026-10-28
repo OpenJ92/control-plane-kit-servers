@@ -669,21 +669,21 @@ def dynamic_restart_witness(engine, cpk, plan, receipt):
     assert helper["cleanup"] == "complete" and helper["helper_removed"]
     assert receipt["setup_helper_removed"]
     for identity in (helper["helper_id"], receipt["setup_helper_id"]):
+        absent = False
         try:
             engine.containers.get(identity)
         except docker.errors.NotFound:
-            pass
-        else:
-            raise AssertionError("completed dynamic helper remains")
+            absent = True
+        assert absent, "completed dynamic helper remains"
     for value in (*helper["temporary_volumes"].values(),
                   *receipt["observations"]["removed_setup_volumes"].values()):
         assert value["removed"]
+        absent = False
         try:
             engine.volumes.get(value["id"])
         except docker.errors.NotFound:
-            pass
-        else:
-            raise AssertionError("completed dynamic helper input remains")
+            absent = True
+        assert absent, "completed dynamic helper input remains"
     node = next(value for value in plan["resources"]["nodes"] if value["node_id"] == plan["cpk_node_id"])
     policy, = node["installer_files"]
     expected = {"workspace": plan["input"]["installation"]["workspace_id"],
