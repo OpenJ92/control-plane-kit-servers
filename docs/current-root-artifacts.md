@@ -89,9 +89,10 @@ Source at `ac144857` adds the dynamic launcher described below and removes the
 intermediate apply guard. Its complete default source gate passed in
 [run 40738175098](https://github.com/OpenJ92/control-plane-kit-servers/actions/runs/40738175098),
 including the seven synthetic account-projection laws. That run did not select
-a current image pair or execute the offline unpacker. Only the historical account
-baseline exists, so a new pair refuses before dynamic acquisition until its seal
-is reviewed. The subsequent reconciliation with accepted #349 merge `fc4cd5b`
+a current image pair or execute the offline unpacker. At that checkpoint only the
+historical account baseline existed, so a new pair refused before dynamic
+acquisition until its seal was reviewed. The subsequent reconciliation with
+accepted #349 merge `fc4cd5b`
 changes the dependency cohort and needs independent combined source validation.
 
 The candidate extension reuses `test.sh` and `live_root_bootstrap.py` for one
@@ -143,3 +144,19 @@ current-pair gate. The original historical row remains separate. Acquisition
 tool provenance, enforced acquisition storage/time limits, the exact offline
 controller and owned failure cleanup remain explicit execution-packet
 prerequisites; source CI does not supply them.
+
+## Accepted current CPK account evidence
+
+The later combined source and diagnostic corrections passed their owning gates;
+exact95989d2 passed run40776581151. Retained CPK manifest337c8cf, produced at94ecb34,
+then passed the separately approved actual diagnostic run40789512741. North
+accepted [independent bounded account evidence](https://github.com/OpenJ92/control-plane-kit-servers/issues/347#issuecomment-6483769887),
+with cleanup credit limited to that attempt and both earlier HOLD histories intact.
+
+The test selector adds only that exact current-image account row while retaining
+the historical row and unknown-reference refusal. It uses original configd300c4fb,
+not normalized config51a42b83, with the independently observed account values.
+The row is not live adoption or current-pair qualification. Secrets publication
+at the common94 producer and the separately released optional pair/launcher gate
+remain pending. The row's source edit will be validated through that unchanged
+full owning gate after independent source review and exact tuple admission.

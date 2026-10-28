@@ -79,9 +79,15 @@ to the public setup commitment, actual driver ID and final plan digest. Private
 material uses the existing v2 index and protected files; the static path retains
 its original fixture.
 
-This is source under review, not a qualified image pair. Only the historical
-account baseline exists. No account seal is copied to a new digest, and no new
-producer or runtime evidence is implied.
+The selector now retains the historical account baseline and adds one exact
+current CPK row from independently accepted #347 run40789512741. Its original
+registry config digest is d300c4fb, distinct from the normalized OCI config51a42b83.
+UID10001, primary GID10001, supplementary[100] and the passwd/group hashes come
+from the actual final-filesystem evidence, not the historical row or a running
+process. See [independent acceptance](https://github.com/OpenJ92/control-plane-kit-servers/issues/347#issuecomment-6483769887).
+Every other image reference still refuses before commissioning. This test-only
+row enables later qualification; it does not qualify the image pair, adopt a
+live baseline or release any effects. The current-pair gate remains unrun.
 
 The next integrated candidate uses the existing commitment owner and adds actual
 prepare-writer admission evidence. Its root check includes installer-file mounts,

@@ -46,10 +46,22 @@ CPK_IMAGE_ACCOUNT = ImageAccountBaseline(
 )
 
 
+# Accepted final-filesystem evidence from #347 run40789512741, independently
+# reviewed at issuecomment-6483769887. config_digest is the original registry
+# config identity, not the separately recorded normalized OCI config identity.
+CPK_DYNAMIC_IMAGE_ACCOUNT = ImageAccountBaseline(
+    image_reference="ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:337c8cf44d1ccf624663c866f8084655ead7e8f5c62c121424c9d15f7650e370",
+    config_digest="sha256:d300c4fbbe1849383d6b9c40ad8832d882f9865110d9d8e24d3556ca83070fab",
+    passwd_sha256="2b154879fd6e9899bbe9f9c04eb2535f3388ad5a090f90a78c0dca81a13b9921",
+    group_sha256="1ffcc10cbb13f710c78598bdccecd91b43251fef7e443ca860dfe84c656c0653",
+    uid=10001, primary_gid=10001, supplementary_gids=(100,),
+)
+
+
 def reviewed_image_account(reference):
     # Extend only with a separately reviewed final-filesystem seal for the exact
     # published candidate. A syntactically valid tuple is not an account seal.
-    for baseline in (CPK_IMAGE_ACCOUNT,):
+    for baseline in (CPK_IMAGE_ACCOUNT, CPK_DYNAMIC_IMAGE_ACCOUNT):
         if baseline.image_reference == reference:
             return baseline
     raise AssertionError("root bootstrap candidate has no reviewed image account baseline")
