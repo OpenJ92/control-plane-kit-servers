@@ -22,12 +22,14 @@ permissions:
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.inspect_cpk_accounts && 'ubuntu-24.04' || 'ubuntu-latest' }}
     timeout-minutes: ${{ inputs.inspect_cpk_accounts && 30 || 360 }}
     env:
       CPK_SERVERS_POLICY_IMAGE: ${{ inputs.inspect_cpk_accounts && 'docker.io/library/python@sha256:cd89c30eda26ee911a4611b18680086e0ea42e6f5f8cbe653d07fa7958c9cec8' || 'python:3.14-slim' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: ${{ !inputs.inspect_cpk_accounts }}
       - name: Admit optional account inspection selection
         env:
           PRODUCT_ID: ${{ inputs.product_id }}

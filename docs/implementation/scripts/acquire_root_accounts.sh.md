@@ -32,7 +32,9 @@ reuse the existing strict projection owner to select one exact Linux/amd64 manif
 and admit closed config/layer descriptors and the 2 GiB compressed sum BEFORE blob
 copy. Each uses an exact name/cidfile, 256 MiB memory, one CPU, 32 PIDs, 16 MiB tmpfs
 and a 30-second timeout, then verifies container absence. They mount only source
-and input metadata. No credentials or tool directory is mounted. Skopeo copies
+and input metadata. No credentials or tool directory is mounted.
+Only the exact reviewed projection script is bound as source; the checkout and
+its .git directory are never mounted. Skopeo copies
 that exact selected digest to one OCI layout with retries disabled; the existing
 offline owner then rechecks all actual config/layer bytes and normalization.
 
@@ -45,6 +47,10 @@ quota on the whole publication job or aggregate resident memory.
 A candidate seal is promoted to the public directory only after actual inspection,
 exact container absence, matching acquisition mount/device/backing, normal unmount,
 exact loop detach and backing-file removal. No force/lazy unmount or broad prune.
+Docker, mount and loop queries must succeed before their output is interpreted.
+After unmount, a successful complete explicit-field mount inventory must show
+the exact target absent; findmnt exit 1 is not absence evidence. A failed empty
+query stops before candidate promotion or backing-file removal.
 The public outcome always distinguishes known publication success from inspection
 HOLD/candidate. Only allowlisted status/provenance and a successful candidate are
 uploaded; raw errors, auth, manifests/layers and account files are excluded. An

@@ -42,11 +42,11 @@ timeout --foreground --signal=TERM --kill-after=15s 300s \
     --memory 5g --pids-limit 64 --cpus 2 \
     --tmpfs "/inspection:rw,noexec,nosuid,nodev,size=4g,uid=$ACCOUNT_UID,gid=$ACCOUNT_GID,mode=0700" \
     --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777 \
-    --mount "type=bind,source=$ACCOUNT_ROOT,target=/source,readonly" \
+    --mount "type=bind,source=$ACCOUNT_ROOT/scripts/root_account_projection.py,target=/source/root_account_projection.py,readonly" \
     --mount "type=bind,source=$ACCOUNT_INPUT,target=/input,readonly" \
     --mount "type=bind,source=$ACCOUNT_TOOL,target=/tools,readonly" \
     -e PYTHONDONTWRITEBYTECODE=1 "$ACCOUNT_CONTROLLER" \
-    python /source/scripts/root_account_projection.py "$ACCOUNT_REFERENCE" "$ACCOUNT_SOURCE" \
+    python /source/root_account_projection.py "$ACCOUNT_REFERENCE" "$ACCOUNT_SOURCE" \
     > "$ACCOUNT_OUTPUT/candidate.json" 2> "$ACCOUNT_OUTPUT/private-error"
 ACCOUNT_STATUS=$?
 set -e

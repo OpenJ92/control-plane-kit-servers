@@ -2,6 +2,9 @@ Source: [publish-product-image.yml](../../../../.github/workflows/publish-produc
 
 The optional inspect_cpk_accounts input defaults false and refuses non-CPK
 products before login/publication. When explicitly selected by a joint release,
+the job selects ubuntu-24.04 (its actual image version remains observed provenance)
+and checkout disables persisted Git credentials. Other publication modes retain
+their existing runner label and checkout behavior. For this opt-in mode,
 the producer's existing policy-image override selects the pinned immutable Python
 image; the later account step borrows that verified cache ID without acquisition.
 Default publication behavior and the existing managed-product path remain.
@@ -11,6 +14,8 @@ reference/source/image-ID outputs are emitted only after the producer's push and
 immutable readback. The account entrypoint cannot publish. Its failure leaves the
 successful publication visible; no retry, rollback or overwrite is attempted.
 This same job has packages-write authority; no token downscoping is claimed.
+Both metadata and offline containers bind only the exact reviewed projection
+script, never the checkout or its .git directory; job credentials are not mounted.
 
 Only allowlisted status/provenance files are retained on failed inspection.
 The candidate seal is uploaded only after the account step, including exact

@@ -2,7 +2,7 @@
 # Opt-in diagnostic in the SAME successful CPK producer job; never publishes.
 set -euo pipefail
 umask 077
-ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+ROOT="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 POLICY='docker.io/library/python@sha256:cd89c30eda26ee911a4611b18680086e0ea42e6f5f8cbe653d07fa7958c9cec8'
 POLICY_DIGEST="${POLICY#*@}"
 UMOCI_SHA='b51c267ec394499e42c6fde47f240b7b7dba57ea49df0b5acd304378b82a3b71'
@@ -11,6 +11,30 @@ valid_inputs() {
   . "$ROOT/scripts/root_artifact_shell.sh"
   root_artifact_reference cpk-server "$REFERENCE" && [[ "$SOURCE" =~ ^[0-9a-f]{40}$ ]]
 }
+cleanup_acquisition() {
+  local remaining mounts backing_after associated
+  remaining="$(docker ps -a --filter "label=org.openj92.cpk.account-acquisition=$RUN" --format '{{.ID}}')" || return 1
+  [ -z "$remaining" ] || return 1
+  mounts="$(findmnt --json --list --output TARGET,SOURCE)" || return 1
+  printf '%s\n' "$mounts" | jq -e --arg target "$MOUNT" --arg source "$LOOP" '
+    (.filesystems | type) == "array" and
+    ([.filesystems[] | select(.target == $target)] | length == 1 and .[0].source == $source)' >/dev/null || return 1
+  backing_after="$(sudo -n losetup --noheadings --output BACK-FILE "$LOOP")" || return 1
+  [ "$backing_after" = "$BACKING" ] || return 1
+  sudo -n umount "$MOUNT" || return 1
+  # findmnt exit 1 can mean an error. Only a successful full inventory proves absence.
+  mounts="$(findmnt --json --list --output TARGET,SOURCE)" || return 1
+  printf '%s\n' "$mounts" | jq -e --arg target "$MOUNT" '
+    (.filesystems | type) == "array" and (.filesystems | length) > 0 and
+    all(.filesystems[]; .target != $target)' >/dev/null || return 1
+  sudo -n losetup --detach "$LOOP" || return 1
+  associated="$(sudo -n losetup --noheadings --output NAME --associated "$BACKING")" || return 1
+  [ -z "$associated" ] || return 1
+  rm -- "$BACKING" || return 1
+  rmdir "$MOUNT"
+}
+# Sourcing exposes this narrow cleanup owner to its ordinary-suite failure tests.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then return 0; fi
 # The worker is invoked only by the parent under its whole-phase timeout.
 if [ "${1:-}" = --acquire ]; then
   shift
@@ -43,10 +67,10 @@ if [ "${1:-}" = --acquire ]; then
       --cidfile "$WORK/$phase.container-id" --network none --read-only \
       --user "$(id -u):$(id -g)" --cap-drop ALL --security-opt no-new-privileges \
       --memory 256m --pids-limit 32 --cpus 1 --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m \
-      --mount "type=bind,source=$ROOT,target=/source,readonly" \
+      --mount "type=bind,source=$ROOT/scripts/root_account_projection.py,target=/source/root_account_projection.py,readonly" \
       --mount "type=bind,source=$INPUT,target=/input,readonly" \
       -e PYTHONDONTWRITEBYTECODE=1 "$CONTROLLER" \
-      python /source/scripts/root_account_projection.py "--$phase" "$REFERENCE" \
+      python /source/root_account_projection.py "--$phase" "$REFERENCE" \
       > "$WORK/$phase.json" 2> "$WORK/$phase.error"
     [ "$(wc -c < "$WORK/$phase.json")" -le 4096 ]
     remaining="$(docker ps -a --filter "name=^/$name$" --format '{{.ID}}')"
@@ -79,7 +103,8 @@ valid_inputs || refuse
 [ "${GITHUB_ACTIONS:-}" = true ] && [ -n "${GITHUB_RUN_ID:-}" ] || refuse
 [ -n "${GITHUB_ACTOR:-}" ] && [ -n "${GH_TOKEN:-}" ] || refuse
 [ "$(git -C "$ROOT" rev-parse HEAD)" = "$SOURCE" ] || refuse
-[ -z "$(git -C "$ROOT" status --porcelain)" ] || refuse
+SOURCE_STATUS="$(git -C "$ROOT" status --porcelain)" || refuse
+[ -z "$SOURCE_STATUS" ] || refuse
 [ "$(uname -s)/$(uname -m)" = Linux/x86_64 ] && [ "$(id -u)" != 0 ] || refuse
 command -v jq >/dev/null || refuse
 mkdir -m 700 -- "$RECORDS"
@@ -163,17 +188,7 @@ sh "$ROOT/scripts/inspect_root_accounts.sh" "$CONTROLLER" "$WORK/input" "$WORK/t
 STAGE=cleanup
 status hold
 # An uncertain inventory or different owner blocks cleanup. No force/lazy mount.
-[ -z "$(docker ps -a --filter "label=org.openj92.cpk.account-acquisition=$RUN" --format '{{.ID}}')" ]
-[ "$(findmnt --noheadings --mountpoint "$MOUNT" --output SOURCE)" = "$LOOP" ]
-[ "$(sudo -n losetup --noheadings --output BACK-FILE "$LOOP")" = "$BACKING" ]
-sudo -n umount "$MOUNT"
-if findmnt --noheadings --mountpoint "$MOUNT" > "$RECORDS/mount-after"; then refuse; else
-  [ "$?" = 1 ]
-fi
-sudo -n losetup --detach "$LOOP"
-[ -z "$(sudo -n losetup --noheadings --output NAME --associated "$BACKING")" ]
-rm -- "$BACKING"
-rmdir "$MOUNT"
+cleanup_acquisition
 # Only a successful inspection AND observed cleanup may expose the candidate seal.
 mv "$RECORDS/inspection/account-seal.json" "$RECORDS/public/account-seal.json"
 STAGE=complete

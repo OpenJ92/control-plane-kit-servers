@@ -12,6 +12,8 @@ bounds before any execution release. This wrapper never fetches tools or images.
 The controller must already exist as an exact SHA256 ID on Linux/amd64. It runs
 once with pull disabled, the nonroot invoking UID/GID, no network/socket/registry
 credential mount, read-only source/input/tool mounts and root filesystem,
+where the source mount contains only the exact reviewed projection script,
+never the checkout or its .git directory. It retains
 dropped capabilities and no-new-privileges. Unpack uses a 4 GiB noexec tmpfs;
 temporary process files use a separate 16 MiB tmpfs. Memory is limited to5GiB,
 processes to64 and CPUs to2. The outer wall limit is300s plus a15s termination
