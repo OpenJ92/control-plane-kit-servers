@@ -44,3 +44,7 @@ workspace population. Their parent directories are trusted; final symlinks and
 nonregular/oversized files are refused. Configuration changes need a restart;
 routine create/grant/revoke operations use the existing authenticated public
 commands and do not edit these files or restart the process.
+
+See [the public administration example](workspace-administration-example.md)
+for separate workspace creation, ordinary permission grants and runtime-management
+assignments, their readbacks and explicit revocations.
