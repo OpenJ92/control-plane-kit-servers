@@ -208,6 +208,11 @@ def run_workspace_initialization(*, input_directory=Path("/bootstrap"),
             # any schema acknowledgement or separate initialization connection.
             with _connection(inputs, autocommit=True) as connection:
                 install_schema(connection, require_empty=True)
+                # A transaction context can return without COMMIT if its
+                # transport was already closed. That is not an acknowledgement.
+                if (connection.closed or connection.autocommit is not True
+                        or connection.info.transaction_status != TransactionStatus.IDLE):
+                    raise ValueError("schema completion is unverified")
             progress.update(schema_acknowledged=True, pending=None)
             _checkpoint(progress_directory, progress)
             progress["pending"] = "initialization"

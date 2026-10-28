@@ -28,3 +28,13 @@ or exception context is projected. No installer/API/SQL selector is exposed by C
 Source checkpoint is unvalidated. Existing PostgreSQL component evidence targets
 physical commit versus acknowledgement loss separately; full public root setup
 and dynamic apply remain #347, and the public guard is retained.
+
+Run 40703084900 exposed a false acknowledgement after the real PostgreSQL fixture
+closed the schema connection before COMMIT. Psycopg 3.3.6's transaction exit returns
+without sending COMMIT when its transport is already bad; absence of an exception
+alone was insufficient. After the owner returns, the helper now requires the
+connection still open, autocommit true and transaction state IDLE before closing
+it and writing schema acknowledgement. Unverified completion leaves schema pending
+and does not enter initialization. The existing real-connection loss target and
+independent catalogue assertion are unchanged; no new SQL, owner API, retry or
+claim of independent durable verification is introduced. Correction is unrun.
