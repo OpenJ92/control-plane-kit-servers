@@ -250,3 +250,19 @@ The canonical field, package/Dockerfile mirrors and installed provenance
 expectation advance together. Generator check and actual dependency resolution
 remain obligations of the existing Docker suite; there is no resolver override,
 image publication, deployment or compatibility-success claim in this pin edit.
+
+## #346 fresh-only schema owner selection
+
+Operations alone now selects accepted CPK #2057 / PR #2058 merge
+`a487fc0ed9b9c821256e4f4c065dd6bc6312331f`, whose tree matches the independently
+reviewed and fully tested owner source. The existing generator rendered the
+root dependency and both CPK Dockerfiles; the two existing installed-provenance
+expectations select the same commit. Other upstream pins and published product,
+descriptor and catalogue bytes are unchanged.
+
+This supplies `install_schema(connection, *, require_empty=False)` for the
+explicit initializer's future `require_empty=True` call under the owner's
+existing namespace lock. Ordinary startup retains default create-or-verify
+behavior. Generator write/check completed in Docker; this is source rendering
+evidence, not installed compatibility, full bootstrap or live-state evidence.
+The #346 implementation and owning suite remain separate obligations.
