@@ -14,3 +14,9 @@ not executed by that red run. The implementation now supplies the interfaces;
 full owning green remains pending, and laws earn evidence only when executed.
 Normal Docker-backed ./test.sh/PR CI is required; no host or alternate harness.
 All tokens and identities are synthetic. No confidential provision is enabled.
+
+For #341, the effectful factory replacement returns a real static
+CpkServerOperationsApplication over the existing recording services instead of a
+namespace/mock carrying only a service map. The host now preserves that configured
+application. Existing credential, receiving, forwarding and no-effect assertions
+are unchanged. Validation is pending the owning Docker gate.

@@ -27,11 +27,11 @@ from receiver_acceptance_ports import ComputeSubstitute, IngressSubstitute, Sign
 def verify_provenance():
     """Apparatus check; no behavioral claim can precede normal installed pins."""
     pins = {
-        "control-plane-kit-core": "879efb9576ac0580a6236d0a7372c036537b4dfe",
-        "control-plane-kit-operations": "879efb9576ac0580a6236d0a7372c036537b4dfe",
-        "control-plane-kit-server-sdk": "43838fd0f4391428cfffa87f8c4dbd5cc6d5eab1",
-        "control-plane-kit-secrets": "78a2ed7c8abee6da31f8661993ed4c5426edd7ee",
-        "control-plane-kit-interpreters": "6faf6698e47381476fb2f09058894eab16f0c768",
+        "control-plane-kit-core": "4cc1716bef4d7548ddb4cd343e53fa06bb447104",
+        "control-plane-kit-operations": "b08d87668b7208042ecd8dda68770ccb9cdf41c1",
+        "control-plane-kit-server-sdk": "464df26c568971362eb3a08abaf9dfc227a4ddbb",
+        "control-plane-kit-secrets": "067678fbaa297d3206ff13d018c69bc14387e46c",
+        "control-plane-kit-interpreters": "bd08b931ae9241878ce4f4b7072f95ccebfa3536",
     }
     for name, commit in pins.items():
         direct = json.loads(importlib.metadata.distribution(name).read_text("direct_url.json"))
@@ -266,6 +266,8 @@ async def failed_update(database_url, fault):
 
 
 async def run(database_url):
+    from workspace_authority_acceptance import workspace_authority_acceptance
+    await asyncio.to_thread(workspace_authority_acceptance, database_url)
     from protected_input_preparation import protected_input_preparation
     await asyncio.to_thread(protected_input_preparation, database_url)
     await declared_gateway_preparation(database_url)

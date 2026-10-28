@@ -83,3 +83,9 @@ and target route selection, and actual-material/provenance refusal. They use exi
 Core requirement values so the causal red reaches the artifact-only adapter selection
 rather than failing imports. No selected artifact is supplied by a requirement.
 These targets precede source implementation; owning validation remains pending.
+
+For #341, the effectful factory replacement returns a real static
+CpkServerOperationsApplication over the existing recording services instead of a
+namespace/mock carrying only a service map. The host now preserves that configured
+application. Existing credential, receiving, forwarding and no-effect assertions
+are unchanged. Validation is pending the owning Docker gate.

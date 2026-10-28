@@ -163,3 +163,92 @@ owned by #225/#284/#188.
 Use the unchanged repository Docker `./test.sh` through the ordinary hosted
 workflow and its existing prerequisites. No alternate runner, local socket
 override or stop-profile bypass belongs to this slice.
+
+## Current #341 accepted composition
+
+The combined executable checkpoint is
+`e08694a35f3e343a664608dd3e0bcf06283d6300` with independent SOURCE + OWNING GATE
+PASS. [Run 40645842537](https://github.com/OpenJ92/control-plane-kit-servers/actions/runs/40645842537)
+passed 1,109 package and 26 support tests, actual process-policy/verifier/public
+PostgreSQL grant/revoke/restart evidence and the final owned Docker residue audit.
+See the [current receipt](https://github.com/OpenJ92/control-plane-kit-servers/issues/341#issuecomment-6462868979)
+for exact source, attribution and limits. The earlier consumer and semantic
+gates remain separate historical evidence.
+
+Current source includes admitted capability mapping, runtime/ordinary-check
+execution and separate original-request observation registrations, shared bound
+Cloudflare create/teardown invocation ports, trusted dynamic process-file inputs
+and bounded public-client queries. Dynamic managed health binds its immutable
+catalogue to the real UoW only after the existing receipt check; bridge and native
+share that selector. Exact installed catalogue equality remains required.
+
+Supported fresh dynamic-bootstrap delivery, explicit owner initialization and
+public enrollment remain a separate prerequisite. Existing installation artifacts
+remain v1-only. G/#342 still owns successful public lifecycle, all three ingress
+denial scenarios and separately reviewed retained upgrade; F2 remains separate.
+These source/package results are not new image publication or live qualification.
+
+## Historical #341 admitted capability consumer target checkpoint
+
+Operations PR #2056 is accepted as `b08d87668b7208042ecd8dda68770ccb9cdf41c1`.
+This checkpoint selects that Operations package while retaining Core4cc and the
+previous SDK/Secrets/Interpreter cohort. Only the normal Docker suite can establish
+that the actual installed cohort resolves; dependency text is not evidence.
+
+The proposed consumer interface at that checkpoint was a pure `bind_admitted(selection, workspace_id=...,
+runtime_id=..., authority=...)` mapping on the installed selector. Its policy
+binding retains the identical full `managed_target`, including revision. It does
+not look up current assignments, construct clients, or grant authority. Existing
+`select` remains current eligibility preflight. Native and bridge dispatch accept
+the exact Operations `managed_target`; signed dispatch also forwards the original
+`invocations` port. Configured-local endpoint reads enter `endpoint-observation`
+and acknowledge before later signing. Public NamedIngress reads require no local
+placement; this adds no placement supplier or process local-readiness support.
+
+Targets exercise the pure mapping/refusal boundary, real SDK/native worker
+acquisition and close for fresh/retained-image plans, actual signer/transport
+control propagation, and configured-local admission/ack ordering. The public
+assignment witness captures an actual owner selection A, grants B, and checks
+current preflight B versus mapping of the original A. That capture is not claimed
+to be an admitted run; Operations owns admission and its retained-history proofs.
+No permission state machine is recreated here. Existing cleanup/cancellation,
+original installation, scope and shape assertions remain unchanged.
+
+At this historical target checkpoint the source targets had not run. Missing
+mapping/dispatch keywords were expected to fail before deeper assertions; later
+PostgreSQL/public witnesses could remain unreached in the initial red gate.
+The target-only change left production composition unchanged. The subsequent
+receipts distinguish actual failures and reached boundaries from predictions.
+
+### Historical consumer implementation checkpoint before its green gate
+
+The first target run40631080717 was mixed red: intended absent mapper/dispatch
+interfaces and no-reselection law failed, alongside two stale expected Operations
+pin assertions. The single expected-pin constant is corrected to acceptedb08;
+Core4cc and exact assertions remain intact. North accepted the intended causal
+red without another full run solely for fixture drift. See the owning #341 log.
+
+`bind_admitted` now performs exact immutable catalogue mapping and retains the
+original selection in the scoped policy binding. Native `qualify` preserves the
+complete graph/product shape without current-assignment lookup; `select` still
+performs eligibility preflight. Dynamic bridge/native dispatch requires the
+owner target and maps it without reselecting. The existing worker still owns
+lazy SDK construction, original installation proof, observation and final close.
+
+Signed bridge dispatch requires a valid invocation port in dynamic mode and
+passes it unchanged through the actual reader/signer/transport. Configured-local
+endpoint selection/read is enclosed by endpoint-observation admission and outcome
+acknowledgement. Denial/failed acknowledgement stops later signing. Cancellation
+records unknown and stops the awaiting sequence; an already running thread may
+finish later, so acknowledgement is not a claim of worker completion or cleanup.
+A bounded thread test demonstrates this distinction; existing native worker tests
+remain unchanged. Dynamic bootstrap readers also require invocation ports.
+
+Dynamic policy capabilities still do not supply borrowed local placement. A
+whole plan requiring local readiness is unsupported in that mode. Ordinary and
+runtime/observer semantic profile registration, Cloudflare invocation forwarding,
+trusted process configuration and installed-client query work were still separate
+#341 connections at this historical checkpoint. They are included in the current
+accepted checkpoint above. Earlier assertions blocked by missing interfaces are
+not retroactively described as causal-red evidence. Whole-issue and live acceptance
+remain separate.

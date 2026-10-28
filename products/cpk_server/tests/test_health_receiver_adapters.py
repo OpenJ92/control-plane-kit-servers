@@ -4,7 +4,6 @@ import importlib
 import importlib.util
 import json
 import sys
-from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -77,7 +76,8 @@ class HealthReceiverAdapterTests(unittest.TestCase):
             **{f"CPK_{store}_DATABASE_URL":"postgres://database.invalid/db"
                for store in ("WORKPLACE", "ACTIVITY_HISTORY", "OBSERVER_STATE", "GRAPH_TOPOLOGY")}})
         services = {role:RecordingService(role.value) for role in core.ControlPlaneServiceRole}
-        with patch.object(self.server, "_operations_application", return_value=SimpleNamespace(services=services)):
+        with patch.object(self.server, "_operations_application",
+                return_value=self.server.CpkServerOperationsApplication(services)):
             app = self.server.create_app(bootstrap, DeterministicVerifier(), control=config, clock=lambda:150)
         with TestClient(app) as client:
             response = client.get("/__control/health/liveness",

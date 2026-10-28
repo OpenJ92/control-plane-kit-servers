@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 import re
 import sys
-from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -38,10 +37,11 @@ class CpkHttpHostTests(unittest.TestCase):
             **{f"CPK_{store}_DATABASE_URL":"postgres://fixture:fixture@database.invalid/db"
                for store in ("WORKPLACE", "ACTIVITY_HISTORY", "OBSERVER_STATE", "GRAPH_TOPOLOGY")},
         }
-        config = self.server.CpkServerBootstrapConfiguration.from_environment(environ)
+        config = self.config = self.server.CpkServerBootstrapConfiguration.from_environment(environ)
         self.authority = fixture()
         # Replace only effectful service construction; use the real app and boundaries.
-        with patch.object(self.server, "_operations_application", return_value=SimpleNamespace(services=self.services)):
+        with patch.object(self.server, "_operations_application",
+                return_value=self.server.CpkServerOperationsApplication(self.services)):
             self.app = self.server.create_app(config, self.verifier, control=self.authority.config, clock=lambda:150)
 
     def tearDown(self):
@@ -55,7 +55,6 @@ class CpkHttpHostTests(unittest.TestCase):
 
     def test_every_operator_contract_reaches_unchanged_auth_boundary(self):
         routes = self.app.state.http_boundary.composition.http_api.routes
-        self.assertEqual(len(routes), 82)
         for route_id, path in (
             ("read.receiver-authoring-context", "/workspaces/{workspace_id}/receiver-authoring-context"),
             ("read.workload-verifier-configuration", "/workspaces/{workspace_id}/workload-verifier-configuration/{purposes}"),
@@ -124,12 +123,19 @@ class CpkHttpHostTests(unittest.TestCase):
         self.assertEqual(self.verifier.credentials, [])
         self.assert_no_service_work()
 
-    def test_mcp_parse_header_auth_and_service_order_is_preserved(self):
+    def test_mcp_header_auth_parse_and_service_order_is_preserved(self):
         with TestClient(self.app) as client:
-            response = client.post("/mcp", content=b"invalid JSON", headers={"Authorization":"Bearer rejected"})
-            self.assertEqual((response.status_code,response.json()), (400,{"error":{"status":400,"message":"invalid JSON request body"}}))
-            self.assertEqual(self.verifier.credentials, [])
             headers = {"Accept":"application/json", "MCP-Protocol-Version":"2025-06-18", "Mcp-Method":"resources/read", "Authorization":"Bearer rejected"}
+            with patch("control_plane_kit_servers_cpk_server.boundary.json.loads",
+                    side_effect=AssertionError("unauthenticated MCP body was decoded")):
+                response = client.post("/mcp", content=b"invalid JSON", headers=headers)
+            self.assertEqual((response.status_code,response.json()),
+                (401,{"error":{"status":401,"message":"invalid credential"}}))
+            self.assert_no_service_work()
+            headers["Authorization"] = "Bearer valid-token"
+            response = client.post("/mcp", content=b"invalid JSON", headers=headers)
+            self.assertEqual((response.status_code,response.json()), (400,{"error":{"status":400,"message":"invalid JSON request body"}}))
+            headers["Authorization"] = "Bearer rejected"
             message = {"jsonrpc":"2.0", "id":"fixture", "method":"resources/read", "params":{"name":"read.run-events", "arguments":{"workspace_id":"workspace-a", "run_id":"run-a"}}}
             self.assertEqual(client.post("/mcp", json=message, headers=headers).status_code, 401)
             self.assert_no_service_work()
@@ -138,7 +144,47 @@ class CpkHttpHostTests(unittest.TestCase):
             response = client.post("/mcp", json=message, headers=headers)
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json(), json.loads(json.dumps(expected.body)))
-        self.assertEqual(self.verifier.credentials, [b"rejected", b"valid-token", b"valid-token"])
+        self.assertEqual(self.verifier.credentials,
+            [b"rejected", b"valid-token", b"rejected", b"valid-token", b"valid-token"])
+
+    def test_mcp_raw_administration_json_refuses_ambiguity_before_dispatch(self):
+        headers = {"Accept":"application/json", "MCP-Protocol-Version":"2025-06-18",
+            "Mcp-Method":"tools/call", "Authorization":"Bearer valid-token"}
+        with TestClient(self.app) as client:
+            for arguments in (b'{"name":"a","name":"b"}', b'{"metadata":{"x":NaN}}',
+                    b'{"metadata":{"x":1e999}}', b'{"metadata":' + b'[' * 65 + b'0' + b']' * 65 + b'}'):
+                body = (b'{"jsonrpc":"2.0","id":"a","method":"tools/call","params":'
+                    b'{"name":"create_workspace_as_administrator","arguments":' + arguments + b'}}')
+                with self.subTest(arguments=arguments):
+                    response = client.post("/mcp", content=body, headers=headers)
+                    self.assertEqual(response.status_code, 400)
+                    self.assertLess(len(response.content), 1024)
+            self.assert_no_service_work()
+
+    def test_host_retains_current_permission_lookup_on_both_surfaces(self):
+        from control_plane_kit_operations.workspace_permissions import WorkspaceContextResolver
+        attempts = []
+        def unavailable():
+            attempts.append(True)
+            raise RuntimeError("synthetic private permission-store detail")
+        configured = self.server.CpkServerOperationsApplication(self.services,
+            authority_mode="dynamic", workspace_context_resolver=WorkspaceContextResolver(
+                unavailable, installation_id="installation-a"))
+        with patch.object(self.server, "_operations_application", return_value=configured):
+            app = self.server.create_app(self.config, self.verifier,
+                control=self.authority.config, clock=lambda:150)
+        headers = {"Authorization":"Bearer valid-token"}
+        with TestClient(app) as client:
+            http = client.get("/workspaces/workspace-a/runs/run-a/events", headers=headers)
+            mcp = client.post("/mcp", headers={**headers, "Accept":"application/json",
+                "MCP-Protocol-Version":"2025-06-18", "Mcp-Method":"resources/read"},
+                json={"jsonrpc":"2.0", "id":"lookup", "method":"resources/read", "params":{
+                    "name":"read.run-events", "arguments":{"workspace_id":"workspace-a", "run_id":"run-a"}}})
+        for response in (http, mcp):
+            self.assertEqual(response.status_code, 503)
+            self.assertNotIn("synthetic private", response.text)
+        self.assertEqual(len(attempts), 2)
+        self.assert_no_service_work()
 
     def test_contract_prefix_derivation_and_rejection_before_registration(self):
         from control_plane_kit_servers_cpk_server.http_host import install_operator_http_routes

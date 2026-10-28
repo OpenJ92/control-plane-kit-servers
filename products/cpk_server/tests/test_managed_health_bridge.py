@@ -313,3 +313,181 @@ class ManagedHealthBridgeSelectionTests(unittest.TestCase):
         with self.assertRaises(GatewayPlacementUnavailable):
             asyncio.run(bridge.observe_signed(realization, request, authority))
         reader.observe.assert_not_awaited()
+
+    def test_dynamic_public_signed_dispatch_preserves_invocation_controls(self):
+        import asyncio
+        from control_plane_kit_interpreters.invocations import InvocationPortError
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+        import httpx
+        from control_plane_kit_core.secrets import SecretResolved, SecretValue
+        from control_plane_kit_interpreters.docker.managed_health import DockerManagedHealthReader
+        from control_plane_kit_interpreters.docker.sdk import DockerUnixSocketClientConfig
+        from control_plane_kit_interpreters.probes.health_signing import Ed25519HealthCredentialPairSigner
+        from control_plane_kit_interpreters.probes.health_transport import SignedGatewayHealthClient
+        from control_plane_kit_interpreters.probes.local_health import LocalGatewayHealthClient
+        from control_plane_kit_operations.managed_runtime_assignments import (
+            ManagedRuntimeCapability, ManagedRuntimeCapabilityPolicy, ManagedRuntimeSelection,
+            managed_runtime_assignment_id,
+        )
+        from control_plane_kit_servers_cpk_server.managed_health import ManagedHealthBridge, ManagedHealthUnavailable
+        from control_plane_kit_servers_cpk_server.managed_health_placement import (
+            DockerRuntimeCapabilityBinding, DockerRuntimeClientSelector,
+        )
+        from control_plane_kit_servers_cpk_server.managed_native_connection import DockerManagedNativeConnection
+        from managed_native_material import NativeMaterial
+        world = NativeMaterial()
+        self.material, self.authority, self.products = world.authored, world.authority, world.products
+        self.current, self.desired, self.plan = world.current, world.desired, world.plan
+        capability = ManagedRuntimeCapability("installed-a")
+        policy = ManagedRuntimeCapabilityPolicy("installation-a", (capability,))
+        uow = Mock(side_effect=AssertionError("signed dispatch must not reselect assignments"))
+        selector = DockerRuntimeClientSelector((), capability_policy=policy,
+            capability_bindings=(DockerRuntimeCapabilityBinding(capability,
+                DockerUnixSocketClientConfig("/var/run/synthetic-never-opened.sock", 5.0)),),
+            unit_of_work_factory=uow)
+        native = DockerManagedNativeConnection(selector, world.document, Mock())
+        target = ManagedRuntimeSelection(managed_runtime_assignment_id(policy.installation_id,
+            "workspace-a", "docker", world.authority.authority_ref), policy.installation_id,
+            "workspace-a", "docker", world.authority.authority_ref,
+            world.authority.registration_id, capability.capability_id, 3)
+        realization, request, authority, _ = self.dispatch_inputs(local=False)
+        resolved = {getattr(authority, family).resolution_grant.reference:
+            SecretResolved(getattr(authority, family).resolution_grant.reference,
+                SecretValue(self.material.private[family].decode("ascii"))) for family in ("transit", "workload")}
+
+        class ControlStop(RuntimeError):
+            pass
+
+        for stop in ("denied", "acknowledgement", None):
+            with self.subTest(stop=stop):
+                events, sent = [], []
+                resolver = SimpleNamespace(resolve=Mock(side_effect=lambda grant: resolved[grant.reference]))
+                def admit(kind, *, authorization_id=None):
+                    events.append(("admit", kind, authorization_id))
+                    if stop == "denied" and authorization_id == authority.workload.resolution_grant.authorization_id:
+                        raise ControlStop("denied")
+                    return object()
+                def acknowledge(permit, outcome):
+                    events.append(("outcome", outcome))
+                    if stop == "acknowledgement":
+                        raise ControlStop("acknowledgement unavailable")
+                port = SimpleNamespace(control_error=ControlStop, admit=admit, record_outcome=acknowledge)
+                def fail(outbound):
+                    sent.append(outbound)
+                    raise httpx.ReadTimeout("synthetic unavailable transport", request=outbound)
+                dns = SimpleNamespace(resolve=AsyncMock(return_value=("93.184.216.34",)))
+                reader = DockerManagedHealthReader(Ed25519HealthCredentialPairSigner(resolver, lambda: 150),
+                    SignedGatewayHealthClient(lambda: 150, public_resolver=dns, transport=httpx.MockTransport(fail)),
+                    LocalGatewayHealthClient(lambda: 150), require_invocations=True)
+                bridge = ManagedHealthBridge(reader, selector, None, self.material.decoders, native)
+                call = bridge.observe_signed(realization, request, authority,
+                    invocations=port, managed_target=target)
+                if stop is None:
+                    self.assertIsNone(asyncio.run(call))
+                    self.assertEqual(resolver.resolve.call_count, 2)
+                    self.assertEqual(len(sent), 1)
+                    self.assertEqual([event[1] for event in events if event[0] == "admit"],
+                        ["secret-resolution", "secret-resolution", "signed-health-transport"])
+                else:
+                    with self.assertRaises(ControlStop):
+                        asyncio.run(call)
+                    resolver.resolve.assert_called_once_with(authority.transit.resolution_grant)
+                    self.assertEqual(sent, [])
+                    dns.resolve.assert_not_awaited()
+                self.assertEqual(events[0], ("admit", "secret-resolution",
+                    authority.transit.resolution_grant.authorization_id))
+                with self.assertRaises(ManagedHealthUnavailable):
+                    asyncio.run(bridge.observe_signed(realization, request, authority, invocations=port))
+                calls = resolver.resolve.call_count
+                with self.assertRaises(InvocationPortError):
+                    asyncio.run(bridge.observe_signed(realization, request, authority, managed_target=target))
+                self.assertEqual(resolver.resolve.call_count, calls)
+        uow.assert_not_called()
+
+    def test_configured_local_endpoint_admission_and_ack_precede_signed_reader(self):
+        import asyncio
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+        from control_plane_kit_interpreters.probes.health_transport import GatewayHealthTransportCode
+        realization, request, authority, result = self.dispatch_inputs(local=True)
+
+        class ControlStop(RuntimeError):
+            pass
+
+        for stop in ("denied", "acknowledgement", None):
+            with self.subTest(stop=stop):
+                events, permit, endpoint = [], object(), object()
+                def admit(kind, *, authorization_id=None):
+                    events.append("admit")
+                    self.assertEqual((kind, authorization_id), ("endpoint-observation", None))
+                    if stop == "denied":
+                        raise ControlStop("denied")
+                    return permit
+                def read(**kwargs):
+                    events.append("read")
+                    return endpoint
+                def acknowledge(actual_permit, outcome):
+                    events.append("acknowledge")
+                    self.assertIs(actual_permit, permit)
+                    self.assertEqual(outcome, "returned")
+                    if stop == "acknowledgement":
+                        raise ControlStop("acknowledgement unavailable")
+                port = SimpleNamespace(control_error=ControlStop, admit=admit, record_outcome=acknowledge)
+                reader = SimpleNamespace(observe=AsyncMock(return_value=SimpleNamespace(
+                    code=GatewayHealthTransportCode.RECEIVED, result=result)))
+                bridge = replace(self.bridge, reader=reader,
+                    endpoints=SimpleNamespace(select=self.endpoints.select, read=read))
+                call = bridge.observe_signed(realization, request, authority, invocations=port)
+                if stop is None:
+                    self.assertIs(asyncio.run(call), result)
+                    self.assertEqual(events, ["admit", "read", "acknowledge"])
+                    self.assertIs(reader.observe.call_args.kwargs["invocations"], port)
+                    self.assertIs(reader.observe.call_args.kwargs["local_destination"], endpoint)
+                else:
+                    with self.assertRaises(ControlStop):
+                        asyncio.run(call)
+                    self.assertEqual(events, ["admit"] if stop == "denied" else ["admit", "read", "acknowledge"])
+                    reader.observe.assert_not_awaited()
+
+    def test_cancelled_local_endpoint_stops_reader_while_worker_finishes(self):
+        import asyncio
+        import threading
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+        realization, request, authority, _ = self.dispatch_inputs(local=True)
+        entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+        reader = SimpleNamespace(observe=AsyncMock())
+
+        class ControlStop(RuntimeError):
+            pass
+
+        permit = object()
+        port = SimpleNamespace(control_error=ControlStop, admit=Mock(return_value=permit), record_outcome=Mock())
+        def read(**kwargs):
+            entered.set()
+            try:
+                if not release.wait(5):
+                    raise AssertionError("endpoint worker was not released")
+                return object()
+            finally:
+                finished.set()
+        bridge = replace(self.bridge, reader=reader,
+            endpoints=SimpleNamespace(select=self.endpoints.select, read=read))
+
+        async def exercise():
+            task = asyncio.create_task(bridge.observe_signed(realization, request, authority, invocations=port))
+            try:
+                self.assertTrue(await asyncio.to_thread(entered.wait, 5))
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+                port.record_outcome.assert_called_once_with(permit, "unknown")
+                self.assertFalse(finished.is_set())
+                reader.observe.assert_not_awaited()
+            finally:
+                release.set()
+                await asyncio.gather(task, return_exceptions=True)
+            self.assertTrue(await asyncio.to_thread(finished.wait, 5))
+            reader.observe.assert_not_awaited()
+        asyncio.run(exercise())

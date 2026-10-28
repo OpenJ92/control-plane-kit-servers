@@ -1,6 +1,18 @@
 Source: [tests/test_coordinates.py](../../../tests/test_coordinates.py).
 Maintain this companion alongside its source and selected dependencies.
 
+## #341 accepted dependency cohort
+
+The selected source cohort is Core/Operations `4cc1716b`, Interpreters
+`bd08b931`, SDK `464df26c`, and Secrets `067678fb`; full immutable hashes
+are in the canonical coordinates manifest. Each prerequisite passed its owning
+gate and independent review before merge. Existing generated recipes and
+current-source provenance expectations advance together, with their assertions
+unchanged. Published product identities remain historical. The first #341 gate
+stopped during dependency resolution before tests; this corrected source
+checkpoint awaits its released owning-gate retry and claims no target-red,
+dynamic composition or live acceptance. Earlier selections below are historical.
+
 ## Current #313 dependency adoption
 
 For #313, the existing current-source provenance expectations follow the accepted cohort in `coordinates/server-products.json`. Exact archive/subdirectory, installed-source, generated-byte and historical-product assertions remain unchanged; only their selected upstream coordinates move. This adds no fixture law or relaxed assertion. Normal owner CI must establish the updated composition.

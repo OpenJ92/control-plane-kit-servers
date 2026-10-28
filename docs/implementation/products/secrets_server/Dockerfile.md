@@ -1,6 +1,12 @@
 Source: [products/secrets_server/Dockerfile](../../../../products/secrets_server/Dockerfile).
 Maintain this companion alongside its source and selected dependencies.
 
+For #341, the unchanged coordinate generator renders this recipe's existing
+dependency subset from the accepted Core/Operations `4cc1716b`, Interpreters
+`bd08b931`, SDK `464df26c`, Secrets `067678fb` cohort. Full hashes live in
+the canonical manifest. Extras, base images, process behavior and published
+identities stay unchanged. The released owning-gate retry is pending.
+
 ## Current #313 dependency adoption
 
 For #313, existing generated dependency URLs select the accepted cohort in `coordinates/server-products.json`. Package subsets/extras, recipe behavior, base images and process identities are unchanged. This source dependency adoption does not change historical published product identities or enable confidential intake. Normal owner CI must establish installed compatibility.

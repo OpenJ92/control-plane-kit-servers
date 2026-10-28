@@ -1,6 +1,12 @@
 Source: [products/postgres_server/Dockerfile](../../../../products/postgres_server/Dockerfile).
 Maintain this companion alongside its source and selected dependencies.
 
+For #341, the unchanged coordinate generator renders this recipe's existing
+dependency subset from the accepted Core/Operations `4cc1716b`, Interpreters
+`bd08b931`, SDK `464df26c`, Secrets `067678fb` cohort. Full hashes live in
+the canonical manifest. Extras, base images, process behavior and published
+identities stay unchanged. The released owning-gate retry is pending.
+
 The PostgreSQL source recipe retains its exact base image, installs Python and
 the SDK verification extra, copies its product-owned process wrapper, and runs
 as UID/GID 70 with the existing database and control ports. File-based password

@@ -14,9 +14,12 @@ from control_plane_kit_core.runtime_authority import RuntimeAuthorityReference
 from control_plane_kit_interpreters.docker import DockerUnixSocketClientConfig
 from control_plane_kit_interpreters.docker.connector_connection import DockerConnectorConnectionQualifier
 from control_plane_kit_interpreters.docker.sdk import ConnectorConnectionProfile
+from control_plane_kit_operations.managed_runtime_assignments import ManagedRuntimeCapability
 
 from .health_receiver_adapters import health_receiver_decoders
-from .managed_health_placement import DockerRuntimeClientSelector, DockerRuntimePolicyBinding
+from .managed_health_placement import (
+    DockerRuntimeCapabilityBinding, DockerRuntimeClientSelector, DockerRuntimePolicyBinding,
+)
 
 
 _INVALID = "managed health process configuration is invalid"
@@ -30,24 +33,39 @@ _INPUT_ERRORS = (ValueError, TypeError, AttributeError, KeyError, OverflowError,
 @dataclass(frozen=True, slots=True, repr=False)
 class ManagedHealthProcessConfiguration:
     local_client_config: DockerUnixSocketClientConfig
-    provider_clients: DockerRuntimeClientSelector
+    provider_clients: DockerRuntimeClientSelector | None
     gateway_documents: tuple[ProductDescriptorDocument, ...]
     native_product_document: ProductDescriptorDocument
+    capability_bindings: tuple[DockerRuntimeCapabilityBinding, ...] = ()
 
     def __post_init__(self):
         try:
             if (type(self.local_client_config) is not DockerUnixSocketClientConfig
-                    or type(self.provider_clients) is not DockerRuntimeClientSelector
-                    or not 1 <= len(self.provider_clients.bindings) <= 64
+                    or type(self.capability_bindings) is not tuple
                     or type(self.gateway_documents) is not tuple
                     or not 1 <= len(self.gateway_documents) <= 64):
                 raise ValueError
             self.local_client_config.__post_init__()
-            self.provider_clients.__post_init__()
-            if any(type(binding) is not DockerRuntimePolicyBinding
-                    or binding.local_client_config is not self.local_client_config
-                    for binding in self.provider_clients.bindings):
-                raise ValueError
+            if self.provider_clients is None:
+                if (type(self.capability_bindings) is not tuple or not 1 <= len(self.capability_bindings) <= 64
+                        or any(type(binding) is not DockerRuntimeCapabilityBinding
+                            or binding.local_client_config is not self.local_client_config
+                            for binding in self.capability_bindings)):
+                    raise ValueError
+                for binding in self.capability_bindings:
+                    binding.__post_init__()
+                if len({binding.capability.capability_id for binding in self.capability_bindings}) != len(self.capability_bindings):
+                    raise ValueError
+            else:
+                if (type(self.provider_clients) is not DockerRuntimeClientSelector or self.capability_bindings
+                        or self.provider_clients.capability_policy is not None
+                        or not 1 <= len(self.provider_clients.bindings) <= 64):
+                    raise ValueError
+                self.provider_clients.__post_init__()
+                if any(type(binding) is not DockerRuntimePolicyBinding
+                        or binding.local_client_config is not self.local_client_config
+                        for binding in self.provider_clients.bindings):
+                    raise ValueError
             references = []
             for document in self.gateway_documents:
                 _canonical_document(document)
@@ -106,16 +124,25 @@ def decode_managed_health_process_configuration(raw: bytes) -> ManagedHealthProc
     try:
         if type(raw) is not bytes or not 1 <= len(raw) <= _MAX_BYTES:
             raise ValueError
-        value = _object(json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object,
-            parse_constant=_invalid_constant),
-            {"schema", "docker", "scopes", "gateway_documents", "native_product_document"})
-        if value["schema"] != "cpk-server.managed-health.v1":
+        value = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object,
+            parse_constant=_invalid_constant)
+        if type(value) is not dict or value.get("schema") not in {
+                "cpk-server.managed-health.v1", "cpk-server.managed-health.v2"}:
             raise ValueError
+        dynamic = value["schema"] == "cpk-server.managed-health.v2"
+        binding_field = "capability_ids" if dynamic else "scopes"
+        _object(value, {"schema", "docker", binding_field, "gateway_documents", "native_product_document"})
         docker = _object(value["docker"], {"socket_path", "request_timeout"})
         policy = DockerUnixSocketClientConfig(docker["socket_path"], docker["request_timeout"])
-        for items in (value["scopes"], value["gateway_documents"]):
+        for items in (value[binding_field], value["gateway_documents"]):
             if type(items) is not list or not 1 <= len(items) <= 64:
                 raise ValueError
+        if dynamic:
+            bindings = tuple(DockerRuntimeCapabilityBinding(ManagedRuntimeCapability(identifier), policy)
+                for identifier in value["capability_ids"])
+            return ManagedHealthProcessConfiguration(policy, None,
+                tuple(_documents_text(document) for document in value["gateway_documents"]),
+                _documents_text(value["native_product_document"]), bindings)
         bindings = []
         for scope in value["scopes"]:
             _object(scope, {"workspace_id", "runtime_id", "authority_ref"})
@@ -159,7 +186,11 @@ def _managed_health_configuration_from_artifact(
         # Core checks content_digest against bytes and validates source_digest
         # syntax. A distinct source_digest is metadata, not authenticated origin.
         checked = ConfigurationArtifact.from_descriptor(artifact.descriptor())
-        return decode_managed_health_process_configuration(checked.content.encode("utf-8"))
+        process = decode_managed_health_process_configuration(checked.content.encode("utf-8"))
+        # The existing installation author emits v1 and has no workspace-policy delivery.
+        if process.provider_clients is None:
+            raise ValueError
+        return process
     except _INPUT_ERRORS:
         failure = ValueError(_INVALID_INSTALLATION)
     raise failure

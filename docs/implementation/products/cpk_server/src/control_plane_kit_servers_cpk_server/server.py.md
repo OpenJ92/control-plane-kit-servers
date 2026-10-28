@@ -1,6 +1,32 @@
 Source: [server.py](../../../../../../products/cpk_server/src/control_plane_kit_servers_cpk_server/server.py).
 Maintain with the process composition and operational ownership boundary.
 
+## #341 typed startup readiness
+
+Bootstrap configuration can carry the trusted WorkspaceAuthorityConfiguration
+value into the real shared factory. Dynamic startup validates the policy and
+rejects competing static authority, retains existing schema install/verification,
+then calls WorkspacePermissionReadService.installation with a configured admin
+context. Missing, mismatched or unavailable receipts become a fixed bootstrap
+error outside the caught exception context, before provider/effect composition.
+Startup never initializes the receipt or seeds grants. Empty owned schema DDL
+may already have committed; this is not a zero-mutation promise.
+
+Main's startup-policy projection returns no static authorizer for dynamic mode;
+the shared factory supplies the durable one. Typed configuration is the current
+source input only: file/environment authoring and installed-client selection
+remain later work, with no live enablement claim. The implementation is pending
+owning green evidence; corrected red40582892453 reached only the missing type.
+
+#341 passes the actual configured Operations application into the shared boundary,
+preserving its resolver and authority mode instead of extracting its service map.
+The MCP host collects at the existing envelope budget and forwards raw bytes to
+the boundary, where headers/authentication precede strict JSON decoding. Duplicate
+members are therefore not lost in an earlier permissive host parse. That transport
+slice passed the owning Linux gate in run40576182119. The typed dynamic factory
+and startup additions above still await their green gate. The following account
+describes the retained static-mode behavior.
+
 #315 explicitly projects configured static-development principals into a
 credential-free ConfiguredPrincipalAuthorizer. Main passes it to create_app,
 which forwards it through _operations_application into the shared factory.
@@ -11,7 +37,7 @@ No constructor opens provider credential files. Generation needs both ports.
 #317 forwards the same existing provider custodian through the optional effect
 port; the shared factory enables provision only with independent authority too.
 Disabled/local-development custody remains absent. No provider adapter, service
-policy or credential format is added. Permission changes require a new
+policy or credential format is added to that static path. Its permission changes require a new
 process, with no hot reload or token/session revocation claim. See
 [configured authority](../../../../../deployment-input-authority.md).
 
@@ -82,3 +108,48 @@ entrances remain available for existing callers; the hosted routes use the
 awaited path. The optional managed-health composition now joins that path through
 the explicit #294 startup value; root-launcher delivery and live acceptance
 remain separate from this source-process wiring.
+
+Dynamic workspace composition explicitly registers the actual Docker executor,
+separate original-request observer, managed-health bridge and Cloudflare wrapper
+with the accepted Operations invocation profiles. Ordinary verification support
+is explicit on the executor; metadata-backed exact-version execution remains
+separate and no exact-version observation support is inferred. Runtime-disabled
+composition does not qualify its unsupported observer. Static mode retains its
+existing registrations and constructor call shapes.
+
+Actual dynamic Docker and Cloudflare interpreters require invocation ports before
+effects. Cloudflare create/teardown preserve the original bound port across pure
+nominal translations; the Interpreter owns admission, control propagation and
+partial-result semantics. Missing ports cannot select a legacy dynamic path.
+The authenticated startup guard still validates workspace authority before these
+private composition helpers; a non-null malformed authority is never interpreted
+as static mode. No policy lookup, owner state machine or credential is added here.
+The existing process-port mock explicitly declares static workspace authority.
+
+Before dynamic managed-health qualification, the exact installed selector must
+have a dynamic capability policy equal to the validated workspace policy,
+including its capability catalogue. Existing selector validation is reused
+without an assignment lookup. Static, foreign-installation or different-catalogue
+selectors are refused with the bounded bootstrap configuration error; absent
+managed health remains absent. This closes the source-review finding that a
+static or mismatched bridge could otherwise be advertised as dynamically qualified.
+
+The three focused dynamic-composition targets exposed missing registrations and
+wrapper keywords in corrected target run40637645793. Green validation remains
+pending. Full public lifecycle/partial-result denial evidence remains mandatory
+under G/#342 per decision341comment6461257447; component success is not that proof.
+
+The process/client continuation adds explicitly selected installer workspace
+policy and managed-health v2 input. Workspace policy is decoded and validated
+before the existing credential parser may accept explicitly empty legacy grants.
+Single and multi credentials keep their existing fixed full identity and validation;
+missing/malformed grants remain distinct from empty, static mode still requires
+nonempty grants, and dynamic request authority never unions or falls back to them.
+
+Managed-health mode/schema pairs and the whole installed capability catalogue
+must agree with workspace authority. The raw v2 value carries no UoW. Only the
+existing post-receipt factory path supplies its actual UoW to effect composition,
+which builds one selector shared by bridge/native consumers. Executor/observer
+retain the same installed local Docker policy. No startup initialization, seed,
+assignment write or provider permission is introduced. Process-file v2 does not
+widen the separately guarded v1-only topology artifact delivery path.

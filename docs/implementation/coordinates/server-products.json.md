@@ -1,6 +1,18 @@
 Source: [coordinates/server-products.json](../../../coordinates/server-products.json).
 Maintain this companion alongside its source and selected dependencies.
 
+## #341 accepted dependency cohort
+
+The selected source cohort is Core/Operations `4cc1716b`, Interpreters
+`bd08b931`, SDK `464df26c`, and Secrets `067678fb`; full immutable hashes
+are in the canonical coordinates manifest. Each prerequisite passed its owning
+gate and independent review before merge. Existing generated recipes and
+current-source provenance expectations advance together, with their assertions
+unchanged. Published product identities remain historical. The first #341 gate
+stopped during dependency resolution before tests; this corrected source
+checkpoint awaits its released owning-gate retry and claims no target-red,
+dynamic composition or live acceptance. Earlier selections below are historical.
+
 ## Current #313 dependency adoption
 
 The accepted upstream cohort is Core/Operations `879efb9576ac0580a6236d0a7372c036537b4dfe`, SDK `43838fd0f4391428cfffa87f8c4dbd5cc6d5eab1`, Secrets `78a2ed7c8abee6da31f8661993ed4c5426edd7ee` and Interpreters `6faf6698e47381476fb2f09058894eab16f0c768`. Only the five upstream fields change. The existing generator updates root requirements and nine dependency recipes. Product source/image/tag/digest fields and descriptor/catalogue bytes stay unchanged; generated source dependencies do not establish publication. Normal owner CI and source review must establish installed compatibility before #311 composition.
@@ -227,3 +239,14 @@ images, runtime/license inputs, assertion strength and published product
 source/image/descriptor/catalogue identities remain unchanged. The existing
 coordinate generator and Docker-backed owning gate must verify the prepared
 source; no validation result is claimed here.
+
+## #341 Operations admitted-target handoff (unvalidated consumer checkpoint)
+
+Operations advances alone to accepted CPK PR2056 merge
+`b08d87668b7208042ecd8dda68770ccb9cdf41c1`; Core remains
+`4cc1716bef4d7548ddb4cd343e53fa06bb447104`. Existing SDK, Secrets and
+Interpreter pins and all published artifact coordinates remain unchanged.
+The canonical field, package/Dockerfile mirrors and installed provenance
+expectation advance together. Generator check and actual dependency resolution
+remain obligations of the existing Docker suite; there is no resolver override,
+image publication, deployment or compatibility-success claim in this pin edit.

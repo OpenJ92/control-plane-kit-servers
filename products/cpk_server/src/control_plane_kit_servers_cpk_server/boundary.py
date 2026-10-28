@@ -28,7 +28,7 @@ from control_plane_kit_operations import (
 )
 
 from .composition import CpkServerComposition, CpkServerCompositionError
-from .request_body import RequestBodyTooLarge, collect_request_body
+from .request_body import MCP_ENVELOPE_MAX_BYTES, RequestBodyTooLarge, collect_request_body
 from .authentication import (
     CredentialAuthenticationError,
     authenticate_bearer_credential,
@@ -72,17 +72,21 @@ class CpkServerApplicationBoundary:
 
     def __init__(
         self,
-        services: Mapping[ControlPlaneServiceRole, CpkServerService],
+        services: CpkServerOperationsApplication | Mapping[ControlPlaneServiceRole, CpkServerService],
         credential_verifier: CredentialVerifier,
     ) -> None:
-        missing = tuple(role for role in ControlPlaneServiceRole if role not in services)
+        configured = services if isinstance(services, CpkServerOperationsApplication) else None
+        service_map = configured.services if configured is not None else services
+        missing = tuple(role for role in ControlPlaneServiceRole if role not in service_map)
         if missing:
             missing_names = ", ".join(role.value for role in missing)
             raise CpkServerCompositionError(f"missing services: {missing_names}")
         if not callable(getattr(credential_verifier, "authenticate", None)):
             raise CpkServerCompositionError("credential verifier is required")
-        self._services = dict(services)
-        self._application = CpkServerOperationsApplication(self._services)
+        # Mapping compatibility is explicitly static. An already configured
+        # application retains its resolver, authority mode and service identity.
+        self._application = (configured if configured is not None
+            else CpkServerOperationsApplication(dict(service_map), authority_mode="static"))
         self._credential_verifier = credential_verifier
 
     def authenticate(
@@ -121,7 +125,8 @@ class CpkServerHttpProcessBoundary:
         request = self._prepare(method, path, headers, body, query_string)
         if isinstance(request, CpkServerBoundaryResponse):
             return request
-        return _http_response(_dispatch_application(self.application, request))
+        return _http_response(_dispatch_application(self.application, request),
+            self.composition.http_api.route(request.route_id))
 
     async def handle_async(
         self,
@@ -135,7 +140,8 @@ class CpkServerHttpProcessBoundary:
         request = self._prepare(method, path, headers, body, query_string)
         if isinstance(request, CpkServerBoundaryResponse):
             return request
-        return _http_response(await _dispatch_application_async(self.application, request))
+        return _http_response(await _dispatch_application_async(self.application, request),
+            self.composition.http_api.route(request.route_id))
 
     def _prepare(
         self, method: str, path: str, headers: Mapping[str, str],
@@ -175,7 +181,8 @@ class CpkServerHttpProcessBoundary:
         request = self._prepare_admitted(admission, collected, query_string)
         if isinstance(request, CpkServerBoundaryResponse):
             return request
-        return _http_response(await _dispatch_application_async(self.application, request))
+        return _http_response(await _dispatch_application_async(self.application, request),
+            self.composition.http_api.route(request.route_id))
 
     def _admit(
         self, method: str, path: str, headers: Mapping[str, str],
@@ -230,7 +237,8 @@ class CpkServerMcpProcessBoundary:
         request = self._prepare(headers, message)
         if isinstance(request, CpkServerBoundaryResponse):
             return request
-        return _mcp_response(message, _dispatch_application(self.application, request))
+        return _mcp_response(message, _dispatch_application(self.application, request),
+            self.composition.http_api.route(request.route_id))
 
     async def handle_async(
         self,
@@ -241,11 +249,37 @@ class CpkServerMcpProcessBoundary:
         request = self._prepare(headers, message)
         if isinstance(request, CpkServerBoundaryResponse):
             return request
-        return _mcp_response(message, await _dispatch_application_async(self.application, request))
+        return _mcp_response(message, await _dispatch_application_async(self.application, request),
+            self.composition.http_api.route(request.route_id))
+
+    async def handle_bytes_async(
+        self, *, headers: Mapping[str, str], body: bytes,
+    ) -> CpkServerBoundaryResponse:
+        """Authenticate before strict raw JSON decoding, without losing duplicates."""
+        if len(body) > MCP_ENVELOPE_MAX_BYTES:
+            return _error(413, "request body too large")
+        principal = self._admit(headers)
+        if isinstance(principal, CpkServerBoundaryResponse):
+            return principal
+        try:
+            message = _strict_json_object(body.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError, RecursionError):
+            return _error(400, "invalid JSON request body")
+        request = self._prepare_admitted(headers, message, principal)
+        if isinstance(request, CpkServerBoundaryResponse):
+            return request
+        return _mcp_response(message, await _dispatch_application_async(self.application, request),
+            self.composition.http_api.route(request.route_id))
 
     def _prepare(
         self, headers: Mapping[str, str], message: Mapping[str, object],
     ) -> CpkServerServiceRequest | CpkServerBoundaryResponse:
+        principal = self._admit(headers)
+        if isinstance(principal, CpkServerBoundaryResponse):
+            return principal
+        return self._prepare_admitted(headers, message, principal)
+
+    def _admit(self, headers: Mapping[str, str]) -> AuthenticatedPrincipal | CpkServerBoundaryResponse:
         header_error = _validate_mcp_headers(headers)
         if header_error is not None:
             return header_error
@@ -253,6 +287,12 @@ class CpkServerMcpProcessBoundary:
             principal = self.application.authenticate(headers)
         except CredentialAuthenticationError:
             return _error(401, "invalid credential")
+        return principal
+
+    def _prepare_admitted(
+        self, headers: Mapping[str, str], message: Mapping[str, object],
+        principal: AuthenticatedPrincipal,
+    ) -> CpkServerServiceRequest | CpkServerBoundaryResponse:
         if not isinstance(message, Mapping):
             return _error(400, "MCP message must be an object")
         method_header = next(
@@ -266,20 +306,30 @@ class CpkServerMcpProcessBoundary:
 
 def _http_response(
     response: Mapping[str, object] | CpkServerBoundaryResponse,
+    route: HttpApiRouteContract,
 ) -> CpkServerBoundaryResponse:
     if isinstance(response, CpkServerBoundaryResponse):
         return response
+    if route.service_role is ControlPlaneServiceRole.AUTHORIZATION:
+        if _json_frame_error(response, route.response_schema.max_bytes) is not None:
+            # A command may already have committed. This says nothing about
+            # rollback, replay safety or the command's durable outcome.
+            return _error(503, "application response unavailable")
     return CpkServerBoundaryResponse(200, dict(response))
 
 
 def _mcp_response(
     message: Mapping[str, object],
     response: Mapping[str, object] | CpkServerBoundaryResponse,
+    route: HttpApiRouteContract,
 ) -> CpkServerBoundaryResponse:
     if isinstance(response, CpkServerBoundaryResponse):
         return response
+    normalized = _http_response(response, route)
+    if normalized.status != 200:
+        return normalized
     return CpkServerBoundaryResponse(
-        200, {"jsonrpc": "2.0", "id": _message_id(message), "result": dict(response)},
+        200, {"jsonrpc": "2.0", "id": _message_id(message), "result": normalized.body},
     )
 
 
@@ -348,8 +398,10 @@ def _decode_http_payload(
     if body == b"":
         return {}
     try:
-        decoded = json.loads(body.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
+        decoded = (_strict_json_object(body.decode("utf-8"))
+            if route.service_role is ControlPlaneServiceRole.AUTHORIZATION
+            else json.loads(body.decode("utf-8")))
+    except (UnicodeDecodeError, ValueError, RecursionError):
         return _error(400, "invalid JSON request body")
     if not isinstance(decoded, dict):
         return _error(400, "request body must be an object")
@@ -365,7 +417,15 @@ def _decode_http_read_query(
     if not isinstance(query_string, bytes):
         return _error(400, "invalid query arguments")
 
-    fields = (
+    administration_fields = {
+        "read.workspace-permissions": {"limit", "after"},
+        "read.workspace-permission": {"target"},
+        "read.workspace-permission-history": {"target", "limit", "after"},
+        "read.managed-runtime-assignments": {"limit", "after"},
+        "read.managed-runtime-assignment": {"runtime_id", "authority_ref"},
+        "read.managed-runtime-assignment-history": {"runtime_id", "authority_ref", "limit", "after"},
+    }
+    fields = administration_fields.get(route.route_id) or (
         {"expected", "pending_draft"}
         if route.route_id == "read.receiver-authoring-context"
         else {"limit", "after"}
@@ -382,6 +442,9 @@ def _decode_http_read_query(
             return _error(400, "invalid query arguments")
         if name not in fields or name in arguments:
             return _error(400, "invalid query arguments")
+        if name in {"runtime_id", "authority_ref"}:
+            arguments[name] = value
+            continue
         if name == "limit":
             if re.fullmatch(r"[1-9][0-9]*", value) is None:
                 return _error(400, "invalid query arguments")
@@ -399,7 +462,7 @@ def _decode_http_read_query(
             )
         except (json.JSONDecodeError, RecursionError, ValueError):
             return _error(400, "invalid query arguments")
-        if (name == "after" and not isinstance(decoded, dict)) or _json_nesting(decoded) > 64:
+        if (name in {"after", "target"} and not isinstance(decoded, dict)) or _json_nesting(decoded) > 64:
             return _error(400, "invalid query arguments")
         arguments[name] = decoded
     return arguments
@@ -431,6 +494,30 @@ def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
             raise ValueError("duplicate JSON object key")
         result[key] = value
     return result
+
+
+def _strict_json_object(value: str) -> dict[str, object]:
+    decoded = json.loads(value, object_pairs_hook=_unique_json_object,
+        parse_constant=_reject_json_constant, parse_float=_parse_finite_json_float)
+    if not isinstance(decoded, dict) or _json_nesting(decoded) > 64:
+        raise ValueError("invalid JSON object")
+    return decoded
+
+
+def _json_frame_error(value: Mapping[str, object], budget: int) -> int | None:
+    """Bound encoded owner values; the JSON-RPC envelope is a separate frame."""
+    if _json_nesting(value) > 64:
+        return 400
+    size = 0
+    try:
+        for chunk in json.JSONEncoder(ensure_ascii=True, allow_nan=False,
+                separators=(",", ":")).iterencode(value):
+            size += len(chunk.encode("utf-8"))
+            if size > budget:
+                return 413
+    except (TypeError, ValueError, RecursionError):
+        return 400
+    return None
 
 
 def _reject_json_constant(_value: str) -> object:
@@ -498,6 +585,11 @@ def _decode_mcp_message(
         return _error(400, "tools/call requires a command route")
     if method == "resources/read" and route.safety is not HttpOperationSafety.READ_ONLY:
         return _error(400, "resources/read requires a read route")
+    if route.service_role is ControlPlaneServiceRole.AUTHORIZATION:
+        framing_status = _json_frame_error(arguments, route.request_schema.max_bytes)
+        if framing_status is not None:
+            return _error(framing_status, "invalid request arguments"
+                if framing_status == 400 else "request arguments too large")
     framing_error = _validate_reobserve_frame(route, arguments, surface="mcp")
     if framing_error is not None:
         return framing_error

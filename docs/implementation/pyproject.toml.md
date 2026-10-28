@@ -1,6 +1,18 @@
 Source: [pyproject.toml](../../pyproject.toml).
 Maintain this companion alongside its source and selected dependencies.
 
+## #341 accepted dependency cohort
+
+The selected source cohort is Core/Operations `4cc1716b`, Interpreters
+`bd08b931`, SDK `464df26c`, and Secrets `067678fb`; full immutable hashes
+are in the canonical coordinates manifest. Each prerequisite passed its owning
+gate and independent review before merge. Existing generated recipes and
+current-source provenance expectations advance together, with their assertions
+unchanged. Published product identities remain historical. The first #341 gate
+stopped during dependency resolution before tests; this corrected source
+checkpoint awaits its released owning-gate retry and claims no target-red,
+dynamic composition or live acceptance. Earlier selections below are historical.
+
 ## Current #313 dependency adoption
 
 For #313, existing generated dependency URLs select the accepted cohort in `coordinates/server-products.json`. Package subsets/extras, recipe behavior, base images and process identities are unchanged. This source dependency adoption does not change historical published product identities or enable confidential intake. Normal owner CI must establish installed compatibility.

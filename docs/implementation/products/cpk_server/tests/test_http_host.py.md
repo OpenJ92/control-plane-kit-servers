@@ -3,10 +3,25 @@ Maintain alongside product transport compatibility.
 
 Tests call real create_app, replacing only the effectful operations factory with
 existing RecordingService/DeterministicVerifier fixtures from the neutral boundary
-tests. All 82 current routes must reach auth before malformed payload decode;
+tests inside a real static Operations application. Every canonical route must reach auth before malformed payload decode;
 exact workspace creation and raw query paging must preserve boundary responses.
 The compatibility table checks bodies, methods, Allow sets, strict slashes,
-legacy public health and MCP parsing/auth/dispatch order, with zero-work counters.
+legacy public health and MCP header/auth/parsing/dispatch order, with zero-work counters.
+
+#341 removes only the stale 82-route total after accepted Core added eleven
+administration routes. Canonical iteration, explicit read contracts, reobserve
+uniqueness, per-route 401/error checks, verifier count and zero-service assertion
+remain. North accepted Meridian's correction plan. This is no inventory law in
+Servers; Core owns inventory/parity. The earlier count accounts below are historical.
+
+The real host now proves a failed current-permission lookup remains a bounded 503
+on HTTP and MCP, using the actual dynamic Operations application and resolver while
+replacing only effectful factory construction. Raw MCP administration examples
+prove duplicate members, NaN, float overflow and excessive depth refuse before
+service dispatch. The auth-order test makes JSON decoding fail if an unauthorized
+request reaches it, then checks admitted malformed JSON and normal dispatch.
+All are pending the unchanged Docker owning gate; the factory's durable grant/revoke
+composition still needs its separate owner-backed proof.
 
 A future literal contract prefix is routable; dynamic, empty and reserved first
 segments and unsupported methods reject before route mutation. Real SDK-only and
