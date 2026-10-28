@@ -8,7 +8,7 @@ from datetime import datetime
 
 from .bootstrap import RootBootstrapError, RootBootstrapHold, decode_document
 from .bootstrap_initialization import (
-    PROGRESS_PATH, PROGRESS_SCHEMA, TARGET_SCHEMA, database_target, helper_input_bytes, package_correlation,
+    PROGRESS_PATH, PROGRESS_VOLUME_PATH, PROGRESS_SCHEMA, TARGET_SCHEMA, database_target, helper_input_bytes, package_correlation,
 )
 from .bootstrap_runtime import _locked, _material, _receipt, _save
 
@@ -21,7 +21,24 @@ def helper_names(plan, *, inspection=False):
     name = plan["resources"]["network"]["name"] + ("-workspace-inspect" if inspection else "-workspace-initialize")
     names = (*_INPUT_NAMES, "principals.json") if plan["input"]["installation"].get(
         "control_auth", {}).get("kind") == "multi-principal" else _INPUT_NAMES
-    return name, {filename: name + "-" + filename.replace(".", "-") for filename in names}
+    return name, {filename: name + "-" + filename.replace(".", "-") for filename in (*names, "progress")}
+
+
+def progress_mount(volume_name):
+    """Only the bounded acknowledgement files need storage beyond helper exit."""
+    import docker
+    return dict(docker.types.Mount(PROGRESS_VOLUME_PATH, volume_name, type="volume", no_copy=True))
+
+
+def prepare_progress_directory(helper, uid):
+    """Prepare an empty private directory on the stopped helper's owned volume."""
+    output = io.BytesIO()
+    with tarfile.open(fileobj=output, mode="w") as archive:
+        entry = tarfile.TarInfo("private")
+        entry.type, entry.mode, entry.uid, entry.gid = tarfile.DIRTYPE, 0o700, uid, uid
+        archive.addfile(entry)
+    if helper.put_archive(PROGRESS_VOLUME_PATH, output.getvalue()) is not True:
+        raise RootBootstrapHold("bootstrap initialization progress preparation is unverified")
 
 
 def _target(plan, receipt, client):
@@ -98,13 +115,13 @@ def _verify_helper(helper, plan, target, record, mounts, *, stopped=False):
     configured = host.get("Mounts", [])
     def mount_key(value):
         return (value.get("Type"), value.get("Source"), value.get("Target"), value.get("ReadOnly"),
-            value.get("VolumeOptions", {}).get("Subpath"))
+            value.get("VolumeOptions", {}).get("Subpath"), value.get("VolumeOptions", {}).get("NoCopy", False))
     if (len(configured) != len(mounts) or sorted(map(mount_key, configured)) != sorted(map(mount_key, mounts))):
         raise RootBootstrapHold("bootstrap initialization helper mounts differ")
     actual = attrs["Mounts"]
-    if (len(actual) != len(mounts) or any(value.get("Type") != "volume" or value.get("RW") is not False for value in actual)
-            or sorted((value.get("Name"), value.get("Destination")) for value in actual)
-            != sorted((value["Source"], value["Target"]) for value in mounts)):
+    if (len(actual) != len(mounts) or any(value.get("Type") != "volume" for value in actual)
+            or sorted((value.get("Name"), value.get("Destination"), value.get("RW")) for value in actual)
+            != sorted((value["Source"], value["Target"], not value["ReadOnly"]) for value in mounts)):
         raise RootBootstrapHold("bootstrap initialization helper mounts differ")
 
 
@@ -187,6 +204,8 @@ def _run_helper(plan, material, intent, state, receipt, client, sdk, *, inspecti
         if volume.id != volume_name or volume.attrs.get("Labels") != receipt["labels"]:
             raise RootBootstrapHold("bootstrap initialization volume ownership differs")
         observed()
+        if filename == "progress":
+            continue
         value = SecretValue(values[filename].decode("utf-8"))
         effect("materialize-initialization-file:" + filename,
             lambda: sdk.materialize_secret_file(volume_name, value, SecretFileMode.OWNER_READ_ONLY, owner_uid=uid))
@@ -200,7 +219,8 @@ def _run_helper(plan, material, intent, state, receipt, client, sdk, *, inspecti
     if _target(plan, receipt, client) != target:
         raise RootBootstrapHold("bootstrap initialization target differs")
     mounts = [dict(DockerSdkSecretMount("/bootstrap/" + filename, volume).docker_mount())
-        for filename, volume in names.items()]
+        for filename, volume in names.items() if filename != "progress"]
+    mounts.append(progress_mount(names["progress"]))
     helper = effect("create-initialization-helper", lambda: client.containers.create(
         plan["driver_image_id"], name=name, user=str(uid), labels=receipt["labels"],
         network_mode="container:" + target["postgres_container_id"],
@@ -212,6 +232,8 @@ def _run_helper(plan, material, intent, state, receipt, client, sdk, *, inspecti
     record["helper_id"] = helper.id
     _save(state, receipt)
     _verify_helper(helper, plan, target, record, mounts, stopped=True)
+    observed()
+    effect("prepare-initialization-progress", lambda: prepare_progress_directory(helper, uid))
     observed()
     if _target(plan, receipt, client) != target:
         raise RootBootstrapHold("bootstrap initialization target differs")

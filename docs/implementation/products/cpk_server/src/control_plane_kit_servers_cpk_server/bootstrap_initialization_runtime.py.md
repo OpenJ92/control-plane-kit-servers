@@ -11,6 +11,13 @@ immutable; its actual installed schema/Operations coordinate binds the helper.
 Only needed private inputs are copied to temporary 0400 volumes. The helper has
 no socket, published ports or added capabilities; its root is read-only, /tmp is
 bounded, and full protected subpath mount/configuration observations must match.
+One additional exact-owned volume at `/cpk-initialization` holds progress beyond
+container exit. Before start, a fixed directory archive gives the numeric helper
+a 0700 private parent; its fresh child directory contains at most the bounded
+4096-byte acknowledgement and atomic replacement file. The directory preparation
+has persisted pending intent; an uncertain response stops without redispatch.
+Only this progress mount is writable. Volume copy-up is disabled. It participates
+in the existing name-absence, ID/label receipt and confirmed-cleanup machinery.
 Create IDs are saved before verification. Progress is read through a bounded
 single-file archive and decoded into a closed redacted shape. A wait/readback
 failure preserves uncertainty, earlier observations and temporary resources.
@@ -28,4 +35,7 @@ for exact ID/label cleanup. Each removal remains pending until absence is verifi
 unknown or foreign resources stop cleanup. PostgreSQL and installation policy
 are not cleanup candidates. No compensation, resume, adoption, schema SQL, new
 lock owner or generalized recovery is added. Source/controller seam tests are
-not full bootstrap or real Docker helper acceptance; owning evidence is pending.
+not full bootstrap or real Docker helper acceptance. The existing root Docker
+witness now exercises these production storage helpers with real stopped
+containers, including a failed exit with retained partial acknowledgement;
+executable evidence is pending.

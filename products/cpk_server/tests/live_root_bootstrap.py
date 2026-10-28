@@ -330,6 +330,100 @@ print("root commissioning: actual driver factories and exact reuse PASS")
         print("root bootstrap: actual driver complete plan PASS", flush=True)
 
 
+def initialization_progress_storage_witness(engine, plan, run, uid):
+    """Real stopped-container archive lifecycle, without any database effects."""
+    import docker
+    from control_plane_kit_servers_cpk_server.bootstrap_initialization import (
+        PROGRESS_SCHEMA, package_correlation,
+    )
+    from control_plane_kit_servers_cpk_server.bootstrap_initialization_runtime import (
+        _progress, prepare_progress_directory, progress_mount,
+    )
+    from control_plane_kit_servers_cpk_server.bootstrap_runtime import _save
+
+    target = {"installation_id": run, **package_correlation()}
+    labels = {"org.openj92.cpk.test-run": run, "org.openj92.cpk.test-purpose": "initialization-progress"}
+    program = '''
+import json, sys
+from pathlib import Path
+from control_plane_kit_servers_cpk_server.bootstrap_initialization import PROGRESS_PATH, _checkpoint
+directory = Path(PROGRESS_PATH).parent
+directory.mkdir(mode=0o700, exist_ok=False)
+_checkpoint(directory, json.loads(sys.argv[1]))
+raise SystemExit(int(sys.argv[2]))
+'''
+    for case, exit_code in (("complete", 0), ("partial", 7)):
+        name = run + "-initialization-progress-" + case
+        assert not engine.containers.list(all=True, filters={"name": "^/" + name + "$"})
+        assert not engine.volumes.list(filters={"name": name})
+        state = ROOT / ("initialization-progress-" + case)
+        state.mkdir(mode=0o700)
+        record = {"engine_id": engine.info()["ID"], "labels": labels,
+            "pending": "create-volume", "volume_id": None, "helper_id": None, "observation": None}
+        _save(state, record)
+        volume = engine.volumes.create(name=name, labels=labels)
+        record.update(volume_id=volume.id, pending=None)
+        _save(state, record)
+        assert volume.id == name and volume.attrs["Labels"] == labels
+        progress = {"schema": PROGRESS_SCHEMA, "plan_digest": plan["digest"], **target,
+            "schema_acknowledged": True, "initialization": "matching" if exit_code == 0 else "unknown",
+            "occurred_at": "2026-10-28T12:00:00Z" if exit_code == 0 else None,
+            "pending": None if exit_code == 0 else "initialization"}
+        record["pending"] = "create-helper"
+        _save(state, record)
+        helper = engine.containers.create(plan["driver_image_id"], name=name, user=str(uid), labels=labels,
+            command=["python", "-c", program, json.dumps(progress), str(exit_code)],
+            network_mode="none", read_only=True, mounts=[progress_mount(volume.id)],
+            tmpfs={"/tmp": "rw,noexec,nosuid,size=1m,mode=1777"}, cap_drop=["ALL"],
+            security_opt=["no-new-privileges:true"],
+            log_config=docker.types.LogConfig(type="json-file", config={"max-size": "1m", "max-file": "1"}))
+        record.update(helper_id=helper.id, pending="prepare-progress")
+        _save(state, record)
+        helper.reload()
+        assert helper.attrs["Image"] == plan["driver_image_id"] and not helper.attrs["State"]["Running"]
+        assert all(helper.attrs["Config"]["Labels"].get(key) == value for key, value in labels.items())
+        prepare_progress_directory(helper, uid)
+        record["pending"] = "start-and-read"
+        _save(state, record)
+        helper.start()
+        assert helper.wait(timeout=30)["StatusCode"] == exit_code, "progress writer failed"
+        helper.reload()
+        assert helper.attrs["State"]["Running"] is False
+        observed = _progress(helper, plan, target, uid)
+        assert observed == progress, "stopped helper lost progress"
+        record.update(observation=observed, pending=None)
+        _save(state, record)
+        # Failed-exit evidence remains readable until this fixture explicitly
+        # cleans its known resources; production retains them on failure.
+        assert _progress(helper, plan, target, uid) == observed
+        record["pending"] = "remove-helper"
+        _save(state, record)
+        helper.reload()
+        assert helper.id == record["helper_id"] and helper.attrs["State"]["Running"] is False
+        assert all(helper.attrs["Config"]["Labels"].get(key) == value for key, value in labels.items())
+        helper.remove()
+        try:
+            engine.containers.get(record["helper_id"])
+        except docker.errors.NotFound:
+            pass
+        else:
+            raise AssertionError("progress helper removal unverified")
+        record["pending"] = "remove-volume"
+        _save(state, record)
+        volume = engine.volumes.get(record["volume_id"])
+        assert volume.id == name and volume.attrs["Labels"] == labels
+        volume.remove()
+        try:
+            engine.volumes.get(record["volume_id"])
+        except docker.errors.NotFound:
+            pass
+        else:
+            raise AssertionError("progress volume removal unverified")
+        record.update(pending=None, cleanup="complete")
+        _save(state, record)
+    print("root bootstrap: stopped-helper progress and partial acknowledgement retention PASS", flush=True)
+
+
 def check(run):
     import docker
     from control_plane_kit_interpreters.docker import DockerSdkClient
@@ -349,6 +443,9 @@ def check(run):
     try:
         engine_matches = engine.info()["ID"] == receipt["engine_id"]
         assert engine_matches
+        progress_uid = sdk.inspect_image(receipt["observations"]["images"][plan["cpk_node_id"]]).secret_file_owner_uid()
+        assert type(progress_uid) is int and progress_uid > 0
+        initialization_progress_storage_witness(engine, plan, run, progress_uid)
         for node in plan["resources"]["nodes"]:
             container = engine.containers.get(receipt["resources"]["containers"][node["node_id"]]["id"])
             image = sdk.inspect_image(node["image"])

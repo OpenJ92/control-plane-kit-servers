@@ -221,6 +221,10 @@ bounded temporary helper, performs only owner receipt reads, and preserves the
 original acquisition's pending phase. Matching receipt evidence does not resume
 apply. Missing or unavailable evidence does not make retry safe. Uncertain helper
 creation/removal retains evidence and refuses another dispatch. Confirmed cleanup
-removes only the exact temporary helper and its input copies, retaining database
+removes only the exact temporary helper, its input copies and progress volume, retaining database
 and installation policy. No live installation or image publication is implied by
 this source workflow, and historical receipts are not proof that resources exist.
+
+Progress lives in a dedicated owned volume so acknowledgement files survive
+helper exit. A failed or uncertain helper retains that volume and its pending
+receipt for inspection; successful bounded readback is retained before cleanup.

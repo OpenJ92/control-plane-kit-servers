@@ -20,7 +20,8 @@ commits are separate; a lost acknowledgement is not rollback or permission to re
 The distinct inspect command uses only the owner read service over an explicitly
 read-only connection. Matching, missing and conflict are bounded observations;
 query/schema/connection failure remains unknown. It never invokes either mutation
-owner. Protected progress uses a new private directory, bounded atomic writes and
+owner. Protected progress uses a new private directory beneath a numeric-owned
+0700 parent on the controller's dedicated persistent progress volume, bounded atomic writes and
 fsync; a preexisting directory refuses rather than replaying work. No raw receipt
 or exception context is projected. No installer/API/SQL selector is exposed by CLI.
 

@@ -24,7 +24,8 @@ from .bootstrap_runtime import private_read
 from .bootstrap_workspace import admit_workspace_intent
 
 
-PROGRESS_PATH = "/tmp/cpk-bootstrap-initialization/progress.json"
+PROGRESS_VOLUME_PATH = "/cpk-initialization"
+PROGRESS_PATH = PROGRESS_VOLUME_PATH + "/private/progress/progress.json"
 PROGRESS_SCHEMA = "cpk.root-bootstrap.initialization-progress.v1"
 TARGET_SCHEMA = "cpk.root-bootstrap.initialization-target.v1"
 _STORES = ("CPK_WORKPLACE_DATABASE_URL", "CPK_ACTIVITY_HISTORY_DATABASE_URL",
@@ -186,7 +187,7 @@ def _utc_now():
 
 
 def run_workspace_initialization(*, input_directory=Path("/bootstrap"),
-        progress_directory=Path("/tmp/cpk-bootstrap-initialization"), inspect_only=False):
+        progress_directory=Path(PROGRESS_PATH).parent, inspect_only=False):
     """Fixed helper commands; directory seams are only for trusted composition tests."""
     try:
         if type(inspect_only) is not bool:

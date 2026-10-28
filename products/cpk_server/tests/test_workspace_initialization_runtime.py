@@ -86,7 +86,12 @@ class WorkspaceInitializationRuntimeTests(unittest.TestCase):
                 self.assertEqual(options["cap_drop"], ["ALL"])
                 self.assertEqual(options["security_opt"], ["no-new-privileges:true"])
                 self.assertNotIn("ports", options)
-                self.assertTrue(all(m["Type"] == "volume" and m["ReadOnly"] for m in options["mounts"]))
+                writable = [m for m in options["mounts"] if not m["ReadOnly"]]
+                self.assertEqual(len(writable), 1)
+                self.assertEqual(writable[0]["Target"], module.PROGRESS_VOLUME_PATH)
+                self.assertTrue(all(m["Type"] == "volume" for m in options["mounts"]))
+                progress_volume = volumes[writable[0]["Source"]]
+                progress_volume.files = {}
                 saved = json.loads((state / "receipt.json").read_bytes())
                 self.assertEqual(saved["pending"], original["pending"])
                 self.assertEqual(saved["initialization_inspection"]["pending"], "create-initialization-helper")
@@ -97,8 +102,28 @@ class WorkspaceInitializationRuntimeTests(unittest.TestCase):
                     "NetworkMode": options["network_mode"], "Privileged": False, "ReadonlyRootfs": True,
                     "CapDrop": options["cap_drop"], "SecurityOpt": options["security_opt"],
                     "Mounts": options["mounts"]}, "Mounts": [{"Type": "volume", "Name": m["Source"],
-                        "Destination": m["Target"], "RW": False} for m in options["mounts"]]}
-                helper.start.side_effect = lambda: helper.attrs["State"].update(Running=True)
+                        "Destination": m["Target"], "RW": not m["ReadOnly"]} for m in options["mounts"]]}
+                def prepare(path, raw):
+                    self.assertFalse(helper.attrs["State"]["Running"])
+                    self.assertEqual(path, module.PROGRESS_VOLUME_PATH)
+                    saved = json.loads((state / "receipt.json").read_bytes())
+                    self.assertEqual(saved["initialization_inspection"]["pending"], "prepare-initialization-progress")
+                    with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
+                        entries = archive.getmembers()
+                        self.assertEqual(len(entries), 1)
+                        entry = entries[0]
+                        self.assertTrue(entry.isdir())
+                        self.assertEqual((entry.name, entry.uid, entry.mode), ("private", 10001, 0o700))
+                    progress_volume.files["private"] = True
+                    if fault == "prepare-unknown":
+                        raise TimeoutError("synthetic-private-cleanup-canary")
+                    return True
+                helper.put_archive.side_effect = prepare
+                def start():
+                    self.assertTrue(progress_volume.files["private"])
+                    helper.attrs["State"]["Running"] = True
+                    progress_volume.files[module.PROGRESS_PATH] = output.getvalue()
+                helper.start.side_effect = start
                 def wait(**kw):
                     helper.attrs["State"]["Running"] = False
                     if fault == "cleanup-unknown":
@@ -107,19 +132,27 @@ class WorkspaceInitializationRuntimeTests(unittest.TestCase):
                             volumes.pop(name)
                             raise TimeoutError("synthetic-private-cleanup-canary")
                         volumes[name].remove.side_effect = uncertain_remove
-                    return {"StatusCode": 0}
+                    return {"StatusCode": 1 if fault == "helper-failed" else 0}
                 helper.wait.side_effect = wait
                 progress = {"schema": module.PROGRESS_SCHEMA, "plan_digest": plan["digest"],
                     "installation_id": target["installation_id"], "operations_commit": target["operations_commit"],
                     "schema_sha256": target["schema_sha256"], "schema_acknowledged": False,
                     "pending": None, "initialization": "matching", "occurred_at": "2026-10-28T12:00:00Z"}
+                if fault == "helper-failed":
+                    progress.update(schema_acknowledged=True, pending="initialization",
+                        initialization="unknown", occurred_at=None)
                 raw = fixture.api.canonical(progress)
                 output = io.BytesIO()
                 with tarfile.open(fileobj=output, mode="w") as archive:
                     entry = tarfile.TarInfo("progress.json")
                     entry.uid, entry.mode, entry.size = 10001, 0o600, len(raw)
                     archive.addfile(entry, io.BytesIO(raw))
-                helper.get_archive.return_value = ([output.getvalue()], {})
+                def archive(path):
+                    self.assertFalse(helper.attrs["State"]["Running"])
+                    # Only the mounted volume survives stop; no archive is
+                    # manufactured independently of the selected storage.
+                    return [progress_volume.files[path]], {}
+                helper.get_archive.side_effect = archive
                 helper.remove.side_effect = lambda: containers.pop(helper.id)
                 containers[helper.id] = helper
                 if fault == "target-drift":
@@ -151,9 +184,18 @@ class WorkspaceInitializationRuntimeTests(unittest.TestCase):
                 elif fault == "cleanup-unknown":
                     self.assertEqual(record["observation"]["initialization"], "matching")
                     self.assertTrue(record["pending"].startswith("remove-initialization-volume:"))
+                elif fault == "helper-failed":
+                    self.assertTrue(record["observation"]["schema_acknowledged"])
+                    self.assertEqual(record["observation"]["pending"], "initialization")
+                    self.assertEqual(record["pending"], "inspect-workspace-initialization")
+                    self.assertIn(helper.id, containers)
+                    self.assertTrue(all(value["id"] in volumes for value in record["temporary_volumes"].values()))
+                    self.assertEqual(record["cleanup"], "not-started")
                 else:
                     helper.start.assert_not_called()
                     self.assertIn(helper.id, containers)
+                    if fault == "prepare-unknown":
+                        self.assertEqual(record["pending"], "prepare-initialization-progress")
                 calls = client.containers.create.call_count
                 before = (state / "receipt.json").read_bytes()
                 if fault is None:
@@ -169,6 +211,12 @@ class WorkspaceInitializationRuntimeTests(unittest.TestCase):
 
     def test_matching_read_does_not_clear_uncertain_cleanup_or_authorize_another_helper(self):
         self.exercise(fault="cleanup-unknown")
+
+    def test_failed_helper_retains_partial_progress_and_owned_storage_without_redispatch(self):
+        self.exercise(fault="helper-failed")
+
+    def test_uncertain_directory_preparation_retains_pending_without_start_or_redispatch(self):
+        self.exercise(fault="prepare-unknown")
 
     def test_foreign_data_or_target_drift_stops_before_helper_dispatch(self):
         for fault in ("foreign-data", "target-drift"):

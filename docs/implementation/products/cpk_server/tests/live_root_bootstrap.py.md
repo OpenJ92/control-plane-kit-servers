@@ -49,3 +49,15 @@ cover the projected public artifact, password file and absence of a published
 PostgreSQL port. This is driver packaging/planning evidence, not managed-image
 startup or published-digest qualification. The existing native acquisition and
 separate PostgreSQL product readiness/storage witnesses retain their meaning.
+
+#346 adds a storage lifecycle regression to the existing Docker check stage.
+Two socket-free numeric helpers use the actual driver's checkpoint writer and
+the production progress mount/directory preparation. One exits successfully with
+completed progress; the other exits with a known nonzero status after a partial
+schema acknowledgement. The controller reads and validates both archives after
+the containers stop, then reads each again before explicit fixture cleanup.
+Private intent, IDs and observations precede effects in fixture receipts; cleanup
+checks exact labels/IDs and verifies absence. Unexpected outcomes retain resources
+and pending evidence. No database, initialization replay, alternative runner or
+full dynamic-bootstrap acceptance is involved. This regression is unrun until
+the owning Servers gate reaches it.
