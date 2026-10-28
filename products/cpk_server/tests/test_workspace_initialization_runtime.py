@@ -97,11 +97,15 @@ class WorkspaceInitializationRuntimeTests(unittest.TestCase):
                 self.assertEqual(saved["initialization_inspection"]["pending"], "create-initialization-helper")
                 helper = Mock()
                 helper.id = "e" * 64
+                configured_mounts = copy.deepcopy(options["mounts"])
+                for mount in configured_mounts:
+                    if mount["ReadOnly"] is False:
+                        del mount["ReadOnly"]  # Docker may omit a false boolean.
                 helper.attrs = {"Image": image, "Config": {"Labels": {**image_labels, **labels}, "User": options["user"],
                     "Cmd": options["command"]}, "State": {"Running": False}, "HostConfig": {
                     "NetworkMode": options["network_mode"], "Privileged": False, "ReadonlyRootfs": True,
                     "CapDrop": options["cap_drop"], "SecurityOpt": options["security_opt"],
-                    "Mounts": options["mounts"]}, "Mounts": [{"Type": "volume", "Name": m["Source"],
+                    "Mounts": configured_mounts}, "Mounts": [{"Type": "volume", "Name": m["Source"],
                         "Destination": m["Target"], "RW": not m["ReadOnly"]} for m in options["mounts"]]}
                 def prepare(path, raw):
                     self.assertFalse(helper.attrs["State"]["Running"])

@@ -114,7 +114,7 @@ def _verify_helper(helper, plan, target, record, mounts, *, stopped=False):
         raise RootBootstrapHold("bootstrap initialization helper ownership differs")
     configured = host.get("Mounts", [])
     def mount_key(value):
-        return (value.get("Type"), value.get("Source"), value.get("Target"), value.get("ReadOnly"),
+        return (value.get("Type"), value.get("Source"), value.get("Target"), value.get("ReadOnly", False),
             value.get("VolumeOptions", {}).get("Subpath"), value.get("VolumeOptions", {}).get("NoCopy", False))
     if (len(configured) != len(mounts) or sorted(map(mount_key, configured)) != sorted(map(mount_key, mounts))):
         raise RootBootstrapHold("bootstrap initialization helper mounts differ")
