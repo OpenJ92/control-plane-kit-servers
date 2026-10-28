@@ -195,3 +195,33 @@ before their deeper assertions; later PostgreSQL/public witnesses may be unreach
 in the initial red gate. Report actual failures and reached boundaries rather
 than predicting an execution count. Meridian reviews before the unchanged Linux
 owning suite. Production composition remains unchanged at this target checkpoint.
+
+### Consumer implementation checkpoint (green evidence pending)
+
+The first target run40631080717 was mixed red: intended absent mapper/dispatch
+interfaces and no-reselection law failed, alongside two stale expected Operations
+pin assertions. The single expected-pin constant is corrected to acceptedb08;
+Core4cc and exact assertions remain intact. North accepted the intended causal
+red without another full run solely for fixture drift. See the owning #341 log.
+
+`bind_admitted` now performs exact immutable catalogue mapping and retains the
+original selection in the scoped policy binding. Native `qualify` preserves the
+complete graph/product shape without current-assignment lookup; `select` still
+performs eligibility preflight. Dynamic bridge/native dispatch requires the
+owner target and maps it without reselecting. The existing worker still owns
+lazy SDK construction, original installation proof, observation and final close.
+
+Signed bridge dispatch requires a valid invocation port in dynamic mode and
+passes it unchanged through the actual reader/signer/transport. Configured-local
+endpoint selection/read is enclosed by endpoint-observation admission and outcome
+acknowledgement. Denial/failed acknowledgement stops later signing. Cancellation
+records unknown and stops the awaiting sequence; an already running thread may
+finish later, so acknowledgement is not a claim of worker completion or cleanup.
+A bounded thread test demonstrates this distinction; existing native worker tests
+remain unchanged. Dynamic bootstrap readers also require invocation ports.
+
+Dynamic policy capabilities still do not supply borrowed local placement. A
+whole plan requiring local readiness is unsupported in that mode. Ordinary and
+runtime/observer semantic profile registration, Cloudflare invocation forwarding,
+trusted process configuration and installed-client query work remain separate
+#341 connections. This checkpoint does not claim whole-issue or live acceptance.

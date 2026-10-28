@@ -59,6 +59,7 @@ class DockerRuntimePolicyBinding:
     runtime_id: str
     authority_ref: RuntimeAuthorityReference
     local_client_config: DockerUnixSocketClientConfig = field(repr=False)
+    managed_target: ManagedRuntimeSelection | None = field(default=None, kw_only=True, repr=False)
 
     def __post_init__(self):
         if (not all(_reference(value) for value in (self.workspace_id, self.runtime_id))
@@ -66,6 +67,13 @@ class DockerRuntimePolicyBinding:
                 or type(self.local_client_config) is not DockerUnixSocketClientConfig):
             raise ValueError("runtime policy binding is invalid")
         self.local_client_config.__post_init__()
+        if self.managed_target is not None:
+            if type(self.managed_target) is not ManagedRuntimeSelection:
+                raise ValueError("runtime policy binding is invalid")
+            self.managed_target.__post_init__()
+            if (self.managed_target.workspace_id, self.managed_target.runtime_id,
+                    self.managed_target.authority_ref) != (self.workspace_id, self.runtime_id, self.authority_ref):
+                raise ValueError("runtime policy binding is invalid")
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -166,6 +174,34 @@ class DockerRuntimeClientSelector:
             if (value.workspace_id, value.runtime_id, value.authority_ref)
                 == (workspace_id, runtime_id, authority.authority_ref))
         return values[0] if len(values) == 1 else None
+
+    def bind_admitted(self, selection, *, workspace_id, runtime_id, authority):
+        """Map owner-supplied correlation to a fixed capability, without admission.
+
+        No current assignment lookup belongs here: a later grant cannot replace
+        the capability of an already admitted check. The caller must enter from
+        the owning admission boundary; the selection is not a reusable permit.
+        """
+        try:
+            if (self.capability_policy is None or type(selection) is not ManagedRuntimeSelection
+                    or type(authority) is not RegisteredRuntimeAuthority
+                    or authority.status is not RegisteredRuntimeAuthorityStatus.ACTIVE
+                    or authority.runtime_kind is not RuntimeKind.DOCKER
+                    or type(authority.authority) is not LocalDockerSocketAuthority
+                    or authority.workspace_id != workspace_id):
+                return None
+            selection.__post_init__()
+            if (selection.installation_id, selection.workspace_id, selection.runtime_id,
+                    selection.authority_ref, selection.registration_id) != (
+                    self.capability_policy.installation_id, workspace_id, runtime_id,
+                    authority.authority_ref, authority.registration_id):
+                return None
+            capability = self.capability_policy.require(selection.capability_id)
+            installed = next(value for value in self.capability_bindings if value.capability == capability)
+            return DockerRuntimePolicyBinding(workspace_id, runtime_id, authority.authority_ref,
+                installed.local_client_config, managed_target=selection)
+        except (ValueError, TypeError, AttributeError, StopIteration):
+            return None
 
 
 @dataclass(frozen=True, slots=True, repr=False)

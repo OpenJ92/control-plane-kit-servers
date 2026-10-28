@@ -33,7 +33,7 @@ class DockerManagedNativeConnection:
     product_document: ProductDescriptorDocument
     clock: Callable[[], datetime]
 
-    def _selected(self, *, plan, current, desired, registered_products, runtime_authorities):
+    def _qualified(self, *, plan, current, desired, registered_products, runtime_authorities):
         try:
             if (type(self.provider_clients) is not DockerRuntimeClientSelector
                     or type(self.product_document) is not ProductDescriptorDocument
@@ -54,10 +54,6 @@ class DockerManagedNativeConnection:
                 resolved = resolve_management_observation(operation, *pair, expected_operation=operation)
                 runtime = resolved.selected_graph.graph.runtimes[operation.target.runtime_id]
                 authority = _authority(runtime_authorities, runtime)
-                binding = self.provider_clients.select(workspace_id=authority.workspace_id,
-                    runtime_id=runtime.runtime_id, authority=authority)
-                if binding is None:
-                    return None
                 product = _product(registered_products, authority.workspace_id, resolved.connector_node)
                 if product.reference != reference or product.descriptor_document != document:
                     return None
@@ -69,35 +65,58 @@ class DockerManagedNativeConnection:
                     authority_ref=authority.authority_ref)
                 if mode is None:
                     return None
-                selected.append((activity.activity_id, authority, binding, mode))
+                selected.append((activity.activity_id, authority, mode))
             return pair, tuple(selected)
         except (ValueError, TypeError, KeyError, AttributeError, OverflowError, RecursionError):
             return None
 
     def select(self, *, plan, current, desired, registered_products, runtime_authorities):
-        selected = self._selected(plan=plan, current=current, desired=desired,
+        selected = self._qualified(plan=plan, current=current, desired=desired,
+            registered_products=registered_products, runtime_authorities=runtime_authorities)
+        if selected is not None:
+            for activity, authority, _ in selected[1]:
+                if self.provider_clients.select(workspace_id=authority.workspace_id,
+                        runtime_id=plan.activity(activity).operation.target.runtime_id, authority=authority) is None:
+                    return None
+        return None if selected is None else tuple(item[0] for item in selected[1])
+
+    def qualify(self, *, plan, current, desired, registered_products, runtime_authorities):
+        """Original complete-plan/product qualification, without current binding reads."""
+        selected = self._qualified(plan=plan, current=current, desired=desired,
             registered_products=registered_products, runtime_authorities=runtime_authorities)
         return None if selected is None else tuple(item[0] for item in selected[1])
 
-    async def observe_connection(self, realization, request, authority):
+    async def observe_connection(self, realization, request, authority, *, managed_target=None):
         try:
             if type(request) is not RuntimeEffectRequest:
                 raise ValueError
             request.__post_init__()
-            selected = self._selected(plan=realization.plan,
+            dynamic = self.provider_clients.capability_policy is not None
+            if (dynamic and managed_target is None) or (not dynamic and managed_target is not None):
+                raise ValueError
+            inputs = dict(plan=realization.plan,
                 current=DEFAULT_GRAPH_CODEC.decode(realization.base_graph.graph_descriptor),
                 desired=DEFAULT_GRAPH_CODEC.decode(realization.desired_graph.graph_descriptor),
                 registered_products=realization.registered_products,
                 runtime_authorities=realization.runtime_authorities)
+            if not dynamic and self.select(**inputs) is None:
+                raise ValueError
+            selected = self._qualified(**inputs)
             if selected is None:
                 raise ValueError
             pair, activities = selected
-            activity, current_authority, binding, mode = next(
+            activity, current_authority, mode = next(
                 item for item in activities if item[0] == request.activity_id)
             if (authority != current_authority or type(authority) is not type(current_authority)
                     or request.source.workspace_id != current_authority.workspace_id
                     or request.authority_ref != current_authority.authority_ref
                     or request.operation != realization.plan.activity(activity).operation):
+                raise ValueError
+            arguments = dict(workspace_id=authority.workspace_id,
+                runtime_id=request.operation.target.runtime_id, authority=authority)
+            binding = (self.provider_clients.bind_admitted(managed_target, **arguments) if dynamic
+                else self.provider_clients.select(**arguments))
+            if binding is None:
                 raise ValueError
             original, receipt = None, None
             if mode in (ConnectorConnectionQualification.RETAINED_CONTENT_UPDATE,

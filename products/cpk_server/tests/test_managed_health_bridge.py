@@ -316,6 +316,7 @@ class ManagedHealthBridgeSelectionTests(unittest.TestCase):
 
     def test_dynamic_public_signed_dispatch_preserves_invocation_controls(self):
         import asyncio
+        from control_plane_kit_interpreters.invocations import InvocationPortError
         from types import SimpleNamespace
         from unittest.mock import AsyncMock
         import httpx
@@ -398,6 +399,10 @@ class ManagedHealthBridgeSelectionTests(unittest.TestCase):
                     authority.transit.resolution_grant.authorization_id))
                 with self.assertRaises(ManagedHealthUnavailable):
                     asyncio.run(bridge.observe_signed(realization, request, authority, invocations=port))
+                calls = resolver.resolve.call_count
+                with self.assertRaises(InvocationPortError):
+                    asyncio.run(bridge.observe_signed(realization, request, authority, managed_target=target))
+                self.assertEqual(resolver.resolve.call_count, calls)
         uow.assert_not_called()
 
     def test_configured_local_endpoint_admission_and_ack_precede_signed_reader(self):
@@ -444,3 +449,45 @@ class ManagedHealthBridgeSelectionTests(unittest.TestCase):
                         asyncio.run(call)
                     self.assertEqual(events, ["admit"] if stop == "denied" else ["admit", "read", "acknowledge"])
                     reader.observe.assert_not_awaited()
+
+    def test_cancelled_local_endpoint_stops_reader_while_worker_finishes(self):
+        import asyncio
+        import threading
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+        realization, request, authority, _ = self.dispatch_inputs(local=True)
+        entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+        reader = SimpleNamespace(observe=AsyncMock())
+
+        class ControlStop(RuntimeError):
+            pass
+
+        permit = object()
+        port = SimpleNamespace(control_error=ControlStop, admit=Mock(return_value=permit), record_outcome=Mock())
+        def read(**kwargs):
+            entered.set()
+            try:
+                if not release.wait(5):
+                    raise AssertionError("endpoint worker was not released")
+                return object()
+            finally:
+                finished.set()
+        bridge = replace(self.bridge, reader=reader,
+            endpoints=SimpleNamespace(select=self.endpoints.select, read=read))
+
+        async def exercise():
+            task = asyncio.create_task(bridge.observe_signed(realization, request, authority, invocations=port))
+            try:
+                self.assertTrue(await asyncio.to_thread(entered.wait, 5))
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+                port.record_outcome.assert_called_once_with(permit, "unknown")
+                self.assertFalse(finished.is_set())
+                reader.observe.assert_not_awaited()
+            finally:
+                release.set()
+                await asyncio.gather(task, return_exceptions=True)
+            self.assertTrue(await asyncio.to_thread(finished.wait, 5))
+            reader.observe.assert_not_awaited()
+        asyncio.run(exercise())
