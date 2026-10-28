@@ -1,5 +1,9 @@
 ## #344 / #345 implementation plan — reviewed private intent contract
 
+This first section preserves the #345 design at its stated source coordinates.
+The current #347 continuation and remaining launcher plan appear below; historical
+intermediate release statements are not evidence of final acceptance.
+
 Vale implements; Meridian reviews independently; North owns scope, releases and merge. Repository `OpenJ92/control-plane-kit-servers`, branch `codex/344-dynamic-root-bootstrap`. Base is the independently verified #343 merge `71e058024bc5c6557b13ba86120554945c4a32fa`, tree `45796b19b719b9a9485c61de5266c02463657b85`; destination `roadmap/1813-runtime-control`. One coherent #344 PR will carry ordered independently reviewed #345 → #346 → #347 slices. The selected Core/Operations/Interpreters/SDK/Secrets cohort is unchanged from #341. Meridian returned PLAN PASS for the revised private-intent contract; North released the docs/target checkpoint, shared draft PR and bounded implementation. No executable validation is claimed by this plan.
 
 ### Existing computation and smallest missing connection
@@ -131,3 +135,118 @@ never default identities, credentials or granted access.
 At the #345 intermediate boundary, applying this valid input returns
 `dynamic-bootstrap-incomplete` before Docker. That is expected: this example
 qualifies authoring and private admission, not a usable root deployment.
+
+## #347 remaining current-artifact launcher plan
+
+Planning source is Servers `25bf669a8234993177112a001bb5c61eb0443f46`, tree
+`ee55410c9495394d57392b90d2fae7ef86b39466`. Selected Operations is
+`a487fc0ed9b9c821256e4f4c065dd6bc6312331f`; Core `4cc1716`, SDK `464df26`,
+Interpreters `bd08b931` and Secrets `067678f` retain the canonical full coordinates.
+Reuse the #347 route/input traces and independent source/component dispositions
+on its governing issue. The local changed path passed 1,138 package and 26 support
+tests plus actual initialization/public HTTP/PostgreSQL composition. A later
+unchanged literal Docker-endpoint guard stopped that local owning gate. Existing
+GitHub run40724897642 tests this exact checkpoint; this plan does not change its
+source or claim its pending result.
+
+### Selected behavior and remaining connection
+
+`bootstrap_cli.public_setup` now re-admits the fixed private files before transport
+or readiness, maps actual administration/permission/management results and reads,
+and accepts the owner's legitimate null desired pointer. `bootstrap_runtime`
+stages the minimized public-helper files and decodes their bounded progress.
+The initializer remains a separate database owner composition. Normal process
+construction consumes its retained binding and never invokes either helper.
+The full public apply guard is still present.
+
+`test.sh` currently qualifies an optional immutable CPK/Secrets pair through the
+existing artifact smoke owners, then runs the historical static root fixture.
+`live_root_bootstrap.prepare` builds its public input from canonical historical
+descriptors and adds an inert configuration witness. `check` uses a CPK account
+baseline sealed for that historical digest. Neither this path nor the new
+in-process component proves a fresh current-image dynamic root.
+
+The smallest remaining connection is an additional case in these existing owners,
+using the qualified pair and actual commissioning/runtime-contract factories.
+No new runner, registry, owner API, deployment shortcut or artifact-admission
+format is proposed.
+
+### Bounded source delta and expected evidence
+
+1. Extend the existing root invocation in `test.sh` with one dynamic case only
+   when the already supported `published-digest` tuple is complete and admitted.
+   Retain the historical static invocation and default source stages. Use the
+   selected CPK digest for the driver base and the two exact repository digests
+   in the authored products. Keep native PostgreSQL, fixed Hello/gateway inputs,
+   canonical catalogue pins, Linux daemon guard and existing timeout unchanged.
+2. Extend `live_root_bootstrap.prepare` using the actual
+   `root_commissioning.plan_root_commissioning` / `prepare_root_commissioning`
+   and CPK/Secrets source-runtime-contract factories already exercised by
+   `root_complete_fixtures`. The dynamic case has the existing three root nodes;
+   it does not add the optional website. Keep commissioning fixture custody
+   private and owned. Author an explicit administrator, known targets, capability,
+   setup bearer and ordinary grant intent; bind exact private bytes and the actual
+   driver/plan digest with the existing v2 index. No fabricated registration ID.
+3. Exercise ordinary `bootstrap.sh plan/apply` and its existing protected
+   staging, initialization and authenticated public helper. Never call `_acquire`
+   directly to get past the guard. Verify initialization acknowledgement before
+   public setup, exact enrollment readbacks, bounded receipt progress and absence
+   of completed temporary helper resources. Extend existing complete mount checks
+   to include retained `installer_files`; verify the actual numeric recipient
+   can read the exact private policy but cannot write it, without emitting bytes
+   or identities. Preserve installer policy and database through helper cleanup.
+4. Review an independent account baseline for the exact new CPK image, then add
+   it to the existing `ImageAccountBaseline` witness while retaining the old row.
+   Bind final-filesystem passwd/group evidence to that repository digest and its
+   manifest/config/execution correspondence. Keep these identities distinct;
+   manifest-valued Docker IDs are not config digests. Expected UID, primary GID
+   and complete supplementary groups must come from reviewed image evidence,
+   never the process being tested. Unknown tuple/baseline refuses before
+   acquisition. Existing PID1 UID and installed provenance checks still apply.
+5. Through actual authenticated public client calls, read enrollment, revoke the
+   fixture's ordinary permission and management assignment, then restart only
+   the exact owned CPK process/container. Re-read policy binding and revoked
+   revisions, and prove ordinary access remains denied. Retain exact policy mount
+   custody across restart; do not call initialization/setup or use direct stores
+   to seed expected state. This restart is a fixture observation, not a product
+   recovery API or authority to restart a retained user installation.
+6. Keep completion and cleanup evidence separate. Preserve existing pending
+   stop/no-redispatch, exact-ID/label cleanup and final residue audit. An uncertain
+   acquisition holds cleanup under the existing rule. Add no compensation,
+   image deletion, broad prune, service repair or automatic retry. Retain borrowed
+   published images. The gate must record both producer and gate source, exact
+   tuple, actual reached boundaries and remaining unknowns.
+
+The full apply guard changes only in the independently reviewed integrated source
+delta released for the qualified tuple's ordinary launcher gate. Keep invalid
+private-input/prior-receipt targets; replace only the intermediate valid-input
+incomplete-path expectation with the newly supported public boundary. Guard
+removal cannot substitute for actual successful evidence. Until that gate passes,
+#347/#344 and the shared PR remain unaccepted, even if normal source CI is green.
+
+### Producer and gate sequencing
+
+Candidate common producer source is the reviewed `25bf669a` checkpoint, subject
+to its full owning result and North's separate publication release. Both products
+use the existing `publish-product-image.yml` / `publish_product_image.sh` path,
+which builds Linux/amd64 and records numeric user, source label, execution ID and
+actual repository digest. Concrete destinations, proposed unused tags and recipe
+hashes belong in the #347 proposal. No publication is authorized by this plan.
+
+After publication, review the actual immutable tuple and independent CPK account
+evidence before adding its baseline. The final launcher gate source cannot yet
+be named: its fixture/guard delta is still to be implemented and reviewed. Compare
+the candidate producer with that exact final revision across coordinates,
+recipes, copied source and entrypoints. In particular, the external driver's
+Dockerfile copies current bootstrap modules over its CPK base; that selected
+driver source must be identified separately from the ordinary server process.
+Any runtime-affecting change requires an explicit equivalence disposition or a
+new reviewed producer coordinate. Do not infer adoption from labels or a source
+pin. Use one existing optional-tuple owning run for the finished boundary when
+released, not an extra framework or an unreviewed intermediate deployment.
+
+The documentation delta teaches these currently available source contracts and
+their limitations. Planning/Markdown verification requires `git diff --check`;
+new executable fixture/guard changes require independent review and the owning
+Docker gate. Publication, current-artifact qualification, live #225 and G/#342
+remain distinct permissions and acceptance boundaries.

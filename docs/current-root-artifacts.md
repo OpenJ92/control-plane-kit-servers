@@ -82,3 +82,38 @@ Only the actual released pair through this gate earns artifact ABI acceptance.
 Website/driver identities remain separate. Public reachability, mobile/browser
 use, CPK-driven Hello deployment/edit/history and teardown belong to #225. No
 tunnel, DNS, production key or retained root is changed by this source capability.
+
+## Dynamic launcher boundary under #347
+
+The existing optional pair currently adds artifact ABI smoke checks. Its later
+root launcher still uses historical canonical images; it does not yet run fresh
+dynamic initialization/enrollment against the optional pair. #347's reviewed
+source and HTTP/PostgreSQL component results do not close that gap, and full
+dynamic apply remains guarded.
+
+The planned extension reuses `test.sh` and `live_root_bootstrap.py` for one
+additional isolated dynamic case. It keeps the mandatory historical static case,
+existing tuple admission, native PostgreSQL selection and exact-owned cleanup.
+The current pair needs actual source-owned CPK/Secrets runtime contracts and
+commissioning artifacts, not the historical fixture's inert file witness. It
+must exercise ordinary `bootstrap.sh plan/apply`, private initialization,
+authenticated public enrollment, retained policy custody and actual process
+restart with revoked permissions still revoked. No direct store grants or
+private deployment call may substitute for the public path.
+
+The existing numeric socket witness has an exact historical CPK image-account
+baseline. Before extending it to another digest, review that image's independent
+final-filesystem account evidence: repository digest, image/config correlation,
+bounded passwd/group file hashes, UID, primary GID and supplementary groups.
+Retain the historical baseline. Do not derive expected groups from the running
+process or copy the historical baseline onto a new image. This account review
+supplements the existing actual PID1 UID and dependency-provenance checks.
+
+The producer and final launcher gate may have different reviewed source commits.
+Record both and review every relevant difference before execution, including
+which bootstrap modules the source-packaged driver actually selects. An image
+label or successful source test is not evidence that a copied runtime change is
+present in an older image. Publication, artifact ABI qualification and complete
+dynamic launcher acceptance are distinct results. Exact producer destinations,
+tags and revisions, then the resulting immutable pair and final gate revision,
+belong in #347 before their respective released actions.
