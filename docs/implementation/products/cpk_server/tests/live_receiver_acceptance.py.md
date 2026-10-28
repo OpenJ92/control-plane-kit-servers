@@ -249,3 +249,10 @@ placed `purposes` in the payload. The existing HTTP read contract and maintained
 client put it in path parameters. The bounded correction follows that convention
 without changing production guards or assertions. Actual gateway construction
 and preparation were not reached; complete owning validation remains pending.
+
+#346 composes the fixed-input workspace initializer witness into the existing
+real PostgreSQL receiver run before public workspace-authority acceptance. It
+covers committed schema, separate initialization, lost acknowledgements and
+read-only exact receipt classification. Its connection destination is the
+existing disposable schema; it does not claim Docker acquisition or full
+public dynamic bootstrap, which remain separately attributable.

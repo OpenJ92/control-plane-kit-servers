@@ -143,13 +143,16 @@ def witness_principal(
 class IsolatedOperationsSchema:
     """Exact disposable schema backed by the smoke test's existing Postgres."""
 
-    def __init__(self, database_url: str, schema: str) -> None:
+    def __init__(self, database_url: str, schema: str, *, install_current: bool = True) -> None:
         if not isinstance(database_url, str) or not database_url:
             raise ValueError("database URL is required")
         if not isinstance(schema, str) or _SCHEMA.fullmatch(schema) is None:
             raise ValueError("receiver-acceptance schema identity is invalid")
         self.database_url = database_url
         self.schema = schema
+        if type(install_current) is not bool:
+            raise ValueError("fixture installation choice must be boolean")
+        self.install_current = install_current
         self._created = False
 
     def connect(self):
@@ -171,9 +174,10 @@ class IsolatedOperationsSchema:
             )
         self._created = True
         try:
-            with self.connect() as connection:
-                install_schema(connection)
-                connection.commit()
+            if self.install_current:
+                with self.connect() as connection:
+                    install_schema(connection)
+                    connection.commit()
         except BaseException:
             self.drop()
             raise
