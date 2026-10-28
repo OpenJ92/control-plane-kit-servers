@@ -5,7 +5,8 @@ from unittest.mock import Mock, patch
 
 from control_plane_kit_interpreters.docker.sdk import DockerSdkClient, DockerUnixSocketClientConfig
 from control_plane_kit_operations.managed_runtime_assignments import (
-    ManagedRuntimeCapability, ManagedRuntimeCapabilityPolicy,
+    ManagedRuntimeCapability, ManagedRuntimeCapabilityPolicy, ManagedRuntimeSelection,
+    managed_runtime_assignment_id,
 )
 from control_plane_kit_operations.runtime_authorities import RegisteredRuntimeAuthorityStatus
 from managed_native_material import NativeMaterial
@@ -21,6 +22,38 @@ class DynamicManagedProviderSelectionTests(unittest.TestCase):
         binding = binding_type(capability, config)
         policy = ManagedRuntimeCapabilityPolicy("installation-a", (capability,))
         return placement, binding, policy
+
+    def test_admitted_mapping_preserves_exact_selection_without_current_lookup(self):
+        placement, binding, policy = self.configuration()
+        world = NativeMaterial()
+        uow = Mock(side_effect=AssertionError("admitted mapping must not read current assignments"))
+        selector = placement.DockerRuntimeClientSelector((), capability_policy=policy,
+            capability_bindings=(binding,), unit_of_work_factory=uow)
+        target = ManagedRuntimeSelection(managed_runtime_assignment_id(policy.installation_id,
+            "workspace-a", "docker", world.authority.authority_ref), policy.installation_id,
+            "workspace-a", "docker", world.authority.authority_ref,
+            world.authority.registration_id, binding.capability.capability_id, 7)
+        mapper = getattr(selector, "bind_admitted", None)
+        self.assertTrue(callable(mapper), "exact admitted management mapping is missing")
+        with patch.object(DockerSdkClient, "from_authority") as sdk, \
+                patch("docker.DockerClient") as constructor, patch("docker.from_env") as ambient:
+            selected = mapper(target, workspace_id="workspace-a", runtime_id="docker", authority=world.authority)
+            self.assertIs(selected.local_client_config, binding.local_client_config)
+            self.assertIs(selected.managed_target, target)
+            for candidate in (None, object(), replace(target, registration_id="other-registration"),
+                    replace(target, capability_id="uninstalled-capability"),
+                    replace(target, installation_id="other-installation", assignment_id=managed_runtime_assignment_id(
+                        "other-installation", "workspace-a", "docker", world.authority.authority_ref))):
+                self.assertIsNone(mapper(candidate, workspace_id="workspace-a", runtime_id="docker",
+                    authority=world.authority))
+            self.assertIsNone(mapper(target, workspace_id="other-workspace", runtime_id="docker",
+                authority=world.authority))
+            self.assertIsNone(mapper(target, workspace_id="workspace-a", runtime_id="other-runtime",
+                authority=world.authority))
+            uow.assert_not_called()
+            sdk.assert_not_called()
+            constructor.assert_not_called()
+            ambient.assert_not_called()
 
     def test_current_lookup_failure_refuses_without_client_construction_or_static_fallback(self):
         placement, binding, policy = self.configuration()

@@ -148,6 +148,41 @@ class OwnedNativeClientTests(unittest.TestCase):
         self.assertNotEqual(self.events[0][1], caller)
         self.raws[0].close.assert_called_once_with()
 
+    def test_dynamic_dispatch_uses_owner_target_without_assignment_reselection(self):
+        from control_plane_kit_operations.managed_runtime_assignments import (
+            ManagedRuntimeCapability, ManagedRuntimeCapabilityPolicy, ManagedRuntimeSelection,
+            managed_runtime_assignment_id,
+        )
+        from control_plane_kit_servers_cpk_server.managed_health import ManagedHealthBootstrap, ManagedHealthUnavailable
+        from control_plane_kit_servers_cpk_server.managed_native_connection import DockerManagedNativeConnection
+        capability = ManagedRuntimeCapability("installed-a")
+        policy = ManagedRuntimeCapabilityPolicy("installation-a", (capability,))
+        uow = Mock(side_effect=AssertionError("an admitted native call must not reselect"))
+        selector = self.placement.DockerRuntimeClientSelector((), capability_policy=policy,
+            capability_bindings=(self.placement.DockerRuntimeCapabilityBinding(capability, self.policy),),
+            unit_of_work_factory=uow)
+        for options in ({}, {"retained_image": True}):
+            world = NativeMaterial(**options)
+            target = ManagedRuntimeSelection(managed_runtime_assignment_id(policy.installation_id,
+                "workspace-a", "docker", world.authority.authority_ref), policy.installation_id,
+                "workspace-a", "docker", world.authority.authority_ref,
+                world.authority.registration_id, capability.capability_id, 3)
+            native = DockerManagedNativeConnection(selector, world.document, self.clock)
+            bridge = ManagedHealthBootstrap((world.authored.documents["gateway"],), selector,
+                native=native).build(Mock())
+            for port in (native, bridge):
+                with self.subTest(options=options, port=type(port).__name__), \
+                        patch("docker.DockerClient", side_effect=self.factory()) as constructor:
+                    result = asyncio.run(port.observe_connection(world.realization, world.request,
+                        world.authority, managed_target=target))
+                    self.assert_unknown(result, world)
+                    constructor.assert_called_once()
+                    self.raws[-1].close.assert_called_once_with()
+                with patch("docker.DockerClient") as constructor, self.assertRaises(ManagedHealthUnavailable):
+                    asyncio.run(port.observe_connection(world.realization, world.request, world.authority))
+                constructor.assert_not_called()
+        uow.assert_not_called()
+
     def test_missing_foreign_and_malformed_retained_proof_refuse_before_contact(self):
         for options in ({"retained": True}, {"retained_image": True}):
             for kind in ("missing", "foreign", "malformed"):

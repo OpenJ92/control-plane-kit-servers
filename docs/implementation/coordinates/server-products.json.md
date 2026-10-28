@@ -239,3 +239,14 @@ images, runtime/license inputs, assertion strength and published product
 source/image/descriptor/catalogue identities remain unchanged. The existing
 coordinate generator and Docker-backed owning gate must verify the prepared
 source; no validation result is claimed here.
+
+## #341 Operations admitted-target handoff (unvalidated consumer checkpoint)
+
+Operations advances alone to accepted CPK PR2056 merge
+`b08d87668b7208042ecd8dda68770ccb9cdf41c1`; Core remains
+`4cc1716bef4d7548ddb4cd343e53fa06bb447104`. Existing SDK, Secrets and
+Interpreter pins and all published artifact coordinates remain unchanged.
+The canonical field, package/Dockerfile mirrors and installed provenance
+expectation advance together. Generator check and actual dependency resolution
+remain obligations of the existing Docker suite; there is no resolver override,
+image publication, deployment or compatibility-success claim in this pin edit.

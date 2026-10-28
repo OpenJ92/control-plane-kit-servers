@@ -6,6 +6,7 @@ from unittest.mock import patch
 from control_plane_kit_core.policies import PolicyScope
 from control_plane_kit_core.runtime_authority import RuntimeAuthorityReference
 from control_plane_kit_interpreters.docker.sdk import DockerSdkClient, DockerUnixSocketClientConfig
+from control_plane_kit_operations.managed_runtime_assignments import ManagedRuntimeSelectionService
 
 from receiver_acceptance_operations import utc_now
 
@@ -58,6 +59,11 @@ def managed_provider_selection_acceptance(client, invoke, schema, authority):
             "expected_revision": 0, "idempotency_key": "management-grant"}
         invoke(client, "http", "command.managed-runtime-access.grant", grant)
         require_selected(config)
+        # Capture the owner's actual selected value, not a reconstructed permission
+        # history or a claim that this fixture has admitted an execution attempt.
+        original = ManagedRuntimeSelectionService(schema.unit_of_work,
+            capability_policy=authority.capability_policy).select(
+                workspace_id=workspace, runtime_id=runtime, authority=runtime_authority)
         assert select(workspace_id="workspace-a") is None
         assert select(runtime_id="unassigned-runtime") is None
         # Unknown registration is input refusal, not a simulated successful incarnation.
@@ -82,6 +88,10 @@ def managed_provider_selection_acceptance(client, invoke, schema, authority):
             "capability_id": other_capability.capability_id,
             "idempotency_key": "management-regrant"})
         require_selected(other_config)
+        mapped = selector.bind_admitted(original, workspace_id=workspace, runtime_id=runtime,
+            authority=runtime_authority)
+        assert mapped.local_client_config is config
+        assert mapped.managed_target is original
         invoke(client, "mcp", "command.runtime-authority.revoke", {
             "authority_ref": reference, "idempotency_key": "management-runtime-revoke"})
         # The retained input still says active; the owner must observe current revocation.

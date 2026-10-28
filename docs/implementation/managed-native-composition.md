@@ -163,3 +163,35 @@ owned by #225/#284/#188.
 Use the unchanged repository Docker `./test.sh` through the ordinary hosted
 workflow and its existing prerequisites. No alternate runner, local socket
 override or stop-profile bypass belongs to this slice.
+
+## #341 admitted capability consumer targets (unvalidated)
+
+Operations PR #2056 is accepted as `b08d87668b7208042ecd8dda68770ccb9cdf41c1`.
+This checkpoint selects that Operations package while retaining Core4cc and the
+previous SDK/Secrets/Interpreter cohort. Only the normal Docker suite can establish
+that the actual installed cohort resolves; dependency text is not evidence.
+
+The next consumer interface is a pure `bind_admitted(selection, workspace_id=...,
+runtime_id=..., authority=...)` mapping on the installed selector. Its policy
+binding retains the identical full `managed_target`, including revision. It does
+not look up current assignments, construct clients, or grant authority. Existing
+`select` remains current eligibility preflight. Native and bridge dispatch accept
+the exact Operations `managed_target`; signed dispatch also forwards the original
+`invocations` port. Configured-local endpoint reads enter `endpoint-observation`
+and acknowledge before later signing. Public NamedIngress reads require no local
+placement; this adds no placement supplier or process local-readiness support.
+
+Targets exercise the pure mapping/refusal boundary, real SDK/native worker
+acquisition and close for fresh/retained-image plans, actual signer/transport
+control propagation, and configured-local admission/ack ordering. The public
+assignment witness captures an actual owner selection A, grants B, and checks
+current preflight B versus mapping of the original A. That capture is not claimed
+to be an admitted run; Operations owns admission and its retained-history proofs.
+No permission state machine is recreated here. Existing cleanup/cancellation,
+original installation, scope and shape assertions remain unchanged.
+
+These source targets have not run. Missing mapping/dispatch keywords should fail
+before their deeper assertions; later PostgreSQL/public witnesses may be unreached
+in the initial red gate. Report actual failures and reached boundaries rather
+than predicting an execution count. Meridian reviews before the unchanged Linux
+owning suite. Production composition remains unchanged at this target checkpoint.
