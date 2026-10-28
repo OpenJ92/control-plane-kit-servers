@@ -18,3 +18,7 @@ its actual credential and private commitment; authentication alone is insufficie
 Produced partial/complete checkpoints round-trip through the controller's existing
 bounded archive decoder. The archive transport is synthetic, not Docker custody
 proof; the existing numeric/file and final current-image gates own that evidence.
+
+A fresh-owner case explicitly covers a null desired pointer with assigned=false;
+the existing assigned-pointer target remains. These values come from the selected
+owner contract rather than an assumption that workspace creation sets both graphs.

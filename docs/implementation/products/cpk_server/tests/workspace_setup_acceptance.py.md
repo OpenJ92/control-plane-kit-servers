@@ -14,3 +14,8 @@ normal factory reconstruction; permission and assignment revisions remain revoke
 ordinary access stays denied, and tripwires forbid startup initialization/setup.
 Provider interpreters are explicitly disabled, so this is HTTP/PostgreSQL
 composition, not provider execution, Docker acquisition or published-image proof.
+
+On an unexpected positive-case stop, the fixture prints only bounded HTTP status
+integers, acknowledged-command count and closed pending/last-read route IDs.
+Private target identities, credentials, keys and response bodies are excluded.
+This diagnoses actual reach without weakening the production error boundary.

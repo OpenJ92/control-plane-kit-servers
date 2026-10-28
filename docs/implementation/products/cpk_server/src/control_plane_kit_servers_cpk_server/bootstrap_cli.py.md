@@ -25,3 +25,8 @@ read supplies desired graph, and both graph reads must agree. Static setup keeps
 its legacy route and direct-call error behavior. Dynamic failures drop private
 exception context. Returned safe coordinates are persisted before later validation;
 an acknowledged response is not a verified readback or completion.
+
+The first local component gate exposed an overstrict desired-graph assumption:
+fresh creation initializes current only. Dynamic completion accepts an explicitly
+null desired ID only with an unassigned desired read, and otherwise requires the
+matching assigned ID. Static comparison retains its prior optional-ID semantics.

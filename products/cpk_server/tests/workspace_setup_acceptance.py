@@ -25,6 +25,23 @@ from test_secret_provider_bootstrap import _base_environment
 from workspace_initialization_fixtures import initialization_target
 
 
+def report_setup_stage(plan, progress, requests):
+    """Closed diagnostic coordinates only; never HTTP bodies or private input."""
+    value = json.loads((progress / "progress.json").read_bytes()) if progress.exists() else {}
+    commands = value.get("commands", [])
+    reads = value.get("reads", [])
+    pending = value.get("pending")
+    allowed_reads = {route.route_id for route in client_transport.operator_read_http_routes()}
+    statuses = [status for _, _, status in requests]
+    assert len(commands) <= len(plan["setup_routes"]) and len(reads) <= 128 and len(statuses) <= 128
+    assert all(type(status) is int and 100 <= status <= 599 for status in statuses)
+    print(json.dumps({"dynamic_setup_stage": {
+        "pending": pending if pending in plan["setup_routes"] else "none-or-unknown",
+        "acknowledged_commands": len(commands),
+        "last_read": reads[-1] if reads and reads[-1] in allowed_reads else "none-or-unknown",
+        "http_statuses": statuses}}), flush=True)
+
+
 def workspace_setup_acceptance(database_url):
     test = TestCase()
     try:
@@ -88,7 +105,11 @@ def workspace_setup_acceptance(database_url):
                         patch.object(cli, "Path", side_effect=lambda path: progress if path == "/tmp/cpk-bootstrap-progress" else Path(path)), \
                         patch.object(cli.socket, "create_connection"):
                     if fault is None:
-                        result = cli.public_setup(plan, root / "credential")
+                        try:
+                            result = cli.public_setup(plan, root / "credential")
+                        except fixture.api.RootBootstrapError:
+                            report_setup_stage(plan, progress, requests)
+                            raise
                         test.assertEqual(result["status"], "authenticated-local-setup")
                         test.assertEqual([entry["route"] for entry in result["commands"]], plan["setup_routes"])
                     else:

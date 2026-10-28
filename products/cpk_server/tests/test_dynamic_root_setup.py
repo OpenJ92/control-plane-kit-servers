@@ -14,7 +14,7 @@ from dynamic_setup_fixtures import setup_inputs, owner_responses
 
 
 class DynamicRootSetupTests(unittest.TestCase):
-    def exercise(self, fault=None):
+    def exercise(self, fault=None, *, desired_graph="desired-from-read"):
         fixture, plan, root, private, material, intent = setup_inputs(self)
         cli = importlib.import_module("control_plane_kit_servers_cpk_server.bootstrap_cli")
         progress = fixture.root / "setup-progress"
@@ -77,11 +77,15 @@ class DynamicRootSetupTests(unittest.TestCase):
                         payload["descriptor_document"])).descriptor()}
             if route == "read.workspace":
                 return {"workspace": {"workspace_id": workspace, "current_graph_id": "current-observed",
-                    "desired_graph_id": "desired-from-read"}}
+                    "desired_graph_id": desired_graph}}
             if route == "read.current-graph":
                 return {"graph_id": "current-observed", "assigned": True}
             if route == "read.desired-graph":
-                return {"graph_id": "desired-from-read"}
+                if fault == "desired-assignment":
+                    return {"graph_id": desired_graph, "assigned": desired_graph is None}
+                if fault == "desired-identity":
+                    return {"graph_id": "unrelated-desired", "assigned": desired_graph is not None}
+                return {"graph_id": desired_graph, "assigned": desired_graph is not None}
             self.fail("unexpected public setup route")
 
         with patch.object(cli, "Path", side_effect=lambda path: progress if path == "/tmp/cpk-bootstrap-progress" else Path(path)), \
@@ -135,6 +139,15 @@ class DynamicRootSetupTests(unittest.TestCase):
 
     def test_dynamic_setup_uses_actual_administration_results_and_exact_registration_binding(self):
         self.exercise()
+
+    def test_fresh_workspace_can_have_no_assigned_desired_graph(self):
+        self.exercise(desired_graph=None)
+
+    def test_desired_graph_assignment_and_identity_must_match_authoritative_workspace(self):
+        for fault, desired_graph in (("desired-assignment", None), ("desired-identity", None),
+                ("desired-assignment", "desired-from-read")):
+            with self.subTest(fault=fault, desired_graph=desired_graph):
+                self.exercise(fault, desired_graph=desired_graph)
 
     def test_mismatched_creation_or_permission_readback_stops_before_ordinary_registration(self):
         for fault in ("create-identity", "permission-read"):

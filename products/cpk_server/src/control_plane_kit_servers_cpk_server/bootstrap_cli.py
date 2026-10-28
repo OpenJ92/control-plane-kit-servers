@@ -230,11 +230,13 @@ def _public_setup(plan, credential, *, intent=None):
         raise RootBootstrapError("bootstrap workspace readback could not be verified")
     current = read("read.current-graph")
     desired = read("read.desired-graph")
-    expected_desired = observed["workspace"].get("desired_graph_id") if intent is not None else created["workspace"]["desired_graph_id"]
+    expected_desired = observed["workspace"]["desired_graph_id"] if intent is not None else created["workspace"]["desired_graph_id"]
     if (current.get("graph_id") != current_graph
             or current.get("assigned") is not True
             or (intent is not None and observed["workspace"].get("current_graph_id") != current_graph)
-            or not isinstance(expected_desired, str) or desired.get("graph_id") != expected_desired):
+            or desired.get("graph_id") != expected_desired
+            or (intent is not None and ("graph_id" not in desired or desired.get("assigned") is not (expected_desired is not None)
+                or (expected_desired is not None and (not isinstance(expected_desired, str) or not expected_desired))))):
         raise RootBootstrapError("bootstrap initial graph readback differs from workspace creation")
     progress["status"] = "complete"
     checkpoint()
