@@ -96,6 +96,35 @@ class DynamicEffectCompositionTests(unittest.TestCase):
                 ambient.assert_not_called()
                 selector.unit_of_work_factory.assert_not_called()
 
+    def test_dynamic_health_rejects_static_or_mismatched_capability_policy_before_io(self):
+        from control_plane_kit_servers_cpk_server import server
+        from control_plane_kit_servers_cpk_server.managed_health_placement import DockerRuntimeClientSelector
+        config, selector = self.configuration()
+        other_capability = ManagedRuntimeCapability("installed-management-b")
+        alternatives = (
+            DockerRuntimeClientSelector(()),
+            replace(selector, capability_policy=replace(selector.capability_policy,
+                installation_id="installation-b")),
+            replace(selector, capability_policy=replace(selector.capability_policy,
+                capabilities=(other_capability,)), capability_bindings=(
+                    replace(selector.capability_bindings[0], capability=other_capability),)),
+        )
+        provider = server._SecretProviderComposition(authorized_resolver=Mock(), secret_custodian=Mock())
+        with patch("docker.DockerClient") as constructor, patch("docker.from_env") as ambient:
+            for incompatible in alternatives:
+                with self.subTest(policy=incompatible.capability_policy):
+                    health = replace(config.managed_health, provider_clients=incompatible, native=None)
+                    with self.assertRaises(server.BootstrapConfigurationError) as caught:
+                        server._operations_effect_ports(replace(config, managed_health=health), provider)
+                    self.assertEqual(str(caught.exception), "managed health composition is invalid")
+            self.assertIsNone(server._operations_effect_ports(
+                replace(config, managed_health=None), provider).managed_health)
+            selector.unit_of_work_factory.assert_not_called()
+            constructor.assert_not_called()
+            ambient.assert_not_called()
+            self.assertEqual(provider.authorized_resolver.mock_calls, [])
+            self.assertEqual(provider.secret_custodian.mock_calls, [])
+
     def test_static_production_does_not_acquire_dynamic_profile_claims(self):
         from control_plane_kit_servers_cpk_server import server
         config, _ = self.configuration()

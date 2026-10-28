@@ -23,6 +23,13 @@ return unchanged from both create and teardown before resolver/custody/HTTP work
 G/#342 must supply actual public owner admission and partial-result history;
 this unit test intentionally does not recreate those semantics.
 
+A source-review correction adds a negative composition case for static,
+foreign-installation and different-catalogue selectors under dynamic workspace
+authority, plus preservation of absent managed health. These real selector values
+must fail before assignment UoW or provider construction; no owner state is
+simulated. The earlier causal-red run does not cover this added test. Its first
+execution is pending in the owning green gate.
+
 Mocking is confined to external provider/secret boundaries, a UoW sentinel proving
 composition has no policy lookup, and a control-port refusal sentinel. No provider
 contact, real secret material, schema execution, publication or live result is

@@ -126,6 +126,14 @@ private composition helpers; a non-null malformed authority is never interpreted
 as static mode. No policy lookup, owner state machine or credential is added here.
 The existing process-port mock explicitly declares static workspace authority.
 
+Before dynamic managed-health qualification, the exact installed selector must
+have a dynamic capability policy equal to the validated workspace policy,
+including its capability catalogue. Existing selector validation is reused
+without an assignment lookup. Static, foreign-installation or different-catalogue
+selectors are refused with the bounded bootstrap configuration error; absent
+managed health remains absent. This closes the source-review finding that a
+static or mismatched bridge could otherwise be advertised as dynamically qualified.
+
 The three focused dynamic-composition targets exposed missing registrations and
 wrapper keywords in corrected target run40637645793. Green validation remains
 pending. Full public lifecycle/partial-result denial evidence remains mandatory

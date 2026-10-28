@@ -896,6 +896,17 @@ def _operations_effect_ports(config, provider):
     if bootstrap is not None:
         if type(bootstrap) is not ManagedHealthBootstrap:
             raise BootstrapConfigurationError("managed health composition is invalid")
+        if dynamic:
+            from .managed_health_placement import DockerRuntimeClientSelector
+            selector = bootstrap.provider_clients
+            try:
+                if (type(selector) is not DockerRuntimeClientSelector
+                        or selector.capability_policy is None
+                        or selector.capability_policy != config.workspace_authority.capability_policy):
+                    raise ValueError
+                selector.__post_init__()
+            except (ValueError, TypeError, AttributeError):
+                raise BootstrapConfigurationError("managed health composition is invalid") from None
         health = bootstrap.build(provider.authorized_resolver)
         decoders = health.decoders
         if dynamic:
