@@ -109,6 +109,7 @@ class GenerationFactoryAvailabilityTests(unittest.TestCase):
         config = Mock()
         config.managed_health_process = None
         config.workspace_authority = None
+        config.provider_policy_authority = None
         explicit = object()
         for arguments, expected in (({}, None), ({"principal_authorizer": explicit}, explicit)):
             with self.subTest(explicit=expected is not None):

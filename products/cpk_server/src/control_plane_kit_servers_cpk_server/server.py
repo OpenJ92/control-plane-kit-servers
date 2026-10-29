@@ -369,7 +369,8 @@ class CpkServerBootstrapConfiguration:
                         "with single static credential configuration"
                     )
                 control_auth_static_principals = _static_principals(
-                    control_auth_static_principals_text, allow_empty_grants=workspace_authority is not None,
+                    control_auth_static_principals_text,
+                    allow_empty_grants=workspace_authority is not None or provider_policy_authority is not None,
                 )
             elif not control_auth_static_credential_text:
                 raise BootstrapConfigurationError(
@@ -397,7 +398,8 @@ class CpkServerBootstrapConfiguration:
                         "CPK_CONTROL_AUTH_STATIC_WORKSPACE_GRANTS_JSON"
                     )
                 control_auth_static_workspace_grants = _static_workspace_grants(
-                    control_auth_static_workspace_grants_text, allow_empty=workspace_authority is not None,
+                    control_auth_static_workspace_grants_text,
+                    allow_empty=workspace_authority is not None or provider_policy_authority is not None,
                 )
         elif control_auth_static_credential_text is not None:
             raise BootstrapConfigurationError(

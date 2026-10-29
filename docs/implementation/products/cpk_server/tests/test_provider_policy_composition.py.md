@@ -13,3 +13,9 @@ These tests do not establish provider-live, durable process or release acceptanc
 No separate runner or synthetic target-red claim is introduced; the existing
 Docker-backed repository gate owns execution. Validation is pending at this
 source checkpoint.
+Review corrections add real provider-only environment/verifier/application
+composition with zero workspace grants and ordinary workspace denial, for both
+static credential forms. Changed logical/provider identities are checked against
+the original nonempty binding registry, separately from missing-binding tests.
+Reconciliation coverage proves resolved-command no-redispatch and replaced-binding
+denial; ambiguous provider readback remains upstream and process-acceptance evidence.

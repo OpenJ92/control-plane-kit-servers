@@ -6,6 +6,10 @@ Ordinary workspace administration and secret-use permissions grant no access to
 this family. An installer must admit the full principal identity and logical
 provider independently.
 
+With this authority configured, static-development authentication may identify a
+provider administrator with an empty workspace-grant map. This enables only the
+independent provider-policy admission; ordinary workspace access remains denied.
+
 Set `CPK_PROVIDER_POLICY_AUTHORITY=secrets-v1` and
 `CPK_PROVIDER_POLICY_AUTHORITY_CONFIGURATION_FILE` to an absolute regular file.
 Both settings are required together. Configuration is read once (at most 1 MiB,

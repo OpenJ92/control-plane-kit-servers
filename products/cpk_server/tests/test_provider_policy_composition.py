@@ -147,12 +147,15 @@ class ProviderPolicyCompositionTests(unittest.TestCase):
             http, mcp = self.boundaries(authority=False)
             self.assertEqual(self.http(http).status, 404)
             self.assertEqual(self.mcp(mcp).status, 404)
+            for changed in (replace(self.binding, provider_id="replacement-provider"),
+                    replace(self.binding, logical_provider_id="replacement-logical")):
+                with self.assertRaises(ValueError):
+                    self.authority.port(changed)
+            acquire.assert_not_called()
             self.authority = replace(self.authority, bindings=())
             http, mcp = self.boundaries()
-            self.assertIn(self.http(http).status, (403, 503))
-            self.assertIn(self.mcp(mcp).status, (403, 503))
-            with self.assertRaises(ValueError):
-                self.authority.port(replace(self.binding, provider_id="replacement-provider"))
+            self.assertEqual(self.http(http).status, 503)
+            self.assertEqual(self.mcp(mcp).status, 503)
             acquire.assert_not_called()
             self.uow.assert_not_called()
 
@@ -293,3 +296,54 @@ class ProviderPolicyCompositionTests(unittest.TestCase):
             server._operations_application(config)
             self.assertIs(factory.call_args.kwargs["provider_policy_authority"], config.provider_policy_authority)
         self.assertFalse(self.credential.exists())
+
+    def test_provider_only_process_authenticates_without_granting_workspace_access(self):
+        from control_plane_kit_servers_cpk_server import server
+        from control_plane_kit_servers_cpk_server import (
+            CpkServerApplicationBoundary, CpkServerHttpProcessBoundary, CpkServerMcpProcessBoundary,
+            create_cpk_server_composition,
+        )
+        from test_secret_provider_bootstrap import _base_environment
+        from test_operations_application_factory import OperationsApplicationFactoryTests
+        path = Path(self.directory.name) / "provider-only.json"
+        for multiple in (False, True):
+            with self.subTest(multiple=multiple):
+                values = {**_base_environment(), "CPK_CONTROL_AUTH_VERIFIER": "static-development"}
+                if multiple:
+                    self.identity = server.static_development_principal(subject_id="provider-administrator",
+                        kind=PrincipalKind.OPERATOR, workspace_grants=()).identity
+                    values["CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON"] = json.dumps([{
+                        "credential": "caller-token", "subject_id": self.identity.subject_id,
+                        "kind": "operator", "workspace_grants": {}}])
+                else:
+                    self.identity = server._static_operator_identity()
+                    values.update(CPK_CONTROL_AUTH_STATIC_CREDENTIAL="caller-token",
+                        CPK_CONTROL_AUTH_STATIC_WORKSPACE_GRANTS_JSON="{}")
+                with self.assertRaises(server.BootstrapConfigurationError):
+                    server.CpkServerBootstrapConfiguration.from_environment(values)
+                path.write_text(json.dumps(self.installer_value()))
+                config = server.CpkServerBootstrapConfiguration.from_environment({**values,
+                    "CPK_PROVIDER_POLICY_AUTHORITY": "secrets-v1",
+                    "CPK_PROVIDER_POLICY_AUTHORITY_CONFIGURATION_FILE": str(path)})
+                self.assertIsNone(config.workspace_authority)
+                verifier = server._credential_verifier(config)
+                self.assertEqual(verifier.authenticate(b"caller-token").workspace_grants, ())
+                ports = OperationsApplicationFactoryTests().disabled_ports(self.composition)
+                with self.clients() as acquire, patch.object(server, "_install_operations_schema"), \
+                        patch.object(server, "_secret_provider_composition"), \
+                        patch.object(server, "_operations_effect_ports", return_value=ports), \
+                        patch.object(server.psycopg, "connect", side_effect=AssertionError("unexpected database IO")):
+                    application = server._operations_application(config,
+                        principal_authorizer=server._configured_principal_authorizer(config))
+                    shared = CpkServerApplicationBoundary(application, verifier)
+                    contract = create_cpk_server_composition(config.process_configuration())
+                    http = CpkServerHttpProcessBoundary(contract, shared)
+                    mcp = CpkServerMcpProcessBoundary(contract, shared)
+                    acquire.assert_not_called()
+                    self.assertEqual(self.http(http).status, 200)
+                    self.assertEqual(self.mcp(mcp).status, 200)
+                    self.assertEqual(acquire.call_count, 2)
+                    denied = http.handle(method="GET", path="/workspaces/workspace-a/graphs/current",
+                        headers={"Authorization": "Bearer caller-token"}, body=b"")
+                    self.assertEqual(denied.status, 403)
+                    self.assertEqual(acquire.call_count, 2)

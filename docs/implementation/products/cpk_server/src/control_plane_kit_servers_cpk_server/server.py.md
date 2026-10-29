@@ -163,3 +163,7 @@ Startup rejects contradictory installation IDs before schema/effect composition.
 The separate policy credential is read only by the admitted lazy client, never by
 the existing ordinary secret-use composition. See `docs/provider-policy-administration.md`
 for the schema, commands and explicit binding-identity continuity obligation.
+Provider-only authority permits empty workspace grants in both static credential
+forms. Authentication supplies identity without broadening workspace authority.
+The real environment/verifier/application test proves admitted provider reads
+and ordinary workspace denial with no database lookup (validation pending).
