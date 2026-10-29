@@ -223,6 +223,12 @@ elif [ "$ROOT_PRODUCT" = 1 ]; then
   REFERENCE="$(printf '%s\n' "$REPO_DIGESTS" | sh scripts/select_repository_digest.sh "$REPOSITORY")"
   printf '%s reference=%s image_id=%s source=%s platform=linux/amd64 configured_user=%s\n' \
     "$PRODUCT_ID" "$REFERENCE" "$ROOT_IMAGE_ID" "$SOURCE_COMMIT" "$ROOT_USER"
+  # Public results only, after the existing push and immutable readback checks.
+  # A later diagnostic failure must not hide this already-completed publication.
+  if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    printf 'root_reference=%s\nroot_source=%s\nroot_image_id=%s\n' \
+      "$REFERENCE" "$SOURCE_COMMIT" "$ROOT_IMAGE_ID" >> "$GITHUB_OUTPUT"
+  fi
   echo 'Publication is not artifact qualification. Preserve the exact producer record and qualify the actual digest through the current-root owning gate before use.' >&2
 else
   docker image inspect "$IMAGE" --format "{{index .RepoDigests 0}}"

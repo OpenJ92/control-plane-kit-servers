@@ -31,3 +31,7 @@ awaited. This preserves query decoding ownership at the process boundary.
 The separate real-ASGI awaited-execution tests exercise runtime completion,
 identity, errors and cancellation; this source assertion alone proves none of
 those behaviors. Other bootstrap/package/runtime assertions remain unchanged.
+
+#345 adds the two explicit workspace-authority environment names to the existing
+contract assertion. The private file declaration remains separate from public
+configuration artifacts. Existing secret-free checks are unchanged.

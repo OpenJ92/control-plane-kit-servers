@@ -39,3 +39,18 @@ requires its receiver ID to differ from the CPK and Secrets receivers. Existing
 CPK/Secrets artifact validation and native-root plan semantics remain intact.
 The input supplies an explicit PostgreSQL descriptor; the old two-role
 commissioning receipt does not commission a third receiver.
+
+# Dynamic root authoring (#345)
+
+The optional closed workspace_authority field and setup.administration summary
+select the dynamic route sequence. The public plan contains only a commitment,
+grant count, management presence and fixed installer file role/schema/path/name/
+lifetime. Exact policy identities, grants, command keys and private filenames
+remain outside the public plan. Static plans receive no added installer fields.
+The reviewed wire contract and correspondence formula are in
+[the parent implementation plan](../../../../dynamic-root-bootstrap-plan.md).
+
+#346 adds inspect_root_initialization as a distinct plan-verified entrance to the
+bounded inspection controller. Ordinary inspect is unchanged; the intermediate
+dynamic-apply guard was later removed by the integrated #347 path. Inspection creates a temporary
+read helper; it is not a zero-effect provider read or authority to resume apply.

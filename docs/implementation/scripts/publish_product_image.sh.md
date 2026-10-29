@@ -78,3 +78,10 @@ digest, installed distributions and observed provenance identify its actual outp
 ## Managed cloudflared (#308)
 
 `cloudflared-connector-managed managed-<source>` explicitly selects the managed producer. The existing `cloudflared-connector` native recipe is unchanged. Set `CPK_MANAGED_RELEASE_RECEIPTS` to a new absolute evidence directory under the reviewed artifact release. The managed producer acquires controller apparatus explicitly, qualifies one exact candidate and retains it; publication is a separate consequential invocation, not released by normal CI.
+
+For CPK/Secrets only, the existing successful push and immutable readback now
+also expose public reference/source/image-ID fields through GITHUB_OUTPUT when
+running in Actions. This occurs after the existing public publication line and
+performs no additional registry operation. The opt-in CPK account step consumes
+those actual results in a separate workflow step. A later failure leaves the
+publication outcome intact and never authorizes a push retry or rollback.

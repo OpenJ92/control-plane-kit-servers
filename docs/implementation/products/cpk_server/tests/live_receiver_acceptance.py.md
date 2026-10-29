@@ -250,6 +250,16 @@ client put it in path parameters. The bounded correction follows that convention
 without changing production guards or assertions. Actual gateway construction
 and preparation were not reached; complete owning validation remains pending.
 
+#346 composes the fixed-input workspace initializer witness into the existing
+real PostgreSQL receiver run before public workspace-authority acceptance. It
+covers committed schema, separate initialization, lost acknowledgements and
+read-only exact receipt classification. Its connection destination is the
+existing disposable schema; it does not claim Docker acquisition or full
+public dynamic bootstrap, which remain separately attributable.
+
+#347 invokes workspace_setup_acceptance beside the existing initialization and
+workspace-authority components, using the same owning PostgreSQL fixture.
+
 
 ## #349 aligned Components dependency cohort
 
@@ -257,4 +267,7 @@ Current generated dependencies and provenance expectations follow accepted
 Core/Operations fec0816, SDK cd4722f, Secrets 46e0718 and Interpreters 27457ca
 in `coordinates/server-products.json`. Predicates, extras, runtime behavior and
 historical product identities are unchanged. The canonical coordinate companion
-records the resolved packaging blocker; the owning Servers gate remains pending.
+records the resolved packaging blocker and accepted #349 gate. The #348 merge
+retains these provenance checks and the Components call in the restarted
+workspace-authority factory, plus initialization and setup before that component.
+The combined tree's owning Servers gate remains pending.

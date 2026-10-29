@@ -41,9 +41,10 @@ provider_clients=None. It has no UoW or callable placeholder. The process
 composition binds the existing dynamic selector to its actual UoW only after
 the installation receipt guard. Existing v1 inputs retain their static selector.
 
-Both public artifact authoring and artifact consumption explicitly remain v1-only:
-the existing topology installation helper emits v1 and cannot deliver the new
-workspace policy. It therefore refuses v2 rather than silently mislabeling it.
-Supported v2 bootstrap authoring/trusted-policy delivery requires an owning
-handoff before final F handoff or G execution. Process-file support does not prove
-that installation delivery, and no private workaround is authorized.
+The public artifact helper retains its v1-only default. #345 adds explicit v2
+artifact consumption only at the dynamic installer entrance, with its separate
+private workspace-policy delivery obligation. Static installations still refuse
+v2 and dynamic installations refuse v1 mixed mode. Core metadata/bounds and exact
+content bytes remain unchanged. The complete catalogue is compared with private
+policy during admission. Public dynamic apply remains incomplete before Docker
+until #346/#347 are composed; authoring is not full bootstrap acceptance.

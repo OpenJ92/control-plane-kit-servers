@@ -181,7 +181,8 @@ class ManagedPostgresInstallationTests(unittest.TestCase):
         runtime = importlib.import_module("control_plane_kit_servers_cpk_server.bootstrap_runtime")
         for managed, password in ((True, b"private-password-canary"), (False, b"native-password\n")):
             plan = self.plan() if managed else self.plan(installation_input())
-            material = runtime._material(plan, self.material_index(plan, password))
+            material, intent = runtime._material(plan, self.material_index(plan, password))
+            self.assertIsNone(intent)
             graph = GraphDescriptorCodec().decode(plan["graph"])
             pg_delivery, = graph.node("root-a-postgres").secret_deliveries
             reference = pg_delivery.reference

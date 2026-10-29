@@ -308,10 +308,18 @@ if [ "${CPK_ROOT_ARTIFACT_MODE:-source-built}" = published-digest ]; then
 fi
 # Real external-root launcher: canonical products, isolated test workspace, no
 # provider/DNS exposure or retained acceptance installation.
-(
+root_bootstrap_witness() (
+  ROOT_CASE="$1"
+  ROOT_BASE_IMAGE="$CPK_IMAGE"
+  if [ "$ROOT_CASE" = dynamic ]; then
+    ROOT_BASE_IMAGE="$CPK_ROOT_CPK_IMAGE"
+  else
+    CPK_ROOT_ARTIFACT_MODE=source-built
+    CPK_ROOT_CPK_IMAGE= CPK_ROOT_SECRETS_IMAGE= CPK_ROOT_SOURCE_REVISION=
+  fi
   RECORDS="$(mktemp -d)"
   [ "${GITHUB_ACTIONS:-}" = true ] || printf 'root bootstrap: private diagnostic records=%s\n' "$RECORDS"
-  RUN="root-$(date +%s)-$$"
+  RUN="root-$ROOT_CASE-$(date +%s)-$$"
   DRIVER_TAG="control-plane-kit-bootstrap-test:$RUN"
   DRIVER=""
   cleanup_root_bootstrap() {
@@ -324,18 +332,30 @@ fi
       python /source/products/cpk_server/tests/live_root_bootstrap.py cleanup "$RUN" || return 1
     [ "$(docker image inspect --format '{{.Id}}' "$DRIVER_TAG")" = "$DRIVER" ] || return 1
     [ "$(docker image inspect --format '{{index .Config.Labels "org.openj92.cpk.test-run"}}' "$DRIVER")" = "$RUN" ] || return 1
+    if [ "$ROOT_CASE" = dynamic ] && [ "$result" = 0 ]; then
+      docker run --rm --network none \
+        --mount "type=bind,source=$ROOT,target=/source,readonly" \
+        --mount "type=bind,source=$RECORDS,target=/witness" \
+        -e PYTHONPATH=/source:/app/products/cpk_server/src "$DRIVER" \
+        python /source/products/cpk_server/tests/live_root_bootstrap.py cleanup-private "$RUN" || return 1
+    fi
     docker image rm "$DRIVER_TAG" >/dev/null
   }
   trap 'result=$?; trap - 0; cleanup_root_bootstrap || { echo "root bootstrap cleanup HOLD; records=$RECORDS" >&2; result=1; }; exit "$result"' 0
   [ -z "$(docker image ls -q --filter "reference=$DRIVER_TAG")" ]
-  docker build -f products/cpk_server/Dockerfile.bootstrap --build-arg "CPK_IMAGE=$CPK_IMAGE" \
+  docker build -f products/cpk_server/Dockerfile.bootstrap --build-arg "CPK_IMAGE=$ROOT_BASE_IMAGE" \
     --label "org.openj92.cpk.test-run=$RUN" --iidfile "$RECORDS/driver" -t "$DRIVER_TAG" .
   DRIVER="$(cat "$RECORDS/driver")"
   docker run --rm --network none --user "$(id -u):$(id -g)" \
     -e "CPK_ROOT_TEST_PORT=${CPK_ROOT_TEST_PORT:-18089}" \
+    -e "CPK_ROOT_ARTIFACT_MODE=$CPK_ROOT_ARTIFACT_MODE" \
+    -e "CPK_ROOT_CPK_IMAGE=$CPK_ROOT_CPK_IMAGE" \
+    -e "CPK_ROOT_SECRETS_IMAGE=$CPK_ROOT_SECRETS_IMAGE" \
+    -e "CPK_ROOT_SOURCE_REVISION=$CPK_ROOT_SOURCE_REVISION" \
+    -e "CPK_ROOT_DRIVER_IMAGE_ID=$DRIVER" \
     --mount "type=bind,source=$ROOT,target=/source,readonly" \
     --mount "type=bind,source=$RECORDS,target=/witness" \
-    -e PYTHONPATH=/source:/app/products/cpk_server/src "$DRIVER" \
+    -e PYTHONPATH=/source:/app/products/cpk_server/src:/app/products/cpk_local_gateway/src:/app/products/secrets_server/src:/app/products/postgres_server/src "$DRIVER" \
     python /source/products/cpk_server/tests/live_root_bootstrap.py prepare "$RUN"
   sh bootstrap.sh plan "$DRIVER" "$RECORDS/input.json" > "$RECORDS/plan.json"
   DIGEST="$(docker run --rm --network none \
@@ -348,8 +368,17 @@ fi
     --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
     --mount "type=bind,source=$ROOT,target=/source,readonly" \
     --mount "type=bind,source=$RECORDS,target=/witness" \
-    -e PYTHONPATH=/source:/app/products/cpk_server/src "$DRIVER" \
+    -e PYTHONPATH=/source:/app/products/cpk_server/src:/app/products/cpk_local_gateway/src "$DRIVER" \
     python /source/products/cpk_server/tests/live_root_bootstrap.py check "$RUN"
+  if [ "$ROOT_CASE" = dynamic ]; then
+    sh bootstrap.sh inspect-initialization "$DRIVER" "$RECORDS/plan.json" "$DIGEST" \
+      "$RECORDS/material/index.json" "$RECORDS/state" > "$RECORDS/initialization-after.json"
+    docker run --rm --network none \
+      --mount "type=bind,source=$ROOT,target=/source,readonly" \
+      --mount "type=bind,source=$RECORDS,target=/witness" \
+      -e PYTHONPATH=/source:/app/products/cpk_server/src "$DRIVER" \
+      python /source/products/cpk_server/tests/live_root_bootstrap.py initialization-after "$RUN"
+  fi
   if sh bootstrap.sh apply "$DRIVER" "$RECORDS/plan.json" "$DIGEST" "$RECORDS/material/index.json" "$RECORDS/state" > "$RECORDS/reapply.json"; then
     echo 'root bootstrap unexpectedly redispatched completed acquisition' >&2
     exit 1
@@ -360,6 +389,10 @@ fi
     -e PYTHONPATH=/source:/app/products/cpk_server/src "$DRIVER" \
     python /source/products/cpk_server/tests/live_root_bootstrap.py unchanged "$RUN"
 )
+root_bootstrap_witness static
+if [ "${CPK_ROOT_ARTIFACT_MODE:-source-built}" = published-digest ]; then
+  root_bootstrap_witness dynamic
+fi
 sh scripts/cloudflared_connection_witness.sh
 sh scripts/cloudflared_managed_witness.sh
 

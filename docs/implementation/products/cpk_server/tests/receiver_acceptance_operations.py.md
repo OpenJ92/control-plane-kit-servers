@@ -76,3 +76,9 @@ to JSON decoding without a coercive fallback. No deployment plan/effect had star
 registration helper. The legacy fixture default remains workspace-a. The helper
 still checks the material shape and all actual public registration responses;
 it does not write stores or fabricate admission records.
+
+#346 adds an exact-boolean `install_current` fixture choice, defaulting to the
+existing schema installation. False creates only the fixture-owned empty
+namespace so the actual bootstrap schema owner can install it. The same exact
+namespace cleanup remains responsible for both paths; this is not a second
+schema installer or a change to production transaction semantics.

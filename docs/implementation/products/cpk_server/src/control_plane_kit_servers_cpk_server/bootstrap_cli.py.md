@@ -9,3 +9,24 @@ An interrupted fourth import leaves pending progress; a returned mismatched
 reference cannot complete setup. This source change does not qualify serving
 images, establish external readiness or add credentials/runtime access to the
 website.
+
+#346 exposes fixed-input initialize-workspace and inspect-workspace-initialization
+helper subcommands, without database/schema/actor override flags. The separate
+inspect-initialization controller requires the reviewed plan/driver/digest,
+private index and existing state. At the intermediate #346 checkpoint setup
+remained static; #347's integrated path below replaces that temporary limitation.
+
+#347 adds a dynamic path: re-admit the fixed private intent and actual bearer before
+transport construction, progress creation or readiness. Administration and grant
+commands carry reviewed explicit keys and actual owner payloads; reads use the
+existing public query encoder. Management is sent only after exact registration
+response/readback. The receipt provides current-graph attribution; final workspace
+read supplies desired graph, and both graph reads must agree. Static setup keeps
+its legacy route and direct-call error behavior. Dynamic failures drop private
+exception context. Returned safe coordinates are persisted before later validation;
+an acknowledged response is not a verified readback or completion.
+
+The first local component gate exposed an overstrict desired-graph assumption:
+fresh creation initializes current only. Dynamic completion accepts an explicitly
+null desired ID only with an unassigned desired read, and otherwise requires the
+matching assigned ID. Static comparison retains its prior optional-ID semantics.

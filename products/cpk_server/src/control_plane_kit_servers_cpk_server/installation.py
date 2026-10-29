@@ -52,6 +52,20 @@ _STORES = ("activity-history-store", "graph-topology-store", "observer-state-sto
            "workplace-store")
 _PROVIDER_CLIENT_FILE = "/run/secrets/cpk-installation/provider-client"
 _INVALID_WEBSITE = "installation website configuration is invalid"
+WORKSPACE_AUTHORITY_PATH = "/etc/cpk/cpk-server/workspace-authority.json"
+WORKSPACE_AUTHORITY_SCHEMA = "cpk-server.workspace-authority.v1"
+
+
+@dataclass(frozen=True)
+class DynamicWorkspaceAuthority:
+    """Public commitment to installer-private intent; not authority or delivery."""
+
+    private_intent_sha256: str
+
+    def __post_init__(self):
+        if (type(self.private_intent_sha256) is not str
+                or re.fullmatch(r"[0-9a-f]{64}", self.private_intent_sha256) is None):
+            raise ValueError("installation workspace authority commitment is invalid")
 
 
 @dataclass(frozen=True)
@@ -153,6 +167,7 @@ class DockerCpkInstallation:
     ingress: ExternalInstallationIngress | NamedPublicIngress
     connector_product: ProductDescriptorDocument | None
     control_auth: SingleOperatorControlAuth | MultiPrincipalControlAuth = SingleOperatorControlAuth()
+    workspace_authority: DynamicWorkspaceAuthority | None = None
     managed_health_configuration: ConfigurationArtifact | None = field(default=None, repr=False)
     website: DockerCpkWebsite | None = field(default=None, repr=False)
 
@@ -182,7 +197,13 @@ class DockerCpkInstallation:
                 raise TypeError("installation credential inputs must be SecretReference values")
         if not isinstance(self.provider_endpoint_ref, SecretProviderEndpointReference):
             raise TypeError("installation provider endpoint must be an opaque reference")
-        _workspace_grants_json(self.workspace_grants)
+        if self.workspace_authority is None:
+            _workspace_grants_json(self.workspace_grants)
+        else:
+            if type(self.workspace_authority) is not DynamicWorkspaceAuthority or self.workspace_grants != ():
+                raise ValueError("dynamic installation requires explicit empty legacy grants")
+            self.workspace_authority.__post_init__()
+            _workspace_authority_slot(self.cpk_product.product.runtime_contract)
         if isinstance(self.ingress, NamedPublicIngress):
             if self.ingress.target != PublicIngressTarget(self.cpk_node_id, "http-api"):
                 raise ValueError("installation ingress must target its CPK HTTP provider")
@@ -332,7 +353,8 @@ def _cpk_variant(value: DockerCpkInstallation, postgres: ContainerServerProduct)
     environment = {item.name: item for item in contract.public_environment}
     additions = {
         "CPK_CONTROL_AUTH_VERIFIER": "static-development",
-        "CPK_CONTROL_AUTH_STATIC_WORKSPACE_GRANTS_JSON": _workspace_grants_json(value.workspace_grants),
+        "CPK_CONTROL_AUTH_STATIC_WORKSPACE_GRANTS_JSON": (
+            "{}" if value.workspace_authority else _workspace_grants_json(value.workspace_grants)),
         "CPK_MATERIAL_PROVIDER_ROUTES_JSON": _json({
             value.provider_endpoint_ref.reference_id: f"http://{value.secrets_node_id}:8081"}),
         "CPK_MATERIAL_PROVIDER_BOOTSTRAP_FILES_JSON": _json({
@@ -340,9 +362,12 @@ def _cpk_variant(value: DockerCpkInstallation, postgres: ContainerServerProduct)
         "PGUSER": postgres_environment["POSTGRES_USER"],
         "PGDATABASE": postgres_environment["POSTGRES_DB"],
     }
+    if value.workspace_authority is not None:
+        additions.update({"CPK_WORKSPACE_AUTHORITY": "dynamic-v1",
+            "CPK_WORKSPACE_AUTHORITY_CONFIGURATION_FILE": WORKSPACE_AUTHORITY_PATH})
     if managed_health is not None:
         additions.update({
-            "CPK_MANAGED_HEALTH": "docker-unix-v1",
+            "CPK_MANAGED_HEALTH": "docker-unix-v2" if value.workspace_authority else "docker-unix-v1",
             "CPK_MANAGED_HEALTH_CONFIGURATION_FILE": managed_health.target_path,
         })
         contract = replace(contract,
@@ -368,6 +393,24 @@ def _cpk_variant(value: DockerCpkInstallation, postgres: ContainerServerProduct)
     return _variant(value.cpk_product, "cpk", contract)
 
 
+def _workspace_authority_slot(contract: ProductRuntimeContract) -> None:
+    """Reserve the installer-owned file without declaring a public artifact."""
+    names = {"CPK_WORKSPACE_AUTHORITY", "CPK_WORKSPACE_AUTHORITY_CONFIGURATION_FILE"}
+    def overlaps(path):
+        return path is not None and (path == WORKSPACE_AUTHORITY_PATH
+            or path.startswith(WORKSPACE_AUTHORITY_PATH + "/")
+            or WORKSPACE_AUTHORITY_PATH.startswith(path.rstrip("/") + "/"))
+    if (any(item.name in names for item in contract.public_environment)
+            or any(getattr(item, "environment_name", None) in names
+                or getattr(getattr(item, "path_binding", None), "environment_name", None) in names
+                or overlaps(getattr(item, "target_path", None))
+                for item in contract.secret_deliveries)
+            or any(item.artifact_id == "workspace-authority" or overlaps(item.target_path)
+                for item in (*contract.configuration_artifacts, *contract.configuration_requirements))
+            or any(overlaps(item.target_path) for item in contract.retained_data_mounts)):
+        raise ValueError("installation workspace authority slot is reserved")
+
+
 def _managed_health_artifact(value: DockerCpkInstallation) -> ConfigurationArtifact | None:
     artifact = value.managed_health_configuration
     if artifact is None:
@@ -377,7 +420,8 @@ def _managed_health_artifact(value: DockerCpkInstallation) -> ConfigurationArtif
         MANAGED_HEALTH_ARTIFACT_ID, MANAGED_HEALTH_CONFIGURATION_PATH,
         _INVALID_INSTALLATION, _managed_health_configuration_from_artifact,
     )
-    process = _managed_health_configuration_from_artifact(artifact)
+    process = _managed_health_configuration_from_artifact(
+        artifact, dynamic_workspace=value.workspace_authority is not None)
     contract = value.cpk_product.product.runtime_contract
     if (process.local_client_config.socket_path != "/var/run/docker.sock"
             or any(item.name in {"CPK_MANAGED_HEALTH", "CPK_MANAGED_HEALTH_CONFIGURATION_FILE"}

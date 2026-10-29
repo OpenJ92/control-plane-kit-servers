@@ -2,7 +2,7 @@
 # External root acquisition using ordinary Docker. No host Python or Compose.
 set -eu
 usage() {
-  echo 'usage: bootstrap.sh plan DRIVER INPUT | apply DRIVER PLAN DIGEST INDEX STATE | inspect DRIVER STATE | commission-plan DRIVER INPUT | commission-prepare DRIVER PLAN DIGEST STATE' >&2
+  echo 'usage: bootstrap.sh plan DRIVER INPUT | apply DRIVER PLAN DIGEST INDEX STATE | inspect DRIVER STATE | inspect-initialization DRIVER PLAN DIGEST INDEX STATE | commission-plan DRIVER INPUT | commission-prepare DRIVER PLAN DIGEST STATE' >&2
   exit 2
 }
 [ "$#" -ge 2 ] || usage
@@ -86,13 +86,13 @@ case "$ACTION" in
       "$DRIVER" python -m control_plane_kit_servers_cpk_server.bootstrap_cli plan \
       --input /bootstrap/input.json --driver "$DRIVER"
     ;;
-  apply|inspect)
+  apply|inspect|inspect-initialization)
     [ -z "${DOCKER_TLS_VERIFY:-}${DOCKER_CERT_PATH:-}" ] || usage
     ENDPOINT="${DOCKER_HOST:-$(docker context inspect --format '{{.Endpoints.docker.Host}}')}"
     case "$ENDPOINT" in unix:///*) ;; *) echo 'bootstrap requires a local Unix Docker context' >&2; exit 2 ;; esac
     ENGINE="$(docker info --format '{{.ID}}')"
     [ -n "$ENGINE" ]
-    if [ "$ACTION" = apply ]; then
+    if [ "$ACTION" != inspect ]; then
       [ "$#" = 4 ] || usage
       PLAN="$(CDPATH= cd -- "$(dirname -- "$1")" && pwd)/$(basename -- "$1")"
       DIGEST="$2"
@@ -106,13 +106,13 @@ case "$ACTION" in
     umask 077
     mkdir -p -- "$STATE"
     STATE="$(CDPATH= cd -- "$STATE" && pwd)"
-    if [ "$ACTION" = apply ]; then
+    if [ "$ACTION" != inspect ]; then
       exec docker run --rm --network none \
         --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
         --mount "type=bind,source=$PLAN,target=/bootstrap/plan.json,readonly" \
         --mount "type=bind,source=$MATERIAL,target=/material,readonly" \
         --mount "type=bind,source=$STATE,target=/state" -e "CPK_BOOTSTRAP_ENGINE_ID=$ENGINE" \
-        "$DRIVER" python -m control_plane_kit_servers_cpk_server.bootstrap_cli apply \
+        "$DRIVER" python -m control_plane_kit_servers_cpk_server.bootstrap_cli "$ACTION" \
         --plan /bootstrap/plan.json --driver "$DRIVER" --digest "$DIGEST" --index "/material/$INDEX" --state /state
     fi
     exec docker run --rm --network none \

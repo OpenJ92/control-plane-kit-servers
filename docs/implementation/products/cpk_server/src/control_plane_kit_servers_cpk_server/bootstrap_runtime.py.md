@@ -55,3 +55,44 @@ in addition to existing empty/NUL/invalid-encoding refusal. The product's generi
 file reader strips LF while CPK environment delivery preserves it; rejecting this
 ambiguous bootstrap input keeps PostgreSQL, CPK and probe bytes identical without
 rewriting the shared secret map. Native-root material behavior is unchanged.
+
+# Protected dynamic admission and delivery (#345)
+
+The dynamic-only v2 material index adds a protected policy sibling and private
+administration intent. Static input still requires v1. Private admission returns
+credentials separately from a repr-hidden snapshot, verifies the plan/commitment,
+whole policy catalogue and actual setup bearer through the process verifier,
+and uses Operations administration/grant validators. Rejected private parser
+context is discarded. A prior acquisition receipt still wins before file reads.
+
+`installer_files` joins occupancy checks, image numeric-UID selection, protected
+0400 staging and the complete recipient read-only mount comparison. Staging
+consumes the admitted byte snapshot, never reopens the private policy filename.
+Only safe UID/mode/verified observations are recorded. The installation policy
+volume is not one of the disposable setup plan/credential volumes.
+
+At the intermediate #345 boundary, public dynamic apply returned
+`dynamic-bootstrap-incomplete` after valid private admission and before Docker.
+The final #347 implementation removes that intermediate guard and uses the
+existing initialization/public setup composition. Invalid material and prior
+receipts still refuse before acquisition. Actual current-image dynamic
+composition at8bb96f9 passed run40818456065 and
+[independent combined review](https://github.com/OpenJ92/control-plane-kit-servers/issues/347#issuecomment-6488312730).
+Earlier component evidence and failed attempts retain their distinct limits.
+
+#346 reserves initialization helper names during dynamic occupancy inspection and
+records absence of the exact PostgreSQL data volumes. After authenticated database
+readiness, the private controller path invokes explicit schema/binding initialization
+before any application node. The #346 hook alone was not a usable bootstrap
+release; the #347 integrated source and actual-image gate own that connection.
+The existing receipt remains the owner of pending and bounded helper observations.
+
+#347 stages the minimized public-helper files from the admitted snapshot. Their
+exact names join conflict detection, numeric-owned protected delivery, read-only
+mounts and exact completed-helper cleanup. No acquisition target or database
+password is delivered to public setup. The progress reader admits bounded receipt,
+assignment and observed-graph identifiers, nonnegative exact-integer revisions
+and closed active/revoked states; private identities, keys and policy remain absent.
+The reviewed current-image launcher gate now passes enrollment, retained
+revocation after restart, initialization inspection and scoped cleanup.
+This isolated fixture result creates no additional live authority.

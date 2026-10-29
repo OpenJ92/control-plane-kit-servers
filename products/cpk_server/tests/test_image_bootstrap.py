@@ -115,6 +115,8 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
                 "CPK_RUNTIME_INTERPRETERS",
                 "CPK_MANAGED_HEALTH",
                 "CPK_MANAGED_HEALTH_CONFIGURATION_FILE",
+                "CPK_WORKSPACE_AUTHORITY",
+                "CPK_WORKSPACE_AUTHORITY_CONFIGURATION_FILE",
                 "CPK_INGRESS_INTERPRETERS",
                 "CPK_GATEWAY_PROBE_SIGNER",
                 "CPK_PUBLIC_DNS_RESOLVER_ENDPOINT",

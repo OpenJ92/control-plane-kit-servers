@@ -23,3 +23,13 @@ The owning test executes this actual shell with a recording Docker CLI boundary;
 real mapped CLI and actual driver imports/factories are separate owning checks.
 No new validation runner, provider deployment or production authorization is
 introduced by these commands.
+
+#346 adds `inspect-initialization DRIVER PLAN DIGEST INDEX STATE` alongside the
+existing apply/inspect commands. It uses the same explicit local driver and
+reviewed plan/private material/state mounts as apply, with existing engine
+binding, but dispatches only the bounded read-helper controller. This command
+creates temporary Docker resources while reading database truth; it never
+replays schema or initialization. The integrated #347 path separately supports
+fresh dynamic apply; its actual current-pair gate and retained initialization
+inspection passed at8bb96f9 with [combined review](https://github.com/OpenJ92/control-plane-kit-servers/issues/347#issuecomment-6488312730).
+That fixture evidence is not authority to acquire or change a retained root.

@@ -82,3 +82,103 @@ Only the actual released pair through this gate earns artifact ABI acceptance.
 Website/driver identities remain separate. Public reachability, mobile/browser
 use, CPK-driven Hello deployment/edit/history and teardown belong to #225. No
 tunnel, DNS, production key or retained root is changed by this source capability.
+
+## Dynamic launcher boundary under #347
+
+The final combined gate at `8bb96f9d60502e44e52b2f32c2f62e345cc91b3e` passed
+[run40818456065](https://github.com/OpenJ92/control-plane-kit-servers/actions/runs/40818456065),
+with [independent combined PASS](https://github.com/OpenJ92/control-plane-kit-servers/issues/347#issuecomment-6488312730).
+It qualifies the following Linux/amd64 pair from common producer
+`94ecb34d7d692c23a0ec017fdc0cac984fd9dccf`:
+
+- CPK: `ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:337c8cf44d1ccf624663c866f8084655ead7e8f5c62c121424c9d15f7650e370`
+- Secrets: `ghcr.io/openj92/control-plane-kit-servers/secrets-server@sha256:76439a4baf59b293ca54df12315efdd3e3b415ad98e35f5e0f11e88a02301415`
+
+Both artifact ABIs, actual numeric process identities and selected dependency
+provenance passed. The real dynamic launcher passed public enrollment, retained
+policy custody, revoked-state persistence after restart, matching initialization
+history and owned resource/private-file cleanup; the full suite's final residue
+audit passed. The [terminal record](https://github.com/OpenJ92/control-plane-kit-servers/issues/347#issuecomment-6488288007)
+distinguishes direct markers from mandatory source/control-flow inference for
+repeated-apply refusal, driver removal and PostgreSQL source-stage completion.
+This is isolated fresh-bootstrap acceptance, not retained/live adoption or #225.
+The producer and tested gate remain distinct; later documentation does not
+change those evidence coordinates. The following paragraphs retain the earlier
+checkpoint history and its narrower evidence.
+
+Source at `ac144857` adds the dynamic launcher described below and removes the
+intermediate apply guard. Its complete default source gate passed in
+[run 40738175098](https://github.com/OpenJ92/control-plane-kit-servers/actions/runs/40738175098),
+including the seven synthetic account-projection laws. That run did not select
+a current image pair or execute the offline unpacker. At that checkpoint only the
+historical account baseline existed, so a new pair refused before dynamic
+acquisition until its seal was reviewed. The subsequent reconciliation with
+accepted #349 merge `fc4cd5b`
+changed the dependency cohort; the final combined result above validates it.
+
+The candidate extension reuses `test.sh` and `live_root_bootstrap.py` for one
+additional isolated dynamic case. It keeps the mandatory historical static case,
+existing tuple admission, native PostgreSQL selection and exact-owned cleanup.
+The current pair needs actual source-owned CPK/Secrets runtime contracts and
+commissioning artifacts, not the historical fixture's inert file witness. It
+must exercise ordinary `bootstrap.sh plan/apply`, private initialization,
+authenticated public enrollment, retained policy custody and actual process
+restart with revoked permissions still revoked. No direct store grants or
+private deployment call may substitute for the public path. It invokes the
+existing `bootstrap.sh inspect-initialization` after restart to compare the
+retained binding, then proves a repeated apply refuses without receipt changes.
+Successful resource cleanup removes the fixture's credential/commissioning
+directories; failures retain private diagnostic evidence. Borrowed images remain.
+
+The existing numeric socket witness has an exact historical CPK image-account
+baseline. Before extending it to another digest, review that image's independent
+final-filesystem account evidence: repository digest, image/config correlation,
+bounded passwd/group file hashes, UID, primary GID and supplementary groups.
+Retain the historical baseline. Do not derive expected groups from the running
+process or copy the historical baseline onto a new image. This account review
+supplements the existing actual PID1 UID and dependency-provenance checks.
+
+The producer and final launcher gate may have different reviewed source commits.
+Record both and review every relevant difference before execution, including
+which bootstrap modules the source-packaged driver actually selects. An image
+label or successful source test is not evidence that a copied runtime change is
+present in an older image. Publication, artifact ABI qualification and complete
+dynamic launcher acceptance are distinct results. Exact producer destinations,
+tags and revisions, then the resulting immutable pair and final gate revision,
+belong in #347 before their respective released actions.
+
+## Producer refresh after #349 integration
+
+The proposed `25bf669a` producer and its proposed tags are superseded. Accepted
+#349 selects Core/Operations `fec0816281aeb83ede98616adcc4f96dfe5777a8`, SDK
+`cd4722fbfb942e7c2467a39b3cd0e32ded4a90ac`, Secrets
+`46e0718664c425d002f2420a6ad1f996be62b2c5` and Interpreters
+`27457ca5eab6ae96d78146e7ea0c998b986feab3`. Both product recipes now select that
+aligned cohort. The earlier producer is therefore not equivalent to the combined
+source, even though the ordinary server source files are unchanged.
+
+Use the reviewed, owning-tested combined source as the new common producer.
+Record its exact commit, unique private destination tags and recipe hashes in
+#347 before publication release. After publication, the actual immutable pair
+and independent account seal still precede a baseline update and the optional
+current-pair gate. The original historical row remains separate. Acquisition
+tool provenance, enforced acquisition storage/time limits, the exact offline
+controller and owned failure cleanup remain explicit execution-packet
+prerequisites; source CI does not supply them.
+
+## Accepted current CPK account evidence
+
+The later combined source and diagnostic corrections passed their owning gates;
+exact95989d2 passed run40776581151. Retained CPK manifest337c8cf, produced at94ecb34,
+then passed the separately approved actual diagnostic run40789512741. North
+accepted [independent bounded account evidence](https://github.com/OpenJ92/control-plane-kit-servers/issues/347#issuecomment-6483769887),
+with cleanup credit limited to that attempt and both earlier HOLD histories intact.
+
+The test selector adds only that exact current-image account row while retaining
+the historical row and unknown-reference refusal. It uses original configd300c4fb,
+not normalized config51a42b83, with the independently observed account values.
+The row alone is not live adoption or current-pair qualification. Secrets
+publication at common94 and the separately released pair/launcher gate have now
+completed, as bound by the exact references and independent review above.
+Earlier failed diagnostics and launcher attempts retain their original limits;
+later success does not establish their cleanup retrospectively.

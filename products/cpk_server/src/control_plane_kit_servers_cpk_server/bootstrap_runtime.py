@@ -45,15 +45,14 @@ def _material(plan, index_path):
     try:
         index = decode_document(private_read(index_path))
         required = set(plan["required_material"]) | set(plan["input"].get("image_pull_credentials", {}).values())
-        if (set(index) != {"schema", "files"} or index["schema"] != "cpk.root-bootstrap.material.v1"
+        dynamic = "workspace_authority" in plan["input"]["installation"]
+        if (set(index) != ({"schema", "files", "dynamic_workspace"} if dynamic else {"schema", "files"})
+                or index["schema"] != ("cpk.root-bootstrap.material.v2" if dynamic else "cpk.root-bootstrap.material.v1")
                 or not isinstance(index["files"], dict) or set(index["files"]) != required):
             raise ValueError("index")
         values = {}
         for reference, filename in index["files"].items():
-            if (not isinstance(filename, str) or not filename or filename in {".", ".."}
-                    or Path(filename).name != filename or "\\" in filename):
-                raise ValueError("filename")
-            value = private_read(index_path.parent / filename).decode("utf-8")
+            value = private_read(_sibling(index_path, filename)).decode("utf-8")
             if "\x00" in value:
                 raise ValueError("encoding")
             values[reference] = value
@@ -65,9 +64,24 @@ def _material(plan, index_path):
             # not. Reject ambiguous shared credentials before any acquisition.
             if values[reference].endswith("\n"):
                 raise ValueError("managed password has trailing LF")
-        return values
-    except (RootBootstrapError, ValueError, TypeError, KeyError, OSError):
-        raise RootBootstrapError("bootstrap material could not be verified") from None
+        intent = None
+        if dynamic:
+            from .bootstrap_workspace import admit_workspace_intent
+            private = index["dynamic_workspace"]
+            policy_bytes = private_read(_sibling(index_path, private["policy"]["file"]))
+            intent = admit_workspace_intent(plan, private, policy_bytes, values)
+        return values, intent
+    except (RootBootstrapError, ValueError, TypeError, KeyError, OSError, AttributeError, OverflowError, RecursionError):
+        failure = RootBootstrapError("bootstrap material could not be verified")
+    # Drop the private parser/verifier exception context as well as its message.
+    raise failure
+
+
+def _sibling(index_path, filename):
+    if (type(filename) is not str or not filename or filename in {".", ".."}
+            or Path(filename).name != filename or "\\" in filename):
+        raise ValueError("filename")
+    return index_path.parent / filename
 
 
 @bootstrap_stage(BootstrapStage.PERSIST_RECEIPT)
@@ -152,7 +166,14 @@ def _setup_progress(client, receipt):
                 continue
             if key == "reference":
                 ProductReferenceCodec().decode(value)
-            elif (key not in {"workspace_id", "current_graph_id", "desired_graph_id", "registration_id", "delivery_id", "authority_id"}
+            elif key == "revision":
+                if type(value) is not int or value < 0:
+                    raise RootBootstrapHold("bootstrap progress revision is invalid")
+            elif key == "status":
+                if value not in ("active", "revoked"):
+                    raise RootBootstrapHold("bootstrap progress state is invalid")
+            elif (key not in {"workspace_id", "current_graph_id", "desired_graph_id", "registration_id", "delivery_id", "authority_id",
+                    "receipt_id", "assignment_id", "observed_current_graph_id"}
                     or not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", value)):
                 raise RootBootstrapHold("bootstrap progress contains unsupported coordinates")
     pending = progress["pending"]
@@ -209,20 +230,20 @@ def acquire_root(plan, index_path, state):
     with bootstrap_stage(BootstrapStage.LOCK_STATE):
         if (state / "receipt.json").exists() or (state / "receipt.json").is_symlink():
             raise RootBootstrapHold("bootstrap receipt exists; inspect without redispatch")
-    material = _material(plan, index_path)
+    material, workspace_intent = _material(plan, index_path)
     with _locked(state):
         with bootstrap_stage(BootstrapStage.LOCK_STATE):
             if (state / "receipt.json").exists() or (state / "receipt.new").exists():
                 raise RootBootstrapHold("bootstrap prior acquisition requires investigation")
         try:
-            return _acquire(plan, material, state)
+            return _acquire(plan, material, state, workspace_intent=workspace_intent)
         except (RootBootstrapError, RootBootstrapHold):
             raise
         except Exception:
             raise RootBootstrapHold("bootstrap acquisition could not be verified; inspect receipt") from None
 
 
-def _acquire(plan, material, state):
+def _acquire(plan, material, state, *, workspace_intent=None):
     with bootstrap_stage(BootstrapStage.LOAD_RUNTIME_DEPENDENCIES):
         import docker
         from control_plane_kit_core.configuration import ConfigurationFileMode
@@ -312,13 +333,30 @@ def _acquire(plan, material, state):
             resources = plan["resources"]
             network_name = resources["network"]["name"]
             setup_name = network_name + "-setup"
+            installation = plan["input"]["installation"]
+            setup_inputs = {"plan.json": canonical(plan),
+                "credential": material[installation["references"]["control_credential"]].encode("utf-8")}
+            if workspace_intent is not None:
+                from .bootstrap_workspace import workspace_helper_input_bytes
+                setup_inputs = workspace_helper_input_bytes(plan, workspace_intent, material)
+            setup_volumes = {name: setup_name + "-" + name.removesuffix(".json") for name in setup_inputs}
             volume_names = [entry["name"] for node in resources["nodes"]
-                            for entry in (*node["data_volumes"], *node["secret_files"], *node["configuration_files"])] + [setup_name + "-plan", setup_name + "-credential"]
+                            for entry in (*node["data_volumes"], *node["secret_files"], *node["configuration_files"],
+                                          *node.get("installer_files", []))] + list(setup_volumes.values())
+            helper_containers = [setup_name]
+            if workspace_intent is not None:
+                from .bootstrap_initialization_runtime import helper_names
+                initialization_name, initialization_files = helper_names(plan)
+                helper_containers.append(initialization_name)
+                volume_names.extend(initialization_files.values())
             if (client.networks.list(names=[network_name])
                     or any(client.containers.list(all=True, filters={"name": "^/" + name + "$"})
-                           for name in [n["name"] for n in resources["nodes"]] + [setup_name])
+                           for name in [n["name"] for n in resources["nodes"]] + helper_containers)
                     or any(sdk.inspect_volume(name) is not None for name in volume_names)):
                 raise RootBootstrapHold("bootstrap resource already exists; adoption is not supported")
+            if workspace_intent is not None:
+                pg = next(node for node in resources["nodes"] if node["node_id"] == plan["postgres_node_id"])
+                receipt["observations"]["fresh_postgres_volumes"] = [entry["name"] for entry in pg["data_volumes"]]
         images = {}
         file_owners = {}
         for node in resources["nodes"]:
@@ -333,7 +371,7 @@ def _acquire(plan, material, state):
                 if image is None or not matches_image_reference(node["image"], image.repo_digests):
                     raise RootBootstrapHold("bootstrap canonical image could not be verified")
                 images[node["node_id"]] = image
-                owner = protected_file_owner(node["secret_files"], image)
+                owner = protected_file_owner([*node["secret_files"], *node.get("installer_files", [])], image)
                 if owner is not None:
                     file_owners[node["node_id"]] = owner
                 # The existing configuration archive is root-owned. Preserve
@@ -363,6 +401,14 @@ def _acquire(plan, material, state):
                 mounts.append(docker.types.Mount(entry["target"], entry["name"], type="volume"))
             for entry in node["secret_files"]:
                 value = next(item.value for item in files if item.target_path == entry["target"])
+                file_volume(entry["name"], value, file_owners[node["node_id"]])
+                mounts.append(dict(DockerSdkSecretMount(entry["target"], entry["name"]).docker_mount()))
+            for entry in node.get("installer_files", []):
+                # Only the admitted snapshot is staged. No private path is
+                # reopened and no policy content enters the acquisition receipt.
+                if workspace_intent is None or entry["role"] != "workspace-authority":
+                    raise RootBootstrapHold("bootstrap material could not be verified")
+                value = SecretValue(workspace_intent.policy_bytes.decode("utf-8"))
                 file_volume(entry["name"], value, file_owners[node["node_id"]])
                 mounts.append(dict(DockerSdkSecretMount(entry["target"], entry["name"]).docker_mount()))
             for entry in node["configuration_files"]:
@@ -399,7 +445,8 @@ def _acquire(plan, material, state):
             inspection = sdk.inspect_container(container.id)
             if (inspection is None or inspection.image_id != image.image_id
                     or {(item.target_path, item.volume_name) for item in inspection.readonly_secret_mounts}
-                    != {(item["target"], item["name"]) for item in (*node["secret_files"], *node["configuration_files"])}):
+                    != {(item["target"], item["name"]) for item in (*node["secret_files"], *node["configuration_files"],
+                                                                 *node.get("installer_files", []))}):
                 raise RootBootstrapHold("bootstrap recipient mounts could not be verified")
             observed()
             effect("start-container:" + node["node_id"], container.start)
@@ -430,6 +477,9 @@ def _acquire(plan, material, state):
                     password = material[reference].encode("utf-8")
                 effect("observe-postgres-readiness", lambda: _postgres_ready(container, password=password))
                 observed()
+                if workspace_intent is not None:
+                    from .bootstrap_initialization_runtime import initialize_acquired_workspace
+                    initialize_acquired_workspace(plan, material, workspace_intent, state, receipt, client, sdk)
             for probe in node["http_checks"]:
                 check = probe["check"]
                 policy = check["policy"]
@@ -448,16 +498,16 @@ def _acquire(plan, material, state):
                 else:
                     raise RootBootstrapHold("bootstrap declared HTTP readiness was not observed")
         setup_uid = file_owners[plan["cpk_node_id"]]
-        file_volume(setup_name + "-plan", SecretValue(canonical(plan).decode()), setup_uid)
-        file_volume(setup_name + "-credential", SecretValue(material[plan["input"]["installation"]["references"]["control_credential"]]), setup_uid)
+        for name, raw in setup_inputs.items():
+            file_volume(setup_volumes[name], SecretValue(raw.decode("utf-8")), setup_uid)
         cpk_id = receipt["resources"]["containers"][plan["cpk_node_id"]]["id"]
         receipt.update(setup_uid=setup_uid, setup_workspace_id=plan["input"]["installation"]["workspace_id"],
                        setup_routes=plan["setup_routes"])
         helper = effect("create-public-setup-helper", lambda: client.containers.create(
             plan["driver_image_id"], name=setup_name, user=str(setup_uid), labels=receipt["labels"], network_mode="container:" + cpk_id,
             command=["python", "-m", "control_plane_kit_servers_cpk_server.bootstrap_cli", "setup"],
-            mounts=[dict(DockerSdkSecretMount("/bootstrap/" + target, setup_name + "-" + suffix).docker_mount())
-                    for target, suffix in (("plan.json", "plan"), ("credential", "credential"))],
+            mounts=[dict(DockerSdkSecretMount("/bootstrap/" + target, volume).docker_mount())
+                    for target, volume in setup_volumes.items()],
             cap_drop=["ALL"], security_opt=["no-new-privileges:true"],
             log_config=docker.types.LogConfig(type="json-file", config={"max-size": "1m", "max-file": "1"})))
         receipt["setup_helper_id"] = helper.id
@@ -483,7 +533,7 @@ def _acquire(plan, material, state):
         effect("remove-completed-setup-helper", helper.remove)
         receipt["setup_helper_removed"] = True
         observed()
-        for name in (setup_name + "-plan", setup_name + "-credential"):
+        for name in setup_volumes.values():
             identity = receipt["resources"]["volumes"][name]["id"]
             staging = client.volumes.get(identity)
             if staging.id != identity or staging.attrs.get("Labels") != receipt["labels"]:

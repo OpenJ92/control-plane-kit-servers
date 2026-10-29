@@ -11,18 +11,33 @@ import sys
 import time
 
 from .bootstrap import (
-    RootBootstrapError, apply_root_bootstrap, canonical, decode_document,
-    inspect_root_bootstrap, plan_root_bootstrap, verified_plan, bootstrap_failure,
+    RootBootstrapError, RootBootstrapHold, apply_root_bootstrap, canonical, decode_document,
+    inspect_root_bootstrap, inspect_root_initialization, plan_root_bootstrap, verified_plan, bootstrap_failure,
 )
 
 
 def public_setup(plan, credential):
+    plan = verified_plan(plan, plan["digest"], plan["driver_image_id"])
+    if "workspace_authority" not in plan["input"]["installation"]:
+        return _public_setup(plan, credential)
+    try:
+        from .bootstrap_workspace import load_workspace_helper_intent
+        if credential.name != "credential":
+            raise ValueError("fixed setup credential required")
+        intent = load_workspace_helper_intent(plan, credential.parent)
+        return _public_setup(plan, credential, intent=intent)
+    except Exception:
+        failure = RootBootstrapHold("bootstrap public setup outcome requires investigation")
+    # Never retain a private identity, policy or transport exception as context.
+    raise failure
+
+
+def _public_setup(plan, credential, *, intent=None):
     from control_plane_kit_core.products import ProductDescriptorCodec, ProductReference
     from control_plane_kit_core.runtime_effects import ImagePullAuthority
     from .client.profile import ClientProfile
     from .client.transport import PublicHttpTransport
 
-    plan = verified_plan(plan, plan["digest"], plan["driver_image_id"])
     installation = plan["input"]["installation"]
     setup = plan["input"]["setup"]
     workspace = installation["workspace_id"]
@@ -65,32 +80,46 @@ def public_setup(plan, credential):
     reads = progress["reads"]
 
     def call(route, payload, *, coordinates=None):
-        return transport.call(route, path_parameters={"workspace_id": workspace, **(coordinates or {})},
+        paths = {} if route == "command.workspace-administration.create" else {"workspace_id": workspace, **(coordinates or {})}
+        return transport.call(route, path_parameters=paths,
                               payload=payload, credential_role="operator")
 
-    def command(route, payload):
+    def command(route, payload, *, explicit=False):
         if len(commands) >= len(plan["setup_routes"]) or plan["setup_routes"][len(commands)] != route:
             raise RootBootstrapError("bootstrap setup sequence differs from reviewed plan")
         progress["pending"] = route
         checkpoint()
-        result = call(route, {"workspace_id": workspace,
+        result = call(route, payload if explicit else {"workspace_id": workspace,
             "idempotency_key": "root-" + plan["digest"][:32] + "-" + str(len(commands)), **payload})
         # Save only bounded returned coordinates, before later validation or the
         # next command can fail. Never persist a raw response or error body.
         entry = {"route": route}
         source = result.get("workspace", {}) if route == "command.workspace.create" else result
+        if explicit:
+            source = result.get("receipt", {})
         if isinstance(source, dict):
-            for key in ("workspace_id", "current_graph_id", "desired_graph_id", "registration_id", "delivery_id", "authority_id"):
+            for key in ("workspace_id", "current_graph_id", "desired_graph_id", "registration_id", "delivery_id", "authority_id",
+                    "receipt_id", "observed_current_graph_id"):
                 value = source.get(key)
                 if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", value):
                     entry[key] = value
+            assignment = source.get("resulting_assignment", source)
+            if isinstance(assignment, dict):
+                if type(assignment.get("revision")) is int and assignment["revision"] >= 0:
+                    entry["revision"] = assignment["revision"]
+                if assignment.get("status") in ("active", "revoked"):
+                    entry["status"] = assignment["status"]
+                for key in ("assignment_id", "registration_id"):
+                    value = assignment.get(key)
+                    if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,256}", value):
+                        entry[key] = value
         commands.append(entry)
         progress["pending"] = None
         checkpoint()
         return result
 
-    def read(route, **coordinates):
-        result = call(route, {}, coordinates=coordinates)
+    def read(route, *, query=None, **coordinates):
+        result = call(route, {} if query is None else query, coordinates=coordinates)
         reads.append(route)
         checkpoint()
         return result
@@ -107,10 +136,26 @@ def public_setup(plan, credential):
         result = read(route, **coordinates)
         if result.get("workspace_id") != workspace or result.get(field, {}).get(key) != expected:
             raise RootBootstrapError("bootstrap registration readback differs from command result")
+        return result[field]
 
-    created = command("command.workspace.create", {"name": setup["workspace_name"], "metadata": {}})
-    if created.get("workspace", {}).get("workspace_id") != workspace or created.get("replayed") is not False:
-        raise RootBootstrapError("bootstrap new workspace could not be verified")
+    if intent is None:
+        created = command("command.workspace.create", {"name": setup["workspace_name"], "metadata": {}})
+        if created.get("workspace", {}).get("workspace_id") != workspace or created.get("replayed") is not False:
+            raise RootBootstrapError("bootstrap new workspace could not be verified")
+        current_graph = created["workspace"]["current_graph_id"]
+    else:
+        from .bootstrap_enrollment import (creation_receipt, permission_receipt, verify_permission_read,
+            verify_runtime_registration, management_receipt)
+        administration = decode_document(intent.administration_bytes)
+        key = administration["workspace_creation_idempotency_key"]
+        created = command("command.workspace-administration.create", {"workspace_id": workspace,
+            "name": setup["workspace_name"], "metadata": {}, "idempotency_key": key}, explicit=True)
+        current_graph = creation_receipt(created, intent, workspace, key).observed_current_graph_id
+        for grant in administration["permission_grants"]:
+            result = command("command.workspace-permission.grant", grant, explicit=True)
+            receipt = permission_receipt(result, intent, workspace, grant)
+            observed = read("read.workspace-permission", query={"target": grant["target"]})
+            verify_permission_read(observed, receipt)
     provider = command("command.secret-provider.register", {
         **setup["provider"], "provider_kind": "control-plane-kit-secrets", "display_name": "Root secrets provider",
         "endpoint_reference": installation["provider_endpoint_ref"],
@@ -129,7 +174,17 @@ def public_setup(plan, credential):
     registered = command("command.runtime-authority.register", {"authority_ref": authority_ref, "runtime_kind": "docker",
         "authority": {"kind": "local-docker-socket"}, "admitted_at": stamp})
     registration = identity(registered, "registration_id")
-    detail("read.runtime-authority-detail", "runtime_authority", "registration_id", registration, authority_ref=authority_ref)
+    authority_read = detail("read.runtime-authority-detail", "runtime_authority", "registration_id", registration, authority_ref=authority_ref)
+    if intent is not None and administration["management_grant"] is not None:
+        grant = administration["management_grant"]
+        for value in (registered, authority_read):
+            verify_runtime_registration(value, workspace, authority_ref, registration)
+        payload = {key: value for key, value in grant.items() if key != "registration_from"}
+        result = command("command.managed-runtime-access.grant", {**payload, "registration_id": registration}, explicit=True)
+        receipt = management_receipt(result, intent, workspace, grant, registration)
+        observed = read("read.managed-runtime-assignment", query={"runtime_id": grant["runtime_id"], "authority_ref": authority_ref})
+        if (observed != receipt.resulting_assignment.descriptor() or type(observed.get("revision")) is not int):
+            raise ValueError("management readback differs from receipt")
     delivered = command("command.runtime-authority-delivery.register", {"delivery": installation["runtime_access"], "admitted_at": stamp})
     delivery_id = identity(delivered, "delivery_id")
     detail("read.runtime-authority-delivery-detail", "runtime_authority_delivery", "delivery_id", delivery_id, authority_ref=authority_ref)
@@ -175,9 +230,13 @@ def public_setup(plan, credential):
         raise RootBootstrapError("bootstrap workspace readback could not be verified")
     current = read("read.current-graph")
     desired = read("read.desired-graph")
-    if (current.get("graph_id") != created["workspace"]["current_graph_id"]
+    expected_desired = observed["workspace"]["desired_graph_id"] if intent is not None else created["workspace"]["desired_graph_id"]
+    if (current.get("graph_id") != current_graph
             or current.get("assigned") is not True
-            or desired.get("graph_id") != created["workspace"]["desired_graph_id"]):
+            or (intent is not None and observed["workspace"].get("current_graph_id") != current_graph)
+            or desired.get("graph_id") != expected_desired
+            or (intent is not None and ("graph_id" not in desired or desired.get("assigned") is not (expected_desired is not None)
+                or (expected_desired is not None and (not isinstance(expected_desired, str) or not expected_desired))))):
         raise RootBootstrapError("bootstrap initial graph readback differs from workspace creation")
     progress["status"] = "complete"
     checkpoint()
@@ -199,6 +258,14 @@ def main():
     apply_parser.add_argument("--state", type=Path, required=True)
     inspect_parser = sub.add_parser("inspect")
     inspect_parser.add_argument("--state", type=Path, required=True)
+    initialization_parser = sub.add_parser("inspect-initialization")
+    initialization_parser.add_argument("--plan", type=Path, required=True)
+    initialization_parser.add_argument("--driver", required=True)
+    initialization_parser.add_argument("--digest", required=True)
+    initialization_parser.add_argument("--index", type=Path, required=True)
+    initialization_parser.add_argument("--state", type=Path, required=True)
+    sub.add_parser("initialize-workspace")
+    sub.add_parser("inspect-workspace-initialization")
     sub.add_parser("setup")
     args = parser.parse_args()
     try:
@@ -213,6 +280,14 @@ def main():
                                           index_path=args.index, state_directory=args.state)
         elif args.command == "inspect":
             result = inspect_root_bootstrap(state_directory=args.state)
+        elif args.command == "inspect-initialization":
+            with args.plan.open("rb") as stream:
+                plan = decode_document(stream.read(1_048_577))
+            result = inspect_root_initialization(plan, expected_digest=args.digest, driver_image_id=args.driver,
+                index_path=args.index, state_directory=args.state)
+        elif args.command in ("initialize-workspace", "inspect-workspace-initialization"):
+            from .bootstrap_initialization import run_workspace_initialization
+            result = run_workspace_initialization(inspect_only=args.command == "inspect-workspace-initialization")
         else:
             from .bootstrap_runtime import private_read
             result = public_setup(decode_document(private_read(Path("/bootstrap/plan.json"))), Path("/bootstrap/credential"))

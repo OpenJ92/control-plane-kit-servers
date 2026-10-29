@@ -1,6 +1,36 @@
 Source: [test.sh](../../test.sh).
 Maintain with the normal Docker-backed owning gate and prerequisite effects.
 
+#347's integrated source candidate wraps the existing root case in a shell
+function, always runs the historical static invocation, and adds one dynamic
+invocation for the existing admitted published pair. It passes actual driver and
+tuple coordinates into the real input writer, uses normal plan/apply, performs
+public revocation/owned restart and normal initialization inspection, then retains
+the existing reapply refusal and exact resource cleanup. Successful dynamic
+cleanup also removes its owned credential and commissioning trees. Published
+images are borrowed; only the run-labelled driver tag is removed. The full
+current-pair gate at8bb96f9 passed run40818456065 with
+[independent combined review](https://github.com/OpenJ92/control-plane-kit-servers/issues/347#issuecomment-6488312730).
+A new pair still requires its independent account baseline and qualification.
+The existing workflow timeout, native PostgreSQL, historical catalogue and fixed
+Hello/gateway prerequisites are unchanged.
+
+Combined run40810659625 passed all package tests, both current artifact ABIs and
+the static launcher, then failed in the dynamic check's material admission before
+its revocation/restart sequence. The check invocation replaced the driver's
+PYTHONPATH and omitted the copied gateway package required by dynamic admission's
+server imports. It now includes the driver's gateway source path alongside CPK
+and the fixture source. This is a source-only fixture correction, not a change to
+production admission or its private-material protections; the underlying runtime
+exception was not exposed by the bounded log projection. The existing dynamic
+launcher assertions remain the regression proof. The corrected import progressed
+in run40815444816; the subsequent mount-order correction and full dynamic path
+passed in run40818456065. Exact-owned resource cleanup passed in the first failed run; private-file
+cleanup was skipped on failure and final residue audit was not established. See
+[bounded evidence and review handoff](https://github.com/OpenJ92/control-plane-kit-servers/issues/347#issuecomment-6487434928).
+The final successful run separately verified private-file cleanup and final
+residue; it does not supply missing evidence for either earlier failed attempt.
+
 #191 adds explicit PostgreSQL source-test and published-image routes through
 `scripts/postgres_artifact_shell.sh`. The latter borrows an already-present exact
 digest and reuses the existing product witness. It requires separate runtime
