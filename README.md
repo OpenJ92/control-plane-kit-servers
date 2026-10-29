@@ -169,3 +169,11 @@ image tag for that gate. Private temporary headers and bounded log capture are
 removed on exit; log retrieval, overflow and redaction failures are failures,
 with no matching secret output. Off-normal adjacent-checkout
 source-live scripts need their own future public-ABI review and remain uncredited.
+
+## Temporary Operational Framework
+
+The [retirement inventory](docs/operational-framework-retirement.md) records
+legacy controller and diagnostic paths, their public replacements, and the
+bootstrap and owner-test boundaries that remain. Source retirement is pending
+#342 public acceptance; the inventory is not a claim that those bypasses have
+already been removed.
