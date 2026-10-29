@@ -368,7 +368,7 @@ root_bootstrap_witness() (
     --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
     --mount "type=bind,source=$ROOT,target=/source,readonly" \
     --mount "type=bind,source=$RECORDS,target=/witness" \
-    -e PYTHONPATH=/source:/app/products/cpk_server/src "$DRIVER" \
+    -e PYTHONPATH=/source:/app/products/cpk_server/src:/app/products/cpk_local_gateway/src "$DRIVER" \
     python /source/products/cpk_server/tests/live_root_bootstrap.py check "$RUN"
   if [ "$ROOT_CASE" = dynamic ]; then
     sh bootstrap.sh inspect-initialization "$DRIVER" "$RECORDS/plan.json" "$DIGEST" \

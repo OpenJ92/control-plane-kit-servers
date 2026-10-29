@@ -13,6 +13,19 @@ unvalidated and a new pair cannot run without its independent account baseline.
 The existing workflow timeout, native PostgreSQL, historical catalogue and fixed
 Hello/gateway prerequisites are unchanged.
 
+Combined run40810659625 passed all package tests, both current artifact ABIs and
+the static launcher, then failed in the dynamic check's material admission before
+its revocation/restart sequence. The check invocation replaced the driver's
+PYTHONPATH and omitted the copied gateway package required by dynamic admission's
+server imports. It now includes the driver's gateway source path alongside CPK
+and the fixture source. This is a source-only fixture correction, not a change to
+production admission or its private-material protections; the underlying runtime
+exception was not exposed by the bounded log projection. The existing dynamic
+launcher assertions remain the regression proof and have not yet run with this
+correction. Exact-owned resource cleanup passed in the failed run; private-file
+cleanup was skipped on failure and final residue audit was not established. See
+[bounded evidence and review handoff](https://github.com/OpenJ92/control-plane-kit-servers/issues/347#issuecomment-6487434928).
+
 #191 adds explicit PostgreSQL source-test and published-image routes through
 `scripts/postgres_artifact_shell.sh`. The latter borrows an already-present exact
 digest and reuses the existing product witness. It requires separate runtime
