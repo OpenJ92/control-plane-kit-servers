@@ -67,3 +67,12 @@ records the resolved packaging blocker. The full owning current-pair gate at
 The static case retains its historical base; the dynamic case builds this driver
 from the qualified current CPK digest. Copied driver source, published server
 producer and actual process/dependency observations remain separate coordinates.
+## Current #351 dependency selection
+
+#351 advances this source's existing dependency/provenance surface through
+`coordinates/server-products.json`: Core/Operations 7afef43, SDK 220f631,
+Secrets a3ca963, Interpreters 71ab335. These are actual accepted owner merges.
+The canonical manifest carries full commits. Existing extras, runner, provenance
+predicates and published product/image/catalogue identities are preserved.
+Earlier cohort accounts below are historical. This checkpoint awaits the owning
+Servers gate; pin selection alone is not installed or live acceptance.

@@ -39,3 +39,9 @@ asserts its default None in the existing no-custodian case. This additive fixtur
 translation preserves all shared-owner, clock, ID and no-construction-IO laws.
 The new custody/authority target matrix and independent-policy denial remain
 unchanged from the reviewed causal-red checkpoint; normal green is pending.
+## #351 disabled-default fixture
+
+The existing production-delegation mock explicitly disables provider-policy
+authority, preserving its shared-factory assertions as the optional typed field
+is added. Real provider-policy composition laws are exercised in
+`test_provider_policy_composition.py`; owner algorithms remain upstream tests.

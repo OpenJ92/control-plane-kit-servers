@@ -182,3 +182,12 @@ publication at common94 and the separately released pair/launcher gate have now
 completed, as bound by the exact references and independent review above.
 Earlier failed diagnostics and launcher attempts retain their original limits;
 later success does not establish their cleanup retrospectively.
+## Current #351 dependency selection
+
+#351 advances this source's existing dependency/provenance surface through
+`coordinates/server-products.json`: Core/Operations 7afef43, SDK 220f631,
+Secrets a3ca963, Interpreters 71ab335. These are actual accepted owner merges.
+The canonical manifest carries full commits. Existing extras, runner, provenance
+predicates and published product/image/catalogue identities are preserved.
+Earlier cohort accounts below are historical. This checkpoint awaits the owning
+Servers gate; pin selection alone is not installed or live acceptance.

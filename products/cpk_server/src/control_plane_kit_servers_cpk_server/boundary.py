@@ -424,12 +424,16 @@ def _decode_http_read_query(
         "read.managed-runtime-assignments": {"limit", "after"},
         "read.managed-runtime-assignment": {"runtime_id", "authority_ref"},
         "read.managed-runtime-assignment-history": {"runtime_id", "authority_ref", "limit", "after"},
+        "read.provider-policy-command": set(),
+        "read.provider-policy-grant": set(),
+        "read.provider-policy-grants": {
+            "subject", "workspace_id", "action", "intent_mode", "intent", "limit", "after_grant_id"},
     }
-    fields = administration_fields.get(route.route_id) or (
+    fields = administration_fields.get(route.route_id, (
         {"expected", "pending_draft"}
         if route.route_id == "read.receiver-authoring-context"
         else {"limit", "after"}
-    )
+    ))
     arguments: dict[str, object] = {}
     for field in query_string.split(b"&"):
         if field == b"" or b"=" not in field:
@@ -442,7 +446,8 @@ def _decode_http_read_query(
             return _error(400, "invalid query arguments")
         if name not in fields or name in arguments:
             return _error(400, "invalid query arguments")
-        if name in {"runtime_id", "authority_ref"}:
+        if name in {"runtime_id", "authority_ref"} or (
+                route.route_id == "read.provider-policy-grants" and name != "limit"):
             arguments[name] = value
             continue
         if name == "limit":

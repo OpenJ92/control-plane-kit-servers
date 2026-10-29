@@ -57,3 +57,12 @@ provision value and requires None by default, retaining every sharing assertion.
 Causal-red CI40029935612 reached three missing-port assertions in615 CPK methods;
 later matrix/current-policy assertions and integrated preparation were unexecuted.
 This implementation still requires source review and the normal full green gate.
+## #351 provider-policy composition
+
+An optional immutable provider-policy authority composes the accepted command,
+current-read and public administration owners using one policy and one lazy exact
+binding factory. Command history shares the existing UoW and clock. The existing
+AUTHORIZATION family multiplexer separates this service from workspace admin;
+no new semantic dispatch or authority store is introduced. Installation IDs must
+agree when both policy families are configured. Construction acquires no provider
+client or credential. The absent option preserves disabled owner behavior.

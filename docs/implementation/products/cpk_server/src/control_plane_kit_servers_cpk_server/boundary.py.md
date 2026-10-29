@@ -76,3 +76,11 @@ InvalidOperationCommand and InvalidEffectRecoveryContract errors become a fixed
 state, retry/lifecycle policy, signing, provider or credential effect belongs to
 this boundary. The recording-coordinator ASGI tests prove transport composition;
 they do not qualify images, provider behavior or persistence.
+## #351 provider-policy framing
+
+The accepted AUTHORIZATION route family retains existing authentication and
+request/response budgets. Its list query has a closed set of plain string filters
+and integer limit; detail and command reads have an explicitly empty query set.
+Empty sets do not fall through to generic pagination. Duplicate, unknown and
+malformed fields are refused before dispatch. Operations owns semantic policy,
+binding admission, durable commands and current-provider result validation.
