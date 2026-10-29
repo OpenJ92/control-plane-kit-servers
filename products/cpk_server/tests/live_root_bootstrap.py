@@ -786,12 +786,13 @@ print(json.dumps(result, sort_keys=True))
     assert cpk.id == receipt["resources"]["containers"][plan["cpk_node_id"]]["id"]
     assert cpk.attrs["Image"] == receipt["observations"]["images"][plan["cpk_node_id"]]
     assert all(cpk.attrs["Config"]["Labels"].get(key) == value for key, value in receipt["labels"].items())
-    mounts = cpk.attrs["Mounts"]
+    # Docker inspection enumerates a mount map; preserve every record, not its order.
+    mounts = sorted(cpk.attrs["Mounts"], key=lambda value: value["Destination"])
     started = cpk.attrs["State"]["StartedAt"]
     cpk.restart(timeout=20)
     cpk.reload()
     assert cpk.attrs["State"]["Running"] and cpk.attrs["State"]["StartedAt"] != started
-    assert cpk.attrs["Mounts"] == mounts
+    assert sorted(cpk.attrs["Mounts"], key=lambda value: value["Destination"]) == mounts
     after = observe("verify")
     assert after == {**before, "permission_revision": before["permission_revision"] + 1,
         "management_revision": before["management_revision"] + 1}

@@ -101,3 +101,17 @@ and timestamp. Existing pending/no-redispatch and exact resource cleanup remain.
 After successful resource cleanup, only the owned material/commissioning trees
 are removed; failures retain private diagnostic evidence. These new paths are
 unrun and require independent source review and an actual qualified-pair gate.
+
+Corrected gate40815444816 passed material admission and the public revocation
+probe, restarted the exact CPK container and verified Running/new StartedAt, then
+failed on positional equality of Docker's mount lists. The before/after mount
+records were not emitted, so an order-only difference is not proven for that run.
+The fixture now sorts both lists by destination before comparing complete
+records: every field, record count and duplicate remains part of equality. This
+changes no production code or mount-ownership rule. Moby's reference implementation
+[constructs inspection mounts by iterating its mount map](https://github.com/moby/moby/blob/v28.0.0/container/container_unix.go#L405-L420),
+supporting order-independent comparison; that reference is not an attestation of
+the failed runner's exact daemon version. The existing real restart witness must
+still pass the unchanged post-restart permission, policy and revision checks,
+initialization inspection, no-redispatch and cleanup. This correction is unrun.
+See [terminal evidence](https://github.com/OpenJ92/control-plane-kit-servers/issues/347#issuecomment-6487952402).
