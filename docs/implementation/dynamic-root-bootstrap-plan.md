@@ -1,8 +1,21 @@
 ## #344 / #345 implementation plan — reviewed private intent contract
 
 This first section preserves the #345 design at its stated source coordinates.
-The current #347 continuation and remaining launcher plan appear below; historical
-intermediate release statements are not evidence of final acceptance.
+The historical #347 continuation and launcher plan appear below; their pending
+and intermediate release statements describe their named checkpoints, not the
+current implementation or authority.
+
+Current disposition: the complete #345/#346/#347 composition at
+`8bb96f9d60502e44e52b2f32c2f62e345cc91b3e` passed the full owning
+[run40818456065](https://github.com/OpenJ92/control-plane-kit-servers/actions/runs/40818456065)
+and [independent combined review](https://github.com/OpenJ92/control-plane-kit-servers/issues/347#issuecomment-6488312730).
+The intermediate dynamic-apply guard is removed. The exact current pair and
+producer, accepted aligned cohort, restart/revocation/initialization and cleanup
+evidence are recorded in [current artifact qualification](../current-root-artifacts.md).
+Normal PR integration/checks remain separate from this checkpoint acceptance.
+CPK #2040, retained lifecycle/upgrade #342, retirement #340 and live/browser #225
+remain separate downstream boundaries. Nothing in this historical plan releases
+provider mutations, new publication or live deployment.
 
 Vale implements; Meridian reviews independently; North owns scope, releases and merge. Repository `OpenJ92/control-plane-kit-servers`, branch `codex/344-dynamic-root-bootstrap`. Base is the independently verified #343 merge `71e058024bc5c6557b13ba86120554945c4a32fa`, tree `45796b19b719b9a9485c61de5266c02463657b85`; destination `roadmap/1813-runtime-control`. One coherent #344 PR will carry ordered independently reviewed #345 → #346 → #347 slices. The selected Core/Operations/Interpreters/SDK/Secrets cohort is unchanged from #341. Meridian returned PLAN PASS for the revised private-intent contract; North released the docs/target checkpoint, shared draft PR and bounded implementation. No executable validation is claimed by this plan.
 
@@ -136,7 +149,7 @@ At the #345 intermediate boundary, applying this valid input returns
 `dynamic-bootstrap-incomplete` before Docker. That is expected: this example
 qualifies authoring and private admission, not a usable root deployment.
 
-## #347 remaining current-artifact launcher plan
+## Historical #347 current-artifact launcher plan at25bf669a
 
 Planning source is Servers `25bf669a8234993177112a001bb5c61eb0443f46`, tree
 `ee55410c9495394d57392b90d2fae7ef86b39466`. Selected Operations is
@@ -269,8 +282,9 @@ The later offline account projection source `ac144857` also passed independent
 review and default gate 40738175098, including seven synthetic projection laws.
 Neither default run selected a current pair or establishes a usable deployment.
 
-The current-image account seal and final gate revision remain unresolved. Only
-the historical account row exists; new references refuse before acquisition.
+At that checkpoint the current-image account seal and final gate revision were
+unresolved. Only the historical account row existed; new references refused
+before acquisition. The current disposition at the top supersedes those gaps.
 No image publication or inspection is implied by preparing the source candidate.
 
 ### Reconciliation after accepted #349 first merge

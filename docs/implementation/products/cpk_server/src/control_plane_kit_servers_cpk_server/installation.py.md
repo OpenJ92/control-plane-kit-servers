@@ -66,6 +66,7 @@ static and standalone artifact helpers retain their v1 behavior. Enabled health
 must use the matching mode and the existing Core artifact bounds.
 
 The root plan declares the separate private file obligation. An ordinary composed
-graph does not deliver it; dynamic root apply remains incomplete until the
-initialization and enrollment children are composed. No usable installation or
-published-image adoption is claimed by this authoring slice.
+graph does not deliver it. The integrated #346/#347 root path now composes
+initialization and authenticated enrollment. The authoring slice alone does not
+qualify an image; actual current-pair launcher acceptance is bound to8bb96f9 and
+[combined review](https://github.com/OpenJ92/control-plane-kit-servers/issues/347#issuecomment-6488312730).

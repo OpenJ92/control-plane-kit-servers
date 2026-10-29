@@ -13,8 +13,8 @@ website.
 #346 exposes fixed-input initialize-workspace and inspect-workspace-initialization
 helper subcommands, without database/schema/actor override flags. The separate
 inspect-initialization controller requires the reviewed plan/driver/digest,
-private index and existing state. Ordinary setup stays static until #347 adapts
-its public administration protocol; the full dynamic-apply guard remains.
+private index and existing state. At the intermediate #346 checkpoint setup
+remained static; #347's integrated path below replaces that temporary limitation.
 
 #347 adds a dynamic path: re-admit the fixed private intent and actual bearer before
 transport construction, progress creation or readiness. Administration and grant

@@ -21,6 +21,7 @@ requires the matching private policy capability catalogue. The separate
 installer_private_files declaration describes the fixed policy schema, numeric
 recipient UID, 0400 mode, read-only subpath and installation lifetime. It is not
 an ordinary public artifact slot; graph composition alone cannot satisfy it.
-Source root apply remains explicitly incomplete before Docker until the remaining
-initialization/enrollment children are integrated. The static v1 profile and
+The integrated #346/#347 root path now composes initialization and authenticated
+enrollment; exact current-pair launcher evidence is recorded in
+[current artifact qualification](../../../current-root-artifacts.md). The static v1 profile and
 historical published-image coordinates remain distinct from this source contract.

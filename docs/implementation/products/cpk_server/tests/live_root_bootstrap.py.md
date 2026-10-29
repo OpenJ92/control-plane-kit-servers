@@ -59,15 +59,16 @@ the containers stop, then reads each again before explicit fixture cleanup.
 Private intent, IDs and observations precede effects in fixture receipts; cleanup
 checks exact labels/IDs and verifies absence. Unexpected outcomes retain resources
 and pending evidence. No database, initialization replay, alternative runner or
-full dynamic-bootstrap acceptance is involved. This regression is unrun until
-the owning Servers gate reaches it.
+full dynamic-bootstrap acceptance is implied by that component alone. It passed
+the accepted #346 gate and the final #347 combined run40818456065.
 
 Run 40702354559 stopped at test integrity before package tests: two removal
 probes used bare `except NotFound: pass`, prohibited as swallowed exceptions.
 The fixture now records and asserts explicit absence booleans, matching the
 existing cleanup witness. Unexpected exceptions still propagate and retain
 pending evidence. Production and the integrity policy are unchanged. This
-correction is unrun until the next normal owning gate.
+correction subsequently passed the normal owning gate; the failed attempt's
+unreached stages remain unreached in its own record.
 ## #347 dynamic authoring checkpoint
 
 The existing prepare owner now admits the optional tuple using
@@ -87,7 +88,9 @@ from the actual final-filesystem evidence, not the historical row or a running
 process. See [independent acceptance](https://github.com/OpenJ92/control-plane-kit-servers/issues/347#issuecomment-6483769887).
 Every other image reference still refuses before commissioning. This test-only
 row enables later qualification; it does not qualify the image pair, adopt a
-live baseline or release any effects. The current-pair gate remains unrun.
+live baseline or release any effects. The current-pair gate subsequently passed
+at8bb96f9 in run40818456065 with
+[independent combined review](https://github.com/OpenJ92/control-plane-kit-servers/issues/347#issuecomment-6488312730).
 
 The next integrated candidate uses the existing commitment owner and adds actual
 prepare-writer admission evidence. Its root check includes installer-file mounts,
@@ -100,7 +103,10 @@ The normal bootstrap initialization inspection then verifies the retained bindin
 and timestamp. Existing pending/no-redispatch and exact resource cleanup remain.
 After successful resource cleanup, only the owned material/commissioning trees
 are removed; failures retain private diagnostic evidence. These new paths are
-unrun and require independent source review and an actual qualified-pair gate.
+now covered by that independently reviewed actual qualified-pair gate. Its
+revoked-state persistence, matching initialization binding, exact-owned resource
+and private-file cleanup markers are recorded in the
+[terminal evidence](https://github.com/OpenJ92/control-plane-kit-servers/issues/347#issuecomment-6488288007).
 
 Corrected gate40815444816 passed material admission and the public revocation
 probe, restarted the exact CPK container and verified Running/new StartedAt, then
@@ -113,5 +119,7 @@ changes no production code or mount-ownership rule. Moby's reference implementat
 supporting order-independent comparison; that reference is not an attestation of
 the failed runner's exact daemon version. The existing real restart witness must
 still pass the unchanged post-restart permission, policy and revision checks,
-initialization inspection, no-redispatch and cleanup. This correction is unrun.
+initialization inspection, no-redispatch and cleanup. The corrected full witness
+passed in run40818456065; this does not establish the old run's actual mount
+difference or cleanup retrospectively.
 See [terminal evidence](https://github.com/OpenJ92/control-plane-kit-servers/issues/347#issuecomment-6487952402).

@@ -106,7 +106,7 @@ document["installation"]["managed_health_configuration"] = (
 )
 ```
 
-Use the [closed process format](../../../docs/managed-health-startup.md) with
+Use the [closed process format](../../../docs/implementation/managed-health-startup.md) with
 explicit scope references and reviewed canonical product documents. The only
 default is an absent field; explicit `null` is invalid. This field accepts all
 seven Core artifact descriptor fields, including both digests, rather than a
@@ -202,11 +202,15 @@ established by this acceptance witness.
 
 ## Explicit dynamic initialization and enrollment (#346/#347)
 
-The accepted25bf669a source keeps full dynamic apply guarded. The later #347
-source candidate connects it to initialization and enrollment, but has not yet
-passed the current-image launcher gate. The reviewed earlier source has
-separate package and HTTP/PostgreSQL component evidence; that does not qualify
-the historical images used by the static example above. The initializer uses a separate fixed-input,
+The integrated source at8bb96f9 passed the current-image launcher gate and
+[independent combined review](https://github.com/OpenJ92/control-plane-kit-servers/issues/347#issuecomment-6488312730).
+Use the exact qualified pair and common producer in
+[current artifact qualification](../../../docs/current-root-artifacts.md);
+the historical images in the static example above are a separate selection.
+The dynamic witness verifies actual public enrollment, revoked-state persistence
+after restart, matching initialization history and scoped cleanup. This isolated
+fixture does not establish the retained/live root or authorize another deployment.
+The initializer uses a separate fixed-input,
 socket-free helper after fresh PostgreSQL readiness and before application
 writers. It admits the real installer credential/private intent, requires an
 empty namespace under the Operations owner's lock, commits schema, then binds
@@ -239,7 +243,7 @@ source-owned runtime contracts and commissioning artifacts when the full launche
 is released. Do not substitute a local tag or assume the static example's image
 digests implement dynamic enrollment. Native PostgreSQL keeps its existing
 selection. The [current-artifact guide](../../../docs/current-root-artifacts.md)
-describes the existing qualification inputs and the remaining launcher boundary.
+describes the qualification inputs, accepted exact pair and remaining live boundary.
 
 Dynamic installation makes these public changes to an otherwise valid root input:
 

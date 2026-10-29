@@ -85,6 +85,27 @@ tunnel, DNS, production key or retained root is changed by this source capabilit
 
 ## Dynamic launcher boundary under #347
 
+The final combined gate at `8bb96f9d60502e44e52b2f32c2f62e345cc91b3e` passed
+[run40818456065](https://github.com/OpenJ92/control-plane-kit-servers/actions/runs/40818456065),
+with [independent combined PASS](https://github.com/OpenJ92/control-plane-kit-servers/issues/347#issuecomment-6488312730).
+It qualifies the following Linux/amd64 pair from common producer
+`94ecb34d7d692c23a0ec017fdc0cac984fd9dccf`:
+
+- CPK: `ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:337c8cf44d1ccf624663c866f8084655ead7e8f5c62c121424c9d15f7650e370`
+- Secrets: `ghcr.io/openj92/control-plane-kit-servers/secrets-server@sha256:76439a4baf59b293ca54df12315efdd3e3b415ad98e35f5e0f11e88a02301415`
+
+Both artifact ABIs, actual numeric process identities and selected dependency
+provenance passed. The real dynamic launcher passed public enrollment, retained
+policy custody, revoked-state persistence after restart, matching initialization
+history and owned resource/private-file cleanup; the full suite's final residue
+audit passed. The [terminal record](https://github.com/OpenJ92/control-plane-kit-servers/issues/347#issuecomment-6488288007)
+distinguishes direct markers from mandatory source/control-flow inference for
+repeated-apply refusal, driver removal and PostgreSQL source-stage completion.
+This is isolated fresh-bootstrap acceptance, not retained/live adoption or #225.
+The producer and tested gate remain distinct; later documentation does not
+change those evidence coordinates. The following paragraphs retain the earlier
+checkpoint history and its narrower evidence.
+
 Source at `ac144857` adds the dynamic launcher described below and removes the
 intermediate apply guard. Its complete default source gate passed in
 [run 40738175098](https://github.com/OpenJ92/control-plane-kit-servers/actions/runs/40738175098),
@@ -93,7 +114,7 @@ a current image pair or execute the offline unpacker. At that checkpoint only th
 historical account baseline existed, so a new pair refused before dynamic
 acquisition until its seal was reviewed. The subsequent reconciliation with
 accepted #349 merge `fc4cd5b`
-changes the dependency cohort and needs independent combined source validation.
+changed the dependency cohort; the final combined result above validates it.
 
 The candidate extension reuses `test.sh` and `live_root_bootstrap.py` for one
 additional isolated dynamic case. It keeps the mandatory historical static case,
@@ -156,7 +177,8 @@ with cleanup credit limited to that attempt and both earlier HOLD histories inta
 The test selector adds only that exact current-image account row while retaining
 the historical row and unknown-reference refusal. It uses original configd300c4fb,
 not normalized config51a42b83, with the independently observed account values.
-The row is not live adoption or current-pair qualification. Secrets publication
-at the common94 producer and the separately released optional pair/launcher gate
-remain pending. The row's source edit will be validated through that unchanged
-full owning gate after independent source review and exact tuple admission.
+The row alone is not live adoption or current-pair qualification. Secrets
+publication at common94 and the separately released pair/launcher gate have now
+completed, as bound by the exact references and independent review above.
+Earlier failed diagnostics and launcher attempts retain their original limits;
+later success does not establish their cleanup retrospectively.

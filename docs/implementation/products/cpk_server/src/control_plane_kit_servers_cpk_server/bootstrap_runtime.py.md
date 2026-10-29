@@ -73,11 +73,12 @@ volume is not one of the disposable setup plan/credential volumes.
 
 At the intermediate #345 boundary, public dynamic apply returned
 `dynamic-bootstrap-incomplete` after valid private admission and before Docker.
-The final #347 source candidate removes that intermediate guard and uses the
+The final #347 implementation removes that intermediate guard and uses the
 existing initialization/public setup composition. Invalid material and prior
-receipts still refuse before acquisition. The candidate remains unvalidated;
-source inspection and earlier component results do not establish current-image
-dynamic installation acceptance or execution history.
+receipts still refuse before acquisition. Actual current-image dynamic
+composition at8bb96f9 passed run40818456065 and
+[independent combined review](https://github.com/OpenJ92/control-plane-kit-servers/issues/347#issuecomment-6488312730).
+Earlier component evidence and failed attempts retain their distinct limits.
 
 #346 reserves initialization helper names during dynamic occupancy inspection and
 records absence of the exact PostgreSQL data volumes. After authenticated database
@@ -92,5 +93,6 @@ mounts and exact completed-helper cleanup. No acquisition target or database
 password is delivered to public setup. The progress reader admits bounded receipt,
 assignment and observed-graph identifiers, nonnegative exact-integer revisions
 and closed active/revoked states; private identities, keys and policy remain absent.
-The integrated guard change requires independent review and the current-image
-launcher gate before acceptance. It creates no additional live authority.
+The reviewed current-image launcher gate now passes enrollment, retained
+revocation after restart, initialization inspection and scoped cleanup.
+This isolated fixture result creates no additional live authority.

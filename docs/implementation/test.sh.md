@@ -8,8 +8,10 @@ tuple coordinates into the real input writer, uses normal plan/apply, performs
 public revocation/owned restart and normal initialization inspection, then retains
 the existing reapply refusal and exact resource cleanup. Successful dynamic
 cleanup also removes its owned credential and commissioning trees. Published
-images are borrowed; only the run-labelled driver tag is removed. This source is
-unvalidated and a new pair cannot run without its independent account baseline.
+images are borrowed; only the run-labelled driver tag is removed. The full
+current-pair gate at8bb96f9 passed run40818456065 with
+[independent combined review](https://github.com/OpenJ92/control-plane-kit-servers/issues/347#issuecomment-6488312730).
+A new pair still requires its independent account baseline and qualification.
 The existing workflow timeout, native PostgreSQL, historical catalogue and fixed
 Hello/gateway prerequisites are unchanged.
 
@@ -21,10 +23,13 @@ server imports. It now includes the driver's gateway source path alongside CPK
 and the fixture source. This is a source-only fixture correction, not a change to
 production admission or its private-material protections; the underlying runtime
 exception was not exposed by the bounded log projection. The existing dynamic
-launcher assertions remain the regression proof and have not yet run with this
-correction. Exact-owned resource cleanup passed in the failed run; private-file
+launcher assertions remain the regression proof. The corrected import progressed
+in run40815444816; the subsequent mount-order correction and full dynamic path
+passed in run40818456065. Exact-owned resource cleanup passed in the first failed run; private-file
 cleanup was skipped on failure and final residue audit was not established. See
 [bounded evidence and review handoff](https://github.com/OpenJ92/control-plane-kit-servers/issues/347#issuecomment-6487434928).
+The final successful run separately verified private-file cleanup and final
+residue; it does not supply missing evidence for either earlier failed attempt.
 
 #191 adds explicit PostgreSQL source-test and published-image routes through
 `scripts/postgres_artifact_shell.sh`. The latter borrows an already-present exact

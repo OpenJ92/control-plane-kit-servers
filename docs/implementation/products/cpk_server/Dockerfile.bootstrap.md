@@ -5,7 +5,8 @@ For #341, the unchanged coordinate generator renders this recipe's existing
 dependency subset from the accepted Core/Operations `4cc1716b`, Interpreters
 `bd08b931`, SDK `464df26c`, Secrets `067678fb` cohort. Full hashes live in
 the canonical manifest. Extras, base images, process behavior and published
-identities stay unchanged. The released owning-gate retry is pending.
+identities stayed unchanged at that historical checkpoint. The current aligned
+cohort and final integrated gate evidence appear below.
 
 ## Current #313 dependency adoption
 
@@ -60,4 +61,9 @@ Current generated dependencies and provenance expectations follow accepted
 Core/Operations fec0816, SDK cd4722f, Secrets 46e0718 and Interpreters 27457ca
 in `coordinates/server-products.json`. Predicates, extras, runtime behavior and
 historical product identities are unchanged. The canonical coordinate companion
-records the resolved packaging blocker; the owning Servers gate remains pending.
+records the resolved packaging blocker. The full owning current-pair gate at
+8bb96f9 passed run40818456065 with
+[independent combined review](https://github.com/OpenJ92/control-plane-kit-servers/issues/347#issuecomment-6488312730).
+The static case retains its historical base; the dynamic case builds this driver
+from the qualified current CPK digest. Copied driver source, published server
+producer and actual process/dependency observations remain separate coordinates.
