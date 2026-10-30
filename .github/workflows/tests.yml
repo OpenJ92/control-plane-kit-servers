@@ -8,6 +8,10 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      retained_managed_connector:
+        description: Qualify only the fixed retained managed connector digest
+        type: boolean
+        default: false
       wrapper_artifact_mode:
         description: Source artifacts or additionally qualify the reviewed private digest tuple
         type: choice
@@ -42,11 +46,12 @@ permissions:
   packages: read
 
 concurrency:
-  group: current-package-tests-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: current-package-tests-${{ github.workflow }}-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.retained_managed_connector && '-retained-managed' || '' }}
+  cancel-in-progress: ${{ !(github.event_name == 'workflow_dispatch' && inputs.retained_managed_connector) }}
 
 jobs:
   docker-tests:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.retained_managed_connector) }}
     name: control-plane-kit-servers
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -140,3 +145,59 @@ jobs:
           fi
       - name: Run Docker-first tests
         run: ./test.sh
+  retained-managed-connector:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.retained_managed_connector }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      DOCKER_HOST: unix:///var/run/docker.sock
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Refuse conflicting artifact selections
+        env:
+          WRAPPER_MODE: ${{ inputs.wrapper_artifact_mode }}
+          ROOT_MODE: ${{ inputs.root_artifact_mode }}
+          HELLO_A: ${{ inputs.hello_a }}
+          HELLO_B: ${{ inputs.hello_b }}
+          GATEWAY: ${{ inputs.gateway }}
+          ROOT_CPK: ${{ inputs.root_cpk_image }}
+          ROOT_SECRETS: ${{ inputs.root_secrets_image }}
+          ROOT_SOURCE: ${{ inputs.root_source_revision }}
+        run: |
+          case "$WRAPPER_MODE" in ''|source-built) ;; *) exit 2 ;; esac
+          case "$ROOT_MODE" in ''|source-built) ;; *) exit 2 ;; esac
+          [ -z "$HELLO_A$HELLO_B$GATEWAY$ROOT_CPK$ROOT_SECRETS$ROOT_SOURCE" ]
+      - uses: actions/checkout@v4
+        with:
+          path: orchestration
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: cc1b8d87b7f895cb56153f3daf2e9683fb59bea2
+          path: owning-source
+          persist-credentials: false
+      - name: Admit actual executor before acquisition
+        working-directory: orchestration
+        run: >-
+          python3 -m products.cloudflared_connector.retained_qualification prepare
+          "$GITHUB_WORKSPACE/owning-source"
+          "$RUNNER_TEMP/managed-qualification-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Qualify fixed retained digest through historical owner
+        working-directory: orchestration
+        run: >-
+          python3 -m products.cloudflared_connector.retained_qualification run
+          "$GITHUB_WORKSPACE/owning-source"
+          "$RUNNER_TEMP/managed-qualification-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+      - name: Retain only bounded new qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: retained-managed-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/managed-qualification-${{ github.run_id }}-${{ github.run_attempt }}/result.json
+          retention-days: 30
+          if-no-files-found: error
