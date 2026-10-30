@@ -106,11 +106,13 @@ class SigningProviderProcess:
             credentials = self._private("credentials.json", json.dumps([{
                 "subject": "docker-image-signing", "token": self.token,
                 "grants": [
-                    {"action": "secret.write", "workspace_id": self.workspace_id},
+                    {"action": "secret.write", "workspace_id": self.workspace_id,
+                     "intents": [*[row[2] for row in SIGNING.values()], "cloudflare.tunnel-token",
+                         APPLICATION_INTENT.value]},
                     {"action": "secret.rotate", "workspace_id": self.workspace_id,
                      "intents": [APPLICATION_INTENT.value]},
-                    {"action": "secret.revoke", "workspace_id": self.workspace_id},
-                    {"action": "secret.metadata", "workspace_id": self.workspace_id},
+                    {"action": "secret.revoke", "workspace_id": self.workspace_id, "intents": []},
+                    {"action": "secret.metadata", "workspace_id": self.workspace_id, "intents": []},
                     {"action": "secret.resolve", "workspace_id": self.workspace_id,
                      "intents": [*[row[2] for row in SIGNING.values()], "cloudflare.tunnel-token",
                          APPLICATION_INTENT.value]},

@@ -17,3 +17,16 @@ before deleting the test custody directory, including entry failures.
 
 This is an unexecuted fixture checkpoint. The normal integration witness performs
 real test-owned encrypted custody effects, not external provider/TLS validation.
+
+#354 adopts accepted Secrets E and replaces the historical three-value initializer.
+Inside the initializer, the protected credential document is parsed once; that
+same tuple seeds `admit_provider_custody` and becomes the returned credentials.
+The fourth value is the owner's real `ProviderPolicyStore`, bound to the same
+admitted database path and provider identity. Existing exact workspace/intents,
+encryption, audit, denial and cleanup behavior remain; no policy-admin capability,
+raw SQL seed, tuple fallback or mirrored policy state is introduced. Existing
+protected-input integration assertions remain the consumer laws. The normal
+Docker gate owns compatibility; G #342 retains same-process policy/retained-upgrade
+proof, which this in-process bridge does not establish.
+The metadata grant explicitly carries `intents: []`: metadata is intentless in
+the accepted owner. Omitting the field means wildcard, not an empty coordinate.

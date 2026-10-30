@@ -28,3 +28,12 @@ write/resolve path. The existing provider endpoint, bootstrap credential and
 workload-health intent remain unchanged; the signing intent grant list is not
 expanded. The overlap is never activated or selected for signing. Existing
 private fixture process/store teardown disposes of this additional custody.
+
+#354 supplies explicit accepted-E seed coordinates. Public `seed()` writes the
+three existing SIGNING intents (including workload-overlap's existing intent);
+SyntheticIngressAllocation stores `cloudflare.tunnel-token`; application setup
+writes `APPLICATION_INTENT`. These are the finite write intents, matching the
+existing resolve scope. Rotate retains only APPLICATION_INTENT; metadata/revoke
+explicitly use empty intent lists as the owner requires. Omitted intents decode
+to wildcard in the credential loader and are rejected by accepted E seed admission.
+No provider administrator, new workspace or broader authority is added.

@@ -153,6 +153,7 @@ provider.joinpath("credentials.json").write_text(
                     {
                         "action": "secret.write",
                         "workspace_id": "workspace-image-smoke",
+                        "intents": ["postgres.password"],
                     },
                     {
                         "action": "secret.generate-delegation-key",
@@ -170,6 +171,7 @@ provider.joinpath("credentials.json").write_text(
                     {
                         "action": "secret.revoke",
                         "workspace_id": "workspace-image-smoke",
+                        "intents": [],
                     },
                 ],
             }

@@ -15,6 +15,7 @@ from control_plane_kit_secrets.bootstrap import load_provider_credentials
 from control_plane_kit_secrets.control import secrets_control_declaration
 from control_plane_kit_secrets.crypto import encode_master_key_for_file, load_master_key_file
 from control_plane_kit_secrets.custody import admit_provider_custody
+from control_plane_kit_secrets.provider_policy import ProviderPolicyStore
 
 from cpk_http_host_fixtures import fixture
 
@@ -78,13 +79,20 @@ class ProtectedProvider:
                 "grants": [
                     {"action": "secret.generate-delegation-key", "workspace_id": WORKSPACE, "intents": list(INTENTS)},
                     {"action": "secret.write", "workspace_id": WORKSPACE, "intents": ["cloudflare.api-token"]},
-                    {"action": "secret.metadata", "workspace_id": WORKSPACE},
+                    {"action": "secret.metadata", "workspace_id": WORKSPACE, "intents": []},
                 ],
             }]))
             def initialize():
-                store, self.audit = admit_provider_custody(self.root / "custody.sqlite3",
-                    master_key=load_master_key_file(master), provider_id=PROVIDER)
-                return store, self.audit, load_provider_credentials({"CPK_SECRETS_CREDENTIALS_FILE": str(credentials)})
+                parsed_credentials = load_provider_credentials({
+                    "CPK_SECRETS_CREDENTIALS_FILE": str(credentials),
+                })
+                database_path = self.root / "custody.sqlite3"
+                store, self.audit = admit_provider_custody(database_path,
+                    master_key=load_master_key_file(master), provider_id=PROVIDER,
+                    credentials=parsed_credentials)
+                return store, self.audit, parsed_credentials, ProviderPolicyStore(
+                    database_path, provider_id=PROVIDER,
+                )
             # Root/provider wrapper trust is test bootstrap only, never a managed signing identity.
             bootstrap = fixture("provider-bootstrap").config
             control = replace(bootstrap, target=replace(bootstrap.target,

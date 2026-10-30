@@ -134,7 +134,8 @@ def main() -> None:
     credential_document = json.dumps([{
         "subject": "numeric-bootstrap-client", "token": token,
         "grants": [
-            {"action": "secret.write", "workspace_id": "workspace-numeric-bootstrap"},
+            {"action": "secret.write", "workspace_id": "workspace-numeric-bootstrap",
+             "intents": ["postgres.password"]},
             {"action": "secret.resolve", "workspace_id": "workspace-numeric-bootstrap",
              "intents": ["postgres.password"]},
         ],

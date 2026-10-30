@@ -229,3 +229,18 @@ The canonical manifest carries full commits. Existing extras, runner, provenance
 predicates and published product/image/catalogue identities are preserved.
 Earlier cohort accounts below are historical. This checkpoint awaits the owning
 Servers gate; pin selection alone is not installed or live acceptance.
+
+## Secrets E adoption (#354)
+
+The selected Secrets dependency is accepted develop merge
+`09442303740ed2e648cf354e35dd61df93974b9c` (Secrets #85/PR #86), replacing the
+historical #351 main-provider selection above. Core7af, Operations802a, SDK220f
+and Interpreters71ab remain unchanged. The canonical manifest and existing
+coordinate generator own the dependency recipes; existing provenance assertions
+advance without weakening. Published product/image/catalogue identities remain
+unchanged. The protected-input fixture now uses accepted E's four-value
+initializer and normal credential seeding; no administrator grant is added.
+The unchanged Servers Docker gate must establish this consumer's compatibility.
+G #342 separately owns real-process policy mutation/readback and retained-upgrade
+proof. Paused wildcard-seeding source-live scripts remain held; this adoption
+neither repairs live state nor authorizes their execution or publication.
