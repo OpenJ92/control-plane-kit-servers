@@ -37,6 +37,14 @@ controller has Docker socket authority and creates three network-none witness
 children. No real tunnel, token, ingress, provider mutation or live deployment is
 part of this workflow. Source review does not authorize dispatch.
 
+GitHub must first discover this new manual workflow on the repository's default
+branch. A merge into roadmap/1813-runtime-control alone does not make it
+dispatchable. Normal reviewed promotion/registration is a separate execution
+prerequisite; after discovery, the execution ref must select the reviewed
+orchestration commit. Do not add push triggers or dispatch merely to register
+the workflow. Local remote HEAD names main, but current server metadata must be
+confirmed when API access is available.
+
 Tests in test_managed_release_retained.py exercise the additive boundary using
 synthetic command results. The maintained `--managed-connector-release-tests`
 route discovers them without new runner code. That source gate runs with no

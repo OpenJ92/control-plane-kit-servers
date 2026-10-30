@@ -6,3 +6,8 @@ Preflight runs before login and acquisition. The product-owned helper invokes
 the existing historical controller/candidate modes. Only its bounded result JSON
 is retained, for 30 days, including failure/incomplete evidence. No historical
 release evidence is rewritten. A new execution release is required for dispatch.
+
+The new file must reach the repository default branch through normal reviewed
+promotion before GitHub exposes workflow_dispatch. Roadmap integration alone
+does not establish dispatchability. Only after registration can the reviewed
+orchestration ref be selected; no registration-trigger workaround is included.
