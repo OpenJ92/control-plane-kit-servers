@@ -5,15 +5,39 @@ import subprocess
 import tempfile
 import unittest
 import json
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from products.cpk_server.tests.live_numeric_bootstrap import (
-    _enrollment_inputs, _enrollment_management_environment, _finish_enrollment,
+    _enrollment_inputs, _enrollment_management_environment, _finish_enrollment, _enrollment_ready,
 )
 from scripts.cpk_server_source_live_report import SourceLiveInvariantError, SourceLiveRunFailed
 
 
 class PublicEnrollmentFixtureAdmissionTests(unittest.TestCase):
+    def test_transport_unavailable_consumes_bounded_readiness_attempts(self):
+        import httpx
+        container = Mock(status="running")
+        with patch("httpx.Client") as client, patch(
+                "products.cpk_server.tests.live_numeric_bootstrap.time.sleep") as pause:
+            get = client.return_value.__enter__.return_value.get
+            get.side_effect = httpx.ConnectError("private transport detail")
+            with self.assertRaises(SourceLiveInvariantError) as failure:
+                _enrollment_ready(container, "http://127.0.0.1:8080/health/live")
+        self.assertEqual(str(failure.exception), "enrollment-readiness-unavailable")
+        self.assertEqual(get.call_count, 40)
+        self.assertEqual(pause.call_count, 40)
+
+    def test_readiness_can_succeed_after_unavailable_observation(self):
+        import httpx
+        container = Mock(status="running")
+        with patch("httpx.Client") as client, patch(
+                "products.cpk_server.tests.live_numeric_bootstrap.time.sleep") as pause:
+            get = client.return_value.__enter__.return_value.get
+            get.side_effect = [httpx.ConnectError("private transport detail"), Mock(status_code=200)]
+            _enrollment_ready(container, "http://127.0.0.1:8080/health/live")
+        self.assertEqual(get.call_count, 2)
+        pause.assert_called_once_with(0.25)
+
     def test_management_environment_accepts_dynamic_owner_configuration(self):
         from managed_native_material import NativeMaterial
         from test_secret_provider_bootstrap import _provider_environment
