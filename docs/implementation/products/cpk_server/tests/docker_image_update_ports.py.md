@@ -66,6 +66,27 @@ The diagnostic domain includes unverified execution/advancement and unchanged
 advancement so unexpected reconstructed-replay classifications remain precise.
 The same bounded public reporter is reused; no additional observation protocol
 or secret-bearing fields are introduced.
+
+The #342 declaration-cutover stop lacked the actual execute response or transport
+classification. The existing attachment now retains only its last execute-call
+observation: fixture-wide ordinal, request run ID, elapsed milliseconds (clamped
+at one hour), already-recorded runtime completion count during that request,
+received-response count and unsent-mutation count. A response projection retains
+only closed coordinator/run statuses, bounded effects count/activity ID, and
+whether the response run matches the request. It records an unsupported/running
+response faithfully even when the maintained client cannot accept that shape.
+It does not reinterpret that response or change client acceptance.
+
+Transport failure categories come from the immediate exception context's type
+and, for HTTP errors, numeric status only. URL, exception message, body, headers,
+query, credentials and context objects are never retained in the diagnostic.
+Unrecognized/response-size failures remain unclassified; no timeout is inferred
+from elapsed time. Observation failure yields unavailable evidence and preserves
+the original response or exception. The public failure report includes this
+observation only when its request run matches the failed result, so a previous
+apply cannot supply evidence for a later one. All counters describe this fixture
+only; they are not independent provider I/O measurements. Existing timeouts,
+dispatch count, fault latch, owner semantics, assertions and cleanup are unchanged.
 #253 retains only `(target_id, health_kind, HTTP status)` from the real forwarded
 health response so the existing witness can correlate signed readiness with its
 replacement phase. Credentials, request bodies and response bodies are never

@@ -7,6 +7,7 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
+from urllib.error import HTTPError
 
 import httpx
 import control_plane_kit_core as core
@@ -43,6 +44,7 @@ from control_plane_kit_operations.runtime_authorities import LocalDockerSocketAu
 from control_plane_kit_operations.products import InlineDescriptorSource, RegisteredProduct
 from control_plane_kit_core.runtime_authority import RuntimeAuthorityReference
 from control_plane_kit_servers_cpk_server.client import ClientProfile, TopologyClient
+from control_plane_kit_servers_cpk_server.client.transport import ClientTransportError
 from control_plane_kit_servers_cpk_server.managed_health_placement import DockerGatewayBinding, DockerRuntimeClientSelector
 
 from docker_image_update_material import DockerImageMaterial, IMAGES
@@ -112,6 +114,77 @@ def secret_file_request():
 
 
 class DockerImageBoundaryTests(unittest.TestCase):
+    def test_execute_diagnostic_preserves_unsupported_response_without_private_fields(self):
+        response = {"run_id": "run-a", "coordinator_status": "unsupported",
+            "run_status": "running", "effects_attempted": 0, "activity_id": None,
+            "private": {"token": "PRIVATE-RESPONSE"}}
+        inner = Mock()
+        inner.call.side_effect = [response,
+            {"items": [], "next_cursor": None},
+            {"items": [{"run_id": "run-a", "plan_id": "plan-a", "status": "running"}],
+                "next_cursor": None}]
+        transport = AttachedPublicTransport(inner, SimpleNamespace(completed=[]), Mock(), "worker-a")
+        with patch("docker_image_update_ports.monotonic", side_effect=[10.0, 10.25]):
+            actual = transport.call("command.deployment.execute",
+                path_parameters={"workspace_id": "workspace-a", "run_id": "run-a"},
+                payload={"private": "PRIVATE-REQUEST"}, credential_role="worker")
+        self.assertIs(actual, response)
+        result = SimpleNamespace(run_id="run-a", plan_id="plan-a", status="attention-required",
+            execution="unverified", advancement="not-attempted")
+        evidence = failed_apply_evidence(transport, "workspace-a", result)
+        call = evidence["execute_call"]
+        self.assertEqual(call["state"], "response")
+        self.assertEqual((call["ordinal"], call["elapsed_ms"], call["responses_received"]), (1, 250, 1))
+        self.assertEqual(call["response"], {"coordinator_status": "unsupported", "run_status": "running",
+            "effects_attempted": 0, "activity_id": None, "run_matches_request": True})
+        self.assertEqual(transport.execution_evidence("another-run"), {"state": "unavailable"})
+        self.assertNotIn("PRIVATE", json.dumps(evidence))
+        self.assertEqual([call.args[0] for call in inner.call.call_args_list],
+            ["command.deployment.execute", "read.run-events", "read.plan-runs"])
+
+    def test_execute_diagnostic_classifies_failure_without_retry_or_exception_text(self):
+        for cause, category, status in (
+                (TimeoutError("PRIVATE-TIMEOUT"), "deadline", None),
+                (HTTPError("https://private.invalid/PRIVATE", 503, "PRIVATE-REASON",
+                    {"Authorization": "PRIVATE-HEADER"}, None), "http-rejected", 503),
+                (ValueError("PRIVATE-JSON"), "invalid-response", None)):
+            with self.subTest(category=category):
+                failure = ClientTransportError()
+                def fail(*args, **kwargs):
+                    try:
+                        raise cause
+                    except Exception:
+                        raise failure from None
+                inner = Mock()
+                inner.call.side_effect = fail
+                transport = AttachedPublicTransport(inner, SimpleNamespace(completed=[]), Mock(), "worker-a")
+                with patch("docker_image_update_ports.monotonic", side_effect=[10.0, 40.0]):
+                    with self.assertRaises(ClientTransportError) as raised:
+                        transport.call("command.deployment.execute",
+                            path_parameters={"workspace_id": "workspace-a", "run_id": "run-a"},
+                            payload={}, credential_role="worker")
+                self.assertIs(raised.exception, failure)
+                inner.call.assert_called_once()
+                evidence = transport.execution_evidence("run-a")
+                self.assertEqual(evidence["transport_category"], category)
+                self.assertEqual(evidence.get("http_status"), status)
+                self.assertEqual(evidence["elapsed_ms"], 30000)
+                self.assertEqual(evidence["responses_received"], 0)
+                self.assertNotIn("PRIVATE", json.dumps(evidence))
+
+    def test_execute_diagnostic_failure_does_not_replace_public_response(self):
+        inner = Mock()
+        response = {"run_id": "run-a", "coordinator_status": "unsupported",
+            "run_status": "running", "effects_attempted": 0, "activity_id": None}
+        inner.call.return_value = response
+        transport = AttachedPublicTransport(inner, SimpleNamespace(completed=[]), Mock(), "worker-a")
+        with patch("docker_image_update_ports.monotonic", side_effect=[10.0, ValueError("PRIVATE-CLOCK")]):
+            self.assertIs(transport.call("command.deployment.execute",
+                path_parameters={"workspace_id": "workspace-a", "run_id": "run-a"},
+                payload={}, credential_role="worker"), response)
+        self.assertEqual(transport.execution_evidence("run-a"), {"state": "unavailable"})
+        inner.call.assert_called_once()
+
     def test_consumer_fixture_declares_initial_use_and_separates_image_and_content(self):
         material = DockerImageMaterial("workspace-a")
         introduced = material.a

@@ -2,8 +2,11 @@
 from dataclasses import dataclass, replace
 import json
 import re
+from time import monotonic
+from urllib.error import HTTPError, URLError
 
 import httpx
+from control_plane_kit_servers_cpk_server.client.transport import ClientAuthorizationError, ClientTransportError
 
 from control_plane_kit_core.planning import StartNode, StartRuntime, ReconcileNode
 from control_plane_kit_core.operations.lifecycle import ActivityEventKind, ActivityRunStatus, FailureCategory
@@ -100,6 +103,8 @@ def failed_apply_evidence(transport, workspace, result):
             "advancement": domain(result.advancement, {"not-attempted", "advanced", "failed", "unverified", "unchanged"})})
         if evidence["run_id"] is None or evidence["plan_id"] is None:
             return evidence
+        if isinstance(transport, AttachedPublicTransport):
+            evidence["execute_call"] = transport.execution_evidence(result.run_id)
         events = public_page(transport, "read.run-events", workspace, run_id=result.run_id)
         rows = []
         for event in events[-32:]:
@@ -211,6 +216,65 @@ class AttachedPublicTransport:
         self.preparations = []
         self.committed = {}
         self.committed_observer = None
+        self.execute_ordinal = 0
+        self.last_execute = None
+
+    def execution_evidence(self, run_id):
+        """Only this run's last bounded observation; never an older apply's call."""
+        if self.last_execute is None or self.last_execute.get("request_run_id") != run_id:
+            return {"state": "unavailable"}
+        return {**self.last_execute, "responses_received": len(self.responses),
+            "unsent_mutations": len(self.unsent)}
+
+    def _observe_execute(self, arguments, started, before, *, response=None, error=None):
+        """Best-effort fixed projections; diagnostics cannot change execution."""
+        try:
+            if started is None:
+                self.last_execute = None
+                return
+            def token(value):
+                return value if type(value) is str and re.fullmatch(r"[A-Za-z0-9_.:/-]{1,128}", value) else None
+
+            def domain(value, choices):
+                return value if type(value) is str and value in choices else "unclassified"
+
+            run_id = arguments["path_parameters"]["run_id"]
+            value = {"state": "response" if error is None else "transport-failure",
+                "request_run_id": token(run_id), "ordinal": self.execute_ordinal,
+                "elapsed_ms": min(3_600_000, max(0, int((monotonic() - started) * 1000))),
+                "runtime_calls_completed_during_request": len(self.runtime.completed) - before}
+            if error is not None:
+                cause = error.__context__
+                category = "unclassified"
+                if isinstance(error, ClientAuthorizationError):
+                    category = "authorization-refused"
+                elif isinstance(cause, HTTPError):
+                    category = "http-rejected"
+                    value["http_status"] = cause.code if type(cause.code) is int and 100 <= cause.code <= 599 else None
+                elif isinstance(cause, TimeoutError) or (
+                        isinstance(cause, URLError) and isinstance(cause.reason, TimeoutError)):
+                    category = "deadline"
+                elif isinstance(cause, URLError):
+                    category = "url-error"
+                elif isinstance(cause, OSError):
+                    category = "os-error"
+                elif isinstance(cause, (UnicodeDecodeError, json.JSONDecodeError, ValueError)):
+                    category = "invalid-response"
+                value["transport_category"] = category
+            else:
+                effects = response.get("effects_attempted")
+                value["response"] = {
+                    "coordinator_status": domain(response.get("coordinator_status"), {
+                        "completed", "progressed", "in-flight", "failed", "unsupported",
+                        "blocked", "uncertain", "authorization-denied"}),
+                    "run_status": domain(response.get("run_status"), {item.value for item in ActivityRunStatus}),
+                    "effects_attempted": effects if type(effects) is int and 0 <= effects < 10**9 else None,
+                    "activity_id": token(response.get("activity_id")),
+                    "run_matches_request": response.get("run_id") == run_id,
+                }
+            self.last_execute = value
+        except Exception:
+            self.last_execute = None
 
     def require_healthy(self):
         if self.failure is not None:
@@ -221,7 +285,21 @@ class AttachedPublicTransport:
             self.unsent.append(route_id)
             self.require_healthy()
         before = len(self.runtime.completed)
-        response = self.inner.call(route_id, **arguments)
+        execute = route_id == "command.deployment.execute"
+        if execute:
+            self.execute_ordinal += 1
+            try:
+                started = monotonic()
+            except Exception:
+                started = None
+        try:
+            response = self.inner.call(route_id, **arguments)
+        except ClientTransportError as error:
+            if execute:
+                self._observe_execute(arguments, started, before, error=error)
+            raise
+        if execute:
+            self._observe_execute(arguments, started, before, response=response)
         if route_id == "command.deployment.prepare":
             self.preparations.append((arguments, response))
         if route_id != "command.deployment.execute":

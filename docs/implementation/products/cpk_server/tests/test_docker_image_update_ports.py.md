@@ -79,3 +79,12 @@ detachment, even when earlier candidates are valid. Existing configuration/secre
 volume, foreign-label, network-membership and resource-ID laws remain intact.
 These targets await the reviewed implementation and released owning gate; source
 and runtime cleanup behavior are not changed by adding them.
+
+#342 adds three socket-free diagnostic laws: a genuine unsupported/running
+response is passed through unchanged while only its allowed fields reach the
+public failure report; timeout/HTTP/invalid-response contexts produce fixed
+classifications without exception text or another dispatch; and diagnostic
+clock failure cannot replace the returned public response. A mismatched run
+cannot borrow the previous call's evidence. These prove fixture reporting only,
+not which path caused the earlier cutover stop. The owning Docker suite and
+separately reviewed next smoke invocation remain required.
