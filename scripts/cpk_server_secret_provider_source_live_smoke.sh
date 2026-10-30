@@ -2,6 +2,90 @@
 set -eu
 
 SERVERS_REPO="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
+SCENARIO="${CPK_SECRET_PROVIDER_SOURCE_LIVE_SCENARIO:-default}"
+if [ "$SCENARIO" = public-workspace-enrollment ]; then
+  # Admit the isolated entrance before legacy paths, private inputs or traps.
+  for g_reference in "${CPK_SERVERS_TEST_IMAGE:-}" "${CPK_SECRET_PROVIDER_SERVER_IMAGE:-}" \
+      "${CPK_SECRETS_TEST_IMAGE:-}" "${CPK_LIVE_POSTGRES_IMAGE:-}"; do
+    [ -n "$g_reference" ] || { echo 'public enrollment requires explicit source images' >&2; exit 2; }
+  done
+  for g_document in "${CPK_G_GATEWAY_DOCUMENT_FILE:-}" "${CPK_G_NATIVE_CONNECTOR_DOCUMENT_FILE:-}"; do
+    case "$g_document" in /*) ;; *) echo 'public enrollment requires explicit public product documents' >&2; exit 2 ;; esac
+    [ -f "$g_document" ] && [ -r "$g_document" ] && [ ! -L "$g_document" ] || {
+      echo 'public enrollment product document unavailable' >&2; exit 2;
+    }
+  done
+  [ "${CPK_SECRET_PROVIDER_BUILD_IMAGES:-0}" = 0 ] || {
+    echo 'public enrollment consumes reviewed built images; it does not build' >&2; exit 2;
+  }
+  [ "$(docker context inspect --format '{{.Endpoints.docker.Host}}')" = unix:///var/run/docker.sock ] || {
+    echo 'public enrollment requires the owning local Unix daemon' >&2; exit 2;
+  }
+  g_engine="$(docker info --format '{{.ID}}')"
+  g_controller_image="$(docker image inspect "$CPK_SERVERS_TEST_IMAGE" --format '{{.Id}}')"
+  g_cpk_image="$(docker image inspect "$CPK_SECRET_PROVIDER_SERVER_IMAGE" --format '{{.Id}}')"
+  g_secrets_image="$(docker image inspect "$CPK_SECRETS_TEST_IMAGE" --format '{{.Id}}')"
+  g_postgres_image="$(docker image inspect "$CPK_LIVE_POSTGRES_IMAGE" --format '{{.Id}}')"
+  umask 077
+  g_records="$(mktemp -d)"
+  g_run="cpk-enrollment-$(basename "$g_records")"
+  g_network=""
+  g_controller=""
+  g_uncertain=0
+  finish_enrollment() {
+    g_status=$?
+    trap - EXIT INT TERM
+    if [ "$g_uncertain" != 0 ]; then
+      echo 'public enrollment acquisition uncertain; exact records retained' >&2
+      exit 1
+    fi
+    if [ -f "$g_records/ownership.json" ] && [ ! -f "$g_records/fixture-resources-absent" ]; then
+      echo 'public enrollment fixture cleanup uncertain; exact records retained' >&2
+      exit 1
+    fi
+    if [ -n "$g_controller" ]; then
+      g_owner="$(docker inspect --format '{{index .Config.Labels "org.openj92.cpk.test-run"}}' "$g_controller")" || exit 1
+      [ "$g_owner" = "$g_run" ] || exit 1
+      docker rm "$g_controller" >/dev/null || exit 1
+      [ -z "$(docker container ls -aq --no-trunc --filter "id=$g_controller")" ] || exit 1
+    fi
+    if [ -n "$g_network" ]; then
+      g_owner="$(docker network inspect --format '{{index .Labels "org.openj92.cpk.test-run"}}' "$g_network")" || exit 1
+      [ "$g_owner" = "$g_run" ] || exit 1
+      docker network rm "$g_network" >/dev/null || exit 1
+      [ -z "$(docker network ls -q --no-trunc --filter "id=$g_network")" ] || exit 1
+    fi
+    rm -f "$g_records/network" "$g_records/controller" "$g_records/ownership.json" \
+      "$g_records/fixture-resources-absent"
+    rmdir "$g_records" || exit 1
+    exit "$g_status"
+  }
+  trap finish_enrollment EXIT
+  trap 'exit 130' INT TERM
+  g_uncertain=1
+  g_network="$(docker network create --label "org.openj92.cpk.test-run=$g_run" "$g_run")"
+  printf '%s\n' "$g_network" > "$g_records/network"
+  g_uncertain=0
+  g_uncertain=1
+  g_controller="$(docker create --name "$g_run-controller" --network "$g_network" \
+    --label "org.openj92.cpk.test-run=$g_run" \
+    --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
+    --mount "type=bind,source=$g_records,target=/witness" \
+    --mount "type=bind,source=$CPK_G_GATEWAY_DOCUMENT_FILE,target=/g-inputs/gateway.cpk.json,readonly" \
+    --mount "type=bind,source=$CPK_G_NATIVE_CONNECTOR_DOCUMENT_FILE,target=/g-inputs/native.cpk.json,readonly" \
+    -e DOCKER_HOST=unix:///var/run/docker.sock -e DOCKER_CONFIG=/tmp/cpk-g-docker \
+    -e PYTHONDONTWRITEBYTECODE=1 \
+    -e CPK_SECRET_PROVIDER_SOURCE_LIVE_SCENARIO=public-workspace-enrollment \
+    -e "CPK_G_RUN=$g_run" -e "CPK_G_ENGINE=$g_engine" -e "CPK_G_NETWORK=$g_network" \
+    -e "CPK_G_CONTROLLER_IMAGE=$g_controller_image" -e "CPK_G_CPK_IMAGE=$g_cpk_image" \
+    -e "CPK_G_SECRETS_IMAGE=$g_secrets_image" -e "CPK_G_POSTGRES_IMAGE=$g_postgres_image" \
+    "$g_controller_image" python scripts/cpk_server_secret_provider_source_live.py)"
+  printf '%s\n' "$g_controller" > "$g_records/controller"
+  g_uncertain=0
+  docker start -a "$g_controller"
+  [ "$(docker inspect --format '{{.State.ExitCode}}' "$g_controller")" = 0 ]
+  exit 0
+fi
 SECRETS_REPO="${CPK_SECRETS_REPO:-$(CDPATH= cd -- "$SERVERS_REPO/../control-plane-kit-secrets" && pwd)}"
 CONTROLLER_IMAGE="${CPK_SERVERS_TEST_IMAGE:-control-plane-kit-servers-test:local}"
 SERVER_IMAGE="${CPK_SECRET_PROVIDER_SERVER_IMAGE:-control-plane-kit-servers/cpk-server:source-1202}"

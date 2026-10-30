@@ -12,3 +12,43 @@ This is component staging/decoder/restart evidence when the owning suite reaches
 it. It does not bypass the dynamic root apply stop, initialize a store, grant
 permissions or establish parent bootstrap acceptance. Policy/credential content
 and the private synthetic subject must not appear in recipient logs.
+
+## G fresh process fixture (source checkpoint; unexecuted)
+
+`public_enrollment_fixture()` extends this existing delivery owner without changing
+`exercise_cpk_file`. It consumes exact image/daemon/network coordinates from the
+isolated source-live entrance. The actual controller owns a network namespace;
+CPK joins that exact namespace, so the existing loopback-only ClientProfile uses
+127.0.0.1 without host publication or a proxy. CPK still listens on its normal
+interfaces and requires real authentication; namespace placement is not authority.
+CPK retains its own process/image/numeric user and protected mounts.
+
+The fixture installs fresh Operations schema once and calls the existing workspace
+initialization service before the first CPK process start, then reads the owner's
+receipt. It creates no A/B workspaces, grants, runtime registrations, plans or
+history. Independent installation/provider administrators and ordinary actor
+identities are fixed at bootstrap; ordinary Secrets credentials start grantless.
+SDK staging delivers owner-encoded wrapper/management configuration and separate
+private policy/client/admin files. Actual Secrets E uses its normal entrypoint.
+
+The yielded private object exposes per-workspace role/admin ClientProfiles, full
+identity descriptors and exact runtime/provider coordinates. Its representation
+is opaque. `process_identity()` observes each real PID1/start generation, mounts
+and namespace-holder continuity. The scenario alone calls the one-time explicit
+`restart_after_enrollment()` after routine enrollment. No readiness restart occurs.
+Ingress stays explicitly disabled pending an admitted provider packet; neither
+successful ingress nor named-management behavior is claimed by this fixture.
+
+The recorded successful creation IDs are the only cleanup targets. Private files
+are temporary; a bounded ownership receipt persists until exact cleanup verifies
+absence. Failed acquisition/cleanup preserves uncertainty rather than searching
+and deleting by name. Shell removes the controller/network only after the fixture
+absence marker. This is fresh synthetic fixture source, not retained upgrade,
+root-bootstrap qualification, published artifacts, live effects or G acceptance.
+
+The gateway/native documents are explicit read-only input files, validated through
+the existing managed-health owner before fixture service acquisition. The root
+catalogue's historical connector document is not the managed wrapper contract and
+must not be substituted. The reviewed execution packet must bind these real
+selected documents and exact source images; no fake never-executed product is
+constructed. Ingress remains disabled until its separately reviewed input exists.
