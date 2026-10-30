@@ -35,6 +35,10 @@ if [ "$SCENARIO" = public-workspace-enrollment ]; then
   finish_enrollment() {
     g_status=$?
     trap - EXIT INT TERM
+    if [ "$g_status" != 0 ]; then
+      echo 'public enrollment failed; cohort and private records retained' >&2
+      exit "$g_status"
+    fi
     if [ "$g_uncertain" != 0 ]; then
       echo 'public enrollment acquisition uncertain; exact records retained' >&2
       exit 1
