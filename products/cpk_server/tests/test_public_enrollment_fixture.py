@@ -4,12 +4,80 @@ import os
 import subprocess
 import tempfile
 import unittest
+import json
+from unittest.mock import Mock
 
-from products.cpk_server.tests.live_numeric_bootstrap import _enrollment_inputs
-from scripts.cpk_server_source_live_report import SourceLiveInvariantError
+from products.cpk_server.tests.live_numeric_bootstrap import (
+    _enrollment_inputs, _enrollment_management_environment, _finish_enrollment,
+)
+from scripts.cpk_server_source_live_report import SourceLiveInvariantError, SourceLiveRunFailed
 
 
 class PublicEnrollmentFixtureAdmissionTests(unittest.TestCase):
+    def test_management_environment_accepts_dynamic_owner_configuration(self):
+        from managed_native_material import NativeMaterial
+        from test_secret_provider_bootstrap import _provider_environment
+        from control_plane_kit_core.identity import PrincipalIdentity, PrincipalKind
+        from control_plane_kit_servers_cpk_server.server import CpkServerBootstrapConfiguration
+        world = NativeMaterial()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "managed.json"
+            policy_path = Path(directory) / "workspace.json"
+            identity = PrincipalIdentity("issuer-g", "administrator-g", PrincipalKind.OPERATOR).descriptor()
+            policy_path.write_text(json.dumps({"schema": "cpk-server.workspace-authority.v1",
+                "installation_id": "installation-g", "administrators": [identity],
+                "known_identities": [identity], "capabilities": ["g-local-docker"]}))
+            path.write_text(json.dumps({"schema": "cpk-server.managed-health.v2",
+                "docker": {"socket_path": "/var/run/docker.sock", "request_timeout": 5.0},
+                "capability_ids": ["g-local-docker"],
+                "gateway_documents": [world.authored.documents["gateway"].content.decode()],
+                "native_product_document": world.document.content.decode()}))
+            config = CpkServerBootstrapConfiguration.from_environment({
+                **_provider_environment(Path(directory) / "unread.token"),
+                "CPK_WORKSPACE_AUTHORITY": "dynamic-v1",
+                "CPK_WORKSPACE_AUTHORITY_CONFIGURATION_FILE": str(policy_path),
+                **_enrollment_management_environment(path)})
+            self.assertIsNone(config.managed_health_process.provider_clients)
+
+    def test_uncertain_or_failed_scenario_keeps_cohort_and_records(self):
+        for primary, uncertain in ((SourceLiveRunFailed("public-outcome-uncertain"), False),
+                                   (SourceLiveInvariantError("scenario-incomplete"), True)):
+            dispose, close, marker = Mock(), Mock(), Mock()
+            _finish_enrollment(primary, uncertain, dispose, close, marker)
+            dispose.assert_not_called()
+            marker.assert_not_called()
+            close.assert_called_once_with()
+        dispose, close, marker = Mock(), Mock(), Mock()
+        with self.assertRaises(SourceLiveRunFailed):
+            _finish_enrollment(None, True, dispose, close, marker)
+        dispose.assert_not_called()
+        marker.assert_not_called()
+
+    def test_primary_identity_survives_close_failure_without_private_exception(self):
+        dispose, marker = Mock(), Mock()
+        with self.assertRaises(SourceLiveRunFailed) as failure:
+            _finish_enrollment(SourceLiveRunFailed("public-outcome-uncertain", "public-cleanup-uncertain"),
+                False, dispose, Mock(side_effect=OSError("private-material")), marker)
+        self.assertEqual(failure.exception.primary_code, "public-outcome-uncertain")
+        self.assertEqual(failure.exception.cleanup_code, "enrollment-cleanup-failed")
+        self.assertNotIn("private-material", str(failure.exception))
+        dispose.assert_not_called()
+        marker.assert_not_called()
+
+    def test_success_disposes_before_absence_and_marker_failure_is_bounded(self):
+        calls = []
+        _finish_enrollment(None, False, lambda: calls.append("dispose"),
+            lambda: calls.append("close"), lambda: calls.append("absent"))
+        self.assertEqual(calls, ["dispose", "close", "absent"])
+        for failing_phase in ("dispose", "close", "marker"):
+            steps = {name: Mock(side_effect=OSError("private-material") if name == failing_phase else None)
+                     for name in ("dispose", "close", "marker")}
+            with self.assertRaises(SourceLiveRunFailed) as failure:
+                _finish_enrollment(None, False, steps["dispose"], steps["close"], steps["marker"])
+            self.assertEqual(str(failure.exception), "enrollment-cleanup-failed; cleanup=enrollment-cleanup-failed")
+            if failing_phase != "marker":
+                steps["marker"].assert_not_called()
+
     def test_exact_nonsecret_launch_coordinates_are_required(self):
         values = {"CPK_G_RUN": "cpk-enrollment-fixture", "CPK_G_ENGINE": "engine-identity",
             "CPK_G_NETWORK": "a" * 64, **{"CPK_G_" + role + "_IMAGE": "sha256:" + "b" * 64

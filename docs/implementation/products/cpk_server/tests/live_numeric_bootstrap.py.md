@@ -39,11 +39,17 @@ and namespace-holder continuity. The scenario alone calls the one-time explicit
 Ingress stays explicitly disabled pending an admitted provider packet; neither
 successful ingress nor named-management behavior is claimed by this fixture.
 
-The recorded successful creation IDs are the only cleanup targets. Private files
-are temporary; a bounded ownership receipt persists until exact cleanup verifies
-absence. Failed acquisition/cleanup preserves uncertainty rather than searching
-and deleting by name. Shell removes the controller/network only after the fixture
-absence marker. This is fresh synthetic fixture source, not retained upgrade,
+The scenario must return normally only after verifying its results and applicable
+approved desired-empty cleanup. Failed, incomplete or uncertain outcomes must
+raise before context exit. Any exception or acquisition uncertainty retains the
+cohort, durable volumes, private state under the private witness directory and
+ownership receipt; the fixture performs no public workload compensation.
+On normal completion, recorded successful creation IDs are the only cleanup
+targets. Disposal stops at its first uncertain removal. Only successful disposal
+and client close permit an absence marker; marker I/O failures remain bounded.
+Combined failures preserve the scenario's original primary code. Shell retains
+controller/network/records on any nonzero outcome or absent fixture marker.
+This is fresh synthetic fixture source, not retained upgrade,
 root-bootstrap qualification, published artifacts, live effects or G acceptance.
 
 The gateway/native documents are explicit read-only input files, validated through
@@ -52,3 +58,8 @@ catalogue's historical connector document is not the managed wrapper contract an
 must not be substituted. The reviewed execution packet must bind these real
 selected documents and exact source images; no fake never-executed product is
 constructed. Ingress remains disabled until its separately reviewed input exists.
+
+The v2 artifact is paired with the existing `docker-unix-v2` mode and dynamic
+workspace configuration. The authority socket uses the SDK's existing conformance
+owner, including its exact qualified Desktop provider/configured/actual/group
+predicates; private volume and file checks remain exact. No alias is invented.

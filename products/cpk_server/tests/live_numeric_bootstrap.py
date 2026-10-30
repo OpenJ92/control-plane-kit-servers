@@ -119,6 +119,36 @@ import os
 import re
 import tempfile
 import time
+import shutil
+
+
+def _enrollment_management_environment(path):
+    return {"CPK_MANAGED_HEALTH": "docker-unix-v2",
+            "CPK_MANAGED_HEALTH_CONFIGURATION_FILE": str(path)}
+
+
+def _finish_enrollment(primary, uncertain, dispose, close, mark_absent):
+    """Normal exit certifies scenario completion; failures retain all evidence."""
+    from scripts.cpk_server_source_live_report import SourceLiveRunFailed
+    failed = False
+    if primary is None and not uncertain:
+        try:
+            dispose()
+        except Exception:
+            failed = True
+    try:
+        close()
+    except Exception:
+        failed = True
+    if primary is None and not uncertain and not failed:
+        try:
+            mark_absent()
+        except Exception:
+            failed = True
+    if failed or (uncertain and primary is None):
+        code = (primary.primary_code if isinstance(primary, SourceLiveRunFailed)
+                else getattr(primary, "code", "enrollment-failed")) if primary else "enrollment-cleanup-failed"
+        raise SourceLiveRunFailed(code, "enrollment-cleanup-failed") from None
 
 
 @dataclass(repr=False)
@@ -288,11 +318,9 @@ def public_enrollment_fixture():
     witness = Path("/witness")
     labels = {"org.openj92.cpk.test-run": inputs["run"]}
     primary = None
-    cleanup_failed = False
     acquisition_uncertain = False
     sdk = DockerSdkClient(client=engine, configuration_helper_image=inputs["controller_image"])
-    directory = tempfile.TemporaryDirectory(prefix="cpk-enrollment-private-")
-    root = Path(directory.name)
+    root = Path(tempfile.mkdtemp(prefix="private-", dir=witness))
     root.chmod(0o700)
 
     def persist():
@@ -483,7 +511,7 @@ def public_enrollment_fixture():
             "CPK_WORKSPACE_AUTHORITY_CONFIGURATION_FILE": "/etc/cpk/cpk-server/workspace-authority.json",
             "CPK_PROVIDER_POLICY_AUTHORITY": "secrets-v1",
             "CPK_PROVIDER_POLICY_AUTHORITY_CONFIGURATION_FILE": "/etc/cpk/cpk-server/provider-policy-authority.json",
-            "CPK_MANAGED_HEALTH": "docker-unix-v1", "CPK_MANAGED_HEALTH_CONFIGURATION_FILE": managed.target_path,
+            **_enrollment_management_environment(managed.target_path),
             "CPK_PRODUCT_MATERIAL_RESOLVER": "provider", "CPK_GATEWAY_PROBE_SIGNER": "ed25519",
             "CPK_MATERIAL_PROVIDER_ROUTES_JSON": json.dumps({logical_provider: "http://g-secrets:8081"}),
             "CPK_MATERIAL_PROVIDER_BOOTSTRAP_FILES_JSON": json.dumps({provider_reference: provider_path}),
@@ -508,6 +536,17 @@ def public_enrollment_fixture():
                     raise SourceLiveInvariantError("enrollment-entrypoint-changed")
             observed_mounts = {item["Destination"]: item for item in container.attrs["Mounts"]}
             for item in cpk_mounts if role == "cpk" else secrets_mounts:
+                if item["Type"] == "bind" and role == "cpk" and item["Target"] == "/var/run/docker.sock":
+                    from control_plane_kit_interpreters.docker.authority import (
+                        DockerAuthorityConformance, docker_authority_conformance,
+                    )
+                    from control_plane_kit_interpreters.docker.sdk import DockerSdkBindMount
+                    if docker_authority_conformance(sdk.inspect_container(container.id),
+                            expected_mounts=(DockerSdkBindMount("/var/run/docker.sock", "/var/run/docker.sock", False),),
+                            expected_groups=(str(os.stat("/var/run/docker.sock").st_gid),),
+                            client=sdk) is not DockerAuthorityConformance.CONFORMANT:
+                        raise SourceLiveInvariantError("enrollment-authority-delivery-invalid")
+                    continue
                 observed_mount = observed_mounts.get(item["Target"])
                 if (observed_mount is None
                         or observed_mount.get("Name", observed_mount.get("Source")) != item["Source"]
@@ -540,48 +579,34 @@ def public_enrollment_fixture():
             raise
         raise SourceLiveInvariantError("enrollment-fixture-failed") from None
     finally:
-        # Only successful creation identities are cleanup candidates. A failed
-        # create can leave unknown effects; never discover-and-delete by name.
-        for kind, identity in reversed(resources):
-            collection = engine.containers if kind == "container" else engine.volumes
-            try:
-                resource = collection.get(identity)
-                resource.reload()
-                observed_labels = resource.labels if kind == "container" else resource.attrs["Labels"]
-                if observed_labels.get("org.openj92.cpk.test-run") != inputs["run"]:
-                    raise SourceLiveInvariantError("enrollment-cleanup-owner-mismatch")
-                resource.remove(force=True) if kind == "container" else resource.remove()
+        def dispose():
+            # Only normal scenario completion permits fixture disposal. Stop at
+            # the first uncertain removal, retaining remaining data and records.
+            for kind, identity in reversed(resources):
+                collection = engine.containers if kind == "container" else engine.volumes
                 try:
-                    collection.get(identity)
+                    resource = collection.get(identity)
+                    resource.reload()
+                    observed_labels = resource.labels if kind == "container" else resource.attrs["Labels"]
+                    if observed_labels.get("org.openj92.cpk.test-run") != inputs["run"]:
+                        raise SourceLiveInvariantError("enrollment-cleanup-owner-mismatch")
+                    resource.remove(force=True) if kind == "container" else resource.remove()
+                    try:
+                        collection.get(identity)
+                    except docker.errors.NotFound:
+                        pass
+                    else:
+                        raise SourceLiveInvariantError("enrollment-cleanup-residue")
+                except docker.errors.NotFound:
+                    pass
+            for identity in helper_ids:
+                try:
+                    engine.containers.get(identity)
                 except docker.errors.NotFound:
                     pass
                 else:
-                    raise SourceLiveInvariantError("enrollment-cleanup-residue")
-            except docker.errors.NotFound:
-                pass
-            except Exception:
-                cleanup_failed = True
-        for identity in helper_ids:
-            try:
-                engine.containers.get(identity)
-            except docker.errors.NotFound:
-                pass
-            except Exception:
-                cleanup_failed = True
-            else:
-                cleanup_failed = True
-        try:
-            directory.cleanup()
-        except Exception:
-            cleanup_failed = True
-        if acquisition_uncertain:
-            cleanup_failed = True
-        if not cleanup_failed:
-            (witness / "fixture-resources-absent").write_text("verified\n", encoding="ascii")
-        try:
-            engine.close()
-        except Exception:
-            cleanup_failed = True
-        if cleanup_failed:
-            raise SourceLiveRunFailed(getattr(primary, "code", "enrollment-failed") if primary else "enrollment-cleanup-failed",
-                                      "enrollment-cleanup-failed") from None
+                    raise SourceLiveInvariantError("enrollment-helper-residue")
+            shutil.rmtree(root)
+
+        _finish_enrollment(primary, acquisition_uncertain, dispose, engine.close,
+            lambda: (witness / "fixture-resources-absent").write_text("verified\n", encoding="ascii"))
