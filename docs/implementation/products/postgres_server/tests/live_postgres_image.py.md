@@ -30,3 +30,24 @@ No raw hint, directory, argv or environment is emitted. This is a projection
 of a message, not observed liveness, ownership or root cause. Parser errors retain
 the original assertion and cleanup paths. No new process, thread, Docker call,
 stderr pipe or product instrumentation is added.
+
+#359 retains `native_lock_emitter_pid` from the already validated matching native
+FATAL/HINT prefix alongside `refused_lock_pid`. Only status `one` carries the two
+bounded integers; absent, invalid, ambiguous, truncated, unavailable and scanner
+failure leave both null. Equal values remain honestly represented rather than
+rejected using an unverified assumption about the selected native build.
+
+A differing pair rules out simple equality of the emitting PID and the PID named
+in that observed hint. It does not identify PID7's live owner, a reused namespace
+identifier, a wrapper thread or another postmaster, nor establish PGDATA ownership
+or safe lock removal. Exact native version/entrypoint association remains a
+separate evidence gap for failed PR358 run41011530872. Historical #277 acceptance
+preserved unexplained recovery uncertainty; this field does not fix recovery.
+
+The existing parser/projection tests cover numeric distinctions/bounds, all null
+states, redaction and preservation of the original assertion/cleanup. No new log
+read, process, thread, timing, native behavior or recovery assertion is introduced.
+Source validation does not release a recovery rerun. Do not loop on emitter-only
+sampling: after any separately authorized observation, record the comparison and
+stop if instantaneous PID/TID ownership still requires a separately reviewed
+observation or explicit uncertainty disposition.
