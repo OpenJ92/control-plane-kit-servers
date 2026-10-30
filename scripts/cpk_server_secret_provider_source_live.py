@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from hashlib import sha256
 import json
 import os
@@ -57,6 +58,7 @@ from cpk_server_hosted_activity import (
     GATEWAY_PROBE_ISSUER,
     ClaimedRun,
     HostedWorkflow,
+    SourceLiveHttpError,
     _assert_activity_mentions,
     _assert_gateway_probe_succeeded,
     _assert_no_node_containers,
@@ -118,6 +120,200 @@ CLOUDFLARE_API_TOKEN_INTENT = "cloudflare.api-token"
 CLOUDFLARE_TUNNEL_TOKEN_INTENT = "cloudflare.tunnel-token"
 GATEWAY_SIGNING_KEY_INTENT = "gateway.probe-signing-key"
 OCI_PULL_CREDENTIAL_INTENT = "oci.pull-credential"
+
+
+class _EnrollmentTransport:
+    """Select the public surface; the existing client still owns its workflow."""
+
+    def __init__(self, profile, *, surface: str) -> None:
+        from control_plane_kit_servers_cpk_server.client.transport import PublicHttpTransport
+        from control_plane_kit_servers_cpk_server.composition import (
+            CpkServerProcessConfiguration, create_cpk_server_composition,
+        )
+
+        if surface not in {"http", "mcp"}:
+            raise ValueError("enrollment surface is invalid")
+        self.profile = profile
+        self.surface = surface
+        self.http = PublicHttpTransport(profile)
+        composition = create_cpk_server_composition(
+            CpkServerProcessConfiguration.execution_capable(authentication_required=True))
+        self.reads = {binding.http_route_id: binding.mcp_tool_name
+            for binding in composition.handoff.projection_parity.projections}
+        self.commands = {binding.http_route_id: binding.mcp_tool_name
+            for binding in composition.handoff.command_parity.commands}
+
+    def call(self, route_id, *, path_parameters, payload, credential_role):
+        from control_plane_kit_servers_cpk_server.client.transport import (
+            ClientAuthorizationError, ClientTransportError,
+        )
+
+        if self.surface == "http":
+            return self.http.call(route_id, path_parameters=path_parameters,
+                payload=payload, credential_role=credential_role)
+        if set(path_parameters).intersection(payload):
+            raise ClientTransportError()
+        read = route_id in self.reads
+        name = (self.reads if read else self.commands).get(route_id)
+        if name is None:
+            raise ClientTransportError()
+        authorization = "Bearer " + self.profile.credential(credential_role).decode("ascii")
+        denied = failed = False
+        try:
+            invoke = _mcp_read if read else _mcp_tool
+            return invoke(self.profile.endpoint, name, {**path_parameters, **payload},
+                authorization=authorization, timeout=30)
+        except SourceLiveHttpError as error:
+            denied = error.status in {401, 403}
+            failed = True
+        except RuntimeError:
+            failed = True
+        finally:
+            authorization = ""
+        if denied:
+            raise ClientAuthorizationError()
+        if failed:
+            raise ClientTransportError()
+
+
+def _enrollment_call(transport, route_id, payload=None, *, workspace_id=None, path=None,
+                     credential_role="operator"):
+    parameters = {} if workspace_id is None else {"workspace_id": workspace_id}
+    return transport.call(route_id, path_parameters={**parameters, **(path or {})},
+        payload={} if payload is None else payload, credential_role=credential_role)
+
+
+def _require_enrollment(value, code):
+    from cpk_server_source_live_report import SourceLiveInvariantError
+    if not value:
+        raise SourceLiveInvariantError(code)
+
+
+def _require_enrollment_denial(action):
+    from control_plane_kit_servers_cpk_server.client.transport import ClientAuthorizationError
+    try:
+        action()
+    except ClientAuthorizationError:
+        return
+    _require_enrollment(False, "enrollment-unauthorized-request-succeeded")
+
+
+def _enroll_public_workspace(fixture, workspace_id, *, surface):
+    """Submit independent owner commands; retain their public receipts only."""
+    ordinary = _EnrollmentTransport(fixture.profiles[workspace_id], surface=surface)
+    administrator = _EnrollmentTransport(fixture.administrator_profiles[workspace_id], surface=surface)
+    provider_admin = _EnrollmentTransport(fixture.provider_administrator_profiles[workspace_id], surface=surface)
+    identities = fixture.identities[workspace_id]
+    created = _enrollment_call(administrator, "command.workspace-administration.create", {
+        "workspace_id": workspace_id, "name": workspace_id,
+        "idempotency_key": workspace_id + ":create"})
+    for selected_surface in ("http", "mcp"):
+        before_grant = _EnrollmentTransport(fixture.profiles[workspace_id], surface=selected_surface)
+        _require_enrollment_denial(lambda: _enrollment_call(before_grant, "read.current-graph",
+            workspace_id=workspace_id))
+        _require_enrollment_denial(lambda: _enrollment_call(before_grant,
+            "command.workspace-permission.grant", {
+                "target": identities["operator"], "scopes": [PolicyScope.INSTANCE_WORKSPACE_READ.value],
+                "expected_revision": 0, "idempotency_key": workspace_id + ":denied-self-grant"},
+            workspace_id=workspace_id))
+        _require_enrollment_denial(lambda: _enrollment_call(before_grant, "read.provider-policy-grants",
+            {"workspace_id": workspace_id, "limit": 1},
+            path={"logical_provider_id": fixture.logical_provider_id}))
+
+    # Distinct credential roles retain distinct full identities and finite scopes.
+    scopes = {
+        "operator": (
+            PolicyScope.INSTANCE_WORKSPACE_READ, PolicyScope.INSTANCE_WORKSPACE_EDIT,
+            PolicyScope.PLAN_REQUEST, PolicyScope.PLAN_EXECUTE,
+            PolicyScope.RUNTIME_AUTHORITY_REGISTER, PolicyScope.RUNTIME_AUTHORITY_READ,
+            PolicyScope.RUNTIME_AUTHORITY_USE, PolicyScope.SECRET_PROVIDER_REGISTER,
+            PolicyScope.SECRET_PROVIDER_READ, PolicyScope.SECRET_PROVIDER_USE,
+            PolicyScope.SECRET_MATERIAL_PROVISION, PolicyScope.DELEGATION_KEY_GENERATE,
+            PolicyScope.DELEGATION_KEY_REGISTER, PolicyScope.DELEGATION_KEY_READ,
+            PolicyScope.DELEGATION_KEY_ACTIVATE, PolicyScope.DELEGATION_KEY_USE,
+            PolicyScope.NODE_CONTROL_READ, PolicyScope.NODE_CONTROL_EXECUTE,
+            PolicyScope.GATEWAY_PROBE_USE,
+        ),
+        "approver": (PolicyScope.INSTANCE_WORKSPACE_READ, PolicyScope.PLAN_APPROVE,
+                     PolicyScope.PLAN_APPROVE_DESTRUCTIVE),
+        "worker": (PolicyScope.INSTANCE_WORKSPACE_READ, PolicyScope.EXECUTION_OPERATE,
+                   PolicyScope.RUNTIME_AUTHORITY_USE, PolicyScope.SECRET_PROVIDER_USE,
+                   PolicyScope.DELEGATION_KEY_USE, PolicyScope.NODE_CONTROL_READ,
+                   PolicyScope.NODE_CONTROL_EXECUTE, PolicyScope.GATEWAY_PROBE_USE),
+    }
+    original_grants = {}
+    for role, allowed in scopes.items():
+        body = {"target": identities[role], "scopes": [value.value for value in allowed],
+            "expected_revision": 0, "idempotency_key": workspace_id + ":grant:" + role}
+        _enrollment_call(administrator, "command.workspace-permission.grant", body,
+            workspace_id=workspace_id)
+        current = _enrollment_call(administrator, "read.workspace-permission",
+            {"target": identities[role]}, workspace_id=workspace_id)
+        _require_enrollment(set(current["scopes"]) == set(body["scopes"]), "enrollment-scopes-differ")
+        original_grants[role] = body
+
+    registration_body = {"authority_ref": fixture.authority_ref, "runtime_kind": "docker",
+        "authority": {"kind": "local-docker-socket"},
+        "admitted_at": datetime.now(timezone.utc).isoformat(),
+        "idempotency_key": workspace_id + ":runtime"}
+    registration = _enrollment_call(ordinary, "command.runtime-authority.register", registration_body,
+        workspace_id=workspace_id)
+    management = {"runtime_id": fixture.runtime_id, "authority_ref": fixture.authority_ref,
+        "registration_id": registration["registration_id"], "capability_id": fixture.capability_id,
+        "expected_revision": 0, "idempotency_key": workspace_id + ":management"}
+    return {"workspace_id": workspace_id, "surface": surface, "created": created,
+        "original_grants": original_grants, "runtime_registration": registration,
+        "runtime_registration_body": registration_body, "management_grant": management,
+        "provider_grants": {}, "ordinary": ordinary, "administrator": administrator,
+        "provider_administrator": provider_admin}
+
+
+def _grant_enrollment_management(fixture, enrolled):
+    workspace_id = enrolled["workspace_id"]
+    administrator = enrolled["administrator"]
+    _enrollment_call(administrator, "command.managed-runtime-access.grant", enrolled["management_grant"],
+        workspace_id=workspace_id)
+    assignment = _enrollment_call(administrator, "read.managed-runtime-assignment",
+        {"runtime_id": fixture.runtime_id, "authority_ref": fixture.authority_ref}, workspace_id=workspace_id)
+    _require_enrollment(assignment["status"] == "active"
+        and assignment["registration_id"] == enrolled["runtime_registration"]["registration_id"]
+        and assignment["capability_id"] == fixture.capability_id, "enrollment-management-differs")
+    return assignment
+
+
+def _enrollment_provider_grant(fixture, enrolled, *, action, intent):
+    """Read the provider revision, grant once, and inspect that exact grant."""
+    workspace_id = enrolled["workspace_id"]
+    transport = enrolled["provider_administrator"]
+    path = {"logical_provider_id": fixture.logical_provider_id}
+    coordinate = {"subject": fixture.provider_subject, "workspace_id": workspace_id,
+        "action": action, "intent": intent}
+    filters = {"subject": fixture.provider_subject, "workspace_id": workspace_id,
+        "action": action, "intent_mode": "none" if intent is None else "exact", "limit": 2}
+    if intent is not None:
+        filters["intent"] = intent
+    page = _enrollment_call(transport, "read.provider-policy-grants", filters, path=path)
+    _require_enrollment(not page["grants"] and page["next_after"] is None,
+        "enrollment-provider-grant-already-exists")
+    body = {"coordinate": coordinate, "expected_revision": page["revision"],
+        "idempotency_key": workspace_id + ":policy:" + action + ":" + (intent or "none")}
+    record = _enrollment_call(transport, "command.provider-policy.grant", body, path=path)
+    _require_enrollment(record["has_matching_result"] and not record["evidence_integrity_conflict"],
+        "enrollment-provider-grant-unverified")
+    results = [item["result"] for item in record["observations"]
+        if item["matches_intent"] and item["result"] is not None]
+    _require_enrollment(len(results) == 1 and results[0]["outcome"] == "granted",
+        "enrollment-provider-grant-unverified")
+    grant_id = results[0]["grant_id"]
+    observed = _enrollment_call(transport, "read.provider-policy-grant",
+        path={**path, "grant_id": grant_id})
+    _require_enrollment(observed["grant"]["coordinate"] == coordinate
+        and observed["grant"]["revoked_at"] is None, "enrollment-provider-current-grant-differs")
+    enrolled["provider_grants"][(action, intent)] = {
+        "body": body, "command_id": record["command_id"], "grant_id": grant_id,
+        "coordinate": coordinate,
+    }
+    return observed
 WORKER_AUTHORIZATION = "Bearer worker-present"
 NO_SECRET_WORKER_AUTHORIZATION = "Bearer worker-no-secret"
 SUCCESS_WORKSPACE = "workspace-secret-provider-live"

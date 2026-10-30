@@ -14,9 +14,9 @@ from pathlib import Path
 import socket
 import time
 from typing import Any, Callable
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import quote_from_bytes
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives import serialization
@@ -2759,8 +2759,18 @@ def _mcp_tool(
     )
 
 
-def _mcp_read(base_url: str, name: str, arguments: dict[str, object]) -> dict[str, Any]:
-    return _mcp(base_url, "resources/read", name, arguments)
+def _mcp_read(
+    base_url: str,
+    name: str,
+    arguments: dict[str, object],
+    *,
+    timeout: int = 10,
+    authorization: str | None = None,
+) -> dict[str, Any]:
+    return _mcp(
+        base_url, "resources/read", name, arguments,
+        timeout=timeout, authorization=authorization,
+    )
 
 
 def _mcp(
@@ -2793,11 +2803,24 @@ def _mcp(
         timeout=timeout,
     )
     if "error" in response:
-        raise RuntimeError(f"MCP {name} failed: {response}")
+        raise RuntimeError("source-live MCP request was refused")
     result = response.get("result")
     if not isinstance(result, dict):
-        raise RuntimeError(f"MCP {name} returned non-object result: {response}")
+        raise RuntimeError("source-live MCP response could not be verified")
     return result
+
+
+class SourceLiveHttpError(RuntimeError):
+    """A status-only failure; response bodies and credentials remain private."""
+
+    def __init__(self, status: int | None = None) -> None:
+        self.status = status
+        super().__init__("source-live HTTP request could not be verified")
+
+
+class _RejectSourceLiveRedirects(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 def _http(
@@ -2822,15 +2845,27 @@ def _http(
         headers=headers,
         method=method,
     )
+    failure = False
+    status = None
     try:
-        with urlopen(request, timeout=timeout) as response:
-            data = response.read(1024 * 1024)
+        with build_opener(_RejectSourceLiveRedirects()).open(request, timeout=timeout) as response:
+            data = response.read(1024 * 1024 + 1)
     except HTTPError as error:
-        detail = error.read(8192).decode("utf-8", errors="replace")
-        raise RuntimeError(f"HTTP {method} {path} failed {error.code}: {detail}") from error
-    decoded = json.loads(data.decode("utf-8"))
-    if not isinstance(decoded, dict):
-        raise RuntimeError(f"HTTP {method} {path} returned non-object JSON")
+        status = error.code
+        error.close()
+        failure = True
+    except (OSError, URLError, TimeoutError):
+        failure = True
+    if failure:
+        raise SourceLiveHttpError(status)
+    if len(data) > 1024 * 1024:
+        raise SourceLiveHttpError()
+    try:
+        decoded = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError, RecursionError):
+        failure = True
+    if failure or not isinstance(decoded, dict):
+        raise SourceLiveHttpError()
     return decoded
 
 
