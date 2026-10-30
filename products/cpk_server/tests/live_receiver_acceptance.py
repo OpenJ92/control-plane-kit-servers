@@ -30,7 +30,7 @@ def verify_provenance():
         "control-plane-kit-core": "7afef43f3d3b981094e37dcb3062b6e3a4f3d674",
         "control-plane-kit-operations": "802a4ce07cf1df4676138dbba1b68092e6cc79e9",
         "control-plane-kit-server-sdk": "220f63169e4bac79653937e97727406255279f7b",
-        "control-plane-kit-secrets": "a3ca9634574484a0018bf73b375d94fab70f169a",
+        "control-plane-kit-secrets": "09442303740ed2e648cf354e35dd61df93974b9c",
         "control-plane-kit-interpreters": "71ab335d45ee804f2aec33c519639c75313626f0",
     }
     for name, commit in pins.items():
