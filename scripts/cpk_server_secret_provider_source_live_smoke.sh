@@ -78,7 +78,7 @@ if [ "$SCENARIO" = public-workspace-enrollment ]; then
     --mount "type=bind,source=$CPK_G_GATEWAY_DOCUMENT_FILE,target=/g-inputs/gateway.cpk.json,readonly" \
     --mount "type=bind,source=$CPK_G_NATIVE_CONNECTOR_DOCUMENT_FILE,target=/g-inputs/native.cpk.json,readonly" \
     -e DOCKER_HOST=unix:///var/run/docker.sock -e DOCKER_CONFIG=/tmp/cpk-g-docker \
-    -e PYTHONDONTWRITEBYTECODE=1 \
+    -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONPATH=/app \
     -e CPK_SECRET_PROVIDER_SOURCE_LIVE_SCENARIO=public-workspace-enrollment \
     -e "CPK_G_RUN=$g_run" -e "CPK_G_ENGINE=$g_engine" -e "CPK_G_NETWORK=$g_network" \
     -e "CPK_G_CONTROLLER_IMAGE=$g_controller_image" -e "CPK_G_CPK_IMAGE=$g_cpk_image" \
