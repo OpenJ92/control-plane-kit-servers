@@ -13,6 +13,14 @@ The maintained `TopologyClient` remains the topology workflow owner. These
 helpers do not seed post-start database state, edit process configuration, or
 use legacy `HostedWorkflow` bootstrap and network-repair routines.
 
+Provider registration accepts the scenario's exact reference/intent set. Material
+intake uses the existing authenticated HTTP-only provision route for either
+workspace, after its independent provider write grant, then compares the public
+request receipt. Intake owns custody and reference admission; the scenario does
+not seed provider state or recreate admission. Material is not returned by the
+helper or retained in its request mapping after dispatch. This remains unexecuted
+scenario preparation pending composition with the selected workload documents.
+
 Sequential authority helpers now read current revisions, submit one explicit
 revoke, inspect current authority, replay the original grant command, and verify
 that it does not revive permission. Ordinary and management restoration use new

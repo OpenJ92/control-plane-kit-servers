@@ -322,6 +322,56 @@ def _enrollment_permission(fixture, enrolled, role):
         workspace_id=enrolled["workspace_id"])
 
 
+def _register_enrollment_provider(fixture, enrolled, reference_intents):
+    """Register only the exact references/intents selected by the scenario."""
+    workspace_id = enrolled["workspace_id"]
+    _require_enrollment(bool(reference_intents), "enrollment-material-references-empty")
+    registered = _enrollment_call(enrolled["ordinary"], "command.secret-provider.register", {
+        "provider_id": fixture.provider_id, "provider_kind": "control-plane-kit-secrets",
+        "display_name": "G isolated durable custody",
+        "endpoint_reference": fixture.provider_endpoint_reference,
+        "credential_reference": fixture.provider_credential_reference,
+        "allowed_reference_prefixes": sorted(reference_intents),
+        "allowed_intents": sorted(set(reference_intents.values())),
+        "admitted_at": datetime.now(timezone.utc).isoformat(),
+        "metadata": {"acceptance": "public-workspace-enrollment"},
+        "idempotency_key": workspace_id + ":provider"}, workspace_id=workspace_id)
+    enrolled["provider_registration_id"] = registered["registration_id"]
+    enrolled["reference_intents"] = dict(reference_intents)
+    return registered
+
+
+def _provision_enrollment_material(fixture, enrolled, *, reference, value):
+    """Use the maintained HTTP-only intake even for the MCP workspace.
+
+    The caller establishes the independently authorized exact provider write
+    grant first. The intake owns custody and reference admission; no provider
+    seed, direct provider write or separate admission is substituted here.
+    """
+    workspace_id = enrolled["workspace_id"]
+    intent = enrolled["reference_intents"][reference]
+    _require_enrollment(type(value) is bytes and bool(value), "enrollment-material-input-invalid")
+    transport = _EnrollmentTransport(fixture.profiles[workspace_id], surface="http")
+    request_id = workspace_id + ":material:" + sha256(reference.encode()).hexdigest()[:16]
+    body = {"request_id": request_id,
+        "provider_registration_id": enrolled["provider_registration_id"],
+        "secret_reference": reference, "intent": intent,
+        "value_base64": base64.b64encode(value).decode("ascii")}
+    try:
+        admitted = _enrollment_call(transport, "command.secret-material.provision", body,
+            workspace_id=workspace_id)
+    finally:
+        body["value_base64"] = ""
+        value = b""
+    _require_enrollment(admitted["state"] == "admitted" and admitted["custody"]
+        and admitted["admission"]["reference_id"] == reference,
+        "enrollment-material-admission-unverified")
+    observed = _enrollment_call(transport, "read.secret-material-provision",
+        workspace_id=workspace_id, path={"request_id": request_id})
+    _require_enrollment(observed == admitted, "enrollment-material-current-receipt-differs")
+    return observed
+
+
 def _revoke_enrollment_operator(fixture, enrolled):
     """Read current authority, revoke it once, and prove old grant replay is inert."""
     workspace_id = enrolled["workspace_id"]
