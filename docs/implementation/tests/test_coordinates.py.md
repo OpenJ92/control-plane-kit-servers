@@ -243,7 +243,7 @@ records the resolved packaging blocker; the owning Servers gate remains pending.
 ## Current #351 dependency selection
 
 #351 advances this source's existing dependency/provenance surface through
-`coordinates/server-products.json`: Core/Operations 7afef43, SDK 220f631,
+`coordinates/server-products.json`: Core 7afef43, Operations 802a4ce, SDK 220f631,
 Secrets a3ca963, Interpreters 71ab335. These are actual accepted owner merges.
 The canonical manifest carries full commits. Existing extras, runner, provenance
 predicates and published product/image/catalogue identities are preserved.
