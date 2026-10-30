@@ -72,7 +72,10 @@ inspection/status functions let the owning Docker suite test propagation using
 process doubles without entering acquisition or performing provider effects.
 
 `--retained DIAGNOSTIC_REVISION REFERENCE PRODUCER_REVISION OUTPUT` admits only
-the recorded337c8cf manifest produced at94ecb34 in publication run40756067917.
+the recorded371b562 manifest produced at3079b70 in publication run41001898450.
+That fixed current target supersedes the earlier337c8cf/94ecb34 diagnostic target;
+the earlier source, workflow and run remain its immutable historical evidence, but
+current source refuses that tuple rather than presenting two active selections.
 The diagnostic revision must match the clean checkout and GitHub workflow source;
 the mode requires the reviewed `inspect-retained-cpk` job in the registered
 `publish-product-image` workflow, with retained inspection selected and same-job

@@ -12,6 +12,11 @@ import unittest
 SCRIPT = Path(__file__).resolve().parents[3] / "scripts/acquire_root_accounts.sh"
 REFERENCE = "ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:" + "b" * 64
 SOURCE = "a" * 40
+RETAINED_REFERENCE = "ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:371b562697a3d1f3ad60c29dd09026133865c0bf19f719c9929b0ca757d93b71"
+RETAINED_SOURCE = "3079b70da4207a6a4a2079138e218a9debfc6fd0"
+RETAINED_PUBLICATION_RUN = "41001898450"
+SUPERSEDED_REFERENCE = "ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:337c8cf44d1ccf624663c866f8084655ead7e8f5c62c121424c9d15f7650e370"
+SUPERSEDED_SOURCE = "94ecb34d7d692c23a0ec017fdc0cac984fd9dccf"
 
 
 class RootAccountAcquisitionTests(unittest.TestCase):
@@ -231,11 +236,12 @@ else:
                     self.assertEqual(seal.read_text(), output)
 
     def test_retained_target_requires_distinct_exact_clean_diagnostic_source(self):
-        retained = "ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:337c8cf44d1ccf624663c866f8084655ead7e8f5c62c121424c9d15f7650e370"
-        producer = "94ecb34d7d692c23a0ec017fdc0cac984fd9dccf"
+        retained = RETAINED_REFERENCE
+        producer = RETAINED_SOURCE
         diagnostic = "d" * 40
         cases = (
             ("retained", retained, producer, diagnostic, diagnostic, "", True),
+            ("retained", SUPERSEDED_REFERENCE, SUPERSEDED_SOURCE, diagnostic, diagnostic, "", False),
             ("retained", retained, producer, diagnostic, producer, "", False),
             ("retained", retained, producer, diagnostic, diagnostic, " M scripts/example", False),
             ("retained", REFERENCE, producer, diagnostic, diagnostic, "", False),
@@ -266,7 +272,7 @@ else:
                 (root / "public").mkdir()
                 env.update(MODE=mode, REFERENCE=REFERENCE, SOURCE=SOURCE, DIAGNOSTIC_SOURCE="d" * 40,
                     RECORDS=str(root), CONTROLLER="", STAGE="preparation", GITHUB_RUN_ID="123",
-                    GITHUB_RUN_ATTEMPT="1", PUBLICATION_RUN="40756067917")
+                    GITHUB_RUN_ATTEMPT="1", PUBLICATION_RUN=RETAINED_PUBLICATION_RUN)
                 result = subprocess.run(["bash", "-c",
                     'source "$1"; if acquire_controller; then exit 0; else status hold; exit 1; fi',
                     "test", str(SCRIPT)], env=env, capture_output=True, text=True, timeout=5, check=False)
@@ -282,7 +288,7 @@ else:
                     self.assertEqual(status["inspection"], "hold")
                     self.assertEqual(status["source_revision"], SOURCE)
                     self.assertEqual(status["diagnostic_source_revision"], "d" * 40)
-                    self.assertEqual(status["publication_run_id"], "40756067917")
+                    self.assertEqual(status["publication_run_id"], RETAINED_PUBLICATION_RUN)
                     self.assertNotIn("private-pull-error-canary", public)
                     events = [json.loads(line) for line in (root / "events").read_text().splitlines()]
                     self.assertEqual(events, [["docker", ["pull", "--quiet", "--platform", "linux/amd64",
@@ -301,15 +307,14 @@ else:
                 TEST_HEAD=diagnostic, TEST_DIRTY=" M scripts/example")
             output = root / "output"
             result = subprocess.run(["bash", str(SCRIPT), "--retained", diagnostic,
-                "ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:337c8cf44d1ccf624663c866f8084655ead7e8f5c62c121424c9d15f7650e370",
-                "94ecb34d7d692c23a0ec017fdc0cac984fd9dccf", str(output)],
+                RETAINED_REFERENCE, RETAINED_SOURCE, str(output)],
                 env=env, capture_output=True, text=True, timeout=5, check=False)
             self.assertNotEqual(result.returncode, 0)
             public = (output / "public" / "status.json").read_text()
             status = json.loads(public)
             self.assertEqual((status["publication"], status["inspection"], status["stage"]),
                 ("succeeded", "hold", "preparation"))
-            self.assertEqual(status["publication_run_id"], "40756067917")
+            self.assertEqual(status["publication_run_id"], RETAINED_PUBLICATION_RUN)
             provenance = (output / "public" / "provenance.json").read_text()
             self.assertFalse(json.loads(provenance)["source_admitted"])
             self.assertNotIn("private-token-canary", public + provenance + result.stdout + result.stderr)
@@ -342,8 +347,7 @@ else:
                     root = Path(directory)
                     env = self.commands(root, "run")
                     env.update(MODE="retained", DIAGNOSTIC_SOURCE="d" * 40, TEST_HEAD="d" * 40,
-                        SOURCE="94ecb34d7d692c23a0ec017fdc0cac984fd9dccf",
-                        REFERENCE="ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:337c8cf44d1ccf624663c866f8084655ead7e8f5c62c121424c9d15f7650e370",
+                        SOURCE=RETAINED_SOURCE, REFERENCE=RETAINED_REFERENCE,
                         GITHUB_WORKFLOW="publish-product-image", GITHUB_JOB="inspect-retained-cpk", GITHUB_SHA="d" * 40,
                         CPK_INSPECT_RETAINED_CPK=retained, CPK_INSPECT_CPK_ACCOUNTS=same_job)
                     result = subprocess.run(["bash", "-c", 'source "$1"; admit_sources', "test", str(SCRIPT)],

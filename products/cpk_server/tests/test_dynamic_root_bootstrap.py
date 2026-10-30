@@ -117,6 +117,22 @@ class DynamicRootBootstrapTests(unittest.TestCase):
                 witness.prepare_dynamic_document(installation_input(), selection, DRIVER)
         self.assertFalse((self.root / "commissioning").exists())
 
+    def test_reviewed_current_account_baseline_is_exact_and_historical_rows_remain(self):
+        from products.cpk_server.tests import live_root_bootstrap as witness
+        current = witness.reviewed_image_account(witness.CPK_CURRENT_IMAGE_ACCOUNT.image_reference)
+        self.assertEqual(current, witness.ImageAccountBaseline(
+            image_reference="ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:371b562697a3d1f3ad60c29dd09026133865c0bf19f719c9929b0ca757d93b71",
+            config_digest="sha256:8282ff51e15b0f1aee76315666da1b331aa11f6ac5303c9d1203455463c2be96",
+            passwd_sha256="2b154879fd6e9899bbe9f9c04eb2535f3388ad5a090f90a78c0dca81a13b9921",
+            group_sha256="1ffcc10cbb13f710c78598bdccecd91b43251fef7e443ca860dfe84c656c0653",
+            uid=10001, primary_gid=10001, supplementary_gids=(100,)))
+        for historical in (witness.CPK_IMAGE_ACCOUNT, witness.CPK_DYNAMIC_IMAGE_ACCOUNT):
+            with self.subTest(reference=historical.image_reference):
+                self.assertIs(witness.reviewed_image_account(historical.image_reference), historical)
+        with self.assertRaisesRegex(AssertionError, "no reviewed image account baseline"):
+            witness.reviewed_image_account(
+                "ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:" + "c" * 64)
+
     def test_dynamic_launcher_emitted_private_files_are_admitted_together(self):
         from products.cpk_server.tests import live_root_bootstrap as witness
         from products.cpk_server.examples.root_bootstrap_input import example_input

@@ -92,6 +92,21 @@ live baseline or release any effects. The current-pair gate subsequently passed
 at8bb96f9 in run40818456065 with
 [independent combined review](https://github.com/OpenJ92/control-plane-kit-servers/issues/347#issuecomment-6488312730).
 
+The selector now also admits exactly the current CPK371b562 image from
+[the one reviewed offline inspection](https://github.com/OpenJ92/control-plane-kit-servers/actions/runs/41011233223).
+Its independently reviewed 1038-byte account seal has SHA-256
+42b1a824c77171f42b14e4c940e5197c5c871f601f1a2a3a9d7ccbc82dca4bb7.
+The row uses original `source_config_digest` 8282ff51, not normalized config
+b171b2de or an identity inferred from a local image observation. The final
+filesystem reports the newly observed passwd hash2b154879, group hash1ffcc10c,
+UID/GID10001 and complete supplementary group[100]. The evidence binds producer
+3079b70, diagnostic sourcee2f185c, prior publication run41001898450 and hosted
+inspection run41011233223 attempt1; its candidate was promoted only after the
+owner reported offline-container absence and exact acquisition cleanup.
+Historical rows remain accepted and every other reference still refuses. This
+test-only baseline enables a separately released qualification; it does not
+prove runtime effective groups, socket access, deployment, or #225 acceptance.
+
 The next integrated candidate uses the existing commitment owner and adds actual
 prepare-writer admission evidence. Its root check includes installer-file mounts,
 exact tuple/source/execution and actual PID1 identity, real helper absence and
