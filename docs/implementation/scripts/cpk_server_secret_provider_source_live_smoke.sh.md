@@ -26,3 +26,8 @@ the fixture's existing managed-health decoder admits their actual canonical
 contracts. This avoids treating the historical catalogue connector as a managed
 wrapper or inventing product coordinates. The exact packet remains a pre-run
 requirement, not something this source checkpoint fabricates.
+
+The controller explicitly sets `PYTHONPATH=/app`: direct execution of the script
+adds `/app/scripts`, while the fixture's qualified `scripts.*` and `products.*`
+imports require the repository root. Its selected fixture imports otherwise use
+installed packages, so no unrelated test directory or host path is added.
