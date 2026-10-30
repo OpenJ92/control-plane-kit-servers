@@ -70,7 +70,8 @@ LIFECYCLE_REASONS = {"native_exit", "management_exit", "readiness_fatal", "start
 
 def scan_refused_lock_pid(logs: bytes, *, truncated: bool = False) -> dict[str, object]:
     """Project a native hint, never a process owner or inferred failure cause."""
-    result = {"lock_pid_status": "absent", "refused_lock_pid": None}
+    result = {"lock_pid_status": "absent", "refused_lock_pid": None,
+              "native_lock_emitter_pid": None}
     if truncated or len(logs) > MAX_FAILURE_LOG_BYTES:
         return dict(result, lock_pid_status="truncated")
     lines = logs.splitlines()
@@ -105,7 +106,8 @@ def scan_refused_lock_pid(logs: bytes, *, truncated: bool = False) -> dict[str, 
     pid = int(match.group(2))
     if pid > 2147483647 or int(match.group(1)) > 2147483647:
         return dict(result, lock_pid_status="invalid")
-    return {"lock_pid_status": "one", "refused_lock_pid": pid}
+    return {"lock_pid_status": "one", "refused_lock_pid": pid,
+            "native_lock_emitter_pid": int(match.group(1))}
 
 
 def require(condition: bool, message: str) -> None:
@@ -186,10 +188,12 @@ def raise_container_failure(container, message: str) -> None:
     logs_truncated = len(logs) > MAX_FAILURE_LOG_BYTES
     logs = logs[-MAX_FAILURE_LOG_BYTES:]
     try:
-        lock_pid = (dict(lock_pid_status="unavailable", refused_lock_pid=None)
+        lock_pid = (dict(lock_pid_status="unavailable", refused_lock_pid=None,
+                         native_lock_emitter_pid=None)
                     if logs_unavailable else scan_refused_lock_pid(logs, truncated=logs_truncated))
     except Exception:
-        lock_pid = dict(lock_pid_status="invalid", refused_lock_pid=None)
+        lock_pid = dict(lock_pid_status="invalid", refused_lock_pid=None,
+                        native_lock_emitter_pid=None)
     if state_refresh_available:
         error = str(state.get("Error", "")).encode("utf-8", errors="replace")
         state_values = {
