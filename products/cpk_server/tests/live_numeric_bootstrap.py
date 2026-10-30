@@ -247,10 +247,12 @@ def _enrollment_ready(container, url):
         try:
             with httpx.Client(timeout=1, trust_env=False, follow_redirects=False) as client:
                 response = client.get(url)
-                if response.status_code == 200:
-                    return
+                ready = response.status_code == 200
         except httpx.TransportError:
-            pass
+            # An unavailable observation consumes this readiness attempt.
+            ready = False
+        if ready:
+            return
         time.sleep(0.25)
     raise SourceLiveInvariantError("enrollment-readiness-unavailable")
 
@@ -594,16 +596,19 @@ def public_enrollment_fixture():
                     try:
                         collection.get(identity)
                     except docker.errors.NotFound:
-                        pass
+                        # The removed exact identity is authoritatively absent.
+                        continue
                     else:
                         raise SourceLiveInvariantError("enrollment-cleanup-residue")
                 except docker.errors.NotFound:
-                    pass
+                    # No remaining resource exists at this recorded identity.
+                    continue
             for identity in helper_ids:
                 try:
                     engine.containers.get(identity)
                 except docker.errors.NotFound:
-                    pass
+                    # SDK-owned helper cleanup is confirmed, not repeated.
+                    continue
                 else:
                     raise SourceLiveInvariantError("enrollment-helper-residue")
             shutil.rmtree(root)

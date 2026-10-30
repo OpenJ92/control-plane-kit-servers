@@ -63,3 +63,8 @@ The v2 artifact is paired with the existing `docker-unix-v2` mode and dynamic
 workspace configuration. The authority socket uses the SDK's existing conformance
 owner, including its exact qualified Desktop provider/configured/actual/group
 predicates; private volume and file checks remain exact. No alias is invented.
+
+Expected transport failures explicitly record an unavailable readiness observation
+and consume the existing bounded attempt. Exact Docker NotFound observations
+advance disposal to the next recorded identity; other removal/lookup failures
+still stop disposal and retain the remaining cohort. No gate suppression applies.
