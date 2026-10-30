@@ -184,7 +184,7 @@ def _enrollment_call(transport, route_id, payload=None, *, workspace_id=None, pa
 
 
 def _require_enrollment(value, code):
-    from cpk_server_source_live_report import SourceLiveInvariantError
+    from scripts.cpk_server_source_live_report import SourceLiveInvariantError
     if not value:
         raise SourceLiveInvariantError(code)
 

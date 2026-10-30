@@ -106,7 +106,7 @@ class SourceLivePublicTransportTests(unittest.TestCase):
         self.assertEqual([item[1] for item in observed], ["Bearer synthetic-operator", "Bearer synthetic-approver"])
         self.assertEqual([item[2]["method"] for item in observed], ["resources/read", "tools/call"])
         self.assertEqual([item[2]["params"]["name"] for item in observed],
-            ["read.current-graph", "command.workspace-administration.create"])
+            ["get_current_graph", "create_workspace_as_administrator"])
         self.assertEqual(observed[0][2]["params"]["arguments"], {"workspace_id": "workspace-b"})
 
     def test_enrollment_adapter_preserves_authorization_refusal_without_raw_context(self):
