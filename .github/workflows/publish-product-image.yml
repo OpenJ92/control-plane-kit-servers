@@ -128,9 +128,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CPK_INSPECT_RETAINED_CPK: ${{ inputs.inspect_retained_cpk }}
           CPK_INSPECT_CPK_ACCOUNTS: ${{ inputs.inspect_cpk_accounts }}
-          # Historical publication: run40756067917/job123055193422, not this job.
-          PUBLISHED_REFERENCE: ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:337c8cf44d1ccf624663c866f8084655ead7e8f5c62c121424c9d15f7650e370
-          PRODUCER_SOURCE: 94ecb34d7d692c23a0ec017fdc0cac984fd9dccf
+          # Prior publication: run41001898450/job123887981624, not this job.
+          PUBLISHED_REFERENCE: ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:371b562697a3d1f3ad60c29dd09026133865c0bf19f719c9929b0ca757d93b71
+          PRODUCER_SOURCE: 3079b70da4207a6a4a2079138e218a9debfc6fd0
         run: |
           bash scripts/acquire_root_accounts.sh --retained "$GITHUB_SHA" \
             "$PUBLISHED_REFERENCE" "$PRODUCER_SOURCE" \

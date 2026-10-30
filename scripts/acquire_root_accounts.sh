@@ -12,8 +12,8 @@ valid_inputs() {
   root_artifact_reference cpk-server "$REFERENCE" && [[ "$SOURCE" =~ ^[0-9a-f]{40}$ ]]
 }
 retained_publication() {
-  [ "$REFERENCE" = 'ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:337c8cf44d1ccf624663c866f8084655ead7e8f5c62c121424c9d15f7650e370' ] &&
-    [ "$SOURCE" = '94ecb34d7d692c23a0ec017fdc0cac984fd9dccf' ]
+  [ "$REFERENCE" = 'ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:371b562697a3d1f3ad60c29dd09026133865c0bf19f719c9929b0ca757d93b71' ] &&
+    [ "$SOURCE" = '3079b70da4207a6a4a2079138e218a9debfc6fd0' ]
 }
 admit_sources() {
   local checkout source_status
@@ -202,7 +202,7 @@ if [ "$MODE" = retained ]; then retained_publication || refuse; fi
 [[ "$GITHUB_RUN_ID" =~ ^[0-9]+$ ]] && [[ "${GITHUB_RUN_ATTEMPT:-1}" =~ ^[0-9]+$ ]] || refuse
 [[ "$DIAGNOSTIC_SOURCE" =~ ^[0-9a-f]{40}$ ]] || refuse
 PUBLICATION_RUN="$GITHUB_RUN_ID"
-if [ "$MODE" = retained ]; then PUBLICATION_RUN=40756067917; fi
+if [ "$MODE" = retained ]; then PUBLICATION_RUN=41001898450; fi
 [ "$(uname -s)/$(uname -m)" = Linux/x86_64 ] && [ "$(id -u)" != 0 ] || refuse
 command -v jq >/dev/null || refuse
 mkdir -m 700 -- "$RECORDS"

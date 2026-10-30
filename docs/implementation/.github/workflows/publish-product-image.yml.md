@@ -40,8 +40,11 @@ permissions to contents-read/packages-read. Its checkout disables credential
 persistence; it has no dependency on the publisher and no login/build/push/Secrets
 step. Normal producer behavior remains selected when the new input is false.
 
-The diagnostic job fixes the retained CPK337c8cf reference and producer94ecb34,
-historical publication run40756067917/job123055193422. Product/tag inputs do not
+The diagnostic job fixes the retained CPK371b562 reference and producer3079b70,
+prior publication run41001898450/job123887981624. This current fixed target
+supersedes the earlier337c8cf/94ecb34 target; its immutable historical source and
+run remain evidence, while current source refuses it as an active selection.
+Product/tag inputs do not
 select another diagnostic target. It passes the distinct exact diagnostic
 GitHub revision to the existing entrypoint's retained mode. Both inspection
 booleans are passed as data; retained=true with same-job=true stops in preparation
