@@ -841,16 +841,29 @@ class RefusedLockPidDiagnosticTests(unittest.TestCase):
                 with self.subTest(pid=pid,role=role):
                     raw=self.hint(pid).replace(b'Is another postmaster',b'Is another '+role)
                     self.assertEqual(live_witness.scan_refused_lock_pid(raw),
-                                     {"lock_pid_status":"one","refused_lock_pid":int(pid)})
+                                     {"lock_pid_status":"one","refused_lock_pid":int(pid),
+                                      "native_lock_emitter_pid":9})
+
+    def test_emitter_and_refused_identity_remain_distinct_without_causal_assumptions(self):
+        for emitter, refused in ((1, 37), (7, 7), (2147483647, 1)):
+            with self.subTest(emitter=emitter, refused=refused):
+                raw = self.hint(str(refused).encode()).replace(b'[9]', f'[{emitter}]'.encode())
+                value = live_witness.scan_refused_lock_pid(raw)
+                self.assertEqual(value, {'lock_pid_status': 'one', 'refused_lock_pid': refused,
+                                         'native_lock_emitter_pid': emitter})
+                self.assertIs(type(value['native_lock_emitter_pid']), int)
+                self.assertIs(type(value['refused_lock_pid']), int)
 
     def test_absent_and_ambiguous_never_select_a_pid(self):
         self.assertEqual(live_witness.scan_refused_lock_pid(b'ordinary log'),
-                         {"lock_pid_status":"absent","refused_lock_pid":None})
+                         {"lock_pid_status":"absent","refused_lock_pid":None,
+                          "native_lock_emitter_pid":None})
         for raw in (self.hint()+self.hint(),self.hint()+self.hint(b"38"),
                     self.hint().replace(b'HINT:',b'Is another HINT:')):
             with self.subTest(raw=raw):
                 self.assertEqual(live_witness.scan_refused_lock_pid(raw),
-                                 {"lock_pid_status":"ambiguous","refused_lock_pid":None})
+                                 {"lock_pid_status":"ambiguous","refused_lock_pid":None,
+                                  "native_lock_emitter_pid":None})
 
     def test_malformed_or_unassociated_hints_are_invalid_and_redacted(self):
         invalid=[self.hint(pid) for pid in
@@ -859,10 +872,13 @@ class RefusedLockPidDiagnosticTests(unittest.TestCase):
                     self.hint().replace(b'already exists',b'is empty'),
                     self.hint().replace(b'"?\n',b'"'),
                     self.hint().replace(b'/RAW_PRIVATE_PATH',b'x'*1024)]
+        invalid += [self.hint().replace(b'[9]', b'[' + emitter + b']') for emitter in
+                    (b'0', b'-1', b'+1', b'01', b'2147483648', b'9'*11, b'9x', b'\xff')]
         for raw in invalid:
             with self.subTest(raw=raw[:100]):
                 self.assertEqual(live_witness.scan_refused_lock_pid(raw),
-                                 {"lock_pid_status":"invalid","refused_lock_pid":None})
+                                 {"lock_pid_status":"invalid","refused_lock_pid":None,
+                                  "native_lock_emitter_pid":None})
 
     def test_byte_line_and_explicit_truncation_refuse_unique_pid(self):
         cases=((self.hint(),True),
@@ -872,7 +888,8 @@ class RefusedLockPidDiagnosticTests(unittest.TestCase):
         for raw,truncated in cases:
             with self.subTest(size=len(raw),truncated=truncated):
                 self.assertEqual(live_witness.scan_refused_lock_pid(raw,truncated=truncated),
-                                 {"lock_pid_status":"truncated","refused_lock_pid":None})
+                                 {"lock_pid_status":"truncated","refused_lock_pid":None,
+                                  "native_lock_emitter_pid":None})
 
     def test_refusal_and_hint_require_one_adjacent_native_emitter_pair(self):
         fatal,hint=self.hint().splitlines()
@@ -886,13 +903,16 @@ class RefusedLockPidDiagnosticTests(unittest.TestCase):
         for raw in invalid:
             with self.subTest(raw=raw):
                 self.assertEqual(live_witness.scan_refused_lock_pid(raw),
-                                 {"lock_pid_status":"invalid","refused_lock_pid":None})
+                                 {"lock_pid_status":"invalid","refused_lock_pid":None,
+                                  "native_lock_emitter_pid":None})
         self.assertEqual(live_witness.scan_refused_lock_pid(fatal+b'\n'+fatal+b'\n'+hint),
-                         {"lock_pid_status":"ambiguous","refused_lock_pid":None})
+                         {"lock_pid_status":"ambiguous","refused_lock_pid":None,
+                          "native_lock_emitter_pid":None})
         # Millisecond timestamps may differ; the adjacent emitter must match.
         raw=fatal.replace(b'15 UTC',b'15.123 UTC')+b'\n'+hint.replace(b'15 UTC',b'15.124 UTC')
         self.assertEqual(live_witness.scan_refused_lock_pid(raw),
-                         {"lock_pid_status":"one","refused_lock_pid":37})
+                         {"lock_pid_status":"one","refused_lock_pid":37,
+                          "native_lock_emitter_pid":9})
 
     def test_failure_path_projects_without_raw_text_or_changed_assertion(self):
         container=Mock();container.attrs={"State":{"Status":"exited","ExitCode":1}}
@@ -904,6 +924,8 @@ class RefusedLockPidDiagnosticTests(unittest.TestCase):
                 live_witness.raise_container_failure(container,'original failure')
             event=json.loads(output.getvalue())['postgres_source_failure']
             self.assertEqual((event['lock_pid_status'],event['refused_lock_pid']),(status,pid))
+            self.assertIn('native_lock_emitter_pid', event)
+            self.assertEqual(event['native_lock_emitter_pid'], 9 if status == 'one' else None)
             self.assertNotIn('RAW_PRIVATE_PATH',output.getvalue())
             self.assertNotIn('Is another',output.getvalue())
             container.logs.assert_called_with(stdout=True,stderr=True,tail=128)
@@ -914,6 +936,8 @@ class RefusedLockPidDiagnosticTests(unittest.TestCase):
         event=json.loads(output.getvalue())['postgres_source_failure']
         self.assertEqual(event['lock_pid_status'],'unavailable')
         self.assertIsNone(event['refused_lock_pid'])
+        self.assertIn('native_lock_emitter_pid', event)
+        self.assertIsNone(event['native_lock_emitter_pid'])
         self.assertNotIn('RAW_LOG_ERROR',output.getvalue())
 
     def test_parser_exception_preserves_main_failure_and_borrowed_cleanup(self):
@@ -936,6 +960,8 @@ class RefusedLockPidDiagnosticTests(unittest.TestCase):
         event=json.loads(output.getvalue())['postgres_source_failure']
         self.assertEqual(event['lock_pid_status'],'invalid')
         self.assertIsNone(event['refused_lock_pid'])
+        self.assertIn('native_lock_emitter_pid', event)
+        self.assertIsNone(event['native_lock_emitter_pid'])
         self.assertNotIn('RAW_PARSER_ERROR',output.getvalue())
         self.assertNotIn('PASS',output.getvalue())
 
