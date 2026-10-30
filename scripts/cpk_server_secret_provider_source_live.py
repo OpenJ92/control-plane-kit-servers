@@ -314,6 +314,132 @@ def _enrollment_provider_grant(fixture, enrolled, *, action, intent):
         "coordinate": coordinate,
     }
     return observed
+
+
+def _enrollment_permission(fixture, enrolled, role):
+    return _enrollment_call(enrolled["administrator"], "read.workspace-permission",
+        {"target": fixture.identities[enrolled["workspace_id"]][role]},
+        workspace_id=enrolled["workspace_id"])
+
+
+def _revoke_enrollment_operator(fixture, enrolled):
+    """Read current authority, revoke it once, and prove old grant replay is inert."""
+    workspace_id = enrolled["workspace_id"]
+    administrator = enrolled["administrator"]
+    original = enrolled["original_grants"]["operator"]
+    before = _enrollment_permission(fixture, enrolled, "operator")
+    _require_enrollment(set(before["scopes"]) == set(original["scopes"]),
+        "enrollment-operator-authority-differs")
+    _enrollment_call(administrator, "command.workspace-permission.revoke", {
+        "target": original["target"], "scopes": before["scopes"],
+        "expected_revision": before["revision"],
+        "idempotency_key": workspace_id + ":revoke:operator"}, workspace_id=workspace_id)
+    revoked = _enrollment_permission(fixture, enrolled, "operator")
+    _require_enrollment(not revoked["scopes"] and revoked["revision"] > before["revision"],
+        "enrollment-operator-revocation-unverified")
+    replay = _enrollment_call(administrator, "command.workspace-permission.grant", original,
+        workspace_id=workspace_id)
+    _require_enrollment(replay["replayed"] is True
+        and _enrollment_permission(fixture, enrolled, "operator") == revoked,
+        "enrollment-operator-replay-changed-authority")
+    for surface in ("http", "mcp"):
+        ordinary = _EnrollmentTransport(fixture.profiles[workspace_id], surface=surface)
+        _require_enrollment_denial(lambda: _enrollment_call(ordinary, "read.current-graph",
+            workspace_id=workspace_id))
+    return revoked
+
+
+def _restore_enrollment_operator(fixture, enrolled):
+    """An explicit new command separates the subsequent management experiment."""
+    workspace_id = enrolled["workspace_id"]
+    before = _enrollment_permission(fixture, enrolled, "operator")
+    _require_enrollment(not before["scopes"], "enrollment-operator-not-revoked")
+    original = enrolled["original_grants"]["operator"]
+    _enrollment_call(enrolled["administrator"], "command.workspace-permission.grant", {
+        **original, "expected_revision": before["revision"],
+        "idempotency_key": workspace_id + ":restore:operator"}, workspace_id=workspace_id)
+    restored = _enrollment_permission(fixture, enrolled, "operator")
+    _require_enrollment(set(restored["scopes"]) == set(original["scopes"])
+        and restored["revision"] > before["revision"], "enrollment-operator-restore-unverified")
+    return restored
+
+
+def _enrollment_management_assignment(fixture, enrolled):
+    return _enrollment_call(enrolled["administrator"], "read.managed-runtime-assignment",
+        {"runtime_id": fixture.runtime_id, "authority_ref": fixture.authority_ref},
+        workspace_id=enrolled["workspace_id"])
+
+
+def _revoke_enrollment_management(fixture, enrolled):
+    """Keep ordinary permission unchanged while revoking its independent assignment."""
+    workspace_id = enrolled["workspace_id"]
+    permissions = {role: _enrollment_permission(fixture, enrolled, role)
+        for role in ("operator", "approver", "worker")}
+    before = _enrollment_management_assignment(fixture, enrolled)
+    _require_enrollment(before["status"] == "active", "enrollment-management-not-active")
+    _enrollment_call(enrolled["administrator"], "command.managed-runtime-access.revoke", {
+        "runtime_id": fixture.runtime_id, "authority_ref": fixture.authority_ref,
+        "expected_revision": before["revision"],
+        "idempotency_key": workspace_id + ":revoke:management"}, workspace_id=workspace_id)
+    revoked = _enrollment_management_assignment(fixture, enrolled)
+    _require_enrollment(revoked["status"] == "revoked"
+        and revoked["registration_id"] == before["registration_id"]
+        and revoked["revision"] > before["revision"], "enrollment-management-revocation-unverified")
+    _enrollment_call(enrolled["administrator"], "command.managed-runtime-access.grant",
+        enrolled["management_grant"], workspace_id=workspace_id)
+    _require_enrollment(_enrollment_management_assignment(fixture, enrolled) == revoked,
+        "enrollment-management-replay-changed-authority")
+    _require_enrollment(all(_enrollment_permission(fixture, enrolled, role) == value
+        for role, value in permissions.items()), "enrollment-management-changed-ordinary-authority")
+    # This proves current assignment and replay only. The caller must separately
+    # exercise the actual management operation and observe its denied I/O boundary.
+    return revoked
+
+
+def _restore_enrollment_management(fixture, enrolled):
+    workspace_id = enrolled["workspace_id"]
+    before = _enrollment_management_assignment(fixture, enrolled)
+    _require_enrollment(before["status"] == "revoked", "enrollment-management-not-revoked")
+    _enrollment_call(enrolled["administrator"], "command.managed-runtime-access.grant", {
+        **enrolled["management_grant"], "expected_revision": before["revision"],
+        "idempotency_key": workspace_id + ":restore:management"}, workspace_id=workspace_id)
+    restored = _enrollment_management_assignment(fixture, enrolled)
+    _require_enrollment(restored["status"] == "active"
+        and restored["registration_id"] == enrolled["runtime_registration"]["registration_id"]
+        and restored["capability_id"] == fixture.capability_id
+        and restored["revision"] > before["revision"], "enrollment-management-restore-unverified")
+    return restored
+
+
+def _revoke_enrollment_provider_grant(fixture, enrolled, *, action, intent):
+    """Revoke one exact provider grant; a replay cannot restore its current state."""
+    grant = enrolled["provider_grants"][(action, intent)]
+    transport = enrolled["provider_administrator"]
+    path = {"logical_provider_id": fixture.logical_provider_id, "grant_id": grant["grant_id"]}
+    before = _enrollment_call(transport, "read.provider-policy-grant", path=path)
+    _require_enrollment(before["grant"]["coordinate"] == grant["coordinate"]
+        and before["grant"]["revoked_at"] is None, "enrollment-provider-grant-not-active")
+    record = _enrollment_call(transport, "command.provider-policy.revoke", {
+        "coordinate": grant["coordinate"], "expected_revision": before["revision"],
+        "idempotency_key": enrolled["workspace_id"] + ":revoke-policy:" + action + ":" + (intent or "none")},
+        path=path)
+    _require_enrollment(record["has_matching_result"] and not record["evidence_integrity_conflict"],
+        "enrollment-provider-revoke-unverified")
+    results = [item["result"] for item in record["observations"]
+        if item["matches_intent"] and item["result"] is not None]
+    _require_enrollment(len(results) == 1 and results[0]["outcome"] == "revoked"
+        and results[0]["grant_id"] == grant["grant_id"], "enrollment-provider-revoke-unverified")
+    revoked = _enrollment_call(transport, "read.provider-policy-grant", path=path)
+    _require_enrollment(revoked["grant"]["coordinate"] == grant["coordinate"]
+        and revoked["grant"]["revoked_at"] is not None, "enrollment-provider-revoke-not-current")
+    replay = _enrollment_call(transport, "command.provider-policy.grant", grant["body"],
+        path={"logical_provider_id": fixture.logical_provider_id})
+    _require_enrollment(replay["command_id"] == grant["command_id"]
+        and _enrollment_call(transport, "read.provider-policy-grant", path=path) == revoked,
+        "enrollment-provider-replay-changed-authority")
+    return revoked
+
+
 WORKER_AUTHORIZATION = "Bearer worker-present"
 NO_SECRET_WORKER_AUTHORIZATION = "Bearer worker-no-secret"
 SUCCESS_WORKSPACE = "workspace-secret-provider-live"

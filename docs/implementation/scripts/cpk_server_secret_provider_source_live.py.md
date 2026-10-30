@@ -13,8 +13,16 @@ The maintained `TopologyClient` remains the topology workflow owner. These
 helpers do not seed post-start database state, edit process configuration, or
 use legacy `HostedWorkflow` bootstrap and network-repair routines.
 
+Sequential authority helpers now read current revisions, submit one explicit
+revoke, inspect current authority, replay the original grant command, and verify
+that it does not revive permission. Ordinary and management restoration use new
+explicit command identities with freshly read revisions to separate experiments.
+Management revocation also checks that ordinary permissions did not change.
+These are public authority observations, not proof of a denied provider effect;
+the scenario still needs the real operation and its independent I/O observation.
+
 This checkpoint is incomplete source preparation. The early G dispatch,
-two-workspace workload progression, sequential revocation and replay checks,
+two-workspace workload progression, actual denied-use checks,
 restart/upgrade evidence, and verified cleanup are not yet composed. The
 launcher-only fixture must not run as G acceptance. Its normal context exit
 permits fixture disposal, so the final scenario must raise for every failed,
