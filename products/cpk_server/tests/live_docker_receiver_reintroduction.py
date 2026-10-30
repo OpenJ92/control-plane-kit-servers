@@ -86,7 +86,7 @@ async def reintroduction_scenario(root, engine, sdk, placement, material, host, 
     assert x_configuration.target.receiver_id != old_y_configuration.target.receiver_id
     for name in ("api", "api-y"):
         placement.inspect_node(name)
-        assert engine.containers.get(placement.nodes[name]).attrs["Image"] == IMAGES["hello_family"]["image_id"]
+        assert engine.containers.get(placement.nodes[name]).attrs["Image"] == placement.expected_image_id("hello_family")
         assert (name, "readiness", 200) in health_socket.observations[initial_health:]
     starts = [value for value in runtime.completed if type(value.request.operation) is StartNode
         and value.request.operation.target.node_id in {"api", "api-y"}]

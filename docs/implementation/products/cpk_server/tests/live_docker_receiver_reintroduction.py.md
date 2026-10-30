@@ -5,6 +5,14 @@ workspace. CPK publicly authors two independent receivers for one qualified
 Hello product. Actual SDK image/user/ownership/network inspection, mounted
 configuration digests and signed gateway readiness prove installed behavior.
 
+Container image equality uses `placement.expected_image_id("hello_family")`,
+the existing same-daemon qualified execution identity. The original manifest and
+config digest remain separately verified by the image identity owner. A daemon
+may report the admitted manifest digest as its execution ID; comparing that to
+the fixture's config digest incorrectly rejects a conformant container.
+The owning run at `4bcfafce` exposed that comparison after initial public apply;
+its failure and bounded disposal remain failed evidence, not retroactive success.
+
 Removal preserves runtime containment order, receives exact destructive approval,
 and produces correlated public StopNode/RemoveNodeResource success. The exact old
 container must be absent before the current placement entry is retired; immutable
