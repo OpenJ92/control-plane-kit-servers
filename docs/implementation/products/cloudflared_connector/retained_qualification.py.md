@@ -1,6 +1,6 @@
 # Retained managed connector qualification
 
-Issue #356, parent #191, consumer #225. The manual workflow composes current
+Issue #356, parent #191, consumer #225. A fixed mode in tests.yml composes current
 orchestration with a separate clean historical owner checkout at cc1b8d8. Its
 fixed input is the already-published 812262 repository digest. It does not repair
 the failed historical release or publish an image.
@@ -37,13 +37,16 @@ controller has Docker socket authority and creates three network-none witness
 children. No real tunnel, token, ingress, provider mutation or live deployment is
 part of this workflow. Source review does not authorize dispatch.
 
-GitHub must first discover this new manual workflow on the repository's default
-branch. A merge into roadmap/1813-runtime-control alone does not make it
-dispatchable. Normal reviewed promotion/registration is a separate execution
-prerequisite; after discovery, the execution ref must select the reviewed
-orchestration commit. Do not add push triggers or dispatch merely to register
-the workflow. Local remote HEAD names main, but current server metadata must be
-confirmed when API access is available.
+The existing registered tests.yml workflow supplies the invocation route at the
+reviewed orchestration ref. Its boolean retained_managed_connector input defaults
+false. Only explicit workflow_dispatch with that input true selects this job and
+excludes the ordinary full suite. Conflicting wrapper/root selections are refused
+before checkout/login/acquisition. Push, PR and ordinary manual runs preserve
+their existing full-suite/root/wrapper behavior. Qualification has a separate
+concurrency group with cancellation disabled; default runs retain their existing
+group and cancellation behavior. No standalone workflow registration, default
+branch promotion, or trigger experiment is required. A future execution release
+must bind the reviewed ref and confirm workflow availability through metadata.
 
 Tests in test_managed_release_retained.py exercise the additive boundary using
 synthetic command results. The maintained `--managed-connector-release-tests`

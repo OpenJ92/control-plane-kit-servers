@@ -2,9 +2,11 @@
 import json
 from pathlib import Path
 import runpy
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
+import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -12,6 +14,42 @@ ROOT = Path(__file__).resolve().parents[3]
 class RetainedQualificationTests(unittest.TestCase):
     def policy(self):
         return runpy.run_path(str(ROOT / 'products/cloudflared_connector/retained_qualification.py'))
+
+    def test_registered_workflow_mode_is_exclusive_and_read_only(self):
+        workflow = yaml.load((ROOT / '.github/workflows/tests.yml').read_text(), Loader=yaml.BaseLoader)
+        selector = "github.event_name == 'workflow_dispatch' && inputs.retained_managed_connector"
+        self.assertEqual(workflow['permissions'], {'contents': 'read', 'packages': 'read'})
+        self.assertEqual(workflow['on']['workflow_dispatch']['inputs']['retained_managed_connector'],
+                         {'description': 'Qualify only the fixed retained managed connector digest',
+                          'type': 'boolean', 'default': 'false'})
+        jobs = workflow['jobs']
+        self.assertEqual(jobs['docker-tests']['if'], '${{ !(' + selector + ') }}')
+        qualification = jobs['retained-managed-connector']
+        self.assertEqual(qualification['if'], '${{ ' + selector + ' }}')
+        steps = qualification['steps']
+        prepare = next(i for i, step in enumerate(steps) if ' prepare ' in step.get('run', ''))
+        login = next(i for i, step in enumerate(steps) if step.get('uses') == 'docker/login-action@v3')
+        self.assertLess(prepare, login)
+        upload = next(step for step in steps if step.get('uses') == 'actions/upload-artifact@v4')
+        self.assertTrue(upload['with']['path'].endswith('/result.json'))
+        self.assertEqual(upload['with']['retention-days'], '30')
+        self.assertEqual(workflow['concurrency']['cancel-in-progress'], '${{ !(' + selector + ') }}')
+
+    def test_conflicting_manual_inputs_refuse_before_acquisition(self):
+        workflow = yaml.load((ROOT / '.github/workflows/tests.yml').read_text(), Loader=yaml.BaseLoader)
+        steps = workflow['jobs']['retained-managed-connector']['steps']
+        admission = steps[0]
+        self.assertEqual(admission['name'], 'Refuse conflicting artifact selections')
+        environment = {key: '' for key in admission['env']}
+        for key in ('WRAPPER_MODE', 'ROOT_MODE'):
+            environment[key] = 'source-built'
+        self.assertEqual(subprocess.run(['sh', '-eu', '-c', admission['run']],
+                                       env=environment, capture_output=True).returncode, 0)
+        for key in environment:
+            with self.subTest(key=key):
+                self.assertNotEqual(subprocess.run(['sh', '-eu', '-c', admission['run']],
+                    env=dict(environment, **{key: 'conflicting-selection'}),
+                    capture_output=True).returncode, 0)
 
     def test_only_reviewed_actual_executor_is_admitted(self):
         p = self.policy()
