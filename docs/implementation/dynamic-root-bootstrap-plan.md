@@ -308,3 +308,12 @@ owning Docker gate. The old producer/recipe equivalence no longer applies. Use
 the reviewed and source-tested combined commit for a refreshed publication packet;
 actual publication, account inspection, current-pair qualification and live
 deployment remain separately released effects.
+## Current #351 dependency selection
+
+#351 advances this source's existing dependency/provenance surface through
+`coordinates/server-products.json`: Core 7afef43, Operations 802a4ce, SDK 220f631,
+Secrets a3ca963, Interpreters 71ab335. These are actual accepted owner merges.
+The canonical manifest carries full commits. Existing extras, runner, provenance
+predicates and published product/image/catalogue identities are preserved.
+Earlier cohort accounts below are historical. This checkpoint awaits the owning
+Servers gate; pin selection alone is not installed or live acceptance.

@@ -153,3 +153,17 @@ which builds one selector shared by bridge/native consumers. Executor/observer
 retain the same installed local Docker policy. No startup initialization, seed,
 assignment write or provider permission is introduced. Process-file v2 does not
 widen the separately guarded v1-only topology artifact delivery path.
+## #351 independent provider-policy process configuration
+
+Optional `CPK_PROVIDER_POLICY_AUTHORITY=secrets-v1` plus the absolute
+`CPK_PROVIDER_POLICY_AUTHORITY_CONFIGURATION_FILE` activates the bounded installer
+metadata loader. Absence disables the family; partial/malformed activation fails
+startup. The typed value reaches the same real Operations factory as HTTP/MCP.
+Startup rejects contradictory installation IDs before schema/effect composition.
+The separate policy credential is read only by the admitted lazy client, never by
+the existing ordinary secret-use composition. See `docs/provider-policy-administration.md`
+for the schema, commands and explicit binding-identity continuity obligation.
+Provider-only authority permits empty workspace grants in both static credential
+forms. Authentication supplies identity without broadening workspace authority.
+The real environment/verifier/application test proves admitted provider reads
+and ordinary workspace denial with no database lookup (validation pending).

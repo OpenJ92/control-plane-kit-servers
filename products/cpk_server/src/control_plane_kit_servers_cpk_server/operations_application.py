@@ -24,6 +24,10 @@ from control_plane_kit_operations.delegation_key_generation import DelegationKey
 from control_plane_kit_operations.delegation_key_generation_commands import DelegationKeyGenerationCommandService
 from control_plane_kit_operations.secret_material_provision_commands import SecretMaterialProvisionCommandService
 from control_plane_kit_operations.cpk_server import CpkServerWorkspaceAdministrationService
+from control_plane_kit_operations.cpk_server import CpkServerProviderPolicyAdministrationService
+from control_plane_kit_operations.provider_policy_commands import ProviderPolicyCommandService
+from control_plane_kit_operations.provider_policy_reads import ProviderPolicyCurrentReadService
+from .provider_policy_configuration import ProviderPolicyAuthorityConfiguration
 from control_plane_kit_operations.effect_permissions import CurrentWorkspaceEffectPolicy
 from control_plane_kit_operations.execution_invocation_service import ExecutionInvocationService
 from control_plane_kit_operations.ingress_invocation_service import IngressInvocationService
@@ -93,6 +97,7 @@ class OperationsApplicationFactory:
     start_service_decorator: Callable | None = None
     principal_authorizer: PrincipalAuthorizer | None = None
     workspace_authority: WorkspaceAuthorityConfiguration | None = None
+    provider_policy_authority: ProviderPolicyAuthorityConfiguration | None = None
 
     def __call__(self) -> CpkServerOperationsApplication:
         unit_of_work, ports, ids, clock = self.unit_of_work_factory, self.ports, self.ids, self.clock
@@ -132,6 +137,21 @@ class OperationsApplicationFactory:
             application_options = {"authority_mode": "dynamic", "workspace_context_resolver":
                 WorkspaceContextResolver(unit_of_work, installation_id=installation_id)}
         authorizer = SecretUseAuthorizationService(unit_of_work)
+        provider_authority = self.provider_policy_authority
+        if provider_authority is not None:
+            if type(provider_authority) is not ProviderPolicyAuthorityConfiguration:
+                raise ValueError("provider-policy authority configuration is invalid")
+            provider_authority.__post_init__()
+            if (authority is not None and authority.administration_policy.installation_id
+                    != provider_authority.administration_policy.installation_id):
+                raise ValueError("provider-policy installation does not match workspace authority")
+            policy = provider_authority.administration_policy
+            service_options["provider_policy_administration"] = CpkServerProviderPolicyAdministrationService(
+                administration_policy=policy,
+                commands=ProviderPolicyCommandService(unit_of_work, administration_policy=policy,
+                    port_factory=provider_authority.port, clock=clock),
+                current_reads=ProviderPolicyCurrentReadService(administration_policy=policy,
+                    port_factory=provider_authority.port))
         runtime = ports.disabled_runtime_adapter
         if ports.runtime_interpreters is not None:
             runtime = RuntimeInterpreterDispatcher(ports.runtime_interpreters,

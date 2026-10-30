@@ -169,3 +169,9 @@ image tag for that gate. Private temporary headers and bounded log capture are
 removed on exit; log retrieval, overflow and redaction failures are failures,
 with no matching secret output. Off-normal adjacent-checkout
 source-live scripts need their own future public-ABI review and remain uncredited.
+# Provider-policy administration
+
+The CPK server can compose independently admitted provider-policy commands and
+reads through its shared HTTP/MCP service. It is disabled by default. See
+[installer configuration and commands](docs/provider-policy-administration.md)
+for the closed metadata schema, separate credential binding and continuity rules.

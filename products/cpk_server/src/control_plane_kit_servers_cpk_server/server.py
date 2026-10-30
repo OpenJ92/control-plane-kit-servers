@@ -119,6 +119,9 @@ if TYPE_CHECKING:
     from .managed_health_configuration import ManagedHealthProcessConfiguration
 
 
+from .provider_policy_configuration import ProviderPolicyAuthorityConfiguration
+
+
 class BootstrapConfigurationError(ValueError):
     """Raised when required process bootstrap configuration is missing."""
 
@@ -206,6 +209,7 @@ class CpkServerBootstrapConfiguration:
     managed_health_process: ManagedHealthProcessConfiguration | None = field(
         default=None, repr=False, compare=False)
     workspace_authority: WorkspaceAuthorityConfiguration | None = None
+    provider_policy_authority: ProviderPolicyAuthorityConfiguration | None = field(default=None, repr=False)
 
     @classmethod
     def from_environment(
@@ -213,6 +217,21 @@ class CpkServerBootstrapConfiguration:
         environ: Mapping[str, str] | None = None,
     ) -> "CpkServerBootstrapConfiguration":
         values = dict(os.environ if environ is None else environ)
+        provider_authority = None
+        provider_mode = values.get("CPK_PROVIDER_POLICY_AUTHORITY", "disabled")
+        provider_path = "CPK_PROVIDER_POLICY_AUTHORITY_CONFIGURATION_FILE"
+        if provider_mode != "disabled" or provider_path in values:
+            try:
+                if provider_mode != "secrets-v1" or provider_path not in values:
+                    raise ValueError
+                from .provider_policy_configuration import read_provider_policy_authority_configuration
+                provider_authority = read_provider_policy_authority_configuration(values[provider_path])
+            except (ValueError, TypeError, AttributeError, KeyError, OverflowError, RecursionError):
+                provider_failure = BootstrapConfigurationError("provider-policy authority process configuration is invalid")
+            else:
+                provider_failure = None
+            if provider_failure is not None:
+                raise provider_failure
         authority = None
         authority_mode = values.get("CPK_WORKSPACE_AUTHORITY", "disabled")
         authority_path = "CPK_WORKSPACE_AUTHORITY_CONFIGURATION_FILE"
@@ -231,7 +250,8 @@ class CpkServerBootstrapConfiguration:
         mode = values.get("CPK_MANAGED_HEALTH", "disabled")
         path_key = "CPK_MANAGED_HEALTH_CONFIGURATION_FILE"
         if mode == "disabled" and path_key not in values:
-            return cls._from_environment(values, workspace_authority=authority)
+            return cls._from_environment(values, workspace_authority=authority,
+                provider_policy_authority=provider_authority)
         try:
             if mode not in {"docker-unix-v1", "docker-unix-v2"} or path_key not in values:
                 raise ValueError
@@ -240,7 +260,8 @@ class CpkServerBootstrapConfiguration:
             process = read_managed_health_process_configuration(values[path_key])
             if (process.provider_clients is None) != (mode == "docker-unix-v2"):
                 raise ValueError
-            config = replace(cls._from_environment(values, workspace_authority=authority), managed_health_process=process)
+            config = replace(cls._from_environment(values, workspace_authority=authority,
+                provider_policy_authority=provider_authority), managed_health_process=process)
             _validate_managed_health_process(config)
             return config
         except (ValueError, TypeError, AttributeError, KeyError, OverflowError,
@@ -254,6 +275,7 @@ class CpkServerBootstrapConfiguration:
         environ: Mapping[str, str],
         *,
         workspace_authority: WorkspaceAuthorityConfiguration | None = None,
+        provider_policy_authority: ProviderPolicyAuthorityConfiguration | None = None,
     ) -> "CpkServerBootstrapConfiguration":
         if workspace_authority is not None:
             try:
@@ -267,6 +289,10 @@ class CpkServerBootstrapConfiguration:
             if authority_failure is not None:
                 raise authority_failure
         values = dict(os.environ if environ is None else environ)
+        if (provider_policy_authority is not None and workspace_authority is not None
+                and provider_policy_authority.administration_policy.installation_id
+                != workspace_authority.administration_policy.installation_id):
+            raise BootstrapConfigurationError("provider-policy installation does not match workspace authority")
         mode = _required(values, "CPK_SERVER_MODE")
         control_auth_verifier = values.get("CPK_CONTROL_AUTH_VERIFIER", "none")
         control_auth_static_credential_text = values.get(
@@ -343,7 +369,8 @@ class CpkServerBootstrapConfiguration:
                         "with single static credential configuration"
                     )
                 control_auth_static_principals = _static_principals(
-                    control_auth_static_principals_text, allow_empty_grants=workspace_authority is not None,
+                    control_auth_static_principals_text,
+                    allow_empty_grants=workspace_authority is not None or provider_policy_authority is not None,
                 )
             elif not control_auth_static_credential_text:
                 raise BootstrapConfigurationError(
@@ -371,7 +398,8 @@ class CpkServerBootstrapConfiguration:
                         "CPK_CONTROL_AUTH_STATIC_WORKSPACE_GRANTS_JSON"
                     )
                 control_auth_static_workspace_grants = _static_workspace_grants(
-                    control_auth_static_workspace_grants_text, allow_empty=workspace_authority is not None,
+                    control_auth_static_workspace_grants_text,
+                    allow_empty=workspace_authority is not None or provider_policy_authority is not None,
                 )
         elif control_auth_static_credential_text is not None:
             raise BootstrapConfigurationError(
@@ -500,6 +528,7 @@ class CpkServerBootstrapConfiguration:
         return cls(
             mode=mode,
             workspace_authority=workspace_authority,
+            provider_policy_authority=provider_policy_authority,
             control_auth_verifier=control_auth_verifier,
             control_auth_static_credential=control_auth_static_credential,
             control_auth_static_principals=control_auth_static_principals,
@@ -851,6 +880,20 @@ def _operations_application(
 ) -> CpkServerOperationsApplication:
     _validate_managed_health_process(config)
     authority = config.workspace_authority
+    provider_authority = config.provider_policy_authority
+    if provider_authority is not None:
+        invalid = False
+        try:
+            if type(provider_authority) is not ProviderPolicyAuthorityConfiguration:
+                raise ValueError
+            provider_authority.__post_init__()
+            if (authority is not None and authority.administration_policy.installation_id
+                    != provider_authority.administration_policy.installation_id):
+                raise ValueError
+        except (ValueError, TypeError, AttributeError):
+            invalid = True
+        if invalid:
+            raise BootstrapConfigurationError("provider-policy authority configuration is invalid")
     if authority is not None:
         invalid = False
         try:
@@ -890,6 +933,7 @@ def _operations_application(
         clock=_clock,
         principal_authorizer=principal_authorizer,
         workspace_authority=authority,
+        provider_policy_authority=provider_authority,
         gateway_probe_factory=lambda uow, authorizer: _gateway_probe_service(
             config, uow, authorizer, provider))()
 

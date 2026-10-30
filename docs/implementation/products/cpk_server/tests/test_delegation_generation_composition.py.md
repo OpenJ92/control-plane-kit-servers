@@ -34,3 +34,5 @@ remain uncredited until they execute in a successful owning run. Only normal
 Docker-backed ./test.sh/PR CI supplies evidence; no alternate harness is introduced.
 Operations owns durable state, provider-registration and authorization algorithms;
 these tests do not reproduce them or claim connected-provider/live proof.
+#351's production-assembly mock explicitly disables the new optional provider-policy
+authority. Existing generation-authority forwarding assertions are preserved.
