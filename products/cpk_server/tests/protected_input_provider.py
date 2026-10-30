@@ -79,7 +79,7 @@ class ProtectedProvider:
                 "grants": [
                     {"action": "secret.generate-delegation-key", "workspace_id": WORKSPACE, "intents": list(INTENTS)},
                     {"action": "secret.write", "workspace_id": WORKSPACE, "intents": ["cloudflare.api-token"]},
-                    {"action": "secret.metadata", "workspace_id": WORKSPACE},
+                    {"action": "secret.metadata", "workspace_id": WORKSPACE, "intents": []},
                 ],
             }]))
             def initialize():

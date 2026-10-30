@@ -53,3 +53,10 @@ substitute for published qualification or public grandparent acceptance.
 The selected artifact verifier requires actual PID 1 effective UID 10006 on both
 initial and restarted provider containers. Bounded private status/exit records
 join exact fixture cleanup; only validated role/PID/UID reaches public output.
+
+#354 makes fixture seed intents explicit for accepted E: write is limited to
+`postgres.password`, the existing application-value write; delegated signing
+continues through the separately scoped generation grant. Revoke explicitly
+uses an empty intent list because it is intentless. Resolve/generation scopes,
+all storage/restart/denial assertions and published-baseline execution remain
+unchanged. No admin capability, new workspace or wildcard authority is added.

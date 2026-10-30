@@ -28,3 +28,5 @@ raw SQL seed, tuple fallback or mirrored policy state is introduced. Existing
 protected-input integration assertions remain the consumer laws. The normal
 Docker gate owns compatibility; G #342 retains same-process policy/retained-upgrade
 proof, which this in-process bridge does not establish.
+The metadata grant explicitly carries `intents: []`: metadata is intentless in
+the accepted owner. Omitting the field means wildcard, not an empty coordinate.

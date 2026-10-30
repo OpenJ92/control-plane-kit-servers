@@ -74,3 +74,8 @@ coordinates, source revision, installed provenance, signed behavior, distinct
 configuration digests and runtime UID checks remain. Optional fixed overlaps also
 receive full proof in the wrapper; extras retain prior laws. Cache absence still
 refuses rather than pulling. Source-built execution-ID laws remain unchanged.
+
+#354 narrows the bootstrap write grant to `postgres.password`, the intent of its
+actual numeric-delivery write/resolve witness. Accepted E seed admission rejects
+omitted/wildcard write intents. Other grant, private-file, restart and cleanup
+assertions are unchanged; this does not grant provider administration.
