@@ -372,6 +372,71 @@ def _provision_enrollment_material(fixture, enrolled, *, reference, value):
     return observed
 
 
+def _apply_enrollment_topology(fixture, enrolled, desired, *, title, destructive):
+    """Run one reviewed scenario transition through the maintained public client.
+
+    The caller supplies the selected authored document and expected approval
+    kind. A changed approval kind or an incomplete result stops this transition;
+    this scenario never retries preparation or application after uncertainty.
+    """
+    from control_plane_kit_servers_cpk_server.client import TopologyClient
+
+    _require_enrollment(type(destructive) is bool, "enrollment-approval-kind-invalid")
+    workspace_id = enrolled["workspace_id"]
+    client = TopologyClient(fixture.profiles[workspace_id], transport=enrolled["ordinary"])
+    planned = client.plan(desired, title=title)
+    _require_enrollment(planned.status == "planned" and bool(planned.plan_id)
+        and planned.workspace_id == workspace_id
+        and planned.destructive is destructive,
+        "enrollment-plan-not-approved-by-scenario")
+    approval = "approve_destructive_plan" if destructive else "approve_plan"
+    applied = client.apply(planned.operation_ref, execute_plan=planned.plan_id,
+        **{approval: planned.plan_id})
+    _require_enrollment(applied.status == "converged"
+        and applied.execution == "succeeded" and applied.advancement == "advanced"
+        and applied.workspace_id == workspace_id
+        and applied.operation_ref == planned.operation_ref
+        and applied.plan_id == planned.plan_id and bool(applied.run_id),
+        "enrollment-application-incomplete")
+    # Status performs the existing bounded public plan/run/event/current reads.
+    # Never replace those reads with the local journal's last result.
+    observed = client.status(applied.operation_ref)
+    _require_enrollment(observed.status == "converged"
+        and observed.execution == "succeeded" and observed.advancement == "advanced"
+        and (observed.workspace_id, observed.operation_ref, observed.plan_id, observed.run_id)
+        == (workspace_id, applied.operation_ref, applied.plan_id, applied.run_id),
+        "enrollment-public-application-unverified")
+    return applied
+
+
+def _require_enrollment_workspace_isolation(fixture, enrolled, foreign, foreign_result):
+    """Try actual foreign graph/plan/run coordinates with the ordinary identity.
+
+    This covers foreign workspace paths only. A foreign child or cursor supplied
+    under an otherwise authorized workspace requires its separate scenario row.
+    """
+    workspace_id = enrolled["workspace_id"]
+    foreign_id = foreign["workspace_id"]
+    _require_enrollment(workspace_id != foreign_id
+        and foreign_result.workspace_id == foreign_id
+        and bool(foreign_result.plan_id) and bool(foreign_result.run_id),
+        "enrollment-isolation-coordinates-invalid")
+    for surface in ("http", "mcp"):
+        ordinary = _EnrollmentTransport(fixture.profiles[workspace_id], surface=surface)
+        # The same identity must still be usable in its own workspace.
+        own = _enrollment_call(ordinary, "read.workspace", workspace_id=workspace_id)
+        _require_enrollment(own.get("workspace", {}).get("workspace_id") == workspace_id,
+            "enrollment-own-workspace-unavailable")
+        _enrollment_call(ordinary, "read.current-graph", workspace_id=workspace_id)
+        for route, path in (
+            ("read.current-graph", {}),
+            ("read.plan-detail", {"plan_id": foreign_result.plan_id}),
+            ("read.run-events", {"run_id": foreign_result.run_id}),
+        ):
+            _require_enrollment_denial(lambda: _enrollment_call(ordinary, route,
+                workspace_id=foreign_id, path=path))
+
+
 def _revoke_enrollment_operator(fixture, enrolled):
     """Read current authority, revoke it once, and prove old grant replay is inert."""
     workspace_id = enrolled["workspace_id"]
@@ -442,7 +507,8 @@ def _revoke_enrollment_management(fixture, enrolled):
     _require_enrollment(all(_enrollment_permission(fixture, enrolled, role) == value
         for role, value in permissions.items()), "enrollment-management-changed-ordinary-authority")
     # This proves current assignment and replay only. The caller must separately
-    # exercise the actual management operation and observe its denied I/O boundary.
+    # exercise the actual management operation and attach the approved layered
+    # owner/composition/public-behavior evidence; live I/O counting is unproved.
     return revoked
 
 

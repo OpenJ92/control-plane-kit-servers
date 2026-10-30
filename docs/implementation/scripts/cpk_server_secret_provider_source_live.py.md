@@ -26,8 +26,27 @@ revoke, inspect current authority, replay the original grant command, and verify
 that it does not revive permission. Ordinary and management restoration use new
 explicit command identities with freshly read revisions to separate experiments.
 Management revocation also checks that ordinary permissions did not change.
-These are public authority observations, not proof of a denied provider effect;
-the scenario still needs the real operation and its independent I/O observation.
+These are public authority observations, not proof of a denied provider effect.
+The scenario still needs the actual operation and the approved G layered evidence:
+exact-cohort owner tests, review of deployed composition, and real public behavior.
+Independent live acquisition/request counting remains unproved. A provider-policy
+refusal intentionally reaches Secrets and cannot establish zero Secrets HTTP.
+
+The topology transition helper delegates preparation, exact-plan approval,
+execution, graph advancement and bounded public status reads to `TopologyClient`.
+The reviewed scenario supplies its expected destructive/non-destructive approval
+kind; a different kind, incomplete execution or unverified current advancement
+raises before success can be reported. It makes one plan/apply call, does not
+retry an uncertain result, and does not treat a no-change plan as evidence of
+workload creation/removal. Its independently read status must retain the exact
+workspace, operation, plan and run coordinates. Actual desired documents and
+their reviewed transition scope remain the caller's responsibility.
+
+The isolation helper uses each ordinary credential through both HTTP and MCP,
+first verifies its own current-graph access, then requires authorization refusal
+for the other workspace's current graph and actual plan/run paths. This is only
+foreign-workspace evidence; foreign child/cursor IDs under an authorized
+workspace, grant isolation, and full-identity verifier cases remain separate.
 
 This checkpoint is incomplete source preparation. The early G dispatch,
 two-workspace workload progression, actual denied-use checks,

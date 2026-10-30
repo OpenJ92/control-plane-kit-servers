@@ -6,8 +6,9 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Thread
+from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from test_hosted_gateway_delegation_bootstrap import _controller_module
 from test_ephemeral_source_live_lifecycle import _controller_module as _source_controller
@@ -44,6 +45,105 @@ def responding_server(*, status=200, body=None, redirect=False):
 
 
 class SourceLivePublicTransportTests(unittest.TestCase):
+    def test_isolation_reaches_foreign_checks_with_owner_graph_pointer_shape(self):
+        from control_plane_kit_operations.read_services.workspace_graph import GraphPointerReadModel
+        from control_plane_kit_servers_cpk_server.client.transport import ClientAuthorizationError
+
+        pointer = GraphPointerReadModel("current", True, graph_id="graph-a",
+            authored_graph_id="graph-a", realized_projection_id="projection-a").descriptor()
+        observed = []
+
+        class Transport:
+            def __init__(self, profile, *, surface):
+                self.surface = surface
+
+            def call(self, route_id, *, path_parameters, payload, credential_role):
+                observed.append((self.surface, route_id, dict(path_parameters), credential_role))
+                if path_parameters["workspace_id"] == "workspace-b":
+                    raise ClientAuthorizationError()
+                if route_id == "read.workspace":
+                    return {"workspace": {"workspace_id": "workspace-a"}}
+                return pointer
+
+        fixture = SimpleNamespace(profiles={"workspace-a": object()})
+        foreign_result = SimpleNamespace(workspace_id="workspace-b", plan_id="plan-b", run_id="run-b")
+        with _source_controller() as controller, patch.object(controller, "_EnrollmentTransport", Transport):
+            controller._require_enrollment_workspace_isolation(fixture,
+                {"workspace_id": "workspace-a"}, {"workspace_id": "workspace-b"}, foreign_result)
+        for surface in ("http", "mcp"):
+            self.assertEqual([row[1:] for row in observed if row[0] == surface], [
+                ("read.workspace", {"workspace_id": "workspace-a"}, "operator"),
+                ("read.current-graph", {"workspace_id": "workspace-a"}, "operator"),
+                ("read.current-graph", {"workspace_id": "workspace-b"}, "operator"),
+                ("read.plan-detail", {"workspace_id": "workspace-b", "plan_id": "plan-b"}, "operator"),
+                ("read.run-events", {"workspace_id": "workspace-b", "run_id": "run-b"}, "operator"),
+            ])
+
+    def test_scenario_does_not_approve_an_unexpected_destructive_plan(self):
+        from control_plane_kit_servers_cpk_server.client.workflow import ClientResult
+
+        client = Mock()
+        client.plan.return_value = ClientResult("planned", "operation-a", "workspace-a",
+            plan_id="plan-a", destructive=True)
+        fixture = SimpleNamespace(profiles={"workspace-a": object()})
+        enrolled = {"workspace_id": "workspace-a", "ordinary": object()}
+        with _source_controller() as controller, patch(
+                "control_plane_kit_servers_cpk_server.client.TopologyClient", return_value=client):
+            from scripts.cpk_server_source_live_report import SourceLiveInvariantError
+            with self.assertRaises(SourceLiveInvariantError):
+                controller._apply_enrollment_topology(fixture, enrolled, Path("selected.json"),
+                    title="Create approved workload", destructive=False)
+        client.apply.assert_not_called()
+        client.status.assert_not_called()
+
+    def test_scenario_stops_after_uncertain_application_without_retry(self):
+        from control_plane_kit_servers_cpk_server.client.workflow import ClientResult
+
+        client = Mock()
+        client.plan.return_value = ClientResult("planned", "operation-a", "workspace-a",
+            plan_id="plan-a", destructive=False)
+        client.apply.return_value = ClientResult("attention-required", "operation-a", "workspace-a",
+            plan_id="plan-a", run_id="run-a", execution="uncertain")
+        fixture = SimpleNamespace(profiles={"workspace-a": object()})
+        enrolled = {"workspace_id": "workspace-a", "ordinary": object()}
+        with _source_controller() as controller, patch(
+                "control_plane_kit_servers_cpk_server.client.TopologyClient", return_value=client):
+            from scripts.cpk_server_source_live_report import SourceLiveInvariantError
+            with self.assertRaises(SourceLiveInvariantError):
+                controller._apply_enrollment_topology(fixture, enrolled, Path("selected.json"),
+                    title="Create approved workload", destructive=False)
+        self.assertEqual(client.plan.call_count, 1)
+        client.apply.assert_called_once_with("operation-a", execute_plan="plan-a", approve_plan="plan-a")
+        client.status.assert_not_called()
+
+    def test_scenario_requires_public_confirmation_of_the_exact_applied_run(self):
+        from control_plane_kit_servers_cpk_server.client.workflow import ClientResult
+
+        client = Mock()
+        client.plan.return_value = ClientResult("planned", "operation-a", "workspace-a",
+            plan_id="plan-a", destructive=True)
+        applied = ClientResult("converged", "operation-a", "workspace-a", plan_id="plan-a",
+            run_id="run-a", execution="succeeded", advancement="advanced")
+        client.apply.return_value = applied
+        fixture = SimpleNamespace(profiles={"workspace-a": object()})
+        enrolled = {"workspace_id": "workspace-a", "ordinary": object()}
+        for run_id in ("run-foreign", "run-a"):
+            with self.subTest(public_run=run_id), _source_controller() as controller, patch(
+                    "control_plane_kit_servers_cpk_server.client.TopologyClient", return_value=client):
+                from scripts.cpk_server_source_live_report import SourceLiveInvariantError
+                client.status.return_value = ClientResult("converged", "operation-a", "workspace-a",
+                    plan_id="plan-a", run_id=run_id, execution="succeeded", advancement="advanced")
+                if run_id == "run-foreign":
+                    with self.assertRaises(SourceLiveInvariantError):
+                        controller._apply_enrollment_topology(fixture, enrolled, Path("empty.json"),
+                            title="Remove approved workload", destructive=True)
+                else:
+                    self.assertIs(controller._apply_enrollment_topology(fixture, enrolled, Path("empty.json"),
+                        title="Remove approved workload", destructive=True), applied)
+                client.apply.assert_called_with("operation-a", execute_plan="plan-a",
+                    approve_destructive_plan="plan-a")
+                client.status.assert_called_with("operation-a")
+
     def test_reads_and_commands_use_the_explicit_identity(self):
         with _controller_module() as controller, responding_server() as (endpoint, observed):
             with patch.object(controller, "AUTHORIZATION", "Bearer unrelated-default"):
