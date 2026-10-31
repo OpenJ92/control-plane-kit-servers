@@ -1,8 +1,12 @@
 # Shared Docker installation value
 
+For explicit first-root public read trust, see
+[offline root commissioning](root-commissioning.md). Private commissioning
+custody stays separate from installation material; it is never a service mount.
+
 `DockerCpkInstallation` describes one CPK Docker+Cloudflare process, one PostgreSQL
-database for its four stores, and one dedicated Secrets process with retained
-custody. `compose_docker_cpk_installation` returns an ordinary Core
+database for its four stores, one dedicated Secrets process with retained
+custody, and an optional website. `compose_docker_cpk_installation` returns an ordinary Core
 `DeploymentTopology`. It performs no IO, secret resolution, authority admission,
 workspace creation, or execution.
 
@@ -142,6 +146,120 @@ image UID with mode `0400` and a read-only mount. Older images declaring the nam
 user `cpk` are unsupported by numeric protected-file delivery. The newly selected
 published CPK image declares numeric `10001`; old image digests remain unchanged.
 
+## Website in the installation
+
+Servers #299 adds `website=None` to preserve existing callers. For the complete
+#225 installation, supply a `DockerCpkWebsite` with a separately reviewed immutable
+image and explicit exposure intent. Building the value does not select, publish
+or qualify that image.
+
+```python
+from dataclasses import replace
+from control_plane_kit_servers_cpk_server import DockerCpkWebsite
+
+def include_website(desired, reviewed_website_image):
+    website = DockerCpkWebsite(
+        image=reviewed_website_image,
+        ingress=NamedPublicIngress(
+            ingress_id="child-a-website-public",
+            authority_ref=IngressAuthorityReference("parent-cloudflare"),
+            target=PublicIngressTarget(desired.website_node_id, "http"),
+            connector_node_id="child-a-website-connector",
+            hostname="web.child-a.example.test",
+        ),
+        connector_product=desired.connector_product,
+    )
+    return compose_docker_cpk_installation(replace(desired, website=website))
+```
+
+This extends the example above to six nodes in the same workspace, runtime and
+network: CPK, PostgreSQL, Secrets, website and two connectors. Both connector
+documents must have canonical bytes, the ordinary revision-1 cloudflared identity
+and an empty runtime contract. Their node IDs must differ from each other and
+all four product node IDs. Ingress IDs and hostnames must differ; each supplied
+ingress lifecycle is preserved. The website node is always
+`<installation_id>-website`, with provider `http`, port 8080 and `PORT=8080`.
+Its only upstream is `https://` plus this installation's API hostname.
+
+The other supported profile uses `ExternalInstallationIngress` for both API and
+website, with both connector documents absent. It yields four nodes and no
+graph-owned ingress allocations. Both endpoints must satisfy the existing
+[frontend canonical HTTPS origin rule](frontend-deployment.md). The website
+upstream is exactly the API endpoint; the website endpoint remains explicit
+exposure intent, without claiming provider allocation. Root acquisition
+accepts this option through the [complete local root profile](complete-root.md),
+which requires actual public receiving configurations and two explicit loopback
+bindings. Production image qualification and external browser acceptance remain
+separate.
+
+Mixed Named/external profiles are refused. Origins must have distinct hostnames,
+even when their ports differ or one hostname has a terminal DNS root dot.
+Accepted origin bytes are preserved; no DNS lookup or normalization occurs.
+New website/profile errors are fixed and omit rejected values. Existing backend
+and API validation retains its original errors and runs first. Website-free
+installations retain their existing external-endpoint and connector admission.
+
+The website reuses `frontend_product`; its image and API upstream determine its
+product identity. Existing backend nodes, store edges, configuration, credential
+references and runtime access remain unchanged. The website has no secret
+delivery, provider/admin credential, Docker access, retained data, protected
+control surface or verification check. Empty verification means unverified
+readiness. Public browser operation, image compatibility, restart/history and
+survival after managed Hello teardown still require #225/Web #6 evidence.
+This composition performs no acquisition, durable mutation or cleanup.
+
+## Explicit managed-health configuration
+
+Managed health defaults to absent. To include it in a new reviewed installation,
+construct a public artifact from the closed process format described in
+[managed-health startup](../../../docs/managed-health-startup.md):
+
+```python
+from dataclasses import replace
+from control_plane_kit_servers_cpk_server.managed_health_configuration import (
+    managed_health_configuration_artifact,
+)
+
+# reviewed_bytes contains the explicit scopes and canonical product documents.
+artifact = managed_health_configuration_artifact(reviewed_bytes)
+desired = replace(desired, managed_health_configuration=artifact)
+topology = compose_docker_cpk_installation(desired)
+```
+
+The composer adds `cpk-managed-health` at
+`/etc/cpk/cpk-server/managed-health.json`, JSON mode `0444`, and the CPK process
+inputs `CPK_MANAGED_HEALTH=docker-unix-v1` and
+`CPK_MANAGED_HEALTH_CONFIGURATION_FILE=/etc/cpk/cpk-server/managed-health.json`.
+It uses ordinary graph configuration delivery. The selected image coordinates,
+other instances, installation-composed credential references and explicit runtime
+access declaration are preserved. The CPK variant identity changes with the
+artifact content. No image is selected or published by this helper.
+
+The original selected CPK contract must leave those environment names and the
+artifact ID/path unused, including configuration requirements. Even an identical
+existing declaration is refused. Existing base-product restrictions on secret
+deliveries and retained mounts still apply before composition. Unrelated public
+configuration is preserved.
+
+The process Unix socket must match the installation's delivered
+`/var/run/docker.sock`. Managed scope references remain exactly as supplied;
+they may describe future managed workspaces and are not inferred from the
+installation's placement. Declaring them does not admit their authority.
+
+Outer UTF-8 bytes, including JSON whitespace, are preserved. Core computes the
+content digest and checks descriptor digests on admission. A valid distinct
+`source_digest` is retained as caller-asserted metadata, not proof of origin.
+Configuration is public: never put credentials into this artifact.
+
+The artifact limit is 262,144 bytes. The complete composed product independently
+has Core's 262,144-byte document limit, so a maximum-sized artifact will not fit
+inside that envelope. The standalone process reader permits 1,048,576 bytes;
+that larger reader bound does not enlarge topology delivery. Root input and
+plan envelopes each have their own 1,048,576-byte bound, including repeated and
+escaped content. A new artifact requires a freshly reviewed plan and process
+restart. Source tests do not establish that a retained or published image has
+adopted this optional mode.
+
 The owning `./test.sh` exercises three product-owned composition tests using real
 descriptors, graph compilation and the graph codec, followed by the repository's
 existing source/live validation phases. No new test runner or provider fixture is
@@ -169,3 +287,31 @@ or `{"kind":"single-operator"}`; omitted root input preserves the default.
 Graphs contain references, never resolved credential documents. Resolved secret
 environment remains visible to trusted Docker/host administrators. Each cluster
 retains its own CPK, PostgreSQL, Secrets instance and credential documents.
+# Selecting managed PostgreSQL
+
+Supply an explicit `postgres-server` descriptor whose immutable image is the
+qualified managed PostgreSQL artifact and whose contract is authored with
+`postgres_source_runtime_contract(postgres_control_configuration_artifact(configuration))`.
+Do not replace the image on the historical native descriptor: it describes a
+different process contract.
+
+The public configuration names this installation's workspace, `<installation>-docker`
+runtime, `<installation>-postgres` node, `management` socket and a distinct
+receiver ID. It requires the product's surface/health verifier families and may
+reuse existing public verifier keys. The original two-role commissioning receipt
+does not establish this third receiver; supply and review it separately. Never
+put private signing keys in configuration.
+
+Composition preserves PostgreSQL 5432, private management 8000, the read-only
+control artifact, retained data and the owner-only password file. The installation
+password reference serves both PostgreSQL and the CPK client; DB/user remain
+`cpk`. Startup requires authenticated `SELECT 1`, independently of signed health.
+Managed shared password input must be nonempty valid UTF-8 without NUL or trailing
+LF. Bootstrap rejects ambiguous trailing LF before acquisition rather than giving
+the file reader and CPK environment different effective credentials. Native-root
+input semantics remain unchanged. The synchronous Linux driver bounds attached
+SQL observation with a scoped signal deadline; expiration holds the pending
+acquisition without retry and does not claim remote-command cancellation.
+The external driver includes the managed product authoring code; the accepted
+CPK/Secrets runtime images can remain selected. Fresh acquisition still refuses
+existing resources: this is not a native-volume migration, adoption or repair.

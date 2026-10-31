@@ -9,18 +9,20 @@ description = "Reusable OCI server products and descriptors for control-plane-ki
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-  "control-plane-kit-core @ https://github.com/OpenJ92/control-plane-kit/archive/e3e29995a4ffc6e6645c2b35d41f394438464d2d.zip#subdirectory=control-plane-kit-core",
-  "control-plane-kit-operations @ https://github.com/OpenJ92/control-plane-kit/archive/e3e29995a4ffc6e6645c2b35d41f394438464d2d.zip#subdirectory=control-plane-kit-operations",
-  "control-plane-kit-interpreters[cloudflare,docker,gateway,public-dns] @ https://github.com/OpenJ92/control-plane-kit-interpreters/archive/e19da40f948d324fbb37cd53075bcbf66a4ee77f.zip",
-  "fastapi>=0.115",
+  "control-plane-kit-secrets @ https://github.com/OpenJ92/control-plane-kit-secrets/archive/09442303740ed2e648cf354e35dd61df93974b9c.zip",
+  "control-plane-kit-server-sdk[fastapi] @ https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/220f63169e4bac79653937e97727406255279f7b.zip",
+  "control-plane-kit-core @ https://github.com/OpenJ92/control-plane-kit/archive/7afef43f3d3b981094e37dcb3062b6e3a4f3d674.zip#subdirectory=control-plane-kit-core",
+  "control-plane-kit-operations @ https://github.com/OpenJ92/control-plane-kit/archive/89d888d6b5440568b174cb05b47baf076e0a08a5.zip#subdirectory=control-plane-kit-operations",
+  "control-plane-kit-interpreters[cloudflare,docker,gateway,public-dns] @ https://github.com/OpenJ92/control-plane-kit-interpreters/archive/71ab335d45ee804f2aec33c519639c75313626f0.zip",
   "uvicorn>=0.30",
+  "httpx>=0.27,<1",
 ]
 
 [project.scripts]
 cpk = "control_plane_kit_servers_cpk_server.client.cli:main"
 
 [tool.setuptools.packages.find]
-where = ["src", "products/cpk_server/src", "products/hello_server/src", "products/http_active_router/src", "products/http_multiplexer/src", "products/cpk_local_gateway/src"]
+where = ["src", "products/cpk_server/src", "products/hello_server/src", "products/http_active_router/src", "products/http_multiplexer/src", "products/cpk_local_gateway/src", "products/secrets_server/src", "products/cloudflared_connector/src", "products/postgres_server/src"]
 
 [tool.setuptools.package-data]
 control_plane_kit_servers = ["catalogue.json", "catalogue.json.sha256"]

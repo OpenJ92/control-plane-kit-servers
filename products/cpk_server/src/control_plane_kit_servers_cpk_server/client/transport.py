@@ -75,14 +75,7 @@ class PublicHttpTransport:
         if route.method is HttpMethod.GET:
             data = None
             if payload:
-                query: list[tuple[str, str]] = []
-                for name, value in payload.items():
-                    if name == "limit" and type(value) is int:
-                        encoded = str(value)
-                    else:
-                        encoded = json.dumps(value, sort_keys=True, separators=(",", ":"))
-                    query.append((name, encoded))
-                url += "?" + urlencode(query)
+                url += "?" + _encode_query(payload, route.request_schema.max_bytes)
         else:
             try:
                 data = json.dumps(
@@ -123,6 +116,35 @@ class PublicHttpTransport:
         if not isinstance(value, dict):
             raise ClientTransportError("cpk-server response is invalid")
         return value
+
+
+def _encode_query(payload: Mapping[str, object], maximum: int) -> str:
+    try:
+        query = []
+        for name, value in payload.items():
+            if type(name) is not str:
+                raise ValueError
+            if name in {"runtime_id", "authority_ref"}:
+                if type(value) is not str or not value:
+                    raise ValueError
+                encoded = value
+            elif name == "limit":
+                if type(value) is not int or value <= 0:
+                    raise ValueError
+                encoded = str(value)
+            else:
+                if name in {"target", "after"} and type(value) is not dict:
+                    raise ValueError
+                encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+            query.append((name, encoded))
+        result = urlencode(query, quote_via=quote)
+        if len(result.encode("ascii")) > maximum:
+            raise ValueError
+        return result
+    except (TypeError, ValueError, RecursionError, UnicodeError):
+        failure = ClientTransportError("public query is invalid")
+    # Do not retain a serialization exception containing private request values.
+    raise failure
 
 
 def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:

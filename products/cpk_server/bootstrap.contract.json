@@ -34,7 +34,7 @@
       "name": "CPK_PORT",
       "required": true,
       "allowed_values": [
-        "1..65535"
+        "8080"
       ]
     },
     {
@@ -44,6 +44,31 @@
         "none",
         "docker"
       ]
+    },
+    {
+      "name": "CPK_MANAGED_HEALTH",
+      "required": false,
+      "allowed_values": [
+        "docker-unix-v1",
+        "docker-unix-v2"
+      ]
+    },
+    {
+      "name": "CPK_MANAGED_HEALTH_CONFIGURATION_FILE",
+      "required": false,
+      "allowed_values": [
+        "/etc/cpk/cpk-server/managed-health.json"
+      ]
+    },
+    {
+      "name": "CPK_WORKSPACE_AUTHORITY",
+      "required": false,
+      "allowed_values": ["disabled", "dynamic-v1"]
+    },
+    {
+      "name": "CPK_WORKSPACE_AUTHORITY_CONFIGURATION_FILE",
+      "required": false,
+      "allowed_values": ["/etc/cpk/cpk-server/workspace-authority.json"]
     },
     {
       "name": "CPK_INGRESS_INTERPRETERS",
@@ -131,6 +156,9 @@
     "authorization credential and static-development verifier credential are runtime-supplied and never echoed",
     "static-development workspace grants are explicit exact-workspace authority and never inferred from request payloads",
     "runtime interpreter authority is selected explicitly and never inferred",
+    "managed health is optional; docker-unix-v1 requires its explicit public configuration file, Docker runtime and provider material mode; managed scopes remain separately admitted",
+    "docker-unix-v2 requires dynamic workspace authority and the matching full capability catalogue; assignments and grants remain durable Operations decisions",
+    "dynamic workspace authority consumes a retained installer-private policy file; ordinary topology artifacts do not deliver it, and the file contains no live grants or credentials",
     "ingress interpreter authority is selected explicitly and never inferred",
     "gateway probe signing authority is selected explicitly and resolves only its secret reference at dispatch",
     "public DNS resolution uses bounded fresh queries against a trusted process-bootstrap endpoint that is never echoed",
@@ -139,5 +167,41 @@
     "provider bootstrap credentials are mounted files read only by the provider client and are never recursively resolved through operations",
     "product secret authority is admitted by operations and resolved only at interpreter dispatch",
     "local-development secret maps are explicit fixtures and are not selected by production descriptors"
+  ],
+  "configuration_files": [
+    {
+      "artifact_id": "cpk-control",
+      "path": "/etc/cpk/cpk-server/control.json",
+      "required": true,
+      "profile": "cpk-control-configuration.v1",
+      "media_type": "application/json",
+      "file_mode": "0444",
+      "maximum_bytes": 65536,
+      "trust": "Authorized parent supplies target/runtime and separate static/health public verification keys; no private keys or default trust."
+    },
+    {
+      "artifact_id": "cpk-managed-health",
+      "path": "/etc/cpk/cpk-server/managed-health.json",
+      "required": false,
+      "profiles": ["cpk-server.managed-health.v1", "cpk-server.managed-health.v2"],
+      "media_type": "application/json",
+      "file_mode": "0444",
+      "maximum_bytes": 1048576,
+      "trust": "Explicit public Unix policy, managed scope references and reviewed product documents; no credentials or inferred authority. Topology delivery has a separate 262144-byte artifact bound."
+    }
+  ],
+  "installer_private_files": [
+    {
+      "role": "workspace-authority",
+      "path": "/etc/cpk/cpk-server/workspace-authority.json",
+      "required_when": "CPK_WORKSPACE_AUTHORITY=dynamic-v1",
+      "schema": "cpk-server.workspace-authority.v1",
+      "file_mode": "0400",
+      "owner": "recipient-image-numeric-uid",
+      "mount": "read-only-file-subpath",
+      "lifetime": "installation",
+      "maximum_bytes": 1048576,
+      "trust": "Installer-reviewed private policy bound to the reviewed root plan; not a public artifact, credential or grant."
+    }
   ]
 }

@@ -1,0 +1,54 @@
+Source: [test_root_commissioning.py](../../../../../products/cpk_server/tests/test_root_commissioning.py).
+
+#301 target-only checkpoint. The missing public module is asserted inside each
+test, preserving collection and making baseline failure causal. No application
+implementation is included. The owning unchanged Docker gate is the only
+execution context; these keys are isolated test fixtures, never production input.
+
+The tests extend existing bootstrap laws for deterministic plans, refusal before
+effects and preservation of uncertain state. New laws cover durable intent before
+ID allocation, durable receiver IDs before key generation, exactly two Ed25519
+purposes, actual Core/CPK/Secrets configuration decoding, private custody modes,
+nonblocking contention, completed immutable reuse and public-only results.
+Persistence failure injection observes actual file descriptors at os.fsync;
+it does not replace the lifecycle or model a separate implementation.
+
+Complete state is not authorization to repair it. Missing/corrupt/mismatched
+keys, modes, manifests or unknown entries must hold without reminting. Error
+payloads cannot retain private exception context. Files have explicit bounds;
+private bytes and private-file digests are excluded from public metadata.
+
+The corresponding real-driver witness runs in the established bootstrap stage,
+using only image-owned product source paths plus installed dependencies. Unit
+green alone cannot establish that packaging boundary. Existing launcher setup,
+no-redispatch and cleanup assertions remain in force. Production commissioning,
+image publication and later website wiring remain outside this target set.
+
+The bootstrap recipe's coordinate-generation target lives in this CPK suite.
+The normal runner stops after a failed suite: keeping it here permits one
+causal-red run to reach both the missing commissioning interface and dependency
+destination. The generator and root coordinate suite retain their existing
+ownership; no collection or runner behavior changes. Synthetic Secrets pin
+drift must update this recipe while preserving generated JSON product documents.
+
+Kepler's TARGET review strengthened durability to require ordered file *and*
+custody-directory fsync before UUID allocation and before key generation. A
+directory-sync fault at each boundary must preserve the incomplete marker,
+perform no premature allocation/generation and hold on reentry. Real CLI
+subprocess tests also exercise differing host/mounted paths via --host-state:
+exact approved host coordinates succeed and reuse, mismatch refuses before
+writes, and the direct library retains its stricter exact-path law.
+
+Kepler SOURCE review added two strengthened regressions while retaining all
+original targets. Digit-leading entropy must still produce Core-valid public
+key IDs and immutable reuse. The driver must explicitly select every accepted
+Core/Operations/SDK/Interpreters/Secrets coordinate: the actual owning runner
+inherits a historical CPK base, so installing Secrets alone can mix cohorts.
+Synthetic full-cohort drift covers generated recipe bytes; the actual driver
+witness additionally checks installed direct_url.json provenance.
+
+The first full source run reached 565 CPK tests but the owning unit image lacked
+the root bootstrap.sh file. The launcher helper now requires that file before
+invocation, so missing apparatus cannot falsely satisfy negative exit assertions.
+Dockerfile.test includes the real launcher in its existing root COPY. No shell
+assertion, runner or workflow is weakened; the failed run remains preserved.

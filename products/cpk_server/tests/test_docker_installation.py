@@ -32,6 +32,7 @@ from control_plane_kit_core.secrets import (
     SecretProviderEndpointReference,
     SecretReference,
 )
+from control_plane_kit_core.secret_selections import SecretVersionSelection, author_secret_selections
 from control_plane_kit_core.topology import DeploymentGraph, GraphDescriptorCodec, compile_topology
 from control_plane_kit_operations.coordinator import ActivityRealizationContext
 from control_plane_kit_operations.execution_leases import ExecutionLeaseFence
@@ -182,11 +183,12 @@ class DockerInstallationTests(unittest.TestCase):
                 configuration = defaults
                 topology = composed
                 if substituted:
-                    configuration = replace(defaults, secret_deliveries=tuple(
+                    deliveries = tuple(
                         replace(value, reference=SecretReference(
                             "secret://configured/child-a/" + value.target_path.rsplit("/", 1)[1],
                         )) for value in reversed(defaults.secret_deliveries)
-                    ))
+                    )
+                    configuration = replace(defaults, secret_deliveries=deliveries)
                     selected = instantiate_product(
                         product, desired.secrets_node_id, configuration,
                     )
@@ -199,6 +201,13 @@ class DockerInstallationTests(unittest.TestCase):
                         ),
                     ))
                 graph = compile_topology(topology)
+                node = graph.node(desired.secrets_node_id)
+                # This material-construction unit fixture supplies selected
+                # versions as input; it does not simulate provider admission.
+                selections = author_secret_selections(node.secret_deliveries, explicit=tuple(
+                    SecretVersionSelection(value.reference, value.intent, "fixture-version-1")
+                    for value in node.secret_deliveries))
+                graph = graph.update_node(replace(node, secret_selections=selections))
                 context = _runtime_context(
                     graph, documents, desired.workspace_id, desired.secrets_node_id,
                 )
@@ -210,6 +219,7 @@ class DockerInstallationTests(unittest.TestCase):
                 self.assertEqual(material.node_id, desired.secrets_node_id)
                 self.assertEqual(material.product.runtime_contract.secret_deliveries,
                                  configuration.secret_deliveries)
+                self.assertEqual(material.secret_selections, selections)
 
     def test_only_cpk_instance_declares_runtime_access(self):
         api = self.api()

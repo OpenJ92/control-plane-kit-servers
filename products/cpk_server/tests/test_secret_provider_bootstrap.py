@@ -16,6 +16,93 @@ SERVER_SOURCE = PRODUCT_SRC / "control_plane_kit_servers_cpk_server" / "server.p
 
 
 class SecretProviderBootstrapTests(unittest.TestCase):
+    def _metadata_bridge_case(self, changes=None, *, status=200):
+        server = _server_module()
+        self.addCleanup(_unload_server)
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        credential_file = Path(directory.name) / "provider.token"
+        credential_file.write_text("metadata-bootstrap-token", encoding="ascii")
+        calls = []
+        document = {}
+        def handler(request):
+            calls.append(request)
+            return httpx.Response(status, headers={"content-type": "application/json"},
+                json={"outcome": "metadata", "metadata": {**document, **(changes or {})}})
+        config = server.CpkServerBootstrapConfiguration.from_environment(
+            _provider_environment(credential_file))
+        composition = server._secret_provider_composition(config, transport=httpx.MockTransport(handler))
+        bridge = getattr(composition, "metadata_reader", None)
+        self.assertIsNotNone(bridge, "production composition needs the typed metadata port")
+        from control_plane_kit_operations.graph_authoring import SecretVersionMetadataRequest
+        from control_plane_kit_core.secret_selections import SecretVersionSelection
+        from control_plane_kit_core.secrets import (
+            SecretReference, SecretUseIntent, SecretProviderEndpointReference,
+        )
+        from control_plane_kit_interpreters.secret_provider import canonical_provider_secret_id
+        reference = SecretReference("secret://provider-main/application/control-token")
+        selection = SecretVersionSelection(reference, SecretUseIntent.APPLICATION_CONTROL_TOKEN, "version-7")
+        request = SecretVersionMetadataRequest("workspace-a", "operator-a", "metadata-request",
+            "provider-registration", "reference-registration",
+            SecretProviderEndpointReference("provider-main"),
+            SecretReference("secret://bootstrap/provider-token"), selection)
+        document.update(workspace_id="workspace-a", secret_id=canonical_provider_secret_id(reference),
+            version_id="version-7", version_number=7, status="active", algorithm="AES-256-GCM",
+            key_fingerprint="a" * 64, key_version="test", labels={"intent": selection.intent.value},
+            created_at="2026-07-30T00:00:00Z", revoked_at=None)
+        return composition, bridge, request, calls
+
+    def test_metadata_bridge_maps_real_operations_request_through_exact_metadata_io(self):
+        composition, bridge, request, calls = self._metadata_bridge_case()
+        from control_plane_kit_operations.graph_authoring import SecretVersionMetadata
+        response = bridge.read_version(request)
+        self.assertIs(type(response), SecretVersionMetadata)
+        self.assertEqual(response, SecretVersionMetadata(request.correlation_id,
+            request.provider_registration_id, request.reference_registration_id, request.selection, True))
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0].method, "GET")
+        self.assertTrue(calls[0].url.path.endswith("/metadata"))
+        self.assertEqual(calls[0].url.params["version_id"], "version-7")
+        self.assertEqual(calls[0].headers["authorization"], "Bearer metadata-bootstrap-token")
+        self.assertNotIn("metadata-bootstrap-token", repr(bridge) + repr(composition) + repr(response))
+
+    def test_provider_composition_qualifies_both_actual_execute_entrances_only(self):
+        server = _server_module()
+        self.addCleanup(_unload_server)
+        composition, bridge, unused, calls = self._metadata_bridge_case()
+        from control_plane_kit_core.types import RuntimeKind
+        from control_plane_kit_interpreters.docker import DockerRuntimeInterpreter
+        from control_plane_kit_operations.runtime_adapter_registration import RuntimeAdapterRegistration
+        config = server.CpkServerBootstrapConfiguration.from_environment(_base_environment())
+        ports = server._operations_effect_ports(config, composition)
+        registration = ports.runtime_interpreters[RuntimeKind.DOCKER]
+        self.assertIs(type(registration), RuntimeAdapterRegistration)
+        self.assertIs(type(registration.adapter), DockerRuntimeInterpreter)
+        self.assertTrue(registration.exact_version_execute)
+        self.assertTrue(registration.exact_version_execute_with_authority)
+        self.assertFalse(registration.exact_version_observe)
+        self.assertIs(ports.secret_metadata_reader, bridge)
+        self.assertIs(bridge.reader.bootstrap_registry, composition.bootstrap_registry)
+        self.assertEqual(calls, [])
+        disabled = server._operations_effect_ports(config, server._SecretProviderComposition())
+        self.assertIs(type(disabled.runtime_interpreters[RuntimeKind.DOCKER]), DockerRuntimeInterpreter)
+        self.assertIsNone(disabled.secret_metadata_reader)
+
+    def test_metadata_bridge_refuses_wrong_reference_version_status_intent_or_unavailable(self):
+        for changes, status in (({"workspace_id": "foreign"}, 200),
+                ({"secret_id": "foreign"}, 200), ({"version_id": "other"}, 200),
+                ({"status": "revoked"}, 200), ({"labels": {"intent": "postgres.password"}}, 200),
+                ({}, 503)):
+            with self.subTest(changes=changes, status=status):
+                unused, bridge, request, calls = self._metadata_bridge_case(changes, status=status)
+                from control_plane_kit_operations.graph_authoring import GraphAuthoringError
+                with self.assertRaises(GraphAuthoringError) as raised:
+                    bridge.read_version(request)
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(calls[0].method, "GET")
+                self.assertNotIn("metadata-bootstrap-token", str(raised.exception))
+                self.assertNotIn(request.selection.reference.reference_id, str(raised.exception))
+
     def test_provider_mode_composes_one_registry_backed_resolver_and_custodian(
         self,
     ) -> None:

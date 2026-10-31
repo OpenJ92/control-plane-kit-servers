@@ -1,13 +1,11 @@
-"""HTTP active-router server product."""
+"""HTTP active-router values; process composition is loaded only when invoked."""
 
-from .server import (
-    RouterConfigurationError,
-    RouterSettings,
-    main,
-)
+from .configuration import RouterConfigurationError, RouterSettings
 
-__all__ = [
-    "RouterConfigurationError",
-    "RouterSettings",
-    "main",
-]
+
+def main() -> int:
+    from .server import main as run
+    return run()
+
+
+__all__ = ["RouterConfigurationError", "RouterSettings", "main"]

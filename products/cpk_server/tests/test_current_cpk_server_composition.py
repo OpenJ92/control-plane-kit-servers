@@ -21,8 +21,10 @@ PRODUCT_SRC = ROOT / "products" / "cpk_server" / "src"
 SERVER_SOURCE = (
     PRODUCT_SRC / "control_plane_kit_servers_cpk_server" / "server.py"
 )
-CPK_COMMIT = "e3e29995a4ffc6e6645c2b35d41f394438464d2d"
-INTERPRETERS_COMMIT = "e19da40f948d324fbb37cd53075bcbf66a4ee77f"
+ASSEMBLY_SOURCE = SERVER_SOURCE.with_name("operations_application.py")
+CORE_COMMIT = "7afef43f3d3b981094e37dcb3062b6e3a4f3d674"
+OPERATIONS_COMMIT = "89d888d6b5440568b174cb05b47baf076e0a08a5"
+INTERPRETERS_COMMIT = "71ab335d45ee804f2aec33c519639c75313626f0"
 PUBLIC_DEPLOYMENT_COMMAND_ROUTES = frozenset(
     {
         "command.deployment.prepare",
@@ -94,7 +96,10 @@ class CurrentCpkServerCompositionTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            coordinates["upstreams"]["control_plane_kit_commit"], CPK_COMMIT
+            coordinates["upstreams"]["control_plane_kit_core_commit"], CORE_COMMIT
+        )
+        self.assertEqual(
+            coordinates["upstreams"]["control_plane_kit_operations_commit"], OPERATIONS_COMMIT
         )
         self.assertEqual(
             coordinates["upstreams"]["control_plane_kit_interpreters_commit"],
@@ -113,11 +118,26 @@ class CurrentCpkServerCompositionTests(unittest.TestCase):
             ROOT / "products" / "cpk_local_gateway" / "Dockerfile"
         ).read_text(encoding="utf-8")
 
-        self.assertEqual(dependencies.count(CPK_COMMIT), 2)
-        self.assertEqual(dependencies.count(INTERPRETERS_COMMIT), 1)
-        self.assertEqual(cpk_dockerfile.count(CPK_COMMIT), 2)
-        self.assertEqual(cpk_dockerfile.count(INTERPRETERS_COMMIT), 1)
-        self.assertEqual(gateway_dockerfile.count(CPK_COMMIT), 1)
+        # Core and Operations can select one commit while remaining distinct
+        # package dependencies. Preserve exact identity including subdirectory.
+        core_url = (
+            f"https://github.com/OpenJ92/control-plane-kit/archive/{CORE_COMMIT}.zip"
+            "#subdirectory=control-plane-kit-core"
+        )
+        operations_url = (
+            f"https://github.com/OpenJ92/control-plane-kit/archive/{OPERATIONS_COMMIT}.zip"
+            "#subdirectory=control-plane-kit-operations"
+        )
+        interpreters_url = (
+            "https://github.com/OpenJ92/control-plane-kit-interpreters/archive/"
+            f"{INTERPRETERS_COMMIT}.zip"
+        )
+        for content in (dependencies, cpk_dockerfile):
+            self.assertEqual(content.count(core_url), 1)
+            self.assertEqual(content.count(operations_url), 1)
+            self.assertEqual(content.count(interpreters_url), 1)
+        self.assertEqual(gateway_dockerfile.count(core_url), 1)
+        self.assertNotIn("control-plane-kit-operations", gateway_dockerfile)
 
     def test_complete_retired_operations_inventory_is_absent(self) -> None:
         tree = ast.parse(
@@ -180,7 +200,7 @@ class CurrentCpkServerCompositionTests(unittest.TestCase):
 
     def test_one_operations_service_map_has_only_current_keywords(self) -> None:
         tree = ast.parse(
-            SERVER_SOURCE.read_text(encoding="utf-8"), filename=str(SERVER_SOURCE)
+            ASSEMBLY_SOURCE.read_text(encoding="utf-8"), filename=str(ASSEMBLY_SOURCE)
         )
         calls = [
             node
@@ -247,7 +267,7 @@ class CurrentCpkServerCompositionTests(unittest.TestCase):
         )
 
         tree = ast.parse(
-            SERVER_SOURCE.read_text(encoding="utf-8"), filename=str(SERVER_SOURCE)
+            ASSEMBLY_SOURCE.read_text(encoding="utf-8"), filename=str(ASSEMBLY_SOURCE)
         )
         calls = [
             node
