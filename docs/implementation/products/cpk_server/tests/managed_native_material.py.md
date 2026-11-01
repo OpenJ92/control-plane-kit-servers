@@ -9,3 +9,11 @@ used by the coordinator, then Core's request binder. It does not read or copy th
 hand-built request's product material. It supplies explicitly authored token
 reference/version inputs, not generated ingress ownership or admitted history.
 Operations owns the separate real coordinator/database proof of those facts.
+
+The new lowering witnesses opt into registered participants: the existing product
+builder declares the API application configuration slot and the connector's
+explicit token delivery before compiling/registering the graph. Operations'
+retained participant guard requires those node inputs to match their registered
+contracts. The default interpreter-only fixture remains unchanged. The first
+old-pin run exposed these two incomplete premises before retained lowering;
+those setup errors are not causal evidence for the missing material defect.

@@ -256,7 +256,7 @@ class ManagedNativeConnectionTests(unittest.TestCase):
     def test_operations_lowering_reaches_real_native_reader_for_fresh_and_retained_content(self):
         for retained in (False, True):
             with self.subTest(retained=retained):
-                world = NativeMaterial(retained=retained)
+                world = NativeMaterial(retained=retained, registered_participants=True)
                 request = world.lowered_request()
                 native = replace(self.native, product_document=world.document)
                 # No patched observer or request enrichment: production lowering
@@ -271,9 +271,9 @@ class ManagedNativeConnectionTests(unittest.TestCase):
                 self.api.reset_mock()
 
     def test_lowered_native_request_missing_or_foreign_material_refuses_before_sdk(self):
-        world = NativeMaterial(retained=True)
+        world = NativeMaterial(retained=True, registered_participants=True)
         request = world.lowered_request()
-        foreign = NativeMaterial(retained=True).lowered_request()
+        foreign = NativeMaterial(retained=True, registered_participants=True).lowered_request()
         self.assertEqual(len(request.products), 1)
         self.assertEqual(len(foreign.products), 1)
         self.assertNotEqual(request.products, foreign.products)

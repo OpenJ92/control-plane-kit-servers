@@ -31,7 +31,7 @@ from receiver_acceptance_material import AuthoredMaterial
 
 
 class NativeMaterial:
-    def __init__(self, *, retained=False, retained_image=False):
+    def __init__(self, *, retained=False, retained_image=False, registered_participants=False):
         retained = retained or retained_image
         authored = self.authored = AuthoredMaterial()
         roles = core.NodeControlGraphReferenceRole
@@ -60,6 +60,8 @@ class NativeMaterial:
         delivery = SecretFileDelivery("/run/secrets/tunnel", SecretReference("secret://fixture/tunnel"),
             SecretUseIntent.CLOUDFLARE_TUNNEL_TOKEN, path_binding=SecretFilePathBinding("TUNNEL_TOKEN_FILE"))
         selection = SecretVersionSelection(delivery.reference, delivery.intent, "fixture-version")
+        if registered_participants:
+            contract = replace(contract, secret_deliveries=(delivery,))
         connector = replace(authored.node("connector", contract), configuration_artifacts=(artifact,),
             secret_deliveries=(delivery,), secret_selections=(selection,))
         self.document = authored.documents["connector"]
@@ -71,6 +73,11 @@ class NativeMaterial:
         application = ConfigurationArtifact("application", "/etc/app/settings.json", ConfigurationMediaType.JSON,
             '{"color":"blue"}')
         api = authored.a.nodes["api"]
+        if registered_participants:
+            api_contract = replace(authored.documents["api"].product.runtime_contract,
+                configuration_requirements=(ConfigurationArtifactRequirement(application.artifact_id,
+                    application.target_path, application.media_type, application.file_mode),))
+            api = authored.node("api", api_contract)
         api = replace(api, configuration_artifacts=(*api.configuration_artifacts, application))
         if retained_image:
             product = authored.documents["api"].product
