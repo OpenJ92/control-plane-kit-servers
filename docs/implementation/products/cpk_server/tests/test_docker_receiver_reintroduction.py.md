@@ -16,11 +16,11 @@ config-valued image set required by placement. Existing role, image, user,
 resource and admission assertions remain unchanged; no extra target law or
 runtime acceptance is claimed by this constructor adaptation.
 
-The initial witness assertion now has direct coverage for both config-valued and
-manifest-valued qualified execution identities, using the existing placement
-fixture and proof owner. Each form must reject an unrelated image or foreign
-workspace owner. Tests call the same assertion used by the initial live X/Y
-loop; they do not duplicate its equality or the identity qualification algorithm.
-The actual run41325866340 supplies the original config-only comparison failure.
-These added tests are not locally executed: North released validation together
-in one subsequent normal Docker-backed owning gate, without a new focused runner.
+The fixture also supplies both config-valued and manifest-valued identities to
+the initial witness checks in `tests/test_z_fixed_image_admission.py`. Those two
+methods passed in run41328633452, but importing the live witness here captured
+an Operations factory before later product-module eviction. The unchanged
+factory identity assertion then failed. The methods move to the existing root
+suite's separate process, following PR286, with their actual helper calls and
+assertions preserved. Fixture construction uses only doubles and requires no
+TestCase setup or cleanup. The relocation awaits the normal owning gate.

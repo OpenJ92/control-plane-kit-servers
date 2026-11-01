@@ -9,6 +9,43 @@ from unittest.mock import Mock, patch
 
 
 class FixedImageAdmissionTests(unittest.TestCase):
+    def test_initial_witness_accepts_both_qualified_execution_forms(self):
+        owner = Path(__file__).resolve().parents[1] / "products/cpk_server/tests"
+        with patch.object(sys, "path", [str(owner), *sys.path]):
+            from live_docker_receiver_reintroduction import _assert_initial_image
+            from test_docker_receiver_reintroduction import SelectedStartImageTests
+            fixture = SelectedStartImageTests().fixture
+            for form in ("config-valued", "manifest-valued"):
+                with self.subTest(form=form):
+                    placement, record, container = fixture(expected_role="hello_family", proof_form=form)
+                    placement.starting(record.request)
+                    placement.observed(record)
+                    placement.completed(record)
+                    _assert_initial_image(placement.engine, placement, "api")
+                    self.assertEqual(placement.nodes["api"], container.id)
+
+    def test_initial_witness_refuses_wrong_image_or_foreign_owner(self):
+        owner = Path(__file__).resolve().parents[1] / "products/cpk_server/tests"
+        with patch.object(sys, "path", [str(owner), *sys.path]):
+            from live_docker_receiver_reintroduction import _assert_initial_image
+            from test_docker_receiver_reintroduction import SelectedStartImageTests
+            from docker_image_update_placement import PREFIX
+            from docker_image_update_ports import FixtureBoundaryFailure
+            fixture = SelectedStartImageTests().fixture
+            for form in ("config-valued", "manifest-valued"):
+                for invalid in ("image", "owner"):
+                    with self.subTest(form=form, invalid=invalid):
+                        placement, record, container = fixture(expected_role="hello_family", proof_form=form)
+                        placement.starting(record.request)
+                        placement.observed(record)
+                        placement.completed(record)
+                        if invalid == "image":
+                            container.attrs["Image"] = "sha256:" + "0" * 64
+                        else:
+                            container.labels[PREFIX + "workspace"] = "foreign"
+                        with self.assertRaises(FixtureBoundaryFailure):
+                            _assert_initial_image(placement.engine, placement, "api")
+
     def test_admission_refuses_absent_or_disagreeing_interpreter_without_effects(self):
         owner = Path(__file__).resolve().parents[1] / "products/cpk_server/tests"
         with patch.object(sys, "path", [str(owner), *sys.path]):

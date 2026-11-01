@@ -87,33 +87,6 @@ class SelectedStartImageTests(unittest.TestCase):
             evidence={"runtime_id": "docker", "container": container.id}))
         return placement, record, container
 
-    def test_initial_witness_accepts_both_qualified_execution_forms(self):
-        from live_docker_receiver_reintroduction import _assert_initial_image
-        for form in ("config-valued", "manifest-valued"):
-            with self.subTest(form=form):
-                placement, record, container = self.fixture(expected_role="hello_family", proof_form=form)
-                placement.starting(record.request)
-                placement.observed(record)
-                placement.completed(record)
-                _assert_initial_image(placement.engine, placement, "api")
-                self.assertEqual(placement.nodes["api"], container.id)
-
-    def test_initial_witness_refuses_wrong_image_or_foreign_owner(self):
-        from live_docker_receiver_reintroduction import _assert_initial_image
-        for form in ("config-valued", "manifest-valued"):
-            for invalid in ("image", "owner"):
-                with self.subTest(form=form, invalid=invalid):
-                    placement, record, container = self.fixture(expected_role="hello_family", proof_form=form)
-                    placement.starting(record.request)
-                    placement.observed(record)
-                    placement.completed(record)
-                    if invalid == "image":
-                        container.attrs["Image"] = "sha256:" + "0" * 64
-                    else:
-                        container.labels[PREFIX + "workspace"] = "foreign"
-                    with self.assertRaises(FixtureBoundaryFailure):
-                        _assert_initial_image(placement.engine, placement, "api")
-
     def test_reviewed_family_passes_observed_and_committed_start_checks(self):
         placement, record, container = self.fixture(expected_role="hello_family")
         placement.starting(record.request)

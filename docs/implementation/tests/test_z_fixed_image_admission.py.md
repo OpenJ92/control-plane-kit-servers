@@ -14,6 +14,17 @@ so importing the public witness here cannot leave a cached factory reference in
 the later product suite while its bootstrap tests evict product modules. No new
 runner, cache mutation, or weakened factory identity assertion is needed.
 
+The two initial receiver image checks use that same process boundary. They call
+the actual live witness assertion with the existing product placement fixture,
+accept both qualified execution forms, and reject unrelated images and foreign
+owners. Imports stay inside the existing scoped path context; the fixture class
+is not a module-level discovery target. Its factory needs no TestCase setup or
+cleanup and creates only doubles. Run41328633452 passed these methods in the
+product suite but subsequently failed the shared factory identity law after
+product-module eviction left the witness alias cached. Moving only these methods
+preserves their assertions, the live helper and production wiring. The relocation
+has not yet been executed; the normal owning gate must validate both roots.
+
 On the implemented side the same test requires a complete daemon-bound result,
 unchanged config identities and explicit manifest-valued execution proofs. No
 Docker client, registry, network, provider or application is executed. It belongs
