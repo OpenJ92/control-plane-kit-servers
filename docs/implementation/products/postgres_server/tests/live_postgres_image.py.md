@@ -15,6 +15,14 @@ entrypoints, matching initial published-artifact admission. Nonempty and malform
 entrypoints still refuse before network, volume or product-container creation.
 See [artifact procedure](../../../../managed-postgres-artifacts.md).
 
+The approved delayed-management startup contract removes the fresh-init
+UNKNOWN assertion that previously depended on the temporary initialization
+server's SQL sleep. Authentication denial, authenticated HEALTHY SQL readiness,
+retained data, native failure, restart and crash recovery checks remain. SQL
+UNKNOWN classification is proven by owner tests, not claimed as a live recovery
+phase. The listener observation requires the selected child's proc metadata to
+be available under uid70; actual image execution remains the integration proof.
+
 The existing capped failure tail also projects a numeric refused lock PID from
 one strictly parsed native hint. States are absent, one, ambiguous, invalid,
 truncated or unavailable; only one carries a PID. Parsing requires printable

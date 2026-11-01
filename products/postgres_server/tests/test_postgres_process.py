@@ -358,7 +358,7 @@ class LifecycleRecordTests(unittest.TestCase):
             patch.object(process.os, "getgid", return_value=70),
             patch.object(process, "validate_pgdata"),
             patch.object(process, "read_password", return_value=b"secret"),
-            patch.object(process, "read_postgres_control_configuration", return_value=Mock()),
+            patch.object(process, "read_postgres_control_configuration", return_value=fixture().config),
             patch.object(process, "create_management_server", return_value=Mock()),
             patch.object(process, "PostgresCoordinator", return_value=coordinator),
             patch.object(process.signal, "signal"),

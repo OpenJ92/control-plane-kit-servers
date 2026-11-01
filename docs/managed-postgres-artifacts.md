@@ -112,8 +112,8 @@ or label. It does not adopt a prior volume returned by Docker's create operation
 Only successfully created objects enter cleanup lists.
 
 The existing witness owns a fresh labelled volume and internal network, temporary
-password/control/init fixtures, and its own containers. Its unchanged ladder
-checks authenticated management, initial unknown then healthy readiness, retained
+password/control/init fixtures, and its own containers. Its ladder
+checks authenticated management and SQL-backed healthy readiness, retained
 row query, graceful stop, same-volume restart, native-child failure, SIGKILL
 recovery and wrong-owner refusal. The negative ownership fixture uses a separate
 fresh local Docker volume with NoCopy on every mount, never a host ownership
@@ -124,6 +124,30 @@ empty data and the installed PGDATA guard's rejection before and after ordinary
 product startup. No root setup/chown/repair is attempted. Both inspector and normal
 container image/user/mount configuration and runtime mount identity are checked;
 the normal product command and read/write data mount are unchanged.
+
+Management is unavailable during native initialization. The PID1 wrapper starts
+it after observing the final native child's IPv4 listener on port5432; temporary
+initialization SQL completes before this point. Readiness remains UNKNOWN when
+the authenticated SQL probe cannot establish readiness, but an observable UNKNOWN
+response is not guaranteed before HEALTHY. The product-owned readiness tests
+prove that classification; the live witness does not manufacture a timing window.
+
+Startup observes only the known child's executable and socket-link metadata and
+its namespace's TCP table, under the existing uid70 permissions. It does not read
+descriptor contents, environment, command lines or PGDATA. Descriptor enumeration
+and TCP reads are capped; unavailable, invalid or oversized required metadata
+fails startup without privileged fallback. Native exit and cancellation take
+precedence. There is no aggregate initialization deadline; individual observation
+work is bounded and cancellation retains the existing stop/reap limits. Before
+management begins, cleanup does not create worker threads.
+
+The listener check is a sampled current-child ownership observation for the
+maintained trusted entrypoint, not SQL health or socket-creation attestation.
+Ordinary initialization scripts and the maintained SQL helper remain supported.
+Same-authority startup code deliberately passing an inherited listener across
+exec is outside what this observation proves; required custom inherited-socket
+startup or unavailable proc metadata requires explicit design review, not silent
+fallback or an inferred supported-runtime restriction.
 
 The negative leg requires complete bounded output with the existing startup-failure
 record and redacted failure line, not arbitrary exit1. Poststate must remain empty

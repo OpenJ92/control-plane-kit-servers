@@ -742,7 +742,8 @@ def exercise(client, image) -> None:
         wait_running(first)
         wait_listener_denial(first)
         require(health(first, wrong)[0] == 401, "management accepted mismatched credential")
-        wait_health(first, valid, "unknown")
+        # Management now starts after the final native listener, following init
+        # SQL. UNKNOWN remains a SQL-readiness outcome, not a guaranteed phase.
         wait_query(first)
         wait_health(first, valid, "healthy")
         require(first.attrs["HostConfig"]["Binds"] is not None, "expected fixed mounts")
