@@ -1,6 +1,16 @@
 Source: [coordinates/server-products.json](../../../coordinates/server-products.json).
 Maintain this companion alongside its source and selected dependencies.
 
+## #225 native material integration
+
+Operations selects accepted #2072 / PR #2074 merge
+`c31dafd81b4ebd3e70216d51cfa0f00e0cee74d7`. The maintained generator changes
+root metadata and the existing CPK/bootstrap recipes; exact installed-provenance
+expectations advance with it. Core, Interpreters, SDK and Secrets remain fixed,
+as do published product source/image coordinates and descriptor/catalogue bytes.
+This is selected source, not publication or live adoption. The unchanged native
+composition targets have intended old-pin red; owning green remains pending.
+
 ## #341 accepted dependency cohort
 
 The selected source cohort is Core/Operations `4cc1716b`, Interpreters

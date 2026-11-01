@@ -12,6 +12,7 @@ from control_plane_kit_core.operations import RunId
 from control_plane_kit_core.planning import StartNode
 from control_plane_kit_core.products import ProductDescriptorCodec, ProductReference, ProductRuntimeContract, ProviderRuntimePort
 from control_plane_kit_core.runtime_effects import RuntimeEffectKind, RuntimeEffectRequest, RuntimeEffectSource, RuntimeProductMaterial
+from control_plane_kit_core.runtime_effect_observation import runtime_effect_request_for_intent
 from control_plane_kit_core.secret_installation import (
     SecretInstallationDisposition, SecretInstallationReceipt,
     secret_installation_correlation_for_request, secret_material_selection_fingerprint,
@@ -22,13 +23,15 @@ from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC, DeploymentGraph
 from control_plane_kit_core.types import Protocol, RuntimeKind
 from control_plane_kit_operations.connector_installation import CurrentConnectorInstallation
 from control_plane_kit_operations.products import InlineDescriptorSource, RegisteredProduct
+from control_plane_kit_operations.plan_derivation import PlanDerivationProfile
 from control_plane_kit_operations.runtime_authorities import LocalDockerSocketAuthority, RegisteredRuntimeAuthority
+from control_plane_kit_operations.runtime_effects import _RuntimeEffectMaterial, _runtime_effect_intent_for_material
 from control_plane_kit_operations.runtime_management_targets import is_native_connection_operation
 from receiver_acceptance_material import AuthoredMaterial
 
 
 class NativeMaterial:
-    def __init__(self, *, retained=False, retained_image=False):
+    def __init__(self, *, retained=False, retained_image=False, registered_participants=False):
         retained = retained or retained_image
         authored = self.authored = AuthoredMaterial()
         roles = core.NodeControlGraphReferenceRole
@@ -54,9 +57,12 @@ class NativeMaterial:
             public_environment=(PublicStaticEnvironmentBinding("CPK_WRAPPER_CONFIGURATION_FILE", artifact.target_path),),
             configuration_requirements=(ConfigurationArtifactRequirement(artifact.artifact_id,
                 artifact.target_path, artifact.media_type, artifact.file_mode),))
-        delivery = SecretFileDelivery("/run/secrets/tunnel", SecretReference("secret://fixture/tunnel"),
+        token_path = "/run/secrets/cloudflare-tunnel-token" if registered_participants else "/run/secrets/tunnel"
+        delivery = SecretFileDelivery(token_path, SecretReference("secret://fixture/tunnel"),
             SecretUseIntent.CLOUDFLARE_TUNNEL_TOKEN, path_binding=SecretFilePathBinding("TUNNEL_TOKEN_FILE"))
         selection = SecretVersionSelection(delivery.reference, delivery.intent, "fixture-version")
+        if registered_participants:
+            contract = replace(contract, secret_deliveries=(delivery,))
         connector = replace(authored.node("connector", contract), configuration_artifacts=(artifact,),
             secret_deliveries=(delivery,), secret_selections=(selection,))
         self.document = authored.documents["connector"]
@@ -68,6 +74,11 @@ class NativeMaterial:
         application = ConfigurationArtifact("application", "/etc/app/settings.json", ConfigurationMediaType.JSON,
             '{"color":"blue"}')
         api = authored.a.nodes["api"]
+        if registered_participants:
+            api_contract = replace(authored.documents["api"].product.runtime_contract,
+                configuration_requirements=(ConfigurationArtifactRequirement(application.artifact_id,
+                    application.target_path, application.media_type, application.file_mode),))
+            api = authored.node("api", api_contract)
         api = replace(api, configuration_artifacts=(*api.configuration_artifacts, application))
         if retained_image:
             product = authored.documents["api"].product
@@ -104,6 +115,9 @@ class NativeMaterial:
         compiler = (core.compile_retained_image_ingress_activity_plan if retained_image
             else core.compile_managed_update_activity_plan if retained
             else core.compile_graph_activity_plan)
+        self.profile = (PlanDerivationProfile.RETAINED_IMAGE_INGRESS_V1 if retained_image
+            else PlanDerivationProfile.MANAGED_UPDATE_V1 if retained
+            else PlanDerivationProfile.MANAGEMENT_GRAPH_PAIR_V1)
         self.plan = compiler(*pair)
         assert self.plan.ready_for_execution and self.plan.activities, "native fixture must compile"
         activity, = (item for item in self.plan.activities if is_native_connection_operation(item.operation))
@@ -144,3 +158,16 @@ class NativeMaterial:
     def selection(self):
         return dict(plan=self.plan, current=self.current, desired=self.desired,
             registered_products=self.products, runtime_authorities=(self.authority,))
+
+    def lowered_request(self):
+        """Use production lowering over typed inputs, not admitted database history."""
+        activity, = (item for item in self.plan.activities if is_native_connection_operation(item.operation))
+        material = _RuntimeEffectMaterial(
+            request=SimpleNamespace(identity=SimpleNamespace(workspace_id="workspace-a", request_id="request")),
+            run=SimpleNamespace(run_id="run"),
+            plan_record=SimpleNamespace(plan_id="plan", base_graph_id="base", desired_graph_id="desired",
+                plan=self.plan, derivation_profile=self.profile),
+            base_graph=self.realization.base_graph, desired_graph=self.realization.desired_graph,
+            registered_products=self.products, runtime_authorities=(self.authority,))
+        intent = _runtime_effect_intent_for_material(material, activity)
+        return runtime_effect_request_for_intent(intent, effect_id="lowered-native-effect", secret_resolution_grants=())

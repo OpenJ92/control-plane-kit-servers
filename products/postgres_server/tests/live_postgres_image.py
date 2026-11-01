@@ -19,7 +19,9 @@ import docker
 
 from postgres_control_fixtures import fixture, health_token, readiness_only
 from control_plane_kit_servers_postgres_server.configuration import postgres_control_configuration_artifact
-from control_plane_kit_servers_postgres_server.process import LIFECYCLE_PREFIX
+from control_plane_kit_servers_postgres_server.process import (
+    LIFECYCLE_PREFIX, ROLE_PREFIX, valid_role_diagnostic,
+)
 
 
 RUN = os.environ["CPK_POSTGRES_TEST_RUN"]
@@ -164,12 +166,68 @@ def scan_lifecycle_record(logs: bytes) -> dict[str, object]:
     return result
 
 
+def scan_role_diagnostic(logs: bytes, *, truncated: bool = False) -> dict:
+    result = {"role_record_status": "absent", "role_observations": None}
+    if truncated or len(logs) > MAX_FAILURE_LOG_BYTES or len(logs.splitlines()) >= 128:
+        return dict(result, role_record_status="truncated")
+    prefix = ROLE_PREFIX.encode("ascii")
+    records = [line[len(prefix):] for line in logs.splitlines() if line.startswith(prefix)]
+    if not records:
+        return result
+    if len(records) != 1:
+        return dict(result, role_record_status="ambiguous")
+
+    def unique_fields(pairs):
+        fields = {}
+        for key, value in pairs:
+            if key in fields:
+                raise ValueError
+            fields[key] = value
+        return fields
+
+    try:
+        raw = records[0]
+        if len(raw) > 1024 or any(byte < 32 or byte > 126 for byte in raw):
+            raise ValueError
+        value = json.loads(raw, object_pairs_hook=unique_fields)
+        if not valid_role_diagnostic(value):
+            raise ValueError
+    except (TypeError, ValueError, RecursionError):
+        return dict(result, role_record_status="invalid")
+    return {"role_record_status": "one", "role_observations": value}
+
+
+def failure_identity(attrs: dict) -> dict:
+    def bounded(value, pattern):
+        return value if type(value) is str and re.fullmatch(pattern, value) else None
+
+    name = bounded(attrs.get("Name"), "/" + re.escape(RUN) + r"-(first|restart|recovery|recovered)")
+    try:
+        with (Path(__file__).resolve().parents[1] / "Dockerfile").open("rb") as source:
+            first = source.readline(256)
+        match = re.fullmatch(rb"FROM (postgres@sha256:[0-9a-f]{64})\n", first)
+        declared_base = match.group(1).decode("ascii") if match else None
+    except (OSError, ValueError):
+        declared_base = None
+    dirty = os.environ.get("CPK_POSTGRES_WITNESS_DIRTY")
+    return {
+        "container_id": bounded(attrs.get("Id"), r"[0-9a-f]{64}"),
+        "image_id": bounded(attrs.get("Image"), r"sha256:[0-9a-f]{64}"),
+        "phase": None if name is None else name[len(RUN) + 2:],
+        "source_revision": bounded(os.environ.get("CPK_POSTGRES_WITNESS_SOURCE"), r"[0-9a-f]{40}"),
+        "source_has_uncommitted_changes": dirty == "true" if dirty in ("true", "false") else None,
+        "declared_base": declared_base,
+    }
+
+
 def raise_container_failure(container, message: str) -> None:
     state_refresh_available = False
     state = {}
+    attrs = {}
     try:
         container.reload()
-        observed = container.attrs.get("State", {})
+        attrs = container.attrs if isinstance(container.attrs, dict) else {}
+        observed = attrs.get("State", {})
         state = observed if isinstance(observed, dict) else {}
         state_refresh_available = True
     except Exception:
@@ -194,6 +252,24 @@ def raise_container_failure(container, message: str) -> None:
     except Exception:
         lock_pid = dict(lock_pid_status="invalid", refused_lock_pid=None,
                         native_lock_emitter_pid=None)
+    roles = {"role_record_status": "unavailable", "role_observations": None}
+    if not logs_unavailable:
+        try:
+            roles = scan_role_diagnostic(logs, truncated=logs_truncated)
+        except Exception:
+            roles["role_record_status"] = "invalid"
+    values = roles["role_observations"] or {}
+
+    def compare(left, right):
+        if left is None or right is None:
+            return "unknown"
+        return "match" if left == right else "different"
+
+    try:
+        identity = failure_identity(attrs)
+    except Exception:
+        identity = dict.fromkeys(("container_id", "image_id", "phase", "source_revision",
+                                  "source_has_uncommitted_changes", "declared_base"))
     if state_refresh_available:
         error = str(state.get("Error", "")).encode("utf-8", errors="replace")
         state_values = {
@@ -239,6 +315,12 @@ def raise_container_failure(container, message: str) -> None:
         },
         **lifecycle,
         **lock_pid,
+        **roles,
+        **identity,
+        "management_pid_comparison": compare(values.get("management_native_id"),
+                                              lock_pid["refused_lock_pid"]),
+        "child_emitter_comparison": compare(values.get("child_entrypoint_pid"),
+                                             lock_pid["native_lock_emitter_pid"]),
     }}
     try:
         print(json.dumps(event, sort_keys=True), flush=True)
@@ -660,7 +742,8 @@ def exercise(client, image) -> None:
         wait_running(first)
         wait_listener_denial(first)
         require(health(first, wrong)[0] == 401, "management accepted mismatched credential")
-        wait_health(first, valid, "unknown")
+        # Management now starts after the final native listener, following init
+        # SQL. UNKNOWN remains a SQL-readiness outcome, not a guaranteed phase.
         wait_query(first)
         wait_health(first, valid, "healthy")
         require(first.attrs["HostConfig"]["Binds"] is not None, "expected fixed mounts")

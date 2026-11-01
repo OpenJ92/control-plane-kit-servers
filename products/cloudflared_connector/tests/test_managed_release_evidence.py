@@ -300,6 +300,35 @@ class ManagedEvidenceTests(unittest.TestCase):
                 self.assertEqual(value['outcomes']['remote_publication'],'unknown')
                 self.assertEqual(value['outcomes']['qualification'],'pass')
 
+    def test_reviewed_29_profile_preserves_exact_source_and_timing_evidence(self):
+        project=self.implementation()['project']
+        source='d3298094ac5111e5d67517a252d291d27543e408'
+        for commit in (source,source[:7]):
+            for defect in (None,'old-build','unknown-version','short-prefix','wrong-source','timing'):
+                with self.subTest(commit=commit,defect=defect),tempfile.TemporaryDirectory() as d:
+                    root=Path(d);context=fixture(root);log=root/'qualification/witness.log'
+                    p,w=map(json.loads,log.read_text().splitlines())
+                    p['engine_version']=w['engine_version']='29.4.2'
+                    p['engine_commit']=w['engine_commit']=commit
+                    w['reviewed_engine_source']=source
+                    if defect=='old-build':p['engine_commit']=w['engine_commit']='6430e49'
+                    if defect=='unknown-version':p['engine_version']=w['engine_version']='29.4.3'
+                    if defect=='short-prefix':p['engine_commit']=w['engine_commit']=source[:6]
+                    if defect=='wrong-source':w['reviewed_engine_source']='6430e49a55babd9b8f4d08e70ecb2b68900770fe'
+                    if defect=='timing':w['kill_time_ns']=w['term_time_ns']+1
+                    log.write_text(json.dumps(p)+'\n'+json.dumps(w)+'\n')
+                    q=json.loads((root/'qualification/qualification.json').read_text())
+                    q['witness_log_sha256']=digest(log);qpath=put(root,'qualification/qualification.json',q)
+                    pub=json.loads((root/'publication.json').read_text())
+                    pub['qualification_sha256']=digest(qpath);put(root,'publication.json',pub)
+                    result=project(root,ROOT,context,0)
+                    self.assertEqual(result['outcomes']['remote_publication'],
+                        'verified' if defect is None else 'unknown')
+                    if defect is None:
+                        self.assertEqual(result['stop']['reviewed_engine_source'],source)
+                        self.assertEqual(result['stop']['effective_timeout'],10)
+                    self.assertNotIn(CANARY,json.dumps(result))
+
     def test_explicit_timeout_does_not_bypass_typed_profile_or_timing(self):
         project=self.implementation()['project']
         for defect in [None,'version','timeout','timing']:

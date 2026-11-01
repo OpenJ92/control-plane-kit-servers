@@ -1,5 +1,23 @@
 # Managed native connection composition
 
+## #225 Operations material composition
+
+The new witness uses Operations' actual pure lowering and Core request binding
+before the existing Servers bridge and unpatched native reader/DockerSdkClient.
+Fresh and retained-content requests must qualify for one unavailable fake SDK
+read and preserve current effect/activity correlation. Empty or independently
+lowered foreign material must refuse before SDK I/O. It does not enrich an
+output request or recreate Operations admission/history.
+
+The first old-pin run failed partly on incomplete registered fixture inputs.
+After declaring the application slot and explicit connector delivery through the
+existing product builder, the old Operations pin produced only the three intended
+assertion failures, with no setup errors. The accepted Operations merge is now
+selected with those corrected targets unchanged; full owning green is pending.
+Explicit token-reference and synthetic original-installation inputs remain
+composition evidence. Operations owns generated-ingress/database history proof;
+neither this witness nor its unavailable first read establishes live readiness.
+
 ## #293 owned policy and worker boundary
 
 Trusted programmatic composition may now select an immutable Unix policy

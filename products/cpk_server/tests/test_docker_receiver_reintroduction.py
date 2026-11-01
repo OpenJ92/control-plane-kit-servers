@@ -60,7 +60,7 @@ class ContainmentTests(unittest.TestCase):
 
 
 class SelectedStartImageTests(unittest.TestCase):
-    def fixture(self, role="hello_family", *, expected_role=None):
+    def fixture(self, role="hello_family", *, expected_role=None, proof_form="config-valued"):
         engine = Mock()
         sdk = DockerSdkClient(client=Mock(), connect_on_init=False)
         sdk.inspect_container = Mock()
@@ -72,15 +72,16 @@ class SelectedStartImageTests(unittest.TestCase):
         request = replace(completed().request, operation=StartNode(NodeTarget("api")),
             products=(RuntimeProductMaterial("api", "docker", ProductReference.from_document(document),
                 document.product),))
+        images = qualified_images(proof_form)
         container = SimpleNamespace(id="c" * 64, labels={PREFIX + "workspace": "workspace-a",
             PREFIX + "runtime": "docker", PREFIX + "kind": "container", PREFIX + "node": "api"},
-            attrs={"Image": IMAGES[role]["image_id"], "Config": {"User": IMAGES[role]["user"]}})
+            attrs={"Image": images.images[role].execution_id, "Config": {"User": IMAGES[role]["user"]}})
         engine.containers.get.return_value = container
         sdk.inspect_container.return_value = SimpleNamespace(container_id=container.id, running=True,
             network_attachments=(SimpleNamespace(network_id="n" * 64),))
         placement = OwnedControllerPlacement(engine, sdk, "workspace-a", "b" * 64, "daemon-a",
             expected_start_roles={} if expected_role is None else {"api": expected_role},
-            qualified_images=qualified_images())
+            qualified_images=images)
         placement.network_id = "n" * 64
         record = CompletedRuntimeCall(request, RuntimeEffectResult.succeeded(request.effect_id,
             evidence={"runtime_id": "docker", "container": container.id}))

@@ -253,6 +253,37 @@ class ManagedNativeConnectionTests(unittest.TestCase):
         self.clock.assert_not_called()
         self.binding.assert_not_called()
 
+    def test_operations_lowering_reaches_real_native_reader_for_fresh_and_retained_content(self):
+        for retained in (False, True):
+            with self.subTest(retained=retained):
+                world = NativeMaterial(retained=retained, registered_participants=True)
+                request = world.lowered_request()
+                native = replace(self.native, product_document=world.document)
+                # No patched observer or request enrichment: production lowering
+                # must qualify for the real reader's first unavailable SDK read.
+                result = self.observe(world=world, request=request, bridge=self.bridge(native, world))
+                self.assertEqual(result, NativeConnectionObservation(NativeConnectionOutcome.UNKNOWN,
+                    request.effect_id, request.activity_id.value))
+                self.api.inspect_container.assert_called_once()
+                self.assertEqual(len(self.api.mock_calls), 1)
+                self.clock.assert_not_called()
+                self.binding.assert_not_called()
+                self.api.reset_mock()
+
+    def test_lowered_native_request_missing_or_foreign_material_refuses_before_sdk(self):
+        world = NativeMaterial(retained=True, registered_participants=True)
+        request = world.lowered_request()
+        foreign = NativeMaterial(retained=True, registered_participants=True).lowered_request()
+        self.assertEqual(len(request.products), 1)
+        self.assertEqual(len(foreign.products), 1)
+        self.assertNotEqual(request.products, foreign.products)
+        native = replace(self.native, product_document=world.document)
+        for products in ((), foreign.products):
+            with self.subTest(missing=not products):
+                self.assertEqual(self.observe(world=world, request=replace(request, products=products),
+                    bridge=self.bridge(native, world)), NativeConnectionRefused())
+                self.assert_pure()
+
     def test_retained_image_missing_or_foreign_original_proof_refuses_before_sdk(self):
         world = NativeMaterial(retained_image=True)
         native = replace(self.native, product_document=world.document)

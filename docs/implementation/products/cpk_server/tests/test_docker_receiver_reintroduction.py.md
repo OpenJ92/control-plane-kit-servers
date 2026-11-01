@@ -15,3 +15,12 @@ process-file red is not evidence for these laws.
 config-valued image set required by placement. Existing role, image, user,
 resource and admission assertions remain unchanged; no extra target law or
 runtime acceptance is claimed by this constructor adaptation.
+
+The fixture also supplies both config-valued and manifest-valued identities to
+the initial witness checks in `tests/test_z_fixed_image_admission.py`. Those two
+methods passed in run41328633452, but importing the live witness here captured
+an Operations factory before later product-module eviction. The unchanged
+factory identity assertion then failed. The methods move to the existing root
+suite's separate process, following PR286, with their actual helper calls and
+assertions preserved. Fixture construction uses only doubles and requires no
+TestCase setup or cleanup. The relocation awaits the normal owning gate.

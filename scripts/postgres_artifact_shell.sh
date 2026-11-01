@@ -66,6 +66,7 @@ case "$MODE" in
   OWNER_LABEL="org.openj92.cpk.controller-run=$OWNER"
   PROJECT_LABEL='org.openj92.project=control-plane-kit-servers'
   NETWORK_ATTEMPTED=0 CONTROLLER_ATTEMPTED=0
+  CONTROLLER_CLEANUP=not_attempted NETWORK_CLEANUP=not_attempted
   : > "$RECEIPTS/qualification.log"
   valid_id() {
     [ "${#1}" = 64 ] || return 1
@@ -81,6 +82,7 @@ case "$MODE" in
   }
   cleanup_owned() {
     if [ "$CONTROLLER_ATTEMPTED" = 1 ]; then
+      CONTROLLER_CLEANUP=unknown
       [ -s "$RECEIPTS/controller.id" ] || return 1
       CONTROLLER_ID="$(cat "$RECEIPTS/controller.id")" || return 1
       valid_id "$CONTROLLER_ID" || return 1
@@ -92,8 +94,10 @@ case "$MODE" in
         docker container rm -f "$CONTROLLER_ID" || return 1
       fi
       controller_absent || return 1
+      CONTROLLER_CLEANUP=completed
     fi
     if [ "$NETWORK_ATTEMPTED" = 1 ]; then
+      NETWORK_CLEANUP=unknown
       [ -s "$RECEIPTS/network.id" ] || return 1
       NETWORK_ID="$(cat "$RECEIPTS/network.id")" || return 1
       valid_id "$NETWORK_ID" || return 1
@@ -101,26 +105,34 @@ case "$MODE" in
       docker network rm "$NETWORK_ID" || return 1
       remaining="$(docker network ls -q --no-trunc --filter "id=$NETWORK_ID")" || return 1
       [ -z "$remaining" ] || return 1
+      NETWORK_CLEANUP=completed
     fi
   }
   finish() {
     result=$?
+    invocation_result=$result
+    fixture_cleanup=not_attempted
     trap - 0 INT TERM
     cleanup_ok=0
     cleanup_owned > "$RECEIPTS/cleanup.log" 2>&1 && cleanup_ok=1
     # These exact private fixtures were previously cleaned by test.sh in source
     # mode. Published witness also cleans them; missing files are harmless.
     if [ "$cleanup_ok" = 1 ]; then
-      rm -f "$RECEIPTS/fixtures/control.json" "$RECEIPTS/fixtures/password" "$RECEIPTS/fixtures/10-witness.sql" || result=1
+      fixture_cleanup=completed
+      rm -f "$RECEIPTS/fixtures/control.json" "$RECEIPTS/fixtures/password" "$RECEIPTS/fixtures/10-witness.sql" || { result=1; fixture_cleanup=failed; }
       if [ -d "$RECEIPTS/fixtures/wrong-owner-data" ]; then
-        rmdir "$RECEIPTS/fixtures/wrong-owner-data" || result=1
+        rmdir "$RECEIPTS/fixtures/wrong-owner-data" || { result=1; fixture_cleanup=failed; }
       fi
-      rmdir "$RECEIPTS/fixtures" || result=1
+      rmdir "$RECEIPTS/fixtures" || { result=1; fixture_cleanup=failed; }
     else
       result=1
     fi
     printf '%s\n' "$result" > "$RECEIPTS/qualification.exit"
     cat "$RECEIPTS/qualification.log"
+    trap '' PIPE
+    printf '{"postgres_invocation_result":{"invocation_exit":%s,"final_exit":%s,"controller_cleanup":"%s","network_cleanup":"%s","fixture_cleanup":"%s"}}\n' \
+      "$invocation_result" "$result" "$CONTROLLER_CLEANUP" "$NETWORK_CLEANUP" "$fixture_cleanup" || :
+    trap - PIPE
     [ "$result" = 0 ] || echo 'PostgreSQL owning invocation failed; private receipts retained' >&2
     exit "$result"
   }
@@ -144,6 +156,9 @@ case "$MODE" in
     CPK_POSTGRES_ARTIFACT_MODE=source-built
   fi
   export CPK_POSTGRES_ARTIFACT_MODE
+  IFS= read -r WITNESS_SOURCE < "$RECEIPTS/source.commit" || WITNESS_SOURCE=''
+  WITNESS_DIRTY=false
+  [ ! -s "$RECEIPTS/source.diff" ] || WITNESS_DIRTY=true
   CONTROLLER_ATTEMPTED=1
   docker create --pull never --network "$NETWORK_ID" --read-only --tmpfs /tmp:exec \
     --name "$CONTROLLER_NAME" --cidfile "$RECEIPTS/controller.id" \
@@ -154,6 +169,7 @@ case "$MODE" in
     -e PYTHONDONTWRITEBYTECODE=1 \
     -e PYTHONPATH=/source/products/postgres_server/src:/source/products/postgres_server/tests \
     -e "CPK_POSTGRES_TEST_RUN=$RUN" -e "CPK_POSTGRES_HOST_RECORDS=$RECEIPTS/fixtures" \
+    -e "CPK_POSTGRES_WITNESS_SOURCE=$WITNESS_SOURCE" -e "CPK_POSTGRES_WITNESS_DIRTY=$WITNESS_DIRTY" \
     -e "CPK_POSTGRES_ARTIFACT_MODE=$CPK_POSTGRES_ARTIFACT_MODE" -e CPK_POSTGRES_IMAGE \
     -e CPK_POSTGRES_SOURCE_REVISION -e CPK_POSTGRES_RECIPE_SHA256 \
     "$CONTROLLER" python /source/products/postgres_server/tests/live_postgres_image.py \

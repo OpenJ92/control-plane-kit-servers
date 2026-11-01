@@ -16,6 +16,7 @@ class ManagedWitnessDiagnosticTests(unittest.TestCase):
         sources = (
             ("28.5.1", "f8215cc266744ef195a50a70d427c345da2acdbb"),
             ("28.0.4", "6430e49a55babd9b8f4d08e70ecb2b68900770fe"),
+            ("29.4.2", "d3298094ac5111e5d67517a252d291d27543e408"),
         )
         cases = [(version, commit, None, source)
                  for version, source in sources for commit in (source, source[:7])]
@@ -39,6 +40,10 @@ class ManagedWitnessDiagnosticTests(unittest.TestCase):
 
     def test_stop_profile_refuses_unknown_mismatched_or_invalid_inputs(self):
         cases = [
+            ("29.4.2", "6430e49", None, "linux", "SIGTERM", "7.2.0", "stop_profile_unproved"),
+            ("29.4.3", "d329809", None, "linux", "SIGTERM", "7.2.0", "stop_profile_unproved"),
+            ("29.4.2", "d32980", None, "linux", "SIGTERM", "7.2.0", "stop_profile_unproved"),
+            ("29.4.2", "d329809" + "0" * 33, None, "linux", "SIGTERM", "7.2.0", "stop_profile_unproved"),
             ("unknown", "6430e49", None, "linux", "SIGTERM", "7.2.0", "stop_profile_unproved"),
             ("28.5.1", "6430e49", None, "linux", "SIGTERM", "7.2.0", "stop_profile_unproved"),
             ("28.0.4", "f8215cc", None, "linux", "SIGTERM", "7.2.0", "stop_profile_unproved"),

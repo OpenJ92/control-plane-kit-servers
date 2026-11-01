@@ -76,3 +76,15 @@ missing successful-exit/receipt/profile enforcement, acceptance of changed layer
 with unchanged config, and rejection of differing export representations. First
 green1a18ca8:49 release/evidence+12 diagnostic methods PASS. Follow-up size/stable
 read negatives have no preimplementation red claim. No registry effects occurred.
+
+## Exact29.4.2 stop evidence
+
+The stop-evidence FIXED map includes only reviewed29.4.2 source
+`d3298094ac5111e5d67517a252d291d27543e408`, coherently with the witness resolver.
+The existing full projection test fixture supplies synthetic qualification
+receipts for full/short commits; old builds, unknown versions, short prefixes,
+wrong reviewed-source claims and invalid event timing refuse publication proof.
+Its separate producer fixture remains28.0.4. This tests evidence consistency;
+it does not execute a publication or widen release.py's producer/store profile.
+The actual Engine/SDK trace is recorded on PR363 comment6561584917. Source
+qualification alone cannot replace empirical stop/fatal/cleanup evidence.

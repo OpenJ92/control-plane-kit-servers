@@ -6,23 +6,61 @@ from enum import Enum
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import stat
 import subprocess
 import sys
-from threading import Event, Lock, Thread
+from threading import Event, Lock, Thread, get_native_id
 import time
 from typing import Callable
 
-from .configuration import PGDATA, PASSWORD_PATH, PostgresConfigurationError, read_postgres_control_configuration
+from .configuration import (PGDATA, PASSWORD_PATH, PostgresConfigurationError,
+                            postgres_control_configuration_artifact, read_postgres_control_configuration)
 from .readiness import PasswordFileError, ProductState, ReadinessController, read_password
 from .server import create_management_server
 
 STOP_SECONDS = 8.0
 FINAL_REAP_SECONDS = 1.0
 START_SECONDS = 3.0
+MAX_STARTUP_FDS = 256
+MAX_STARTUP_TCP_BYTES = 256 * 1024
+MAX_STARTUP_TCP_LINE = 4096
 ENTRYPOINT = "/usr/local/bin/docker-entrypoint.sh"
 LIFECYCLE_PREFIX = "postgres-server lifecycle "
+ROLE_PREFIX = "postgres-server roles "
+ROLE_PID_FIELDS = ("owner_pid", "child_entrypoint_pid", "management_native_id")
+ROLE_STATE_FIELDS = ("management_entered", "management_ended", "management_alive_at_native_exit")
+
+
+def valid_role_diagnostic(value: object) -> bool:
+    if type(value) is not dict or set(value) != set(ROLE_PID_FIELDS + ROLE_STATE_FIELDS):
+        return False
+    return all(value[key] is None or type(value[key]) is int and 1 <= value[key] <= 2147483647
+               for key in ROLE_PID_FIELDS) and all(
+        value[key] is None or type(value[key]) is bool for key in ROLE_STATE_FIELDS)
+
+
+def emit_role_diagnostic(coordinator, *, stream=None) -> None:
+    try:
+        value = coordinator.role_diagnostic
+        if valid_role_diagnostic(value):
+            print(ROLE_PREFIX + json.dumps(value, separators=(",", ":"), sort_keys=True),
+                  file=sys.stderr if stream is None else stream, flush=True)
+    except Exception:
+        return
+
+
+def _bounded_pid(value: object) -> int | None:
+    return value if type(value) is int and 1 <= value <= 2147483647 else None
+
+
+def _observe_role_pid(read: Callable[[], object]) -> int | None:
+    """Unavailable diagnostic identity is null, never a lifecycle failure."""
+    try:
+        return _bounded_pid(read())
+    except Exception:
+        return None
 
 
 class PostgresProcessError(RuntimeError):
@@ -80,6 +118,80 @@ def _spawn_native(argv: tuple[str, ...], **kwargs):
     return subprocess.Popen(argv, **kwargs)
 
 
+def native_listener_observed(
+    child_pid: int, *, proc_root: Path = Path("/proc"),
+    native_executable: Path = Path("/usr/local/bin/postgres"),
+    cancelled: Callable[[], bool] = lambda: False,
+) -> bool:
+    """Observe the known child's listener metadata; never read descriptor contents.
+
+    This is a sampled ownership milestone for the maintained trusted entrypoint,
+    not socket-creation attestation or SQL health. The caller owns child reaping.
+    """
+    if cancelled():
+        return False
+    if _bounded_pid(child_pid) is None:
+        raise PostgresProcessError("PostgreSQL startup observation unavailable")
+    child = proc_root / str(child_pid)
+    try:
+        expected = os.stat(native_executable)
+
+        def native_identity() -> bool:
+            actual = os.stat(child / "exe")
+            return (actual.st_dev, actual.st_ino) == (expected.st_dev, expected.st_ino)
+
+        if not native_identity():
+            return False
+        sockets = {}
+        with os.scandir(child / "fd") as entries:
+            for count, entry in enumerate(entries, start=1):
+                if cancelled():
+                    return False
+                if count > MAX_STARTUP_FDS:
+                    raise PostgresProcessError("PostgreSQL startup observation exceeds bounds")
+                try:
+                    link = os.readlink(entry.path)
+                except FileNotFoundError:
+                    continue
+                match = re.fullmatch(r"socket:\[([1-9][0-9]{0,19})\]", link)
+                if match is not None:
+                    sockets[match[1]] = entry.path
+        if cancelled() or not sockets:
+            return False
+        with open(child / "net" / "tcp", "rb") as table:
+            header = table.readline(MAX_STARTUP_TCP_LINE + 1)
+            if len(header) > MAX_STARTUP_TCP_LINE or header.split()[:4] != [
+                b"sl", b"local_address", b"rem_address", b"st"
+            ]:
+                raise PostgresProcessError("PostgreSQL startup observation is invalid")
+            total = len(header)
+            while not cancelled():
+                row = table.readline(MAX_STARTUP_TCP_LINE + 1)
+                if not row:
+                    return False
+                total += len(row)
+                if len(row) > MAX_STARTUP_TCP_LINE or total > MAX_STARTUP_TCP_BYTES:
+                    raise PostgresProcessError("PostgreSQL startup observation exceeds bounds")
+                fields = row.split()
+                if (len(fields) < 10
+                        or re.fullmatch(rb"[0-9A-F]{8}:[0-9A-F]{4}", fields[1]) is None
+                        or re.fullmatch(rb"[0-9A-F]{2}", fields[3]) is None
+                        or re.fullmatch(rb"[0-9]{1,20}", fields[9]) is None):
+                    raise PostgresProcessError("PostgreSQL startup observation is invalid")
+                inode = fields[9].decode("ascii")
+                descriptor = sockets.get(inode)
+                if (descriptor is not None and fields[3] == b"0A"
+                        and fields[1] in (b"00000000:1538", b"0100007F:1538")):
+                    try:
+                        still_owned = os.readlink(descriptor) == f"socket:[{inode}]"
+                    except FileNotFoundError:
+                        return False
+                    return still_owned and native_identity() and not cancelled()
+        return False
+    except OSError:
+        raise PostgresProcessError("PostgreSQL startup observation unavailable") from None
+
+
 class PostgresCoordinator:
     def __init__(self, host, readiness: ReadinessController, *, spawn: Callable = _spawn_native):
         self.host = host
@@ -96,6 +208,31 @@ class PostgresCoordinator:
         self._stopped = False
         self._stop_result = 1
         self._management_live = False
+        self._child_entrypoint_pid = None
+        self._management_native_id = None
+        self._management_entered = False
+        self._management_ended = False
+        self._role_diagnostic = None
+
+    @property
+    def role_diagnostic(self) -> dict | None:
+        return None if self._role_diagnostic is None else dict(self._role_diagnostic)
+
+    def _observe_roles_at_native_exit(self) -> None:
+        # Per-field observations before cleanup, not an atomic/lock-time snapshot.
+        owner_pid = _observe_role_pid(os.getpid)
+        try:
+            alive = None if self._serve_thread is None else self._serve_thread.is_alive()
+        except Exception:
+            alive = None
+        self._role_diagnostic = {
+            "owner_pid": owner_pid,
+            "child_entrypoint_pid": self._child_entrypoint_pid,
+            "management_native_id": self._management_native_id,
+            "management_entered": self._management_entered,
+            "management_ended": self._management_ended,
+            "management_alive_at_native_exit": alive,
+        }
 
     @property
     def lifecycle_record(self) -> LifecycleRecord | None:
@@ -111,15 +248,58 @@ class PostgresCoordinator:
         if self._native is not None:
             raise PostgresProcessError("PostgreSQL native child already started")
         self._native = self._spawn((ENTRYPOINT, "postgres"), start_new_session=True)
+        self._child_entrypoint_pid = _observe_role_pid(lambda: self._native.pid)
+
+    def _record_native_exit(self, returncode: int) -> None:
+        self._record_lifecycle(LifecycleRecord(LifecycleReason.NATIVE_EXIT, returncode))
+        try:
+            self._observe_roles_at_native_exit()
+        except Exception:
+            self._role_diagnostic = None
+
+    def wait_for_native_listener(self) -> bool:
+        """No auxiliary tasks or aggregate initialization deadline before admission."""
+        if self._native is None:
+            raise PostgresProcessError("PostgreSQL native child is not started")
+        while True:
+            returncode = self._native.poll()
+            if returncode is not None:
+                self._record_native_exit(returncode)
+                return False
+            if self._stop_requested.is_set():
+                return False
+            try:
+                ready = native_listener_observed(
+                    self._native.pid, cancelled=self._stop_requested.is_set)
+            except PostgresProcessError:
+                returncode = self._native.poll()
+                if returncode is not None:
+                    self._record_native_exit(returncode)
+                    return False
+                if self._stop_requested.is_set():
+                    return False
+                raise
+            returncode = self._native.poll()
+            if returncode is not None:
+                self._record_native_exit(returncode)
+                return False
+            if self._stop_requested.is_set():
+                return False
+            if ready:
+                return True
+            self._stop_requested.wait(0.05)
 
     def start_management(self) -> None:
         if self._native is None:
             raise PostgresProcessError("PostgreSQL native child is not started")
 
         def serve() -> None:
+            self._management_entered = True
+            self._management_native_id = _observe_role_pid(get_native_id)
             try:
                 self.host.serve_forever(poll_interval=0.05)
             finally:
+                self._management_ended = True
                 self._serve_failed.set()
 
         thread = Thread(target=serve, name="cpk-postgres-management", daemon=True)
@@ -142,7 +322,7 @@ class PostgresCoordinator:
         while True:
             returncode = self._native.poll()
             if returncode is not None:
-                self._record_lifecycle(LifecycleRecord(LifecycleReason.NATIVE_EXIT, returncode))
+                self._record_native_exit(returncode)
                 deadline = time.monotonic() + STOP_SECONDS
                 self.readiness.set_state(ProductState.STOPPING)
                 self.readiness.stop_active(deadline=deadline)
@@ -179,16 +359,24 @@ class PostgresCoordinator:
             except BaseException:
                 results[name] = False
 
-        workers = (
-            Thread(target=cleanup, args=("native", lambda: self._stop_native(deadline)), daemon=True),
-            Thread(target=cleanup, args=("probe", lambda: self.readiness.stop_active(deadline=deadline)), daemon=True),
-            Thread(target=cleanup, args=("management", lambda: self._close_management(deadline)), daemon=True),
+        operations = (
+            ("native", lambda: self._stop_native(deadline)),
+            ("probe", lambda: self.readiness.stop_active(deadline=deadline)),
+            ("management", lambda: self._close_management(deadline)),
         )
-        for worker in workers:
-            worker.start()
-        completion_deadline = deadline + FINAL_REAP_SECONDS
-        for worker in workers:
-            worker.join(max(0.0, completion_deadline - time.monotonic()))
+        workers = []
+        if self._serve_thread is None:
+            # Native startup may still be checking a retained lock PID. Do not
+            # allocate competing task IDs, even to clean up a cancelled start.
+            for name, operation in operations:
+                cleanup(name, operation)
+        else:
+            workers = [Thread(target=cleanup, args=item, daemon=True) for item in operations]
+            for worker in workers:
+                worker.start()
+            completion_deadline = deadline + FINAL_REAP_SECONDS
+            for worker in workers:
+                worker.join(max(0.0, completion_deadline - time.monotonic()))
         clean = all(results.values()) and all(not worker.is_alive() for worker in workers)
         self.readiness.set_state(ProductState.EXITED)
         self._stop_result = 0 if not failure and clean else 1
@@ -196,6 +384,8 @@ class PostgresCoordinator:
         return self._stop_result
 
     def _close_management(self, deadline: float) -> bool:
+        if self.host is None:
+            return True
         result = True
         if self._management_live and getattr(self.host, "cpk_is_serving", False):
             completed = Event()
@@ -259,9 +449,9 @@ def main() -> int:
             raise PostgresProcessError("PostgreSQL password path is invalid")
         password = read_password(password_path)
         configuration = read_postgres_control_configuration()
+        postgres_control_configuration_artifact(configuration)
         readiness = ReadinessController(password=password)
-        host = create_management_server(configuration, readiness)
-        coordinator = PostgresCoordinator(host, readiness)
+        coordinator = PostgresCoordinator(None, readiness)
 
         def stop_signal(signum, frame) -> None:  # noqa: ANN001
             coordinator.request_stop()
@@ -269,12 +459,15 @@ def main() -> int:
         signal.signal(signal.SIGINT, stop_signal)
         signal.signal(signal.SIGTERM, stop_signal)
         coordinator.start_native()
-        coordinator.start_management()
+        if coordinator.wait_for_native_listener():
+            coordinator.host = create_management_server(configuration, readiness)
+            coordinator.start_management()
         startup_complete = True
         result = coordinator.wait()
         record = coordinator.lifecycle_record
         if result != 0 and record is not None:
             emit_lifecycle_record(record)
+            emit_role_diagnostic(coordinator)
         return result
     except (PostgresConfigurationError, PasswordFileError, PostgresProcessError, OSError):
         record = None

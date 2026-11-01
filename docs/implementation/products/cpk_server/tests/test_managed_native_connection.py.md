@@ -13,3 +13,11 @@ stopped at the real effect-port call because the double omitted the custody fiel
 Its later native bridge, no-fallback and no-transaction assertions were unexecuted;
 the correction retains them unchanged. Production and protected-input target laws
 are unchanged. The later integrated witness and full gate remain unverified.
+
+#225 adds actual Operations lowering through the existing Servers bridge and
+unpatched native observer/DockerSdkClient. Fresh and retained-content inputs must
+reach one unavailable fake SDK read and return UNKNOWN with current correlation.
+Empty material or independently lowered foreign material must refuse before SDK
+I/O. Existing original-installation proof negatives remain unchanged. These
+composition inputs are not admitted history; the first failed SDK read proves
+qualification and conversion, not connected health or later material readback.

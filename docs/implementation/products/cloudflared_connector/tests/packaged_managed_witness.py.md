@@ -211,3 +211,17 @@ The canonical manifest carries full commits. Existing extras, runner, provenance
 predicates and published product/image/catalogue identities are preserved.
 Earlier cohort accounts below are historical. This checkpoint awaits the owning
 Servers gate; pin selection alone is not installed or live acceptance.
+
+## Observed29.4.2 stop source
+
+Run41330139040 passed package and receiver integration tests, then refused the
+observed29.4.2/d329809/null timeout before any measured stop. The official
+`docker-v29.4.2` tag resolves to d3298094ac5111e5d67517a252d291d27543e408.
+[Immutable source and selected SDK trace](https://github.com/OpenJ92/control-plane-kit-servers/pull/363#issuecomment-6561584917)
+shows the same Unix10-second default when neither container nor request supplies
+a timeout. SDK7.2.0 sends no timeout parameter for the selected Interpreter's
+argument-free stop. The signal-error2-second branch remains; empirical9–11second
+signal events, terminal receipts and cleanup still must pass. Only this exact
+version/source pair is added, with matching evidence-parser support. No general
+29.x admission, binary attestation, publication producer qualification or timeout
+override is implied. PostgreSQL recovery was not reached in that failed run.
