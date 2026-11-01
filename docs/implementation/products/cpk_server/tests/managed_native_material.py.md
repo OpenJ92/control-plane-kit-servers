@@ -17,3 +17,12 @@ retained participant guard requires those node inputs to match their registered
 contracts. The default interpreter-only fixture remains unchanged. The first
 old-pin run exposed these two incomplete premises before retained lowering;
 those setup errors are not causal evidence for the missing material defect.
+
+This opt-in mode also uses Operations' canonical protected token-file path before
+constructing the descriptor, node and synthetic original-installation proof.
+The sole delivery already has the required type, tunnel-token intent,
+owner-read-only mode, TUNNEL_TOKEN_FILE binding and typed reference; version
+selection stays unchanged. The accepted-pin run first exposed the path mismatch
+before reader assertions. Its failed evidence remains recorded; this correction
+changes the helper's input bytes from the earlier causal-red checkpoint while
+preserving every test assertion and the default interpreter-only path.

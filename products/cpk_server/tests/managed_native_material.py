@@ -57,7 +57,8 @@ class NativeMaterial:
             public_environment=(PublicStaticEnvironmentBinding("CPK_WRAPPER_CONFIGURATION_FILE", artifact.target_path),),
             configuration_requirements=(ConfigurationArtifactRequirement(artifact.artifact_id,
                 artifact.target_path, artifact.media_type, artifact.file_mode),))
-        delivery = SecretFileDelivery("/run/secrets/tunnel", SecretReference("secret://fixture/tunnel"),
+        token_path = "/run/secrets/cloudflare-tunnel-token" if registered_participants else "/run/secrets/tunnel"
+        delivery = SecretFileDelivery(token_path, SecretReference("secret://fixture/tunnel"),
             SecretUseIntent.CLOUDFLARE_TUNNEL_TOKEN, path_binding=SecretFilePathBinding("TUNNEL_TOKEN_FILE"))
         selection = SecretVersionSelection(delivery.reference, delivery.intent, "fixture-version")
         if registered_participants:
