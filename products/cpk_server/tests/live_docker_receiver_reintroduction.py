@@ -12,7 +12,6 @@ from control_plane_kit_servers_cpk_server.client import TopologyClient
 from control_plane_kit_servers_cpk_server.client.authoring import ReceiverScope
 from control_plane_kit_servers_cpk_server.client.transport import ClientTransportError
 
-from docker_image_update_material import IMAGES
 from docker_image_update_placement import owned_resources
 from docker_image_update_ports import require_committed_call
 from docker_receiver_reintroduction import route_intent, with_nodes
@@ -29,6 +28,11 @@ def wrapper_configuration(graph, name):
     artifact, = [value for value in graph.node(name).configuration_artifacts
         if value.artifact_id == "hello-control"]
     return core.ReceiverNodeControlConfigurationCodec().decode_bytes(artifact.content.encode()), artifact
+
+
+def _assert_initial_image(engine, placement, name):
+    placement.inspect_node(name)
+    assert engine.containers.get(placement.nodes[name]).attrs["Image"] == placement.expected_image_id("hello_family")
 
 
 async def reintroduction_scenario(root, engine, sdk, placement, material, host, transport,
@@ -85,8 +89,7 @@ async def reintroduction_scenario(root, engine, sdk, placement, material, host, 
     old_y_configuration, old_y_wrapper = wrapper_configuration(initial_graph, "api-y")
     assert x_configuration.target.receiver_id != old_y_configuration.target.receiver_id
     for name in ("api", "api-y"):
-        placement.inspect_node(name)
-        assert engine.containers.get(placement.nodes[name]).attrs["Image"] == IMAGES["hello_family"]["image_id"]
+        _assert_initial_image(engine, placement, name)
         assert (name, "readiness", 200) in health_socket.observations[initial_health:]
     starts = [value for value in runtime.completed if type(value.request.operation) is StartNode
         and value.request.operation.target.node_id in {"api", "api-y"}]

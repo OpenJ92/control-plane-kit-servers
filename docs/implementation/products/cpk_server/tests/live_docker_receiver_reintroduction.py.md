@@ -28,6 +28,15 @@ is claimed. Ingress/native connection remain named substitutes. Private credenti
 must remain absent from preparations and client journals. Source alone is not
 executed OCI lifecycle or grandparent acceptance; the normal owning gate is required.
 
+The initial X/Y image check uses the existing placement's qualified execution
+identity, separately from the fixed artifact's config digest. Run41325866340
+qualified a manifest-valued Hello execution ID and passed placement inspection,
+then failed the older config-only equality during initial setup. The private
+witness assertion keeps both placement inspection and exact image equality;
+it does not admit arbitrary digests, resolve a new image, or weaken ownership.
+Its extraction allows the actual check to be tested with the existing placement
+fixture. The corrected tests remain unexecuted until the normal owning gate.
+
 Before public desired-empty, the existing placement.detach() verifies and removes
 only this fixture controller's recorded attachment, exactly as the accepted
 image-update scenario does. Run39182987065 passed support26/package650 and reached

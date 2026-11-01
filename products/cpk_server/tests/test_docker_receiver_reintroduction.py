@@ -60,7 +60,7 @@ class ContainmentTests(unittest.TestCase):
 
 
 class SelectedStartImageTests(unittest.TestCase):
-    def fixture(self, role="hello_family", *, expected_role=None):
+    def fixture(self, role="hello_family", *, expected_role=None, proof_form="config-valued"):
         engine = Mock()
         sdk = DockerSdkClient(client=Mock(), connect_on_init=False)
         sdk.inspect_container = Mock()
@@ -72,19 +72,47 @@ class SelectedStartImageTests(unittest.TestCase):
         request = replace(completed().request, operation=StartNode(NodeTarget("api")),
             products=(RuntimeProductMaterial("api", "docker", ProductReference.from_document(document),
                 document.product),))
+        images = qualified_images(proof_form)
         container = SimpleNamespace(id="c" * 64, labels={PREFIX + "workspace": "workspace-a",
             PREFIX + "runtime": "docker", PREFIX + "kind": "container", PREFIX + "node": "api"},
-            attrs={"Image": IMAGES[role]["image_id"], "Config": {"User": IMAGES[role]["user"]}})
+            attrs={"Image": images.images[role].execution_id, "Config": {"User": IMAGES[role]["user"]}})
         engine.containers.get.return_value = container
         sdk.inspect_container.return_value = SimpleNamespace(container_id=container.id, running=True,
             network_attachments=(SimpleNamespace(network_id="n" * 64),))
         placement = OwnedControllerPlacement(engine, sdk, "workspace-a", "b" * 64, "daemon-a",
             expected_start_roles={} if expected_role is None else {"api": expected_role},
-            qualified_images=qualified_images())
+            qualified_images=images)
         placement.network_id = "n" * 64
         record = CompletedRuntimeCall(request, RuntimeEffectResult.succeeded(request.effect_id,
             evidence={"runtime_id": "docker", "container": container.id}))
         return placement, record, container
+
+    def test_initial_witness_accepts_both_qualified_execution_forms(self):
+        from live_docker_receiver_reintroduction import _assert_initial_image
+        for form in ("config-valued", "manifest-valued"):
+            with self.subTest(form=form):
+                placement, record, container = self.fixture(expected_role="hello_family", proof_form=form)
+                placement.starting(record.request)
+                placement.observed(record)
+                placement.completed(record)
+                _assert_initial_image(placement.engine, placement, "api")
+                self.assertEqual(placement.nodes["api"], container.id)
+
+    def test_initial_witness_refuses_wrong_image_or_foreign_owner(self):
+        from live_docker_receiver_reintroduction import _assert_initial_image
+        for form in ("config-valued", "manifest-valued"):
+            for invalid in ("image", "owner"):
+                with self.subTest(form=form, invalid=invalid):
+                    placement, record, container = self.fixture(expected_role="hello_family", proof_form=form)
+                    placement.starting(record.request)
+                    placement.observed(record)
+                    placement.completed(record)
+                    if invalid == "image":
+                        container.attrs["Image"] = "sha256:" + "0" * 64
+                    else:
+                        container.labels[PREFIX + "workspace"] = "foreign"
+                    with self.assertRaises(FixtureBoundaryFailure):
+                        _assert_initial_image(placement.engine, placement, "api")
 
     def test_reviewed_family_passes_observed_and_committed_start_checks(self):
         placement, record, container = self.fixture(expected_role="hello_family")
