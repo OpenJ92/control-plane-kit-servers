@@ -267,6 +267,7 @@ def resolve_profile(client, container):
     fixed_source = {
         "28.5.1": "f8215cc266744ef195a50a70d427c345da2acdbb",
         "28.0.4": "6430e49a55babd9b8f4d08e70ecb2b68900770fe",
+        "29.4.2": "d3298094ac5111e5d67517a252d291d27543e408",
     }.get(engine_version) if type(engine_version) is str else None
     if (timeout is None and fixed_source is not None
             and type(commit) is str and 7 <= len(commit) <= 40

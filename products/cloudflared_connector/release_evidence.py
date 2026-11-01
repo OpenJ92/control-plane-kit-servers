@@ -24,7 +24,8 @@ PRODUCER_STAGES = frozenset((
     'published-policy','publication-record','complete',
 ))
 FIXED = {'28.0.4':'6430e49a55babd9b8f4d08e70ecb2b68900770fe',
-         '28.5.1':'f8215cc266744ef195a50a70d427c345da2acdbb'}
+         '28.5.1':'f8215cc266744ef195a50a70d427c345da2acdbb',
+         '29.4.2':'d3298094ac5111e5d67517a252d291d27543e408'}
 
 
 def require(condition):

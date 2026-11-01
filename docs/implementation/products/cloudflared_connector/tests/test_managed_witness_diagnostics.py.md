@@ -60,3 +60,11 @@ cases passed, including negative inputs and prior diagnostics. Meridian and
 Kepler independently accepted causal red. Later runtime stages were not reached.
 North then released the local closed two-pair implementation. Targets remain
 unchanged; post-implementation green is not yet claimed.
+
+The observed29.4.2 target extends the existing source-pair cases with immutable
+full and seven-character d3298094ac5111e5d67517a252d291d27543e408. New negative
+inputs reject an old build under29.4.2, an unknown version with that build, a
+six-character prefix and a mismatched full hash. Existing explicit timeout,
+signal/platform/SDK and timing laws remain. These are resolver tests with doubles,
+not measured stop behavior. The maintained managed-connector-release-tests route
+owns focused execution; its result is separate from full image qualification.
