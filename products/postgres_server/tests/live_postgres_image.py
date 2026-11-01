@@ -202,15 +202,13 @@ def failure_identity(attrs: dict) -> dict:
         return value if type(value) is str and re.fullmatch(pattern, value) else None
 
     name = bounded(attrs.get("Name"), "/" + re.escape(RUN) + r"-(first|restart|recovery|recovered)")
-    declared_base = None
     try:
         with (Path(__file__).resolve().parents[1] / "Dockerfile").open("rb") as source:
             first = source.readline(256)
         match = re.fullmatch(rb"FROM (postgres@sha256:[0-9a-f]{64})\n", first)
-        if match:
-            declared_base = match.group(1).decode("ascii")
+        declared_base = match.group(1).decode("ascii") if match else None
     except (OSError, ValueError):
-        pass
+        declared_base = None
     dirty = os.environ.get("CPK_POSTGRES_WITNESS_DIRTY")
     return {
         "container_id": bounded(attrs.get("Id"), r"[0-9a-f]{64}"),
@@ -267,12 +265,11 @@ def raise_container_failure(container, message: str) -> None:
             return "unknown"
         return "match" if left == right else "different"
 
-    identity = dict.fromkeys(("container_id", "image_id", "phase", "source_revision",
-                              "source_has_uncommitted_changes", "declared_base"))
     try:
         identity = failure_identity(attrs)
     except Exception:
-        pass
+        identity = dict.fromkeys(("container_id", "image_id", "phase", "source_revision",
+                                  "source_has_uncommitted_changes", "declared_base"))
     if state_refresh_available:
         error = str(state.get("Error", "")).encode("utf-8", errors="replace")
         state_values = {

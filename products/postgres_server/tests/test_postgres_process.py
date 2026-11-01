@@ -9,7 +9,7 @@ from tempfile import TemporaryDirectory
 from threading import Event, Thread
 import time
 import unittest
-from unittest.mock import ANY, Mock, call, patch
+from unittest.mock import ANY, Mock, PropertyMock, call, patch
 
 import control_plane_kit_core as core
 from control_plane_kit_server_sdk.stdlib import CpkThreadingHTTPServer
@@ -1038,6 +1038,22 @@ class RoleDiagnosticTests(unittest.TestCase):
             management_entered=False, management_alive_at_native_exit=None))
         self.assertEqual(coordinator.readiness.state, ProductState.EXITED)
 
+    def test_failed_role_capture_clears_prior_snapshot_and_preserves_failure(self):
+        child = CoordinatorTests.native(self, returncode=7)
+        coordinator = process.PostgresCoordinator(
+            CoordinatorTests.host(self), ReadinessController(password=b"secret"),
+            spawn=Mock(return_value=child))
+        coordinator.start_native()
+        self.assertEqual(coordinator.wait(poll_seconds=0), 1)
+        self.assertIsNotNone(coordinator.role_diagnostic)
+        with patch.object(coordinator, "_observe_roles_at_native_exit",
+                          side_effect=OSError("RAW_ROLE_CAPTURE")):
+            self.assertEqual(coordinator.wait(poll_seconds=0), 1)
+        self.assertIsNone(coordinator.role_diagnostic)
+        self.assertEqual(coordinator.lifecycle_record,
+                         process.LifecycleRecord(process.LifecycleReason.NATIVE_EXIT, 7))
+        self.assertEqual(coordinator.readiness.state, ProductState.EXITED)
+
     def test_main_emits_separate_record_without_changing_lifecycle_schema(self):
         coordinator = Mock()
         coordinator.wait.return_value = 1
@@ -1073,6 +1089,19 @@ class RoleDiagnosticTests(unittest.TestCase):
             self.assertEqual(process.main(), 1)
         self.assertIn(process.LIFECYCLE_PREFIX, sink.getvalue())
         self.assertNotIn("RAW_ROLE_SINK", sink.getvalue())
+        coordinator.stop.assert_not_called()
+
+        output = io.StringIO()
+        with ExitStack() as stack:
+            for item in LifecycleRecordTests.runtime(self, coordinator):
+                stack.enter_context(item)
+            stack.enter_context(patch.object(type(coordinator), "role_diagnostic",
+                new=PropertyMock(side_effect=OSError("RAW_ROLE_ACCESS")), create=True))
+            stack.enter_context(patch.object(process.sys, "stderr", output))
+            self.assertEqual(process.main(), 1)
+        self.assertIn(process.LIFECYCLE_PREFIX, output.getvalue())
+        self.assertNotIn(self.PREFIX.decode(), output.getvalue())
+        self.assertNotIn("RAW_ROLE_ACCESS", output.getvalue())
         coordinator.stop.assert_not_called()
 
     def test_projection_keeps_child_emitter_and_management_comparisons_separate(self):
@@ -1129,6 +1158,19 @@ class RoleDiagnosticTests(unittest.TestCase):
         self.assertIsNone(event.get("image_id"))
         self.assertIsNone(event.get("phase"))
         self.assertNotIn("RAW_PRIVATE", output)
+
+        with patch.object(live_witness.Path, "open", side_effect=OSError("RAW_BASE_ERROR")):
+            event, output = self.observe(self.record())
+        self.assertIsNone(event["declared_base"])
+        self.assertEqual(event["container_id"], "a" * 64)
+        self.assertNotIn("RAW_BASE_ERROR", output)
+        with patch.object(live_witness, "failure_identity", side_effect=OSError("RAW_IDENTITY_ERROR")):
+            event, output = self.observe(self.record())
+        for key in ("container_id", "image_id", "phase", "source_revision",
+                    "source_has_uncommitted_changes", "declared_base"):
+            self.assertIsNone(event[key])
+        self.assertEqual(event["role_record_status"], "one")
+        self.assertNotIn("RAW_IDENTITY_ERROR", output)
 
     def test_unavailable_logs_and_nullable_role_fields_remain_explicit(self):
         event, output = self.observe(OSError("RAW_LOG_ERROR"))

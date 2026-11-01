@@ -17,3 +17,10 @@ missing states, and cover bounded malformed/duplicate/truncated/unavailable
 records, nullable fields, redacted identity and output failure. The focused red
 establishes absent reporting only. Neither fake role numbers nor a prospective
 green prove the historic refused PID's owner.
+
+Acquisition failures explicitly produce nullable PID/state fields. A failed whole
+capture clears its prior snapshot, and role-property access shares the existing
+best-effort emitter boundary. Targets verify that absent role or source identity
+does not replace the primary lifecycle failure or erase independently available
+fields. The normal package-integrity scan remains required alongside this focused
+suite; the focused launch route does not execute that preflight.

@@ -36,8 +36,9 @@ def valid_role_diagnostic(value: object) -> bool:
         value[key] is None or type(value[key]) is bool for key in ROLE_STATE_FIELDS)
 
 
-def emit_role_diagnostic(value: object, *, stream=None) -> None:
+def emit_role_diagnostic(coordinator, *, stream=None) -> None:
     try:
+        value = coordinator.role_diagnostic
         if valid_role_diagnostic(value):
             print(ROLE_PREFIX + json.dumps(value, separators=(",", ":"), sort_keys=True),
                   file=sys.stderr if stream is None else stream, flush=True)
@@ -47,6 +48,14 @@ def emit_role_diagnostic(value: object, *, stream=None) -> None:
 
 def _bounded_pid(value: object) -> int | None:
     return value if type(value) is int and 1 <= value <= 2147483647 else None
+
+
+def _observe_role_pid(read: Callable[[], object]) -> int | None:
+    """Unavailable diagnostic identity is null, never a lifecycle failure."""
+    try:
+        return _bounded_pid(read())
+    except Exception:
+        return None
 
 
 class PostgresProcessError(RuntimeError):
@@ -132,17 +141,11 @@ class PostgresCoordinator:
 
     def _observe_roles_at_native_exit(self) -> None:
         # Per-field observations before cleanup, not an atomic/lock-time snapshot.
-        owner_pid = None
-        alive = None
+        owner_pid = _observe_role_pid(os.getpid)
         try:
-            owner_pid = _bounded_pid(os.getpid())
+            alive = None if self._serve_thread is None else self._serve_thread.is_alive()
         except Exception:
-            pass
-        try:
-            if self._serve_thread is not None:
-                alive = self._serve_thread.is_alive()
-        except Exception:
-            pass
+            alive = None
         self._role_diagnostic = {
             "owner_pid": owner_pid,
             "child_entrypoint_pid": self._child_entrypoint_pid,
@@ -166,10 +169,7 @@ class PostgresCoordinator:
         if self._native is not None:
             raise PostgresProcessError("PostgreSQL native child already started")
         self._native = self._spawn((ENTRYPOINT, "postgres"), start_new_session=True)
-        try:
-            self._child_entrypoint_pid = _bounded_pid(self._native.pid)
-        except Exception:
-            pass
+        self._child_entrypoint_pid = _observe_role_pid(lambda: self._native.pid)
 
     def start_management(self) -> None:
         if self._native is None:
@@ -177,10 +177,7 @@ class PostgresCoordinator:
 
         def serve() -> None:
             self._management_entered = True
-            try:
-                self._management_native_id = _bounded_pid(get_native_id())
-            except Exception:
-                pass
+            self._management_native_id = _observe_role_pid(get_native_id)
             try:
                 self.host.serve_forever(poll_interval=0.05)
             finally:
@@ -212,7 +209,7 @@ class PostgresCoordinator:
                 try:
                     self._observe_roles_at_native_exit()
                 except Exception:
-                    pass
+                    self._role_diagnostic = None
                 self.readiness.set_state(ProductState.STOPPING)
                 self.readiness.stop_active(deadline=deadline)
                 self._close_management(deadline)
@@ -344,10 +341,7 @@ def main() -> int:
         record = coordinator.lifecycle_record
         if result != 0 and record is not None:
             emit_lifecycle_record(record)
-            try:
-                emit_role_diagnostic(coordinator.role_diagnostic)
-            except Exception:
-                pass
+            emit_role_diagnostic(coordinator)
         return result
     except (PostgresConfigurationError, PasswordFileError, PostgresProcessError, OSError):
         record = None
