@@ -1,5 +1,15 @@
 Source: [test_dynamic_root_bootstrap.py](../../../../../products/cpk_server/tests/test_dynamic_root_bootstrap.py).
 
+The producer234a evidence update exercises real fixture authoring with the new
+reviewed CPK account and checks its original config, complete group evidence,
+socket-group composition and different-image refusal. The historical1035 row is
+also explicitly retained. Existing unknown-reference refusal still occurs before
+commissioning. The target-only checkpoint precedes the row implementation; it
+was not executed separately red. There is no maintained focused CPK selector.
+North authorized consolidating executable validation into the existing
+published-root qualification, including the ordinary CPK tests. Static source
+inspection is not executable evidence; acceptance remains pending that gate.
+
 Initial #345 targets enter through the existing public root planning/apply
 interfaces. The seven methods cover private policy delivery projection without
 private intent disclosure, closed public summaries and static compatibility,
