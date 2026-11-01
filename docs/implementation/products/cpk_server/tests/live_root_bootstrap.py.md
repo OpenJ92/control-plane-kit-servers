@@ -1,5 +1,13 @@
 Source: [live_root_bootstrap.py](../../../../../products/cpk_server/tests/live_root_bootstrap.py).
 
+The #225 producer234a candidate adds exact reference e493dc25 using the original
+source config5267d901, observed passwd/group hashes and account10001:10001+[100].
+The account seal from publication41343366480 was independently accepted in
+[review6563031280](https://github.com/OpenJ92/control-plane-kit-servers/issues/225#issuecomment-6563031280).
+Normalized config4d329b05 is not used. Historical admissions and unknown-reference
+refusal remain. This evidence row enables qualification; it does not itself
+qualify the pair, prove effective runtime groups or authorize deployment.
+
 #301 extends the existing prepare stage with an offline commissioning witness
 inside the actual bootstrap driver built by unchanged test.sh. A subprocess uses
 only the image's CPK, gateway and Secrets product paths, checks product module

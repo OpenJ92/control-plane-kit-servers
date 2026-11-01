@@ -86,9 +86,9 @@ class DynamicRootBootstrapTests(unittest.TestCase):
     def test_dynamic_launcher_authoring_uses_real_contracts_and_admissible_private_intent(self):
         from products.cpk_server.tests import live_root_bootstrap as witness
         document = installation_input()
-        # Authoring evidence only: historical CPK account coordinates and an
+        # Authoring evidence only: reviewed CPK account coordinates and an
         # inert Secrets reference do not qualify this pair for execution.
-        selection = {"images": {"cpk-server": witness.CPK_IMAGE_ACCOUNT.image_reference,
+        selection = {"images": {"cpk-server": witness.CPK_234A_IMAGE_ACCOUNT.image_reference,
             "secrets-server": "ghcr.io/openj92/control-plane-kit-servers/secrets-server@sha256:" + "a" * 64}}
         with patch.object(witness, "ROOT", self.root):
             policy, private = witness.prepare_dynamic_document(document, selection, DRIVER)
@@ -126,12 +126,30 @@ class DynamicRootBootstrapTests(unittest.TestCase):
             passwd_sha256="2b154879fd6e9899bbe9f9c04eb2535f3388ad5a090f90a78c0dca81a13b9921",
             group_sha256="1ffcc10cbb13f710c78598bdccecd91b43251fef7e443ca860dfe84c656c0653",
             uid=10001, primary_gid=10001, supplementary_gids=(100,)))
-        for historical in (witness.CPK_IMAGE_ACCOUNT, witness.CPK_DYNAMIC_IMAGE_ACCOUNT):
+        for historical in (witness.CPK_IMAGE_ACCOUNT, witness.CPK_DYNAMIC_IMAGE_ACCOUNT,
+                witness.CPK_1035_IMAGE_ACCOUNT):
             with self.subTest(reference=historical.image_reference):
                 self.assertIs(witness.reviewed_image_account(historical.image_reference), historical)
         with self.assertRaisesRegex(AssertionError, "no reviewed image account baseline"):
             witness.reviewed_image_account(
                 "ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:" + "c" * 64)
+
+    def test_reviewed_234a_account_binds_original_config_and_complete_groups(self):
+        from products.cpk_server.tests import live_root_bootstrap as witness
+        reference = "ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:e493dc253cb5c27d633aea585dc0795d251841175718060a48a35c01e1c93c29"
+        admitted = witness.reviewed_image_account(reference)
+        # Independently accepted seal81654310, run41343366480. These are
+        # observed evidence coordinates, not a runtime-derived expectation.
+        self.assertEqual(admitted.config_digest,
+            "sha256:5267d901754ee8214dc24ce6d2116d9d6458c04e8fa809e0594c6b28936489f0")
+        self.assertEqual((admitted.passwd_sha256, admitted.group_sha256), (
+            "2b154879fd6e9899bbe9f9c04eb2535f3388ad5a090f90a78c0dca81a13b9921",
+            "1ffcc10cbb13f710c78598bdccecd91b43251fef7e443ca860dfe84c656c0653"))
+        self.assertEqual((admitted.uid, admitted.primary_gid, admitted.supplementary_gids),
+            (10001, 10001, (100,)))
+        self.assertEqual(admitted.expected_groups(reference, 999), frozenset((10001, 100, 999)))
+        with self.assertRaisesRegex(AssertionError, "does not match candidate"):
+            admitted.expected_groups(witness.CPK_1035_IMAGE_ACCOUNT.image_reference, 999)
 
     def test_dynamic_launcher_emitted_private_files_are_admitted_together(self):
         from products.cpk_server.tests import live_root_bootstrap as witness
