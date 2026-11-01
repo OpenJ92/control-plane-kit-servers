@@ -51,3 +51,30 @@ Source validation does not release a recovery rerun. Do not loop on emitter-only
 sampling: after any separately authorized observation, record the comparison and
 stop if instantaneous PID/TID ownership still requires a separately reviewed
 observation or explicit uncertainty disposition.
+
+The selected product can also emit one separate `postgres-server roles` record
+after ordinary native-exit cleanup. The process owner captures its already-created
+child/entrypoint PID, owner PID, existing management-thread native ID and explicit
+entry/ended/alive observations before cleanup. It adds no process, thread, exec,
+startup gate or pipe. Field reads are not atomic, and their ordering does not
+establish who existed at PostgreSQL's lock check. The original lifecycle record,
+failure precedence, startup and shutdown decisions remain unchanged; collection
+and output failures are best-effort and cannot replace the primary failure.
+
+The witness consumes that record only through the existing capped tail. Exactly
+one closed six-field record is accepted; IDs are nullable positive bounded ints,
+states are nullable bools. Missing, duplicate, malformed, truncated and unavailable
+records remain explicit unknowns. Numeric child/emitter and management/refused-PID
+comparisons stay separate. A matching ID with ended/unknown state is not a live
+collision claim. Even a recorded live matching role only names a candidate; it
+does not establish historical causality. Nonmatch excludes only that recorded
+role's numeric identity, not other tasks or historical reuse. Green remains
+prospective non-reproduction, with no automatic repeat or recovery action.
+
+Failure identity includes bounded container/image IDs from refreshed attrs, a
+closed witness phase, source revision/dirty state from the launcher's receipt,
+and the declared immutable base read from the selected Dockerfile. These bind
+observations and declarations without claiming measured native-version or
+entrypoint bytes. Raw attrs, logs, paths, environment and credential values are
+not exported. The separate shell summary below does not certify Python-owned
+resource absence; the normal final residue audit retains that responsibility.

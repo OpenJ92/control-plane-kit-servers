@@ -74,7 +74,49 @@ else: raise AssertionError(a)
 
 
 class PostgresArtifactShellTests(unittest.TestCase):
-    def invoke(self, mode='published', failure='', extra=None):
+    def summary(self, result):
+        lines = [line for line in result.stdout.splitlines()
+                 if line.startswith('{"postgres_invocation_result":')]
+        self.assertEqual(len(lines), 1, result.stdout)
+        return json.loads(lines[0])["postgres_invocation_result"]
+
+    def test_summary_separates_invocation_failure_from_completed_cleanup(self):
+        result, _, _, state = self.invoke('source', 'controller')
+        self.assertEqual(result.returncode, 7)
+        self.assertEqual(self.summary(result), {
+            "invocation_exit": 7, "final_exit": 7,
+            "controller_cleanup": "completed", "network_cleanup": "completed",
+            "fixture_cleanup": "completed"})
+        self.assertNotIn('container', state)
+        self.assertNotIn('network', state)
+
+    def test_summary_does_not_confuse_unknown_cleanup_with_not_attempted(self):
+        for failure, controller, network in (
+            ('collision', 'not_attempted', 'not_attempted'),
+            ('ambiguous-create', 'not_attempted', 'unknown'),
+            ('cleanup-controller-owner', 'unknown', 'not_attempted'),
+            ('cleanup-endpoint', 'completed', 'unknown'),
+        ):
+            with self.subTest(failure=failure):
+                result, _, _, _ = self.invoke('source', failure)
+                report = self.summary(result)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(report['final_exit'], result.returncode)
+                self.assertEqual(report['controller_cleanup'], controller)
+                self.assertEqual(report['network_cleanup'], network)
+                self.assertEqual(report['fixture_cleanup'],
+                                 'completed' if failure == 'collision' else 'not_attempted')
+
+    def test_closed_summary_pipe_preserves_invocation_exit_and_cleanup(self):
+        result, receipt, _, state = self.invoke('source', 'controller', closed_stdout=True)
+        self.assertEqual((receipt/'qualification.log').read_bytes(), b'')
+        self.assertEqual(result.returncode, 7)
+        self.assertEqual((receipt/'qualification.exit').read_text().strip(), '7')
+        self.assertNotIn('container', state)
+        self.assertNotIn('network', state)
+        self.assertFalse((receipt/'fixtures').exists())
+
+    def invoke(self, mode='published', failure='', extra=None, *, closed_stdout=False):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
@@ -90,9 +132,16 @@ class PostgresArtifactShellTests(unittest.TestCase):
         env.update(extra or {})
         selector={'published':'--postgres-published-image','source':'--postgres-source-image','unit':'--postgres-release-tests'}[mode]
         receipt=root/'receipt'
-        result=subprocess.run(['sh',str(ROOT/'scripts/postgres_artifact_shell.sh'),selector,
-                               '--controller-image-id',IMAGE,'--receipt-dir',str(receipt)],
-                              env=env,capture_output=True,text=True,timeout=15)
+        command=['sh',str(ROOT/'scripts/postgres_artifact_shell.sh'),selector,
+                 '--controller-image-id',IMAGE,'--receipt-dir',str(receipt)]
+        if closed_stdout:
+            reader, writer = os.pipe()
+            os.close(reader)
+            with os.fdopen(writer, 'wb') as sink:
+                result=subprocess.run(command,env=env,stdout=sink,stderr=subprocess.PIPE,
+                                      text=True,timeout=15)
+        else:
+            result=subprocess.run(command,env=env,capture_output=True,text=True,timeout=15)
         calls=[json.loads(line) for line in (root/'calls.jsonl').read_text().splitlines()] if (root/'calls.jsonl').exists() else []
         state=json.loads((root/'state.json').read_text()) if (root/'state.json').exists() else {}
         return result, receipt, calls, state

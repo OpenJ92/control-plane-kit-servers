@@ -10,7 +10,7 @@ import signal
 import stat
 import subprocess
 import sys
-from threading import Event, Lock, Thread
+from threading import Event, Lock, Thread, get_native_id
 import time
 from typing import Callable
 
@@ -23,6 +23,30 @@ FINAL_REAP_SECONDS = 1.0
 START_SECONDS = 3.0
 ENTRYPOINT = "/usr/local/bin/docker-entrypoint.sh"
 LIFECYCLE_PREFIX = "postgres-server lifecycle "
+ROLE_PREFIX = "postgres-server roles "
+ROLE_PID_FIELDS = ("owner_pid", "child_entrypoint_pid", "management_native_id")
+ROLE_STATE_FIELDS = ("management_entered", "management_ended", "management_alive_at_native_exit")
+
+
+def valid_role_diagnostic(value: object) -> bool:
+    if type(value) is not dict or set(value) != set(ROLE_PID_FIELDS + ROLE_STATE_FIELDS):
+        return False
+    return all(value[key] is None or type(value[key]) is int and 1 <= value[key] <= 2147483647
+               for key in ROLE_PID_FIELDS) and all(
+        value[key] is None or type(value[key]) is bool for key in ROLE_STATE_FIELDS)
+
+
+def emit_role_diagnostic(value: object, *, stream=None) -> None:
+    try:
+        if valid_role_diagnostic(value):
+            print(ROLE_PREFIX + json.dumps(value, separators=(",", ":"), sort_keys=True),
+                  file=sys.stderr if stream is None else stream, flush=True)
+    except Exception:
+        return
+
+
+def _bounded_pid(value: object) -> int | None:
+    return value if type(value) is int and 1 <= value <= 2147483647 else None
 
 
 class PostgresProcessError(RuntimeError):
@@ -96,6 +120,37 @@ class PostgresCoordinator:
         self._stopped = False
         self._stop_result = 1
         self._management_live = False
+        self._child_entrypoint_pid = None
+        self._management_native_id = None
+        self._management_entered = False
+        self._management_ended = False
+        self._role_diagnostic = None
+
+    @property
+    def role_diagnostic(self) -> dict | None:
+        return None if self._role_diagnostic is None else dict(self._role_diagnostic)
+
+    def _observe_roles_at_native_exit(self) -> None:
+        # Per-field observations before cleanup, not an atomic/lock-time snapshot.
+        owner_pid = None
+        alive = None
+        try:
+            owner_pid = _bounded_pid(os.getpid())
+        except Exception:
+            pass
+        try:
+            if self._serve_thread is not None:
+                alive = self._serve_thread.is_alive()
+        except Exception:
+            pass
+        self._role_diagnostic = {
+            "owner_pid": owner_pid,
+            "child_entrypoint_pid": self._child_entrypoint_pid,
+            "management_native_id": self._management_native_id,
+            "management_entered": self._management_entered,
+            "management_ended": self._management_ended,
+            "management_alive_at_native_exit": alive,
+        }
 
     @property
     def lifecycle_record(self) -> LifecycleRecord | None:
@@ -111,15 +166,25 @@ class PostgresCoordinator:
         if self._native is not None:
             raise PostgresProcessError("PostgreSQL native child already started")
         self._native = self._spawn((ENTRYPOINT, "postgres"), start_new_session=True)
+        try:
+            self._child_entrypoint_pid = _bounded_pid(self._native.pid)
+        except Exception:
+            pass
 
     def start_management(self) -> None:
         if self._native is None:
             raise PostgresProcessError("PostgreSQL native child is not started")
 
         def serve() -> None:
+            self._management_entered = True
+            try:
+                self._management_native_id = _bounded_pid(get_native_id())
+            except Exception:
+                pass
             try:
                 self.host.serve_forever(poll_interval=0.05)
             finally:
+                self._management_ended = True
                 self._serve_failed.set()
 
         thread = Thread(target=serve, name="cpk-postgres-management", daemon=True)
@@ -144,6 +209,10 @@ class PostgresCoordinator:
             if returncode is not None:
                 self._record_lifecycle(LifecycleRecord(LifecycleReason.NATIVE_EXIT, returncode))
                 deadline = time.monotonic() + STOP_SECONDS
+                try:
+                    self._observe_roles_at_native_exit()
+                except Exception:
+                    pass
                 self.readiness.set_state(ProductState.STOPPING)
                 self.readiness.stop_active(deadline=deadline)
                 self._close_management(deadline)
@@ -275,6 +344,10 @@ def main() -> int:
         record = coordinator.lifecycle_record
         if result != 0 and record is not None:
             emit_lifecycle_record(record)
+            try:
+                emit_role_diagnostic(coordinator.role_diagnostic)
+            except Exception:
+                pass
         return result
     except (PostgresConfigurationError, PasswordFileError, PostgresProcessError, OSError):
         record = None

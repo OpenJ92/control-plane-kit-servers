@@ -1,5 +1,5 @@
 from dataclasses import replace
-from contextlib import redirect_stdout
+from contextlib import ExitStack, redirect_stdout
 from http.client import HTTPConnection
 import io
 import json
@@ -964,6 +964,182 @@ class RefusedLockPidDiagnosticTests(unittest.TestCase):
         self.assertIsNone(event['native_lock_emitter_pid'])
         self.assertNotIn('RAW_PARSER_ERROR',output.getvalue())
         self.assertNotIn('PASS',output.getvalue())
+
+
+class RoleDiagnosticTests(unittest.TestCase):
+    PREFIX = b"postgres-server roles "
+
+    def roles(self, **changes):
+        return dict({
+            "owner_pid": 1, "child_entrypoint_pid": 7, "management_native_id": 37,
+            "management_entered": True, "management_ended": False,
+            "management_alive_at_native_exit": True,
+        }, **changes)
+
+    def record(self, value=None):
+        return self.PREFIX + json.dumps(self.roles() if value is None else value).encode()
+
+    def observe(self, logs, *, attrs=None):
+        container = Mock()
+        container.attrs = attrs or {
+            "State": {"Status": "exited", "ExitCode": 1},
+            "Id": "a" * 64, "Image": "sha256:" + "b" * 64,
+            "Name": "/cpk-postgres-unit-recovered",
+        }
+        if isinstance(logs, Exception):
+            container.logs.side_effect = logs
+        else:
+            container.logs.return_value = logs
+        output = io.StringIO()
+        with patch.dict(os.environ, {"CPK_POSTGRES_WITNESS_SOURCE": "c" * 40,
+                                    "CPK_POSTGRES_WITNESS_DIRTY": "false"}), \
+                redirect_stdout(output), self.assertRaisesRegex(AssertionError, "original failure"):
+            live_witness.raise_container_failure(container, "original failure")
+        return json.loads(output.getvalue())["postgres_source_failure"], output.getvalue()
+
+    def test_existing_management_role_is_observed_before_native_exit_cleanup(self):
+        entered, finish = Event(), Event()
+        host = CoordinatorTests.host(self)
+        def serve(**kwargs):
+            entered.set()
+            finish.wait(3)
+        host.serve_forever.side_effect = serve
+        host.shutdown.side_effect = finish.set
+        child = CoordinatorTests.native(self, returncode=1)
+        coordinator = process.PostgresCoordinator(
+            host, ReadinessController(password=b"secret"), spawn=Mock(return_value=child))
+        with patch.object(process, "get_native_id", return_value=37, create=True), \
+                patch.object(process.os, "getpid", return_value=1):
+            coordinator.start_native()
+            try:
+                coordinator.start_management()
+                self.assertTrue(entered.wait(2))
+                self.assertEqual(coordinator.wait(poll_seconds=0), 1)
+            finally:
+                finish.set()
+                coordinator._serve_thread.join(2)
+        roles = getattr(coordinator, "role_diagnostic", None)
+        self.assertEqual(roles, self.roles(child_entrypoint_pid=321))
+        self.assertFalse(coordinator._serve_thread.is_alive())
+        self.assertEqual(coordinator.lifecycle_record,
+                         process.LifecycleRecord(process.LifecycleReason.NATIVE_EXIT, 1))
+        self.assertEqual(child.poll.call_count, 1)
+
+    def test_missing_management_and_identity_read_failure_preserve_native_failure(self):
+        child = CoordinatorTests.native(self, returncode=7)
+        coordinator = process.PostgresCoordinator(
+            CoordinatorTests.host(self), ReadinessController(password=b"secret"),
+            spawn=Mock(return_value=child))
+        with patch.object(process.os, "getpid", side_effect=OSError("RAW_PID_ERROR")):
+            coordinator.start_native()
+            self.assertEqual(coordinator.wait(poll_seconds=0), 1)
+        self.assertEqual(getattr(coordinator, "role_diagnostic", None), self.roles(
+            owner_pid=None, child_entrypoint_pid=321, management_native_id=None,
+            management_entered=False, management_alive_at_native_exit=None))
+        self.assertEqual(coordinator.readiness.state, ProductState.EXITED)
+
+    def test_main_emits_separate_record_without_changing_lifecycle_schema(self):
+        coordinator = Mock()
+        coordinator.wait.return_value = 1
+        coordinator.lifecycle_record = process.LifecycleRecord(process.LifecycleReason.NATIVE_EXIT, 1)
+        coordinator.role_diagnostic = self.roles()
+        output = io.StringIO()
+        with ExitStack() as stack:
+            for item in LifecycleRecordTests.runtime(self, coordinator):
+                stack.enter_context(item)
+            stack.enter_context(patch.object(process.sys, "stderr", output))
+            self.assertEqual(process.main(), 1)
+        lines = output.getvalue().splitlines()
+        role_lines = [line[len(self.PREFIX):] for line in lines
+                      if line.startswith(self.PREFIX.decode())]
+        self.assertEqual(len(role_lines), 1)
+        self.assertEqual(json.loads(role_lines[0]), self.roles())
+        lifecycle = [line[len(process.LIFECYCLE_PREFIX):] for line in lines
+                     if line.startswith(process.LIFECYCLE_PREFIX)]
+        self.assertEqual([json.loads(line) for line in lifecycle],
+                         [{"reason": "native_exit", "native_exit_code": 1}])
+        coordinator.stop.assert_not_called()
+
+        class BrokenRoleSink(io.StringIO):
+            def write(self, text):
+                if text.startswith("postgres-server roles "):
+                    raise OSError("RAW_ROLE_SINK")
+                return super().write(text)
+        sink = BrokenRoleSink()
+        with ExitStack() as stack:
+            for item in LifecycleRecordTests.runtime(self, coordinator):
+                stack.enter_context(item)
+            stack.enter_context(patch.object(process.sys, "stderr", sink))
+            self.assertEqual(process.main(), 1)
+        self.assertIn(process.LIFECYCLE_PREFIX, sink.getvalue())
+        self.assertNotIn("RAW_ROLE_SINK", sink.getvalue())
+        coordinator.stop.assert_not_called()
+
+    def test_projection_keeps_child_emitter_and_management_comparisons_separate(self):
+        hint = RefusedLockPidDiagnosticTests.hint(self)
+        for roles, management, child in (
+            (self.roles(), "match", "different"),
+            (self.roles(management_native_id=38, child_entrypoint_pid=9), "different", "match"),
+            (self.roles(management_native_id=None, child_entrypoint_pid=None), "unknown", "unknown"),
+            (self.roles(management_ended=True), "match", "different"),
+        ):
+            with self.subTest(roles=roles):
+                event, _ = self.observe(hint + b"\n" + self.record(roles))
+                self.assertEqual(event.get("role_record_status"), "one")
+                self.assertEqual(event["role_observations"], roles)
+                self.assertEqual(event["management_pid_comparison"], management)
+                self.assertEqual(event["child_emitter_comparison"], child)
+
+    def test_invalid_partial_ambiguous_and_truncated_records_do_not_select_roles(self):
+        valid = self.record()
+        duplicate_key = valid[:-1] + b',"owner_pid":2}'
+        cases = [
+            (b"ordinary", "absent"),
+            (valid + b"\n" + valid, "ambiguous"),
+            (duplicate_key, "invalid"),
+            (self.record({"owner_pid": 1}), "invalid"),
+            (self.record(self.roles(owner_pid=True)), "invalid"),
+            (self.record(self.roles(owner_pid=2147483648)), "invalid"),
+            (self.record(self.roles(management_entered=1)), "invalid"),
+            (self.record(dict(self.roles(), unexpected="RAW_PRIVATE")), "invalid"),
+            (self.PREFIX + b"[" * 2000 + b"0" + b"]" * 2000, "invalid"),
+            (b"x" * 65536 + b"\n" + valid, "truncated"),
+            (b"ordinary\n" * 127 + valid, "truncated"),
+        ]
+        for raw, expected in cases:
+            with self.subTest(expected=expected, length=len(raw)):
+                event, output = self.observe(raw)
+                self.assertEqual(event.get("role_record_status"), expected)
+                self.assertIsNone(event["role_observations"])
+                self.assertEqual(event["management_pid_comparison"], "unknown")
+                self.assertEqual(event["child_emitter_comparison"], "unknown")
+                self.assertNotIn("RAW_PRIVATE", output)
+
+    def test_observed_identity_is_bounded_and_invalid_identity_is_unknown(self):
+        event, _ = self.observe(self.record())
+        self.assertEqual(event.get("container_id"), "a" * 64)
+        self.assertEqual(event.get("image_id"), "sha256:" + "b" * 64)
+        self.assertEqual(event.get("phase"), "recovered")
+        self.assertEqual(event.get("source_revision"), "c" * 40)
+        self.assertIs(event.get("source_has_uncommitted_changes"), False)
+        event, output = self.observe(self.record(), attrs={
+            "State": {"Status": "exited"}, "Id": "RAW_PRIVATE", "Image": "RAW_PRIVATE",
+            "Name": "/foreign-recovered"})
+        self.assertIsNone(event.get("container_id"))
+        self.assertIsNone(event.get("image_id"))
+        self.assertIsNone(event.get("phase"))
+        self.assertNotIn("RAW_PRIVATE", output)
+
+    def test_unavailable_logs_and_nullable_role_fields_remain_explicit(self):
+        event, output = self.observe(OSError("RAW_LOG_ERROR"))
+        self.assertEqual(event.get("role_record_status"), "unavailable")
+        self.assertIsNone(event["role_observations"])
+        self.assertNotIn("RAW_LOG_ERROR", output)
+        nullable = dict.fromkeys(self.roles())
+        event, _ = self.observe(self.record(nullable))
+        self.assertEqual(event.get("role_record_status"), "one")
+        self.assertEqual(event["role_observations"], nullable)
+        self.assertEqual(event["management_pid_comparison"], "unknown")
 
 
 class ImageDefinitionTests(unittest.TestCase):

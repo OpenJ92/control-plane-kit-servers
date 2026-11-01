@@ -29,3 +29,17 @@ Source mode rejects published selection variables and preserves the existing
 witness-owned build/image removal. Published mode never builds or removes its
 borrowed image. Unit mode stays socket-free and network-none. Normal source CI
 uses this same launch path once; it does not produce published-image evidence.
+
+The launch passes the existing source receipt's revision and dirty flag as
+bounded attribution inputs. The finish trap emits a closed
+`postgres_invocation_result` summary separating the invocation's original exit
+from the effective exit and controller/network/fixture cleanup dispositions.
+Existing attempt flags and absence checks supply these states; no new provider
+inspection or cleanup is introduced. Not-attempted and attempted-but-unknown
+remain distinct. Fixture removal failure is reported separately. This summary
+does not expose the private cleanup log or fixtures, and output failure does not
+replace the existing final exit. Completed shell cleanup does not stand in for
+the product witness's cleanup or the repository's final residue audit.
+PIPE is ignored only while the new summary is written, then restored: a closed
+summary reader cannot terminate the shell and replace the invocation's exit.
+The existing qualification-log output and cleanup paths remain unchanged.
