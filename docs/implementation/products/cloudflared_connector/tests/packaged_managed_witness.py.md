@@ -1,5 +1,24 @@
 # Managed cloudflared package witness
 
+#225 parses event records independently of HTTP chunk boundaries. With the same
+historical query and exact container filter, it checks the cumulative 65536-byte
+limit before buffering each raw byte chunk, decodes strict UTF-8 after EOF, and
+uses the standard JSON decoder over adjacent or JSON-whitespace-separated records.
+At most 32 objects pass shape, exact Actor.ID and integer timeNano admission;
+the downstream stop sequence, timing and clock laws are unchanged. Empty history
+cannot satisfy those laws. Malformed JSON/UTF-8 receives a closed reason without
+payload text. Acquisition/iteration errors retain their original classification.
+Every acquired stream is closed; a primary failure survives a simultaneous close
+failure, which emits the existing closed cleanup/profile/events marker. A lone
+close failure also refuses qualification.
+
+This bounds witness accumulation, not SDK/socket allocation. The selected SDK
+uses timeout=None for events: until requests finite server history and does not
+establish a client wall-clock deadline. Supplied-stream focused tests prove the
+framing correction, not the cause of the earlier local profile/events exception
+or actual daemon timing. The source trace is recorded on
+[#225](https://github.com/OpenJ92/control-plane-kit-servers/issues/225#issuecomment-6575830623).
+
 #225 deliberately configures StopTimeout=10 on the controlled TERM-ignore
 fixture only. The selected docker-py7.2.0 high-level create rejects that option,
 so the existing create/record/cleanup wrapper uses its supported low-level API

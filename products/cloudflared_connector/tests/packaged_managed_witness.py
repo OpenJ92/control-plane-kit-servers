@@ -238,21 +238,50 @@ def fatal_process():
 
 
 def events_between(client, identity, since, until):
-    """Finite historical event query, never an open-ended listener."""
+    """Bound historical event bytes and records independently of HTTP chunks.
+
+    SDK events uses timeout=None: until scopes server history, not a client
+    wall-clock deadline. This bounds our buffer, not upstream socket allocation.
+    """
     stream = client.events(since=since, until=until,
                            filters={"container": identity}, decode=False)
-    events, size = [], 0
+    events, buffer = [], bytearray()
+    primary_failed = False
     try:
         for raw in stream:
-            size += len(raw)
-            require(size <= 65536 and len(events) < 32, "event_bound")
-            value = json.loads(raw)
-            require(value.get("Actor", {}).get("ID") == identity, "event_identity")
-            require(type(value.get("timeNano")) is int, "event_precision")
-            events.append(value)
+            require(isinstance(raw, bytes), "event_chunk_type")
+            require(len(buffer) + len(raw) <= 65536, "event_bound")
+            buffer.extend(raw)
+        try:
+            text = buffer.decode("utf-8")
+            decoder = json.JSONDecoder()
+            offset = 0
+            while offset < len(text):
+                if text[offset] in " \t\r\n":
+                    offset += 1
+                    continue
+                require(len(events) < 32, "event_bound")
+                value, offset = decoder.raw_decode(text, offset)
+                require(isinstance(value, dict), "event_shape")
+                actor = value.get("Actor")
+                require(isinstance(actor, dict) and actor.get("ID") == identity,
+                        "event_identity")
+                require(type(value.get("timeNano")) is int, "event_precision")
+                events.append(value)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise QualificationFailure("event_json_invalid") from None
+        return events
+    except BaseException:
+        primary_failed = True
+        raise
     finally:
-        stream.close()
-    return events
+        try:
+            stream.close()
+        except Exception:
+            emit_controller_failure("cleanup", {
+                "phase": "profile", "operation": "events", "helper_mode": None})
+            if not primary_failed:
+                raise QualificationFailure("event_stream_close_failed") from None
 
 
 def verify_stop_events(events):
