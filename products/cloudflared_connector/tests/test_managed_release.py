@@ -47,6 +47,19 @@ class ManagedReleaseRoutingTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertEqual(calls, '')
 
+    def test_contents_observation_requires_receipt_and_reaches_only_admission(self):
+        result, calls = self.run_owner(['--managed-connector-contents'])
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(calls, '')
+        result, calls = self.run_owner([
+            '--managed-connector-contents', '--controller-image-id', 'sha256:'+'a'*64,
+            '--controller-receipt', '@controller-receipt', '--receipt-dir', '@receipts'], ignored='cache')
+        # The double refuses the first actual image inspection, before any build/run.
+        self.assertEqual(result.returncode, 91)
+        self.assertIn('image inspect', calls)
+        self.assertNotIn('build', calls)
+        self.assertNotIn('run ', calls)
+
     def test_ignored_bytecode_refuses_before_controller_or_source_import(self):
         result, calls = self.run_owner([
             '--managed-connector-release-tests', '--controller-image-id', 'sha256:'+'a'*64,
@@ -87,6 +100,13 @@ class ManagedReleaseRoutingTests(unittest.TestCase):
 
 
 class ManagedReleasePolicyTests(unittest.TestCase):
+    def test_contents_observation_cannot_supply_package_qualification_evidence(self):
+        import runpy
+        policy = runpy.run_path(str(ROOT / 'products/cloudflared_connector/release_evidence.py'))
+        record = {'stage': 'managed_cloudflared_contents_observation', 'outcome': 'contents_observed'}
+        with self.assertRaises(ValueError):
+            policy['witness_value'](json.dumps(record).encode())
+
     def policy(self):
         import runpy
         path = ROOT / 'products/cloudflared_connector/release.py'

@@ -4,6 +4,7 @@ import io
 import json
 from pathlib import Path
 import stat
+import tempfile
 import time
 from types import SimpleNamespace
 import unittest
@@ -13,6 +14,97 @@ import packaged_managed_witness as witness
 
 
 class ManagedWitnessDiagnosticTests(unittest.TestCase):
+    def run_contents_controller(self, *, observation=True, helper_failure=None,
+                                cleanup_failure=None):
+        run = "contents-observation-test"
+        containers = {}
+        client = Mock()
+        client.api = SimpleNamespace(timeout=5)
+        client.containers.list.return_value = []
+        client.containers.get.side_effect = containers.__getitem__
+        client.images.get.return_value = SimpleNamespace(attrs={"Config": {
+            "User": "65532:65532", "Entrypoint": ["python", "-m", witness.ENTRYPOINT],
+            "Cmd": None, "StopSignal": "SIGTERM", "Healthcheck": {
+                "Test": ["CMD", "python", "-m", witness.READER],
+                "Interval": 5_000_000_000, "Timeout": 3_000_000_000, "Retries": 1}}})
+
+        def create(_image, **kwargs):
+            identity = kwargs["name"]
+            container = Mock(id=identity, labels={witness.OWNER: run}, status="exited",
+                             attrs={"State": {"Status": "exited", "ExitCode": 0, "Pid": 0}})
+            container.remove.side_effect = cleanup_failure
+            containers[identity] = container
+            return container
+
+        client.containers.create.side_effect = create
+        output = io.StringIO()
+        profile_boundary = RuntimeError("profile-boundary")
+        failure = None
+        with tempfile.TemporaryDirectory() as directory:
+            records = Path(directory)
+            environment = {"CPK_MANAGED_TEST_RUN": run, "CPK_MANAGED_IMAGE": "fixture-image",
+                           "CPK_MANAGED_HOST_RECORDS": directory,
+                           "CPK_MANAGED_HOST_TESTS": "/source/product/tests"}
+            with patch.dict(witness.os.environ, environment), \
+                    patch.object(witness, "Path", side_effect=lambda p: records if p == "/witness" else Path(p)), \
+                    patch.object(witness.os, "chown"), \
+                    patch("docker.from_env", return_value=client), \
+                    patch("control_plane_kit_interpreters.docker.sdk.DockerSdkClient") as sdk, \
+                    patch.object(witness, "completed_helper", return_value={"PRIVATE_CONTENTS": "do-not-report"},
+                                 side_effect=helper_failure), \
+                    patch.object(witness, "resolve_profile", side_effect=profile_boundary) as profile, \
+                    redirect_stdout(output):
+                try:
+                    if observation:
+                        witness.controller(contents_only=True)
+                    else:
+                        witness.controller()
+                except Exception as caught:
+                    failure = caught
+                stop_count = sdk.return_value.stop_container.call_count
+            return failure, [json.loads(line) for line in output.getvalue().splitlines()], \
+                client, containers, profile.call_count, profile_boundary, stop_count
+
+    def test_contents_observation_stops_before_profile_and_reports_after_cleanup(self):
+        failure, records, client, containers, profiles, _, stops = self.run_contents_controller()
+        self.assertIsNone(failure)
+        self.assertEqual(list(containers), ["contents-observation-test-contents"])
+        self.assertEqual((profiles, stops), (0, 0))
+        self.assertEqual(records, [{"stage": "managed_cloudflared_contents_observation",
+                                   "outcome": "contents_observed"}])
+        next(iter(containers.values())).remove.assert_called_once_with(force=True)
+        client.close.assert_called_once_with()
+
+    def test_contents_observation_never_hides_helper_or_cleanup_failure(self):
+        primary = witness.QualificationFailure("helper_result_owner")
+        cleanup = RuntimeError("PRIVATE_CLEANUP_DETAIL")
+        for helper_failure, cleanup_failure in ((primary, None), (None, cleanup), (primary, cleanup)):
+            with self.subTest(helper=helper_failure is not None, cleanup=cleanup_failure is not None):
+                failure, records, client, _, profiles, _, stops = self.run_contents_controller(
+                    helper_failure=helper_failure, cleanup_failure=cleanup_failure)
+                if helper_failure is not None:
+                    self.assertIs(failure, primary)
+                else:
+                    self.assertIsInstance(failure, witness.QualificationFailure)
+                    self.assertEqual(str(failure), "managed_cleanup_incomplete")
+                self.assertEqual((profiles, stops), (0, 0))
+                self.assertFalse(any(row.get("outcome") in ("contents_observed", "package_pass")
+                                     for row in records))
+                roles = [row.get("role") for row in records]
+                if cleanup_failure is not None:
+                    self.assertIn("cleanup", roles)
+                self.assertNotIn("PRIVATE_CLEANUP_DETAIL", json.dumps(records))
+                client.close.assert_called_once_with()
+
+    def test_default_controller_still_requires_profile_after_contents(self):
+        failure, records, _, containers, profiles, boundary, _ = self.run_contents_controller(observation=False)
+        self.assertIs(failure, boundary)
+        self.assertEqual(profiles, 1)
+        self.assertEqual(list(containers), ["contents-observation-test-contents",
+                                           "contents-observation-test-profile"])
+        self.assertFalse(any(row.get("outcome") in ("contents_observed", "package_pass")
+                             for row in records))
+
     def test_result_metadata_refusal_identifies_first_predicate_before_read(self):
         valid = dict(st_mode=stat.S_IFREG | 0o400, st_uid=65532, st_size=2)
         cases = (

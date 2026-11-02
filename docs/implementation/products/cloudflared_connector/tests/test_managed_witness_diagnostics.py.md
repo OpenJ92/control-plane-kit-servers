@@ -1,5 +1,12 @@
 # Managed witness failure diagnostics
 
+#225 contents-only targets exercise the actual controller with provider doubles:
+one contents helper, no stop-profile creation or stop effects, and a distinct
+closed observation emitted only after common cleanup. Helper and cleanup failures
+cannot produce success; a primary helper failure retains precedence. Default
+controller invocation still reaches profile admission after contents. These are
+control-flow proofs, not actual container or bind-mount observations.
+
 Source: [test_managed_witness_diagnostics.py](../../../../../products/cloudflared_connector/tests/test_managed_witness_diagnostics.py).
 
 #225 adds focused targets for the result-file admission boundary. Each existing
