@@ -1,5 +1,9 @@
 # Managed release owner entries
 
+Docker metadata admission and absence checks require successful command exit
+before comparing captured output. Empty stdout from failed listing or an
+expected-looking image ID/revision from failed inspection cannot admit effects.
+
 All actual managed result paths now use the product-owned local volume helper.
 The candidate controller writes a provisional cleanup=pending_volume receipt,
 which cannot satisfy qualification. After controller exit, the shell validates

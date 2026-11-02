@@ -70,7 +70,8 @@ if [ "$MODE" = --managed-connector-controller ]; then
   [ "$RESULT" = 0 ] || exit "$RESULT"
   [ -z "$(git status --porcelain)" ] && [ "$(git rev-parse HEAD)" = "$SOURCE" ] || exit 1
   ID="$(cat "$RECEIPTS/image.id")"
-  [ "$(docker image inspect "$ID" --format '{{.Id}}')" = "$ID" ] || exit 1
+  OBSERVED_ID="$(docker image inspect "$ID" --format '{{.Id}}')" || exit 1
+  [ "$OBSERVED_ID" = "$ID" ] || exit 1
   LOG_HASH="$(hash_file "$RECEIPTS/build.log" | cut -d ' ' -f 1)"
   jq -n --arg source "$SOURCE" --arg tree "$TREE" --arg recipe "$RECIPE" --arg image "$ID" --arg log "$LOG_HASH" \
     '{schema:"cpk.cloudflared-controller-acquisition.v1",source_commit:$source,source_tree:$tree,dockerfile_sha256:$recipe,image_id:$image,build_exit:0,build_log_sha256:$log}' > "$RECEIPTS/controller.json"
@@ -86,8 +87,11 @@ case "$CONTROLLER_RECEIPT" in /*) ;; *) invalid ;; esac
 [ -f "$CONTROLLER_RECEIPT" ] && [ ! -L "$CONTROLLER_RECEIPT" ] || invalid
 [ "$(wc -c < "$CONTROLLER_RECEIPT")" -le 65536 ] || invalid
 jq -e --arg id "$CONTROLLER" 'type == "object" and .schema == "cpk.cloudflared-controller-acquisition.v1" and .image_id == $id and .build_exit == 0 and (.source_commit | test("^[0-9a-f]{40}$")) and (.source_tree | test("^[0-9a-f]{40}$")) and (.dockerfile_sha256 | test("^[0-9a-f]{64}$")) and (.build_log_sha256 | test("^[0-9a-f]{64}$"))' "$CONTROLLER_RECEIPT" >/dev/null || invalid
-[ "$(docker image inspect "$CONTROLLER" --format '{{.Id}}')" = "$CONTROLLER" ] || exit 1
-[ "$(docker image inspect "$CONTROLLER" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$(jq -r .source_commit "$CONTROLLER_RECEIPT")" ] || exit 1
+OBSERVED_CONTROLLER="$(docker image inspect "$CONTROLLER" --format '{{.Id}}')" || exit 1
+[ "$OBSERVED_CONTROLLER" = "$CONTROLLER" ] || exit 1
+OBSERVED_REVISION="$(docker image inspect "$CONTROLLER" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" || exit 1
+EXPECTED_REVISION="$(jq -r .source_commit "$CONTROLLER_RECEIPT")" || exit 1
+[ "$OBSERVED_REVISION" = "$EXPECTED_REVISION" ] || exit 1
 mkdir -m 700 "$RECEIPTS"
 cp "$CONTROLLER_RECEIPT" "$RECEIPTS/controller.json"
 if [ "$MODE" = --managed-connector-contents ]; then
@@ -113,12 +117,14 @@ if [ "$MODE" = --managed-connector-candidate ]; then
   TREE="$(git rev-parse HEAD^{tree})"
   [ "$(jq -r .source_commit "$CONTROLLER_RECEIPT")" = "$SOURCE" ] || invalid
   [ "$(jq -r .source_tree "$CONTROLLER_RECEIPT")" = "$TREE" ] || invalid
-  [ "$(docker image inspect "$CANDIDATE" --format '{{.Id}}')" = "$CANDIDATE" ] || exit 1
+  OBSERVED_CANDIDATE="$(docker image inspect "$CANDIDATE" --format '{{.Id}}')" || exit 1
+  [ "$OBSERVED_CANDIDATE" = "$CANDIDATE" ] || exit 1
   mkdir -m 700 "$RECEIPTS/fixtures"
   RUN_RECORD="$(mktemp "$RECEIPTS/run.XXXXXXXXXXXX")"
   RUN="cpk-managed-release-$(basename "$RUN_RECORD")"
   printf '%s\n' "$RUN" > "$RUN_RECORD"
-  [ -z "$(docker container ls -aq --filter "label=org.openj92.cpk.test-run=$RUN")" ] || exit 1
+  PREFLIGHT_CONTAINERS="$(docker container ls -aq --filter "label=org.openj92.cpk.test-run=$RUN")" || exit 1
+  [ -z "$PREFLIGHT_CONTAINERS" ] || exit 1
   sh scripts/cloudflared_result_volume.sh acquire "$RUN" "$RECEIPTS/fixtures"
   cp "$RECEIPTS/fixtures/result-volume.json" "$RECEIPTS/result-volume.json"
   set +e

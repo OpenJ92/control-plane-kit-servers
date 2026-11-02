@@ -61,8 +61,10 @@ cleanup() {
   return "$failed"
 }
 
-[ -z "$(docker container ls -aq --filter "label=org.openj92.cpk.test-run=$RUN")" ]
-[ -z "$(docker image ls -q --filter "reference=$TAG")" ]
+PREFLIGHT_CONTAINERS="$(docker container ls -aq --filter "label=org.openj92.cpk.test-run=$RUN")" || exit 1
+[ -z "$PREFLIGHT_CONTAINERS" ]
+PREFLIGHT_IMAGES="$(docker image ls -q --filter "reference=$TAG")" || exit 1
+[ -z "$PREFLIGHT_IMAGES" ]
 finish() {
   result=$?
   trap - EXIT INT TERM
