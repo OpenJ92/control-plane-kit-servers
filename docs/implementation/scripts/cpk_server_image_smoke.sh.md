@@ -1,6 +1,14 @@
 Source: [cpk_server_image_smoke.sh](../../../scripts/cpk_server_image_smoke.sh).
 Maintain with the owning smoke profiles and local synthetic effect plan.
 
+#225 admits Linux and Docker Desktop context-selected local Unix endpoints via
+`docker_witness_daemon.sh`. Endpoint/TLS environment overrides are refused;
+the resolved context is exported for subsequent CLI calls. The host client
+socket path is not used as a daemon-host mount source: the controller still
+mounts `/var/run/docker.sock`, and its existing daemon-ID/image/run-label checks
+must succeed before workload effects. A nonempty CLI daemon ID is required.
+Actual Desktop binding remains owning-gate evidence, not endpoint-string proof.
+
 #191 adds explicit wrapped-artifact/build0 admission. The cached role-specific
 digest, source/platform/user and actual execution ID are validated by the bounded
 shared artifact owner before runtime effects. Selected image use disables pulling;
