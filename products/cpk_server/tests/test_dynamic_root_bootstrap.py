@@ -88,7 +88,7 @@ class DynamicRootBootstrapTests(unittest.TestCase):
         document = installation_input()
         # Authoring evidence only: reviewed CPK account coordinates and an
         # inert Secrets reference do not qualify this pair for execution.
-        selection = {"images": {"cpk-server": witness.CPK_234A_IMAGE_ACCOUNT.image_reference,
+        selection = {"images": {"cpk-server": witness.CPK_B3D8_IMAGE_ACCOUNT.image_reference,
             "secrets-server": "ghcr.io/openj92/control-plane-kit-servers/secrets-server@sha256:" + "a" * 64}}
         with patch.object(witness, "ROOT", self.root):
             policy, private = witness.prepare_dynamic_document(document, selection, DRIVER)
@@ -150,6 +150,17 @@ class DynamicRootBootstrapTests(unittest.TestCase):
         self.assertEqual(admitted.expected_groups(reference, 999), frozenset((10001, 100, 999)))
         with self.assertRaisesRegex(AssertionError, "does not match candidate"):
             admitted.expected_groups(witness.CPK_1035_IMAGE_ACCOUNT.image_reference, 999)
+
+    def test_reviewed_b3d8_account_binds_observed_original_config_and_groups(self):
+        from products.cpk_server.tests import live_root_bootstrap as witness
+        reference = "ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:19ebe8e35e5ce3749e51d34f644599c0c48a64622772b941823d223f07df6d2a"
+        # Independently accepted seal1ef8ad93, run41458930336.
+        self.assertEqual(witness.reviewed_image_account(reference), witness.ImageAccountBaseline(
+            image_reference=reference,
+            config_digest="sha256:f83cca32c0c01afa9b4e58a5518c3b4bd89b514bc06f0bb9d5f1df7849b81012",
+            passwd_sha256="2b154879fd6e9899bbe9f9c04eb2535f3388ad5a090f90a78c0dca81a13b9921",
+            group_sha256="1ffcc10cbb13f710c78598bdccecd91b43251fef7e443ca860dfe84c656c0653",
+            uid=10001, primary_gid=10001, supplementary_gids=(100,)))
 
     def test_dynamic_launcher_emitted_private_files_are_admitted_together(self):
         from products.cpk_server.tests import live_root_bootstrap as witness
