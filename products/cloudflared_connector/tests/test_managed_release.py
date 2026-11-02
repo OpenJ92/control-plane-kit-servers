@@ -138,7 +138,7 @@ if a[:2]==['volume','inspect']:
            'Labels':{'org.openj92.cpk.test-run':'other' if fail=='changed_owner' and s.get('exited') else s['run'],
                      'org.openj92.project':'control-plane-kit-servers'}}])
 if a[:2]==['volume','rm']:
-    if fail=='volume_remove': done(code=1)
+    if fail in ('volume_remove','witness_and_volume'): done(code=1)
     s.pop('volume',None); done()
 if a[:2]==['image','inspect']:
     fmt=a[a.index('--format')+1]; image=next(x for x in a[2:] if x.startswith(('sha256:','control-plane-kit-')))
@@ -184,7 +184,7 @@ if a[:1]==['run']:
            'primary_diagnostic':'retained-closed-value'}
         if fail=='mismatched_receipt': q['run']='other-run'
         (evidence/'qualification.json').write_text(json.dumps(q))
-    done(code=1 if fail in ('residue','witness') else 0)
+    done(code=7 if fail=='witness_and_volume' else 1 if fail in ('residue','witness') else 0)
 done(code=90)
 ''')
             # Simulate interruption on each side of the final receipt rename.
@@ -230,6 +230,22 @@ done(code=90)
                 if qualification:
                     self.assertEqual(qualification['cleanup'], 'verified')
                     self.assertEqual(qualification['status'], 'pass')
+
+    def test_normal_failure_retains_separate_cleanup_outcome_and_primary_exit(self):
+        for failure, primary, final, cleanup in (
+                ('', 0, 0, 'verified'), ('witness', 1, 1, 'verified'),
+                ('volume_remove', 0, 1, 'incomplete'), ('witness_and_volume', 7, 7, 'incomplete')):
+            with self.subTest(failure=failure):
+                result, calls, _ = self.run_lane('normal', failure)
+                records = [json.loads(line) for line in result.stdout.splitlines()
+                           if line.startswith('{')]
+                self.assertEqual(records, [{
+                    'stage': 'managed_cloudflared_cleanup', 'cleanup': cleanup,
+                    'primary_exit': primary, 'exit_code': final}])
+                self.assertEqual(result.returncode, final)
+                self.assertEqual(sum(c[:2] == ['volume','rm'] for c in calls), 1)
+                if final:
+                    self.assertNotIn('managed cloudflared package stage passed', result.stdout)
 
     def test_result_volume_failure_cannot_qualify_or_erase_unknown_result(self):
         for failure in ('volume_remove','residue','mismatched_receipt','before_promotion',

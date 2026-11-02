@@ -1,5 +1,14 @@
 # Managed witness failure diagnostics
 
+#225 event-stream targets treat SDK yields as transport chunks, not records.
+The real events_between boundary must preserve values across coalesced/split
+JSON and split UTF8, strict framing/shape/identity/precision admission, aggregate
+65536-byte and logical32-event limits, finite query inputs and stream closure.
+Recognized JSON/encoding errors have a fixed reason; transport errors retain
+their primary identity, including when close also fails. Secondary close failure
+uses the existing closed cleanup/profile/events marker, without raw values.
+These are supplied-stream tests, not actual Engine timing or failure attribution.
+
 #225 contents-only targets exercise the actual controller with provider doubles:
 one contents helper, no stop-profile creation or stop effects, and a distinct
 closed observation emitted only after common cleanup. Helper and cleanup failures

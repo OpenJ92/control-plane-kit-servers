@@ -14,6 +14,104 @@ import packaged_managed_witness as witness
 
 
 class ManagedWitnessDiagnosticTests(unittest.TestCase):
+    def event_stream(self, chunks, *, close_failure=None):
+        class Stream:
+            def __iter__(self):
+                for chunk in chunks:
+                    if isinstance(chunk, Exception):
+                        raise chunk
+                    yield chunk
+        stream = Stream()
+        stream.close = Mock(side_effect=close_failure)
+        client = Mock()
+        client.events.return_value = stream
+        return client, stream
+
+    def event_values(self):
+        return [
+            {'Action': 'kill', 'timeNano': 1_000_000_000,
+             'Actor': {'ID': 'controlled', 'Attributes': {'signal': '15', 'note': 'café'}}},
+            {'Action': 'kill', 'timeNano': 11_000_000_000,
+             'Actor': {'ID': 'controlled', 'Attributes': {'signal': '9'}}},
+            {'Action': 'die', 'timeNano': 11_000_000_001,
+             'Actor': {'ID': 'controlled', 'Attributes': {'exitCode': '137'}}},
+        ]
+
+    def test_event_records_do_not_depend_on_http_chunk_boundaries(self):
+        expected = self.event_values()
+        records = [json.dumps(v, ensure_ascii=False).encode('utf-8') for v in expected]
+        raw = b'\n'.join(records)
+        split = raw.index('é'.encode('utf-8')) + 1
+        variants = [records, [raw], [raw[:split], b'', raw[split:]],
+                    [bytes([value]) for value in raw],
+                    [b' \t\r\n' + b''.join(records) + b'\n'],
+                    [raw + b' ' * (65536 - len(raw))]]
+        for chunks in variants:
+            with self.subTest(chunks=len(chunks)):
+                client, stream = self.event_stream(chunks)
+                actual = witness.events_between(client, 'controlled', 1, 12)
+                self.assertEqual(actual, expected)
+                witness.verify_stop_events(actual)
+                client.events.assert_called_once_with(
+                    since=1, until=12, filters={'container': 'controlled'}, decode=False)
+                stream.close.assert_called_once_with()
+        for chunks in ([], [b' \t\r\n']):
+            client, stream = self.event_stream(chunks)
+            self.assertEqual(witness.events_between(client, 'controlled', 1, 12), [])
+            stream.close.assert_called_once_with()
+        client, stream = self.event_stream([records[0] * 32])
+        self.assertEqual(len(witness.events_between(client, 'controlled', 1, 12)), 32)
+        stream.close.assert_called_once_with()
+
+    def test_event_framing_admission_and_limits_fail_closed(self):
+        record = json.dumps(self.event_values()[0]).encode()
+        cases = [
+            ([record[:-1]], 'event_json_invalid'),
+            ([record + b'{bad'], 'event_json_invalid'),
+            ([b'\xff'], 'event_json_invalid'),
+            (['not raw bytes'], 'event_chunk_type'),
+            ([b'[]'], 'event_shape'),
+            ([b'{"Actor":[]}'], 'event_identity'),
+            ([b'{"Actor":{"ID":"foreign"},"timeNano":1}'], 'event_identity'),
+            ([b'{"Actor":{"ID":"controlled"},"timeNano":true}'], 'event_precision'),
+            ([b' ' * 65536, b'x'], 'event_bound'),
+            ([record * 33], 'event_bound'),
+        ]
+        for chunks, reason in cases:
+            with self.subTest(reason=reason, size=sum(len(c) for c in chunks)):
+                client, stream = self.event_stream(chunks)
+                with self.assertRaises(witness.QualificationFailure) as raised:
+                    witness.events_between(client, 'controlled', 1, 12)
+                self.assertEqual(str(raised.exception), reason)
+                stream.close.assert_called_once_with()
+
+    def test_event_stream_failure_preserves_primary_and_reports_close_failure(self):
+        primary = RuntimeError('PRIVATE_TRANSPORT_DETAIL')
+        client, stream = self.event_stream([])
+        client.events.side_effect = primary
+        with self.assertRaises(RuntimeError) as raised:
+            witness.events_between(client, 'controlled', 1, 12)
+        self.assertIs(raised.exception, primary)
+        stream.close.assert_not_called()  # No stream was acquired.
+        for chunks, expected in (([primary], primary), ([b'{'], 'event_json_invalid'),
+                                 ([], 'event_stream_close_failed')):
+            with self.subTest(primary=expected):
+                client, stream = self.event_stream(
+                    chunks, close_failure=OSError('PRIVATE_CLOSE_DETAIL'))
+                output = io.StringIO()
+                with redirect_stdout(output), self.assertRaises(Exception) as raised:
+                    witness.events_between(client, 'controlled', 1, 12)
+                if expected is primary:
+                    self.assertIs(raised.exception, primary)
+                else:
+                    self.assertIsInstance(raised.exception, witness.QualificationFailure)
+                    self.assertEqual(str(raised.exception), expected)
+                stream.close.assert_called_once_with()
+                self.assertEqual(json.loads(output.getvalue()), {
+                    'stage': 'managed_cloudflared_controller_failure', 'outcome': 'unqualified',
+                    'role': 'cleanup', 'phase': 'profile', 'operation': 'events', 'helper_mode': None})
+                self.assertNotIn('PRIVATE', output.getvalue())
+
     def run_contents_controller(self, *, observation=True, helper_failure=None,
                                 cleanup_failure=None, residue=False, finish_profile=False,
                                 profile_failure=None, profile_inspection_missing=False,
