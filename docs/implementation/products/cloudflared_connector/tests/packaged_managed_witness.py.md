@@ -11,7 +11,11 @@ malformed/ambiguous creation stops without retry or adoption. Contents and fatal
 fixtures retain their existing high-level creation path.
 
 The actual inspected explicit timeout uses the existing container-origin
-resolver and reports no reviewed fixed-default source. Docker29.7.2/null still
+resolver and reports no reviewed fixed-default source. The controlled call site
+requires actual configured integer10, container origin and null reviewed source
+before stop/fatal effects; even a reviewed older Engine cannot substitute its
+historical fixed default when this fixture's explicit setting is absent.
+Docker29.7.2/null still
 refuses: that upstream daemon default is configurable and its effective value
 is not proved by version/build alone. Neither fixed-default map changes. The
 Interpreter stop call supplies no timeout override; actual 15/9/die137 events,

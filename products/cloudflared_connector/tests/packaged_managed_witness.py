@@ -459,6 +459,11 @@ def controller(*, contents_only=False):
             controlled.start()
             mark_controller(context, "profile", "resolve_profile")
             profile = resolve_profile(client, controlled)
+            require(type(profile["configured_stop_timeout"]) is int
+                    and profile["configured_stop_timeout"] == 10
+                    and profile["timeout_origin"] == "container"
+                    and profile["reviewed_engine_source"] is None,
+                    "controlled_stop_profile_unproved")
             wait_receipt(controlled, b"handler-ready")
             wall_before, mono_before = time.time_ns(), time.monotonic_ns()
             mark_controller(context, "profile", "stop")
