@@ -1,5 +1,25 @@
 # Managed cloudflared package witness
 
+#225 deliberately configures StopTimeout=10 on the controlled TERM-ignore
+fixture only. The selected docker-py7.2.0 high-level create rejects that option,
+so the existing create/record/cleanup wrapper uses its supported low-level API
+for this fixture, preserving the image, name, labels, network-none, readonly
+test bind, disabled healthcheck and inherited user/SIGTERM. A valid returned
+64-character lowercase hexadecimal ID enters memory and containers.json before
+the fallible model lookup. Record or lookup failure retains known-ID cleanup;
+malformed/ambiguous creation stops without retry or adoption. Contents and fatal
+fixtures retain their existing high-level creation path.
+
+The actual inspected explicit timeout uses the existing container-origin
+resolver and reports no reviewed fixed-default source. Docker29.7.2/null still
+refuses: that upstream daemon default is configurable and its effective value
+is not proved by version/build alone. Neither fixed-default map changes. The
+Interpreter stop call supplies no timeout override; actual 15/9/die137 events,
+9–11second timing, receipts, fatal teardown and cleanup remain required.
+This is the approved #284 controlled package profile, not ambient-default or
+native/live shutdown acceptance. Source decision and immutable SDK/Engine
+anchors are recorded on [#225](https://github.com/OpenJ92/control-plane-kit-servers/issues/225#issuecomment-6573025301).
+
 #225's result transport now mounts the same admitted daemon-local scratch volume
 at /witness-results in controller and helper. The controller verifies recorded
 volume/run/creation association and its actual mount, then initializes only the

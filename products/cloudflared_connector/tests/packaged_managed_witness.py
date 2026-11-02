@@ -332,7 +332,7 @@ def controller(*, contents_only=False):
     created = []
     volume_prepared = False
 
-    def create(name, *, deadline=None, **kwargs):
+    def create(name, *, deadline=None, stop_timeout=None, **kwargs):
         phase = context["phase"]
         mode = context["helper_mode"]
         if deadline is not None:
@@ -343,13 +343,30 @@ def controller(*, contents_only=False):
         if deadline is not None:
             require(time.monotonic() < deadline, "helper_deadline")
         mark_controller(context, phase, "create", mode)
-        container = client.containers.create(
-            image_id, name=name, network_mode="none",
-            labels={OWNER: run, "org.openj92.project": "control-plane-kit-servers"},
-            **kwargs)
-        created.append(container.id)
+        labels = {OWNER: run, "org.openj92.project": "control-plane-kit-servers"}
+        container = None
+        if stop_timeout is None:
+            container = client.containers.create(
+                image_id, name=name, network_mode="none", labels=labels, **kwargs)
+            identity = container.id
+        else:
+            # The selected SDK supports StopTimeout only through its low-level
+            # create API. Preserve the fixture's binds and inherited image user.
+            binds = kwargs.pop("volumes")
+            response = client.api.create_container(
+                image_id, name=name, labels=labels, stop_timeout=stop_timeout,
+                host_config=client.api.create_host_config(network_mode="none", binds=binds),
+                volumes=[binding["bind"] for binding in binds.values()], **kwargs)
+            identity = response.get("Id") if type(response) is dict else None
+            require(type(identity) is str and len(identity) == 64
+                    and all(char in "0123456789abcdef" for char in identity),
+                    "created_identity_unproved")
+        created.append(identity)
         mark_controller(context, phase, "record", mode)
         (records / "containers.json").write_text(json.dumps(created))
+        if container is None:
+            mark_controller(context, phase, "reload", mode)
+            container = client.containers.get(identity)
         if deadline is not None:
             require(time.monotonic() < deadline, "helper_deadline")
         return container
@@ -433,7 +450,8 @@ def controller(*, contents_only=False):
         else:
             mark_controller(context, "profile", "create")
             controlled = create(
-                run + "-profile", entrypoint=["python", "/witness-tests/packaged_managed_witness.py",
+                run + "-profile", stop_timeout=10,
+                entrypoint=["python", "/witness-tests/packaged_managed_witness.py",
                                             "controlled"],
                 volumes={host_tests: {"bind": "/witness-tests", "mode": "ro"}},
                 healthcheck={"test": ["NONE"]})
