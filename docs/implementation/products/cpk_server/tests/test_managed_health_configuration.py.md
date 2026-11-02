@@ -1,5 +1,13 @@
 # Managed-health startup laws — Servers294
 
+For #367, the existing positive native freshness fixture includes the canonical
+configuration-selection label required by the corrected interpreter. Its
+synthetic value is FRESH candidate metadata, not allocation or adoption proof.
+The real composed observer, freshness checks, CONNECTED/effect correlation and
+all existing assertions remain. Missing/malformed selection rejection and actual
+creator-label compatibility are proved by the owning Interpreters #239 tests.
+The first Servers CI exposed this fixture omission; corrected full CI is pending.
+
 #315 adds explicit delegation_key_generator=None to this file's two existing
 provider doubles. They continue to represent unavailable generation, retain all
 managed-health assertions and do not enable confidential provision.
