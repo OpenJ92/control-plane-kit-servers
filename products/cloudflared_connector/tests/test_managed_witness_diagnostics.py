@@ -15,14 +15,22 @@ import packaged_managed_witness as witness
 
 class ManagedWitnessDiagnosticTests(unittest.TestCase):
     def run_contents_controller(self, *, observation=True, helper_failure=None,
-                                cleanup_failure=None, residue=False):
+                                cleanup_failure=None, residue=False, finish_profile=False,
+                                profile_failure=None):
+        import docker
         run = "contents-observation-test"
+        profile_id = 'b' * 64
         containers = {}
         client = Mock()
         volume = run + "-results"
-        client.api = SimpleNamespace(timeout=5, inspect_container=Mock(return_value={
+        # Real SDK configuration serialization, with its HTTP transport doubled.
+        client.api = docker.APIClient(base_url='http://127.0.0.1:1', version='1.53', timeout=5)
+        client.api.inspect_container = Mock(return_value={
             "Mounts": [{"Type": "volume", "Name": volume,
-                        "Destination": "/witness-results", "RW": True}]}))
+                        "Destination": "/witness-results", "RW": True}]})
+        client.info.return_value = {'ID': 'engine', 'OSType': 'linux'}
+        client.version.return_value = {'Version': '29.7.2', 'GitCommit': '6a43e3d'}
+        client.profile_payloads = []
         volume_attrs = {"Name": volume, "Driver": "local", "Scope": "local", "Options": None,
                         "CreatedAt": "2026-11-02T00:00:00Z", "Labels": {
                             witness.OWNER: run, "org.openj92.project": "control-plane-kit-servers"}}
@@ -35,14 +43,40 @@ class ManagedWitnessDiagnosticTests(unittest.TestCase):
                 "Test": ["CMD", "python", "-m", witness.READER],
                 "Interval": 5_000_000_000, "Timeout": 3_000_000_000, "Retries": 1}}})
 
-        def create(_image, **kwargs):
-            identity = kwargs["name"]
+        def make_container(identity, name, timeout=None):
             container = Mock(id=identity, labels={witness.OWNER: run}, status="exited",
-                             attrs={"State": {"Status": "exited", "ExitCode": 0, "Pid": 0}})
+                             attrs={"State": {"Status": "exited", "ExitCode": 0, "Pid": 0},
+                                    "Config": {"StopSignal": "SIGTERM", "StopTimeout": timeout}})
+            if name.endswith(('-profile', '-fatal')):
+                def start():
+                    container.status = 'running'
+                    container.attrs['State'].update(Status='running', Pid=2)
+                def terminal(**_kwargs):
+                    container.status = 'exited'
+                    container.attrs['State'].update(Status='exited', Pid=0, ExitCode=137)
+                container.start.side_effect = start
+                container.kill.side_effect = terminal
+                container.wait.return_value = {'StatusCode': 137}
+                container.logs.return_value = (b'handler-ready\n' if name.endswith('-profile')
+                                               else b'{"child_pid":22,"child_group":22}')
             container.remove.side_effect = cleanup_failure
             containers[identity] = container
             return container
 
+        def create(_image, **kwargs):
+            name = kwargs['name']
+            return make_container(profile_id if name.endswith('-profile') else name, name)
+
+        def post(_url, *, data, params):
+            client.profile_payloads.append(data)
+            if profile_failure == 'create':
+                raise RuntimeError('create-failure')
+            make_container(profile_id, params['name'], data.get('StopTimeout'))
+            response = Mock()
+            response.json.return_value = {'Id': 'invalid' if profile_failure == 'malformed' else profile_id}
+            return response
+
+        client.api._post_json = Mock(side_effect=post)
         client.containers.create.side_effect = create
         output = io.StringIO()
         profile_boundary = RuntimeError("profile-boundary")
@@ -66,15 +100,44 @@ class ManagedWitnessDiagnosticTests(unittest.TestCase):
                     raise helper_failure
                 return {"PRIVATE_CONTENTS": "do-not-report"}
 
+            looked_up = False
+            client.profile_ids_before_lookup = None
+            def get(identity):
+                nonlocal looked_up
+                if identity == profile_id and not looked_up:
+                    looked_up = True
+                    client.profile_ids_before_lookup = json.loads((records / 'containers.json').read_text())
+                    if profile_failure == 'lookup':
+                        raise RuntimeError('lookup-failure')
+                return containers[identity]
+            client.containers.get.side_effect = get
+            write_text = Path.write_text
+            def write(path, value, *args, **kwargs):
+                if profile_failure == 'record' and path.name == 'containers.json' and profile_id in value:
+                    raise OSError('record-failure')
+                return write_text(path, value, *args, **kwargs)
+            def stop(identity):
+                container = containers[identity]
+                container.kill()
+                container.logs.return_value = b'handler-ready\nterm-received\n'
+            events = [
+                {'Action':'kill','timeNano':1_000_000_000,'Actor':{'Attributes':{'signal':'15'}}},
+                {'Action':'kill','timeNano':11_000_000_000,'Actor':{'Attributes':{'signal':'9'}}},
+                {'Action':'die','timeNano':11_000_000_001,'Actor':{'Attributes':{'exitCode':'137'}}},
+            ]
+            resolver = witness.resolve_profile
             with patch.dict(witness.os.environ, environment), \
                     patch.object(witness, "Path", side_effect=lambda p:
                                  records if p == "/witness" else result_root if p == "/witness-results" else Path(p)), \
                     patch.object(witness.os, "chown"), \
+                    patch.object(Path, 'write_text', write), \
                     patch("docker.from_env", return_value=client), \
                     patch("control_plane_kit_interpreters.docker.sdk.DockerSdkClient") as sdk, \
                     patch.object(witness, "completed_helper", side_effect=complete), \
-                    patch.object(witness, "resolve_profile", side_effect=profile_boundary) as profile, \
+                    patch.object(witness, "resolve_profile", side_effect=resolver if finish_profile else profile_boundary) as profile, \
+                    patch.object(witness, 'events_between', return_value=events), \
                     redirect_stdout(output):
+                sdk.return_value.stop_container.side_effect = stop
                 try:
                     if observation:
                         witness.controller(contents_only=True)
@@ -83,9 +146,11 @@ class ManagedWitnessDiagnosticTests(unittest.TestCase):
                 except Exception as caught:
                     failure = caught
                 stop_count = sdk.return_value.stop_container.call_count
+                client.stop_calls = sdk.return_value.stop_container.call_args_list
                 marker = records / "result-volume.empty.json"
                 client.empty_marker = json.loads(marker.read_text()) if marker.exists() else None
                 client.result_residue = [p.name for p in result_root.iterdir()]
+            client.api.close()
             return failure, [json.loads(line) for line in output.getvalue().splitlines()], \
                 client, containers, profile.call_count, profile_boundary, stop_count
 
@@ -146,10 +211,52 @@ class ManagedWitnessDiagnosticTests(unittest.TestCase):
         failure, records, _, containers, profiles, boundary, _ = self.run_contents_controller(observation=False)
         self.assertIs(failure, boundary)
         self.assertEqual(profiles, 1)
-        self.assertEqual(list(containers), ["contents-observation-test-contents",
-                                           "contents-observation-test-profile"])
+        self.assertEqual(list(containers), ["contents-observation-test-contents", 'b'*64])
         self.assertFalse(any(row.get("outcome") in ("contents_observed", "package_pass")
                              for row in records))
+
+    def test_controlled_fixture_serializes_explicit_ten_without_changing_other_fixtures_or_stop(self):
+        failure, records, client, _, _, _, stops = self.run_contents_controller(
+            observation=False, finish_profile=True)
+        self.assertIsNone(failure)
+        self.assertEqual(len(client.profile_payloads), 1)
+        payload = client.profile_payloads[0]
+        self.assertEqual(payload['StopTimeout'], 10)
+        self.assertEqual(payload['Image'], 'fixture-image')
+        self.assertEqual(payload['Entrypoint'][-1], 'controlled')
+        self.assertEqual(payload['Labels'][witness.OWNER], 'contents-observation-test')
+        self.assertEqual(payload['HostConfig']['NetworkMode'], 'none')
+        self.assertEqual(payload['HostConfig']['Binds'], ['/source/product/tests:/witness-tests:ro'])
+        self.assertEqual(payload['Healthcheck']['Test'], ['NONE'])
+        self.assertFalse(payload.get('User'))  # Inherit the verified image account and signal.
+        self.assertIsNone(payload.get('StopSignal'))
+        self.assertEqual([c.kwargs['entrypoint'][-1] if c.kwargs['name'].endswith('-fatal') else 'contents'
+                          for c in client.containers.create.call_args_list], ['contents','fatal'])
+        self.assertEqual(stops, 1)
+        self.assertEqual(client.stop_calls[0].args, ('b'*64,))
+        self.assertEqual(client.stop_calls[0].kwargs, {})
+        final = records[-1]
+        self.assertEqual(final['outcome'], 'package_pass')
+        self.assertEqual(final['configured_stop_timeout'], 10)
+        self.assertEqual(final['timeout_origin'], 'container')
+        self.assertIsNone(final['reviewed_engine_source'])
+
+    def test_controlled_create_failure_keeps_known_id_for_cleanup_without_retry(self):
+        for mode in ('lookup','record','create','malformed'):
+            with self.subTest(mode=mode):
+                failure, records, client, containers, _, _, stops = self.run_contents_controller(
+                    observation=False, profile_failure=mode)
+                self.assertIsNotNone(failure)
+                self.assertEqual(len(client.profile_payloads), 1)
+                self.assertEqual(stops, 0)
+                self.assertFalse(any(r.get('outcome') == 'package_pass' for r in records))
+                if mode == 'lookup':
+                    self.assertIn('b'*64, client.profile_ids_before_lookup)
+                if mode in ('lookup','record'):
+                    containers['b'*64].remove.assert_called_once_with(force=True)
+                elif mode == 'malformed':
+                    containers['b'*64].remove.assert_not_called()  # Unrecorded response is not adopted.
+                    self.assertFalse(any(c.args == ('invalid',) for c in client.containers.get.call_args_list))
 
     def test_result_metadata_refusal_identifies_first_predicate_before_read(self):
         valid = dict(st_mode=stat.S_IFREG | 0o400, st_uid=65532, st_size=2)
@@ -213,6 +320,7 @@ class ManagedWitnessDiagnosticTests(unittest.TestCase):
         cases = [(version, commit, None, source)
                  for version, source in sources for commit in (source, source[:7])]
         cases.append(("unreviewed", "unknown", 10, None))
+        cases.append(("29.7.2", "6a43e3d", 10, None))
         for version, commit, timeout, source in cases:
             with self.subTest(version=version, commit=commit, timeout=timeout):
                 container = SimpleNamespace(id="controlled", reload=Mock(), attrs={
@@ -232,6 +340,7 @@ class ManagedWitnessDiagnosticTests(unittest.TestCase):
 
     def test_stop_profile_refuses_unknown_mismatched_or_invalid_inputs(self):
         cases = [
+            ("29.7.2", "6a43e3d", None, "linux", "SIGTERM", "7.2.0", "stop_profile_unproved"),
             ("29.4.2", "6430e49", None, "linux", "SIGTERM", "7.2.0", "stop_profile_unproved"),
             ("29.4.3", "d329809", None, "linux", "SIGTERM", "7.2.0", "stop_profile_unproved"),
             ("29.4.2", "d32980", None, "linux", "SIGTERM", "7.2.0", "stop_profile_unproved"),

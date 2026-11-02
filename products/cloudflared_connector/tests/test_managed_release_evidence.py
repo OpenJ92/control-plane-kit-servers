@@ -343,6 +343,31 @@ class ManagedEvidenceTests(unittest.TestCase):
                         self.assertEqual(result['stop']['effective_timeout'],10)
                     self.assertNotIn(CANARY,json.dumps(result))
 
+    def test_configurable_engine_requires_container_profile_not_invented_fixed_default(self):
+        for configured in (10, None):
+            with self.subTest(configured=configured), tempfile.TemporaryDirectory() as d:
+                root = Path(d)
+                context = fixture(root)
+                log = root/'qualification/witness.log'
+                p,w = map(json.loads, log.read_text().splitlines())
+                p['engine_version'] = w['engine_version'] = '29.7.2'
+                p['engine_commit'] = w['engine_commit'] = '6a43e3d'
+                p['configured_timeout'] = w['configured_stop_timeout'] = configured
+                w['timeout_origin'] = 'container' if configured else 'engine_fixed_default'
+                w['reviewed_engine_source'] = None if configured else '6a43e3d5afddf4111da0f864bbc7cae5d7e95001'
+                log.write_text(json.dumps(p)+'\n'+json.dumps(w)+'\n')
+                q = json.loads((root/'qualification/qualification.json').read_text())
+                q['witness_log_sha256'] = digest(log)
+                qpath = put(root, 'qualification/qualification.json', q)
+                pub = json.loads((root/'publication.json').read_text())
+                pub['qualification_sha256'] = digest(qpath)
+                put(root, 'publication.json', pub)
+                result = self.implementation()['project'](root, ROOT, context, 0)
+                self.assertEqual(result['outcomes']['qualification'], 'pass' if configured else 'unknown')
+                if configured:
+                    self.assertEqual(result['stop']['timeout_origin'], 'container')
+                    self.assertIsNone(result['stop']['reviewed_engine_source'])
+
     def test_explicit_timeout_does_not_bypass_typed_profile_or_timing(self):
         project=self.implementation()['project']
         for defect in [None,'version','timeout','timing']:

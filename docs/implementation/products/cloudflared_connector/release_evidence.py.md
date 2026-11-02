@@ -92,3 +92,6 @@ qualification alone cannot replace empirical stop/fatal/cleanup evidence.
 as unverified cleanup and never establishes qualification. The known candidate
 retention and receipt hash remain visible. Final acceptance still requires
 verified cleanup; the outer owning shell finalizes only after volume absence.
+#225 controlled-profile targets round-trip29.7.2/explicit10 as container-origin
+with null reviewed source, while refusing the same version/null timeout presented
+as a fixed daemon default. This does not expand either fixed-default source map.

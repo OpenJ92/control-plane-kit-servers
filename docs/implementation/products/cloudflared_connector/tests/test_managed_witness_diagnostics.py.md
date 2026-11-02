@@ -89,3 +89,9 @@ owns focused execution; its result is separate from full image qualification.
 with no initial content copy and a closed empty-volume marker only after cleanup.
 Rejected-result residue and cleanup failure suppress that marker and success.
 The existing opened-file metadata, no-follow, bounds and stability targets remain.
+#225 explicitly configured controlled-fixture targets serialize the real selected
+SDK create request through a doubled HTTP transport. Only the controlled fixture
+receives StopTimeout10; contents/fatal paths and argument-free Interpreter stop
+remain. A known returned ID is recorded before lookup and retained for cleanup
+on lookup/record failure; malformed/ambiguous creation cannot be adopted/retried.
+Resolver targets retain29.7.2/null refusal and label explicit10 as container-origin.

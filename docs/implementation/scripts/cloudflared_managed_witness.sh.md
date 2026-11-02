@@ -9,11 +9,10 @@ Only that controller has the daemon socket. Image fixtures use network none,
 no host ports and no credentials/configuration. The same image supplies contents,
 controlled stop-profile and fatal-PID1 cases; none is positive live qualification.
 
-Unique ownership-label absence is checked before creation. Cleanup checks each
-preflight listing's command status before treating empty output as absence.
+Unique ownership-label absence is checked before creation. Preflight checks each
+listing's command status before treating empty output as absence.
 Failed preflight observations stop before build/run or volume acquisition.
-Cleanup checks each
-container's label and the recorded image/tag identity before deletion; no broad
+Cleanup checks each container's label and the recorded image/tag identity before deletion; no broad
 prune occurs. The controller verifies created IDs, while shell fallback covers
 its run label. Trap cleanup preserves failure if removal cannot be verified.
 The #225 result channel uses one fresh run-owned local volume shared by the
