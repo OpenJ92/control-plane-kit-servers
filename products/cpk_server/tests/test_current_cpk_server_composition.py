@@ -24,7 +24,7 @@ SERVER_SOURCE = (
 ASSEMBLY_SOURCE = SERVER_SOURCE.with_name("operations_application.py")
 CORE_COMMIT = "7afef43f3d3b981094e37dcb3062b6e3a4f3d674"
 OPERATIONS_COMMIT = "c31dafd81b4ebd3e70216d51cfa0f00e0cee74d7"
-INTERPRETERS_COMMIT = "ed5ca565faee2a4d36666ea6ce3dd42865c238b5"
+INTERPRETERS_COMMIT = "a26586e9f075c2f8f525c0b5bb2c4294e93c66cf"
 PUBLIC_DEPLOYMENT_COMMAND_ROUTES = frozenset(
     {
         "command.deployment.prepare",

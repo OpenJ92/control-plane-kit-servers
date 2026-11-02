@@ -380,8 +380,11 @@ class ManagedHealthConfigurationTests(unittest.TestCase):
         sample = DockerSdkConnectorSample(sample_time, sample_time, 0, json.dumps({
             "schema": "cpk.cloudflared.connection/v1", "outcome": "connected", "readyConnections": 1,
             "connectorId": "ae232234-79c8-48fe-9b67-123456789abc"}))
+        labels = _node_labels(request, material)
+        # FRESH selection is candidate metadata, not an allocation ownership claim.
+        labels["org.openj92.cpk.configuration.selection"] = "d" * 64
         facts = DockerSdkConnectorInspection("c" * 64, "/" + _container_name(request, "connector"),
-            "sha256:" + "a" * 64, tuple(_node_labels(request, material).items()), "b" * 64,
+            "sha256:" + "a" * 64, tuple(labels.items()), "b" * 64,
             _network_name(request, "docker"), DockerSdkSecretMount(delivery.target_path,
                 _secret_volume_name(request, "connector", delivery, owner_uid=10002)),
             (now - timedelta(seconds=60)).isoformat().replace("+00:00", "Z"), sample,

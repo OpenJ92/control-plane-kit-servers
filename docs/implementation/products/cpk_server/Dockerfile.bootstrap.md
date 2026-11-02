@@ -1,6 +1,20 @@
 Source: [products/cpk_server/Dockerfile.bootstrap](../../../../products/cpk_server/Dockerfile.bootstrap).
 Maintain this companion alongside its source and selected dependencies.
 
+## Current #367 connector-label correction
+
+Select supported Interpreters backport
+`a26586e9f075c2f8f525c0b5bb2c4294e93c66cf` from deployed `ed5ca565`,
+carrying Interpreters #239 while preserving the deployed provider-policy code.
+Core `7afef43`, Operations `c31dafd`, SDK `220f631` and Secrets `094423`
+remain selected. The acquisition driver force-installs the same corrected interpreter as the CPK recipe. Its existing dependency overrides, extras and bootstrap behavior remain unchanged.
+
+The backport passed its full owning Docker gate; Servers composition validation
+is pending. This source selection does not publish an image or upgrade the
+retained installation. Later adoption requires a same-producer CPK/Secrets pair,
+observed image-account admission and actual-pair qualification. Earlier dependency
+accounts below describe their named historical checkpoints.
+
 For #341, the unchanged coordinate generator renders this recipe's existing
 dependency subset from the accepted Core/Operations `4cc1716b`, Interpreters
 `bd08b931`, SDK `464df26c`, Secrets `067678fb` cohort. Full hashes live in
