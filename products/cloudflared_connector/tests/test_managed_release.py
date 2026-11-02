@@ -126,14 +126,15 @@ def done(value=None, code=0):
     if value is not None: print(value if isinstance(value,str) else json.dumps(value))
     sys.exit(code)
 if a[:2]==['volume','ls']:
-    done(s.get('volume','') if s.get('volume') or fail=='preexisting' else '')
+    done(s.get('volume','') or ('occupied' if fail=='preexisting' else ''))
 if a[:2]==['volume','create']:
-    s['volume']=a[-1]; s['run']=a[-1].removesuffix('-results'); done(a[-1])
+    s['volume']=a[-1]; s['run']=a[-1].removesuffix('-results')
+    done(a[-1], 53 if fail=='ambiguous_create' else 0)
 if a[:2]==['volume','inspect']:
     if not s.get('volume'): done(code=1)
     done([{'Name':s['volume'],'Driver':'local','Scope':'local','Options':None,
            'CreatedAt':'2026-11-02T00:00:00Z',
-           'Labels':{'org.openj92.cpk.test-run':s['run'],
+           'Labels':{'org.openj92.cpk.test-run':'other' if fail=='changed_owner' and s.get('exited') else s['run'],
                      'org.openj92.project':'control-plane-kit-servers'}}])
 if a[:2]==['volume','rm']:
     if fail=='volume_remove': done(code=1)
@@ -144,12 +145,14 @@ if a[:2]==['image','inspect']:
          'sha256:'+'d'*64 if image.startswith('control-plane-kit-') else image)
 if a[:2]==['image','ls']: done(s.get('image_tag',''))
 if a[:2]==['image','rm']: s.pop('image_tag',None); done()
-if a[:2]==['container','ls'] or a[:1]==['ps']: done()
+if a[:2]==['container','ls'] or a[:1]==['ps']:
+    done('foreign-reference' if fail=='active_reference' and any(x.startswith('volume=') for x in a) else '')
 if a[:1]==['build']:
     pathlib.Path(a[a.index('--iidfile')+1]).write_text('sha256:'+'d'*64)
     s['image_tag']=a[a.index('-t')+1]
     s['image_run']=a[a.index('--label')+1].split('=',1)[1]; done()
 if a[:1]==['run']:
+    s['exited']=True
     env={a[i+1].split('=',1)[0]:a[i+1].split('=',1)[1] for i,x in enumerate(a[:-1]) if x=='-e'}
     mounts=[dict(p.split('=',1) for p in a[i+1].split(',') if '=' in p)
             for i,x in enumerate(a[:-1]) if x=='--mount']
@@ -218,13 +221,24 @@ done(code=90)
                     self.assertEqual(qualification['status'], 'pass')
 
     def test_result_volume_failure_cannot_qualify_or_erase_unknown_result(self):
-        for failure in ('volume_remove','residue','mismatched_receipt','before_promotion'):
+        for failure in ('volume_remove','residue','mismatched_receipt','before_promotion',
+                        'changed_owner','active_reference'):
             with self.subTest(failure=failure):
                 result, calls, q = self.run_lane('candidate', failure)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotEqual(q['cleanup'], 'verified')
-                if failure in ('residue','mismatched_receipt'):
+                if failure in ('residue','mismatched_receipt','changed_owner','active_reference'):
                     self.assertFalse(any(c[:2] == ['volume','rm'] for c in calls))
+
+    def test_preexisting_and_uncertain_volume_acquisition_never_runs_or_deletes(self):
+        for lane in ('normal','contents','candidate'):
+            for failure in ('preexisting','ambiguous_create'):
+                with self.subTest(lane=lane, failure=failure):
+                    result, calls, _ = self.run_lane(lane, failure)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(any(c[0] == 'run' or c[:2] == ['volume','rm'] for c in calls))
+                    self.assertEqual(sum(c[:2] == ['volume','create'] for c in calls),
+                                     1 if failure == 'ambiguous_create' else 0)
 
     def test_cleanup_finalization_never_promotes_witness_failure_or_repeats_removal(self):
         for failure in ('witness','after_promotion'):
@@ -329,6 +343,9 @@ class ManagedCandidateOwnershipTests(unittest.TestCase):
             with self.subTest(failed=failed, close_failed=close_failed), tempfile.TemporaryDirectory() as directory:
                 evidence = Path(directory)
                 (evidence/'fixtures').mkdir()
+                (evidence/'fixtures/result-volume.empty.json').write_text(json.dumps({
+                    'schema':'cpk.managed-result-empty.v1','run':'owned-test',
+                    'volume':'owned-test-results','empty':True}))
                 record = dict(schema='cpk.cloudflared-controller-acquisition.v1',source_commit=source,
                               source_tree=tree,image_id=controller,build_exit=0,build_log_sha256='e'*64,
                               dockerfile_sha256=policy['digest_file'](ROOT/'Dockerfile.test'))
@@ -342,7 +359,7 @@ class ManagedCandidateOwnershipTests(unittest.TestCase):
                     client.close.side_effect = RuntimeError('close failed')
                 env = dict(CPK_MANAGED_IMAGE=candidate,CPK_MANAGED_SOURCE=source,
                            CPK_MANAGED_TEST_RUN='owned-test',CPK_RELEASE_CONTROLLER=controller,
-                           CPK_RELEASE_TREE=tree)
+                           CPK_RELEASE_TREE=tree,CPK_MANAGED_RESULT_VOLUME='owned-test-results')
                 with patch.dict(os.environ,env), patch('docker.from_env',return_value=client), \
                      patch.object(witness,'verify_image'), patch.object(witness,'controller',
                          side_effect=RuntimeError('private detail must not escape') if failed else None):
@@ -353,9 +370,9 @@ class ManagedCandidateOwnershipTests(unittest.TestCase):
                         policy['qualify'](ROOT,evidence)
                 final = json.loads((evidence/'qualification.json').read_text())
                 self.assertEqual(final['status'], 'fail' if failed else 'pass')
-                self.assertEqual(final['cleanup'], 'unverified' if close_failed else 'verified')
+                self.assertEqual(final['cleanup'], 'unverified' if close_failed else 'pending_volume')
                 self.assertTrue(final['candidate_retained'])
-                self.assertEqual((evidence/'fixtures').exists(), close_failed)
+                self.assertTrue((evidence/'fixtures').exists())  # Outer owner finishes transport cleanup.
                 self.assertNotIn('private detail', (evidence/'qualification.json').read_text())
                 client.images.remove.assert_not_called()
                 client.images.build.assert_not_called()

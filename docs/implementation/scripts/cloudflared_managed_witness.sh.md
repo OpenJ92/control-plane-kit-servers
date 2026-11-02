@@ -13,10 +13,14 @@ Unique ownership-label absence is checked before creation. Cleanup checks each
 container's label and the recorded image/tag identity before deletion; no broad
 prune occurs. The controller verifies created IDs, while shell fallback covers
 its run label. Trap cleanup preserves failure if removal cannot be verified.
-After containers are gone, only named result files are unlinked and the results
-directory must be empty. Unexpected files fail cleanup. Obsolete synthetic
-control/token/request file cleanup was removed together with their producers;
-only containers.json and image remain as named top-level records.
+The #225 result channel uses one fresh run-owned local volume shared by the
+controller and contents helper, with no initial image-content copy. Host records
+remain separate. After controller exit, volume cleanup requires recorded
+association, an empty-volume marker and zero references. Rejected result files
+retain the volume and make cleanup incomplete. Only fixed host records are then
+removed; unexpected host files make directory removal fail. Normal and contents
+paths each perform one EXIT cleanup attempt, including on failure; no cleanup
+retry follows a failed explicit cleanup.
 
 The final marker explicitly says package stage passed and live qualification
 pending, after container/image/fixture cleanup. Controller package_pass covers

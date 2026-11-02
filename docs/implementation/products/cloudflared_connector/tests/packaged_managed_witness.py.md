@@ -1,5 +1,16 @@
 # Managed cloudflared package witness
 
+#225's result transport now mounts the same admitted daemon-local scratch volume
+at /witness-results in controller and helper. The controller verifies recorded
+volume/run/creation association and its actual mount, then initializes only the
+empty directory as root:65532/mode0770. Helper identity, exclusive file creation,
+mode0400 and the opened-file reader's exact UID65532/bounds/stability laws remain
+unchanged. No produced file is normalized. After helper cleanup and client close,
+an empty-root check permits a closed run/volume marker for outer cleanup; rejected
+or unknown results suppress that marker and remain on the volume. The mounted
+root is never removed from inside the controller. A marker can accompany a known
+primary failure; it proves empty transport and helper cleanup, not witness success.
+
 The explicit #225 contents observation invokes `controller(contents_only=True)`.
 It runs the same image verification and contents helper/read boundary, sets only
 a closed `contents_observed` result, and skips all profile/fatal creation and

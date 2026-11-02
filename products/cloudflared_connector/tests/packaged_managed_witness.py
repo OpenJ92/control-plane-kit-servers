@@ -161,6 +161,34 @@ def completed_helper(mode, exit_code, local_path, deadline):
     require(False, "package_inspection_failed")
 
 
+def prepare_result_volume(client, records, results, run, volume):
+    """Verify the admitted scratch mount before initializing its empty root."""
+    require(volume == run + "-results", "result_volume_association")
+    record_path = records / "result-volume.json"
+    require(record_path.stat().st_size <= 4096, "result_volume_association")
+    record = json.loads(record_path.read_text())
+    require(record.get("schema") == "cpk.managed-result-volume.v1"
+            and record.get("run") == run and record.get("volume") == volume
+            and record.get("acquired") is True, "result_volume_association")
+    observed = client.volumes.get(volume).attrs
+    require(observed.get("Name") == volume and observed.get("Driver") == "local"
+            and observed.get("Scope") == "local" and observed.get("Options") in (None, {})
+            and isinstance(record.get("created_at"), str) and bool(record["created_at"])
+            and observed.get("CreatedAt") == record["created_at"]
+            and observed.get("Labels", {}).get(OWNER) == run
+            and observed.get("Labels", {}).get("org.openj92.project") == "control-plane-kit-servers",
+            "result_volume_association")
+    mounts = client.api.inspect_container(os.environ["HOSTNAME"])["Mounts"]
+    selected = [mount for mount in mounts if mount.get("Destination") == "/witness-results"]
+    require(len(selected) == 1 and selected[0].get("Type") == "volume"
+            and selected[0].get("Name") == volume and selected[0].get("RW") is True,
+            "result_volume_mount")
+    require(not any(results.iterdir()), "result_volume_not_empty")
+    # Initialize only this fresh empty directory, never a produced result file.
+    results.chmod(0o770)
+    os.chown(results, 0, 65532)
+
+
 def image_contents():
     require(os.getuid() == 65532 and os.getgid() == 65532, "numeric_uid")
     from importlib import metadata
@@ -302,6 +330,7 @@ def controller(*, contents_only=False):
     cleanup_context = None
     client = None
     created = []
+    volume_prepared = False
 
     def create(name, *, deadline=None, **kwargs):
         phase = context["phase"]
@@ -344,10 +373,10 @@ def controller(*, contents_only=False):
         from control_plane_kit_interpreters.docker.sdk import DockerSdkClient
         mark_controller(context, "setup", "inputs")
         records = Path("/witness")
-        results = records / "results"
+        results = Path("/witness-results")
         run = os.environ["CPK_MANAGED_TEST_RUN"]
         image_id = os.environ["CPK_MANAGED_IMAGE"]
-        host_records = os.environ["CPK_MANAGED_HOST_RECORDS"]
+        volume = os.environ["CPK_MANAGED_RESULT_VOLUME"]
         host_tests = os.environ["CPK_MANAGED_HOST_TESTS"]
         mark_controller(context, "setup", "connect")
         client = docker.from_env(timeout=5)
@@ -357,14 +386,10 @@ def controller(*, contents_only=False):
         image = client.images.get(image_id)
         verify_image(image)
         mark_controller(context, "setup", "prepare_files")
-        results.mkdir(mode=0o770)
-        results.chmod(0o770)
-        # The host run owner can clean up failed observations; the numeric
-        # product group can write only this fixture directory.
-        os.chown(results, records.stat().st_uid, 65532)
+        prepare_result_volume(client, records, results, run, volume)
+        volume_prepared = True
         mounts = {
             host_tests: {"bind": "/witness-tests", "mode": "ro"},
-            host_records + "/results": {"bind": "/witness-results", "mode": "rw"},
             str(Path(host_tests).parent / "licenses/cloudflared-manifest.json"):
                 {"bind": "/witness/notice-manifest.json", "mode": "ro"},
         }
@@ -378,7 +403,9 @@ def controller(*, contents_only=False):
                 run + "-contents", deadline=deadline,
                 entrypoint=["python", "/witness-tests/packaged_managed_witness.py",
                             "contents", "/witness-results/" + name],
-                volumes=mounts, healthcheck={"test": ["NONE"]})
+                volumes=mounts, mounts=[docker.types.Mount(
+                    target="/witness-results", source=volume, type="volume", no_copy=True)],
+                healthcheck={"test": ["NONE"]})
             require(time.monotonic() < deadline, "helper_deadline")
             mark_controller(context, "artifact", "start", "contents")
             inspection.start()
@@ -503,6 +530,15 @@ def controller(*, contents_only=False):
             except Exception:
                 if cleanup_context is None:
                     cleanup_context = dict(context)
+        if volume_prepared and cleanup_context is None:
+            try:
+                mark_controller(context, "cleanup", "prepare_files")
+                require(not any(results.iterdir()), "result_volume_not_empty")
+                with (records / "result-volume.empty.json").open("x") as marker:
+                    json.dump({"schema": "cpk.managed-result-empty.v1", "run": run,
+                               "volume": volume, "empty": True}, marker)
+            except Exception:
+                cleanup_context = dict(context)
         if cleanup_context is not None:
             emit_controller_failure("cleanup", cleanup_context)
     if primary_context is not None and not primary_reported:

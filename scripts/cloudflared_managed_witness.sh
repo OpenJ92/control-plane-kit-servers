@@ -1,6 +1,7 @@
 #!/bin/sh
 # Owned test.sh stage; no standalone release or alternate test harness.
 set -eu
+RESULT_VOLUME_SCRIPT="$(dirname -- "$0")/cloudflared_result_volume.sh"
 
 # Explicit selected-image mode borrows the image and retains its evidence.
 OBSERVATION=''
@@ -22,6 +23,7 @@ RECORDS="$(mktemp -d)"
 RUN="cpk-managed-$(basename "$RECORDS")"
 TAG="control-plane-kit-cloudflared-managed:$RUN"
 IMAGE_ID=""
+VOLUME_ATTEMPTED=0
 
 cleanup() {
   failed=0
@@ -34,6 +36,9 @@ cleanup() {
     observed="$(docker container ls -aq --no-trunc --filter "id=$identity")" || return 1
     [ -z "$observed" ] || failed=1
   done
+  if [ "$VOLUME_ATTEMPTED" = 1 ]; then
+    sh "$RESULT_VOLUME_SCRIPT" remove "$RUN" "$RECORDS" || failed=1
+  fi
   if [ -n "$IMAGE_ID" ]; then
     observed="$(docker image inspect --format '{{.Id}}' "$TAG")" || return 1
     [ "$observed" = "$IMAGE_ID" ] || return 1
@@ -49,11 +54,8 @@ cleanup() {
     [ -z "$observed" ] || return 1
   fi
   if [ "$failed" = 0 ]; then
-    if [ -d "$RECORDS/results" ]; then
-      rm -f "$RECORDS/results"/cpk-witness-*.json
-      rmdir "$RECORDS/results" || return 1
-    fi
-    rm -f "$RECORDS/containers.json" "$RECORDS/image" || return 1
+    rm -f "$RECORDS/result-volume.json" "$RECORDS/result-volume.empty.json" \
+      "$RECORDS/containers.json" "$RECORDS/image" || return 1
     rmdir "$RECORDS" || return 1
   fi
   return "$failed"
@@ -71,6 +73,8 @@ finish() {
     if [ "$result" = 0 ]; then outcome=contents_observed; fi
     printf '{"stage":"managed_cloudflared_contents_observation","outcome":"%s","cleanup":"%s","exit_code":%s}\n' \
       "$outcome" "$cleanup_outcome" "$result" > "$OBSERVATION/result.json" || result=1
+  elif [ "$result" = 0 ]; then
+    echo 'managed cloudflared package stage passed with owned container/image/fixture cleanup; live qualification pending'
   fi
   exit "$result"
 }
@@ -85,22 +89,25 @@ if [ -n "$OBSERVATION" ]; then
   printf '%s\n' "$RUN" > "$OBSERVATION/run"
   printf '%s\n' "$IMAGE_ID" > "$OBSERVATION/fixture-image.id"
 fi
+VOLUME_ATTEMPTED=1
+sh "$RESULT_VOLUME_SCRIPT" acquire "$RUN" "$RECORDS"
+if [ -n "$OBSERVATION" ]; then
+  cp "$RECORDS/result-volume.json" "$OBSERVATION/result-volume.json"
+fi
 docker run --rm --name "$RUN-controller" --network none \
   --label "org.openj92.cpk.test-run=$RUN" \
   --label org.openj92.project=control-plane-kit-servers \
   --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
   --mount "type=bind,source=$PWD,target=/source,readonly" \
   --mount "type=bind,source=$RECORDS,target=/witness" \
+  --mount "type=volume,source=$RUN-results,target=/witness-results,volume-nocopy" \
   -e DOCKER_HOST=unix:///var/run/docker.sock \
   -e PYTHONPATH=/source/products/cloudflared_connector/tests \
   -e "CPK_MANAGED_TEST_RUN=$RUN" \
   -e "CPK_MANAGED_IMAGE=$IMAGE_ID" \
-  -e "CPK_MANAGED_HOST_RECORDS=$RECORDS" \
+  -e "CPK_MANAGED_RESULT_VOLUME=$RUN-results" \
   -e "CPK_MANAGED_HOST_TESTS=$PWD/products/cloudflared_connector/tests" \
   "${CPK_SERVERS_TEST_IMAGE:-control-plane-kit-servers-test:local}" \
   python /source/products/cloudflared_connector/tests/packaged_managed_witness.py "$CONTROLLER_MODE"
 
-if [ -n "$OBSERVATION" ]; then exit 0; fi
-cleanup
-trap - EXIT INT TERM
-echo 'managed cloudflared package stage passed with owned container/image/fixture cleanup; live qualification pending'
+exit 0  # One EXIT cleanup attempt for both normal and observation paths.

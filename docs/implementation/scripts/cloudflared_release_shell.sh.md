@@ -1,5 +1,18 @@
 # Managed release owner entries
 
+All actual managed result paths now use the product-owned local volume helper.
+The candidate controller writes a provisional cleanup=pending_volume receipt,
+which cannot satisfy qualification. After controller exit, the shell validates
+the exact admitted run/source/tree/controller/candidate association, verifies
+candidate retention, removes the recorded empty unreferenced volume and fixed
+scratch records, then atomically finalizes only cleanup=verified. Witness status
+and diagnostics are preserved, including failure. Missing/mismatched receipts,
+residue, failed removal or pre-rename interruption remain nonqualified. After a
+completed rename, verified cleanup facts remain true despite caller interruption;
+no effect is replayed. Acquisition and empty-volume records remain as private
+supporting evidence. The finalizer owns this fixed invocation path, not an
+arbitrary user-selected receipt. Publication still requires final pass/verified.
+
 `--managed-connector-contents` is a separate diagnostic route. It validates the
 same borrowed controller receipt/image association as focused tests, requires
 clean current source, and records its commit/tree plus recipe/witness hashes.
@@ -8,7 +21,7 @@ private output, invocation exit and a closed cleanup/result record. This route
 builds one current-source ephemeral managed fixture and observes only its helper
 result channel. It does not claim current-source controller provenance or relax
 candidate admission, and never publishes or qualifies an artifact. Default/full
-candidate routes are unchanged. A diagnostic failure remains nonzero.
+candidate admission remains unchanged. A diagnostic failure remains nonzero.
 
 The owning test.sh routes controller acquisition and focused release tests before broad setup. Acquisition builds only Dockerfile.test from clean source and retains source/tree/recipe/image/build receipts. Focused tests require an exact cached controller plus explicit receipt, mount current source read-only, receive no daemon socket, and cannot pull/build implicitly. They retain failure evidence and prove release behavior only, never managed OCI/live acceptance.
 

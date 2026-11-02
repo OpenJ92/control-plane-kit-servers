@@ -276,7 +276,7 @@ def project(receipts, source_root, context, producer_exit):
                 q['source_tree']==source['tree'] and q['recipe_sha256']==source['managed_recipe_sha256'] and q['witness_sha256']==source['witness_sha256'])
         require(c is not None and candidate_id is not None and q['candidate_id']==candidate_id and q['controller_id']==c[0]['image_id'])
         require(read(root/'qualification/controller.json')==c[1] and q['controller_receipt_sha256']==sha(c[1]))
-        text(q['run']);require(q['status'] in ('running','pass','fail') and q['cleanup'] in ('verified','unverified') and type(q['candidate_retained']) is bool)
+        text(q['run']);require(q['status'] in ('running','pass','fail') and q['cleanup'] in ('verified','unverified','pending_volume') and type(q['candidate_retained']) is bool)
         if 'created_containers' in q:
             require(type(q['created_containers']) is list and len(q['created_containers'])<=100)
             for item in q['created_containers']:hexadecimal(item,64)
@@ -284,7 +284,8 @@ def project(receipts, source_root, context, producer_exit):
         if 'platform' in q:require(q['platform']=='linux/amd64')
         if 'witness_log_sha256' in q:hexadecimal(q['witness_log_sha256'],64)
         result['qualification_receipt_sha256']=sha(raw)
-        result['outcomes']['cleanup']=q['cleanup'];result['outcomes']['candidate_retained_before_runner_disposal']=q['candidate_retained']
+        result['outcomes']['cleanup']='verified' if q['cleanup']=='verified' else 'unverified'
+        result['outcomes']['candidate_retained_before_runner_disposal']=q['candidate_retained']
         if q['status']=='fail':result['outcomes']['qualification']='fail'
         return q,raw
     q=attempt(qualification)

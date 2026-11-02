@@ -119,26 +119,51 @@ if [ "$MODE" = --managed-connector-candidate ]; then
   RUN="cpk-managed-release-$(basename "$RUN_RECORD")"
   printf '%s\n' "$RUN" > "$RUN_RECORD"
   [ -z "$(docker container ls -aq --filter "label=org.openj92.cpk.test-run=$RUN")" ] || exit 1
+  sh scripts/cloudflared_result_volume.sh acquire "$RUN" "$RECEIPTS/fixtures"
+  cp "$RECEIPTS/fixtures/result-volume.json" "$RECEIPTS/result-volume.json"
   set +e
   docker run --pull never --rm --network none \
     --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
     --mount "type=bind,source=$ROOT,target=/source,readonly" \
     --mount "type=bind,source=$RECEIPTS,target=/evidence" \
     --mount "type=bind,source=$RECEIPTS/fixtures,target=/witness" \
+    --mount "type=volume,source=$RUN-results,target=/witness-results,volume-nocopy" \
     --workdir /source -e PYTHONDONTWRITEBYTECODE=1 -e DOCKER_HOST=unix:///var/run/docker.sock \
     -e "CPK_MANAGED_IMAGE=$CANDIDATE" -e "CPK_MANAGED_SOURCE=$SOURCE" \
     -e "CPK_RELEASE_CONTROLLER=$CONTROLLER" -e "CPK_RELEASE_TREE=$TREE" \
-    -e "CPK_MANAGED_TEST_RUN=$RUN" -e "CPK_MANAGED_HOST_RECORDS=$RECEIPTS/fixtures" \
+    -e "CPK_MANAGED_TEST_RUN=$RUN" -e "CPK_MANAGED_RESULT_VOLUME=$RUN-results" \
     -e "CPK_MANAGED_HOST_TESTS=$ROOT/products/cloudflared_connector/tests" \
     "$CONTROLLER" python products/cloudflared_connector/release.py qualify \
     > "$RECEIPTS/controller.log" 2>&1
   RESULT=$?
   set -e
   printf '%s\n' "$RESULT" > "$RECEIPTS/controller.exit"
-  # A killed controller leaves retained evidence; never claim cleanup on its behalf.
-  [ "$RESULT" = 0 ] || exit "$RESULT"
+  # A killed controller or rejected result leaves unqualified retained evidence.
+  # Only this admitted run's provisional receipt can be finalized, never an
+  # arbitrary receipt path or an inner failure promoted to witness success.
+  QUALIFICATION="$RECEIPTS/qualification.json"
+  [ -f "$QUALIFICATION" ] && [ ! -L "$QUALIFICATION" ] && \
+    [ "$(wc -c < "$QUALIFICATION")" -le 65536 ] || exit 1
+  jq -e --arg source "$SOURCE" --arg tree "$TREE" --arg candidate "$CANDIDATE" \
+    --arg controller "$CONTROLLER" --arg run "$RUN" '
+    .schema == "cpk.cloudflared-managed-qualification.v1" and .source_commit == $source and
+    .source_tree == $tree and .candidate_id == $candidate and .controller_id == $controller and
+    .run == $run and .cleanup == "pending_volume" and .candidate_retained == true and
+    (.status == "pass" or .status == "fail")
+  ' "$QUALIFICATION" >/dev/null || exit 1
   [ "$(docker image inspect "$CANDIDATE" --format '{{.Id}}')" = "$CANDIDATE" ] || exit 1
   [ -z "$(docker container ls -aq --filter "label=org.openj92.cpk.test-run=$RUN")" ] || exit 1
+  sh scripts/cloudflared_result_volume.sh remove "$RUN" "$RECEIPTS/fixtures"
+  cp "$RECEIPTS/fixtures/result-volume.empty.json" "$RECEIPTS/result-volume.empty.json"
+  rm "$RECEIPTS/fixtures/result-volume.json" "$RECEIPTS/fixtures/result-volume.empty.json"
+  rm -f "$RECEIPTS/fixtures/containers.json"
+  rmdir "$RECEIPTS/fixtures"
+  # No external effect is retried if writing/renaming this final record fails.
+  # After a completed rename the verified facts remain true even if interrupted.
+  jq '.cleanup = "verified"' "$QUALIFICATION" > "$QUALIFICATION.tmp"
+  mv "$QUALIFICATION.tmp" "$QUALIFICATION"
+  [ "$RESULT" = 0 ] || exit "$RESULT"
+  jq -e '.status == "pass"' "$QUALIFICATION" >/dev/null || exit 1
   exit 0
 fi
 git rev-parse HEAD > "$RECEIPTS/source.commit"
