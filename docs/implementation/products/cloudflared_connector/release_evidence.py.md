@@ -88,3 +88,7 @@ Its separate producer fixture remains28.0.4. This tests evidence consistency;
 it does not execute a publication or widen release.py's producer/store profile.
 The actual Engine/SDK trace is recorded on PR363 comment6561584917. Source
 qualification alone cannot replace empirical stop/fatal/cleanup evidence.
+#225 provisional cleanup target: pending_volume must remain valid bounded evidence
+but project as unverified cleanup and never establish qualification. The known
+candidate-retention fact and receipt hash remain visible rather than being lost
+to unrecognized-receipt handling. This is a target, not implementation evidence.

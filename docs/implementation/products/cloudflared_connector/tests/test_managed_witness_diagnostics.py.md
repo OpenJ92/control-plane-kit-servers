@@ -85,3 +85,7 @@ six-character prefix and a mismatched full hash. Existing explicit timeout,
 signal/platform/SDK and timing laws remain. These are resolver tests with doubles,
 not measured stop behavior. The maintained managed-connector-release-tests route
 owns focused execution; its result is separate from full image qualification.
+#225 result-transport targets require the helper's exact owned named-volume mount
+with no initial content copy and a closed empty-volume marker only after cleanup.
+Rejected-result residue and cleanup failure suppress that marker and success.
+The existing opened-file metadata, no-follow, bounds and stability targets remain.

@@ -131,6 +131,20 @@ class ManagedEvidenceTests(unittest.TestCase):
                 self.assertEqual(value['outcomes']['cleanup'],'verified')
                 self.assertEqual(value['outcomes']['projection'],'incomplete')
 
+    def test_pending_volume_is_valid_unverified_evidence_never_qualification(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            context = fixture(root)
+            path = root / 'qualification/qualification.json'
+            receipt = json.loads(path.read_text())
+            receipt['cleanup'] = 'pending_volume'
+            path.write_text(json.dumps(receipt))
+            value = self.implementation()['project'](root, ROOT, context, 1)
+            self.assertEqual(value['outcomes']['cleanup'], 'unverified')
+            self.assertTrue(value['outcomes']['candidate_retained_before_runner_disposal'])
+            self.assertEqual(value['qualification_receipt_sha256'], digest(path))
+            self.assertNotEqual(value['outcomes']['qualification'], 'pass')
+
     def test_contradictory_receipts_cannot_establish_publication(self):
         project=self.implementation()['project']
         for name,key,bad in [('publication.json','candidate_id',CONTROLLER),

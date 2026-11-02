@@ -15,11 +15,18 @@ import packaged_managed_witness as witness
 
 class ManagedWitnessDiagnosticTests(unittest.TestCase):
     def run_contents_controller(self, *, observation=True, helper_failure=None,
-                                cleanup_failure=None):
+                                cleanup_failure=None, residue=False):
         run = "contents-observation-test"
         containers = {}
         client = Mock()
-        client.api = SimpleNamespace(timeout=5)
+        volume = run + "-results"
+        client.api = SimpleNamespace(timeout=5, inspect_container=Mock(return_value={
+            "Mounts": [{"Type": "volume", "Name": volume,
+                        "Destination": "/witness-results", "RW": True}]}))
+        volume_attrs = {"Name": volume, "Driver": "local", "Scope": "local", "Options": None,
+                        "CreatedAt": "2026-11-02T00:00:00Z", "Labels": {
+                            witness.OWNER: run, "org.openj92.project": "control-plane-kit-servers"}}
+        client.volumes.get.return_value.attrs = volume_attrs
         client.containers.list.return_value = []
         client.containers.get.side_effect = containers.__getitem__
         client.images.get.return_value = SimpleNamespace(attrs={"Config": {
@@ -42,16 +49,30 @@ class ManagedWitnessDiagnosticTests(unittest.TestCase):
         failure = None
         with tempfile.TemporaryDirectory() as directory:
             records = Path(directory)
+            result_root = records / "volume-mount"
+            result_root.mkdir()
+            (records / "result-volume.json").write_text(json.dumps({
+                "schema": "cpk.managed-result-volume.v1", "run": run, "volume": volume,
+                "acquired": True, "created_at": volume_attrs["CreatedAt"]}))
             environment = {"CPK_MANAGED_TEST_RUN": run, "CPK_MANAGED_IMAGE": "fixture-image",
                            "CPK_MANAGED_HOST_RECORDS": directory,
+                           "CPK_MANAGED_RESULT_VOLUME": volume, "HOSTNAME": "controller",
                            "CPK_MANAGED_HOST_TESTS": "/source/product/tests"}
+
+            def complete(*_args):
+                if residue:
+                    (result_root / "untrusted-result").write_text("do-not-read-or-remove")
+                if helper_failure:
+                    raise helper_failure
+                return {"PRIVATE_CONTENTS": "do-not-report"}
+
             with patch.dict(witness.os.environ, environment), \
-                    patch.object(witness, "Path", side_effect=lambda p: records if p == "/witness" else Path(p)), \
+                    patch.object(witness, "Path", side_effect=lambda p:
+                                 records if p == "/witness" else result_root if p == "/witness-results" else Path(p)), \
                     patch.object(witness.os, "chown"), \
                     patch("docker.from_env", return_value=client), \
                     patch("control_plane_kit_interpreters.docker.sdk.DockerSdkClient") as sdk, \
-                    patch.object(witness, "completed_helper", return_value={"PRIVATE_CONTENTS": "do-not-report"},
-                                 side_effect=helper_failure), \
+                    patch.object(witness, "completed_helper", side_effect=complete), \
                     patch.object(witness, "resolve_profile", side_effect=profile_boundary) as profile, \
                     redirect_stdout(output):
                 try:
@@ -62,8 +83,33 @@ class ManagedWitnessDiagnosticTests(unittest.TestCase):
                 except Exception as caught:
                     failure = caught
                 stop_count = sdk.return_value.stop_container.call_count
+                marker = records / "result-volume.empty.json"
+                client.empty_marker = json.loads(marker.read_text()) if marker.exists() else None
+                client.result_residue = [p.name for p in result_root.iterdir()]
             return failure, [json.loads(line) for line in output.getvalue().splitlines()], \
                 client, containers, profile.call_count, profile_boundary, stop_count
+
+    def test_result_transport_shares_owned_volume_and_attests_empty_only_after_cleanup(self):
+        failure, _, client, _, _, _, _ = self.run_contents_controller()
+        self.assertIsNone(failure)
+        create = client.containers.create.call_args.kwargs
+        result_mount = next(m for m in create.get('mounts', []) if m['Target'] == '/witness-results')
+        self.assertEqual(result_mount['Type'], 'volume')
+        self.assertEqual(result_mount['Source'], 'contents-observation-test-results')
+        self.assertTrue(result_mount['VolumeOptions']['NoCopy'])
+        self.assertEqual(client.empty_marker, {
+            'schema': 'cpk.managed-result-empty.v1', 'run': 'contents-observation-test',
+            'volume': 'contents-observation-test-results', 'empty': True})
+        for helper_failure, cleanup_failure, residue in (
+                (witness.QualificationFailure('helper_result_owner'), None, True),
+                (None, RuntimeError('cleanup failed'), False)):
+            with self.subTest(residue=residue):
+                failure, _, client, _, _, _, _ = self.run_contents_controller(
+                    helper_failure=helper_failure, cleanup_failure=cleanup_failure, residue=residue)
+                self.assertIsNotNone(failure)
+                self.assertIsNone(client.empty_marker)
+                if residue:
+                    self.assertEqual(client.result_residue, ['untrusted-result'])
 
     def test_contents_observation_stops_before_profile_and_reports_after_cleanup(self):
         failure, records, client, containers, profiles, _, stops = self.run_contents_controller()
