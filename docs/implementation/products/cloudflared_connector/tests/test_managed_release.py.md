@@ -7,6 +7,9 @@ Removal failure, retained results, mismatched provisional receipt and interrupte
 promotion cannot qualify. Cleanup verification preserves a failed witness outcome;
 interruption after atomic promotion does not undo already verified cleanup facts.
 These are orchestration targets, not actual Docker volume evidence.
+The normal-shell target checks a separate closed cleanup record for successful
+and failed invocations, preserves the primary nonzero exit when cleanup also
+fails, and requires a single volume-removal attempt.
 Preflight negatives also return empty listings or expected-looking image metadata
 with nonzero command status: every affected owner must stop before build, run or
 volume acquisition/removal. This tests admission separately from later finalization.

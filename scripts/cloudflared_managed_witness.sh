@@ -67,6 +67,7 @@ PREFLIGHT_IMAGES="$(docker image ls -q --filter "reference=$TAG")" || exit 1
 [ -z "$PREFLIGHT_IMAGES" ]
 finish() {
   result=$?
+  primary_exit=$result
   trap - EXIT INT TERM
   cleanup_outcome=verified
   if ! cleanup; then cleanup_outcome=incomplete; result=1; fi
@@ -75,8 +76,16 @@ finish() {
     if [ "$result" = 0 ]; then outcome=contents_observed; fi
     printf '{"stage":"managed_cloudflared_contents_observation","outcome":"%s","cleanup":"%s","exit_code":%s}\n' \
       "$outcome" "$cleanup_outcome" "$result" > "$OBSERVATION/result.json" || result=1
-  elif [ "$result" = 0 ]; then
-    echo 'managed cloudflared package stage passed with owned container/image/fixture cleanup; live qualification pending'
+  else
+    # Cleanup has its own disposition; retain a failing invocation's exit code.
+    if [ "$primary_exit" != 0 ]; then result=$primary_exit; fi
+    if ! printf '{"stage":"managed_cloudflared_cleanup","cleanup":"%s","primary_exit":%s,"exit_code":%s}\n' \
+      "$cleanup_outcome" "$primary_exit" "$result"; then
+      if [ "$result" = 0 ]; then result=1; fi
+    fi
+    if [ "$result" = 0 ]; then
+      echo 'managed cloudflared package stage passed with owned container/image/fixture cleanup; live qualification pending'
+    fi
   fi
   exit "$result"
 }

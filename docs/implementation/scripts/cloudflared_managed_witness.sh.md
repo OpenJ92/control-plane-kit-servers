@@ -24,6 +24,13 @@ removed; unexpected host files make directory removal fail. Normal and contents
 paths each perform one EXIT cleanup attempt, including on failure; no cleanup
 retry follows a failed explicit cleanup.
 
+Normal mode emits a closed cleanup record after that single attempt, including
+verified/incomplete disposition, the original invocation exit and final exit.
+A failing invocation retains its exit even if cleanup also fails; cleanup-only
+or record-emission failure cannot return success. This reports the existing
+cleanup boundary without introducing another cleanup attempt. Contents-mode
+receipts remain separate.
+
 The final marker explicitly says package stage passed and live qualification
 pending, after container/image/fixture cleanup. Controller package_pass covers
 only its observations and container cleanup. Later PostgreSQL and final global
