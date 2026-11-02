@@ -88,7 +88,7 @@ class DynamicRootBootstrapTests(unittest.TestCase):
         document = installation_input()
         # Authoring evidence only: reviewed CPK account coordinates and an
         # inert Secrets reference do not qualify this pair for execution.
-        selection = {"images": {"cpk-server": witness.CPK_B3D8_IMAGE_ACCOUNT.image_reference,
+        selection = {"images": {"cpk-server": witness.CPK_C028_IMAGE_ACCOUNT.image_reference,
             "secrets-server": "ghcr.io/openj92/control-plane-kit-servers/secrets-server@sha256:" + "a" * 64}}
         with patch.object(witness, "ROOT", self.root):
             policy, private = witness.prepare_dynamic_document(document, selection, DRIVER)
@@ -158,6 +158,17 @@ class DynamicRootBootstrapTests(unittest.TestCase):
         self.assertEqual(witness.reviewed_image_account(reference), witness.ImageAccountBaseline(
             image_reference=reference,
             config_digest="sha256:f83cca32c0c01afa9b4e58a5518c3b4bd89b514bc06f0bb9d5f1df7849b81012",
+            passwd_sha256="2b154879fd6e9899bbe9f9c04eb2535f3388ad5a090f90a78c0dca81a13b9921",
+            group_sha256="1ffcc10cbb13f710c78598bdccecd91b43251fef7e443ca860dfe84c656c0653",
+            uid=10001, primary_gid=10001, supplementary_gids=(100,)))
+
+    def test_reviewed_c028_account_binds_observed_original_config_and_groups(self):
+        from products.cpk_server.tests import live_root_bootstrap as witness
+        reference = "ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:1185398ca86b82a447d583a823051f6604a9d6ed21f638201ba9c8489d0e6bfa"
+        # Independently accepted sealeecdc492, run41536207318.
+        self.assertEqual(witness.reviewed_image_account(reference), witness.ImageAccountBaseline(
+            image_reference=reference,
+            config_digest="sha256:2ca5aed0a5c01946fc50035c5a0207519546d9fa9ae50d474f266464811df396",
             passwd_sha256="2b154879fd6e9899bbe9f9c04eb2535f3388ad5a090f90a78c0dca81a13b9921",
             group_sha256="1ffcc10cbb13f710c78598bdccecd91b43251fef7e443ca860dfe84c656c0653",
             uid=10001, primary_gid=10001, supplementary_gids=(100,)))
