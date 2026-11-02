@@ -1,5 +1,14 @@
 Source: [test_dynamic_root_bootstrap.py](../../../../../products/cpk_server/tests/test_dynamic_root_bootstrap.py).
 
+For #369, the existing real authoring/material-admission test uses the newly
+observed1185398c row. One exact observed-row assertion binds original config2ca5aed0,
+passwd/group hashes and all account groups. Historical b3d8/234a checks,
+different-image and unknown-reference refusal, and socket-group coverage remain.
+The inert Secrets reference is still authoring-only. Actual-pair qualification
+must use published CPK1185398c and Secretsf755cb05 with common producerc028.
+This checkpoint is unvalidated; the full maintained Docker owning gate remains
+required, with no new runner or separate causal-red claim.
+
 The producerb3d8 update exercises the existing real authoring/material-admission
 test with the independently reviewed19ebe8e3 account row and adds one exact
 observed-row assertion for original configf83cca32, passwd/group hashes and the

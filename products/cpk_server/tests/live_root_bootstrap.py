@@ -108,12 +108,26 @@ CPK_B3D8_IMAGE_ACCOUNT = ImageAccountBaseline(
 )
 
 
+# Accepted #225 run41536207318 seal, independently reviewed at
+# issuecomment-6589983537; SHA256
+# eecdc492304ae9684495e77657cd1e4495dd03ddbe80b051245f22195f6d9324.
+# Bind the original source config, not normalized configd238d24a.
+CPK_C028_IMAGE_ACCOUNT = ImageAccountBaseline(
+    image_reference="ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:1185398ca86b82a447d583a823051f6604a9d6ed21f638201ba9c8489d0e6bfa",
+    config_digest="sha256:2ca5aed0a5c01946fc50035c5a0207519546d9fa9ae50d474f266464811df396",
+    passwd_sha256="2b154879fd6e9899bbe9f9c04eb2535f3388ad5a090f90a78c0dca81a13b9921",
+    group_sha256="1ffcc10cbb13f710c78598bdccecd91b43251fef7e443ca860dfe84c656c0653",
+    uid=10001, primary_gid=10001, supplementary_gids=(100,),
+)
+
+
 def reviewed_image_account(reference):
     # Extend only with a separately reviewed final-filesystem seal for the exact
     # published candidate. A syntactically valid tuple is not an account seal.
     for baseline in (
         CPK_IMAGE_ACCOUNT, CPK_DYNAMIC_IMAGE_ACCOUNT, CPK_CURRENT_IMAGE_ACCOUNT,
         CPK_1035_IMAGE_ACCOUNT, CPK_234A_IMAGE_ACCOUNT, CPK_B3D8_IMAGE_ACCOUNT,
+        CPK_C028_IMAGE_ACCOUNT,
     ):
         if baseline.image_reference == reference:
             return baseline

@@ -1,5 +1,16 @@
 Source: [live_root_bootstrap.py](../../../../../products/cpk_server/tests/live_root_bootstrap.py).
 
+For #369, the c028 producer adds exact reference1185398c using original source
+config2ca5aed0 and the newly observed account10001:10001+[100], passwd and group
+hashes. Publication41536207318 produced seal SHA256
+eecdc492304ae9684495e77657cd1e4495dd03ddbe80b051245f22195f6d9324,
+independently accepted in
+[review6589983537](https://github.com/OpenJ92/control-plane-kit-servers/issues/225#issuecomment-6589983537).
+Normalized configd238d24a is not used. Historical rows and unknown-reference
+refusal remain. Only the evidence selector changes; runtime recipes, dependency
+pins and qualification owners remain identical to c028. Executable actual-pair
+qualification is pending; this row does not authorize live installation.
+
 The #225 producerb3d8 candidate adds exact reference19ebe8e3 using original source
 configf83cca32 and the observed passwd/group hashes and account10001:10001+[100].
 Publication41458930336 produced seal SHA256
