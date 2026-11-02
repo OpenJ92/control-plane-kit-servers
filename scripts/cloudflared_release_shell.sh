@@ -77,7 +77,7 @@ if [ "$MODE" = --managed-connector-controller ]; then
   echo "Controller receipt: $RECEIPTS/controller.json"
   exit 0
 fi
-case "$MODE" in --managed-connector-release-tests|--managed-connector-candidate) ;; *) invalid ;; esac
+case "$MODE" in --managed-connector-release-tests|--managed-connector-candidate|--managed-connector-contents) ;; *) invalid ;; esac
 [ -z "$(git ls-files --others --exclude-standard)" ] || invalid
 case "$CONTROLLER" in sha256:*) ;; *) invalid ;; esac
 [ "${#CONTROLLER}" = 71 ] || invalid
@@ -90,6 +90,23 @@ jq -e --arg id "$CONTROLLER" 'type == "object" and .schema == "cpk.cloudflared-c
 [ "$(docker image inspect "$CONTROLLER" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$(jq -r .source_commit "$CONTROLLER_RECEIPT")" ] || exit 1
 mkdir -m 700 "$RECEIPTS"
 cp "$CONTROLLER_RECEIPT" "$RECEIPTS/controller.json"
+if [ "$MODE" = --managed-connector-contents ]; then
+  [ -z "$(git status --porcelain)" ] || invalid
+  git rev-parse HEAD > "$RECEIPTS/source.commit"
+  git rev-parse HEAD^{tree} > "$RECEIPTS/source.tree"
+  hash_file products/cloudflared_connector/Dockerfile.managed > "$RECEIPTS/recipe.sha256"
+  hash_file products/cloudflared_connector/tests/packaged_managed_witness.py > "$RECEIPTS/witness.sha256"
+  set +e
+  CPK_SERVERS_TEST_IMAGE="$CONTROLLER" sh scripts/cloudflared_managed_witness.sh \
+    --contents-only "$RECEIPTS" > "$RECEIPTS/observation.log" 2>&1
+  RESULT=$?
+  set -e
+  printf '%s\n' "$RESULT" > "$RECEIPTS/observation.exit"
+  [ -z "$(git status --porcelain)" ] && \
+    [ "$(git rev-parse HEAD)" = "$(cat "$RECEIPTS/source.commit")" ] || exit 1
+  echo 'Managed contents observation finished; bounded result and private log retained'
+  exit "$RESULT"
+fi
 if [ "$MODE" = --managed-connector-candidate ]; then
   [ -z "$(git status --porcelain)" ] || invalid
   [ "$(git rev-parse HEAD)" = "$SOURCE" ] || invalid

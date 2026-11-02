@@ -11,7 +11,7 @@ case "${1:-}" in
   --postgres-release-tests|--postgres-published-image|--postgres-source-image)
     exec sh scripts/postgres_artifact_shell.sh "$@"
     ;;
-  --managed-connector-controller|--managed-connector-release-tests)
+  --managed-connector-controller|--managed-connector-release-tests|--managed-connector-contents)
     exec sh scripts/cloudflared_release_shell.sh "$@"
     ;;
   --managed-connector-candidate)

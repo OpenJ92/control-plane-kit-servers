@@ -1,5 +1,15 @@
 # Managed release owner entries
 
+`--managed-connector-contents` is a separate diagnostic route. It validates the
+same borrowed controller receipt/image association as focused tests, requires
+clean current source, and records its commit/tree plus recipe/witness hashes.
+It invokes the existing managed witness shell in contents-only mode and retains
+private output, invocation exit and a closed cleanup/result record. This route
+builds one current-source ephemeral managed fixture and observes only its helper
+result channel. It does not claim current-source controller provenance or relax
+candidate admission, and never publishes or qualifies an artifact. Default/full
+candidate routes are unchanged. A diagnostic failure remains nonzero.
+
 The owning test.sh routes controller acquisition and focused release tests before broad setup. Acquisition builds only Dockerfile.test from clean source and retains source/tree/recipe/image/build receipts. Focused tests require an exact cached controller plus explicit receipt, mount current source read-only, receive no daemon socket, and cannot pull/build implicitly. They retain failure evidence and prove release behavior only, never managed OCI/live acceptance.
 
 Focused dirty-source validation refuses untracked files: all participating new files must first be tracked (intent-to-add suffices). The retained commit plus binary diff therefore includes their contents. Earlier exploratory working-snapshot runs are not represented as reproducible committed-source proof. Candidate qualification requires a clean exact source and matched controller acquisition receipt.

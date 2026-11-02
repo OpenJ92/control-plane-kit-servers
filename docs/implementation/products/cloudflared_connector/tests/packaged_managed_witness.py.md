@@ -1,5 +1,13 @@
 # Managed cloudflared package witness
 
+The explicit #225 contents observation invokes `controller(contents_only=True)`.
+It runs the same image verification and contents helper/read boundary, sets only
+a closed `contents_observed` result, and skips all profile/fatal creation and
+stop effects. Common finally cleanup and finish_controller arbitration still
+run before result emission. No raw contents are merged into observation output.
+Default controller and candidate calls remain full witnesses; an observation
+record cannot satisfy the existing package qualification parser.
+
 #225 splits the opened result-file metadata guard into four ordered, fixed
 reasons: `helper_result_type`, `helper_result_mode`, `helper_result_owner` and
 `helper_result_size`. The first failing predicate is reported through the

@@ -294,7 +294,7 @@ def verify_image(image):
             (5_000_000_000, 3_000_000_000, 1), "image_health_bounds")
 
 
-def controller():
+def controller(*, contents_only=False):
     context = {"phase": "setup", "operation": "initialize", "helper_mode": None}
     primary_failure = None
     primary_context = None
@@ -400,69 +400,73 @@ def controller():
         finally:
             client.api.timeout = old_timeout
 
-        mark_controller(context, "profile", "create")
-        controlled = create(
-            run + "-profile", entrypoint=["python", "/witness-tests/packaged_managed_witness.py",
-                                        "controlled"],
-            volumes={host_tests: {"bind": "/witness-tests", "mode": "ro"}},
-            healthcheck={"test": ["NONE"]})
-        mark_controller(context, "profile", "start")
-        controlled.start()
-        mark_controller(context, "profile", "resolve_profile")
-        profile = resolve_profile(client, controlled)
-        wait_receipt(controlled, b"handler-ready")
-        wall_before, mono_before = time.time_ns(), time.monotonic_ns()
-        mark_controller(context, "profile", "stop")
-        owner.stop_container(controlled.id)
-        wall_after, mono_after = time.time_ns(), time.monotonic_ns()
-        require(abs((wall_after - wall_before) - (mono_after - mono_before)) <= 1_000_000_000,
-                "controller_clock_discontinuity")
-        mark_controller(context, "profile", "reload")
-        controlled.reload()
-        require(controlled.status == "exited" and controlled.attrs["State"]["ExitCode"] == 137,
-                "controlled_terminal_state")
-        mark_controller(context, "profile", "logs")
-        output = controlled.logs(tail=3)
-        require(len(output) <= 128 and output.splitlines() == [b"handler-ready", b"term-received"],
-                "controlled_receipts")
-        mark_controller(context, "profile", "events")
-        events = events_between(client, controlled.id, wall_before // 1_000_000_000,
-                                wall_after // 1_000_000_000 + 1)
-        evidence = verify_stop_events(events)
-        mark_controller(context, "fatal", "create")
-        fatal = create(
-            run + "-fatal", entrypoint=["python", "/witness-tests/packaged_managed_witness.py",
-                                      "fatal"],
-            volumes={host_tests: {"bind": "/witness-tests", "mode": "ro"}},
-            healthcheck={"test": ["NONE"]})
-        mark_controller(context, "fatal", "start")
-        fatal.start()
-        fatal_deadline = time.monotonic() + 5
-        child = None
-        while time.monotonic() < fatal_deadline:
-            mark_controller(context, "fatal", "logs")
-            output = fatal.logs(tail=1)
-            require(len(output) <= 128, "fatal_receipt_bound")
-            if output:
-                child = json.loads(output)
-                break
-            time.sleep(0.05)
-        require(child is not None and child["child_pid"] == child["child_group"] > 1,
-                "fatal_child_group")
-        mark_controller(context, "fatal", "kill")
-        fatal.kill(signal="SIGKILL")
-        mark_controller(context, "fatal", "wait")
-        require(fatal.wait(timeout=5)["StatusCode"] == 137, "fatal_exit")
-        mark_controller(context, "fatal", "reload")
-        fatal.reload()
-        require(fatal.status == "exited" and fatal.attrs["State"]["Pid"] == 0,
-                "fatal_namespace_still_running")
-        # Linux PID-namespace init death terminates namespace members. This is
-        # Docker's stopped namespace evidence, not a scan of all host processes.
-        result = {"stage": "managed_cloudflared_controller", "outcome": "package_pass",
-                  "live_qualification": "pending",
-                  "profile_container_id": controlled.id,
-                  "docker_sdk": docker.__version__, **profile, **evidence, **contents}
+        if contents_only:
+            result = {"stage": "managed_cloudflared_contents_observation",
+                      "outcome": "contents_observed"}
+        else:
+            mark_controller(context, "profile", "create")
+            controlled = create(
+                run + "-profile", entrypoint=["python", "/witness-tests/packaged_managed_witness.py",
+                                            "controlled"],
+                volumes={host_tests: {"bind": "/witness-tests", "mode": "ro"}},
+                healthcheck={"test": ["NONE"]})
+            mark_controller(context, "profile", "start")
+            controlled.start()
+            mark_controller(context, "profile", "resolve_profile")
+            profile = resolve_profile(client, controlled)
+            wait_receipt(controlled, b"handler-ready")
+            wall_before, mono_before = time.time_ns(), time.monotonic_ns()
+            mark_controller(context, "profile", "stop")
+            owner.stop_container(controlled.id)
+            wall_after, mono_after = time.time_ns(), time.monotonic_ns()
+            require(abs((wall_after - wall_before) - (mono_after - mono_before)) <= 1_000_000_000,
+                    "controller_clock_discontinuity")
+            mark_controller(context, "profile", "reload")
+            controlled.reload()
+            require(controlled.status == "exited" and controlled.attrs["State"]["ExitCode"] == 137,
+                    "controlled_terminal_state")
+            mark_controller(context, "profile", "logs")
+            output = controlled.logs(tail=3)
+            require(len(output) <= 128 and output.splitlines() == [b"handler-ready", b"term-received"],
+                    "controlled_receipts")
+            mark_controller(context, "profile", "events")
+            events = events_between(client, controlled.id, wall_before // 1_000_000_000,
+                                    wall_after // 1_000_000_000 + 1)
+            evidence = verify_stop_events(events)
+            mark_controller(context, "fatal", "create")
+            fatal = create(
+                run + "-fatal", entrypoint=["python", "/witness-tests/packaged_managed_witness.py",
+                                          "fatal"],
+                volumes={host_tests: {"bind": "/witness-tests", "mode": "ro"}},
+                healthcheck={"test": ["NONE"]})
+            mark_controller(context, "fatal", "start")
+            fatal.start()
+            fatal_deadline = time.monotonic() + 5
+            child = None
+            while time.monotonic() < fatal_deadline:
+                mark_controller(context, "fatal", "logs")
+                output = fatal.logs(tail=1)
+                require(len(output) <= 128, "fatal_receipt_bound")
+                if output:
+                    child = json.loads(output)
+                    break
+                time.sleep(0.05)
+            require(child is not None and child["child_pid"] == child["child_group"] > 1,
+                    "fatal_child_group")
+            mark_controller(context, "fatal", "kill")
+            fatal.kill(signal="SIGKILL")
+            mark_controller(context, "fatal", "wait")
+            require(fatal.wait(timeout=5)["StatusCode"] == 137, "fatal_exit")
+            mark_controller(context, "fatal", "reload")
+            fatal.reload()
+            require(fatal.status == "exited" and fatal.attrs["State"]["Pid"] == 0,
+                    "fatal_namespace_still_running")
+            # Linux PID-namespace init death terminates namespace members. This is
+            # Docker's stopped namespace evidence, not a scan of all host processes.
+            result = {"stage": "managed_cloudflared_controller", "outcome": "package_pass",
+                      "live_qualification": "pending",
+                      "profile_container_id": controlled.id,
+                      "docker_sdk": docker.__version__, **profile, **evidence, **contents}
     except Exception as failure:
         primary_failure = failure
         primary_context, primary_reported = capture_controller_failure("primary", context)
@@ -539,6 +543,8 @@ if __name__ == "__main__":
             fatal_process()
         elif mode == "controller":
             controller()
+        elif mode == "contents-controller":
+            controller(contents_only=True)
         else:
             raise QualificationFailure("invalid_witness_mode")
     except QualificationFailure as failure:

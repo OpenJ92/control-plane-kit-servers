@@ -3,9 +3,19 @@
 set -eu
 
 # Explicit selected-image mode borrows the image and retains its evidence.
+OBSERVATION=''
+CONTROLLER_MODE=controller
 if [ "$#" -gt 0 ]; then
-  [ "$1" = --managed-connector-candidate ] || exit 2
-  exec sh "$(dirname -- "$0")/cloudflared_release_shell.sh" "$@"
+  case "$1" in
+    --managed-connector-candidate)
+      exec sh "$(dirname -- "$0")/cloudflared_release_shell.sh" "$@" ;;
+    --contents-only)
+      [ "$#" = 2 ] || exit 2
+      OBSERVATION="$2"
+      [ -f "$OBSERVATION/controller.json" ] && [ -f "$OBSERVATION/source.commit" ] || exit 2
+      CONTROLLER_MODE=contents-controller ;;
+    *) exit 2 ;;
+  esac
 fi
 
 RECORDS="$(mktemp -d)"
@@ -32,27 +42,49 @@ cleanup() {
     docker image rm "$TAG" >/dev/null || failed=1
     observed="$(docker image ls -q --filter "reference=$TAG")" || return 1
     [ -z "$observed" ] || failed=1
+  else
+    # An interrupted build may leave a tag before its image ID was recorded.
+    # Preserve that uncertain image; do not certify cleanup or delete by name.
+    observed="$(docker image ls -q --filter "reference=$TAG")" || return 1
+    [ -z "$observed" ] || return 1
   fi
   if [ "$failed" = 0 ]; then
     if [ -d "$RECORDS/results" ]; then
       rm -f "$RECORDS/results"/cpk-witness-*.json
       rmdir "$RECORDS/results" || return 1
     fi
-    rm -f "$RECORDS/containers.json" "$RECORDS/image"
-    rmdir "$RECORDS"
+    rm -f "$RECORDS/containers.json" "$RECORDS/image" || return 1
+    rmdir "$RECORDS" || return 1
   fi
   return "$failed"
 }
 
 [ -z "$(docker container ls -aq --filter "label=org.openj92.cpk.test-run=$RUN")" ]
 [ -z "$(docker image ls -q --filter "reference=$TAG")" ]
-trap 'result=$?; trap - EXIT INT TERM; cleanup || result=1; exit "$result"' EXIT
+finish() {
+  result=$?
+  trap - EXIT INT TERM
+  cleanup_outcome=verified
+  if ! cleanup; then cleanup_outcome=incomplete; result=1; fi
+  if [ -n "$OBSERVATION" ]; then
+    outcome=failed
+    if [ "$result" = 0 ]; then outcome=contents_observed; fi
+    printf '{"stage":"managed_cloudflared_contents_observation","outcome":"%s","cleanup":"%s","exit_code":%s}\n' \
+      "$outcome" "$cleanup_outcome" "$result" > "$OBSERVATION/result.json" || result=1
+  fi
+  exit "$result"
+}
+trap finish EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
 docker build -f products/cloudflared_connector/Dockerfile.managed \
   --label "org.openj92.cpk.test-run=$RUN" --iidfile "$RECORDS/image" -t "$TAG" .
 IMAGE_ID="$(cat "$RECORDS/image")"
+if [ -n "$OBSERVATION" ]; then
+  printf '%s\n' "$RUN" > "$OBSERVATION/run"
+  printf '%s\n' "$IMAGE_ID" > "$OBSERVATION/fixture-image.id"
+fi
 docker run --rm --name "$RUN-controller" --network none \
   --label "org.openj92.cpk.test-run=$RUN" \
   --label org.openj92.project=control-plane-kit-servers \
@@ -66,8 +98,9 @@ docker run --rm --name "$RUN-controller" --network none \
   -e "CPK_MANAGED_HOST_RECORDS=$RECORDS" \
   -e "CPK_MANAGED_HOST_TESTS=$PWD/products/cloudflared_connector/tests" \
   "${CPK_SERVERS_TEST_IMAGE:-control-plane-kit-servers-test:local}" \
-  python /source/products/cloudflared_connector/tests/packaged_managed_witness.py controller
+  python /source/products/cloudflared_connector/tests/packaged_managed_witness.py "$CONTROLLER_MODE"
 
+if [ -n "$OBSERVATION" ]; then exit 0; fi
 cleanup
 trap - EXIT INT TERM
 echo 'managed cloudflared package stage passed with owned container/image/fixture cleanup; live qualification pending'

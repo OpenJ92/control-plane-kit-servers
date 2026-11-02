@@ -33,3 +33,17 @@ public ingress, dependency or publication effect is introduced.
 ## Selected candidate release mode (#308)
 
 The owning `test.sh --managed-connector-candidate` entry delegates here before broad gate setup. Explicit arguments route to the product release policy through `cloudflared_release_shell.sh`, reusing the packaged controller unchanged. Unlike default package mode, the supplied exact image is borrowed and retained; evidence is written to a new caller-selected directory. No implicit image build/pull occurs. A controller failure cannot authorize publication, and a missing/partial receipt never proves success. The original no-argument build/owned cleanup stage is unchanged.
+#225's explicit contents-only route is selected by the owning release shell,
+after borrowed controller receipt/image admission. It reuses this script's one
+current-source managed fixture build, controller mounts and strict helper reader.
+The controller receives `contents-controller`; default invocation remains full.
+No profile/fatal fixture or Engine admission is performed in observation mode.
+
+Observation receipts retain run and created fixture-image identity, and a closed
+result separately reports invocation success/failure and verified/incomplete
+cleanup. The common EXIT handler cleans only exact owned resources and writes
+the result after cleanup; success is never package qualification. An unknown
+tag left by a build before image-ID recording is preserved and cleanup refuses.
+Unexpected remaining files make rmdir fail rather than yielding a false cleanup
+claim. Borrowed controller images and the retained evidence directory are not
+deleted. Build logs stay private in the owning route's observation.log.
