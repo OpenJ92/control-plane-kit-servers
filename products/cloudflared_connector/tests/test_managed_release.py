@@ -126,6 +126,7 @@ def done(value=None, code=0):
     if value is not None: print(value if isinstance(value,str) else json.dumps(value))
     sys.exit(code)
 if a[:2]==['volume','ls']:
+    if fail=='volume_list_error': done(code=54)
     done(s.get('volume','') or ('occupied' if fail=='preexisting' else ''))
 if a[:2]==['volume','create']:
     s['volume']=a[-1]; s['run']=a[-1].removesuffix('-results')
@@ -146,6 +147,7 @@ if a[:2]==['image','inspect']:
 if a[:2]==['image','ls']: done(s.get('image_tag',''))
 if a[:2]==['image','rm']: s.pop('image_tag',None); done()
 if a[:2]==['container','ls'] or a[:1]==['ps']:
+    if fail=='reference_error' and any(x.startswith('volume=') for x in a): done(code=55)
     done('foreign-reference' if fail=='active_reference' and any(x.startswith('volume=') for x in a) else '')
 if a[:1]==['build']:
     pathlib.Path(a[a.index('--iidfile')+1]).write_text('sha256:'+'d'*64)
@@ -222,17 +224,17 @@ done(code=90)
 
     def test_result_volume_failure_cannot_qualify_or_erase_unknown_result(self):
         for failure in ('volume_remove','residue','mismatched_receipt','before_promotion',
-                        'changed_owner','active_reference'):
+                        'changed_owner','active_reference','reference_error'):
             with self.subTest(failure=failure):
                 result, calls, q = self.run_lane('candidate', failure)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotEqual(q['cleanup'], 'verified')
-                if failure in ('residue','mismatched_receipt','changed_owner','active_reference'):
+                if failure in ('residue','mismatched_receipt','changed_owner','active_reference','reference_error'):
                     self.assertFalse(any(c[:2] == ['volume','rm'] for c in calls))
 
     def test_preexisting_and_uncertain_volume_acquisition_never_runs_or_deletes(self):
         for lane in ('normal','contents','candidate'):
-            for failure in ('preexisting','ambiguous_create'):
+            for failure in ('preexisting','ambiguous_create','volume_list_error'):
                 with self.subTest(lane=lane, failure=failure):
                     result, calls, _ = self.run_lane(lane, failure)
                     self.assertNotEqual(result.returncode, 0)

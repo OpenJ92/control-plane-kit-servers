@@ -8,12 +8,14 @@ managed_result_acquire() (
   volume="$run-results"
   record="$records/result-volume.json"
   [ ! -e "$record" ] && [ ! -L "$record" ]
-  [ -z "$(docker volume ls -q --filter "name=$volume")" ]
+  observed="$(docker volume ls -q --filter "name=$volume")"
+  [ -z "$observed" ]
   jq -n --arg run "$run" --arg volume "$volume" \
     '{schema:"cpk.managed-result-volume.v1",run:$run,volume:$volume,acquired:false}' > "$record"
   # A failed create or receipt write preserves the proposed name as uncertain.
-  [ "$(docker volume create --driver local --label "org.openj92.cpk.test-run=$run" \
-      --label org.openj92.project=control-plane-kit-servers "$volume")" = "$volume" ]
+  created="$(docker volume create --driver local --label "org.openj92.cpk.test-run=$run" \
+      --label org.openj92.project=control-plane-kit-servers "$volume")"
+  [ "$created" = "$volume" ]
   observed="$(docker volume inspect "$volume")"
   printf '%s\n' "$observed" | jq -e --arg run "$run" --arg volume "$volume" '
     if length == 1 and .[0].Name == $volume and .[0].Driver == "local" and
@@ -51,9 +53,11 @@ managed_result_remove() (
     .[0].CreatedAt == $created and .[0].Labels["org.openj92.cpk.test-run"] == $run and
     .[0].Labels["org.openj92.project"] == "control-plane-kit-servers"
   ' >/dev/null
-  [ -z "$(docker container ls -aq --filter "volume=$volume")" ]
+  references="$(docker container ls -aq --filter "volume=$volume")"
+  [ -z "$references" ]
   docker volume rm "$volume" >/dev/null
-  [ -z "$(docker volume ls -q --filter "name=$volume")" ]
+  observed="$(docker volume ls -q --filter "name=$volume")"
+  [ -z "$observed" ]
 )
 
 case "${1:-}" in
