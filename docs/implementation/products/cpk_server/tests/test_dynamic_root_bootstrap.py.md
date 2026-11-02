@@ -1,5 +1,15 @@
 Source: [test_dynamic_root_bootstrap.py](../../../../../products/cpk_server/tests/test_dynamic_root_bootstrap.py).
 
+The producerb3d8 update exercises the existing real authoring/material-admission
+test with the independently reviewed19ebe8e3 account row and adds one exact
+observed-row assertion for original configf83cca32, passwd/group hashes and the
+complete account groups. Historical234a evidence, different-image refusal,
+socket-group composition and unknown-reference refusal before commissioning
+remain unchanged. The inert Secrets reference in the authoring test does not
+qualify an executable pair. North authorized consolidation of package/CPK
+regression validation into the full maintained published-root workflow; this
+source checkpoint is unvalidated, with no separate causal-red claim or new runner.
+
 The producer234a evidence update exercises real fixture authoring with the new
 reviewed CPK account and checks its original config, complete group evidence,
 socket-group composition and different-image refusal. The historical1035 row is
