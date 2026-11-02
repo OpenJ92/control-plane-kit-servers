@@ -37,6 +37,15 @@ digest and reuses the existing product witness. It requires separate runtime
 authorization and is never selected by default CI. See
 [managed PostgreSQL artifacts](../managed-postgres-artifacts.md).
 
+#225 resolves the freshly allocated PostgreSQL scratch directory to its physical
+path before deriving the receipt path. This preserves the same owned directory
+when the host temporary root has an alias such as macOS /var -> /private/var.
+The standalone assignment retains failure status under set -e, so failed cd or
+pwd stops before controller inspection or PostgreSQL invocation. The PostgreSQL
+owner still refuses noncanonical or symlinked receipt parents. Its command-double
+regression covers alias-ancestor refusal and canonical/physical admission; it
+does not execute the normal caller or prove a live PostgreSQL lifecycle.
+
 #306 adds one unconditional representation regression after the existing
 controller/package/import checks and before product runtime effects. It calls
 the actual sourced `root_artifact_inspection` function on the cached `hello_family`
