@@ -1,5 +1,19 @@
 # Managed cloudflared package witness
 
+#225 splits the opened result-file metadata guard into four ordered, fixed
+reasons: `helper_result_type`, `helper_result_mode`, `helper_result_owner` and
+`helper_result_size`. The first failing predicate is reported through the
+existing bounded controller failure record. Regular-file, mode0400, UID65532
+and size1–4096 admission remain identical, before any bytes are read. Open
+flags, deadlines, stable-file checks, parsing/unlink and finally-close are
+unchanged. No observed metadata, paths or contents are added to diagnostics.
+This identifies the first mismatch; it neither attributes an OS cause nor
+changes the transport or supported Engine stop profiles.
+
+The source recipe currently selects SDK220f63169e4bac79653937e97727406255279f7b
+and Core7afef43f3d3b981094e37dcb3062b6e3a4f3d674; historical adoption notes below
+describe their original checkpoints.
+
 For #341, the current source recipe and this witness select accepted Core
 `4cc1716bef4d7548ddb4cd343e53fa06bb447104` and SDK
 `464df26c568971362eb3a08abaf9dfc227a4ddbb`. Only the two provenance constants

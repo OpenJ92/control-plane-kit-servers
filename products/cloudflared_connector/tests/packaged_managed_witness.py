@@ -115,9 +115,10 @@ def read_helper_result(local_path, deadline):
                          os.O_NONBLOCK | os.O_CLOEXEC)
     try:
         before = os.fstat(descriptor)
-        require(stat.S_ISREG(before.st_mode) and stat.S_IMODE(before.st_mode) == 0o400
-                and before.st_uid == 65532 and 0 < before.st_size <= 4096,
-                "helper_result_file")
+        require(stat.S_ISREG(before.st_mode), "helper_result_type")
+        require(stat.S_IMODE(before.st_mode) == 0o400, "helper_result_mode")
+        require(before.st_uid == 65532, "helper_result_owner")
+        require(0 < before.st_size <= 4096, "helper_result_size")
         value = os.read(descriptor, 4097)
         after = os.fstat(descriptor)
         require((before.st_size, before.st_mtime_ns, before.st_ctime_ns) ==
