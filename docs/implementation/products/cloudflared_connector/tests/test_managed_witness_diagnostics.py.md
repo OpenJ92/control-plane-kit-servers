@@ -95,3 +95,8 @@ receives StopTimeout10; contents/fatal paths and argument-free Interpreter stop
 remain. A known returned ID is recorded before lookup and retained for cleanup
 on lookup/record failure; malformed/ambiguous creation cannot be adopted/retried.
 Resolver targets retain29.7.2/null refusal and label explicit10 as container-origin.
+The selected controlled fixture must also refuse a missing inspected timeout on
+an older reviewed Engine, even though the generic resolver may legitimately
+derive that Engine's historical fixed default. The regression requires refusal
+before stop/fatal effects and cleanup of the known controlled ID; historical
+resolver/evidence support remains unchanged.

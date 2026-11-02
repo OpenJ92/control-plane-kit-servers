@@ -16,7 +16,8 @@ import packaged_managed_witness as witness
 class ManagedWitnessDiagnosticTests(unittest.TestCase):
     def run_contents_controller(self, *, observation=True, helper_failure=None,
                                 cleanup_failure=None, residue=False, finish_profile=False,
-                                profile_failure=None):
+                                profile_failure=None, profile_inspection_missing=False,
+                                engine_profile=('29.7.2', '6a43e3d')):
         import docker
         run = "contents-observation-test"
         profile_id = 'b' * 64
@@ -29,7 +30,7 @@ class ManagedWitnessDiagnosticTests(unittest.TestCase):
             "Mounts": [{"Type": "volume", "Name": volume,
                         "Destination": "/witness-results", "RW": True}]})
         client.info.return_value = {'ID': 'engine', 'OSType': 'linux'}
-        client.version.return_value = {'Version': '29.7.2', 'GitCommit': '6a43e3d'}
+        client.version.return_value = {'Version': engine_profile[0], 'GitCommit': engine_profile[1]}
         client.profile_payloads = []
         volume_attrs = {"Name": volume, "Driver": "local", "Scope": "local", "Options": None,
                         "CreatedAt": "2026-11-02T00:00:00Z", "Labels": {
@@ -71,7 +72,8 @@ class ManagedWitnessDiagnosticTests(unittest.TestCase):
             client.profile_payloads.append(data)
             if profile_failure == 'create':
                 raise RuntimeError('create-failure')
-            make_container(profile_id, params['name'], data.get('StopTimeout'))
+            make_container(profile_id, params['name'],
+                           None if profile_inspection_missing else data.get('StopTimeout'))
             response = Mock()
             response.json.return_value = {'Id': 'invalid' if profile_failure == 'malformed' else profile_id}
             return response
@@ -240,6 +242,19 @@ class ManagedWitnessDiagnosticTests(unittest.TestCase):
         self.assertEqual(final['configured_stop_timeout'], 10)
         self.assertEqual(final['timeout_origin'], 'container')
         self.assertIsNone(final['reviewed_engine_source'])
+
+    def test_controlled_profile_refuses_missing_explicit_timeout_even_on_reviewed_engine(self):
+        failure, records, client, containers, _, _, stops = self.run_contents_controller(
+            observation=False, finish_profile=True, profile_inspection_missing=True,
+            engine_profile=('29.4.2', 'd329809'))
+        self.assertIsInstance(failure, witness.QualificationFailure)
+        self.assertEqual(str(failure), 'controlled_stop_profile_unproved')
+        self.assertEqual(client.profile_payloads[0]['StopTimeout'], 10)
+        self.assertEqual(stops, 0)
+        self.assertFalse(any(c.kwargs['name'].endswith('-fatal')
+                             for c in client.containers.create.call_args_list))
+        self.assertFalse(any(r.get('outcome') == 'package_pass' for r in records))
+        containers['b'*64].remove.assert_called_once_with(force=True)
 
     def test_controlled_create_failure_keeps_known_id_for_cleanup_without_retry(self):
         for mode in ('lookup','record','create','malformed'):
