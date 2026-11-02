@@ -2,6 +2,16 @@
 
 Source: [test_managed_witness_diagnostics.py](../../../../../products/cloudflared_connector/tests/test_managed_witness_diagnostics.py).
 
+#225 adds focused targets for the result-file admission boundary. Each existing
+metadata predicate is independently falsified, requiring its fixed reason and
+refusal before bytes or unlink, with descriptor closure. A valid bounded read
+retains the existing open flags, JSON result and unlink; changed metadata still
+refuses and closes without unlink. These use supplied metadata at the actual
+read function, not a Docker or provider simulation. They identify the first
+failed predicate, not every possible mismatch or an operating-system cause.
+The target checkpoint precedes the diagnostic implementation; no execution or
+actual Desktop metadata observation is inferred from the test source.
+
 Servers #284 owns ten focused methods at real witness boundaries. They protect
 numeric UID/GID refusal before version I/O, frozen primary context, closed
 candidate-free diagnostics, original-versus-cleanup failure precedence,

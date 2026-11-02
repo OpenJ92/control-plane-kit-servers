@@ -3,6 +3,7 @@ from contextlib import redirect_stderr, redirect_stdout
 import io
 import json
 from pathlib import Path
+import stat
 import time
 from types import SimpleNamespace
 import unittest
@@ -12,6 +13,59 @@ import packaged_managed_witness as witness
 
 
 class ManagedWitnessDiagnosticTests(unittest.TestCase):
+    def test_result_metadata_refusal_identifies_first_predicate_before_read(self):
+        valid = dict(st_mode=stat.S_IFREG | 0o400, st_uid=65532, st_size=2)
+        cases = (
+            ({"st_mode": stat.S_IFDIR | 0o400}, "helper_result_type"),
+            ({"st_mode": stat.S_IFREG | 0o600}, "helper_result_mode"),
+            ({"st_uid": 0}, "helper_result_owner"),
+            ({"st_size": 0}, "helper_result_size"),
+            ({"st_size": 4097}, "helper_result_size"),
+        )
+        for changed, reason in cases:
+            with self.subTest(reason=reason, changed=changed):
+                path = Mock(spec=Path)
+                observed = SimpleNamespace(**(valid | changed))
+                with patch.object(witness.os, "open", return_value=42), \
+                        patch.object(witness.os, "fstat", return_value=observed), \
+                        patch.object(witness.os, "read") as read, \
+                        patch.object(witness.os, "close") as close:
+                    with self.assertRaises(witness.QualificationFailure) as raised:
+                        witness.read_helper_result(path, time.monotonic() + 10)
+                self.assertEqual(str(raised.exception), reason)
+                read.assert_not_called()
+                path.unlink.assert_not_called()
+                close.assert_called_once_with(42)
+
+    def test_result_metadata_admission_preserves_stable_bounded_read(self):
+        payload = b'{"native_version":"2026.6.1"}'
+        before = dict(st_mode=stat.S_IFREG | 0o400, st_uid=65532,
+                      st_size=len(payload), st_mtime_ns=1, st_ctime_ns=2)
+        for changed in (False, True):
+            with self.subTest(changed=changed):
+                path = Mock(spec=Path)
+                after = before | {"st_ctime_ns": 3 if changed else 2}
+                with patch.object(witness.os, "open", return_value=42) as opened, \
+                        patch.object(witness.os, "fstat", side_effect=[
+                            SimpleNamespace(**before), SimpleNamespace(**after)]), \
+                        patch.object(witness.os, "read", return_value=payload) as read, \
+                        patch.object(witness.os, "close") as close:
+                    if changed:
+                        with self.assertRaisesRegex(witness.QualificationFailure,
+                                                    "^helper_result_changed$"):
+                            witness.read_helper_result(path, time.monotonic() + 10)
+                    else:
+                        self.assertEqual(witness.read_helper_result(path, time.monotonic() + 10),
+                                         {"native_version": "2026.6.1"})
+                opened.assert_called_once_with(path, witness.os.O_RDONLY | witness.os.O_NOFOLLOW |
+                                               witness.os.O_NONBLOCK | witness.os.O_CLOEXEC)
+                read.assert_called_once_with(42, 4097)
+                close.assert_called_once_with(42)
+                if changed:
+                    path.unlink.assert_not_called()
+                else:
+                    path.unlink.assert_called_once_with()
+
     def test_stop_profile_resolves_only_reviewed_defaults_or_explicit_integer_ten(self):
         sources = (
             ("28.5.1", "f8215cc266744ef195a50a70d427c345da2acdbb"),
