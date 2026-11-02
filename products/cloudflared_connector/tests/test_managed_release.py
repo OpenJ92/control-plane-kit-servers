@@ -142,11 +142,13 @@ if a[:2]==['volume','rm']:
     s.pop('volume',None); done()
 if a[:2]==['image','inspect']:
     fmt=a[a.index('--format')+1]; image=next(x for x in a[2:] if x.startswith(('sha256:','control-plane-kit-')))
+    if fail=='final_image_error' and s.get('exited'): done(image, 56)
     done('b'*40 if 'revision' in fmt else s.get('image_run','') if 'test-run' in fmt else
          'sha256:'+'d'*64 if image.startswith('control-plane-kit-') else image)
 if a[:2]==['image','ls']: done(s.get('image_tag',''))
 if a[:2]==['image','rm']: s.pop('image_tag',None); done()
 if a[:2]==['container','ls'] or a[:1]==['ps']:
+    if fail=='final_container_list_error' and s.get('exited') and any(x.startswith('label=') for x in a): done(code=57)
     if fail=='reference_error' and any(x.startswith('volume=') for x in a): done(code=55)
     done('foreign-reference' if fail=='active_reference' and any(x.startswith('volume=') for x in a) else '')
 if a[:1]==['build']:
@@ -224,12 +226,14 @@ done(code=90)
 
     def test_result_volume_failure_cannot_qualify_or_erase_unknown_result(self):
         for failure in ('volume_remove','residue','mismatched_receipt','before_promotion',
-                        'changed_owner','active_reference','reference_error'):
+                        'changed_owner','active_reference','reference_error',
+                        'final_image_error','final_container_list_error'):
             with self.subTest(failure=failure):
                 result, calls, q = self.run_lane('candidate', failure)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotEqual(q['cleanup'], 'verified')
-                if failure in ('residue','mismatched_receipt','changed_owner','active_reference','reference_error'):
+                if failure in ('residue','mismatched_receipt','changed_owner','active_reference','reference_error',
+                               'final_image_error','final_container_list_error'):
                     self.assertFalse(any(c[:2] == ['volume','rm'] for c in calls))
 
     def test_preexisting_and_uncertain_volume_acquisition_never_runs_or_deletes(self):

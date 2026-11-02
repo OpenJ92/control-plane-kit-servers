@@ -151,8 +151,10 @@ if [ "$MODE" = --managed-connector-candidate ]; then
     .run == $run and .cleanup == "pending_volume" and .candidate_retained == true and
     (.status == "pass" or .status == "fail")
   ' "$QUALIFICATION" >/dev/null || exit 1
-  [ "$(docker image inspect "$CANDIDATE" --format '{{.Id}}')" = "$CANDIDATE" ] || exit 1
-  [ -z "$(docker container ls -aq --filter "label=org.openj92.cpk.test-run=$RUN")" ] || exit 1
+  OBSERVED_CANDIDATE="$(docker image inspect "$CANDIDATE" --format '{{.Id}}')" || exit 1
+  [ "$OBSERVED_CANDIDATE" = "$CANDIDATE" ] || exit 1
+  REMAINING_CONTAINERS="$(docker container ls -aq --filter "label=org.openj92.cpk.test-run=$RUN")" || exit 1
+  [ -z "$REMAINING_CONTAINERS" ] || exit 1
   sh scripts/cloudflared_result_volume.sh remove "$RUN" "$RECEIPTS/fixtures"
   cp "$RECEIPTS/fixtures/result-volume.empty.json" "$RECEIPTS/result-volume.empty.json"
   rm "$RECEIPTS/fixtures/result-volume.json" "$RECEIPTS/fixtures/result-volume.empty.json"
