@@ -1,5 +1,81 @@
 # Managed cloudflared package witness
 
+#225 parses event records independently of HTTP chunk boundaries. With the same
+historical query and exact container filter, it checks the cumulative 65536-byte
+limit before buffering each raw byte chunk, decodes strict UTF-8 after EOF, and
+uses the standard JSON decoder over adjacent or JSON-whitespace-separated records.
+At most 32 objects pass shape, exact Actor.ID and integer timeNano admission;
+the downstream stop sequence, timing and clock laws are unchanged. Empty history
+cannot satisfy those laws. Malformed JSON/UTF-8 receives a closed reason without
+payload text. Acquisition/iteration errors retain their original classification.
+Every acquired stream is closed; a primary failure survives a simultaneous close
+failure, which emits the existing closed cleanup/profile/events marker. A lone
+close failure also refuses qualification.
+
+This bounds witness accumulation, not SDK/socket allocation. The selected SDK
+uses timeout=None for events: until requests finite server history and does not
+establish a client wall-clock deadline. Supplied-stream focused tests prove the
+framing correction, not the cause of the earlier local profile/events exception
+or actual daemon timing. The source trace is recorded on
+[#225](https://github.com/OpenJ92/control-plane-kit-servers/issues/225#issuecomment-6575830623).
+
+#225 deliberately configures StopTimeout=10 on the controlled TERM-ignore
+fixture only. The selected docker-py7.2.0 high-level create rejects that option,
+so the existing create/record/cleanup wrapper uses its supported low-level API
+for this fixture, preserving the image, name, labels, network-none, readonly
+test bind, disabled healthcheck and inherited user/SIGTERM. A valid returned
+64-character lowercase hexadecimal ID enters memory and containers.json before
+the fallible model lookup. Record or lookup failure retains known-ID cleanup;
+malformed/ambiguous creation stops without retry or adoption. Contents and fatal
+fixtures retain their existing high-level creation path.
+
+The actual inspected explicit timeout uses the existing container-origin
+resolver and reports no reviewed fixed-default source. The controlled call site
+requires actual configured integer10, container origin and null reviewed source
+before stop/fatal effects; even a reviewed older Engine cannot substitute its
+historical fixed default when this fixture's explicit setting is absent.
+Docker29.7.2/null still
+refuses: that upstream daemon default is configurable and its effective value
+is not proved by version/build alone. Neither fixed-default map changes. The
+Interpreter stop call supplies no timeout override; actual 15/9/die137 events,
+9–11second timing, receipts, fatal teardown and cleanup remain required.
+This is the approved #284 controlled package profile, not ambient-default or
+native/live shutdown acceptance. Source decision and immutable SDK/Engine
+anchors are recorded on [#225](https://github.com/OpenJ92/control-plane-kit-servers/issues/225#issuecomment-6573025301).
+
+#225's result transport now mounts the same admitted daemon-local scratch volume
+at /witness-results in controller and helper. The controller verifies recorded
+volume/run/creation association and its actual mount, then initializes only the
+empty directory as root:65532/mode0770. Helper identity, exclusive file creation,
+mode0400 and the opened-file reader's exact UID65532/bounds/stability laws remain
+unchanged. No produced file is normalized. After helper cleanup and client close,
+an empty-root check permits a closed run/volume marker for outer cleanup; rejected
+or unknown results suppress that marker and remain on the volume. The mounted
+root is never removed from inside the controller. A marker can accompany a known
+primary failure; it proves empty transport and helper cleanup, not witness success.
+
+The explicit #225 contents observation invokes `controller(contents_only=True)`.
+It runs the same image verification and contents helper/read boundary, sets only
+a closed `contents_observed` result, and skips all profile/fatal creation and
+stop effects. Common finally cleanup and finish_controller arbitration still
+run before result emission. No raw contents are merged into observation output.
+Default controller and candidate calls remain full witnesses; an observation
+record cannot satisfy the existing package qualification parser.
+
+#225 splits the opened result-file metadata guard into four ordered, fixed
+reasons: `helper_result_type`, `helper_result_mode`, `helper_result_owner` and
+`helper_result_size`. The first failing predicate is reported through the
+existing bounded controller failure record. Regular-file, mode0400, UID65532
+and size1–4096 admission remain identical, before any bytes are read. Open
+flags, deadlines, stable-file checks, parsing/unlink and finally-close are
+unchanged. No observed metadata, paths or contents are added to diagnostics.
+This identifies the first mismatch; it neither attributes an OS cause nor
+changes the transport or supported Engine stop profiles.
+
+The source recipe currently selects SDK220f63169e4bac79653937e97727406255279f7b
+and Core7afef43f3d3b981094e37dcb3062b6e3a4f3d674; historical adoption notes below
+describe their original checkpoints.
+
 For #341, the current source recipe and this witness select accepted Core
 `4cc1716bef4d7548ddb4cd343e53fa06bb447104` and SDK
 `464df26c568971362eb3a08abaf9dfc227a4ddbb`. Only the two provenance constants

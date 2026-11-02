@@ -70,14 +70,15 @@ if [ "$MODE" = --managed-connector-controller ]; then
   [ "$RESULT" = 0 ] || exit "$RESULT"
   [ -z "$(git status --porcelain)" ] && [ "$(git rev-parse HEAD)" = "$SOURCE" ] || exit 1
   ID="$(cat "$RECEIPTS/image.id")"
-  [ "$(docker image inspect "$ID" --format '{{.Id}}')" = "$ID" ] || exit 1
+  OBSERVED_ID="$(docker image inspect "$ID" --format '{{.Id}}')" || exit 1
+  [ "$OBSERVED_ID" = "$ID" ] || exit 1
   LOG_HASH="$(hash_file "$RECEIPTS/build.log" | cut -d ' ' -f 1)"
   jq -n --arg source "$SOURCE" --arg tree "$TREE" --arg recipe "$RECIPE" --arg image "$ID" --arg log "$LOG_HASH" \
     '{schema:"cpk.cloudflared-controller-acquisition.v1",source_commit:$source,source_tree:$tree,dockerfile_sha256:$recipe,image_id:$image,build_exit:0,build_log_sha256:$log}' > "$RECEIPTS/controller.json"
   echo "Controller receipt: $RECEIPTS/controller.json"
   exit 0
 fi
-case "$MODE" in --managed-connector-release-tests|--managed-connector-candidate) ;; *) invalid ;; esac
+case "$MODE" in --managed-connector-release-tests|--managed-connector-candidate|--managed-connector-contents) ;; *) invalid ;; esac
 [ -z "$(git ls-files --others --exclude-standard)" ] || invalid
 case "$CONTROLLER" in sha256:*) ;; *) invalid ;; esac
 [ "${#CONTROLLER}" = 71 ] || invalid
@@ -86,42 +87,91 @@ case "$CONTROLLER_RECEIPT" in /*) ;; *) invalid ;; esac
 [ -f "$CONTROLLER_RECEIPT" ] && [ ! -L "$CONTROLLER_RECEIPT" ] || invalid
 [ "$(wc -c < "$CONTROLLER_RECEIPT")" -le 65536 ] || invalid
 jq -e --arg id "$CONTROLLER" 'type == "object" and .schema == "cpk.cloudflared-controller-acquisition.v1" and .image_id == $id and .build_exit == 0 and (.source_commit | test("^[0-9a-f]{40}$")) and (.source_tree | test("^[0-9a-f]{40}$")) and (.dockerfile_sha256 | test("^[0-9a-f]{64}$")) and (.build_log_sha256 | test("^[0-9a-f]{64}$"))' "$CONTROLLER_RECEIPT" >/dev/null || invalid
-[ "$(docker image inspect "$CONTROLLER" --format '{{.Id}}')" = "$CONTROLLER" ] || exit 1
-[ "$(docker image inspect "$CONTROLLER" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$(jq -r .source_commit "$CONTROLLER_RECEIPT")" ] || exit 1
+OBSERVED_CONTROLLER="$(docker image inspect "$CONTROLLER" --format '{{.Id}}')" || exit 1
+[ "$OBSERVED_CONTROLLER" = "$CONTROLLER" ] || exit 1
+OBSERVED_REVISION="$(docker image inspect "$CONTROLLER" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" || exit 1
+EXPECTED_REVISION="$(jq -r .source_commit "$CONTROLLER_RECEIPT")" || exit 1
+[ "$OBSERVED_REVISION" = "$EXPECTED_REVISION" ] || exit 1
 mkdir -m 700 "$RECEIPTS"
 cp "$CONTROLLER_RECEIPT" "$RECEIPTS/controller.json"
+if [ "$MODE" = --managed-connector-contents ]; then
+  [ -z "$(git status --porcelain)" ] || invalid
+  git rev-parse HEAD > "$RECEIPTS/source.commit"
+  git rev-parse HEAD^{tree} > "$RECEIPTS/source.tree"
+  hash_file products/cloudflared_connector/Dockerfile.managed > "$RECEIPTS/recipe.sha256"
+  hash_file products/cloudflared_connector/tests/packaged_managed_witness.py > "$RECEIPTS/witness.sha256"
+  set +e
+  CPK_SERVERS_TEST_IMAGE="$CONTROLLER" sh scripts/cloudflared_managed_witness.sh \
+    --contents-only "$RECEIPTS" > "$RECEIPTS/observation.log" 2>&1
+  RESULT=$?
+  set -e
+  printf '%s\n' "$RESULT" > "$RECEIPTS/observation.exit"
+  [ -z "$(git status --porcelain)" ] && \
+    [ "$(git rev-parse HEAD)" = "$(cat "$RECEIPTS/source.commit")" ] || exit 1
+  echo 'Managed contents observation finished; bounded result and private log retained'
+  exit "$RESULT"
+fi
 if [ "$MODE" = --managed-connector-candidate ]; then
   [ -z "$(git status --porcelain)" ] || invalid
   [ "$(git rev-parse HEAD)" = "$SOURCE" ] || invalid
   TREE="$(git rev-parse HEAD^{tree})"
   [ "$(jq -r .source_commit "$CONTROLLER_RECEIPT")" = "$SOURCE" ] || invalid
   [ "$(jq -r .source_tree "$CONTROLLER_RECEIPT")" = "$TREE" ] || invalid
-  [ "$(docker image inspect "$CANDIDATE" --format '{{.Id}}')" = "$CANDIDATE" ] || exit 1
+  OBSERVED_CANDIDATE="$(docker image inspect "$CANDIDATE" --format '{{.Id}}')" || exit 1
+  [ "$OBSERVED_CANDIDATE" = "$CANDIDATE" ] || exit 1
   mkdir -m 700 "$RECEIPTS/fixtures"
   RUN_RECORD="$(mktemp "$RECEIPTS/run.XXXXXXXXXXXX")"
   RUN="cpk-managed-release-$(basename "$RUN_RECORD")"
   printf '%s\n' "$RUN" > "$RUN_RECORD"
-  [ -z "$(docker container ls -aq --filter "label=org.openj92.cpk.test-run=$RUN")" ] || exit 1
+  PREFLIGHT_CONTAINERS="$(docker container ls -aq --filter "label=org.openj92.cpk.test-run=$RUN")" || exit 1
+  [ -z "$PREFLIGHT_CONTAINERS" ] || exit 1
+  sh scripts/cloudflared_result_volume.sh acquire "$RUN" "$RECEIPTS/fixtures"
+  cp "$RECEIPTS/fixtures/result-volume.json" "$RECEIPTS/result-volume.json"
   set +e
   docker run --pull never --rm --network none \
     --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
     --mount "type=bind,source=$ROOT,target=/source,readonly" \
     --mount "type=bind,source=$RECEIPTS,target=/evidence" \
     --mount "type=bind,source=$RECEIPTS/fixtures,target=/witness" \
+    --mount "type=volume,source=$RUN-results,target=/witness-results,volume-nocopy" \
     --workdir /source -e PYTHONDONTWRITEBYTECODE=1 -e DOCKER_HOST=unix:///var/run/docker.sock \
     -e "CPK_MANAGED_IMAGE=$CANDIDATE" -e "CPK_MANAGED_SOURCE=$SOURCE" \
     -e "CPK_RELEASE_CONTROLLER=$CONTROLLER" -e "CPK_RELEASE_TREE=$TREE" \
-    -e "CPK_MANAGED_TEST_RUN=$RUN" -e "CPK_MANAGED_HOST_RECORDS=$RECEIPTS/fixtures" \
+    -e "CPK_MANAGED_TEST_RUN=$RUN" -e "CPK_MANAGED_RESULT_VOLUME=$RUN-results" \
     -e "CPK_MANAGED_HOST_TESTS=$ROOT/products/cloudflared_connector/tests" \
     "$CONTROLLER" python products/cloudflared_connector/release.py qualify \
     > "$RECEIPTS/controller.log" 2>&1
   RESULT=$?
   set -e
   printf '%s\n' "$RESULT" > "$RECEIPTS/controller.exit"
-  # A killed controller leaves retained evidence; never claim cleanup on its behalf.
+  # A killed controller or rejected result leaves unqualified retained evidence.
+  # Only this admitted run's provisional receipt can be finalized, never an
+  # arbitrary receipt path or an inner failure promoted to witness success.
+  QUALIFICATION="$RECEIPTS/qualification.json"
+  [ -f "$QUALIFICATION" ] && [ ! -L "$QUALIFICATION" ] && \
+    [ "$(wc -c < "$QUALIFICATION")" -le 65536 ] || exit 1
+  jq -e --arg source "$SOURCE" --arg tree "$TREE" --arg candidate "$CANDIDATE" \
+    --arg controller "$CONTROLLER" --arg run "$RUN" '
+    .schema == "cpk.cloudflared-managed-qualification.v1" and .source_commit == $source and
+    .source_tree == $tree and .candidate_id == $candidate and .controller_id == $controller and
+    .run == $run and .cleanup == "pending_volume" and .candidate_retained == true and
+    (.status == "pass" or .status == "fail")
+  ' "$QUALIFICATION" >/dev/null || exit 1
+  OBSERVED_CANDIDATE="$(docker image inspect "$CANDIDATE" --format '{{.Id}}')" || exit 1
+  [ "$OBSERVED_CANDIDATE" = "$CANDIDATE" ] || exit 1
+  REMAINING_CONTAINERS="$(docker container ls -aq --filter "label=org.openj92.cpk.test-run=$RUN")" || exit 1
+  [ -z "$REMAINING_CONTAINERS" ] || exit 1
+  sh scripts/cloudflared_result_volume.sh remove "$RUN" "$RECEIPTS/fixtures"
+  cp "$RECEIPTS/fixtures/result-volume.empty.json" "$RECEIPTS/result-volume.empty.json"
+  rm "$RECEIPTS/fixtures/result-volume.json" "$RECEIPTS/fixtures/result-volume.empty.json"
+  rm -f "$RECEIPTS/fixtures/containers.json"
+  rmdir "$RECEIPTS/fixtures"
+  # No external effect is retried if writing/renaming this final record fails.
+  # After a completed rename the verified facts remain true even if interrupted.
+  jq '.cleanup = "verified"' "$QUALIFICATION" > "$QUALIFICATION.tmp"
+  mv "$QUALIFICATION.tmp" "$QUALIFICATION"
   [ "$RESULT" = 0 ] || exit "$RESULT"
-  [ "$(docker image inspect "$CANDIDATE" --format '{{.Id}}')" = "$CANDIDATE" ] || exit 1
-  [ -z "$(docker container ls -aq --filter "label=org.openj92.cpk.test-run=$RUN")" ] || exit 1
+  jq -e '.status == "pass"' "$QUALIFICATION" >/dev/null || exit 1
   exit 0
 fi
 git rev-parse HEAD > "$RECEIPTS/source.commit"

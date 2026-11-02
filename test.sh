@@ -11,7 +11,7 @@ case "${1:-}" in
   --postgres-release-tests|--postgres-published-image|--postgres-source-image)
     exec sh scripts/postgres_artifact_shell.sh "$@"
     ;;
-  --managed-connector-controller|--managed-connector-release-tests)
+  --managed-connector-controller|--managed-connector-release-tests|--managed-connector-contents)
     exec sh scripts/cloudflared_release_shell.sh "$@"
     ;;
   --managed-connector-candidate)
@@ -400,6 +400,7 @@ sh scripts/cloudflared_managed_witness.sh
 # bounded failure/stop behavior. The controller owns only its labeled resources.
 (
   RECORDS="$(mktemp -d)"
+  RECORDS="$(CDPATH= cd -- "$RECORDS" && pwd -P)"
   CONTROLLER="$(docker image inspect "$IMAGE" --format '{{.Id}}')"
   sh scripts/postgres_artifact_shell.sh --postgres-source-image \
     --controller-image-id "$CONTROLLER" --receipt-dir "$RECORDS/receipts"

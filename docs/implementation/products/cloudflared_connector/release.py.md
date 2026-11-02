@@ -1,5 +1,15 @@
 # Managed cloudflared release policy
 
+#225 separates the inner witness outcome from final scratch-volume cleanup.
+The inner qualification receipt remains unverified or pending_volume while the
+controller holds its mount; qualified_candidate still accepts only verified.
+Only the outer admitted shell can finalize cleanup after controller exit and
+volume absence. Known failure status remains failure. Inner cleanup retains
+records for this outer step and requires the matching empty-volume marker;
+rejected result bytes are retained on the volume instead of copied through the
+generic JSON reader. Closed diagnostics preserve the failure without exposing
+or accepting invalid result material. No mounted-root rmdir is attempted.
+
 Product-owned closed evidence parsing checks source-bound destinations, explicit controller acquisition receipts, complete package-version pages and the same qualified candidate. Its qualification entry reuses the existing packaged controller and preserves exact stop-profile laws. It retains bounded status, source/recipe/controller/candidate/witness provenance and cleanup facts on failure. No credential values, generic runtime semantics, image acquisition or publication occur in the policy. Shell owner entries provide explicit acquisition/effect boundaries. Test doubles are source evidence, not OCI or live qualification.
 
 Fallback cleanup uses recorded container IDs plus their current ownership labels. A matching label alone is not deletion authority; an unexpected same-label object stops cleanup. Per-invocation run identity is independently randomized. Client-close failures cannot skip terminal failed/unverified receipt finalization. Unknown cleanup retains fixtures and ownership evidence. Candidate images are never deleted by this lane.

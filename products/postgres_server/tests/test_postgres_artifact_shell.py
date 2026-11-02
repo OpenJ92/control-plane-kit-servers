@@ -116,7 +116,8 @@ class PostgresArtifactShellTests(unittest.TestCase):
         self.assertNotIn('network', state)
         self.assertFalse((receipt/'fixtures').exists())
 
-    def invoke(self, mode='published', failure='', extra=None, *, closed_stdout=False):
+    def invoke(self, mode='published', failure='', extra=None, *, closed_stdout=False,
+               parent_spelling=None):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
@@ -132,6 +133,18 @@ class PostgresArtifactShellTests(unittest.TestCase):
         env.update(extra or {})
         selector={'published':'--postgres-published-image','source':'--postgres-source-image','unit':'--postgres-release-tests'}[mode]
         receipt=root/'receipt'
+        if parent_spelling is not None:
+            physical = root/'physical'
+            physical.mkdir()
+            (physical/'scratch').mkdir(mode=0o700)
+            alias = root/'alias'
+            alias.symlink_to(physical, target_is_directory=True)
+            parent = alias/'scratch'
+            if parent_spelling == 'canonical':
+                parent = parent.resolve(strict=True)
+            elif parent_spelling == 'physical':
+                parent = physical/'scratch'
+            receipt = parent/'receipt'
         command=['sh',str(ROOT/'scripts/postgres_artifact_shell.sh'),selector,
                  '--controller-image-id',IMAGE,'--receipt-dir',str(receipt)]
         if closed_stdout:
@@ -145,6 +158,21 @@ class PostgresArtifactShellTests(unittest.TestCase):
         calls=[json.loads(line) for line in (root/'calls.jsonl').read_text().splitlines()] if (root/'calls.jsonl').exists() else []
         state=json.loads((root/'state.json').read_text()) if (root/'state.json').exists() else {}
         return result, receipt, calls, state
+
+    def test_receipt_parent_requires_physical_spelling_even_with_alias_ancestor(self):
+        for spelling in ('alias', 'canonical', 'physical'):
+            with self.subTest(spelling=spelling):
+                result, receipt, calls, state = self.invoke('source', parent_spelling=spelling)
+                if spelling == 'alias':
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(calls, [])
+                    self.assertFalse(receipt.exists())
+                else:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(self.summary(result)['final_exit'], 0)
+                    self.assertTrue(any(call[0] == 'start' for call in calls))
+                    self.assertNotIn('container', state)
+                    self.assertNotIn('network', state)
 
     def test_effectful_modes_share_internal_launch_and_exact_cleanup(self):
         for mode in ('source','published'):

@@ -1,5 +1,18 @@
 Source: [scripts/apply_coordinates.py](../../../scripts/apply_coordinates.py).
 
+## Interpreter empty-command correction adoption (#225)
+
+The canonical Interpreter coordinate advances from `71ab335` to accepted
+`ed5ca565faee2a4d36666ea6ce3dd42865c238b5` (Interpreters #236 / PR #238).
+The unchanged generator updates root metadata and the CPK/ bootstrap Docker
+recipes; existing installed-provenance expectations advance with them. Core,
+Operations, SDK, runtime Secrets, extras and product/image/catalogue coordinates
+stay unchanged. The Interpreter fix normalizes present null/empty Docker Cmd
+at its representation boundary; Servers adds no decoder or runtime behavior.
+The normal owning gate must qualify consumer resolution and composition.
+This source selection does not publish or activate a replacement image, retry
+an observation, or establish live readiness.
+
 The early #181 prerequisite for #208 splits the former common field into required `control_plane_kit_core_commit` and `control_plane_kit_operations_commit`. Archive replacement is scoped by the exact package subdirectory, including when both original URLs share a commit. Every install destination receives only its own selected package coordinate. Coreb79 and Operationsbc559 are independent immutable sources; matching Core subtree evidence does not replace installed compatibility checks. Product source/image coordinates and generated descriptor/catalogue bytes remain unchanged.
 Maintain this companion when the generator or selected dependency contracts change.
 

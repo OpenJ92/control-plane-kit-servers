@@ -47,6 +47,19 @@ class ManagedReleaseRoutingTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertEqual(calls, '')
 
+    def test_contents_observation_requires_receipt_and_reaches_only_admission(self):
+        result, calls = self.run_owner(['--managed-connector-contents'])
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(calls, '')
+        result, calls = self.run_owner([
+            '--managed-connector-contents', '--controller-image-id', 'sha256:'+'a'*64,
+            '--controller-receipt', '@controller-receipt', '--receipt-dir', '@receipts'], ignored='cache')
+        # The double refuses the first actual image inspection, before any build/run.
+        self.assertNotIn(result.returncode, (0, 2))
+        self.assertIn('image inspect', calls)
+        self.assertNotIn('build', calls)
+        self.assertNotIn('run ', calls)
+
     def test_ignored_bytecode_refuses_before_controller_or_source_import(self):
         result, calls = self.run_owner([
             '--managed-connector-release-tests', '--controller-image-id', 'sha256:'+'a'*64,
@@ -86,7 +99,219 @@ class ManagedReleaseRoutingTests(unittest.TestCase):
         self.assertEqual(calls, '')
 
 
+class ManagedResultVolumeTests(unittest.TestCase):
+    """Exercise owning shell effects with a command double, never a real daemon."""
+
+    def run_lane(self, lane, failure=''):
+        import sys
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            binary = home / 'bin'
+            binary.mkdir()
+            source, tree = 'b'*40, 'c'*40
+            controller, candidate = 'sha256:'+'a'*64, 'sha256:'+'d'*64
+            receipt = home / 'controller.json'
+            receipt.write_text(json.dumps(dict(schema='cpk.cloudflared-controller-acquisition.v1',
+                image_id=controller, source_commit=source, source_tree=tree,
+                dockerfile_sha256='e'*64, build_exit=0, build_log_sha256='f'*64)))
+            (binary / 'git').write_text('#!/bin/sh\ncase "$*" in\n'
+                f'"rev-parse HEAD") echo {source};;\n"rev-parse HEAD^{{tree}}") echo {tree};;\nesac\n')
+            (binary / 'docker').write_text('#!'+sys.executable+'\n'+r'''
+import json, os, pathlib, sys
+a=sys.argv[1:]; home=pathlib.Path(os.environ['DOUBLE_HOME']); fail=os.environ['DOUBLE_FAILURE']
+state=home/'state.json'; s=json.loads(state.read_text()) if state.exists() else {}
+with (home/'calls').open('a') as out: out.write(json.dumps(a)+'\n')
+def done(value=None, code=0):
+    state.write_text(json.dumps(s))
+    if value is not None: print(value if isinstance(value,str) else json.dumps(value))
+    sys.exit(code)
+if a[:2]==['volume','ls']:
+    if fail=='volume_list_error': done(code=54)
+    done(s.get('volume','') or ('occupied' if fail=='preexisting' else ''))
+if a[:2]==['volume','create']:
+    s['volume']=a[-1]; s['run']=a[-1].removesuffix('-results')
+    done(a[-1], 53 if fail=='ambiguous_create' else 0)
+if a[:2]==['volume','inspect']:
+    if not s.get('volume'): done(code=1)
+    done([{'Name':s['volume'],'Driver':'local','Scope':'local','Options':None,
+           'CreatedAt':'2026-11-02T00:00:00Z',
+           'Labels':{'org.openj92.cpk.test-run':'other' if fail=='changed_owner' and s.get('exited') else s['run'],
+                     'org.openj92.project':'control-plane-kit-servers'}}])
+if a[:2]==['volume','rm']:
+    if fail in ('volume_remove','witness_and_volume'): done(code=1)
+    s.pop('volume',None); done()
+if a[:2]==['image','inspect']:
+    fmt=a[a.index('--format')+1]; image=next(x for x in a[2:] if x.startswith(('sha256:','control-plane-kit-')))
+    if not s.get('exited'):
+        if fail=='admission_revision_error' and 'revision' in fmt: done('b'*40, 56)
+        if fail=='admission_controller_error' and image=='sha256:'+'a'*64 and 'revision' not in fmt: done(image, 56)
+        if fail=='admission_candidate_error' and image=='sha256:'+'d'*64: done(image, 56)
+    if fail=='final_image_error' and s.get('exited'): done(image, 56)
+    done('b'*40 if 'revision' in fmt else s.get('image_run','') if 'test-run' in fmt else
+         'sha256:'+'d'*64 if image.startswith('control-plane-kit-') else image)
+if a[:2]==['image','ls']:
+    if fail=='preflight_image_list_error' and not s.get('exited'): done(code=57)
+    done(s.get('image_tag',''))
+if a[:2]==['image','rm']: s.pop('image_tag',None); done()
+if a[:2]==['container','ls'] or a[:1]==['ps']:
+    if fail=='preflight_container_list_error' and not s.get('exited') and any(x.startswith('label=') for x in a): done(code=57)
+    if fail=='final_container_list_error' and s.get('exited') and any(x.startswith('label=') for x in a): done(code=57)
+    if fail=='reference_error' and any(x.startswith('volume=') for x in a): done(code=55)
+    done('foreign-reference' if fail=='active_reference' and any(x.startswith('volume=') for x in a) else '')
+if a[:1]==['build']:
+    pathlib.Path(a[a.index('--iidfile')+1]).write_text('sha256:'+'d'*64)
+    s['image_tag']=a[a.index('-t')+1]
+    s['image_run']=a[a.index('--label')+1].split('=',1)[1]; done()
+if a[:1]==['run']:
+    s['exited']=True
+    env={a[i+1].split('=',1)[0]:a[i+1].split('=',1)[1] for i,x in enumerate(a[:-1]) if x=='-e'}
+    mounts=[dict(p.split('=',1) for p in a[i+1].split(',') if '=' in p)
+            for i,x in enumerate(a[:-1]) if x=='--mount']
+    records=pathlib.Path(next(m['source'] for m in mounts if m.get('target')=='/witness'))
+    (records/'containers.json').write_text('[]')
+    volume=env.get('CPK_MANAGED_RESULT_VOLUME')
+    if volume and fail!='residue':
+        (records/'result-volume.empty.json').write_text(json.dumps({
+            'schema':'cpk.managed-result-empty.v1','run':env['CPK_MANAGED_TEST_RUN'],
+            'volume':volume,'empty':True}))
+    if 'qualify' in a:
+        evidence=pathlib.Path(next(m['source'] for m in mounts if m.get('target')=='/evidence'))
+        q={'schema':'cpk.cloudflared-managed-qualification.v1','candidate_id':env['CPK_MANAGED_IMAGE'],
+           'controller_id':env['CPK_RELEASE_CONTROLLER'],'source_commit':env['CPK_MANAGED_SOURCE'],
+           'source_tree':env['CPK_RELEASE_TREE'],'run':env['CPK_MANAGED_TEST_RUN'],
+           'status':'fail' if fail=='witness' else 'pass',
+           'cleanup':'pending_volume' if volume else 'verified','candidate_retained':True,
+           'primary_diagnostic':'retained-closed-value'}
+        if fail=='mismatched_receipt': q['run']='other-run'
+        (evidence/'qualification.json').write_text(json.dumps(q))
+    done(code=7 if fail=='witness_and_volume' else 1 if fail in ('residue','witness') else 0)
+done(code=90)
+''')
+            # Simulate interruption on each side of the final receipt rename.
+            (binary / 'mv').write_text('#!/bin/sh\ncase "$*" in *qualification.json*)\n'
+                'case "$DOUBLE_FAILURE" in before_promotion) exit 143;; '
+                'after_promotion) /bin/mv "$@"; exit 143;; esac;; esac\nexec /bin/mv "$@"\n')
+            for path in binary.iterdir():
+                path.chmod(0o755)
+            receipts = home / 'receipts'
+            environment = dict(os.environ, PATH=str(binary)+os.pathsep+os.environ['PATH'],
+                DOUBLE_HOME=str(home), DOUBLE_FAILURE=failure, TMPDIR=str(home),
+                CPK_SERVERS_TEST_IMAGE=controller)
+            if lane == 'normal':
+                command = ['sh', str(ROOT/'scripts/cloudflared_managed_witness.sh')]
+            else:
+                command = ['sh', str(ROOT/'test.sh'), '--managed-connector-'+lane,
+                           '--controller-image-id', controller, '--controller-receipt', str(receipt),
+                           '--receipt-dir', str(receipts)]
+                if lane == 'candidate':
+                    command += ['--image-id', candidate, '--source', source]
+            result = subprocess.run(command, cwd=ROOT, env=environment,
+                                    capture_output=True, text=True, timeout=15)
+            calls = [json.loads(line) for line in (home/'calls').read_text().splitlines()]
+            qpath = receipts/'qualification.json'
+            q = json.loads(qpath.read_text()) if qpath.exists() else None
+            return result, calls, q
+
+    def test_all_owners_remove_same_result_volume_only_after_controller_exit(self):
+        for lane in ('normal', 'contents', 'candidate'):
+            with self.subTest(lane=lane):
+                result, calls, qualification = self.run_lane(lane)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                creates = [c for c in calls if c[:2] == ['volume','create']]
+                removes = [c for c in calls if c[:2] == ['volume','rm']]
+                self.assertEqual(len(creates), 1)
+                self.assertEqual(len(removes), 1)
+                self.assertEqual(creates[0][-1], removes[0][-1])
+                run = next(c for c in calls if c[0] == 'run')
+                self.assertLess(calls.index(creates[0]), calls.index(run))
+                self.assertLess(calls.index(run), calls.index(removes[0]))
+                self.assertIn('type=volume,source='+creates[0][-1]+',target=/witness-results,volume-nocopy', run)
+                self.assertNotIn('--force', removes[0])
+                if qualification:
+                    self.assertEqual(qualification['cleanup'], 'verified')
+                    self.assertEqual(qualification['status'], 'pass')
+
+    def test_normal_failure_retains_separate_cleanup_outcome_and_primary_exit(self):
+        for failure, primary, final, cleanup in (
+                ('', 0, 0, 'verified'), ('witness', 1, 1, 'verified'),
+                ('volume_remove', 0, 1, 'incomplete'), ('witness_and_volume', 7, 7, 'incomplete')):
+            with self.subTest(failure=failure):
+                result, calls, _ = self.run_lane('normal', failure)
+                records = [json.loads(line) for line in result.stdout.splitlines()
+                           if line.startswith('{')]
+                self.assertEqual(records, [{
+                    'stage': 'managed_cloudflared_cleanup', 'cleanup': cleanup,
+                    'primary_exit': primary, 'exit_code': final}])
+                self.assertEqual(result.returncode, final)
+                self.assertEqual(sum(c[:2] == ['volume','rm'] for c in calls), 1)
+                if final:
+                    self.assertNotIn('managed cloudflared package stage passed', result.stdout)
+
+    def test_result_volume_failure_cannot_qualify_or_erase_unknown_result(self):
+        for failure in ('volume_remove','residue','mismatched_receipt','before_promotion',
+                        'changed_owner','active_reference','reference_error',
+                        'final_image_error','final_container_list_error'):
+            with self.subTest(failure=failure):
+                result, calls, q = self.run_lane('candidate', failure)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotEqual(q['cleanup'], 'verified')
+                if failure in ('residue','mismatched_receipt','changed_owner','active_reference','reference_error',
+                               'final_image_error','final_container_list_error'):
+                    self.assertFalse(any(c[:2] == ['volume','rm'] for c in calls))
+
+    def test_preexisting_and_uncertain_volume_acquisition_never_runs_or_deletes(self):
+        for lane in ('normal','contents','candidate'):
+            for failure in ('preexisting','ambiguous_create','volume_list_error'):
+                with self.subTest(lane=lane, failure=failure):
+                    result, calls, _ = self.run_lane(lane, failure)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(any(c[0] == 'run' or c[:2] == ['volume','rm'] for c in calls))
+                    self.assertEqual(sum(c[:2] == ['volume','create'] for c in calls),
+                                     1 if failure == 'ambiguous_create' else 0)
+
+    def test_cleanup_finalization_never_promotes_witness_failure_or_repeats_removal(self):
+        for failure in ('witness','after_promotion'):
+            with self.subTest(failure=failure):
+                result, calls, q = self.run_lane('candidate', failure)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(q['cleanup'], 'verified')
+                self.assertEqual(q['status'], 'fail' if failure == 'witness' else 'pass')
+                self.assertEqual(q['primary_diagnostic'], 'retained-closed-value')
+                self.assertEqual(sum(c[:2] == ['volume','rm'] for c in calls), 1)
+
+    def test_failed_preflight_absence_observation_prevents_all_fixture_effects(self):
+        for lane in ('normal','contents','candidate'):
+            failures = ['preflight_container_list_error']
+            if lane != 'candidate':
+                failures.append('preflight_image_list_error')
+            for failure in failures:
+                with self.subTest(lane=lane, failure=failure):
+                    result, calls, _ = self.run_lane(lane, failure)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(any(c[0] in ('build','run') or
+                                         c[:2] in (['volume','create'], ['volume','rm']) for c in calls))
+
+    def test_failed_image_admission_cannot_use_expected_looking_output(self):
+        for lane in ('contents','candidate'):
+            failures = ['admission_controller_error','admission_revision_error']
+            if lane == 'candidate':
+                failures.append('admission_candidate_error')
+            for failure in failures:
+                with self.subTest(lane=lane, failure=failure):
+                    result, calls, _ = self.run_lane(lane, failure)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(any(c[0] in ('build','run') or
+                                         c[:2] in (['volume','create'], ['volume','rm']) for c in calls))
+
+
 class ManagedReleasePolicyTests(unittest.TestCase):
+    def test_contents_observation_cannot_supply_package_qualification_evidence(self):
+        import runpy
+        policy = runpy.run_path(str(ROOT / 'products/cloudflared_connector/release_evidence.py'))
+        record = {'stage': 'managed_cloudflared_contents_observation', 'outcome': 'contents_observed'}
+        with self.assertRaises(ValueError):
+            policy['witness_value'](json.dumps(record).encode())
+
     def policy(self):
         import runpy
         path = ROOT / 'products/cloudflared_connector/release.py'
@@ -148,7 +373,7 @@ class ManagedReleasePolicyTests(unittest.TestCase):
                        candidate_id=candidate, source_commit='b'*40,
                        status='pass', cleanup='verified', candidate_retained=True)
         check(receipt, candidate, 'b'*40)
-        for field, value in [('status','fail'),('cleanup','unverified'),
+        for field, value in [('status','fail'),('cleanup','unverified'),('cleanup','pending_volume'),
                              ('candidate_retained',False),('candidate_id','sha256:'+'c'*64),
                              ('source_commit','d'*40)]:
             with self.assertRaises(ValueError):
@@ -171,6 +396,9 @@ class ManagedCandidateOwnershipTests(unittest.TestCase):
             with self.subTest(failed=failed, close_failed=close_failed), tempfile.TemporaryDirectory() as directory:
                 evidence = Path(directory)
                 (evidence/'fixtures').mkdir()
+                (evidence/'fixtures/result-volume.empty.json').write_text(json.dumps({
+                    'schema':'cpk.managed-result-empty.v1','run':'owned-test',
+                    'volume':'owned-test-results','empty':True}))
                 record = dict(schema='cpk.cloudflared-controller-acquisition.v1',source_commit=source,
                               source_tree=tree,image_id=controller,build_exit=0,build_log_sha256='e'*64,
                               dockerfile_sha256=policy['digest_file'](ROOT/'Dockerfile.test'))
@@ -184,7 +412,7 @@ class ManagedCandidateOwnershipTests(unittest.TestCase):
                     client.close.side_effect = RuntimeError('close failed')
                 env = dict(CPK_MANAGED_IMAGE=candidate,CPK_MANAGED_SOURCE=source,
                            CPK_MANAGED_TEST_RUN='owned-test',CPK_RELEASE_CONTROLLER=controller,
-                           CPK_RELEASE_TREE=tree)
+                           CPK_RELEASE_TREE=tree,CPK_MANAGED_RESULT_VOLUME='owned-test-results')
                 with patch.dict(os.environ,env), patch('docker.from_env',return_value=client), \
                      patch.object(witness,'verify_image'), patch.object(witness,'controller',
                          side_effect=RuntimeError('private detail must not escape') if failed else None):
@@ -195,9 +423,9 @@ class ManagedCandidateOwnershipTests(unittest.TestCase):
                         policy['qualify'](ROOT,evidence)
                 final = json.loads((evidence/'qualification.json').read_text())
                 self.assertEqual(final['status'], 'fail' if failed else 'pass')
-                self.assertEqual(final['cleanup'], 'unverified' if close_failed else 'verified')
+                self.assertEqual(final['cleanup'], 'unverified' if close_failed else 'pending_volume')
                 self.assertTrue(final['candidate_retained'])
-                self.assertEqual((evidence/'fixtures').exists(), close_failed)
+                self.assertTrue((evidence/'fixtures').exists())  # Outer owner finishes transport cleanup.
                 self.assertNotIn('private detail', (evidence/'qualification.json').read_text())
                 client.images.remove.assert_not_called()
                 client.images.build.assert_not_called()

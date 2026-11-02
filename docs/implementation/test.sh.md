@@ -37,6 +37,15 @@ digest and reuses the existing product witness. It requires separate runtime
 authorization and is never selected by default CI. See
 [managed PostgreSQL artifacts](../managed-postgres-artifacts.md).
 
+#225 resolves the freshly allocated PostgreSQL scratch directory to its physical
+path before deriving the receipt path. This preserves the same owned directory
+when the host temporary root has an alias such as macOS /var -> /private/var.
+The standalone assignment retains failure status under set -e, so failed cd or
+pwd stops before controller inspection or PostgreSQL invocation. The PostgreSQL
+owner still refuses noncanonical or symlinked receipt parents. Its command-double
+regression covers alias-ancestor refusal and canonical/physical admission; it
+does not execute the normal caller or prove a live PostgreSQL lifecycle.
+
 #306 adds one unconditional representation regression after the existing
 controller/package/import checks and before product runtime effects. It calls
 the actual sourced `root_artifact_inspection` function on the cached `hello_family`
@@ -175,3 +184,10 @@ are pending; causal target-red39451603339 is not whole-package acceptance.
 ## Narrow managed release validation
 
 Explicit `--managed-connector-controller`, `--managed-connector-release-tests`, and `--managed-connector-candidate` routes exit before root artifact/policy/full-suite setup. Candidate mode uses the existing managed witness owner. Focused release tests run in the exact previously acquired Dockerfile.test controller with no socket/network and a test-only executable tmpfs for command doubles. All other isolation flags remain; this is not a product mount/configuration. Every acquisition/validation uses a new retained receipt directory; image identities and controller provenance are explicit. Default full gate and its managed witness behavior remain unchanged.
+#225 adds explicit `--managed-connector-contents` routing before broad suite
+setup. This is an isolated diagnostic observation through the existing managed
+shell/controller owner, not package or artifact acceptance. It requires an
+acquired controller receipt, clean source and fresh receipts; builds one owned
+current-source fixture; uses the same host-bind helper result channel; and stops
+before stop-profile/fatal work. The default full gate remains mandatory for
+composition acceptance and is not shortened by this option.

@@ -1,6 +1,32 @@
 # Managed witness failure diagnostics
 
+#225 event-stream targets treat SDK yields as transport chunks, not records.
+The real events_between boundary must preserve values across coalesced/split
+JSON and split UTF8, strict framing/shape/identity/precision admission, aggregate
+65536-byte and logical32-event limits, finite query inputs and stream closure.
+Recognized JSON/encoding errors have a fixed reason; transport errors retain
+their primary identity, including when close also fails. Secondary close failure
+uses the existing closed cleanup/profile/events marker, without raw values.
+These are supplied-stream tests, not actual Engine timing or failure attribution.
+
+#225 contents-only targets exercise the actual controller with provider doubles:
+one contents helper, no stop-profile creation or stop effects, and a distinct
+closed observation emitted only after common cleanup. Helper and cleanup failures
+cannot produce success; a primary helper failure retains precedence. Default
+controller invocation still reaches profile admission after contents. These are
+control-flow proofs, not actual container or bind-mount observations.
+
 Source: [test_managed_witness_diagnostics.py](../../../../../products/cloudflared_connector/tests/test_managed_witness_diagnostics.py).
+
+#225 adds focused targets for the result-file admission boundary. Each existing
+metadata predicate is independently falsified, requiring its fixed reason and
+refusal before bytes or unlink, with descriptor closure. A valid bounded read
+retains the existing open flags, JSON result and unlink; changed metadata still
+refuses and closes without unlink. These use supplied metadata at the actual
+read function, not a Docker or provider simulation. They identify the first
+failed predicate, not every possible mismatch or an operating-system cause.
+The target checkpoint precedes the diagnostic implementation; no execution or
+actual Desktop metadata observation is inferred from the test source.
 
 Servers #284 owns ten focused methods at real witness boundaries. They protect
 numeric UID/GID refusal before version I/O, frozen primary context, closed
@@ -68,3 +94,18 @@ six-character prefix and a mismatched full hash. Existing explicit timeout,
 signal/platform/SDK and timing laws remain. These are resolver tests with doubles,
 not measured stop behavior. The maintained managed-connector-release-tests route
 owns focused execution; its result is separate from full image qualification.
+#225 result-transport targets require the helper's exact owned named-volume mount
+with no initial content copy and a closed empty-volume marker only after cleanup.
+Rejected-result residue and cleanup failure suppress that marker and success.
+The existing opened-file metadata, no-follow, bounds and stability targets remain.
+#225 explicitly configured controlled-fixture targets serialize the real selected
+SDK create request through a doubled HTTP transport. Only the controlled fixture
+receives StopTimeout10; contents/fatal paths and argument-free Interpreter stop
+remain. A known returned ID is recorded before lookup and retained for cleanup
+on lookup/record failure; malformed/ambiguous creation cannot be adopted/retried.
+Resolver targets retain29.7.2/null refusal and label explicit10 as container-origin.
+The selected controlled fixture must also refuse a missing inspected timeout on
+an older reviewed Engine, even though the generic resolver may legitimately
+derive that Engine's historical fixed default. The regression requires refusal
+before stop/fatal effects and cleanup of the known controlled ID; historical
+resolver/evidence support remains unchanged.

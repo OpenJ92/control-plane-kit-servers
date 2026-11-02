@@ -285,24 +285,25 @@ def qualify(root=Path('/source'), evidence=Path('/evidence')):
         try:
             require(receipt['cleanup'] == 'verified')
             fixtures = evidence / 'fixtures'
-            results = fixtures / 'results'
-            if results.exists():
-                preserved = evidence / 'witness-results'
-                preserved.mkdir()
-                for item in results.iterdir():
-                    require(re.fullmatch(r'cpk-witness-[0-9a-f]+\.json', item.name) is not None)
-                    value = read_json(item, 4096)
-                    write_receipt(preserved / item.name, value)
-                    item.unlink()
-                results.rmdir()
-            if records.exists():
-                records.unlink()
-            fixtures.rmdir()  # Unknown files fail closed; no recursive removal.
+            # Rejected result bytes stay on the volume; never copy them through
+            # the weaker generic JSON reader. The controller attests emptiness
+            # only after its strict result reader and helper cleanup.
+            volume = os.environ['CPK_MANAGED_RESULT_VOLUME']
+            require(volume == run + '-results')
+            require(read_json(fixtures / 'result-volume.empty.json', 4096) == {
+                'schema': 'cpk.managed-result-empty.v1', 'run': run,
+                'volume': volume, 'empty': True})
+            require({item.name for item in fixtures.iterdir()} <= {
+                'containers.json', 'result-volume.json', 'result-volume.empty.json'})
+            # The outer owner removes the mounted volume and these records
+            # after this controller exits, then atomically finalizes cleanup.
+            receipt['cleanup'] = 'pending_volume'
         except Exception:
             receipt['status'] = 'fail'
             receipt['cleanup'] = 'unverified'
         write_receipt(path, receipt)
-    qualified_candidate(receipt, candidate, source)
+    require(receipt['status'] == 'pass' and receipt['cleanup'] == 'pending_volume'
+            and receipt['candidate_retained'] is True)
 
 
 def main():

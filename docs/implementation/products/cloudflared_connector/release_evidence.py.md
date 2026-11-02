@@ -88,3 +88,10 @@ Its separate producer fixture remains28.0.4. This tests evidence consistency;
 it does not execute a publication or widen release.py's producer/store profile.
 The actual Engine/SDK trace is recorded on PR363 comment6561584917. Source
 qualification alone cannot replace empirical stop/fatal/cleanup evidence.
+#225 provisional cleanup pending_volume is valid bounded evidence but projects
+as unverified cleanup and never establishes qualification. The known candidate
+retention and receipt hash remain visible. Final acceptance still requires
+verified cleanup; the outer owning shell finalizes only after volume absence.
+#225 controlled-profile targets round-trip29.7.2/explicit10 as container-origin
+with null reviewed source, while refusing the same version/null timeout presented
+as a fixed daemon default. This does not expand either fixed-default source map.

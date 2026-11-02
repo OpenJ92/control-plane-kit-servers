@@ -115,9 +115,10 @@ def read_helper_result(local_path, deadline):
                          os.O_NONBLOCK | os.O_CLOEXEC)
     try:
         before = os.fstat(descriptor)
-        require(stat.S_ISREG(before.st_mode) and stat.S_IMODE(before.st_mode) == 0o400
-                and before.st_uid == 65532 and 0 < before.st_size <= 4096,
-                "helper_result_file")
+        require(stat.S_ISREG(before.st_mode), "helper_result_type")
+        require(stat.S_IMODE(before.st_mode) == 0o400, "helper_result_mode")
+        require(before.st_uid == 65532, "helper_result_owner")
+        require(0 < before.st_size <= 4096, "helper_result_size")
         value = os.read(descriptor, 4097)
         after = os.fstat(descriptor)
         require((before.st_size, before.st_mtime_ns, before.st_ctime_ns) ==
@@ -158,6 +159,34 @@ def completed_helper(mode, exit_code, local_path, deadline):
                       "exit_code": exit_code, "result": "deadline_exhausted"}
     print(json.dumps(diagnostic), flush=True)
     require(False, "package_inspection_failed")
+
+
+def prepare_result_volume(client, records, results, run, volume):
+    """Verify the admitted scratch mount before initializing its empty root."""
+    require(volume == run + "-results", "result_volume_association")
+    record_path = records / "result-volume.json"
+    require(record_path.stat().st_size <= 4096, "result_volume_association")
+    record = json.loads(record_path.read_text())
+    require(record.get("schema") == "cpk.managed-result-volume.v1"
+            and record.get("run") == run and record.get("volume") == volume
+            and record.get("acquired") is True, "result_volume_association")
+    observed = client.volumes.get(volume).attrs
+    require(observed.get("Name") == volume and observed.get("Driver") == "local"
+            and observed.get("Scope") == "local" and observed.get("Options") in (None, {})
+            and isinstance(record.get("created_at"), str) and bool(record["created_at"])
+            and observed.get("CreatedAt") == record["created_at"]
+            and observed.get("Labels", {}).get(OWNER) == run
+            and observed.get("Labels", {}).get("org.openj92.project") == "control-plane-kit-servers",
+            "result_volume_association")
+    mounts = client.api.inspect_container(os.environ["HOSTNAME"])["Mounts"]
+    selected = [mount for mount in mounts if mount.get("Destination") == "/witness-results"]
+    require(len(selected) == 1 and selected[0].get("Type") == "volume"
+            and selected[0].get("Name") == volume and selected[0].get("RW") is True,
+            "result_volume_mount")
+    require(not any(results.iterdir()), "result_volume_not_empty")
+    # Initialize only this fresh empty directory, never a produced result file.
+    results.chmod(0o770)
+    os.chown(results, 0, 65532)
 
 
 def image_contents():
@@ -209,21 +238,50 @@ def fatal_process():
 
 
 def events_between(client, identity, since, until):
-    """Finite historical event query, never an open-ended listener."""
+    """Bound historical event bytes and records independently of HTTP chunks.
+
+    SDK events uses timeout=None: until scopes server history, not a client
+    wall-clock deadline. This bounds our buffer, not upstream socket allocation.
+    """
     stream = client.events(since=since, until=until,
                            filters={"container": identity}, decode=False)
-    events, size = [], 0
+    events, buffer = [], bytearray()
+    primary_failed = False
     try:
         for raw in stream:
-            size += len(raw)
-            require(size <= 65536 and len(events) < 32, "event_bound")
-            value = json.loads(raw)
-            require(value.get("Actor", {}).get("ID") == identity, "event_identity")
-            require(type(value.get("timeNano")) is int, "event_precision")
-            events.append(value)
+            require(isinstance(raw, bytes), "event_chunk_type")
+            require(len(buffer) + len(raw) <= 65536, "event_bound")
+            buffer.extend(raw)
+        try:
+            text = buffer.decode("utf-8")
+            decoder = json.JSONDecoder()
+            offset = 0
+            while offset < len(text):
+                if text[offset] in " \t\r\n":
+                    offset += 1
+                    continue
+                require(len(events) < 32, "event_bound")
+                value, offset = decoder.raw_decode(text, offset)
+                require(isinstance(value, dict), "event_shape")
+                actor = value.get("Actor")
+                require(isinstance(actor, dict) and actor.get("ID") == identity,
+                        "event_identity")
+                require(type(value.get("timeNano")) is int, "event_precision")
+                events.append(value)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise QualificationFailure("event_json_invalid") from None
+        return events
+    except BaseException:
+        primary_failed = True
+        raise
     finally:
-        stream.close()
-    return events
+        try:
+            stream.close()
+        except Exception:
+            emit_controller_failure("cleanup", {
+                "phase": "profile", "operation": "events", "helper_mode": None})
+            if not primary_failed:
+                raise QualificationFailure("event_stream_close_failed") from None
 
 
 def verify_stop_events(events):
@@ -293,7 +351,7 @@ def verify_image(image):
             (5_000_000_000, 3_000_000_000, 1), "image_health_bounds")
 
 
-def controller():
+def controller(*, contents_only=False):
     context = {"phase": "setup", "operation": "initialize", "helper_mode": None}
     primary_failure = None
     primary_context = None
@@ -301,8 +359,9 @@ def controller():
     cleanup_context = None
     client = None
     created = []
+    volume_prepared = False
 
-    def create(name, *, deadline=None, **kwargs):
+    def create(name, *, deadline=None, stop_timeout=None, **kwargs):
         phase = context["phase"]
         mode = context["helper_mode"]
         if deadline is not None:
@@ -313,13 +372,30 @@ def controller():
         if deadline is not None:
             require(time.monotonic() < deadline, "helper_deadline")
         mark_controller(context, phase, "create", mode)
-        container = client.containers.create(
-            image_id, name=name, network_mode="none",
-            labels={OWNER: run, "org.openj92.project": "control-plane-kit-servers"},
-            **kwargs)
-        created.append(container.id)
+        labels = {OWNER: run, "org.openj92.project": "control-plane-kit-servers"}
+        container = None
+        if stop_timeout is None:
+            container = client.containers.create(
+                image_id, name=name, network_mode="none", labels=labels, **kwargs)
+            identity = container.id
+        else:
+            # The selected SDK supports StopTimeout only through its low-level
+            # create API. Preserve the fixture's binds and inherited image user.
+            binds = kwargs.pop("volumes")
+            response = client.api.create_container(
+                image_id, name=name, labels=labels, stop_timeout=stop_timeout,
+                host_config=client.api.create_host_config(network_mode="none", binds=binds),
+                volumes=[binding["bind"] for binding in binds.values()], **kwargs)
+            identity = response.get("Id") if type(response) is dict else None
+            require(type(identity) is str and len(identity) == 64
+                    and all(char in "0123456789abcdef" for char in identity),
+                    "created_identity_unproved")
+        created.append(identity)
         mark_controller(context, phase, "record", mode)
         (records / "containers.json").write_text(json.dumps(created))
+        if container is None:
+            mark_controller(context, phase, "reload", mode)
+            container = client.containers.get(identity)
         if deadline is not None:
             require(time.monotonic() < deadline, "helper_deadline")
         return container
@@ -343,10 +419,10 @@ def controller():
         from control_plane_kit_interpreters.docker.sdk import DockerSdkClient
         mark_controller(context, "setup", "inputs")
         records = Path("/witness")
-        results = records / "results"
+        results = Path("/witness-results")
         run = os.environ["CPK_MANAGED_TEST_RUN"]
         image_id = os.environ["CPK_MANAGED_IMAGE"]
-        host_records = os.environ["CPK_MANAGED_HOST_RECORDS"]
+        volume = os.environ["CPK_MANAGED_RESULT_VOLUME"]
         host_tests = os.environ["CPK_MANAGED_HOST_TESTS"]
         mark_controller(context, "setup", "connect")
         client = docker.from_env(timeout=5)
@@ -356,14 +432,10 @@ def controller():
         image = client.images.get(image_id)
         verify_image(image)
         mark_controller(context, "setup", "prepare_files")
-        results.mkdir(mode=0o770)
-        results.chmod(0o770)
-        # The host run owner can clean up failed observations; the numeric
-        # product group can write only this fixture directory.
-        os.chown(results, records.stat().st_uid, 65532)
+        prepare_result_volume(client, records, results, run, volume)
+        volume_prepared = True
         mounts = {
             host_tests: {"bind": "/witness-tests", "mode": "ro"},
-            host_records + "/results": {"bind": "/witness-results", "mode": "rw"},
             str(Path(host_tests).parent / "licenses/cloudflared-manifest.json"):
                 {"bind": "/witness/notice-manifest.json", "mode": "ro"},
         }
@@ -377,7 +449,9 @@ def controller():
                 run + "-contents", deadline=deadline,
                 entrypoint=["python", "/witness-tests/packaged_managed_witness.py",
                             "contents", "/witness-results/" + name],
-                volumes=mounts, healthcheck={"test": ["NONE"]})
+                volumes=mounts, mounts=[docker.types.Mount(
+                    target="/witness-results", source=volume, type="volume", no_copy=True)],
+                healthcheck={"test": ["NONE"]})
             require(time.monotonic() < deadline, "helper_deadline")
             mark_controller(context, "artifact", "start", "contents")
             inspection.start()
@@ -399,69 +473,79 @@ def controller():
         finally:
             client.api.timeout = old_timeout
 
-        mark_controller(context, "profile", "create")
-        controlled = create(
-            run + "-profile", entrypoint=["python", "/witness-tests/packaged_managed_witness.py",
-                                        "controlled"],
-            volumes={host_tests: {"bind": "/witness-tests", "mode": "ro"}},
-            healthcheck={"test": ["NONE"]})
-        mark_controller(context, "profile", "start")
-        controlled.start()
-        mark_controller(context, "profile", "resolve_profile")
-        profile = resolve_profile(client, controlled)
-        wait_receipt(controlled, b"handler-ready")
-        wall_before, mono_before = time.time_ns(), time.monotonic_ns()
-        mark_controller(context, "profile", "stop")
-        owner.stop_container(controlled.id)
-        wall_after, mono_after = time.time_ns(), time.monotonic_ns()
-        require(abs((wall_after - wall_before) - (mono_after - mono_before)) <= 1_000_000_000,
-                "controller_clock_discontinuity")
-        mark_controller(context, "profile", "reload")
-        controlled.reload()
-        require(controlled.status == "exited" and controlled.attrs["State"]["ExitCode"] == 137,
-                "controlled_terminal_state")
-        mark_controller(context, "profile", "logs")
-        output = controlled.logs(tail=3)
-        require(len(output) <= 128 and output.splitlines() == [b"handler-ready", b"term-received"],
-                "controlled_receipts")
-        mark_controller(context, "profile", "events")
-        events = events_between(client, controlled.id, wall_before // 1_000_000_000,
-                                wall_after // 1_000_000_000 + 1)
-        evidence = verify_stop_events(events)
-        mark_controller(context, "fatal", "create")
-        fatal = create(
-            run + "-fatal", entrypoint=["python", "/witness-tests/packaged_managed_witness.py",
-                                      "fatal"],
-            volumes={host_tests: {"bind": "/witness-tests", "mode": "ro"}},
-            healthcheck={"test": ["NONE"]})
-        mark_controller(context, "fatal", "start")
-        fatal.start()
-        fatal_deadline = time.monotonic() + 5
-        child = None
-        while time.monotonic() < fatal_deadline:
-            mark_controller(context, "fatal", "logs")
-            output = fatal.logs(tail=1)
-            require(len(output) <= 128, "fatal_receipt_bound")
-            if output:
-                child = json.loads(output)
-                break
-            time.sleep(0.05)
-        require(child is not None and child["child_pid"] == child["child_group"] > 1,
-                "fatal_child_group")
-        mark_controller(context, "fatal", "kill")
-        fatal.kill(signal="SIGKILL")
-        mark_controller(context, "fatal", "wait")
-        require(fatal.wait(timeout=5)["StatusCode"] == 137, "fatal_exit")
-        mark_controller(context, "fatal", "reload")
-        fatal.reload()
-        require(fatal.status == "exited" and fatal.attrs["State"]["Pid"] == 0,
-                "fatal_namespace_still_running")
-        # Linux PID-namespace init death terminates namespace members. This is
-        # Docker's stopped namespace evidence, not a scan of all host processes.
-        result = {"stage": "managed_cloudflared_controller", "outcome": "package_pass",
-                  "live_qualification": "pending",
-                  "profile_container_id": controlled.id,
-                  "docker_sdk": docker.__version__, **profile, **evidence, **contents}
+        if contents_only:
+            result = {"stage": "managed_cloudflared_contents_observation",
+                      "outcome": "contents_observed"}
+        else:
+            mark_controller(context, "profile", "create")
+            controlled = create(
+                run + "-profile", stop_timeout=10,
+                entrypoint=["python", "/witness-tests/packaged_managed_witness.py",
+                                            "controlled"],
+                volumes={host_tests: {"bind": "/witness-tests", "mode": "ro"}},
+                healthcheck={"test": ["NONE"]})
+            mark_controller(context, "profile", "start")
+            controlled.start()
+            mark_controller(context, "profile", "resolve_profile")
+            profile = resolve_profile(client, controlled)
+            require(type(profile["configured_stop_timeout"]) is int
+                    and profile["configured_stop_timeout"] == 10
+                    and profile["timeout_origin"] == "container"
+                    and profile["reviewed_engine_source"] is None,
+                    "controlled_stop_profile_unproved")
+            wait_receipt(controlled, b"handler-ready")
+            wall_before, mono_before = time.time_ns(), time.monotonic_ns()
+            mark_controller(context, "profile", "stop")
+            owner.stop_container(controlled.id)
+            wall_after, mono_after = time.time_ns(), time.monotonic_ns()
+            require(abs((wall_after - wall_before) - (mono_after - mono_before)) <= 1_000_000_000,
+                    "controller_clock_discontinuity")
+            mark_controller(context, "profile", "reload")
+            controlled.reload()
+            require(controlled.status == "exited" and controlled.attrs["State"]["ExitCode"] == 137,
+                    "controlled_terminal_state")
+            mark_controller(context, "profile", "logs")
+            output = controlled.logs(tail=3)
+            require(len(output) <= 128 and output.splitlines() == [b"handler-ready", b"term-received"],
+                    "controlled_receipts")
+            mark_controller(context, "profile", "events")
+            events = events_between(client, controlled.id, wall_before // 1_000_000_000,
+                                    wall_after // 1_000_000_000 + 1)
+            evidence = verify_stop_events(events)
+            mark_controller(context, "fatal", "create")
+            fatal = create(
+                run + "-fatal", entrypoint=["python", "/witness-tests/packaged_managed_witness.py",
+                                          "fatal"],
+                volumes={host_tests: {"bind": "/witness-tests", "mode": "ro"}},
+                healthcheck={"test": ["NONE"]})
+            mark_controller(context, "fatal", "start")
+            fatal.start()
+            fatal_deadline = time.monotonic() + 5
+            child = None
+            while time.monotonic() < fatal_deadline:
+                mark_controller(context, "fatal", "logs")
+                output = fatal.logs(tail=1)
+                require(len(output) <= 128, "fatal_receipt_bound")
+                if output:
+                    child = json.loads(output)
+                    break
+                time.sleep(0.05)
+            require(child is not None and child["child_pid"] == child["child_group"] > 1,
+                    "fatal_child_group")
+            mark_controller(context, "fatal", "kill")
+            fatal.kill(signal="SIGKILL")
+            mark_controller(context, "fatal", "wait")
+            require(fatal.wait(timeout=5)["StatusCode"] == 137, "fatal_exit")
+            mark_controller(context, "fatal", "reload")
+            fatal.reload()
+            require(fatal.status == "exited" and fatal.attrs["State"]["Pid"] == 0,
+                    "fatal_namespace_still_running")
+            # Linux PID-namespace init death terminates namespace members. This is
+            # Docker's stopped namespace evidence, not a scan of all host processes.
+            result = {"stage": "managed_cloudflared_controller", "outcome": "package_pass",
+                      "live_qualification": "pending",
+                      "profile_container_id": controlled.id,
+                      "docker_sdk": docker.__version__, **profile, **evidence, **contents}
     except Exception as failure:
         primary_failure = failure
         primary_context, primary_reported = capture_controller_failure("primary", context)
@@ -498,6 +582,15 @@ def controller():
             except Exception:
                 if cleanup_context is None:
                     cleanup_context = dict(context)
+        if volume_prepared and cleanup_context is None:
+            try:
+                mark_controller(context, "cleanup", "prepare_files")
+                require(not any(results.iterdir()), "result_volume_not_empty")
+                with (records / "result-volume.empty.json").open("x") as marker:
+                    json.dump({"schema": "cpk.managed-result-empty.v1", "run": run,
+                               "volume": volume, "empty": True}, marker)
+            except Exception:
+                cleanup_context = dict(context)
         if cleanup_context is not None:
             emit_controller_failure("cleanup", cleanup_context)
     if primary_context is not None and not primary_reported:
@@ -538,6 +631,8 @@ if __name__ == "__main__":
             fatal_process()
         elif mode == "controller":
             controller()
+        elif mode == "contents-controller":
+            controller(contents_only=True)
         else:
             raise QualificationFailure("invalid_witness_mode")
     except QualificationFailure as failure:

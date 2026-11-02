@@ -616,11 +616,8 @@ exec python products/cpk_server/tests/live_unlisted_receiver.py')"
   RECEIVER_NAME="$NETWORK-docker-$docker_scenario"
   RECEIVER_RECORDS="$(mktemp -d)"
   [ -z "$(docker container ls -aq --filter "name=^/$RECEIVER_NAME$")" ]
-  case "$(docker context inspect --format '{{.Endpoints.docker.Host}}')" in
-    unix:///var/run/docker.sock) ;;
-    *) echo 'Docker image witness requires the owning local Unix daemon' >&2; exit 1 ;;
-  esac
-  image_witness_daemon="$(docker info --format '{{.ID}}')"
+  . ./scripts/docker_witness_daemon.sh
+  docker_witness_daemon
   receiver_id="$(docker create --name "$RECEIVER_NAME" \
     --cidfile "$RECEIVER_RECORDS/container" --label "$LABEL" \
     --label "org.openj92.cpk.test-run=$NETWORK" --network "$NETWORK" \
