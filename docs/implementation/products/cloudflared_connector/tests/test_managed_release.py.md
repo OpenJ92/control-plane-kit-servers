@@ -7,6 +7,9 @@ Removal failure, retained results, mismatched provisional receipt and interrupte
 promotion cannot qualify. Cleanup verification preserves a failed witness outcome;
 interruption after atomic promotion does not undo already verified cleanup facts.
 These are orchestration targets, not actual Docker volume evidence.
+Preflight negatives also return empty listings or expected-looking image metadata
+with nonzero command status: every affected owner must stop before build, run or
+volume acquisition/removal. This tests admission separately from later finalization.
 
 Command doubles prove routing and refusal ordering only. Missing, mutable and duplicate selected-image inputs must refuse before Docker I/O or unrelated full-gate setup. They do not prove image qualification, publication or real native connection. Run through the owning Docker test environment.
 

@@ -142,12 +142,19 @@ if a[:2]==['volume','rm']:
     s.pop('volume',None); done()
 if a[:2]==['image','inspect']:
     fmt=a[a.index('--format')+1]; image=next(x for x in a[2:] if x.startswith(('sha256:','control-plane-kit-')))
+    if not s.get('exited'):
+        if fail=='admission_revision_error' and 'revision' in fmt: done('b'*40, 56)
+        if fail=='admission_controller_error' and image=='sha256:'+'a'*64 and 'revision' not in fmt: done(image, 56)
+        if fail=='admission_candidate_error' and image=='sha256:'+'d'*64: done(image, 56)
     if fail=='final_image_error' and s.get('exited'): done(image, 56)
     done('b'*40 if 'revision' in fmt else s.get('image_run','') if 'test-run' in fmt else
          'sha256:'+'d'*64 if image.startswith('control-plane-kit-') else image)
-if a[:2]==['image','ls']: done(s.get('image_tag',''))
+if a[:2]==['image','ls']:
+    if fail=='preflight_image_list_error' and not s.get('exited'): done(code=57)
+    done(s.get('image_tag',''))
 if a[:2]==['image','rm']: s.pop('image_tag',None); done()
 if a[:2]==['container','ls'] or a[:1]==['ps']:
+    if fail=='preflight_container_list_error' and not s.get('exited') and any(x.startswith('label=') for x in a): done(code=57)
     if fail=='final_container_list_error' and s.get('exited') and any(x.startswith('label=') for x in a): done(code=57)
     if fail=='reference_error' and any(x.startswith('volume=') for x in a): done(code=55)
     done('foreign-reference' if fail=='active_reference' and any(x.startswith('volume=') for x in a) else '')
@@ -255,6 +262,30 @@ done(code=90)
                 self.assertEqual(q['status'], 'fail' if failure == 'witness' else 'pass')
                 self.assertEqual(q['primary_diagnostic'], 'retained-closed-value')
                 self.assertEqual(sum(c[:2] == ['volume','rm'] for c in calls), 1)
+
+    def test_failed_preflight_absence_observation_prevents_all_fixture_effects(self):
+        for lane in ('normal','contents','candidate'):
+            failures = ['preflight_container_list_error']
+            if lane != 'candidate':
+                failures.append('preflight_image_list_error')
+            for failure in failures:
+                with self.subTest(lane=lane, failure=failure):
+                    result, calls, _ = self.run_lane(lane, failure)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(any(c[0] in ('build','run') or
+                                         c[:2] in (['volume','create'], ['volume','rm']) for c in calls))
+
+    def test_failed_image_admission_cannot_use_expected_looking_output(self):
+        for lane in ('contents','candidate'):
+            failures = ['admission_controller_error','admission_revision_error']
+            if lane == 'candidate':
+                failures.append('admission_candidate_error')
+            for failure in failures:
+                with self.subTest(lane=lane, failure=failure):
+                    result, calls, _ = self.run_lane(lane, failure)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(any(c[0] in ('build','run') or
+                                         c[:2] in (['volume','create'], ['volume','rm']) for c in calls))
 
 
 class ManagedReleasePolicyTests(unittest.TestCase):
