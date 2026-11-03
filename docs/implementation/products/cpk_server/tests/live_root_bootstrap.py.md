@@ -168,3 +168,17 @@ initialization inspection, no-redispatch and cleanup. The corrected full witness
 passed in run40818456065; this does not establish the old run's actual mount
 difference or cleanup retrospectively.
 See [terminal evidence](https://github.com/OpenJ92/control-plane-kit-servers/issues/347#issuecomment-6487952402).
+
+## #225 diagnostic artifact account admission
+
+The exact-reference selector adds the observed CPK e9dc7188 artifact from
+producer8b0ea409 and publication/account run41610182419. Seal SHA256
+cbdd3010b7230ad02942a753a2413f0695abd60e5ad3b45ecbe7c2111833a2b2
+binds original source config424318ef, UID/GID10001, supplementary group100 and
+the actual final-filesystem account hashes. Normalized configd4b74405 is not
+substituted. See the [publication/account evidence](https://github.com/OpenJ92/control-plane-kit-servers/issues/225#issuecomment-6599907164).
+All prior rows and unknown-reference refusal remain. Production recipes,
+dependencies and runtime code are unchanged from the accepted producer. This
+fixture admission awaits the owning package and actual published-pair gates;
+it does not establish artifact qualification, retained replacement or successful
+continuation of the original pending advancement.

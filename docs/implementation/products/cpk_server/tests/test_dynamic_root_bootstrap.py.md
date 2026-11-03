@@ -85,3 +85,15 @@ commissioning, generated credentials/principals, protected files, index and publ
 plan are consumed together. This does not replace normal launcher plan/apply
 evidence. The intermediate valid-input refusal becomes a provider-entrance target;
 invalid credentials, fabricated registration and existing-receipt refusals remain.
+
+## #225 diagnostic account evidence
+
+The existing dynamic authoring/material-admission case now selects the observed
+e9dc7188 CPK account. One concise exact-row assertion binds its independently
+observed original config424318ef, account hashes and UID/GID/groups from seal
+cbdd3010/run41610182419. Prior historical/c028 rows and unknown-reference,
+wrong-image and socket-group checks remain intact. The authoring fixture's
+Secrets reference remains inert; the actual-pair gate selects published Secrets
+11fef743 with common producer8b0ea409. No execution/lifecycle owner is replaced.
+The change is unvalidated until the existing owning Docker workflow runs; no
+new focused harness or live effect is introduced.
