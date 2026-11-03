@@ -1,5 +1,12 @@
 #371 selects accepted Operations 9822cab5831c0cb7f8584a99607812b07cc346b6. Nonauthorization HTTP errors retain only an actual integer 4xx/5xx status. Only advancement reads an error body, capped at 8192+1 bytes, rejects duplicate/extra/malformed/unbound envelopes and validates the closed diagnostic with the accepted owner value. Every HTTPError body closes, including authorization and invalid evidence. Fixed failures are raised outside the handler to avoid retaining raw error context. Source review and consolidated normal Docker validation are pending.
 
+The first consolidated gate at `5febb5f7` stopped at package integrity before
+image build or product tests: the new close handler used a forbidden no-op
+`except: pass`. The correction explicitly discards diagnostic evidence on close
+failure while retaining only safe actual status. The bounded wire cohort covers
+this case. No waiver or behavioral-green claim follows the first run; see
+[the integrity stop](https://github.com/OpenJ92/control-plane-kit-servers/issues/371#issuecomment-6597592805).
+
 # Public HTTP client transport
 
 GET query encoding follows the existing shared boundary contract: runtime_id and

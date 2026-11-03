@@ -133,7 +133,7 @@ class PublicHttpTransport:
                 try:
                     error.close()
                 except Exception:
-                    pass
+                    diagnostic = None
             failure = (ClientAuthorizationError() if status in {401, 403} else
                 ClientTransportError(http_status=status, diagnostic=diagnostic))
         except (OSError, TimeoutError, URLError):

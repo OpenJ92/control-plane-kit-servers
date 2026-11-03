@@ -959,7 +959,8 @@ class TopologyClientTests(unittest.TestCase):
             ("category", wire({**diagnostic, "reason": "body-canary"}), 500, False),
             ("recursive", b"[" * 2000 + b"]" * 2000, 500, False),
             ("wrong-status", valid, 503, False), ("bool-status", valid, True, False),
-            ("unreadable", valid, 500, False), ("other-route", valid, 500, False),
+            ("unreadable", valid, 500, False), ("close-failure", valid, 500, False),
+            ("other-route", valid, 500, False),
             ("denied", valid, 403, False), ("unauthenticated", valid, 401, False)]
         for key in correlation:
             cases.append((key, wire({**diagnostic, "correlation": {**correlation, key: "foreign-canary"}}), 500, False))
@@ -969,6 +970,12 @@ class TopologyClientTests(unittest.TestCase):
                 if name == "unreadable":
                     raise OSError("private-read-canary")
                 return super().read(size)
+            def close(self):
+                if self.closed:
+                    return
+                super().close()
+                if name == "close-failure":
+                    raise OSError("private-close-canary")
         for name, raw, status, accepted in cases:
             with self.subTest(name=name):
                 reads = []
