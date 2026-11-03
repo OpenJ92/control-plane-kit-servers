@@ -761,6 +761,40 @@ class TopologyClientTests(unittest.TestCase):
             )
         )
 
+    def test_lost_advancement_preserves_succeeded_execution_and_pending_intent(self) -> None:
+        from control_plane_kit_servers_cpk_server.client import ClientTransportError
+
+        snapshots = []
+
+        class LostAdvancementTransport(ScriptedTransport):
+            def call(self, route_id, **arguments):
+                if route_id == "command.graph.advance-current":
+                    self.calls.append({"route_id": route_id, **arguments})
+                    snapshots.append(client.journal.read(planned.operation_ref))
+                    raise ClientTransportError()
+                return super().call(route_id, **arguments)
+
+        transport = LostAdvancementTransport()
+        client = self.client(transport)
+        planned = client.plan(self.desired_path)
+        result = client.apply(planned.operation_ref, execute_plan="plan-a", approve_plan="plan-a")
+
+        self.assertEqual(result.execution, "succeeded")
+        self.assertEqual(result.advancement, "unverified")
+        self.assertEqual(result.status, "attention-required")
+        self.assertEqual(result.exit_code, 4)
+        self.assertEqual(len(snapshots), 1, "one apply must not redispatch an uncertain advancement")
+        before = snapshots[0]
+        after = client.journal.read(planned.operation_ref)
+        self.assertEqual(before["phase"], "executed")
+        self.assertEqual(after["phase"], "executed")
+        for name in ("pending_request", "request_history", "coordinates"):
+            self.assertEqual(json.dumps(after[name], sort_keys=True, separators=(",", ":")),
+                json.dumps(before[name], sort_keys=True, separators=(",", ":")))
+        self.assertEqual(after["pending_request"]["route_id"], "command.graph.advance-current")
+        self.assertEqual(after["last_result"], result.descriptor())
+        self.assertFalse(transport.advanced)
+
     def test_unresolved_dispatch_is_unverified_attention_with_nonzero_exit(self) -> None:
         from control_plane_kit_servers_cpk_server.client import ClientTransportError
 
