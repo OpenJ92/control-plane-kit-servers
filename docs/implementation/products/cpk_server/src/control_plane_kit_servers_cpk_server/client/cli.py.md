@@ -1,3 +1,5 @@
+#371 renders only the retained safe HTTP status and closed stage/reason/acceptance in human output. JSON includes the optional result fields unchanged. No raw error text, response headers or credentials are displayed. Source review and normal Docker validation remain pending.
+
 # `client/cli.py`
 
 Receiver authoring flags are valid only with a graph file. Introductions name an

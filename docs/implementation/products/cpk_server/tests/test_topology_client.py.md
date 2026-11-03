@@ -1,3 +1,5 @@
+#371 adds a typed owner failure through the real authenticated FastAPI host, PublicHttpTransport, TopologyClient.apply and a reloaded real journal. Earlier commands use the existing scripted composition fixture; no Operations acceptance state machine is recreated. It checks unchanged pending/history/coordinates/phase, unresolved read-only status retention, rejection of tampered journal evidence on read/write, human/JSON rendering and existing successful replay supersession. A bounded negative transport cohort proves body cap/closure, safe-status retention, malformed/duplicate/extra/substituted evidence rejection, authorization preservation and no raw error context. An injected transport case proves independent workflow rebinding. These cases and the earlier reporting/save-failure cases await the one consolidated normal Docker gate.
+
 # `test_topology_client.py`
 
 The #371 target case loses only the final advancement response after the existing

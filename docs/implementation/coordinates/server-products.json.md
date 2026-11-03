@@ -1,3 +1,5 @@
+#371 selects accepted Operations merge 9822cab5831c0cb7f8584a99607812b07cc346b6; repository-owned Docker generation updates only its package and CPK image dependency inputs. Other upstreams, product source references and published image digests stay unchanged. This is source dependency adoption, not image or runtime adoption.
+
 Source: [coordinates/server-products.json](../../../coordinates/server-products.json).
 Maintain this companion alongside its source and selected dependencies.
 

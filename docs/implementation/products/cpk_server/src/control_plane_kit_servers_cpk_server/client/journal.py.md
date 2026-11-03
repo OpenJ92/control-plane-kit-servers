@@ -1,3 +1,5 @@
+#371 adds only optional http_status and diagnostic fields to existing result envelopes. Old valid journals remain valid. Read/write validation requires unverified advancement and exact still-pending workspace/run/plan/idempotency binding, independently of transport ingestion. Invalid stored evidence refuses; no new schema version, sidecar or durable server record is introduced. Source review and normal Docker validation are pending.
+
 # `client/journal.py`
 
 `topology-client-preparation.v1` extends the existing private invocation journal

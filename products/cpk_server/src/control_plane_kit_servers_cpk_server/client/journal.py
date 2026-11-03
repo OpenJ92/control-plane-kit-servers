@@ -12,6 +12,8 @@ import stat
 from typing import Iterator, Mapping
 from uuid import UUID
 
+from .transport import safe_http_status, validated_advancement_diagnostic
+
 
 JOURNAL_SCHEMA = "cpk.client-invocation.v1"
 SAVED_JOURNAL_SCHEMA = "cpk.client-saved-invocation.v1"
@@ -517,7 +519,7 @@ def _validate_journal(value: object, operation_ref: str) -> None:
         ):
             raise JournalError("operation journal request history is invalid")
     if value["last_result"] is not None:
-        _validate_result(value["last_result"], operation_ref, target, coordinates)
+        _validate_result(value["last_result"], operation_ref, target, coordinates, pending)
 
 
 
@@ -725,6 +727,7 @@ def _validate_result(
     operation_ref: str,
     target: Mapping[str, object],
     coordinates: Mapping[str, object],
+    pending: object,
 ) -> None:
     required = {
         "schema",
@@ -743,6 +746,8 @@ def _validate_result(
         "run_id",
         "required_scope",
         "destructive",
+        "http_status",
+        "diagnostic",
     }
     if (
         not isinstance(result, dict)
@@ -809,6 +814,31 @@ def _validate_result(
         raise JournalError("operation journal result is invalid")
     if "destructive" in result and type(result["destructive"]) is not bool:
         raise JournalError("operation journal result is invalid")
+    retained = {key: result[key] for key in ("http_status", "diagnostic") if key in result}
+    if retained and (result["advancement"] != "unverified" or retained != advancement_evidence(
+            pending, coordinates, target["workspace_id"], **retained)):
+        raise JournalError("operation journal advancement evidence is invalid")
+
+
+def advancement_evidence(pending: object, coordinates: Mapping[str, object], workspace_id: str,
+                         *, http_status: object = None, diagnostic: object = None) -> dict[str, object]:
+    """Retain observations only for this still-pending advancement command."""
+    status = safe_http_status(http_status)
+    if (status is None or type(pending) is not dict
+            or pending.get("route_id") != "command.graph.advance-current"
+            or type(pending.get("path_parameters")) is not dict or type(pending.get("body")) is not dict):
+        return {}
+    path, body = pending["path_parameters"], pending["body"]
+    expected = {"workspace_id": workspace_id, "run_id": coordinates.get("run_id"),
+        "plan_id": coordinates.get("plan_id"), "idempotency_key": pending.get("idempotency_key")}
+    if (path.get("workspace_id") != workspace_id or path.get("run_id") != expected["run_id"]
+            or body.get("plan_id") != expected["plan_id"] or body.get("idempotency_key") != expected["idempotency_key"]):
+        return {}
+    result = {"http_status": status}
+    validated = validated_advancement_diagnostic(diagnostic, expected)
+    if validated is not None:
+        result["diagnostic"] = validated
+    return result
 
 
 def _valid_pointer(value: object) -> bool:

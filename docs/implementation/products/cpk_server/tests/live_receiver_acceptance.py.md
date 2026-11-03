@@ -1,3 +1,5 @@
+#371 updates the source-gate provenance expectation only for Operations, to accepted merge 9822cab5831c0cb7f8584a99607812b07cc346b6. This does not execute or authorize a provider/live attempt; other pinned upstreams and existing fixture semantics remain unchanged.
+
 Source: [products/cpk_server/tests/live_receiver_acceptance.py](../../../../../products/cpk_server/tests/live_receiver_acceptance.py).
 Maintain this companion alongside its source and selected dependencies.
 

@@ -1,3 +1,5 @@
+The complete #371 source slice now adopts accepted Operations 9822cab5831c0cb7f8584a99607812b07cc346b6 and propagates optional validated HTTP status/diagnostic through ClientResult. The workflow independently rebinds injected transport evidence to pending intent before saving. Unresolved status retains only bound evidence without dispatch; the existing bound-success transition removes stale optional evidence before its normal pending-clear write. Existing phase, coordinates, history, idempotency, save-failure uncertainty and retry authority remain unchanged. The earlier reporting-only slice is source-reviewed, not green; this combined slice still awaits source review and the normal consolidated Docker gate.
+
 # `client/workflow.py`
 
 The independent #371 reporting slice handles a lost or invalid final advancement

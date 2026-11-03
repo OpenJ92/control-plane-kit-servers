@@ -328,6 +328,11 @@ def _render(result: ClientResult, *, json_output: bool) -> None:
         print(f"run: {result.run_id}")
     print(f"execution: {result.execution}")
     print(f"advancement: {result.advancement}")
+    if "http_status" in value:
+        print(f"HTTP status: {value['http_status']}")
+    if "diagnostic" in value:
+        diagnostic = value["diagnostic"]
+        print(f"advancement diagnostic: {diagnostic['stage']} / {diagnostic['reason']} / {diagnostic['acceptance']}")
     if result.required_scope is not None:
         print(f"required authorization: {result.required_scope}")
     if result.destructive is not None:
