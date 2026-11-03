@@ -1,3 +1,5 @@
+#371 updates only the expected Operations dependency to accepted merge 9822cab5831c0cb7f8584a99607812b07cc346b6. Other upstreams and published image coordinates remain unchanged. The normal owning gate must verify generated dependency parity; source selection is not live adoption.
+
 Source: [products/cpk_server/tests/test_current_cpk_server_composition.py](../../../../../products/cpk_server/tests/test_current_cpk_server_composition.py).
 Maintain this companion alongside its source and selected dependencies.
 

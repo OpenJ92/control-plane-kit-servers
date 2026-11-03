@@ -761,6 +761,319 @@ class TopologyClientTests(unittest.TestCase):
             )
         )
 
+    def test_lost_advancement_preserves_succeeded_execution_and_pending_intent(self) -> None:
+        self.assert_unverified_advancement("lost")
+
+    def test_invalid_advancement_preserves_succeeded_execution_and_pending_intent(self) -> None:
+        self.assert_unverified_advancement("invalid")
+
+    def test_advancement_authorization_refusal_preserves_existing_error_and_journal(self) -> None:
+        self.assert_unverified_advancement("denied")
+
+    def assert_unverified_advancement(self, outcome):
+        from control_plane_kit_servers_cpk_server.client import ClientAuthorizationError, ClientTransportError
+
+        snapshots = []
+        authorization_error = ClientAuthorizationError()
+
+        class LostAdvancementTransport(ScriptedTransport):
+            def call(self, route_id, **arguments):
+                if route_id == "command.graph.advance-current":
+                    self.calls.append({"route_id": route_id, **arguments})
+                    snapshots.append(client.journal.read(planned.operation_ref))
+                    if outcome == "invalid":
+                        return {"run_id": "foreign-run-canary"}
+                    if outcome == "denied":
+                        raise authorization_error
+                    raise ClientTransportError()
+                return super().call(route_id, **arguments)
+
+        transport = LostAdvancementTransport()
+        client = self.client(transport)
+        planned = client.plan(self.desired_path)
+        if outcome == "denied":
+            with self.assertRaises(ClientAuthorizationError) as captured:
+                client.apply(planned.operation_ref, execute_plan="plan-a", approve_plan="plan-a")
+            self.assertIs(captured.exception, authorization_error)
+            self.assertEqual(len(snapshots), 1)
+            self.assertEqual(client.journal.read(planned.operation_ref), snapshots[0])
+            self.assertFalse(transport.advanced)
+            return
+        result = client.apply(planned.operation_ref, execute_plan="plan-a", approve_plan="plan-a")
+
+        self.assertEqual(result.execution, "succeeded")
+        self.assertEqual(result.advancement, "unverified")
+        self.assertEqual(result.status, "attention-required")
+        self.assertEqual(result.exit_code, 4)
+        self.assertEqual(len(snapshots), 1, "one apply must not redispatch an uncertain advancement")
+        before = snapshots[0]
+        after = client.journal.read(planned.operation_ref)
+        self.assertEqual(before["phase"], "executed")
+        self.assertEqual(after["phase"], "executed")
+        for name in ("pending_request", "request_history", "coordinates"):
+            self.assertEqual(json.dumps(after[name], sort_keys=True, separators=(",", ":")),
+                json.dumps(before[name], sort_keys=True, separators=(",", ":")))
+        self.assertEqual(after["pending_request"]["route_id"], "command.graph.advance-current")
+        self.assertEqual(after["last_result"], result.descriptor())
+        self.assertFalse(transport.advanced)
+
+    def test_advancement_diagnostic_crosses_authenticated_http_and_reloaded_journal(self) -> None:
+        from types import SimpleNamespace
+        from urllib.error import HTTPError
+        from urllib.parse import urlsplit
+        from fastapi.testclient import TestClient
+        from control_plane_kit_core.operations import ControlPlaneServiceRole
+        from control_plane_kit_operations.advancement import CurrentGraphAdvancementFailure
+        from control_plane_kit_operations.cpk_server import CpkServerAdvancementFailure
+        from control_plane_kit_servers_cpk_server import server
+        from control_plane_kit_servers_cpk_server.client import TopologyClient, JournalError
+        from control_plane_kit_servers_cpk_server.client import cli
+        from control_plane_kit_servers_cpk_server.client.transport import PublicHttpTransport
+        from cpk_http_host_fixtures import fixture
+        from test_http_mcp_boundaries import DeterministicVerifier, RecordingService
+
+        failures = []
+        class FailingLifecycle:
+            def handle(self, request):
+                diagnostic = CurrentGraphAdvancementFailure("publication", "internal-error",
+                    request.path_parameters["workspace_id"], request.path_parameters["run_id"],
+                    request.payload["plan_id"], request.payload["idempotency_key"])
+                failures.append(diagnostic.descriptor())
+                raise CpkServerAdvancementFailure(diagnostic)
+
+        config = server.CpkServerBootstrapConfiguration.from_environment({
+            "CPK_SERVER_MODE": "execution-capable", "CPK_CONTROL_AUTH_CONFIGURED": "true",
+            "CPK_PORT": "8080", "CPK_RUNTIME_INTERPRETERS": "none",
+            **{f"CPK_{store}_DATABASE_URL": "postgres://fixture:fixture@database.invalid/db"
+               for store in ("WORKPLACE", "ACTIVITY_HISTORY", "OBSERVER_STATE", "GRAPH_TOPOLOGY")},
+        })
+        verifier = DeterministicVerifier()
+        services = {role: RecordingService(role.value) for role in ControlPlaneServiceRole}
+        services[ControlPlaneServiceRole.LIFECYCLE] = FailingLifecycle()
+        with patch.object(server, "_operations_application", return_value=server.CpkServerOperationsApplication(
+                services)):
+            app = server.create_app(config, verifier, control=fixture().config, clock=lambda: 150)
+        snapshots = []
+        class HttpAdvancement(ScriptedTransport):
+            allow_advance = False
+            execution_succeeded = False
+            def call(self, route_id, **arguments):
+                if route_id == "command.graph.advance-current" and not self.allow_advance:
+                    self.calls.append({"route_id": route_id, **arguments})
+                    snapshots.append(client.journal.read(planned.operation_ref))
+                    return http.call(route_id, **arguments)
+                response = super().call(route_id, **arguments)
+                if route_id == "command.deployment.execute":
+                    self.execution_succeeded = response["run_status"] == "succeeded"
+                if route_id == "read.plan-runs" and self.execution_succeeded:
+                    response["items"][0]["status"] = "succeeded"
+                return response
+        transport = HttpAdvancement()
+        client = self.client(transport)
+        for credential in client.profile.credentials.values():
+            credential.write_text("valid-token", encoding="ascii")
+            credential.chmod(0o600)
+        http = PublicHttpTransport(client.profile)
+        planned = client.plan(self.desired_path)
+        bodies = []
+        def open_request(request, *, timeout):
+            parts = urlsplit(request.full_url)
+            response = web.request(request.get_method(), parts.path,
+                headers=dict(request.header_items()), content=request.data)
+            body = io.BytesIO(response.content)
+            bodies.append(body)
+            if response.status_code >= 400:
+                raise HTTPError(request.full_url, response.status_code, "private-error-canary", None, body)
+            return body
+        with TestClient(app) as web, patch.object(http, "_opener", SimpleNamespace(open=open_request)):
+            result = client.apply(planned.operation_ref, execute_plan="plan-a", approve_plan="plan-a")
+        self.assertEqual(len(failures), 1)
+        self.assertEqual(verifier.credentials, [b"valid-token"])
+        self.assertTrue(all(body.closed for body in bodies))
+        self.assertEqual((result.execution, result.advancement, result.http_status), ("succeeded", "unverified", 500))
+        self.assertEqual(result.diagnostic, failures[0])
+        saved = client.journal.read(planned.operation_ref)
+        self.assertEqual(saved["last_result"], result.descriptor())
+        for field in ("phase", "pending_request", "coordinates", "request_history"):
+            self.assertEqual(saved[field], snapshots[0][field])
+        self.assertNotIn("diagnostic", snapshots[0]["last_result"])
+        serialized = json.dumps(saved)
+        for secret in ("valid-token", "private-error-canary"):
+            self.assertNotIn(secret, serialized)
+        before_calls = len(transport.calls)
+        reconstructed = TopologyClient(client.profile, transport=transport)
+        observed = reconstructed.status(planned.operation_ref)
+        self.assertEqual((observed.execution, observed.advancement), ("succeeded", "unverified"))
+        self.assertEqual((observed.http_status, observed.diagnostic), (500, failures[0]))
+        self.assertFalse(any(call["route_id"].startswith("command.") for call in transport.calls[before_calls:]))
+        self.assertEqual(client.journal.read(planned.operation_ref), saved)
+        tampered = json.loads(serialized)
+        tampered["last_result"]["diagnostic"]["correlation"]["idempotency_key"] = "foreign-request"
+        with self.assertRaises(JournalError):
+            client.journal.write(planned.operation_ref, tampered)
+        journal_path = client.profile.state_directory / "invocations" / (planned.operation_ref + ".json")
+        original = journal_path.read_bytes()
+        try:
+            journal_path.write_text(json.dumps(tampered))
+            with self.assertRaises(JournalError):
+                client.journal.read(planned.operation_ref)
+        finally:
+            journal_path.write_bytes(original)
+        for as_json in (False, True):
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                cli._render(result, json_output=as_json)
+            if as_json:
+                self.assertEqual(json.loads(output.getvalue()), result.descriptor())
+            else:
+                self.assertIn("HTTP status: 500", output.getvalue())
+                self.assertIn("publication / internal-error / unverified", output.getvalue())
+        transport.allow_advance = True
+        completed = reconstructed.apply(planned.operation_ref, execute_plan="plan-a")
+        self.assertEqual((completed.execution, completed.advancement), ("succeeded", "advanced"))
+        final = client.journal.read(planned.operation_ref)
+        self.assertIsNone(final["pending_request"])
+        self.assertNotIn("diagnostic", final["last_result"])
+        self.assertNotIn("http_status", final["last_result"])
+        self.assertEqual(sum(call["route_id"] == "command.graph.advance-current" for call in transport.calls), 2)
+
+    def test_advancement_http_evidence_is_bounded_closed_and_request_bound(self) -> None:
+        from types import SimpleNamespace
+        from urllib.error import HTTPError
+        from control_plane_kit_servers_cpk_server.client.transport import (
+            PublicHttpTransport, ClientTransportError, ClientAuthorizationError,
+        )
+        profile = self.profile()
+        profile.credentials["worker"].write_text("worker-canary")
+        profile.credentials["worker"].chmod(0o600)
+        transport = PublicHttpTransport(profile)
+        correlation = {"workspace_id": "workspace-a", "run_id": "run-a", "plan_id": "plan-a", "idempotency_key": "key-a"}
+        diagnostic = {"stage": "publication", "reason": "internal-error", "acceptance": "unverified", "correlation": correlation}
+        def wire(value):
+            return json.dumps({"error": {"status": 500, "message": "application service failed", "diagnostic": value}}).encode()
+        valid = wire(diagnostic)
+        cases = [("valid", valid, 500, True), ("malformed", b"not-json", 500, False),
+            ("truncated", valid[:-1], 500, False), ("oversized", valid + b" " * 8192, 500, False),
+            ("duplicate", valid.replace(b'"stage":', b'"stage":"unknown","stage":'), 500, False),
+            ("extra", wire({**diagnostic, "private": "body-canary"}), 500, False),
+            ("category", wire({**diagnostic, "reason": "body-canary"}), 500, False),
+            ("recursive", b"[" * 2000 + b"]" * 2000, 500, False),
+            ("wrong-status", valid, 503, False), ("bool-status", valid, True, False),
+            ("unreadable", valid, 500, False), ("close-failure", valid, 500, False),
+            ("other-route", valid, 500, False),
+            ("denied", valid, 403, False), ("unauthenticated", valid, 401, False)]
+        for key in correlation:
+            cases.append((key, wire({**diagnostic, "correlation": {**correlation, key: "foreign-canary"}}), 500, False))
+        class Body(io.BytesIO):
+            def read(self, size=-1):
+                reads.append(size)
+                if name == "unreadable":
+                    raise OSError("private-read-canary")
+                return super().read(size)
+            def close(self):
+                if self.closed:
+                    return
+                super().close()
+                if name == "close-failure":
+                    raise OSError("private-close-canary")
+        for name, raw, status, accepted in cases:
+            with self.subTest(name=name):
+                reads = []
+                body = Body(raw)
+                def refuse(request, *, timeout):
+                    raise HTTPError(request.full_url, status, "private-error-canary", None, body)
+                with patch.object(transport, "_opener", SimpleNamespace(open=refuse)), self.assertRaises(ClientTransportError) as captured:
+                    transport.call("read.workspace" if name == "other-route" else "command.graph.advance-current", path_parameters={"workspace_id": "workspace-a", "run_id": "run-a"},
+                        payload={"plan_id": "plan-a", "idempotency_key": "key-a"}, credential_role="worker")
+                self.assertTrue(body.closed)
+                self.assertEqual(reads, [] if status in (True, 401, 403) or name == "other-route" else [8193])
+                self.assertIsNone(captured.exception.__context__)
+                self.assertEqual(isinstance(captured.exception, ClientAuthorizationError), status in (401, 403))
+                self.assertEqual(captured.exception.http_status, None if status in (True, 401, 403) else status)
+                self.assertEqual(captured.exception.diagnostic, diagnostic if accepted else None)
+                self.assertNotIn("canary", str(captured.exception))
+
+    def test_injected_transport_diagnostic_is_rebound_before_journal_storage(self) -> None:
+        from control_plane_kit_servers_cpk_server.client import ClientTransportError
+        class UnboundTransport(ScriptedTransport):
+            def call(self, route_id, **arguments):
+                if route_id == "command.graph.advance-current":
+                    failure = ClientTransportError(http_status=503)
+                    failure.diagnostic = {"stage": "publication", "reason": "internal-error", "acceptance": "unverified",
+                        "correlation": {"workspace_id": "foreign-canary", "run_id": "run-a",
+                            "plan_id": "plan-a", "idempotency_key": arguments["payload"]["idempotency_key"]}}
+                    raise failure
+                return super().call(route_id, **arguments)
+        client = self.client(UnboundTransport())
+        planned = client.plan(self.desired_path)
+        result = client.apply(planned.operation_ref, execute_plan="plan-a", approve_plan="plan-a")
+        self.assertEqual((result.execution, result.advancement, result.http_status), ("succeeded", "unverified", 503))
+        self.assertIsNone(result.diagnostic)
+        self.assertNotIn("foreign-canary", json.dumps(client.journal.read(planned.operation_ref)))
+
+    def test_advancement_attention_save_failure_is_bounded_without_retry(self) -> None:
+        import os
+        from control_plane_kit_servers_cpk_server.client import ClientTransportError
+        from control_plane_kit_servers_cpk_server.client.journal import JournalError
+
+        for after_replace in (False, True):
+            with self.subTest(after_replace=after_replace):
+                snapshots = []
+                saves = []
+
+                class LostAdvancementTransport(ScriptedTransport):
+                    def call(self, route_id, **arguments):
+                        if route_id == "command.graph.advance-current":
+                            self.calls.append({"route_id": route_id, **arguments})
+                            snapshots.append(client.journal.read(planned.operation_ref))
+                            raise ClientTransportError()
+                        return super().call(route_id, **arguments)
+
+                transport = LostAdvancementTransport()
+                client = self.client(transport, state=f"save-failure-{after_replace}")
+                planned = client.plan(self.desired_path)
+                write = client.journal.write
+                replace_file, fsync = os.replace, os.fsync
+
+                def fail_attention_save(operation_ref, value):
+                    if value["last_result"]["status"] != "attention-required":
+                        return write(operation_ref, value)
+                    saves.append(operation_ref)
+                    if not after_replace:
+                        raise OSError("private-save-canary")
+                    replaced = False
+
+                    def mark_replace(*args, **kwargs):
+                        nonlocal replaced
+                        replace_file(*args, **kwargs)
+                        replaced = True
+
+                    def fail_directory_sync(descriptor):
+                        if replaced:
+                            raise OSError("private-directory-sync-canary")
+                        return fsync(descriptor)
+
+                    with patch("os.replace", side_effect=mark_replace), patch("os.fsync", side_effect=fail_directory_sync):
+                        return write(operation_ref, value)
+
+                with patch.object(client.journal, "write", side_effect=fail_attention_save):
+                    with self.assertRaises(JournalError) as captured:
+                        client.apply(planned.operation_ref, execute_plan="plan-a", approve_plan="plan-a")
+                self.assertEqual(str(captured.exception),
+                    "advancement and journal persistence could not be verified")
+                self.assertIsNone(captured.exception.__cause__)
+                self.assertEqual(saves, [planned.operation_ref])
+                self.assertEqual(len(snapshots), 1)
+                before, after = snapshots[0], client.journal.read(planned.operation_ref)
+                for name in ("phase", "pending_request", "request_history", "coordinates"):
+                    self.assertEqual(after[name], before[name])
+                if after_replace:
+                    self.assertEqual(after["last_result"]["execution"], "succeeded")
+                    self.assertEqual(after["last_result"]["advancement"], "unverified")
+                else:
+                    self.assertEqual(after["last_result"], before["last_result"])
+                self.assertFalse(transport.advanced)
+
     def test_unresolved_dispatch_is_unverified_attention_with_nonzero_exit(self) -> None:
         from control_plane_kit_servers_cpk_server.client import ClientTransportError
 

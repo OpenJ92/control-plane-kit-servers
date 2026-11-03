@@ -1,3 +1,10 @@
+#371 renders only the retained safe HTTP status and closed stage/reason/acceptance in human output. JSON includes the optional result fields unchanged. No raw error text, response headers or credentials are displayed. Source review and the complete normal Docker gate passed at fdacc9405138e9b25b4c2928a3d5c13b9a7ecdae; required CI remains pending.
+
+The gate passed all 1,260 product tests plus 26 test-support tests, compilation,
+clean import and the normal smoke/cleanup stages. See [the complete result and
+scoped cleanup limits](https://github.com/OpenJ92/control-plane-kit-servers/issues/371#issuecomment-6598347612).
+Earlier pending-validation statements below describe historical slices.
+
 # `client/cli.py`
 
 Receiver authoring flags are valid only with a graph file. Introductions name an

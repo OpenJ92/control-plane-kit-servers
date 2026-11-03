@@ -13,18 +13,25 @@ from control_plane_kit_core.operations import (
     operator_command_http_routes,
     operator_read_http_routes,
 )
+from control_plane_kit_operations.advancement import CurrentGraphAdvancementFailure
 
 from .profile import ClientProfile
 
 
 MAXIMUM_RESPONSE_BYTES = 1_048_576
+MAXIMUM_ADVANCEMENT_ERROR_BYTES = 8192
 
 
 class ClientTransportError(RuntimeError):
     """Fixed transport failure that retains no response or credential material."""
 
-    def __init__(self, message: str = "cpk-server request could not be verified") -> None:
+    def __init__(self, message: str = "cpk-server request could not be verified", *,
+                 http_status: int | None = None, diagnostic: object = None) -> None:
         super().__init__(message)
+        self.http_status = safe_http_status(http_status)
+        self.diagnostic = validated_advancement_diagnostic(diagnostic,
+            diagnostic.get("correlation") if type(diagnostic) is dict else None
+        ) if self.http_status is not None else None
 
 
 class ClientAuthorizationError(ClientTransportError):
@@ -94,19 +101,49 @@ class PublicHttpTransport:
         if data is not None:
             headers["Content-Type"] = "application/json"
         request = Request(url, data=data, method=route.method.value, headers=headers)
+        failure = None
         try:
             response = self._opener.open(request, timeout=self.timeout_seconds)
             with response:
                 raw = response.read(MAXIMUM_RESPONSE_BYTES + 1)
         except HTTPError as error:
-            if error.code in {401, 403}:
-                raise ClientAuthorizationError() from None
-            raise ClientTransportError() from None
+            status = safe_http_status(error.code)
+            diagnostic = None
+            try:
+                if status not in {None, 401, 403} and route_id == "command.graph.advance-current":
+                    raw_error = error.read(MAXIMUM_ADVANCEMENT_ERROR_BYTES + 1)
+                    if len(raw_error) <= MAXIMUM_ADVANCEMENT_ERROR_BYTES:
+                        envelope = json.loads(raw_error.decode("utf-8"), object_pairs_hook=_unique_object)
+                        if (type(envelope) is dict and set(envelope) == {"error"}
+                                and type(envelope["error"]) is dict
+                                and set(envelope["error"]) == {"status", "message", "diagnostic"}
+                                and type(envelope["error"]["status"]) is int
+                                and envelope["error"]["status"] == status
+                                and envelope["error"]["message"] == "application service failed"):
+                            diagnostic = validated_advancement_diagnostic(envelope["error"]["diagnostic"], {
+                                "workspace_id": path_parameters.get("workspace_id"),
+                                "run_id": path_parameters.get("run_id"),
+                                "plan_id": payload.get("plan_id"),
+                                "idempotency_key": payload.get("idempotency_key"),
+                            })
+            except Exception:
+                # Malformed, truncated or unreadable evidence never replaces the known status.
+                diagnostic = None
+            finally:
+                try:
+                    error.close()
+                except Exception:
+                    diagnostic = None
+            failure = (ClientAuthorizationError() if status in {401, 403} else
+                ClientTransportError(http_status=status, diagnostic=diagnostic))
         except (OSError, TimeoutError, URLError):
-            raise ClientTransportError() from None
+            failure = ClientTransportError()
         finally:
             credential = b""
             headers["Authorization"] = ""
+        if failure is not None:
+            # Raise outside the handler so the error retains no HTTPError/body context.
+            raise failure
         if len(raw) > MAXIMUM_RESPONSE_BYTES:
             raise ClientTransportError("cpk-server response exceeds the client bound")
         try:
@@ -116,6 +153,29 @@ class PublicHttpTransport:
         if not isinstance(value, dict):
             raise ClientTransportError("cpk-server response is invalid")
         return value
+
+
+def safe_http_status(value: object) -> int | None:
+    return value if type(value) is int and 400 <= value <= 599 else None
+
+
+def validated_advancement_diagnostic(value: object, correlation: object) -> dict[str, object] | None:
+    """Copy only the closed owner vocabulary bound to the requested coordinates."""
+    if (type(value) is not dict or set(value) != {"stage", "reason", "acceptance", "correlation"}
+            or value["acceptance"] != "unverified" or type(value["correlation"]) is not dict
+            or type(correlation) is not dict
+            or set(correlation) != {"workspace_id", "run_id", "plan_id", "idempotency_key"}
+            or value["correlation"] != correlation):
+        return None
+    try:
+        owner = CurrentGraphAdvancementFailure(value["stage"], value["reason"], **correlation)
+        result = owner.descriptor()
+        envelope = {"error": {"status": 500, "message": "application service failed", "diagnostic": result}}
+        if len(json.dumps(envelope, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > MAXIMUM_ADVANCEMENT_ERROR_BYTES:
+            return None
+        return result
+    except (TypeError, ValueError, UnicodeError, RecursionError):
+        return None
 
 
 def _encode_query(payload: Mapping[str, object], maximum: int) -> str:

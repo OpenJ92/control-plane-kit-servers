@@ -23,6 +23,7 @@ from .journal import (
     JournalError,
     JournalStore,
     canonical_operation_ref,
+    advancement_evidence,
 )
 from .profile import ClientProfile
 from .transport import (
@@ -88,6 +89,8 @@ class ClientResult:
     changes: tuple[Mapping[str, object], ...] = ()
     next_command: str | None = None
     next_public_read: str | None = None
+    http_status: int | None = None
+    diagnostic: Mapping[str, object] | None = None
 
     def descriptor(self) -> dict[str, object]:
         value: dict[str, object] = {
@@ -114,6 +117,8 @@ class ClientResult:
             ("run_id", self.run_id),
             ("required_scope", self.required_scope),
             ("destructive", self.destructive),
+            ("http_status", self.http_status),
+            ("diagnostic", self.diagnostic),
         ):
             if item is not None:
                 value[key] = item
@@ -778,9 +783,10 @@ class TopologyClient:
         self, journal: dict[str, object], body: Mapping[str, object]
     ) -> Mapping[str, object] | ClientResult:
         pending = _mapping(journal, "pending_request")
+        route_id = _text(pending, "route_id")
         try:
             response = self.transport.call(
-                _text(pending, "route_id"),
+                route_id,
                 path_parameters={
                     key: _text_coordinate(value)
                     for key, value in _mapping(pending, "path_parameters").items()
@@ -790,24 +796,20 @@ class TopologyClient:
             )
         except ClientAuthorizationError:
             raise
-        except ClientTransportError:
+        except ClientTransportError as error:
+            if route_id == "command.graph.advance-current":
+                return self._unverified_advancement(journal, http_status=error.http_status,
+                    diagnostic=error.diagnostic)
             return self._attention(
                 journal,
                 execution=(
                     "unverified"
-                    if _text(pending, "route_id")
-                    in {"command.run.start", "command.deployment.execute"}
+                    if route_id in {"command.run.start", "command.deployment.execute"}
                     else "not-started"
-                ),
-                advancement=(
-                    "unverified"
-                    if _text(pending, "route_id") == "command.graph.advance-current"
-                    else "not-attempted"
                 ),
                 next_public_read=_next_read(journal),
                 persist=False,
             )
-        route_id = _text(pending, "route_id")
         if not _response_is_bound(
             route_id,
             response,
@@ -816,17 +818,14 @@ class TopologyClient:
             coordinates=_coordinates(journal),
             workspace_id=self.profile.workspace_id,
         ):
+            if route_id == "command.graph.advance-current":
+                return self._unverified_advancement(journal)
             return self._attention(
                 journal,
                 execution=(
                     "unverified"
                     if route_id in {"command.run.start", "command.deployment.execute"}
                     else "not-started"
-                ),
-                advancement=(
-                    "unverified"
-                    if route_id == "command.graph.advance-current"
-                    else "not-attempted"
                 ),
                 next_public_read=_next_read(journal),
                 persist=False,
@@ -846,17 +845,31 @@ class TopologyClient:
         _coordinates(journal).update(projection)
         journal["pending_request"] = None
         journal["phase"] = _phase_after(route_id, response)
+        if route_id == "command.graph.advance-current" and isinstance(journal["last_result"], dict):
+            for field in ("http_status", "diagnostic"):
+                journal["last_result"].pop(field, None)
         self.journal.write(_text(journal, "operation_ref"), journal)
         return response
+
+    def _unverified_advancement(self, journal: dict[str, object], *,
+                               http_status: object = None, diagnostic: object = None) -> ClientResult:
+        evidence = advancement_evidence(journal["pending_request"], _coordinates(journal),
+            self.profile.workspace_id, http_status=http_status, diagnostic=diagnostic)
+        try:
+            return self._attention(journal, execution=None, advancement="unverified",
+                next_public_read=_next_read(journal), evidence=evidence)
+        except (JournalError, OSError):
+            raise JournalError("advancement and journal persistence could not be verified") from None
 
     def _attention(
         self,
         journal: dict[str, object],
         *,
-        execution: str = "not-started",
+        execution: str | None = "not-started",
         advancement: str = "not-attempted",
         next_public_read: str,
         persist: bool = True,
+        evidence: Mapping[str, object] | None = None,
     ) -> ClientResult:
         result = self._status_from_journal(
             journal,
@@ -864,6 +877,7 @@ class TopologyClient:
             execution=execution,
             advancement=advancement,
             next_public_read=next_public_read,
+            evidence=evidence,
         )
         journal["last_result"] = result.descriptor()
         if persist:
@@ -880,6 +894,7 @@ class TopologyClient:
         next_public_read: str | None = None,
         changes: tuple[Mapping[str, object], ...] = (),
         approval: Mapping[str, object] | None = None,
+        evidence: Mapping[str, object] | None = None,
     ) -> ClientResult:
         coordinates = _coordinates(journal)
         phase = _text(journal, "phase")
@@ -915,6 +930,12 @@ class TopologyClient:
             _text(approval, "required_scope") if approval is not None else None
         )
         destructive = _boolean(approval, "destructive") if approval is not None else None
+        if evidence is None:
+            previous = journal.get("last_result")
+            evidence = ({key: previous[key] for key in ("http_status", "diagnostic") if key in previous}
+                if isinstance(previous, dict) else {})
+        evidence = (advancement_evidence(journal.get("pending_request"), coordinates,
+            self.profile.workspace_id, **evidence) if advancement == "unverified" else {})
         return ClientResult(
             status=status,
             operation_ref=_text(journal, "operation_ref"),
@@ -941,6 +962,8 @@ class TopologyClient:
             changes=changes,
             next_command=("cpk apply" if status == "planned" else None),
             next_public_read=next_public_read,
+            http_status=evidence.get("http_status"),
+            diagnostic=evidence.get("diagnostic"),
         )
 
     def _load(self, operation_ref: str) -> dict[str, object]:

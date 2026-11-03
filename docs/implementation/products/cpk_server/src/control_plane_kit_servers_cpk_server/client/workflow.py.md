@@ -1,4 +1,22 @@
+The complete #371 source slice now adopts accepted Operations 9822cab5831c0cb7f8584a99607812b07cc346b6 and propagates optional validated HTTP status/diagnostic through ClientResult. The workflow independently rebinds injected transport evidence to pending intent before saving. Unresolved status retains only bound evidence without dispatch; the existing bound-success transition removes stale optional evidence before its normal pending-clear write. Existing phase, coordinates, history, idempotency, save-failure uncertainty and retry authority remain unchanged. The combined reporting/propagation source passed review and the complete normal Docker gate at fdacc9405138e9b25b4c2928a3d5c13b9a7ecdae; required CI remains pending.
+
+The gate passed all 1,260 product tests plus 26 test-support tests, compilation,
+clean import and the normal smoke/cleanup stages. See [the complete result and
+scoped cleanup limits](https://github.com/OpenJ92/control-plane-kit-servers/issues/371#issuecomment-6598347612).
+Earlier pending-validation statements below describe historical slices.
+
 # `client/workflow.py`
+
+The independent #371 reporting slice handles a lost or invalid final advancement
+response by deriving execution status from the existing journal phase and saving
+bounded attention with advancement unverified. It changes only last_result;
+pending intent/idempotency, successful request history, coordinates and executed
+phase remain intact, with no redispatch. Authorization errors keep their existing
+path. A failed attention save raises the existing bounded JournalError, reporting
+both advancement and persistence as unverified; replacement may already have
+occurred before directory fsync, so no retry, restoration or saved/absent claim is
+made. The existing result schema is unchanged in this slice. Source review and
+consolidated green remain pending; Operations pins are not changed here.
 
 `TopologyClient.plan` keeps its existing file and saved-revision paths and adds
 `AuthoredDesiredGraph`. The authored path reads workspace fences, requests exact
