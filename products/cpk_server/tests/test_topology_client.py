@@ -762,21 +762,43 @@ class TopologyClientTests(unittest.TestCase):
         )
 
     def test_lost_advancement_preserves_succeeded_execution_and_pending_intent(self) -> None:
-        from control_plane_kit_servers_cpk_server.client import ClientTransportError
+        self.assert_unverified_advancement("lost")
+
+    def test_invalid_advancement_preserves_succeeded_execution_and_pending_intent(self) -> None:
+        self.assert_unverified_advancement("invalid")
+
+    def test_advancement_authorization_refusal_preserves_existing_error_and_journal(self) -> None:
+        self.assert_unverified_advancement("denied")
+
+    def assert_unverified_advancement(self, outcome):
+        from control_plane_kit_servers_cpk_server.client import ClientAuthorizationError, ClientTransportError
 
         snapshots = []
+        authorization_error = ClientAuthorizationError()
 
         class LostAdvancementTransport(ScriptedTransport):
             def call(self, route_id, **arguments):
                 if route_id == "command.graph.advance-current":
                     self.calls.append({"route_id": route_id, **arguments})
                     snapshots.append(client.journal.read(planned.operation_ref))
+                    if outcome == "invalid":
+                        return {"run_id": "foreign-run-canary"}
+                    if outcome == "denied":
+                        raise authorization_error
                     raise ClientTransportError()
                 return super().call(route_id, **arguments)
 
         transport = LostAdvancementTransport()
         client = self.client(transport)
         planned = client.plan(self.desired_path)
+        if outcome == "denied":
+            with self.assertRaises(ClientAuthorizationError) as captured:
+                client.apply(planned.operation_ref, execute_plan="plan-a", approve_plan="plan-a")
+            self.assertIs(captured.exception, authorization_error)
+            self.assertEqual(len(snapshots), 1)
+            self.assertEqual(client.journal.read(planned.operation_ref), snapshots[0])
+            self.assertFalse(transport.advanced)
+            return
         result = client.apply(planned.operation_ref, execute_plan="plan-a", approve_plan="plan-a")
 
         self.assertEqual(result.execution, "succeeded")
@@ -794,6 +816,69 @@ class TopologyClientTests(unittest.TestCase):
         self.assertEqual(after["pending_request"]["route_id"], "command.graph.advance-current")
         self.assertEqual(after["last_result"], result.descriptor())
         self.assertFalse(transport.advanced)
+
+    def test_advancement_attention_save_failure_is_bounded_without_retry(self) -> None:
+        import os
+        from control_plane_kit_servers_cpk_server.client import ClientTransportError
+        from control_plane_kit_servers_cpk_server.client.journal import JournalError
+
+        for after_replace in (False, True):
+            with self.subTest(after_replace=after_replace):
+                snapshots = []
+                saves = []
+
+                class LostAdvancementTransport(ScriptedTransport):
+                    def call(self, route_id, **arguments):
+                        if route_id == "command.graph.advance-current":
+                            self.calls.append({"route_id": route_id, **arguments})
+                            snapshots.append(client.journal.read(planned.operation_ref))
+                            raise ClientTransportError()
+                        return super().call(route_id, **arguments)
+
+                transport = LostAdvancementTransport()
+                client = self.client(transport, state=f"save-failure-{after_replace}")
+                planned = client.plan(self.desired_path)
+                write = client.journal.write
+                replace_file, fsync = os.replace, os.fsync
+
+                def fail_attention_save(operation_ref, value):
+                    if value["last_result"]["status"] != "attention-required":
+                        return write(operation_ref, value)
+                    saves.append(operation_ref)
+                    if not after_replace:
+                        raise OSError("private-save-canary")
+                    replaced = False
+
+                    def mark_replace(*args, **kwargs):
+                        nonlocal replaced
+                        replace_file(*args, **kwargs)
+                        replaced = True
+
+                    def fail_directory_sync(descriptor):
+                        if replaced:
+                            raise OSError("private-directory-sync-canary")
+                        return fsync(descriptor)
+
+                    with patch("os.replace", side_effect=mark_replace), patch("os.fsync", side_effect=fail_directory_sync):
+                        return write(operation_ref, value)
+
+                with patch.object(client.journal, "write", side_effect=fail_attention_save):
+                    with self.assertRaises(JournalError) as captured:
+                        client.apply(planned.operation_ref, execute_plan="plan-a", approve_plan="plan-a")
+                self.assertEqual(str(captured.exception),
+                    "advancement and journal persistence could not be verified")
+                self.assertIsNone(captured.exception.__cause__)
+                self.assertEqual(saves, [planned.operation_ref])
+                self.assertEqual(len(snapshots), 1)
+                before, after = snapshots[0], client.journal.read(planned.operation_ref)
+                for name in ("phase", "pending_request", "request_history", "coordinates"):
+                    self.assertEqual(after[name], before[name])
+                if after_replace:
+                    self.assertEqual(after["last_result"]["execution"], "succeeded")
+                    self.assertEqual(after["last_result"]["advancement"], "unverified")
+                else:
+                    self.assertEqual(after["last_result"], before["last_result"])
+                self.assertFalse(transport.advanced)
 
     def test_unresolved_dispatch_is_unverified_attention_with_nonzero_exit(self) -> None:
         from control_plane_kit_servers_cpk_server.client import ClientTransportError

@@ -16,6 +16,14 @@ and dependency pins remain unchanged. This establishes the reporting defect,
 not a diagnosis of the server refusal or full acceptance; see
 [the terminal record](https://github.com/OpenJ92/control-plane-kit-servers/issues/371#issuecomment-6595189545).
 
+The implementation checkpoint extends the same fixture to an invalid advancement
+response and an authorization refusal, preserving the latter's original exception
+and journal. Save-failure cases inject failure before writing and at the real
+directory fsync after replacement. Both require one save attempt, one advancement
+dispatch and a bounded JournalError; pending intent/history/coordinates remain
+unchanged even though the stored last_result can differ. These additional cases
+have not run; the consolidated ordinary green gate remains pending.
+
 The completed-operation regressions use the real client and the existing
 `ScriptedTransport` public-route fixture. They first plan and apply to genuine
 convergence, then replay through the same or reconstructed client, requiring

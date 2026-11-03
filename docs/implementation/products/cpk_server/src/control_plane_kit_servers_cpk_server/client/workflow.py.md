@@ -1,5 +1,16 @@
 # `client/workflow.py`
 
+The independent #371 reporting slice handles a lost or invalid final advancement
+response by deriving execution status from the existing journal phase and saving
+bounded attention with advancement unverified. It changes only last_result;
+pending intent/idempotency, successful request history, coordinates and executed
+phase remain intact, with no redispatch. Authorization errors keep their existing
+path. A failed attention save raises the existing bounded JournalError, reporting
+both advancement and persistence as unverified; replacement may already have
+occurred before directory fsync, so no retry, restoration or saved/absent claim is
+made. The existing result schema is unchanged in this slice. Source review and
+consolidated green remain pending; Operations pins are not changed here.
+
 `TopologyClient.plan` keeps its existing file and saved-revision paths and adds
 `AuthoredDesiredGraph`. The authored path reads workspace fences, requests exact
 receiver context, reads only required public verifier families, performs the pure

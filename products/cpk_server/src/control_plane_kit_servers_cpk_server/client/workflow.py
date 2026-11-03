@@ -778,9 +778,10 @@ class TopologyClient:
         self, journal: dict[str, object], body: Mapping[str, object]
     ) -> Mapping[str, object] | ClientResult:
         pending = _mapping(journal, "pending_request")
+        route_id = _text(pending, "route_id")
         try:
             response = self.transport.call(
-                _text(pending, "route_id"),
+                route_id,
                 path_parameters={
                     key: _text_coordinate(value)
                     for key, value in _mapping(pending, "path_parameters").items()
@@ -791,23 +792,18 @@ class TopologyClient:
         except ClientAuthorizationError:
             raise
         except ClientTransportError:
+            if route_id == "command.graph.advance-current":
+                return self._unverified_advancement(journal)
             return self._attention(
                 journal,
                 execution=(
                     "unverified"
-                    if _text(pending, "route_id")
-                    in {"command.run.start", "command.deployment.execute"}
+                    if route_id in {"command.run.start", "command.deployment.execute"}
                     else "not-started"
-                ),
-                advancement=(
-                    "unverified"
-                    if _text(pending, "route_id") == "command.graph.advance-current"
-                    else "not-attempted"
                 ),
                 next_public_read=_next_read(journal),
                 persist=False,
             )
-        route_id = _text(pending, "route_id")
         if not _response_is_bound(
             route_id,
             response,
@@ -816,17 +812,14 @@ class TopologyClient:
             coordinates=_coordinates(journal),
             workspace_id=self.profile.workspace_id,
         ):
+            if route_id == "command.graph.advance-current":
+                return self._unverified_advancement(journal)
             return self._attention(
                 journal,
                 execution=(
                     "unverified"
                     if route_id in {"command.run.start", "command.deployment.execute"}
                     else "not-started"
-                ),
-                advancement=(
-                    "unverified"
-                    if route_id == "command.graph.advance-current"
-                    else "not-attempted"
                 ),
                 next_public_read=_next_read(journal),
                 persist=False,
@@ -849,11 +842,18 @@ class TopologyClient:
         self.journal.write(_text(journal, "operation_ref"), journal)
         return response
 
+    def _unverified_advancement(self, journal: dict[str, object]) -> ClientResult:
+        try:
+            return self._attention(journal, execution=None, advancement="unverified",
+                next_public_read=_next_read(journal))
+        except (JournalError, OSError):
+            raise JournalError("advancement and journal persistence could not be verified") from None
+
     def _attention(
         self,
         journal: dict[str, object],
         *,
-        execution: str = "not-started",
+        execution: str | None = "not-started",
         advancement: str = "not-attempted",
         next_public_read: str,
         persist: bool = True,
