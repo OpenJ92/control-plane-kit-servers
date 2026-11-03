@@ -6,10 +6,15 @@ execution succeeded, advancement unverified and attention required, then retain
 that result in the existing journal without changing its executed phase, pending
 intent/idempotency, coordinates or successful request history. The fixture takes
 its snapshot at the dispatched advancement boundary; it does not seed journal
-state or recreate Operations acceptance. This tests-only checkpoint has not run
-and earns no target-red evidence. Production and dependency pins are unchanged;
-execution uses only the established repository Docker suite after its prerequisites
-and gate boundary are ready.
+state or recreate Operations acceptance. Tests-only checkpoint
+`c21cd8fdf8e62e096ef3566f1687925a2ad5bd27` ran once through ordinary `./test.sh`:
+the CPK group ran 737 tests in 117.366 seconds with this target's expected
+`not-started` versus `succeeded` assertion as its only failure. Whole gate exit
+was 1; preceding groups, build, integrity and initial compilation passed. Later
+product groups, clean import and daemon smoke stages were not reached. Production
+and dependency pins remain unchanged. This establishes the reporting defect,
+not a diagnosis of the server refusal or full acceptance; see
+[the terminal record](https://github.com/OpenJ92/control-plane-kit-servers/issues/371#issuecomment-6595189545).
 
 The completed-operation regressions use the real client and the existing
 `ScriptedTransport` public-route fixture. They first plan and apply to genuine
