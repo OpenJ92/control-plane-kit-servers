@@ -1,5 +1,24 @@
 # Managed native connection composition
 
+## #374 bounded rejection diagnostics
+
+The native adapter validates the returned interpreter value and explicitly maps
+its optional closed diagnostic to the Operations-owned enum. Only unsampled
+UNKNOWN may carry it. Missing diagnostics retain the existing result shape;
+invalid values produce the existing fixed unavailable failure. Correlation,
+client custody, cancellation and provider call order remain unchanged.
+
+Composition tests exercise all closed codes and the actual observer/SDK's first
+failed read through fresh and retained inputs. Operations owns durable retention
+and the authenticated run-events projection. These tests do not recreate history
+or grant authority to retry, repair or deploy. Reader adoption must precede
+diagnostic producers; old readers cannot consume diagnostic-bearing records.
+
+The prepared source requires the separately reviewed #374 dependency selection.
+At the adapter preparation checkpoint, pins and full composition validation are
+pending. Normal-main interpreter validation is distinct from the selected
+Core7afef43 cohort; only its reviewed diagnostic-only transfer may be selected.
+
 ## #225 Operations material composition
 
 The new witness uses Operations' actual pure lowering and Core request binding
