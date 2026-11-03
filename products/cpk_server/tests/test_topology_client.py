@@ -856,12 +856,18 @@ class TopologyClientTests(unittest.TestCase):
         snapshots = []
         class HttpAdvancement(ScriptedTransport):
             allow_advance = False
+            execution_succeeded = False
             def call(self, route_id, **arguments):
                 if route_id == "command.graph.advance-current" and not self.allow_advance:
                     self.calls.append({"route_id": route_id, **arguments})
                     snapshots.append(client.journal.read(planned.operation_ref))
                     return http.call(route_id, **arguments)
-                return super().call(route_id, **arguments)
+                response = super().call(route_id, **arguments)
+                if route_id == "command.deployment.execute":
+                    self.execution_succeeded = response["run_status"] == "succeeded"
+                if route_id == "read.plan-runs" and self.execution_succeeded:
+                    response["items"][0]["status"] = "succeeded"
+                return response
         transport = HttpAdvancement()
         client = self.client(transport)
         for credential in client.profile.credentials.values():
@@ -897,6 +903,7 @@ class TopologyClientTests(unittest.TestCase):
         before_calls = len(transport.calls)
         reconstructed = TopologyClient(client.profile, transport=transport)
         observed = reconstructed.status(planned.operation_ref)
+        self.assertEqual((observed.execution, observed.advancement), ("succeeded", "unverified"))
         self.assertEqual((observed.http_status, observed.diagnostic), (500, failures[0]))
         self.assertFalse(any(call["route_id"].startswith("command.") for call in transport.calls[before_calls:]))
         self.assertEqual(client.journal.read(planned.operation_ref), saved)
