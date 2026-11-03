@@ -28,10 +28,10 @@ def verify_provenance():
     """Apparatus check; no behavioral claim can precede normal installed pins."""
     pins = {
         "control-plane-kit-core": "7afef43f3d3b981094e37dcb3062b6e3a4f3d674",
-        "control-plane-kit-operations": "9822cab5831c0cb7f8584a99607812b07cc346b6",
+        "control-plane-kit-operations": "35c82b9da629862b4d7e1b4619cc1b0c3c8c4f5a",
         "control-plane-kit-server-sdk": "220f63169e4bac79653937e97727406255279f7b",
         "control-plane-kit-secrets": "09442303740ed2e648cf354e35dd61df93974b9c",
-        "control-plane-kit-interpreters": "a26586e9f075c2f8f525c0b5bb2c4294e93c66cf",
+        "control-plane-kit-interpreters": "685c86279ae50ac16128d9417429f97db9af982a",
     }
     for name, commit in pins.items():
         direct = json.loads(importlib.metadata.distribution(name).read_text("direct_url.json"))

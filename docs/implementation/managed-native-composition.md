@@ -14,10 +14,13 @@ and the authenticated run-events projection. These tests do not recreate history
 or grant authority to retry, repair or deploy. Reader adoption must precede
 diagnostic producers; old readers cannot consume diagnostic-bearing records.
 
-The prepared source requires the separately reviewed #374 dependency selection.
-At the adapter preparation checkpoint, pins and full composition validation are
-pending. Normal-main interpreter validation is distinct from the selected
-Core7afef43 cohort; only its reviewed diagnostic-only transfer may be selected.
+The candidate selects accepted Operations merge
+`35c82b9da629862b4d7e1b4619cc1b0c3c8c4f5a` and the independently reviewed,
+owning-suite-validated interpreter transfer
+`685c86279ae50ac16128d9417429f97db9af982a`. Core `7afef43`, SDK `220f631`
+and Secrets `0944230` remain unchanged. Normal-main interpreter validation is
+distinct from this selected cohort. Candidate composition validation is pending;
+these dependency coordinates do not establish a published or live upgrade.
 
 ## #225 Operations material composition
 
