@@ -14,7 +14,7 @@ from control_plane_kit_interpreters.docker.connector_connection import (
 )
 from control_plane_kit_interpreters.docker.sdk import ConnectorConnectionProfile, DockerSdkClient
 from control_plane_kit_operations.effect_outcome_evidence import (
-    NativeConnectionObservation, NativeConnectionOutcome, NativeConnectionRefused, NativeConnectionDiagnostic,
+    NativeConnectionObservation, NativeConnectionOutcome, NativeConnectionRefused,
 )
 from control_plane_kit_operations.runtime_management_targets import is_native_connection_operation
 
@@ -130,7 +130,6 @@ class DockerManagedNativeConnection:
             if (type(observed) is not ConnectorConnectionObservation
                     or type(observed.outcome) is not ConnectorConnectionOutcome):
                 raise ValueError
-            observed.__post_init__()
             if observed.outcome is ConnectorConnectionOutcome.REFUSED:
                 if any(value is not None for value in (observed.effect_id, observed.activity_id,
                         observed.container_id, observed.sample_start, observed.sample_end,
@@ -144,8 +143,7 @@ class DockerManagedNativeConnection:
             # preserve timestamp text rather than rounding through datetime.
             return NativeConnectionObservation(NativeConnectionOutcome(observed.outcome.value),
                 observed.effect_id, observed.activity_id, observed.container_id,
-                observed.sample_start, observed.sample_end, observed.ready_connections, observed.connector_id,
-                diagnostic=None if observed.diagnostic is None else NativeConnectionDiagnostic(observed.diagnostic.value))
+                observed.sample_start, observed.sample_end, observed.ready_connections, observed.connector_id)
         except Exception:
             failure = ManagedHealthUnavailable("managed health is unavailable")
         # Raise outside the exception context: provider/material detail is private.
