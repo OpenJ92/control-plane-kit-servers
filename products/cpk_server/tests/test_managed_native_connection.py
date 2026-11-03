@@ -17,12 +17,41 @@ from control_plane_kit_interpreters.docker.connector_connection import (
 )
 from control_plane_kit_interpreters.docker.sdk import ConnectorConnectionProfile, DockerSdkClient
 from control_plane_kit_operations.effect_outcome_evidence import (
-    NativeConnectionObservation, NativeConnectionOutcome, NativeConnectionRefused,
+    NativeConnectionObservation, NativeConnectionOutcome, NativeConnectionRefused, NativeConnectionDiagnostic,
 )
 from managed_native_material import NativeMaterial
 
 
 class ManagedNativeConnectionTests(unittest.TestCase):
+    def test_closed_native_diagnostics_cross_adapter_without_provider_calls(self):
+        from control_plane_kit_interpreters.docker import connector_connection
+        from control_plane_kit_operations import effect_outcome_evidence
+        diagnostics = getattr(connector_connection, "ConnectorConnectionDiagnostic", None)
+        self.assertIsNotNone(diagnostics)
+        for diagnostic in diagnostics:
+            original = replace(self.result(ConnectorConnectionOutcome.UNKNOWN, sample=False), diagnostic=diagnostic)
+            with patch.object(DockerConnectorConnectionObserver, "observe", return_value=original) as observe:
+                result = self.observe()
+            observe.assert_called_once()
+            self.assertIs(type(result.diagnostic), effect_outcome_evidence.NativeConnectionDiagnostic)
+            self.assertEqual(result.diagnostic.value, diagnostic.value)
+            self.assertEqual(result.effect_id, original.effect_id)
+            self.assertEqual(result.activity_id, original.activity_id)
+            self.assertIsNone(result.container_id)
+        self.assert_pure()
+
+    def test_invalid_native_diagnostic_is_bounded_adapter_failure(self):
+        from control_plane_kit_servers_cpk_server.managed_health import ManagedHealthUnavailable
+        original = self.result(ConnectorConnectionOutcome.UNKNOWN, sample=False)
+        # Simulate invalid returned provider-port data without weakening the
+        # production value constructor or assigning it any execution authority.
+        object.__setattr__(original, "diagnostic", "PRIVATE-CANDIDATE")
+        with patch.object(DockerConnectorConnectionObserver, "observe", return_value=original):
+            with self.assertRaisesRegex(ManagedHealthUnavailable, "^managed health is unavailable$") as caught:
+                self.observe()
+        self.assertNotIn("PRIVATE-CANDIDATE", str(caught.exception))
+        self.assert_pure()
+
     def setUp(self):
         from control_plane_kit_servers_cpk_server.managed_health_placement import (
             DockerControllerPlacement, DockerGatewayEndpointReader, DockerRuntimeClientBinding, DockerRuntimeClientSelector,
@@ -226,7 +255,7 @@ class ManagedNativeConnectionTests(unittest.TestCase):
         # Real accepted SDK/observer sees one failed passive read. No helper API exists.
         result = self.observe()
         self.assertEqual(result, NativeConnectionObservation(NativeConnectionOutcome.UNKNOWN,
-            self.world.request.effect_id, self.world.request.activity_id.value))
+            self.world.request.effect_id, self.world.request.activity_id.value, diagnostic=NativeConnectionDiagnostic.INITIAL_EVIDENCE_UNAVAILABLE))
         self.api.inspect_container.assert_called_once()
         self.assertEqual(len(self.api.mock_calls), 1)
         self.api.reset_mock()
@@ -247,7 +276,7 @@ class ManagedNativeConnectionTests(unittest.TestCase):
         # supplies no connected sample and performs no external operation.
         result = self.observe(world=world, bridge=self.bridge(native, world))
         self.assertEqual(result, NativeConnectionObservation(NativeConnectionOutcome.UNKNOWN,
-            world.request.effect_id, world.request.activity_id.value))
+            world.request.effect_id, world.request.activity_id.value, diagnostic=NativeConnectionDiagnostic.INITIAL_EVIDENCE_UNAVAILABLE))
         self.api.inspect_container.assert_called_once()
         self.assertEqual(len(self.api.mock_calls), 1)
         self.clock.assert_not_called()
@@ -263,7 +292,7 @@ class ManagedNativeConnectionTests(unittest.TestCase):
                 # must qualify for the real reader's first unavailable SDK read.
                 result = self.observe(world=world, request=request, bridge=self.bridge(native, world))
                 self.assertEqual(result, NativeConnectionObservation(NativeConnectionOutcome.UNKNOWN,
-                    request.effect_id, request.activity_id.value))
+                    request.effect_id, request.activity_id.value, diagnostic=NativeConnectionDiagnostic.INITIAL_EVIDENCE_UNAVAILABLE))
                 self.api.inspect_container.assert_called_once()
                 self.assertEqual(len(self.api.mock_calls), 1)
                 self.clock.assert_not_called()

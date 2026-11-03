@@ -11,7 +11,7 @@ from docker.transport import UnixHTTPAdapter
 from control_plane_kit_interpreters.docker.sdk import DockerSdkClient, DockerUnixSocketClientConfig
 from control_plane_kit_interpreters.docker.connector_connection import DockerConnectorConnectionObserver
 from control_plane_kit_operations.effect_outcome_evidence import (
-    NativeConnectionObservation, NativeConnectionOutcome, NativeConnectionRefused,
+    NativeConnectionObservation, NativeConnectionOutcome, NativeConnectionRefused, NativeConnectionDiagnostic,
 )
 from control_plane_kit_operations.runtime_authorities import RegisteredRuntimeAuthorityStatus
 from managed_native_material import NativeMaterial
@@ -81,7 +81,7 @@ class OwnedNativeClientTests(unittest.TestCase):
     def assert_unknown(self, result, world=None):
         world = world or self.world
         self.assertEqual(result, NativeConnectionObservation(NativeConnectionOutcome.UNKNOWN,
-            world.request.effect_id, world.request.activity_id.value))
+            world.request.effect_id, world.request.activity_id.value, diagnostic=NativeConnectionDiagnostic.INITIAL_EVIDENCE_UNAVAILABLE))
 
     def test_policy_selection_is_pure_scoped_and_redacted(self):
         with patch("docker.DockerClient") as constructor, patch("docker.from_env") as ambient:
