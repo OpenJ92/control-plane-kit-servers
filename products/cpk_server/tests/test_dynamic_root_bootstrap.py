@@ -88,7 +88,7 @@ class DynamicRootBootstrapTests(unittest.TestCase):
         document = installation_input()
         # Authoring evidence only: reviewed CPK account coordinates and an
         # inert Secrets reference do not qualify this pair for execution.
-        selection = {"images": {"cpk-server": witness.CPK_DIAGNOSTICS_371_IMAGE_ACCOUNT.image_reference,
+        selection = {"images": {"cpk-server": witness.CPK_DIAGNOSTICS_374_IMAGE_ACCOUNT.image_reference,
             "secrets-server": "ghcr.io/openj92/control-plane-kit-servers/secrets-server@sha256:" + "a" * 64}}
         with patch.object(witness, "ROOT", self.root):
             policy, private = witness.prepare_dynamic_document(document, selection, DRIVER)
@@ -180,6 +180,17 @@ class DynamicRootBootstrapTests(unittest.TestCase):
         self.assertEqual(witness.reviewed_image_account(reference), witness.ImageAccountBaseline(
             image_reference=reference,
             config_digest="sha256:424318efc6704d40a34100c2c4c54b67614dedd9bfbf1e2ca34d4a830882f278",
+            passwd_sha256="2b154879fd6e9899bbe9f9c04eb2535f3388ad5a090f90a78c0dca81a13b9921",
+            group_sha256="1ffcc10cbb13f710c78598bdccecd91b43251fef7e443ca860dfe84c656c0653",
+            uid=10001, primary_gid=10001, supplementary_gids=(100,)))
+
+    def test_reviewed_diagnostics_374_account_binds_observed_original_config_and_groups(self):
+        from products.cpk_server.tests import live_root_bootstrap as witness
+        reference = "ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:071056fd3d609beb2d3a97591419d77a68aaef5940c7c4a82a36d59386cf0b10"
+        # Independently reviewed seal c704aebc, run41741818301.
+        self.assertEqual(witness.reviewed_image_account(reference), witness.ImageAccountBaseline(
+            image_reference=reference,
+            config_digest="sha256:43ddc793762dc35b31ad99aa8cc378cdb3fd4a920886d21822bae678e314547f",
             passwd_sha256="2b154879fd6e9899bbe9f9c04eb2535f3388ad5a090f90a78c0dca81a13b9921",
             group_sha256="1ffcc10cbb13f710c78598bdccecd91b43251fef7e443ca860dfe84c656c0653",
             uid=10001, primary_gid=10001, supplementary_gids=(100,)))

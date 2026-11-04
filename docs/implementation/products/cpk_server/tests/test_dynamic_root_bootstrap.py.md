@@ -97,3 +97,15 @@ Secrets reference remains inert; the actual-pair gate selects published Secrets
 11fef743 with common producer8b0ea409. No execution/lifecycle owner is replaced.
 The change is unvalidated until the existing owning Docker workflow runs; no
 new focused harness or live effect is introduced.
+
+## #225 / #374 diagnostic account evidence
+
+The existing dynamic authoring/material-admission case now selects reviewed
+CPK071056fd. A concise exact-row assertion binds original config43ddc793,
+account hashes and UID/GID/groups from independently reviewed sealc704aebc,
+run41741818301. Existing historical rows, unknown-reference refusal and
+wrong-image/socket-group checks remain. The authoring fixture keeps an inert
+Secrets reference; the separate published-pair gate selects actual Secrets
+554f433b and common producer8f79a051. This successor changes no runtime owner,
+recipe or dependency. Validation remains pending the owning Docker workflow;
+no additional test harness or live effect is introduced.
