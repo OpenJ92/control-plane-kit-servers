@@ -1,5 +1,24 @@
 # Managed native connection composition
 
+## #225 native ingress custody evidence selection
+
+Servers selects accepted Operations merge
+`885513e348b5b9cdb077c9f8804e98d9b2c0e803` from
+[CPK PR #2082](https://github.com/OpenJ92/control-plane-kit/pull/2082).
+After a successful native allocation's durable fold, Operations emits the
+custody-success marker required by its existing final-acceptance predicate.
+The existing application factory already composes the real ingress invocation
+service, workspace effect policy and native adapter; no Servers adapter or
+acceptance behavior changes. Failed allocation and removal remain unchanged.
+
+The dependency, both build recipes and installed-provenance expectations select
+that merge together. Other package pins and product-image coordinates remain
+unchanged. Servers composition validation is pending for this candidate. The
+historical CPK071056 account baseline remains exact-image recognition only;
+its prior qualification does not qualify this new source cohort or a new image.
+This selection does not repair retained events, advance a live graph, publish
+an image or establish live adoption.
+
 ## #374 bounded rejection diagnostics
 
 The native adapter validates the returned interpreter value and explicitly maps
@@ -14,13 +33,16 @@ and the authenticated run-events projection. These tests do not recreate history
 or grant authority to retry, repair or deploy. Reader adoption must precede
 diagnostic producers; old readers cannot consume diagnostic-bearing records.
 
-The candidate selects accepted Operations merge
+The accepted #374 cohort selected Operations merge
 `35c82b9da629862b4d7e1b4619cc1b0c3c8c4f5a` and the independently reviewed,
 owning-suite-validated interpreter transfer
 `685c86279ae50ac16128d9417429f97db9af982a`. Core `7afef43`, SDK `220f631`
 and Secrets `0944230` remain unchanged. Normal-main interpreter validation is
-distinct from this selected cohort. Candidate composition validation is pending;
-these dependency coordinates do not establish a published or live upgrade.
+distinct from this cohort. Its owning gate
+[41735659080](https://github.com/OpenJ92/control-plane-kit-servers/actions/runs/41735659080)
+passed before [PR #375](https://github.com/OpenJ92/control-plane-kit-servers/pull/375)
+merged. Those results apply to that cohort; they do not validate the new
+Operations selection above or establish a published or live upgrade.
 
 ## #225 Operations material composition
 

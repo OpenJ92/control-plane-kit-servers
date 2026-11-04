@@ -106,6 +106,11 @@ account hashes and UID/GID/groups from independently reviewed sealc704aebc,
 run41741818301. Existing historical rows, unknown-reference refusal and
 wrong-image/socket-group checks remain. The authoring fixture keeps an inert
 Secrets reference; the separate published-pair gate selects actual Secrets
-554f433b and common producer8f79a051. This successor changes no runtime owner,
-recipe or dependency. Validation remains pending the owning Docker workflow;
-no additional test harness or live effect is introduced.
+554f433b and common producer8f79a051. The historical account checkpoint1dfe1643
+changed no runtime owner, recipe or dependency; its owning published-pair
+[gate41743627407](https://github.com/OpenJ92/control-plane-kit-servers/actions/runs/41743627407)
+subsequently passed. The exact-row assertion remains historical account
+evidence, not qualification of the later Operations885513e3 source cohort or
+any new image. That source integration requires its own owning Docker gate;
+new publication requires new account and artifact qualification evidence.
+No additional test harness or live effect is introduced.
