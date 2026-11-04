@@ -114,3 +114,10 @@ evidence, not qualification of the later Operations885513e3 source cohort or
 any new image. That source integration requires its own owning Docker gate;
 new publication requires new account and artifact qualification evidence.
 No additional test harness or live effect is introduced.
+
+## Native ingress custody release
+
+The authoring test selects CPK `f90709a1…`. Its exact-row assertion checks
+the original config and account fields observed in the seal from run 41901636089.
+The separate artifact gate exercises the actual Secrets companion `2455fb88…`
+from common producer `15a2de2d`. [Pair publication receipt](https://github.com/OpenJ92/control-plane-kit-servers/issues/225#issuecomment-6644009264).

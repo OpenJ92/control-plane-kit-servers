@@ -202,3 +202,11 @@ changes the dependency cohort; the old pair's qualification does not qualify
 that source or a newly built image. Any new published image requires its own
 observed account and owning qualification. Retained resources and historical
 runs remain unchanged by this source integration.
+
+## Native ingress custody release
+
+The selector admits the exact CPK digest `f90709a1…` from producer `15a2de2d`.
+Its account seal binds original config `43d8e9f3…` to UID and primary GID
+10001, supplementary group 100 and the observed passwd and group file hashes.
+The fixture uses that baseline when the owning gate runs the actual image.
+[Publication and account evidence](https://github.com/OpenJ92/control-plane-kit-servers/issues/225#issuecomment-6640674897).

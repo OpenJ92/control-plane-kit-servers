@@ -88,7 +88,7 @@ class DynamicRootBootstrapTests(unittest.TestCase):
         document = installation_input()
         # Authoring evidence only: reviewed CPK account coordinates and an
         # inert Secrets reference do not qualify this pair for execution.
-        selection = {"images": {"cpk-server": witness.CPK_DIAGNOSTICS_374_IMAGE_ACCOUNT.image_reference,
+        selection = {"images": {"cpk-server": witness.CPK_CUSTODY_2081_IMAGE_ACCOUNT.image_reference,
             "secrets-server": "ghcr.io/openj92/control-plane-kit-servers/secrets-server@sha256:" + "a" * 64}}
         with patch.object(witness, "ROOT", self.root):
             policy, private = witness.prepare_dynamic_document(document, selection, DRIVER)
@@ -191,6 +191,16 @@ class DynamicRootBootstrapTests(unittest.TestCase):
         self.assertEqual(witness.reviewed_image_account(reference), witness.ImageAccountBaseline(
             image_reference=reference,
             config_digest="sha256:43ddc793762dc35b31ad99aa8cc378cdb3fd4a920886d21822bae678e314547f",
+            passwd_sha256="2b154879fd6e9899bbe9f9c04eb2535f3388ad5a090f90a78c0dca81a13b9921",
+            group_sha256="1ffcc10cbb13f710c78598bdccecd91b43251fef7e443ca860dfe84c656c0653",
+            uid=10001, primary_gid=10001, supplementary_gids=(100,)))
+
+    def test_reviewed_custody_2081_account_binds_observed_original_config_and_groups(self):
+        from products.cpk_server.tests import live_root_bootstrap as witness
+        reference = "ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:f90709a15ae3d36cc5719403a5d7a2fbd848e1d2610ba6e1be5cd8b62f4a1ab1"
+        self.assertEqual(witness.reviewed_image_account(reference), witness.ImageAccountBaseline(
+            image_reference=reference,
+            config_digest="sha256:43d8e9f30f5e7c8f99c1c12efcab550aae17ad8405f3292525d6fc181ab0e3b8",
             passwd_sha256="2b154879fd6e9899bbe9f9c04eb2535f3388ad5a090f90a78c0dca81a13b9921",
             group_sha256="1ffcc10cbb13f710c78598bdccecd91b43251fef7e443ca860dfe84c656c0653",
             uid=10001, primary_gid=10001, supplementary_gids=(100,)))
