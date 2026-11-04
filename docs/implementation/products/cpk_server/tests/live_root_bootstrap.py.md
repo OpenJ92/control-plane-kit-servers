@@ -182,3 +182,23 @@ dependencies and runtime code are unchanged from the accepted producer. This
 fixture admission awaits the owning package and actual published-pair gates;
 it does not establish artifact qualification, retained replacement or successful
 continuation of the original pending advancement.
+
+## #225 / #374 diagnostic artifact account admission
+
+The exact-reference selector adds CPK071056fd from producer8f79a051 and
+publication/account run41741818301. Kepler independently reviewed seal SHA256
+c704aebcdcbb517582e5b24a0bc3f21c7c8a9fb65669574fffd981d509b1fa91,
+including owned acquisition cleanup. The row binds original config43ddc793,
+UID/GID10001, supplementary group100 and final-filesystem account hashes;
+normalized inspection config1ac11e94 is not substituted. See the
+[publication/account evidence](https://github.com/OpenJ92/control-plane-kit-servers/issues/225#issuecomment-6618543785).
+Prior rows and unknown-reference refusal remain. At the historical account
+checkpoint 1dfe1643, runtime source, recipes, dependencies and workflow were
+unchanged from producer8f79a051. The owning published-pair
+[gate41743627407](https://github.com/OpenJ92/control-plane-kit-servers/actions/runs/41743627407)
+subsequently qualified that exact pair. This row continues to recognize only
+that historical image/account. The later Operations885513e3 source selection
+changes the dependency cohort; the old pair's qualification does not qualify
+that source or a newly built image. Any new published image requires its own
+observed account and owning qualification. Retained resources and historical
+runs remain unchanged by this source integration.
