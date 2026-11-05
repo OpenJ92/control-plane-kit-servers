@@ -12,6 +12,7 @@ ARG VCS_REF
 LABEL org.opencontainers.image.source="https://github.com/OpenJ92/control-plane-kit-servers" \
       org.opencontainers.image.revision=$VCS_REF
 COPY products/website_server/src /app/website-src
+COPY products/website_server/node /app/website-managed
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app/website-src \
     CPK_WRAPPER_CONFIGURATION_FILE=/etc/cpk/website/control.json

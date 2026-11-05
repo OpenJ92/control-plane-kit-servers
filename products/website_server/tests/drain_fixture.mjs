@@ -15,7 +15,7 @@ https.request = (_url, _options, callback) => {
       response.headers = {'content-type':'application/json'};
       callback(response);
       response.end('{"recorded":true}');
-    }, 9000);
+    }, _url.pathname.includes('/slow/') ? 9000 : 4500);
   };
   outgoing.destroy = () => { clearTimeout(timer); };
   return outgoing;

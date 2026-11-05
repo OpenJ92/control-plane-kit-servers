@@ -9,8 +9,8 @@ from control_plane_kit_server_sdk import wrapper
 
 from .managed import control_configuration_artifact, create_control_server
 
-# Selected Web main.mjs drains for 11 seconds; retain a reap margin.
-NODE_STOP_SECONDS = 12
+# Managed Node drains within 7 seconds; total cleanup stays below Docker's 10s.
+NODE_STOP_SECONDS = 8
 
 
 def node_environment(environment):
@@ -84,7 +84,7 @@ def run(configuration, environment):
         host = create_control_server(configuration, health)
         if not signals:
             child = subprocess.Popen(
-                ["/usr/local/bin/node", "/app/server/main.mjs"], env=child_env,
+                ["/usr/local/bin/node", "/app/website-managed/main.mjs"], env=child_env,
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 start_new_session=True, close_fds=True)
             health.attach(child)
@@ -127,7 +127,7 @@ def run(configuration, environment):
                 except OSError:
                     result = 1
                 try:
-                    child.wait(timeout=1)
+                    child.wait(timeout=0.25)
                 except subprocess.TimeoutExpired:
                     result = 1
                 result = 1
@@ -135,8 +135,8 @@ def run(configuration, environment):
             if serving is not None:
                 shutdown = Thread(target=host.shutdown, daemon=True)
                 shutdown.start()
-                shutdown.join(timeout=2)
-                serving.join(timeout=2)
+                shutdown.join(timeout=0.25)
+                serving.join(timeout=0.25)
                 if shutdown.is_alive() or serving.is_alive():
                     result = 1
             host.server_close()

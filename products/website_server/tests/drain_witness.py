@@ -7,9 +7,10 @@ import sys
 from threading import Thread
 import time
 
-image, directory = sys.argv[1:]
+image, directory, case = sys.argv[1:]
+assert case in ("fast", "slow")
 owner = "rowan-website190-drain"
-name = "cpk-website190-drain"
+name = "cpk-website190-drain-" + case
 
 
 def docker(*args):
@@ -45,7 +46,7 @@ try:
         try:
             body = json.dumps({"session_id":"synthetic-session","decision":"approved",
                                "idempotency_key":"synthetic-once"})
-            connection.request("POST", "/api/workspaces/synthetic/approvals/synthetic/decision",
+            connection.request("POST", "/api/workspaces/" + case + "/approvals/synthetic/decision",
                                body=body, headers={"Authorization":"Bearer synthetic-test-only",
                                                    "Content-Type":"application/json"})
             response = connection.getresponse()
@@ -61,19 +62,25 @@ try:
                  "process.stdout.write(String(require('fs').existsSync('/run/witness/admitted')))") != "true":
         assert time.monotonic() < deadline
         time.sleep(0.1)
-    # stop's outer budget explicitly allows Node's 11s drain + reap/management margin.
-    docker("stop", "--time", "20", container)
+    source = str(Path(__file__).resolve().parents[3])
+    docker("run", "--rm", "--network", "none",
+           "--volume", "/var/run/docker.sock:/var/run/docker.sock",
+           "--volume", source + ":/source:ro",
+           "--env", "PYTHONDONTWRITEBYTECODE=1",
+           "control-plane-kit-servers-test:379-trace-red", "python",
+           "/source/products/website_server/tests/stop_owned.py", container, case)
     reader.join(2)
     assert not reader.is_alive()
-    assert response_result == [(200, b'{"recorded":true}')], response_result
+    expected = (200, b'{"recorded":true}') if case == "fast" else (504, b'{"error":"upstream_timeout"}')
+    assert response_result == [expected], response_result
     info = json.loads(docker("inspect", container))[0]
     assert info["State"]["ExitCode"] == 0
-    print('{"late_synthetic_response":"delivered","supervisor_exit":0}')
+    print(json.dumps({"case":case,"response":expected[0],"supervisor_exit":0,"stop_path":"ordinary-sdk-default"}))
 finally:
     if container is not None:
         info = json.loads(docker("inspect", container))[0]
         assert info["Name"] == "/" + name
         assert info["Config"]["Labels"]["cpk.witness.owner"] == owner
         if info["State"]["Running"]:
-            docker("stop", "--time", "20", container)
+            docker("stop", "--time", "10", container)
         docker("rm", container)
