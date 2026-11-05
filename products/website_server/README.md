@@ -31,3 +31,13 @@ The explicit packaged_witness.py uses the default image entrypoint, synthetic ge
 The new unittest file is collected by the existing scripts/run_all_tests.py::product_test_roots discovery. The explicit Docker witness is a separate packaging proof command documented in its module. It does not replace the full owning test.sh/CI gate before merge. These are source/local evidence only.
 
 Pending: image-qualified asset manifest and independent accepted-origin delivery; a generation-bound positive startup receipt and subsequent receiver/poll composition; selected descriptor/image adoption; normal independent review and owning gate. No source claim of healthy website readiness.
+
+## Review correction and ordinary stop boundary
+
+Meridian identified the wrapper's original eight-second grace as shorter than the selected Web's ten-second upstream deadline and eleven-second drain. The wrapper now allows twelve seconds for Node plus bounded final reap/management shutdown. A fixture-only delayed HTTPS adapter keeps the actual Web main/serving code and produces a nine-second synthetic decision response. The explicit drain witness uses an outer twenty-second test budget and proves only the wrapper's own drain behavior.
+
+The selected Docker interpreter685c8627 stop_container calls Container.stop() with no timeout; the owning Docker SDK documents default ten seconds. The selected container renderer exposes no stop-timeout input, and the Core product lifecycle models retention rather than process grace. An image StopSignal does not set a larger stop timeout. Ordinary StopNode orderly-drain acceptance remains held. Owner choice is a scoped runtime grace contract preserving current Web timing, or a deliberately shorter managed-only Web deadline/drain with a proven total teardown bound. This slice does not change global defaults or silently select the latter policy.
+
+Kepler identified that constructing the SDK host after spawning Node left a brief visitor-startup path before management refusal. Management construction/bind now precedes Popen, the health holder attaches exactly one child, and serving management starts only after attachment. A bind/refusal unit test proves zero Node launches. Child environment filtering prevents accidental inheritance only: Node and wrapper share the same UID/filesystem. Control configuration must carry only the reviewed public verifier material.
+
+The default-entrypoint packaged witness now also makes a synthetic authorized SDK readiness request for every original/replacement and asserts UNKNOWN with request correlation. This is negative generation evidence only; image/manifest/origin-qualified positive readiness remains absent.

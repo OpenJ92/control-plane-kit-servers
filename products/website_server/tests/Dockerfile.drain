@@ -1,0 +1,6 @@
+ARG MANAGED_IMAGE
+FROM ${MANAGED_IMAGE}
+USER root
+RUN cp /app/server/main.mjs /app/server/original-main.mjs
+COPY products/website_server/tests/drain_fixture.mjs /app/server/main.mjs
+USER node

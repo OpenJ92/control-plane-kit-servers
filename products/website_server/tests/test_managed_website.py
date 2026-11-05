@@ -87,3 +87,30 @@ class ManagedWebsiteTests(unittest.TestCase):
             host.server_close()
             serving.join(2)
             self.assertFalse(serving.is_alive())
+
+    def test_management_refusal_prevents_any_node_launch(self):
+        import sys
+        from pathlib import Path
+        from unittest.mock import patch
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "cloudflared_connector" / "tests"))
+        from managed_control_fixtures import fixture
+        process = self.module("process")
+        with patch.object(process.subprocess, "Popen") as spawn, \
+                patch.object(process, "create_control_server", side_effect=OSError("synthetic bind refusal")):
+            result = process.run(fixture().config, {"CPK_WEB_UPSTREAM":"https://child.example.invalid"})
+        self.assertEqual(result, 1)
+        spawn.assert_not_called()
+
+    def test_management_holder_attaches_one_process_generation(self):
+        class Child:
+            def poll(self):
+                return None
+        health = self.module("process").WebsiteHealth()
+        self.assertEqual(health.liveness().value, "unknown")
+        health.attach(Child())
+        self.assertEqual(health.liveness().value, "healthy")
+        with self.assertRaises(ValueError):
+            health.attach(Child())
+        health.stop()
+        with self.assertRaises(ValueError):
+            health.attach(Child())

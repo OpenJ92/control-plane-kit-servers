@@ -9,6 +9,9 @@ from control_plane_kit_server_sdk import wrapper
 
 from .managed import control_configuration_artifact, create_control_server
 
+# Selected Web main.mjs drains for 11 seconds; retain a reap margin.
+NODE_STOP_SECONDS = 12
+
 
 def node_environment(environment):
     upstream = environment.get("CPK_WEB_UPSTREAM")
@@ -20,10 +23,16 @@ def node_environment(environment):
 class WebsiteHealth:
     """Owned child generation only; a stopped/exited generation stays invalid."""
 
-    def __init__(self, child):
+    def __init__(self, child=None):
         self._child = child
         self._lock = Lock()
         self._stopped = False
+
+    def attach(self, child):
+        with self._lock:
+            if self._child is not None or self._stopped or child is None:
+                raise ValueError("Website generation is already bound")
+            self._child = child
 
     def stop(self):
         with self._lock:
@@ -31,6 +40,8 @@ class WebsiteHealth:
 
     def liveness(self):
         with self._lock:
+            if self._child is None:
+                return core.NodeHealthReadOutcome.UNHEALTHY if self._stopped else core.NodeHealthReadOutcome.UNKNOWN
             if self._child.poll() is not None:
                 self._stopped = True
             return core.NodeHealthReadOutcome.UNHEALTHY if self._stopped else core.NodeHealthReadOutcome.HEALTHY
@@ -69,13 +80,14 @@ def run(configuration, environment):
         for signum in (signal.SIGTERM, signal.SIGINT):
             previous[signum] = signal.getsignal(signum)
             signal.signal(signum, request_stop)
+        health = WebsiteHealth()
+        host = create_control_server(configuration, health)
         if not signals:
             child = subprocess.Popen(
                 ["/usr/local/bin/node", "/app/server/main.mjs"], env=child_env,
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 start_new_session=True, close_fds=True)
-            health = WebsiteHealth(child)
-            host = create_control_server(configuration, health)
+            health.attach(child)
             serving = Thread(target=serve, name="website-control", daemon=True)
             serving.start()
             while not stop.wait(0.05):
@@ -106,7 +118,7 @@ def run(configuration, environment):
             except OSError:
                 result = 1
             try:
-                child.wait(timeout=8)
+                child.wait(timeout=NODE_STOP_SECONDS)
             except subprocess.TimeoutExpired:
                 try:
                     os.killpg(child.pid, signal.SIGKILL)
