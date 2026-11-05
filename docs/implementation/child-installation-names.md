@@ -16,6 +16,11 @@ installation. Zone, role authority references and explicit ingress lifecycles
 are checked inside that record. Image versions, client operation IDs, profile
 names and working directories have no effect on the names.
 
+The parent target is a canonical origin. HTTPS uses the existing frontend
+origin validator; explicit default ports and path prefixes are refused.
+The client profile's deliberate loopback HTTP policy is retained with the same
+origin-only restriction and a single default-port spelling.
+
 This is local intent. Before explicit creation the caller must establish that
 the child is new. Missing local state cannot establish global absence. Preserve
 the exact record when moving the workflow to another account or host. Reopening
@@ -29,6 +34,8 @@ file, after checking the recorded inode, and syncs that removal before returning
 Any surviving pending file takes precedence over final state. Contending callers
 receive the committed matching assignment or a refusal. Publication uncertainty
 preserves the files for investigation. No caller overwrites or repairs them.
+An existing-record return independently syncs pending removal and rechecks both
+absence and the assignment. It cannot rely on an overlapping writer's sync.
 
 The record carries planned authority references. Exact-host authority
 registrations can be created only after their names are known. A separately

@@ -7,11 +7,13 @@ from pathlib import Path
 import re
 import stat
 from uuid import UUID, uuid4
+from urllib.parse import urlsplit
 
 from control_plane_kit_core.public_ingress import (
     IngressAuthorityReference, PublicIngressLifecycle,
 )
 from .profile import normalize_endpoint
+from .frontend import _canonical_origin
 
 
 _SCHEMA = "cpk.child-names.v1"
@@ -32,6 +34,21 @@ def _require(condition):
 
 def _identity(value):
     _require(type(value) is str and _IDENTITY.fullmatch(value) is not None)
+
+
+def _parent_origin(value):
+    try:
+        _require(normalize_endpoint(value) == value)
+        parsed = urlsplit(value)
+        if parsed.scheme == "https":
+            return _canonical_origin(value)
+        # The profile owner already restricts plaintext HTTP to exact loopback
+        # hosts. Close its base-URL shape to one origin spelling here.
+        _require(not parsed.path and parsed.port != 80)
+        return value
+    except ValueError:
+        failure = ChildNamingError("child parent origin is invalid")
+    raise failure from None
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,7 +76,7 @@ class ChildNameBinding:
     ingresses: tuple[ChildIngressNameBinding, ...]
 
     def __post_init__(self):
-        _require(normalize_endpoint(self.parent_endpoint) == self.parent_endpoint)
+        _parent_origin(self.parent_endpoint)
         for value in (self.parent_installation_id, self.parent_workspace_id,
                 self.child_installation_id):
             _identity(value)
@@ -237,6 +254,10 @@ def _load_or_create(binding, *, create):
     if _present(final):
         assignment = _read(final, binding)
         _require(not _present(pending))
+        # An overlapping creator may have unlinked pending but not yet synced
+        # that removal. Establish our own barrier before acknowledging reuse.
+        _sync_directory(root)
+        _require(not _present(pending) and _read(final, binding) == assignment)
         return assignment
     _require(create)
     return _publish(root, final, pending, binding)
