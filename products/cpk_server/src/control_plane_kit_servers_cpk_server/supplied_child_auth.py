@@ -5,7 +5,7 @@ and returns no credential, verifier, grant or evidence of deployed identity.
 """
 import json
 
-from control_plane_kit_core.identity import PrincipalIdentity
+from control_plane_kit_core.identity import PrincipalIdentity, PrincipalKind
 
 from .server import _static_principals
 from .workspace_authority_configuration import decode_workspace_authority_configuration
@@ -44,6 +44,7 @@ def validate_child_auth_documents(*, child_installation_id, administrator,
         identities = (administrator, initializer, browser)
         if (any(type(identity) is not PrincipalIdentity for identity in identities)
                 or len(set(identities)) != 3
+                or browser.kind is not PrincipalKind.OPERATOR
                 or type(child_installation_id) is not str
                 or not child_installation_id
                 or type(verifier_document) is not bytes

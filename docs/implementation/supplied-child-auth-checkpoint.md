@@ -1,14 +1,13 @@
 # Supplied child authentication: proposed first slice
 
-Governing issue: Servers #379. Tests-only source checkpoint for independent
-review; production adapter and executable validation are pending.
+Governing issue: Servers #379. Private admission adapter and focused tests.
 
 Base and destination: roadmap/1813-runtime-control at
 883f08298d4864199ca450b19d5cbd500e6168e7. Branch: codex/379-supplied-auth.
 Core 7afef43f, Operations 885513e3, Interpreters 685c8627, SDK 220f6316,
 Secrets 09442303 remain selected. Operations and root bootstrap are unchanged.
 
-## Proposed private interface
+## Private interface
 
 `supplied_child_auth.validate_child_auth_documents` takes keyword-only
 `child_installation_id`, three typed `PrincipalIdentity` values named
@@ -39,7 +38,7 @@ administrator and checks policy membership, but targets root bootstrap inputs.
 later child adapters must compare exact intended resulting scopes and revision
 without altering the root helper.
 
-The proposed validator closes only the exact-profile correspondence gap. It
+The validator closes only the exact-profile correspondence gap. It
 performs no file, resolver, network, store, permission, issuance or delivery I/O.
 It cannot prove a supplied byte string came from a claimed reference/version or
 that a deployed child received it. Those claims require existing owner evidence.
@@ -49,8 +48,10 @@ that a deployed child received it. Those claims require existing owner evidence.
 The tests use synthetic bytes and check acceptance, role/identity mismatch,
 duplicate/missing/extra principals, extra static grants, duplicate bearer,
 policy mismatch and detached redacted errors. The ordinary Docker-backed
-`./test.sh` owns executable evidence. This checkpoint has not run it and is
-expected to lack the proposed adapter. No behavioral red is claimed.
+`./test.sh` owns executable evidence. Red checkpoint ca27092 completed all 773
+CPK tests with exactly one failure: matching WORKER browser was accepted. All
+other nine admission/interface cases passed. The correction requires an OPERATOR
+browser without changing the test inputs. Green validation is pending.
 
 Kepler's test revision additionally checks a sole but wrong administrator,
 an extra policy-only known identity, conflicting duplicate credential/subject
@@ -77,8 +78,8 @@ Initializer has seven temporary setup scopes and then an empty set; browser has
 workspace-read only. Revocation of workspace permission leaves authentication
 valid. External supplier owns token lifecycle, assembly and customer delivery.
 
-Review requested: Meridian for interface/test ownership; Kepler for privileged
-document consumption and authority. No production edits or gate before review.
+Meridian and Kepler reviewed the interface/test boundary before implementation.
+Final source and evidence review remains required before adoption.
 
 Focused implementation release: North relayed Kepler/Meridian clearance of the
 corrected tests. The issue's browser-role law specifically requires OPERATOR.

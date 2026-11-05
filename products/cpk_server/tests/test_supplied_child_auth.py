@@ -1,7 +1,4 @@
-"""Proposed #379 private admission boundary; synthetic protected input only.
-
-Tests-only review checkpoint. Production adapter has not been implemented.
-"""
+"""#379 private admission boundary; synthetic protected input only."""
 import importlib
 import json
 import unittest
