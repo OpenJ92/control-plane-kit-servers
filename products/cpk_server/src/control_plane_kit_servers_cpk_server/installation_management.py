@@ -164,6 +164,8 @@ def managed_children(value: DockerCpkInstallation, children):
     gateway = group.gateway_product.product
     gateway_id = group.runtime_management.gateway_node_id
     routes.append(_route(value, gateway_id, gateway.runtime_contract, group.gateway_control))
+    if len({route.target.receiver_id for route in routes}) != len(routes):
+        raise ValueError(_INVALID)
     relay = core.ReceiverManagementRoutes(group.gateway_control.target, tuple(routes))
     trust = gateway_health_transit_configuration_artifact(group.transit_trust)
     targets = gateway_health_relay_configuration_artifact(relay)

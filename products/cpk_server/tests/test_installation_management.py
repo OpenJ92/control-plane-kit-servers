@@ -139,6 +139,13 @@ class InstallationManagementTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.graph(self.installation(self.group(connector_controls=crossed)))
 
+    def test_receiver_identity_reused_at_another_valid_node_is_refused(self):
+        first, second, third = self.controls
+        duplicate = replace(second, configuration=replace(second.configuration,
+            target=replace(second.configuration.target, receiver_id=first.configuration.target.receiver_id)))
+        with self.assertRaises(ValueError):
+            self.graph(self.installation(self.group(connector_controls=(first, duplicate, third))))
+
     def test_foreign_gateway_receiver_even_with_matching_trust_is_refused(self):
         roles = core.NodeControlGraphReferenceRole
         target = replace(self.gateway_control.target,
@@ -194,4 +201,3 @@ class InstallationManagementTests(unittest.TestCase):
         inputs["connector_product"] = self.connector
         with self.assertRaises(ValueError):
             frontend.compose_frontend_deployment(**inputs)
-
