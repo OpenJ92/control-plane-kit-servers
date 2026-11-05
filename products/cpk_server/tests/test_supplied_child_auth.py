@@ -131,6 +131,42 @@ class SuppliedChildAuthTests(unittest.TestCase):
         raw = json.dumps(self.document).encode("ascii")
         self.refused(verifier_document=raw + b" " * (131073 - len(raw)))
 
+    def test_late_policy_denial_traceback_retains_no_adapter_owned_material(self):
+        def protected(value):
+            if isinstance(value, str):
+                return "synthetic-private" in value
+            if isinstance(value, bytes):
+                return b"synthetic-private" in value
+            if isinstance(value, dict):
+                return any(protected(item) for item in value.values())
+            if isinstance(value, (list, tuple)):
+                return any(protected(item) for item in value)
+            credential = getattr(value, "credential", None)
+            return isinstance(credential, bytes) and protected(credential)
+
+        # Reject only after valid private bytes have been decoded and parsed.
+        self.policy["administrators"] = [self.identities["initializer"].descriptor()]
+        denied = False
+        clean = True
+        frames = 0
+        try:
+            self.validate()
+        except self.api.SuppliedChildAuthError as error:
+            denied = True
+            clean = (str(error) == "supplied child authentication configuration is invalid"
+                and error.__cause__ is None and error.__context__ is None)
+            traceback = error.__traceback__
+            while traceback is not None:
+                frame = traceback.tb_frame
+                if frame.f_globals.get("__name__") == self.api.__name__:
+                    frames += 1
+                    clean = clean and not any(protected(value) for value in frame.f_locals.values())
+                traceback = traceback.tb_next
+        # Assert booleans only; never print a protected local, even on failure.
+        self.assertTrue(denied)
+        self.assertGreater(frames, 0)
+        self.assertTrue(clean, "adapter denial traceback retained protected material")
+
 
 if __name__ == "__main__":
     unittest.main()
