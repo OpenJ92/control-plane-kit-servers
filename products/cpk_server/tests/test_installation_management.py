@@ -11,10 +11,6 @@ from control_plane_kit_core.receiver_configuration import select_receiver_node_c
 from control_plane_kit_core.topology import GraphDescriptorCodec, compile_topology, validate_graph
 from control_plane_kit_operations.graph_authoring import product_reference_in_node
 from control_plane_kit_servers_cloudflared_connector import managed
-from control_plane_kit_servers_cpk_local_gateway.control_configuration import gateway_control_declaration
-from control_plane_kit_servers_cpk_local_gateway.health_relay_configuration import gateway_health_declared_runtime_contract
-from control_plane_kit_servers_cpk_local_gateway.health_transit_configuration import GatewayHealthTransitConfiguration
-from control_plane_kit_servers_cpk_local_gateway.health_transit_configuration import gateway_health_transit_configuration_artifact
 from receiver_acceptance_material import AuthoredMaterial
 import test_frontend_deployment
 from test_managed_postgres_installation import managed_input
@@ -27,24 +23,29 @@ class InstallationManagementTests(unittest.TestCase):
     def setUp(self):
         self.api = importlib.import_module("control_plane_kit_servers_cpk_server.installation")
         self.assertTrue(hasattr(self.api, "DockerCpkManagement"), "managed installation group is missing")
+        # Earlier isolation tests remove gateway modules. Use the same current
+        # public value classes as the product factories' exact-type admission.
+        control = importlib.import_module("control_plane_kit_servers_cpk_local_gateway.control_configuration")
+        relay = importlib.import_module("control_plane_kit_servers_cpk_local_gateway.health_relay_configuration")
+        self.transit = importlib.import_module("control_plane_kit_servers_cpk_local_gateway.health_transit_configuration")
         bootstrap = importlib.import_module("control_plane_kit_servers_cpk_server.bootstrap")
         self.base = bootstrap._installation(managed_input())
         self.codec = ProductDescriptorCodec()
         self.keys = AuthoredMaterial().public
         self.gateway_id = self.base.installation_id + "-gateway"
-        self.gateway = self.document("cpk_local_gateway", gateway_health_declared_runtime_contract())
+        self.gateway = self.document("cpk_local_gateway", relay.gateway_health_declared_runtime_contract())
         self.connector = self.document("cloudflared_connector", managed.declared_runtime_contract())
         self.api_ingress = self.ingress("api", self.base.cpk_node_id, "http-api")
         self.website_ingress = self.ingress("website", self.base.website_node_id, "http")
         self.management_ingress = self.ingress("management", self.gateway_id, "control")
         template = core.ReceiverNodeControlConfigurationCodec().decode_bytes(
             self.base.cpk_product.product.runtime_contract.configuration_artifacts[0].content.encode())
-        self.gateway_control = self.configuration(template, self.gateway_id, "1" * 32, gateway_control_declaration())
+        self.gateway_control = self.configuration(template, self.gateway_id, "1" * 32, control.gateway_control_declaration())
         self.controls = tuple(self.api.DockerCpkConnectorControl(
             ingress_id=ingress.ingress_id,
             configuration=self.configuration(template, ingress.connector_node_id, str(index) * 32, managed.control_declaration()))
             for index, ingress in enumerate((self.api_ingress, self.website_ingress, self.management_ingress), start=2))
-        self.trust = GatewayHealthTransitConfiguration(self.gateway_control.target, "parent-cpk",
+        self.trust = self.transit.GatewayHealthTransitConfiguration(self.gateway_control.target, "parent-cpk",
             core.DelegationKeyPurpose.GATEWAY_NODE_HEALTH_READ_TRANSIT, (self.keys["transit"],))
 
     def document(self, lane, contract):
@@ -105,7 +106,7 @@ class InstallationManagementTests(unittest.TestCase):
         artifacts = {item.artifact_id: item for item in gateway.configuration_artifacts}
         self.assertEqual(set(artifacts), {"gateway-control", "gateway-health-targets", "gateway-health-transit"})
         self.assertEqual(self.receiver(gateway), self.gateway_control)
-        self.assertEqual(artifacts["gateway-health-transit"], gateway_health_transit_configuration_artifact(self.trust))
+        self.assertEqual(artifacts["gateway-health-transit"], self.transit.gateway_health_transit_configuration_artifact(self.trust))
         controls = {item.ingress_id: item.configuration for item in self.controls}
         for ingress in supplied_ingresses:
             self.assertEqual(self.receiver(graph.node(ingress.connector_node_id)), controls[ingress.ingress_id])
