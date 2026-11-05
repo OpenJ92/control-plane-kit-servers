@@ -10,6 +10,7 @@ from tempfile import TemporaryDirectory
 import threading
 import unittest
 from unittest.mock import patch
+from uuid import UUID
 
 from control_plane_kit_core.public_ingress import PublicIngressLifecycle
 
@@ -63,6 +64,15 @@ class ChildNamesTests(unittest.TestCase):
         with patch.object(self.api, "uuid4", side_effect=AssertionError("identity regenerated")):
             self.assertEqual(self.api.reopen_child_names(self.binding()), original)
             self.assertEqual(self.api.create_child_names(self.binding()), original)
+
+    def test_distinct_new_children_have_distinct_valid_public_ids(self):
+        first = self.api.create_child_names(self.binding())
+        second = self.api.create_child_names(self.binding(child_installation_id="child-b"))
+        self.assertNotEqual(first.public_id, second.public_id)
+        for assignment in (first, second):
+            parsed = UUID(assignment.public_id)
+            self.assertEqual(parsed.version, 4)
+            self.assertEqual(parsed.hex, assignment.public_id)
 
     def test_missing_record_on_reopen_is_refused_without_creation(self):
         with self.assertRaises(self.api.ChildNamingError):
@@ -183,7 +193,9 @@ class ChildNamesTests(unittest.TestCase):
 
         def sync(descriptor):
             original_sync(descriptor)
-            if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            information = os.fstat(descriptor)
+            root = self.root.stat()
+            if stat.S_ISDIR(information.st_mode) and (information.st_dev, information.st_ino) == (root.st_dev, root.st_ino):
                 files = self.files()
                 if len(files) == 1 and files[0].suffix == ".json":
                     acknowledged.append(True)
