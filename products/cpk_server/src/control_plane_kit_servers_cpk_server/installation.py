@@ -43,6 +43,10 @@ from control_plane_kit_core.secrets import (
     SecretUseIntent,
 )
 from control_plane_kit_core.verification import PostgresPasswordAuthentication, PostgresQueryCheck
+from .installation_management import (
+    DockerCpkConnectorControl, DockerCpkManagement,
+    managed_children, management_ingresses, selected_managed_connector,
+)
 
 
 _INSTALLATION_ID = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*\Z")
@@ -131,7 +135,7 @@ class DockerCpkWebsite:
     connector_product: ProductDescriptorDocument | None = None
 
     def __post_init__(self) -> None:
-        _website_input(self)
+        _website_input(self, allow_managed=True)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -170,6 +174,7 @@ class DockerCpkInstallation:
     workspace_authority: DynamicWorkspaceAuthority | None = None
     managed_health_configuration: ConfigurationArtifact | None = field(default=None, repr=False)
     website: DockerCpkWebsite | None = field(default=None, repr=False)
+    management: DockerCpkManagement | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.control_auth, (SingleOperatorControlAuth, MultiPrincipalControlAuth)):
@@ -209,7 +214,10 @@ class DockerCpkInstallation:
                 raise ValueError("installation ingress must target its CPK HTTP provider")
             if self.ingress.connector_node_id in (self.cpk_node_id, self.postgres_node_id, self.secrets_node_id):
                 raise ValueError("installation connector identity must be distinct")
-            _selected_product(self.connector_product, "cloudflared-connector")
+            if self.management is None:
+                _selected_product(self.connector_product, "cloudflared-connector")
+            else:
+                selected_managed_connector(self.connector_product)
         elif isinstance(self.ingress, ExternalInstallationIngress):
             if self.connector_product is not None:
                 raise ValueError("external installation ingress must not claim a connector")
@@ -228,6 +236,8 @@ class DockerCpkInstallation:
                 raise ValueError("installation PostgreSQL receiving target is invalid")
         _managed_health_artifact(self)
         _website_parts(self)
+        if self.management is not None:
+            management_ingresses(self)
 
     @property
     def cpk_node_id(self) -> str:
@@ -263,7 +273,7 @@ def compose_docker_cpk_installation(installation: DockerCpkInstallation) -> Depl
         ProductInstanceConfiguration.from_contract(cpk.runtime_contract),
         runtime_authority_deliveries=(installation.runtime_access,))))
     public_ingresses = ()
-    if isinstance(installation.ingress, NamedPublicIngress):
+    if installation.management is None and isinstance(installation.ingress, NamedPublicIngress):
         connector = _selected_product(installation.connector_product, "cloudflared-connector")
         children.append(instantiate_product(connector, installation.ingress.connector_node_id,
                         ProductInstanceConfiguration.from_contract(connector.runtime_contract)))
@@ -272,31 +282,35 @@ def compose_docker_cpk_installation(installation: DockerCpkInstallation) -> Depl
         website, connector = website_parts
         children.append(instantiate_product(website, installation.website_node_id,
                         ProductInstanceConfiguration.from_contract(website.runtime_contract)))
-        if connector is not None:
+        if installation.management is None and connector is not None:
             ingress = installation.website.ingress
             children.append(instantiate_product(connector, ingress.connector_node_id,
                             ProductInstanceConfiguration.from_contract(connector.runtime_contract)))
             public_ingresses += (ingress,)
+    if installation.management is not None:
+        public_ingresses = management_ingresses(installation)
+        children.extend(managed_children(installation, children))
     children.extend(SocketConnection(installation.postgres_node_id, "postgres",
                     installation.cpk_node_id, requirement) for requirement in _STORES)
     return DeploymentTopology(
         installation.workspace_id,
         DockerRuntime(runtime_id=f"{installation.installation_id}-docker",
                       network_name=f"cpk-{installation.workspace_id}-{installation.installation_id}",
-                      authority_ref=installation.runtime_authority, children=tuple(children)),
+                      authority_ref=installation.runtime_authority, children=tuple(children),
+                      management=None if installation.management is None else installation.management.runtime_management),
         public_ingresses=public_ingresses,
     )
 
 
-def _website_input(value: DockerCpkWebsite) -> tuple[str, ContainerServerProduct | None]:
+def _website_input(value: DockerCpkWebsite, *, allow_managed=False) -> tuple[str, ContainerServerProduct | None]:
     """Validate enabled-only inputs using the existing frontend owners."""
-    from .client.frontend import _canonical_origin, _selected_frontend_connector
+    from .client.frontend import _canonical_origin
 
     try:
         if not isinstance(value, DockerCpkWebsite) or not isinstance(value.image, OciImageReference):
             raise ValueError(_INVALID_WEBSITE)
         if isinstance(value.ingress, NamedPublicIngress):
-            connector = _selected_frontend_connector(value.connector_product)
+            connector = _website_connector(value.connector_product, allow_managed=allow_managed)
             return _canonical_origin("https://" + value.ingress.hostname), connector
         if isinstance(value.ingress, ExternalInstallationIngress) and value.connector_product is None:
             return _canonical_origin(value.ingress.endpoint), None
@@ -307,18 +321,26 @@ def _website_input(value: DockerCpkWebsite) -> tuple[str, ContainerServerProduct
     raise error
 
 
+def _website_connector(document, *, allow_managed):
+    from .client.frontend import _selected_frontend_connector
+    if (allow_managed and isinstance(document, ProductDescriptorDocument)
+            and document.product.runtime_contract.control_surfaces):
+        return selected_managed_connector(document)
+    return _selected_frontend_connector(document)
+
+
 def _website_parts(value: DockerCpkInstallation) -> tuple[
     ContainerServerProduct, ContainerServerProduct | None,
 ] | None:
     if value.website is None:
         return None
-    from .client.frontend import _canonical_origin, _selected_frontend_connector, frontend_product
+    from .client.frontend import _canonical_origin, frontend_product
 
     try:
-        origin, connector = _website_input(value.website)
+        origin, connector = _website_input(value.website, allow_managed=value.management is not None)
         ingress = value.website.ingress
         if isinstance(value.ingress, NamedPublicIngress) and isinstance(ingress, NamedPublicIngress):
-            _selected_frontend_connector(value.connector_product)
+            _website_connector(value.connector_product, allow_managed=value.management is not None)
             product_ids = {value.cpk_node_id, value.postgres_node_id,
                            value.secrets_node_id, value.website_node_id}
             connector_ids = {value.ingress.connector_node_id, ingress.connector_node_id}

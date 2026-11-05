@@ -1,5 +1,14 @@
 Source: [installation.py](../../../../../../products/cpk_server/src/control_plane_kit_servers_cpk_server/installation.py).
 
+Servers #378 adds optional `DockerCpkManagement` composition. The installation
+supplies a complete group of selected declared gateway/connector documents,
+public receiver configurations, transit trust and a separate management ingress.
+The website value can hold the exact managed connector declaration; an enclosing
+installation without the group still requires ordinary connectors, as does the
+unchanged standalone frontend composer. Group admission and route construction
+live in [installation_management.py](installation_management.py.md). No bootstrap
+input schema, provider effect or executable-plan support is added by this slice.
+
 The shared pure composer keeps placement, runtime access, credential references
 and selected product contracts explicit. Existing selected-product validation
 owns allowed secret deliveries and retained mounts before variants rebuild the
