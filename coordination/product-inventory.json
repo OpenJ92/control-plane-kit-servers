@@ -107,7 +107,7 @@
       "image_issue": "OpenJ92/control-plane-kit-servers#190",
       "descriptor_issue": "OpenJ92/control-plane-kit-servers#378",
       "status": "source-implementation",
-      "role": "one OCI with ordinary Web visitor HTTP and protected SDK control; readiness unverified pending qualified inputs"
+      "role": "one OCI with visitor HTTP and protected SDK local-index readiness; published-image and deployment qualification pending"
     }
   ],
   "bootstrap_reserved_products": [
