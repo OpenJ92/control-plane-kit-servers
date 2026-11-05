@@ -16,6 +16,7 @@ COPY products/website_server/node /app/website-managed
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app/website-src \
     CPK_WRAPPER_CONFIGURATION_FILE=/etc/cpk/website/control.json
+RUN /opt/cpk-website/bin/python -m control_plane_kit_servers_website_server.index_probe
 USER node
 EXPOSE 8080 8000
 STOPSIGNAL SIGTERM

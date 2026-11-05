@@ -11,7 +11,9 @@ import subprocess
 import sys
 import time
 
-IMAGE, DIRECTORY = sys.argv[1:]
+IMAGE, DIRECTORY, *outcomes = sys.argv[1:]
+EXPECTED = outcomes[0] if outcomes else "healthy"
+assert EXPECTED in ("healthy", "unhealthy")
 OWNER = "rowan-website190"
 
 
@@ -80,7 +82,13 @@ for suffix, action in (("term", "term"), ("node-exit", "node-exit"), ("replaceme
         status, _, body = request(management, "/__control/health/readiness", credential)
         assert status == 200
         outcome = json.loads(body)
-        assert outcome["outcome"] == "unknown"
+        deadline = time.monotonic() + 5
+        while outcome["outcome"] == "unknown" and time.monotonic() < deadline:
+            time.sleep(0.05)
+            status, _, body = request(management, "/__control/health/readiness", credential)
+            assert status == 200
+            outcome = json.loads(body)
+        assert outcome["outcome"] == EXPECTED
         assert outcome["request_id"] == "health-request"
         assert request(management, "/index.html")[0] == 404
         # Visitor surface cannot return the protected management read.

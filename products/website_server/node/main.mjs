@@ -7,7 +7,9 @@ try {
     timeoutMs:5000, responseTimeoutMs:6500,
   });
   server.on('error', () => { process.exitCode = 1; });
-  server.listen(config.port, '0.0.0.0');
+  server.listen(config.port, '0.0.0.0', () => {
+    process.stdout.write('CPK_WEBSITE_LISTENING_V1\n');
+  });
   let stopping = false;
   function stop() {
     if (stopping) return;

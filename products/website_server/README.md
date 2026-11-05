@@ -8,7 +8,7 @@ New laws from #190: the actual entrypoint serves the selected website, rejects u
 
 Interface: product-owned runtime contract and exact control declaration/configuration validation; PID1 runs a single Node generation and one SDK host. Node command is fixed. No caller-supplied process or health URL is supported. Each new coordinator has fresh health state. No automatic child restart or configuration reload.
 
-Initial readiness is UNKNOWN while Node is alive and UNHEALTHY after stop/exit. Startup asset-manifest verification and independent expected-origin inputs are pending owner contracts. The wrapper therefore never reports positive readiness in this slice. Process liveness is distinct from serving/content readiness.
+Readiness is UNKNOWN until the owned Node signals successful listening and a valid build-owned index expectation is loaded. The protected callback then compares one bounded local index response. Exact page match is HEALTHY; explicit mismatch is UNHEALTHY; deadline/refusal is UNKNOWN. Stop/exit invalidates the generation. This narrow local-page claim follows Jacob's accepted #190 comment6672106167. Full bundle integrity, independent upstream correctness and public/customer acceptance remain separate.
 
 Tests first target the public configuration/contract and real subprocess entrypoint using synthetic protected configuration, local HTTP and generated test-only signing keys. Source test red precedes implementation. Production qualification and release stay separate. Do not interpret a mock supervisor test as packaged-entrypoint proof.
 
@@ -51,3 +51,11 @@ Visitor tradeoff: slow upstream requests time out sooner than the ordinary websi
 This candidate supersedes the earlier twelve-second internal-grace proposal for this product only. The earlier nine-second successful response used explicit twenty-second grace and remains wrapper-only historical evidence. The updated fixture exercises both a 4.5-second successful proxy response and a nine-second synthetic response that must time out at five seconds. It invokes the selected DockerSdkClient.stop_container without a timeout override against the label-verified owned container, whose Config.StopTimeout is absent or ten. The controller uses only the existing local test Docker socket; it cannot select an arbitrary target.
 
 SDK7.2.0 low-level creation supports stop_timeout and normal stop uses Config.StopTimeout, but its high-level container-create keyword allowlist does not accept stop_timeout. This is an additional adaptation requirement for any future explicit-grace alternative. Neither Core nor the interpreter is changed here.
+
+## Local page readiness and failed-drain correction
+
+The build records actual selected index length/SHA-256 in /app/website-index.json, outside the served tree, root-owned0444. Missing/untrusted/malformed expectation yields UNKNOWN. The supervisor binds SDK management first, attaches its Node once, and consumes a capped fixed notification from that exact child's private stdout pipe. Managed Node sends it only from the successful visitor listen callback. An identical foreign listener with no owned-child listen signal cannot become eligible.
+
+Each authorized readiness call performs one fixed credential-free loopback GET with one-second absolute/per-read bounds and at most the expected index length plus one byte. It checks status, MIME, length and SHA-256, then rechecks child lifetime. No redirects or healthy cache. Unit tests prove no probe before the owned signal, mismatch/redirect/timeout refusal, expected-file protections and a late match overridden by child exit.
+
+Requested stop now propagates nonzero child.wait status as website_drain_failed. The specific exit1-before-eight-seconds test was red (old supervisor incorrectly returned0) and is green after correction; clean exit0 remains covered.

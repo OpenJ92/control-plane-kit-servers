@@ -114,3 +114,37 @@ class ManagedWebsiteTests(unittest.TestCase):
         health.stop()
         with self.assertRaises(ValueError):
             health.attach(Child())
+
+    def test_requested_stop_preserves_child_drain_failure_before_timeout(self):
+        import signal
+        import sys
+        from pathlib import Path
+        from threading import Event
+        from unittest.mock import Mock, patch
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "cloudflared_connector" / "tests"))
+        from managed_control_fixtures import fixture
+        process = self.module("process")
+        for code in (0, 1):
+            with self.subTest(child_exit=code):
+                handlers = {}
+                released = Event()
+                child = Mock(pid=1234)
+                child.poll.return_value = None
+                child.wait.return_value = code
+                host = Mock()
+                host.serve_forever.side_effect = lambda **_kwargs: released.wait(2)
+                host.shutdown.side_effect = released.set
+                def spawn(*_args, **_kwargs):
+                    handlers[signal.SIGTERM](signal.SIGTERM, None)
+                    return child
+                def register(signum, handler):
+                    handlers[signum] = handler
+                with patch.object(process.signal, "signal", side_effect=register), \
+                        patch.object(process.subprocess, "Popen", side_effect=spawn), \
+                        patch.object(process, "create_control_server", return_value=host), \
+                        patch.object(process.os, "killpg"), \
+                        patch.object(process.os, "set_blocking"), \
+                        patch.object(process.os, "read", return_value=b""):
+                    result = process.run(fixture().config, {"CPK_WEB_UPSTREAM":"https://child.example.invalid"})
+                self.assertEqual(result, code)
+                child.wait.assert_called_once_with(timeout=8)
