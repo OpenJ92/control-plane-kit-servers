@@ -167,6 +167,32 @@ class SuppliedChildAuthTests(unittest.TestCase):
         self.assertGreater(frames, 0)
         self.assertTrue(clean, "adapter denial traceback retained protected material")
 
+    def test_malformed_identity_traceback_releases_supplied_principal_entry(self):
+        private_entry = self.document[0]
+        denied = False
+        clean = True
+        frames = 0
+        try:
+            self.validate(administrator=private_entry)
+        except self.api.SuppliedChildAuthError as error:
+            denied = True
+            clean = (str(error) == "supplied child authentication configuration is invalid"
+                and error.__cause__ is None and error.__context__ is None)
+            traceback = error.__traceback__
+            while traceback is not None:
+                frame = traceback.tb_frame
+                if frame.f_globals.get("__name__") == self.api.__name__:
+                    frames += 1
+                    clean = clean and not any(
+                        value is private_entry
+                        or (isinstance(value, bytes) and b"synthetic-private" in value)
+                        or (isinstance(value, str) and "synthetic-private" in value)
+                        for value in frame.f_locals.values())
+                traceback = traceback.tb_next
+        self.assertTrue(denied)
+        self.assertGreater(frames, 0)
+        self.assertTrue(clean, "adapter denial traceback retained malformed identity material")
+
 
 if __name__ == "__main__":
     unittest.main()

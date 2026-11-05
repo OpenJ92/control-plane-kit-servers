@@ -84,6 +84,7 @@ def validate_child_auth_documents(*, child_installation_id, administrator,
         verifier_document=verifier_document, authority_document=authority_document)
     # Do not retain even the original argument references in this frame when it
     # becomes part of a public exception traceback. Parsed copies stayed private.
+    child_installation_id = administrator = initializer = browser = None
     verifier_document = authority_document = None
     if not accepted:
         raise SuppliedChildAuthError()

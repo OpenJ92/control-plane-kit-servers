@@ -61,8 +61,10 @@ new plain try/except regression at4e6cbb8 ran with all774 CPK tests and failed
 only that retention assertion. Its checks output booleans, never private values.
 
 Private parsing/comparison now returns a boolean for expected invalid input.
-That frame exits before the public function clears its two protected argument
-references and raises the fixed refusal. The refusal retains neither parsed
+That frame exits before the public function clears all six input argument
+references and raises the fixed refusal. Malformed identity arguments can also
+carry protected values, so their references are cleared too. A second synthetic
+traceback case supplies a principal-entry dict as the administrator. The refusal retains neither parsed
 credentials nor original document arguments in adapter frames. Caller-owned
 custody still exists; this is not secure erasure. Corrected green uses the
 existing isolated Servers CI job and unchanged ./test.sh after source review.
