@@ -1,0 +1,8 @@
+ARG MANAGED_IMAGE
+FROM ${MANAGED_IMAGE}
+USER root
+RUN cp /app/website-managed/main.mjs /app/website-managed/original-main.mjs
+COPY products/website_server/tests/collision_delay.mjs /app/website-managed/main.mjs
+COPY products/website_server/tests/collision_fixture.py /app/collision_fixture.py
+USER node
+ENTRYPOINT ["/opt/cpk-website/bin/python", "/app/collision_fixture.py"]

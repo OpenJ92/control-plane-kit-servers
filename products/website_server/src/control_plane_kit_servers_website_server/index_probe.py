@@ -33,7 +33,7 @@ class IndexExpectation:
 
 def load_expectation():
     try:
-        descriptor = os.open(EXPECTATION_PATH, os.O_RDONLY | os.O_NOFOLLOW)
+        descriptor = os.open(EXPECTATION_PATH, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         with os.fdopen(descriptor, "rb") as stream:
             metadata = os.fstat(stream.fileno())
             if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_mode & 0o222:
@@ -53,10 +53,12 @@ def read_index(expected):
     connection = http.client.HTTPConnection("127.0.0.1", 8080, timeout=PROBE_SECONDS)
     expired = Event()
     deadline = time.monotonic() + PROBE_SECONDS
+    transport = None
+    response = None
 
     def expire():
         expired.set()
-        current = connection.sock
+        current = transport if transport is not None else connection.sock
         if current is not None:
             try:
                 current.shutdown(socket.SHUT_RDWR)
@@ -70,37 +72,41 @@ def read_index(expected):
         connection.request("GET", "/index.html", headers={"Accept":"text/html", "Connection":"keep-alive"})
         # Keep a direct socket reference: HTTPConnection may detach it on a
         # Connection: close reply while its response file still reads the body.
-        current = connection.sock
+        transport = connection.sock
         response = connection.getresponse()
         if (response.status != 200 or response.getheader("Content-Type") != MIME
                 or response.getheader("Content-Length") != str(expected.length)
-                or response.getheader("Content-Encoding") not in (None,"identity")):
-            return Outcome.UNKNOWN if expired.is_set() else Outcome.UNHEALTHY
+                or response.getheader("Content-Encoding") not in (None,"identity")
+                or response.getheader("Transfer-Encoding") is not None):
+            return Outcome.UNKNOWN if expired.is_set() or time.monotonic() >= deadline else Outcome.UNHEALTHY
         digest = sha256()
         size = 0
         while size <= expected.length:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return Outcome.UNKNOWN
-            if current is not None and current.fileno() >= 0:
-                current.settimeout(remaining)
+            if transport is not None and transport.fileno() >= 0:
+                transport.settimeout(remaining)
             chunk = response.read1(min(65536,expected.length + 1 - size))
             if not chunk:
                 break
             size += len(chunk)
             digest.update(chunk)
-        if expired.is_set():
+        if expired.is_set() or time.monotonic() >= deadline:
             return Outcome.UNKNOWN
         return Outcome.HEALTHY if size == expected.length and digest.hexdigest() == expected.digest else Outcome.UNHEALTHY
     except (OSError, http.client.HTTPException, ValueError):
         return Outcome.UNKNOWN
     finally:
         timer.cancel()
+        if response is not None:
+            response.close()
         connection.close()
 
 
 def build_expectation():
-    content = Path("/app/dist/index.html").read_bytes()
+    with Path("/app/dist/index.html").open("rb") as stream:
+        content = stream.read(MAX_INDEX_BYTES + 1)
     expected = IndexExpectation(len(content),sha256(content).hexdigest())
     target = Path(EXPECTATION_PATH)
     target.write_text(json.dumps({"schema":"cpk.website-index.v1","length":expected.length,

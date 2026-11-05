@@ -120,3 +120,90 @@ class IndexReadinessTests(unittest.TestCase):
             worker.join(2)
             self.assertFalse(worker.is_alive())
         self.assertEqual(result,[process.core.NodeHealthReadOutcome.UNHEALTHY])
+
+    def test_chunked_content_length_contradiction_is_refused(self):
+        probe = importlib.import_module("control_plane_kit_servers_website_server.index_probe")
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type",probe.MIME)
+                self.send_header("Content-Length","4")
+                self.send_header("Transfer-Encoding","chunked")
+                self.end_headers()
+                try:
+                    self.wfile.write(b"4\r\npage\r\n0\r\n\r\n")
+                except OSError:
+                    return
+            def log_message(self,*_args):
+                return
+        host = ThreadingHTTPServer(("127.0.0.1",8080),Handler)
+        host.daemon_threads = True
+        worker = Thread(target=host.serve_forever,daemon=True)
+        worker.start()
+        try:
+            self.assertEqual(probe.read_index(probe.IndexExpectation(4,sha256(b"page").hexdigest())).value,"unhealthy")
+        finally:
+            host.shutdown()
+            host.server_close()
+            worker.join(2)
+
+    def test_close_trickle_has_absolute_deadline_and_releases_probe_slot(self):
+        process = importlib.import_module("control_plane_kit_servers_website_server.process")
+        probe = importlib.import_module("control_plane_kit_servers_website_server.index_probe")
+        class Child:
+            def poll(self):
+                return None
+        class Handler(BaseHTTPRequestHandler):
+            calls = 0
+            protocol_version = "HTTP/1.1"
+            def do_GET(self):
+                Handler.calls += 1
+                slow = Handler.calls == 1
+                self.send_response(200)
+                self.send_header("Content-Type",probe.MIME)
+                self.send_header("Content-Length","4")
+                self.send_header("Connection","close")
+                self.end_headers()
+                try:
+                    for byte in b"page":
+                        if slow:
+                            time.sleep(0.4)
+                        self.wfile.write(bytes([byte]))
+                        self.wfile.flush()
+                except OSError:
+                    return
+            def log_message(self,*_args):
+                return
+        child = Child()
+        health = process.WebsiteHealth(child,expectation=probe.IndexExpectation(4,sha256(b"page").hexdigest()))
+        health.listening(child)
+        host = ThreadingHTTPServer(("127.0.0.1",8080),Handler)
+        host.daemon_threads = True
+        worker = Thread(target=host.serve_forever,daemon=True)
+        worker.start()
+        try:
+            started = time.monotonic()
+            self.assertEqual(health.readiness().value,"unknown")
+            self.assertLess(time.monotonic()-started,1.75)
+            self.assertEqual(health.readiness().value,"healthy")
+        finally:
+            host.shutdown()
+            host.server_close()
+            worker.join(2)
+
+    def test_unexpected_fifo_cannot_block_startup_expectation_read(self):
+        import os
+        from pathlib import Path
+        import subprocess
+        import sys
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/"unexpected-fifo"
+            os.mkfifo(path)
+            result = subprocess.run(
+                [sys.executable,"-c",
+                 "import sys;from control_plane_kit_servers_website_server import index_probe;"
+                 "index_probe.EXPECTATION_PATH=sys.argv[1];print(index_probe.load_expectation() is None)",str(path)],
+                capture_output=True,timeout=2,check=True)
+            self.assertEqual(result.stdout.strip(),b"True")

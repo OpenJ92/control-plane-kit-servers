@@ -59,3 +59,11 @@ The build records actual selected index length/SHA-256 in /app/website-index.jso
 Each authorized readiness call performs one fixed credential-free loopback GET with one-second absolute/per-read bounds and at most the expected index length plus one byte. It checks status, MIME, length and SHA-256, then rechecks child lifetime. No redirects or healthy cache. Unit tests prove no probe before the owned signal, mismatch/redirect/timeout refusal, expected-file protections and a late match overridden by child exit.
 
 Requested stop now propagates nonzero child.wait status as website_drain_failed. The specific exit1-before-eight-seconds test was red (old supervisor incorrectly returned0) and is green after correction; clean exit0 remains covered.
+
+## Packaged local-page checkpoint and framing hardening
+
+At source9a46f75, the real default OCI entrypoint returned signed HEALTHY for original and replacement generations; a test-only root-owned wrong-digest expectation returned signed UNHEALTHY. A separate already-bound foreign identical-page listener fixture produced43 authorized UNKNOWN responses, then owned Node bind failure and PID1exit1. This proves the owned-listen eligibility boundary independently of matching response bytes. Runtime UID1000 could write neither /app nor the root-owned0444 expectation.
+
+Meridian found contradictory Content-Length/Transfer-Encoding could be accepted by http.client, and a detached close-response socket could evade the watchdog. The corrected probe rejects every Transfer-Encoding, retains the actual transport across getresponse/body, shuts it down at the absolute deadline and rechecks monotonic expiry. The old frozen image returned HEALTHY for the new dual-framing regression; corrected source refuses it. A close/trickle case returns UNKNOWN within1.75s and the next probe succeeds, proving slot release. Expectation loading uses O_NONBLOCK before fstat; a subprocess-bounded FIFO test returns UNKNOWN promptly. Build hashing reads at most MAX_INDEX_BYTES+1. All15 focused product laws passed after this hardening.
+
+No full-bundle, accepted-child-origin, public ingress or customer authentication assertion is implied by local-page HEALTHY. Full owning test.sh/CI and exact-head reviewer clearance are still required before merge.
