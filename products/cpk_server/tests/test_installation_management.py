@@ -1,7 +1,6 @@
 """Pure managed-child composition; synthetic contracts are not qualified images."""
 from dataclasses import replace
 import importlib
-import json
 from pathlib import Path
 import unittest
 
@@ -14,6 +13,7 @@ from control_plane_kit_servers_cloudflared_connector import managed
 from control_plane_kit_servers_cpk_local_gateway.control_configuration import gateway_control_declaration
 from control_plane_kit_servers_cpk_local_gateway.health_relay_configuration import gateway_health_declared_runtime_contract
 from control_plane_kit_servers_cpk_local_gateway.health_transit_configuration import GatewayHealthTransitConfiguration
+from control_plane_kit_servers_cpk_local_gateway.health_transit_configuration import gateway_health_transit_configuration_artifact
 from receiver_acceptance_material import AuthoredMaterial
 import test_frontend_deployment
 from test_managed_postgres_installation import managed_input
@@ -96,21 +96,22 @@ class InstallationManagementTests(unittest.TestCase):
         self.assertEqual(codec.encode(codec.decode(codec.encode(graph))), codec.encode(graph))
         runtime = graph.runtimes[value.installation_id + "-docker"]
         self.assertEqual(runtime.management, value.management.runtime_management)
+        supplied_ingresses = (self.api_ingress, self.website_ingress, self.management_ingress)
         expected = {value.cpk_node_id, value.postgres_node_id, value.secrets_node_id,
-            self.gateway_id, *(item.connector_node_id for item in graph.public_ingresses)}
+            self.gateway_id, *(item.connector_node_id for item in supplied_ingresses)}
         self.assertEqual(set(graph.nodes), expected | {value.website_node_id})
         gateway = graph.node(self.gateway_id)
         artifacts = {item.artifact_id: item for item in gateway.configuration_artifacts}
         self.assertEqual(set(artifacts), {"gateway-control", "gateway-health-targets", "gateway-health-transit"})
+        self.assertEqual(self.receiver(gateway), self.gateway_control)
+        self.assertEqual(artifacts["gateway-health-transit"], gateway_health_transit_configuration_artifact(self.trust))
+        controls = {item.ingress_id: item.configuration for item in self.controls}
+        for ingress in supplied_ingresses:
+            self.assertEqual(self.receiver(graph.node(ingress.connector_node_id)), controls[ingress.ingress_id])
         routes = core.ReceiverManagementRoutesCodec().decode_bytes(artifacts["gateway-health-targets"].content.encode())
         self.assertEqual(routes.gateway_target, self.gateway_control.target)
         self.assertEqual({item.target.node_id.value for item in routes.targets}, expected)
         self.assertEqual(len(routes.targets), 7)
-        trust = json.loads(artifacts["gateway-health-transit"].content)
-        self.assertEqual(trust["gateway_target"], self.gateway_control.target.descriptor())
-        self.assertEqual(trust["issuer"], self.trust.issuer)
-        self.assertEqual(trust["purpose"], self.trust.purpose.value)
-        self.assertEqual(trust["public_keys"][0]["key_id"], self.keys["transit"].key_id)
         for route in routes.targets:
             node = graph.node(route.target.node_id.value)
             configured = self.receiver(node)
@@ -121,8 +122,8 @@ class InstallationManagementTests(unittest.TestCase):
             self.assertEqual(route.origin, node.endpoints[route.target.provider_socket_name.value].address.value)
         self.assertEqual(graph.node(value.website_node_id).non_secret_environment()["CPK_WEB_UPSTREAM"], "https://api.example.test")
         self.assertEqual(len({item.hostname for item in graph.public_ingresses}), 3)
-        self.assertEqual({item.ingress_id: item.target for item in graph.public_ingresses}, {
-            item.ingress_id: item.target for item in (self.api_ingress, self.website_ingress, self.management_ingress)})
+        self.assertEqual({item.ingress_id: item for item in graph.public_ingresses}, {
+            item.ingress_id: item for item in supplied_ingresses})
         for node in graph.nodes.values():
             self.assertEqual(node.runtime_authority_deliveries, (value.runtime_access,) if node.node_id == value.cpk_node_id else ())
         for ingress in graph.public_ingresses:
