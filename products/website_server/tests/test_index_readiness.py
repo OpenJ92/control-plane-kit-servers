@@ -168,7 +168,7 @@ class IndexReadinessTests(unittest.TestCase):
                 try:
                     for byte in b"page":
                         if slow:
-                            time.sleep(0.4)
+                            time.sleep(0.8)
                         self.wfile.write(bytes([byte]))
                         self.wfile.flush()
                 except OSError:
