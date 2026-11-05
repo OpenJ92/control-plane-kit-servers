@@ -323,11 +323,9 @@ def _website_input(value: DockerCpkWebsite, *, allow_managed=False) -> tuple[str
 
 def _website_connector(document, *, allow_managed):
     from .client.frontend import _selected_frontend_connector
-    if allow_managed:
-        try:
-            return selected_managed_connector(document)
-        except (ValueError, TypeError):
-            pass
+    if (allow_managed and isinstance(document, ProductDescriptorDocument)
+            and document.product.runtime_contract.control_surfaces):
+        return selected_managed_connector(document)
     return _selected_frontend_connector(document)
 
 
