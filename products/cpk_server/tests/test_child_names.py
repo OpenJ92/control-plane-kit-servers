@@ -74,6 +74,71 @@ class ChildNamesTests(unittest.TestCase):
             self.assertEqual(parsed.version, 4)
             self.assertEqual(parsed.hex, assignment.public_id)
 
+    def test_equivalent_origin_and_path_cannot_allocate_another_assignment(self):
+        self.api.create_child_names(self.binding())
+        for origin in ("https://parent.example.test:443", "https://parent.example.test/prefix"):
+            with self.subTest(origin=origin):
+                for operation in (self.api.create_child_names, self.api.reopen_child_names):
+                    with self.assertRaises(self.api.ChildNamingError):
+                        operation(self.binding(parent_endpoint=origin))
+        self.assertEqual(len(self.committed()), 1)
+
+    def test_loopback_origins_keep_explicit_nondefault_ports(self):
+        for origin in ("http://127.0.0.1:18780", "http://localhost:18780", "http://[::1]:18780"):
+            with self.subTest(origin=origin):
+                binding = self.binding(parent_endpoint=origin)
+                assigned = self.api.create_child_names(binding)
+                self.assertEqual(self.api.reopen_child_names(binding), assigned)
+
+    def test_overlapping_reader_requires_its_own_pending_removal_barrier(self):
+        binding = self.binding()
+        original_sync = os.fsync
+        waiting, release = threading.Event(), threading.Event()
+        writer_errors, reader_barriers = [], []
+
+        def sync(descriptor):
+            information = os.fstat(descriptor)
+            files = self.files()
+            after_unlink = len(files) == 1 and files[0].suffix == ".json"
+            root = self.root.stat()
+            at_root = (information.st_dev, information.st_ino) == (root.st_dev, root.st_ino)
+            if stat.S_ISDIR(information.st_mode) and at_root and after_unlink:
+                if threading.current_thread().name == "naming-writer":
+                    waiting.set()
+                    if not release.wait(5):
+                        raise OSError("test writer timeout")
+                    raise OSError("injected writer removal sync failure")
+                reader_barriers.append(True)
+            return original_sync(descriptor)
+
+        def create():
+            try:
+                self.api.create_child_names(binding)
+            except self.api.ChildNamingError:
+                writer_errors.append(True)
+
+        with patch.object(self.api.os, "fsync", side_effect=sync):
+            writer = threading.Thread(target=create, name="naming-writer")
+            writer.start()
+            try:
+                self.assertTrue(waiting.wait(5))
+                observed = self.api.reopen_child_names(binding)
+                self.assertTrue(reader_barriers, "reader acknowledged before a durable removal barrier")
+                self.assertEqual(observed.binding, binding)
+            finally:
+                release.set()
+                writer.join(5)
+        self.assertFalse(writer.is_alive())
+        self.assertEqual(writer_errors, [True])
+
+    def test_existing_record_is_not_acknowledged_when_reader_directory_sync_fails(self):
+        binding = self.binding()
+        self.api.create_child_names(binding)
+        for operation in (self.api.create_child_names, self.api.reopen_child_names):
+            with patch.object(self.api.os, "fsync", side_effect=OSError("injected reader sync failure")):
+                with self.assertRaises(self.api.ChildNamingError):
+                    operation(binding)
+
     def test_missing_record_on_reopen_is_refused_without_creation(self):
         with self.assertRaises(self.api.ChildNamingError):
             self.api.reopen_child_names(self.binding())
