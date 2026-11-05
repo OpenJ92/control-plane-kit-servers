@@ -52,6 +52,15 @@ policy mismatch and detached redacted errors. The ordinary Docker-backed
 `./test.sh` owns executable evidence. This checkpoint has not run it and is
 expected to lack the proposed adapter. No behavioral red is claimed.
 
+Kepler's test revision additionally checks a sole but wrong administrator,
+an extra policy-only known identity, conflicting duplicate credential/subject
+keys, an unexpected field on an otherwise valid entry, and valid JSON padded
+past the byte limit. A profile-local structural pass must reject duplicate keys
+and nonclosed entry shapes before reusing the existing parser for semantics;
+the generic process parser is unchanged. The public interface check is separate
+from the behavioral class's module prerequisite. Missing-interface evidence is
+never classified as a denied-profile behavioral result.
+
 The next integration step must bind approved parent custody workspace/provider,
 reference/version, child installation, canonical API origin and policy to
 authoritative current child/ingress evidence before resolving any credential.

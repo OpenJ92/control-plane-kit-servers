@@ -10,11 +10,24 @@ from control_plane_kit_core.identity import PrincipalIdentity, PrincipalKind
 
 
 ISSUER = "urn:control-plane-kit:static-development"
+MODULE = "control_plane_kit_servers_cpk_server.supplied_child_auth"
+
+
+class SuppliedChildAuthInterfaceTests(unittest.TestCase):
+    def test_proposed_interface_is_available(self):
+        api = importlib.import_module(MODULE)
+        self.assertTrue(callable(api.validate_child_auth_documents))
+        self.assertTrue(issubclass(api.SuppliedChildAuthError, ValueError))
 
 
 class SuppliedChildAuthTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # An absent adapter is one class prerequisite error, not behavioral red
+        # for every proposed denial case. No case is skipped or replaced.
+        cls.api = importlib.import_module(MODULE)
+
     def setUp(self):
-        self.api = importlib.import_module("control_plane_kit_servers_cpk_server.supplied_child_auth")
         self.identities = {
             role: PrincipalIdentity(ISSUER, "child-a-" + role, PrincipalKind.OPERATOR)
             for role in ("administrator", "initializer", "browser")
@@ -81,13 +94,39 @@ class SuppliedChildAuthTests(unittest.TestCase):
         self.policy["administrators"].append(self.identities["initializer"].descriptor())
         self.refused()
         self.policy["administrators"] = original
+        self.policy["administrators"] = [self.identities["initializer"].descriptor()]
+        self.refused()
+        self.policy["administrators"] = original
+        known = list(self.policy["known_identities"])
         self.policy["known_identities"] = self.policy["known_identities"][:2]
+        self.refused()
+        self.policy["known_identities"] = [*known, PrincipalIdentity(
+            ISSUER, "policy-only-foreign", PrincipalKind.OPERATOR).descriptor()]
+        self.refused()
+
+    def test_conflicting_duplicate_verifier_keys_are_refused(self):
+        raw = json.dumps(self.document).encode("ascii")
+        for key, existing, conflicting in (
+            (b"credential", b"synthetic-private-administrator", b"synthetic-private-foreign"),
+            (b"subject_id", b"child-a-administrator", b"child-a-foreign"),
+        ):
+            with self.subTest(key=key):
+                field = b'"' + key + b'": "' + existing + b'"'
+                conflict = b'"' + key + b'": "' + conflicting + b'", '
+                # Keep the intended value last, so a permissive JSON decoder
+                # would otherwise accept the profile after discarding conflict.
+                self.refused(verifier_document=raw.replace(field, conflict + field, 1))
+
+    def test_unexpected_field_on_valid_verifier_entry_is_refused(self):
+        self.document[0]["unexpected"] = "synthetic-private-unrecognized"
         self.refused()
 
     def test_invalid_private_bytes_have_fixed_detached_failure(self):
         self.refused(verifier_document=b'{"synthetic-private-input":')
         self.refused(authority_document=b'{"synthetic-private-input":')
         self.refused(verifier_document=b"x" * 131073)
+        raw = json.dumps(self.document).encode("ascii")
+        self.refused(verifier_document=raw + b" " * (131073 - len(raw)))
 
 
 if __name__ == "__main__":
