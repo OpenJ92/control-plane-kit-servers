@@ -71,6 +71,6 @@ def validate_child_auth_documents(*, child_installation_id, administrator,
             raise ValueError
         return None
     except (ValueError, TypeError, AttributeError, UnicodeError, RecursionError, OverflowError):
-        pass
+        failure = SuppliedChildAuthError()
     # Raise outside the handler: never retain a protected parser's exception.
-    raise SuppliedChildAuthError()
+    raise failure
