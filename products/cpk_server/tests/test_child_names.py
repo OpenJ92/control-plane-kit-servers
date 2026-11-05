@@ -24,7 +24,7 @@ class ChildNamesTests(unittest.TestCase):
         self.api = importlib.import_module(MODULE)
         self.directory = TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
-        self.root = Path(self.directory.name) / "child-installations"
+        self.root = Path(self.directory.name) / ".local" / "state" / "cpk" / "child-installations"
         root = patch.object(self.api, "_assignment_root", side_effect=lambda: self.root)
         root.start()
         self.addCleanup(root.stop)
@@ -100,8 +100,8 @@ class ChildNamesTests(unittest.TestCase):
             information = os.fstat(descriptor)
             files = self.files()
             after_unlink = len(files) == 1 and files[0].suffix == ".json"
-            root = self.root.stat()
-            at_root = (information.st_dev, information.st_ino) == (root.st_dev, root.st_ino)
+            root = self.root.stat() if self.root.exists() else None
+            at_root = root is not None and (information.st_dev, information.st_ino) == (root.st_dev, root.st_ino)
             if stat.S_ISDIR(information.st_mode) and at_root and after_unlink:
                 if threading.current_thread().name == "naming-writer":
                     waiting.set()
@@ -138,6 +138,46 @@ class ChildNamesTests(unittest.TestCase):
             with patch.object(self.api.os, "fsync", side_effect=OSError("injected reader sync failure")):
                 with self.assertRaises(self.api.ChildNamingError):
                     operation(binding)
+
+    def test_contender_covers_parent_entry_when_directory_creator_sync_fails(self):
+        binding = self.binding()
+        original_sync = os.fsync
+        waiting, release = threading.Event(), threading.Event()
+        creator_errors, contender_barriers = [], []
+
+        def sync(descriptor):
+            information = os.fstat(descriptor)
+            if self.root.exists():
+                parent = self.root.parent.stat()
+                is_parent = (information.st_dev, information.st_ino) == (parent.st_dev, parent.st_ino)
+                if stat.S_ISDIR(information.st_mode) and is_parent:
+                    if threading.current_thread().name == "directory-creator":
+                        waiting.set()
+                        if not release.wait(5):
+                            raise OSError("test creator timeout")
+                        raise OSError("injected parent entry sync failure")
+                    contender_barriers.append(True)
+            return original_sync(descriptor)
+
+        def create():
+            try:
+                self.api.create_child_names(binding)
+            except self.api.ChildNamingError:
+                creator_errors.append(True)
+
+        with patch.object(self.api.os, "fsync", side_effect=sync):
+            creator = threading.Thread(target=create, name="directory-creator")
+            creator.start()
+            try:
+                self.assertTrue(waiting.wait(5))
+                observed = self.api.create_child_names(binding)
+                self.assertTrue(contender_barriers, "contender acknowledged without a parent entry barrier")
+                self.assertEqual(observed.binding, binding)
+            finally:
+                release.set()
+                creator.join(5)
+        self.assertFalse(creator.is_alive())
+        self.assertEqual(creator_errors, [True])
 
     def test_missing_record_on_reopen_is_refused_without_creation(self):
         with self.assertRaises(self.api.ChildNamingError):
@@ -198,7 +238,7 @@ class ChildNamesTests(unittest.TestCase):
         original_link = os.link
         for publish in (False, True):
             with self.subTest(published=publish), TemporaryDirectory() as directory:
-                self.root = Path(directory) / "child-installations"
+                self.root = Path(directory) / ".local" / "state" / "cpk" / "child-installations"
 
                 def interrupted(source, destination, **kwargs):
                     if publish:
@@ -259,8 +299,8 @@ class ChildNamesTests(unittest.TestCase):
         def sync(descriptor):
             original_sync(descriptor)
             information = os.fstat(descriptor)
-            root = self.root.stat()
-            if stat.S_ISDIR(information.st_mode) and (information.st_dev, information.st_ino) == (root.st_dev, root.st_ino):
+            root = self.root.stat() if self.root.exists() else None
+            if root is not None and stat.S_ISDIR(information.st_mode) and (information.st_dev, information.st_ino) == (root.st_dev, root.st_ino):
                 files = self.files()
                 if len(files) == 1 and files[0].suffix == ".json":
                     acknowledged.append(True)
