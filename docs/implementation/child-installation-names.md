@@ -36,6 +36,10 @@ receive the committed matching assignment or a refusal. Publication uncertainty
 preserves the files for investigation. No caller overwrites or repairs them.
 An existing-record return independently syncs pending removal and rechecks both
 absence and the assignment. It cannot rely on an overlapping writer's sync.
+Each caller also validates the directory chain below the existing trusted
+account home and syncs each parent entry, including entries another creator
+already made visible. A successful first-use acknowledgement cannot depend on
+that other creator completing its directory-creation barriers.
 
 The record carries planned authority references. Exact-host authority
 registrations can be created only after their names are known. A separately

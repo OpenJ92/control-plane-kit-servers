@@ -18,6 +18,7 @@ from .frontend import _canonical_origin
 
 _SCHEMA = "cpk.child-names.v1"
 _LIMIT = 16384
+_STATE_PARTS = (".local", "state", "cpk", "child-installations")
 _ROLES = {"api": "api", "website": "web", "management": "management"}
 _IDENTITY = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
 _LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")
@@ -106,7 +107,7 @@ class ChildNameAssignment:
 
 def _assignment_root():
     # This lifetime belongs to the OS account, independent of profile/cwd/output.
-    return Path.home() / ".local" / "state" / "cpk" / "child-installations"
+    return Path.home().joinpath(*_STATE_PARTS)
 
 
 def _binding_descriptor(binding):
@@ -155,15 +156,21 @@ def _directory(create):
     _require(isinstance(root, Path) and root.is_absolute())
     for component in (root, *root.parents):
         _require(not component.is_symlink())
-    if create:
-        missing = []
-        component = root
-        while not _present(component):
-            missing.append(component)
-            component = component.parent
-        for component in reversed(missing):
+    anchor = root.parents[len(_STATE_PARTS) - 1]
+    _require(root.relative_to(anchor).parts == _STATE_PARTS)
+    information = anchor.lstat()
+    _require(stat.S_ISDIR(information.st_mode) and information.st_uid == os.getuid()
+        and stat.S_IMODE(information.st_mode) & 0o022 == 0)
+    chain = (root, *root.parents[:len(_STATE_PARTS) - 1])
+    for component in reversed(chain):
+        if create:
             component.mkdir(mode=0o700, exist_ok=True)
-            _sync_directory(component.parent)
+        information = component.lstat()
+        _require(stat.S_ISDIR(information.st_mode) and information.st_uid == os.getuid()
+            and stat.S_IMODE(information.st_mode) & 0o022 == 0)
+        # Visibility may come from a creator that has not synced this entry.
+        # Every successful caller establishes all links below the account anchor.
+        _sync_directory(component.parent)
     information = root.lstat()
     _require(stat.S_ISDIR(information.st_mode) and information.st_uid == os.getuid()
         and stat.S_IMODE(information.st_mode) == 0o700)
