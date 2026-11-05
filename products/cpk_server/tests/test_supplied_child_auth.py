@@ -88,6 +88,12 @@ class SuppliedChildAuthTests(unittest.TestCase):
         self.refused(browser=PrincipalIdentity(ISSUER, "child-a-browser", PrincipalKind.WORKER))
         self.refused(browser=self.identities["initializer"])
 
+    def test_matching_worker_browser_is_refused_by_the_browser_role_law(self):
+        browser = PrincipalIdentity(ISSUER, "child-a-browser", PrincipalKind.WORKER)
+        self.document[2]["kind"] = "worker"
+        self.policy["known_identities"][2] = browser.descriptor()
+        self.refused(browser=browser)
+
     def test_policy_requires_exact_child_single_administrator_and_known_identities(self):
         self.refused(child_installation_id="child-b")
         original = list(self.policy["administrators"])

@@ -79,3 +79,13 @@ valid. External supplier owns token lifecycle, assembly and customer delivery.
 
 Review requested: Meridian for interface/test ownership; Kepler for privileged
 document consumption and authority. No production edits or gate before review.
+
+Focused implementation release: North relayed Kepler/Meridian clearance of the
+corrected tests. The issue's browser-role law specifically requires OPERATOR.
+The generic static parser accepts operator/service/worker; the selected Operations
+workspace read route policies admit OPERATOR. The validator must reject even a
+WORKER browser that matches its verifier and policy entries. Exact correspondence
+to the three supplier-designated typed identities is necessary but insufficient
+for that role law. Admission still proves no usable browser, permission or live
+destination. The red checkpoint deliberately omits only this browser-kind rule
+to demonstrate the corresponding behavioral failure through the owning gate.
