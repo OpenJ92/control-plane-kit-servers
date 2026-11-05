@@ -31,15 +31,9 @@ def _invalid_constant(value):
     raise ValueError
 
 
-def validate_child_auth_documents(*, child_installation_id, administrator,
-                                  initializer, browser, verifier_document,
-                                  authority_document):
-    """Compare protected documents with three supplier-designated identities.
-
-    Success establishes only document correspondence. The caller must separately
-    establish custody/version provenance and current child association before
-    any material resolution or authenticated request.
-    """
+def _documents_match(*, child_installation_id, administrator, initializer,
+                     browser, verifier_document, authority_document):
+    """Private parse/comparison frame returns before the public refusal."""
     try:
         identities = (administrator, initializer, browser)
         if (any(type(identity) is not PrincipalIdentity for identity in identities)
@@ -70,8 +64,27 @@ def validate_child_auth_documents(*, child_installation_id, administrator,
                 or policy.administrators != (administrator,)
                 or set(policy.known_identities) != set(identities)):
             raise ValueError
-        return None
+        return True
     except (ValueError, TypeError, AttributeError, UnicodeError, RecursionError, OverflowError):
-        failure = SuppliedChildAuthError()
-    # Raise outside the handler: never retain a protected parser's exception.
-    raise failure
+        return False
+
+
+def validate_child_auth_documents(*, child_installation_id, administrator,
+                                  initializer, browser, verifier_document,
+                                  authority_document):
+    """Compare supplied documents without retaining material in denial frames.
+
+    Success establishes only document correspondence. The caller separately
+    establishes custody/version provenance and current child association before
+    material resolution or authenticated requests. Caller-owned input lifetime
+    remains the caller's responsibility; no memory-zeroization claim is made.
+    """
+    accepted = _documents_match(child_installation_id=child_installation_id,
+        administrator=administrator, initializer=initializer, browser=browser,
+        verifier_document=verifier_document, authority_document=authority_document)
+    # Do not retain even the original argument references in this frame when it
+    # becomes part of a public exception traceback. Parsed copies stayed private.
+    verifier_document = authority_document = None
+    if not accepted:
+        raise SuppliedChildAuthError()
+    return None

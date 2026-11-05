@@ -53,6 +53,20 @@ CPK tests with exactly one failure: matching WORKER browser was accepted. All
 other nine admission/interface cases passed. The correction requires an OPERATOR
 browser without changing the test inputs. Green validation is pending.
 
+At90cf1b3 all773 CPK tests and all ten admission cases passed, but the full
+local gate failed later at a wrapper listener with transport-unavailable; that
+failure remains separate and does not establish final residue. Meridian then
+found that a late denial's traceback retained protected adapter locals. The
+new plain try/except regression at4e6cbb8 ran with all774 CPK tests and failed
+only that retention assertion. Its checks output booleans, never private values.
+
+Private parsing/comparison now returns a boolean for expected invalid input.
+That frame exits before the public function clears its two protected argument
+references and raises the fixed refusal. The refusal retains neither parsed
+credentials nor original document arguments in adapter frames. Caller-owned
+custody still exists; this is not secure erasure. Corrected green uses the
+existing isolated Servers CI job and unchanged ./test.sh after source review.
+
 Kepler's test revision additionally checks a sole but wrong administrator,
 an extra policy-only known identity, conflicting duplicate credential/subject
 keys, an unexpected field on an otherwise valid entry, and valid JSON padded
