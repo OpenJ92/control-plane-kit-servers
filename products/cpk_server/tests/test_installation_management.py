@@ -3,6 +3,7 @@ from dataclasses import replace
 import importlib
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 import control_plane_kit_core as core
 from control_plane_kit_core.products import ProductDescriptorCodec, ProductReference
@@ -174,6 +175,22 @@ class InstallationManagementTests(unittest.TestCase):
         self.assertIsNone(before.runtimes[self.base.installation_id + "-docker"].management)
         frontend = importlib.import_module("control_plane_kit_servers_cpk_server.client.frontend")
         inputs = test_frontend_deployment.FrontendDeploymentTests().inputs()
+        ordinary = inputs["connector_product"]
+        original_import = __import__
+
+        def without_managed_connector(name, *args, **kwargs):
+            if name == "control_plane_kit_servers_cloudflared_connector.managed":
+                raise ModuleNotFoundError(name)
+            return original_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", side_effect=without_managed_connector):
+            website = self.api.DockerCpkWebsite(image=self.base.website.image,
+                ingress=self.website_ingress, connector_product=ordinary)
+            native = replace(self.base, ingress=self.api_ingress, connector_product=ordinary, website=website)
+            native_graph = self.graph(native)
+        self.assertEqual({item.ingress_id: item for item in native_graph.public_ingresses}, {
+            item.ingress_id: item for item in (self.api_ingress, self.website_ingress)})
+        self.assertIsNone(native_graph.runtimes[self.base.installation_id + "-docker"].management)
         inputs["connector_product"] = self.connector
         with self.assertRaises(ValueError):
             frontend.compose_frontend_deployment(**inputs)
