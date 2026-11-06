@@ -84,3 +84,8 @@ and integer limit; detail and command reads have an explicitly empty query set.
 Empty sets do not fall through to generic pagination. Duplicate, unknown and
 malformed fields are refused before dispatch. Operations owns semantic policy,
 binding admission, durable commands and current-provider result validation.
+
+#386's reviewed compatibility correction passes only inventory `read.workspaces`
+`after` as strict percent-decoded text. Operations976 owns its opaque cursor
+codec and scope validation. Existing duplicate, unknown, encoding and request
+size checks still apply; every other paged route retains its JSON-object cursor.
