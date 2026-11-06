@@ -392,7 +392,7 @@ prepare_docker_witness_runtime() {
       --tmpfs /var/lib/postgresql/data:rw,nosuid,size=512m \
       -e POSTGRES_DB=cpk -e POSTGRES_USER=cpk -e POSTGRES_PASSWORD=cpk "$ISOLATED_PG_IMAGE")"
     [ "$POSTGRES_CONTAINER" = "$(cat "$ISOLATED_RECORDS/postgres.cid")" ]
-    [ "$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Type}}{{end}}{{end}}' "$POSTGRES_CONTAINER")" = tmpfs ]
+    [ "$(docker exec "$POSTGRES_CONTAINER" stat -f -c %T /var/lib/postgresql/data)" = tmpfs ]
   else
     POSTGRES_CONTAINER="$(docker run -d \
     --pull "$WITNESS_POSTGRES_PULL_POLICY" \
