@@ -446,7 +446,7 @@ def _decode_http_read_query(
             return _error(400, "invalid query arguments")
         if name not in fields or name in arguments:
             return _error(400, "invalid query arguments")
-        if name in {"runtime_id", "authority_ref"} or (
+        if (route.route_id == "read.workspaces" and name == "after") or name in {"runtime_id", "authority_ref"} or (
                 route.route_id == "read.provider-policy-grants" and name != "limit"):
             arguments[name] = value
             continue

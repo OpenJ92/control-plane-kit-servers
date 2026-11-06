@@ -198,3 +198,8 @@ The unchanged Servers Docker gate must establish this consumer's compatibility.
 G #342 separately owns real-process policy mutation/readback and retained-upgrade
 proof. Paused wildcard-seeding source-live scripts remain held; this adoption
 neither repairs live state nor authorizes their execution or publication.
+
+#386 current-source provenance selects Secrets158b17ed while historical producer
+and published digest assertions remain unchanged. Packaging assertions now name
+the real product factory and Uvicorn factory selection. Product composition and
+ordinary runtime-field assertions remain intact.

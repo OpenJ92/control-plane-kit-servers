@@ -60,3 +60,15 @@ continues through the separately scoped generation grant. Revoke explicitly
 uses an empty intent list because it is intentless. Resolve/generation scopes,
 all storage/restart/denial assertions and published-baseline execution remain
 unchanged. No admin capability, new workspace or wildcard authority is added.
+
+#386 keeps the initial source phase without a companion and opts in only the
+source restart. The bounded witness prepares public trust before restart, waits
+for the existing actual readiness signal, mints one15-second grant and reads
+once through secrets-provider:8081. Inner correlated PASSED/status200 and exit0
+are required. Existing run-labelled cleanup/absence covers the helper; exact
+public marker files join existing phase cleanup. Private keys stay in memory.
+Published profiles and retained-custody assertions remain unchanged.
+
+Review correction: after readiness the parent polls helper completion for at
+most20seconds, requires authoritative exited/status0, and fails into the normal
+owned cleanup on timeout/inspection failure; no unbounded docker wait remains.

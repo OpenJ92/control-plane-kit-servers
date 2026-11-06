@@ -80,7 +80,8 @@ from control_plane_kit_operations.desired_topology_drafts import DesiredTopology
 
 from .control_configuration import (
     CpkControlConfigurationError,
-    cpk_control_configuration_artifact, read_cpk_control_configuration,
+    cpk_control_configuration_artifact, read_cpk_control_configuration, read_cpk_http_sample_binding,
+    cpk_http_sample_binding,
 )
 from .http_host import install_operator_http_routes
 from .request_body import MCP_ENVELOPE_MAX_BYTES, RequestBodyTooLarge, collect_request_body
@@ -91,7 +92,9 @@ from .operations_application import (
 )
 from .managed_health import ManagedHealthBootstrap
 from control_plane_kit_core.receiver_configuration import ReceiverNodeControlConfiguration
+from control_plane_kit_core.http_verification_sample_installation import HttpVerificationSampleReceiverBinding
 from control_plane_kit_server_sdk.fastapi import install_cpk_wrapper
+from control_plane_kit_server_sdk.wrapper import WrapperSetupError
 from .boundary import (
     CpkServerApplicationBoundary,
     CpkServerHttpProcessBoundary,
@@ -572,12 +575,25 @@ def create_app(
     credential_verifier: CredentialVerifier,
     *, control: ReceiverNodeControlConfiguration,
     clock: Callable[[], int] = lambda: int(time.time()),
+    http_verification_binding: HttpVerificationSampleReceiverBinding | None = None,
+    http_sample_clock: Callable[[], float] | None = None,
     principal_authorizer: PrincipalAuthorizer | None = None,
 ) -> FastAPI:
     """Create the hosted cpk-server FastAPI application."""
 
     _validate_managed_health_process(config)
     cpk_control_configuration_artifact(control)
+    if http_verification_binding is not None:
+        valid = False
+        try:
+            if (type(http_verification_binding) is not HttpVerificationSampleReceiverBinding
+                    or http_verification_binding != cpk_http_sample_binding(control, http_verification_binding.configuration)):
+                raise ValueError
+            valid = True
+        except Exception:
+            valid = False
+        if not valid:
+            raise CpkControlConfigurationError("CPK control configuration is invalid")
     composition = create_cpk_server_composition(config.process_configuration())
     app = FastAPI(
         title="cpk-server",
@@ -633,7 +649,8 @@ def create_app(
         return _json_response(response.status, response.body)
 
     install_operator_http_routes(app, composition.http_api, http)
-    install_cpk_wrapper(app, configuration=control, clock=clock)
+    install_cpk_wrapper(app, configuration=control, clock=clock,
+        http_verification_binding=http_verification_binding, http_sample_clock=http_sample_clock)
     # No application/listener escapes before both admitted routes and existing
     # Operations schema/services are ready. Callbacks never perform schema work.
     application = CpkServerApplicationBoundary(
@@ -648,14 +665,16 @@ def create_app(
 
 def main() -> int:
     try:
+        control = read_cpk_control_configuration()
+        samples = read_cpk_http_sample_binding(control)
         config = CpkServerBootstrapConfiguration.from_environment()
         credential_verifier = _credential_verifier(config)
-        control = read_cpk_control_configuration()
         if config.port != 8080:
             raise BootstrapConfigurationError("CPK_PORT must be 8080")
         app = create_app(config, credential_verifier, control=control,
+                         http_verification_binding=samples,
                          principal_authorizer=_configured_principal_authorizer(config))
-    except (BootstrapConfigurationError, CpkServerCompositionError, CpkControlConfigurationError) as error:
+    except (BootstrapConfigurationError, CpkServerCompositionError, CpkControlConfigurationError, WrapperSetupError) as error:
         print(f"cpk-server bootstrap error: {error}", flush=True)
         return 2
     print(f"cpk-server listening on 0.0.0.0:{config.port}", flush=True)

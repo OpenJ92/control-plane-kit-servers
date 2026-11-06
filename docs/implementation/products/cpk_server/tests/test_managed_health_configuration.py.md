@@ -76,3 +76,8 @@ new attribute would synthesize a Mock and correctly fail typed process input
 validation. Each now explicitly supplies managed_health_process=None for its
 existing disabled composition law. Assertions and the reviewed16 targets stay
 unchanged. This was found before any source execution, not an observed failure.
+
+#386's public-first startup requires valid independent public control before the
+invalid managed-health branch is reached. That existing fixture now supplies
+its normal control snapshot in both branches. Its exact managed-health refusal,
+redaction, zero schema/provider work and no-listener assertions are unchanged.

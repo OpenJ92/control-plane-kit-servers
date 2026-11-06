@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[3]
 PRODUCT = ROOT / "products" / "secrets_server"
 PATH = "/etc/cpk/secrets-server/control.json"
 ENVIRONMENT = "CPK_WRAPPER_CONFIGURATION_FILE"
-ACCEPTED_SECRETS = "09442303740ed2e648cf354e35dd61df93974b9c"
+ACCEPTED_SECRETS = "158b17ed10689360c4e1529a395b3ee2b47aecbc"
 
 
 class SecretsSourceControlProductTests(unittest.TestCase):
@@ -149,7 +149,8 @@ class SecretsSourceControlProductTests(unittest.TestCase):
         self.assertIn("control-plane-kit-secrets/archive/" + ACCEPTED_SECRETS + ".zip", recipe)
         self.assertIn("\nUSER 10006\n", recipe)
         self.assertIn("EXPOSE 8081", recipe)
-        self.assertIn("control_plane_kit_secrets.server:app", recipe)
+        self.assertIn("control_plane_kit_servers_secrets_server.server:create_app", recipe)
+        self.assertIn('"--factory"', recipe)
         coordinates = json.loads((ROOT / "coordinates/server-products.json").read_text())
         self.assertEqual(coordinates["upstreams"]["control_plane_kit_secrets_commit"], ACCEPTED_SECRETS)
         published = next(item for item in coordinates["products"] if item["product_id"] == "secrets-server")

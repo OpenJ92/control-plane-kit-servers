@@ -89,6 +89,112 @@ class CpkControlReceiverTests(unittest.TestCase):
         self.assertNotIn("public_key", repr(self.control))
         self.assertNotIn("PRIVATE KEY", self.artifact.content)
 
+    def test_optional_samples_bind_original_metadata_and_preserve_ordinary_contract(self):
+        from scripts.http_sample_fixture import SampleAuthority
+        from control_plane_kit_core.http_verification_sample_installation import (
+            HTTP_VERIFICATION_SAMPLES_CONFIGURATION_ENVIRONMENT, HttpVerificationSampleReceiverConfigurationCodec,
+        )
+        baseline = self.config.cpk_source_runtime_contract(self.config.CpkSourceVariant.CPK, self.artifact)
+        authority = SampleAuthority(self.control, baseline)
+        artifact = self.config.cpk_http_sample_configuration_artifact(self.control, authority.configuration)
+        for variant in self.config.CpkSourceVariant:
+            ordinary = self.config.cpk_source_runtime_contract(variant, self.artifact)
+            supplied = self.config.cpk_source_runtime_contract(variant, self.artifact, sample_artifact=artifact)
+            self.assertEqual(supplied.configuration_artifacts, (self.artifact, artifact))
+            self.assertEqual(replace(supplied, configuration_artifacts=ordinary.configuration_artifacts,
+                public_environment=ordinary.public_environment), ordinary)
+            self.assertIn(PublicStaticEnvironmentBinding(HTTP_VERIFICATION_SAMPLES_CONFIGURATION_ENVIRONMENT,
+                artifact.target_path), supplied.public_environment)
+        binding = self.config.cpk_http_sample_binding(self.control, authority.configuration)
+        self.assertEqual([(entry.check, entry.container_port) for entry in binding.checks], [(authority.check, 8080)])
+        # Same audience is insufficient: an independently selected receiver id
+        # cannot replace this process's V2 target.
+        crossed = replace(authority.configuration, target=replace(self.control.target, receiver_id="f" * 32))
+        self.assertEqual(core.receiver_node_control_audience(crossed.target), binding.audience)
+        crossed_bytes = HttpVerificationSampleReceiverConfigurationCodec().encode_canonical_bytes(crossed)
+        for invalid in (replace(artifact, artifact_id="other"), replace(artifact, target_path="/etc/other.json"),
+                replace(artifact, content=crossed_bytes.decode()), replace(artifact, content="{}")):
+            self.rejected(lambda: self.config.cpk_source_runtime_contract(
+                self.config.CpkSourceVariant.CPK, self.artifact, sample_artifact=invalid))
+        # Even an otherwise valid caller-supplied binding cannot redirect the
+        # source factory away from its own original HTTP listener.
+        from control_plane_kit_core.products import ProviderRuntimePort
+        changed = replace(binding, provider_ports=(ProviderRuntimePort("http-api",8081),
+            ProviderRuntimePort("mcp",8080)))
+        with patch.object(self.server, "_operations_application") as operations:
+            self.rejected(lambda: self.server.create_app(self.bootstrap, self.verifier,
+                control=self.control, http_verification_binding=changed))
+            operations.assert_not_called()
+
+    def test_actual_main_reads_optional_public_companion_before_operations(self):
+        from scripts.http_sample_fixture import SampleAuthority
+        from control_plane_kit_core.http_verification_sample_installation import HTTP_VERIFICATION_SAMPLES_CONFIGURATION_ENVIRONMENT
+        ordinary = self.config.cpk_source_runtime_contract(self.config.CpkSourceVariant.CPK, self.artifact)
+        authority = SampleAuthority(self.control, ordinary)
+        artifact = self.config.cpk_http_sample_configuration_artifact(self.control, authority.configuration)
+        with TemporaryDirectory() as directory:
+            path = Path(self.config.HTTP_SAMPLE_SLOT.target_path)
+            path.parent.mkdir(parents=True,exist_ok=True)
+            self.assertFalse(path.exists())
+            self.addCleanup(path.unlink, missing_ok=True)
+            path.write_text(artifact.content)
+            path.chmod(0o444)
+            with patch.dict(os.environ, {HTTP_VERIFICATION_SAMPLES_CONFIGURATION_ENVIRONMENT:str(path)}), \
+                    patch.object(self.server.CpkServerBootstrapConfiguration, "from_environment", return_value=self.bootstrap) as bootstrap, \
+                    patch.object(self.server, "_credential_verifier", return_value=self.verifier) as verifier, \
+                    patch.object(self.server, "_configured_principal_authorizer", return_value=None), \
+                    patch.object(self.server, "read_cpk_control_configuration", return_value=self.control), \
+                    patch.object(self.server, "_operations_application", return_value=self.server.CpkServerOperationsApplication(self.services)) as operations, \
+                    patch.object(self.server.uvicorn, "run") as run:
+                self.assertEqual(self.server.main(), 0)
+                operations.assert_called_once()
+                with TestClient(run.call_args.args[0]) as client:
+                    self.assertEqual(client.get("/__control/verification/http").status_code,401)
+                    self.assertEqual(client.get("/health/ready").status_code,200)
+                operations.reset_mock()
+                run.reset_mock()
+                bootstrap.reset_mock()
+                verifier.reset_mock()
+                # A valid public file at a different absolute slot must fail
+                # before the generic reader or protected bootstrap is reached.
+                wrong = Path(directory) / "samples.json"
+                wrong.write_text(artifact.content)
+                wrong.chmod(0o444)
+                from control_plane_kit_server_sdk import wrapper
+                with patch.dict(os.environ, {HTTP_VERIFICATION_SAMPLES_CONFIGURATION_ENVIRONMENT:str(wrong)}), \
+                        patch.object(wrapper,"load_http_verification_sample_configuration") as reader:
+                    self.assertEqual(self.server.main(),2)
+                    reader.assert_not_called()
+                bootstrap.assert_not_called()
+                verifier.assert_not_called()
+                operations.assert_not_called()
+                run.assert_not_called()
+                path.chmod(0o644)
+                path.write_text("malformed-public-companion")
+                path.chmod(0o444)
+                self.assertEqual(self.server.main(), 2)
+                bootstrap.assert_not_called()
+                verifier.assert_not_called()
+                operations.assert_not_called()
+                run.assert_not_called()
+
+    def test_source_sample_witness_requires_original_bounded_canonical_result_bytes(self):
+        from scripts.http_sample_fixture import SampleAuthority, require_passed_sample
+        from control_plane_kit_core.http_verification_samples import HttpVerificationSampleResult
+        from control_plane_kit_core.verification import VerificationOutcome, HttpVerificationEvidence
+        contract = self.config.cpk_source_runtime_contract(self.config.CpkSourceVariant.CPK,self.artifact)
+        authority = SampleAuthority(self.control,contract)
+        request = authority.request()
+        passed = HttpVerificationSampleResult(request,VerificationOutcome.PASSED,HttpVerificationEvidence(200,5))
+        raw = passed.canonical_bytes(installed_check=authority.check)
+        require_passed_sample(raw,request,authority.check)
+        unavailable = HttpVerificationSampleResult(request,VerificationOutcome.REJECTED).canonical_bytes(installed_check=authority.check)
+        for invalid in (raw + b" " * 2048, b" " + raw,
+                raw.replace(b'"outcome":"passed"',b'"outcome":"failed","outcome":"passed"'), unavailable):
+            with self.subTest(size=len(invalid)):
+                with self.assertRaises(ValueError):
+                    require_passed_sample(invalid,request,authority.check)
+
     def test_closed_configuration_fixed_errors_and_wrong_authority_types(self):
         original = json.loads(self.artifact.content)
         cases = [b"",b"\xff",b"{"+b" "*65536,self.artifact.content.replace('"profile":','"profile":"duplicate", "profile":',1).encode()]
