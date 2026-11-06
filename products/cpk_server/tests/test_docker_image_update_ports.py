@@ -163,6 +163,22 @@ class ExecuteFailureProjectionTests(unittest.TestCase):
         self.assertIsNone(self.transport.last_execute)
         self.assertEqual(self.projection(self.journal(recorded=True))["outcome"],"unknown")
 
+    def test_only_latest_recorded_execute_can_supply_the_disposition(self):
+        self.transport.call("command.deployment.execute",**self.arguments)
+        journal = self.journal(recorded=True)
+        later_arguments = {**self.arguments,"payload":{**self.arguments["payload"],"idempotency_key":"execute-b"}}
+        later_reply = {**self.reply,"coordinator_status":"failed","run_status":"failed"}
+        journal["request_history"].append({"route_id":"command.deployment.execute",
+            "idempotency_key":"execute-b","body_sha256":_canonical_digest(later_arguments["payload"]),
+            "response":later_reply})
+        self.assertEqual(self.projection(journal)["outcome"],"unknown")
+        self.inner.call.return_value = later_reply
+        self.transport.call("command.deployment.execute",**later_arguments)
+        value = self.projection(journal)
+        self.assertEqual(value["outcome"],"recorded-disposition")
+        self.assertEqual(value["coordinator_status"],"failed")
+        self.assertEqual(value["run_status"],"failed")
+
     def test_journal_failure_keeps_existing_event_and_run_evidence_and_primary_result(self):
         self.transport.call("command.deployment.execute",**self.arguments)
         self.inner.call.side_effect = [

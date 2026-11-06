@@ -95,3 +95,8 @@ redaction. These prove only the diagnostic witness. The existing module remains
 under unchanged default unittest discovery. A shell command-double check
 requires the exact focused target to stop before runtime stages with no daemon
 mount and rejects invalid/extra arguments before invoking Docker.
+
+Review identified one remaining causal target: observed execute A must remain
+unknown when execute B is recorded later in the same operation/run. Observed
+latest B must report its own disposition. This target precedes the latest-row
+correction; prior focused results cannot establish this missing behavior.
