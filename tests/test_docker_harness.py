@@ -137,6 +137,7 @@ class DockerHarnessTests(unittest.TestCase):
                 "cloudflared-connector",
                 "postgres-server",
                 "secrets-server",
+                "managed-website",
             ],
         )
         self.assertEqual(
@@ -200,6 +201,12 @@ class DockerHarnessTests(unittest.TestCase):
                     "product_id": "secrets-server",
                     "image_source": "local-dockerfile",
                     "dockerfile": "products/secrets_server/Dockerfile",
+                    "status": "image-definition-present",
+                },
+                {
+                    "product_id": "managed-website",
+                    "image_source": "local-dockerfile",
+                    "dockerfile": "products/website_server/Dockerfile",
                     "status": "image-definition-present",
                 },
             ],
