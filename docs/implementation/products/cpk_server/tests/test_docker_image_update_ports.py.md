@@ -98,5 +98,6 @@ mount and rejects invalid/extra arguments before invoking Docker.
 
 Review identified one remaining causal target: observed execute A must remain
 unknown when execute B is recorded later in the same operation/run. Observed
-latest B must report its own disposition. This target precedes the latest-row
-correction; prior focused results cannot establish this missing behavior.
+latest B must report its own disposition. The reporter now requires that latest
+row in addition to all existing identity, digest and binding checks. Prior
+focused results cannot establish this missing behavior.

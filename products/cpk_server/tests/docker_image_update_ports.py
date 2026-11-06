@@ -140,8 +140,8 @@ def last_execute_boundary(transport, workspace, result, journal_reader=None):
         history = journal["request_history"]
         if type(history) is not list:
             return unknown
-        matches = [row for row in history if row.get("route_id") == "command.deployment.execute"
-            and row.get("idempotency_key") == observation["key"]]
+        executes = [row for row in history if row.get("route_id") == "command.deployment.execute"]
+        matches = [row for row in executes if row.get("idempotency_key") == observation["key"]]
         pending = journal["pending_request"]
         reply = observation["reply"]
         if pending is not None:
@@ -160,7 +160,8 @@ def last_execute_boundary(transport, workspace, result, journal_reader=None):
                         body=pending["body"],coordinates=journal["coordinates"],workspace_id=workspace)):
                 evidence["outcome"] = "binding-rejected"
             return evidence
-        if (len(matches) != 1 or matches[0].get("body_sha256") != observation["body_sha256"]
+        if (len(matches) != 1 or matches[0] is not executes[-1]
+                or matches[0].get("body_sha256") != observation["body_sha256"]
                 or observation["return_kind"] != "reply" or type(reply) is not dict):
             return _unknown_execute_boundary("unmatched")
         recorded = _execute_reply(matches[0]["response"])

@@ -69,7 +69,8 @@ error status. It is cleared before a new execute, including a latched unsent
 execute. No raw bodies, headers or exception text enter the receipt. A unique
 pending request must match workspace/run, key and canonical body digest before
 reporting no-usable-reply or binding-rejected. A unique congruent journal history
-row is required for recorded-disposition. The client's existing predicate owns
+row, also the latest execute in journal ordering, is required for
+recorded-disposition. The client's existing predicate owns
 reply binding; the witness does not reproduce execution state transitions.
 Missing, conflicting, stale or unreadable state remains unknown. Malformed
 non-null activity values remain invalid after projection. There is no echoed
