@@ -128,9 +128,16 @@ fresh-Y, existing history/replay checks and normal desired-empty teardown.
 It does not build/start the unrelated CPK source server or invoke other smokes.
 Fresh workspace/schema/provider state and immutable input qualification remain
 owned by the existing witness. No user credentials or retained resource enters.
-Selected mode refuses missing cached Postgres rather than pulling, records
-network allocation before cleanup can remove it, and independently verifies
-Postgres and network absence after existing cleanup. Witness/managed-resource
+Selected mode refuses missing cached Postgres rather than pulling. Before any
+top-level Docker effect both entrypoints admit and export the supported local
+context. A fresh mktemp-derived invocation identity labels/names every new
+runtime allocation. PostgreSQL has a cidfile, immutable image check and tmpfs at
+`/var/lib/postgresql/data`; it cannot leave an anonymous data volume. Selected
+cleanup never enters generic sample-helper/PID-file cleanup. Allocation-start
+flags distinguish collisions/refusal from ambiguous new allocations. Exact name
+queries plus invocation labels resolve the latter without retry, or report HOLD.
+Network removal uses a captured/verified immutable ID. Every absence proof
+requires a successful empty query; failures stay uncertain. Witness/managed-resource
 absence remains the existing exact proof. Default mode retains its sequence,
 pull behavior and final residue audit. No default assertion or phase is skipped.
 One invocation is a bounded diagnostic, not full gate or #387 acceptance.

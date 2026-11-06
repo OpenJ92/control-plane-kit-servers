@@ -101,3 +101,7 @@ unknown when execute B is recorded later in the same operation/run. Observed
 latest B must report its own disposition. The reporter now requires that latest
 row in addition to all existing identity, digest and binding checks. Prior
 focused results cannot establish this missing behavior.
+
+The isolated runtime selector adds a command-double preflight proof for both
+owning entrypoints: an endpoint override is refused before any Docker command
+or generic rm cleanup. This executes inside the same socket-free Docker target.

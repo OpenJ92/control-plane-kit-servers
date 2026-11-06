@@ -220,6 +220,25 @@ class ExecuteFailureProjectionTests(unittest.TestCase):
                     self.assertEqual(result.returncode,2)
                     self.assertFalse(calls.exists())
 
+    def test_isolated_runtime_preflight_refusal_never_enters_docker_effects_or_cleanup(self):
+        root = Path(__file__).resolve().parents[3]
+        for script in (root/"test.sh",root/"scripts/cpk_server_image_smoke.sh"):
+            with self.subTest(script=script.name), TemporaryDirectory() as directory:
+                bin_path = Path(directory)
+                calls = bin_path/"calls"
+                for name in ("docker","rm"):
+                    command = bin_path/name
+                    command.write_text('#!/bin/sh\nprintf "%s %s\\n" "$0" "$*" >> "$CALLS"\nexit 1\n')
+                    command.chmod(0o755)
+                env = dict(os.environ)
+                env.update(PATH=str(bin_path)+os.pathsep+env["PATH"],CALLS=str(calls),
+                    DOCKER_HOST="tcp://refused.invalid:2375",CPK_SERVER_SMOKE_PROFILE="wrapped-source")
+                result = subprocess.run(["sh",str(script),"--receiver-reintroduction-only"],
+                    cwd=root,env=env,text=True,capture_output=True,check=False)
+                self.assertNotEqual(result.returncode,0)
+                self.assertIn("refuses endpoint or TLS overrides",result.stderr)
+                self.assertFalse(calls.exists())
+
 
 def completed():
     request = RuntimeEffectRequest("effect-a", RuntimeEffectKind.REALIZE_ACTIVITY, RuntimeKind.DOCKER,

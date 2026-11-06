@@ -2,7 +2,13 @@
 set -eu
 
 REINTRODUCTION_ONLY=0
-WITNESS_NETWORK_CREATED=0
+ISOLATED_RECORDS=""
+ISOLATED_NETWORK_ID=""
+ISOLATED_PG_IMAGE=""
+ISOLATED_POSTGRES_NAME=""
+ISOLATED_NETWORK_ALLOCATING=0
+ISOLATED_PG_ALLOCATING=0
+ISOLATED_RECEIVER_ALLOCATING=0
 case "$#:${1:-}" in
   0:) ;;
   1:--receiver-reintroduction-only) REINTRODUCTION_ONLY=1 ;;
@@ -12,6 +18,11 @@ esac
 IMAGE="${CPK_SERVER_IMAGE:-localhost/control-plane-kit-servers/cpk-server:local}"
 BUILD_IMAGE="${CPK_SERVER_BUILD_IMAGE:-1}"
 PROFILE="${CPK_SERVER_SMOKE_PROFILE:-wrapped-source}"
+if [ "$REINTRODUCTION_ONLY" = 1 ]; then
+  [ "$PROFILE" = wrapped-source ] || { echo 'isolated witness requires wrapped-source' >&2; exit 2; }
+  . ./scripts/docker_witness_daemon.sh
+  docker_witness_daemon
+fi
 PRODUCT_PULL_POLICY=missing
 CONTROL_RECORDS=""
 MISSING_CONTROL_CONTAINER=""
@@ -126,14 +137,17 @@ cleanup() {
   if [ -n "$POSTGRES_CONTAINER" ]; then
     docker rm -f "$POSTGRES_CONTAINER" >/dev/null 2>&1 || true
   fi
-  if [ "$REINTRODUCTION_ONLY" = 0 ] || [ "$WITNESS_NETWORK_CREATED" = 1 ]; then
-    docker network rm "$NETWORK" >/dev/null 2>&1 || true
-  fi
+  docker network rm "$NETWORK" >/dev/null 2>&1 || true
   return "$receiver_cleanup_status"
 }
 
 cleanup_receiver_fixture() {
   [ -n "$RECEIVER_RECORDS" ] || return 0
+  if [ "$REINTRODUCTION_ONLY" = 1 ] && [ "$ISOLATED_RECEIVER_ALLOCATING" = 0 ]; then
+    rmdir "$RECEIVER_RECORDS" || return 1
+    RECEIVER_RECORDS=""
+    return 0
+  fi
   receiver_name="${RECEIVER_NAME:-$NETWORK-receiver-acceptance}"
   if [ -f "$RECEIVER_RECORDS/ownership.json" ] && [ ! -f "$RECEIVER_RECORDS/managed-resources-absent" ]; then
     echo "Docker image fixture cleanup is uncertain; preserved records=$RECEIVER_RECORDS" >&2
@@ -169,6 +183,10 @@ cleanup_receiver_fixture() {
 finish() {
   status=$?
   trap - EXIT INT TERM
+  if [ "$REINTRODUCTION_ONLY" = 1 ]; then
+    cleanup_isolated_runtime || status=1
+    exit "$status"
+  fi
   if [ "$status" -ne 0 ]; then
     echo "cpk-server image smoke failed during phase: $PHASE" >&2
     if [ -n "$CONTAINER" ]; then
@@ -180,36 +198,8 @@ finish() {
       docker logs --tail 40 "$POSTGRES_CONTAINER" >&2 || true
     fi
   fi
-  isolated_postgres="$POSTGRES_CONTAINER"
   cleanup || status=1
   cleanup_control_fixture || status=1
-  if [ "$REINTRODUCTION_ONLY" = 1 ]; then
-    if [ -n "$isolated_postgres" ]; then
-      if observed="$(docker container ls -aq --no-trunc --filter "id=$isolated_postgres")"; then
-        if [ -z "$observed" ]; then
-          echo 'isolated receiver-reintroduction Postgres absence verified'
-        else
-          status=1
-        fi
-      else
-        status=1
-      fi
-    fi
-    if observed="$(docker network ls -q --filter "name=$NETWORK")"; then
-      if [ -z "$observed" ]; then
-        echo 'isolated receiver-reintroduction network absence verified'
-      else
-        status=1
-      fi
-    else
-      status=1
-    fi
-    if [ "$status" = 0 ]; then
-      echo 'isolated receiver-reintroduction test-owned cleanup verified'
-    else
-      echo 'isolated receiver-reintroduction result or cleanup HOLD' >&2
-    fi
-  fi
   exit "$status"
 }
 
@@ -319,17 +309,92 @@ invalid_published_port() {
     exit 1
 }
 
+cleanup_isolated_postgres() {
+  [ "$ISOLATED_PG_ALLOCATING" = 1 ] || return 0
+  if [ -z "$POSTGRES_CONTAINER" ] && [ -s "$ISOLATED_RECORDS/postgres.cid" ]; then
+    POSTGRES_CONTAINER="$(cat "$ISOLATED_RECORDS/postgres.cid")" || return 1
+  fi
+  observed="$(docker container ls -aq --no-trunc --filter "name=^/$ISOLATED_POSTGRES_NAME$")" || return 1
+  if [ -n "$observed" ]; then
+    [ -z "$POSTGRES_CONTAINER" ] || [ "$observed" = "$POSTGRES_CONTAINER" ] || return 1
+    postgres_owner="$(docker inspect --format '{{.Id}}|{{index .Config.Labels "org.openj92.cpk.test-run"}}|{{.Image}}' "$observed")" || return 1
+    [ "$postgres_owner" = "$observed|$NETWORK|$ISOLATED_PG_IMAGE" ] || return 1
+    POSTGRES_CONTAINER="$observed"
+    docker rm -f "$POSTGRES_CONTAINER" >/dev/null || return 1
+  fi
+  if [ -n "$POSTGRES_CONTAINER" ]; then
+    observed="$(docker container ls -aq --no-trunc --filter "id=$POSTGRES_CONTAINER")" || return 1
+    [ -z "$observed" ] || return 1
+  fi
+  observed="$(docker container ls -aq --no-trunc --filter "name=^/$ISOLATED_POSTGRES_NAME$")" || return 1
+  [ -z "$observed" ] || return 1
+  echo 'isolated receiver-reintroduction Postgres absence verified (data=tmpfs)'
+}
+
+cleanup_isolated_network() {
+  [ "$ISOLATED_NETWORK_ALLOCATING" = 1 ] || return 0
+  observed="$(docker network ls -q --no-trunc --filter "name=$NETWORK")" || return 1
+  if [ -n "$observed" ]; then
+    [ -z "$ISOLATED_NETWORK_ID" ] || [ "$observed" = "$ISOLATED_NETWORK_ID" ] || return 1
+    network_owner="$(docker network inspect --format '{{.Id}}|{{.Name}}|{{index .Labels "org.openj92.cpk.test-run"}}' "$observed")" || return 1
+    [ "$network_owner" = "$observed|$NETWORK|$NETWORK" ] || return 1
+    ISOLATED_NETWORK_ID="$observed"
+    docker network rm "$ISOLATED_NETWORK_ID" >/dev/null || return 1
+  fi
+  if [ -n "$ISOLATED_NETWORK_ID" ]; then
+    observed="$(docker network ls -q --no-trunc --filter "id=$ISOLATED_NETWORK_ID")" || return 1
+    [ -z "$observed" ] || return 1
+  fi
+  observed="$(docker network ls -q --no-trunc --filter "name=$NETWORK")" || return 1
+  [ -z "$observed" ] || return 1
+  echo 'isolated receiver-reintroduction network absence verified'
+}
+
+cleanup_isolated_runtime() {
+  [ -n "$ISOLATED_RECORDS" ] || return 0
+  isolated_cleanup_status=0
+  cleanup_receiver_fixture || isolated_cleanup_status=1
+  cleanup_isolated_postgres || isolated_cleanup_status=1
+  cleanup_isolated_network || isolated_cleanup_status=1
+  if [ "$isolated_cleanup_status" = 0 ]; then
+    rm -f "$ISOLATED_RECORDS/postgres.cid" || return 1
+    rmdir "$ISOLATED_RECORDS" || return 1
+    echo 'isolated receiver-reintroduction test-owned cleanup verified'
+  else
+    echo "isolated receiver-reintroduction cleanup HOLD; records=$ISOLATED_RECORDS" >&2
+  fi
+  return "$isolated_cleanup_status"
+}
+
 prepare_docker_witness_runtime() {
   if [ "$REINTRODUCTION_ONLY" = 1 ]; then
-    [ -z "$(docker network ls -q --filter "name=$NETWORK")" ]
-    docker image inspect postgres:16-alpine >/dev/null
+    observed="$(docker network ls -q --filter "name=$NETWORK")"
+    [ -z "$observed" ]
+    observed="$(docker container ls -aq --filter "name=^/$ISOLATED_POSTGRES_NAME$")"
+    [ -z "$observed" ]
+    ISOLATED_PG_IMAGE="$(docker image inspect --format '{{.Id}}' postgres:16-alpine)"
   fi
   phase "create owned runtime network"
-  docker network create --label "$LABEL" "$NETWORK" >/dev/null
-  WITNESS_NETWORK_CREATED=1
+  if [ "$REINTRODUCTION_ONLY" = 1 ]; then
+    ISOLATED_NETWORK_ALLOCATING=1
+    ISOLATED_NETWORK_ID="$(docker network create --label "$LABEL" --label "org.openj92.cpk.test-run=$NETWORK" "$NETWORK")"
+  else
+    docker network create --label "$LABEL" "$NETWORK" >/dev/null
+  fi
 
   phase "start Postgres dependency"
-  POSTGRES_CONTAINER="$(docker run -d \
+  if [ "$REINTRODUCTION_ONLY" = 1 ]; then
+    ISOLATED_PG_ALLOCATING=1
+    POSTGRES_CONTAINER="$(docker run -d --pull never --name "$ISOLATED_POSTGRES_NAME" \
+      --cidfile "$ISOLATED_RECORDS/postgres.cid" --label "$LABEL" \
+      --label "org.openj92.cpk.test-run=$NETWORK" \
+      --network "$ISOLATED_NETWORK_ID" --network-alias cpk-postgres \
+      --tmpfs /var/lib/postgresql/data:rw,nosuid,size=512m \
+      -e POSTGRES_DB=cpk -e POSTGRES_USER=cpk -e POSTGRES_PASSWORD=cpk "$ISOLATED_PG_IMAGE")"
+    [ "$POSTGRES_CONTAINER" = "$(cat "$ISOLATED_RECORDS/postgres.cid")" ]
+    [ "$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Type}}{{end}}{{end}}' "$POSTGRES_CONTAINER")" = tmpfs ]
+  else
+    POSTGRES_CONTAINER="$(docker run -d \
     --pull "$WITNESS_POSTGRES_PULL_POLICY" \
     --label "$LABEL" \
     --network "$NETWORK" \
@@ -338,6 +403,7 @@ prepare_docker_witness_runtime() {
     -e POSTGRES_USER=cpk \
     -e POSTGRES_PASSWORD=cpk \
     postgres:16-alpine)"
+  fi
 
   phase "wait for Postgres semantic readiness"
   POSTGRES_READY=0
@@ -363,9 +429,11 @@ run_public_docker_scenario() {
   [ -z "$RECEIVER_RECORDS" ]
   RECEIVER_NAME="$NETWORK-docker-$docker_scenario"
   RECEIVER_RECORDS="$(mktemp -d)"
-  [ -z "$(docker container ls -aq --filter "name=^/$RECEIVER_NAME$")" ]
+  observed="$(docker container ls -aq --filter "name=^/$RECEIVER_NAME$")"
+  [ -z "$observed" ]
   . ./scripts/docker_witness_daemon.sh
   docker_witness_daemon
+  if [ "$REINTRODUCTION_ONLY" = 1 ]; then ISOLATED_RECEIVER_ALLOCATING=1; fi
   receiver_id="$(docker create --name "$RECEIVER_NAME" \
     --cidfile "$RECEIVER_RECORDS/container" --label "$LABEL" \
     --label "org.openj92.cpk.test-run=$NETWORK" --network "$NETWORK" \
@@ -395,6 +463,9 @@ if [ "$REINTRODUCTION_ONLY" = 1 ]; then
   frozen_controller="$(docker image inspect --format '{{.Id}}' "$CPK_SERVERS_TEST_IMAGE")"
   . ./scripts/docker_witness_daemon.sh
   docker_witness_daemon
+  ISOLATED_RECORDS="$(mktemp -d)"
+  NETWORK="cpk-reintroduction-$(basename "$ISOLATED_RECORDS")"
+  ISOLATED_POSTGRES_NAME="$NETWORK-postgres"
   prepare_docker_witness_runtime
   run_public_docker_scenario receiver-reintroduction
   exit 0

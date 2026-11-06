@@ -17,6 +17,8 @@ case "${1:-}" in
     ;;
   --receiver-reintroduction-only)
     [ "$#" = 1 ] || invalid_test_arguments
+    . ./scripts/docker_witness_daemon.sh
+    docker_witness_daemon
     FOCUSED_EXECUTE_EVIDENCE=2
     IMAGE="${CPK_SERVERS_TEST_IMAGE:-control-plane-kit-servers-reintroduction-test:local}"
     ;;
