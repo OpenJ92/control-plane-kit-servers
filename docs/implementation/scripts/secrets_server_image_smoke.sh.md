@@ -68,3 +68,7 @@ once through secrets-provider:8081. Inner correlated PASSED/status200 and exit0
 are required. Existing run-labelled cleanup/absence covers the helper; exact
 public marker files join existing phase cleanup. Private keys stay in memory.
 Published profiles and retained-custody assertions remain unchanged.
+
+Review correction: after readiness the parent polls helper completion for at
+most20seconds, requires authoritative exited/status0, and fails into the normal
+owned cleanup on timeout/inspection failure; no unbounded docker wait remains.

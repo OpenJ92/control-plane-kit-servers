@@ -133,12 +133,15 @@ class CpkControlReceiverTests(unittest.TestCase):
         authority = SampleAuthority(self.control, ordinary)
         artifact = self.config.cpk_http_sample_configuration_artifact(self.control, authority.configuration)
         with TemporaryDirectory() as directory:
-            path = Path(directory) / "samples.json"
+            path = Path(self.config.HTTP_SAMPLE_SLOT.target_path)
+            path.parent.mkdir(parents=True,exist_ok=True)
+            self.assertFalse(path.exists())
+            self.addCleanup(path.unlink, missing_ok=True)
             path.write_text(artifact.content)
             path.chmod(0o444)
             with patch.dict(os.environ, {HTTP_VERIFICATION_SAMPLES_CONFIGURATION_ENVIRONMENT:str(path)}), \
-                    patch.object(self.server.CpkServerBootstrapConfiguration, "from_environment", return_value=self.bootstrap), \
-                    patch.object(self.server, "_credential_verifier", return_value=self.verifier), \
+                    patch.object(self.server.CpkServerBootstrapConfiguration, "from_environment", return_value=self.bootstrap) as bootstrap, \
+                    patch.object(self.server, "_credential_verifier", return_value=self.verifier) as verifier, \
                     patch.object(self.server, "_configured_principal_authorizer", return_value=None), \
                     patch.object(self.server, "read_cpk_control_configuration", return_value=self.control), \
                     patch.object(self.server, "_operations_application", return_value=self.server.CpkServerOperationsApplication(self.services)) as operations, \
@@ -150,12 +153,47 @@ class CpkControlReceiverTests(unittest.TestCase):
                     self.assertEqual(client.get("/health/ready").status_code,200)
                 operations.reset_mock()
                 run.reset_mock()
+                bootstrap.reset_mock()
+                verifier.reset_mock()
+                # A valid public file at a different absolute slot must fail
+                # before the generic reader or protected bootstrap is reached.
+                wrong = Path(directory) / "samples.json"
+                wrong.write_text(artifact.content)
+                wrong.chmod(0o444)
+                from control_plane_kit_server_sdk import wrapper
+                with patch.dict(os.environ, {HTTP_VERIFICATION_SAMPLES_CONFIGURATION_ENVIRONMENT:str(wrong)}), \
+                        patch.object(wrapper,"load_http_verification_sample_configuration") as reader:
+                    self.assertEqual(self.server.main(),2)
+                    reader.assert_not_called()
+                bootstrap.assert_not_called()
+                verifier.assert_not_called()
+                operations.assert_not_called()
+                run.assert_not_called()
                 path.chmod(0o644)
                 path.write_text("malformed-public-companion")
                 path.chmod(0o444)
                 self.assertEqual(self.server.main(), 2)
+                bootstrap.assert_not_called()
+                verifier.assert_not_called()
                 operations.assert_not_called()
                 run.assert_not_called()
+
+    def test_source_sample_witness_requires_original_bounded_canonical_result_bytes(self):
+        from scripts.http_sample_fixture import SampleAuthority, require_passed_sample
+        from control_plane_kit_core.http_verification_samples import HttpVerificationSampleResult
+        from control_plane_kit_core.verification import VerificationOutcome, HttpVerificationEvidence
+        contract = self.config.cpk_source_runtime_contract(self.config.CpkSourceVariant.CPK,self.artifact)
+        authority = SampleAuthority(self.control,contract)
+        request = authority.request()
+        passed = HttpVerificationSampleResult(request,VerificationOutcome.PASSED,HttpVerificationEvidence(200,5))
+        raw = passed.canonical_bytes(installed_check=authority.check)
+        require_passed_sample(raw,request,authority.check)
+        unavailable = HttpVerificationSampleResult(request,VerificationOutcome.REJECTED).canonical_bytes(installed_check=authority.check)
+        for invalid in (raw + b" " * 2048, b" " + raw,
+                raw.replace(b'"outcome":"passed"',b'"outcome":"failed","outcome":"passed"'), unavailable):
+            with self.subTest(size=len(invalid)):
+                with self.assertRaises(ValueError):
+                    require_passed_sample(invalid,request,authority.check)
 
     def test_closed_configuration_fixed_errors_and_wrong_authority_types(self):
         original = json.loads(self.artifact.content)

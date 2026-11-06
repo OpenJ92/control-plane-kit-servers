@@ -9,7 +9,7 @@ from control_plane_kit_secrets.bootstrap import ProviderConfigurationError
 from control_plane_kit_secrets.control import read_secrets_control_configuration
 from control_plane_kit_server_sdk.wrapper import load_http_verification_sample_configuration
 
-from .configuration import secrets_http_sample_binding
+from .configuration import HTTP_SAMPLE_SLOT, secrets_http_sample_binding
 
 
 def create_app(*, environment=None, clock=None, http_sample_clock=None):
@@ -19,6 +19,8 @@ def create_app(*, environment=None, clock=None, http_sample_clock=None):
         companion = HTTP_VERIFICATION_SAMPLES_CONFIGURATION_ENVIRONMENT
         if ((companion in source) != (companion in os.environ)
                 or source.get(companion) != os.environ.get(companion)):
+            raise ValueError
+        if companion in source and source[companion] != HTTP_SAMPLE_SLOT.target_path:
             raise ValueError
         control = read_secrets_control_configuration(source)
         samples = (secrets_http_sample_binding(control, load_http_verification_sample_configuration())

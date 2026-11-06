@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from dataclasses import replace
 import importlib
-import json
 import os
 from pathlib import Path
+import signal
 import sys
 import time
 from uuid import uuid4
@@ -21,7 +21,7 @@ from control_plane_kit_core.http_verification_sample_installation import (
 )
 from control_plane_kit_core.http_verification_samples import (
     HttpVerificationSampleRequest, HttpVerificationSampleGrant, HttpVerificationSampleResultCodec,
-    http_verification_check_digest,
+    http_verification_check_digest, MAX_HTTP_VERIFICATION_SAMPLE_RESULT_BYTES,
 )
 from control_plane_kit_core.verification import VerificationOutcome
 
@@ -71,6 +71,13 @@ def write_public(path, content):
         os.fchmod(stream.fileno(), 0o444)
 
 
+def require_passed_sample(raw, request, check):
+    result = HttpVerificationSampleResultCodec(request, check).decode_canonical_bytes(raw)
+    if (result.outcome is not VerificationOutcome.PASSED or result.evidence is None
+            or result.evidence.status_code != 200):
+        raise ValueError
+
+
 def witness(product, directory):
     if product == "cpk":
         owner = importlib.import_module("control_plane_kit_servers_cpk_server.control_configuration")
@@ -107,17 +114,18 @@ def witness(product, directory):
             raise ValueError
         body = bytearray()
         for chunk in response.iter_bytes(chunk_size=4096):
-            if len(body) + len(chunk) > 65536:
+            if len(body) + len(chunk) > MAX_HTTP_VERIFICATION_SAMPLE_RESULT_BYTES:
                 raise ValueError
             body.extend(chunk)
-    result = HttpVerificationSampleResultCodec(request, authority.check).decode(json.loads(body))
-    if (result.outcome is not VerificationOutcome.PASSED or result.evidence is None
-            or result.evidence.status_code != 200):
-        raise ValueError
+    require_passed_sample(bytes(body), request, authority.check)
     write_public(directory / "sample.passed", b"passed\n")
 
 
 def main():
+    def timed_out(signum, frame):
+        raise TimeoutError
+    signal.signal(signal.SIGALRM, timed_out)
+    signal.alarm(150)
     try:
         if len(sys.argv) != 3:
             raise ValueError
@@ -125,6 +133,8 @@ def main():
     except Exception:
         print("source HTTP sample witness failed", file=sys.stderr)
         return 1
+    finally:
+        signal.alarm(0)
     return 0
 
 

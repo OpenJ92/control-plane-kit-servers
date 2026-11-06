@@ -8,3 +8,8 @@ original binding to the service factory boundary; missing/malformed sample
 input refuses before that call. Absence passes no binding. Upstream Secrets
 owns private initialization and SDK/Core own protocol laws; the maintained
 source image restart proves the actual process/listener/custody composition.
+
+Review regression supplies a valid0444 companion at another path while both
+explicit/process mappings agree, then requires refusal without reader/factory
+work. Successful file loading uses the declared canonical sample slot inside
+the owning isolated Docker test container.

@@ -9,3 +9,7 @@ cannot hide/redirect the SDK's process-environment companion. Malformed/missing
 opt-in raises a fixed provider error before the factory's private work. The
 product never imports the legacy eager upstream server. Ordinary absence
 supplies no binding. Precise sample time remains separate from V2 time.
+
+Review correction: both explicit and process mappings must select the product's
+canonical sample slot before the SDK opens it. Agreement on an alternate valid
+file is insufficient. Generic upstream/SDK path contracts remain unchanged.

@@ -9,6 +9,7 @@ CONTROL_RECORDS=""
 MISSING_CONTROL_CONTAINER=""
 RECEIVER_RECORDS=""
 SAMPLE_HELPER=""
+SAMPLE_CLEANUP_UNCERTAIN=0
 case "$PROFILE" in
   wrapped-source)
     : "${CPK_SERVERS_TEST_IMAGE:?wrapped-source requires the owning test/controller image}"
@@ -47,6 +48,7 @@ HEALTH_ATTEMPTS="${CPK_SERVER_HEALTH_ATTEMPTS:-30}"
 REQUEST_HOST="${CPK_SERVER_SMOKE_HOST:-127.0.0.1}"
 
 cleanup_control_fixture() {
+  [ "$SAMPLE_CLEANUP_UNCERTAIN" = 0 ] || return 1
   if [ -n "$CONTROL_RECORDS" ]; then
     rm -f "$CONTROL_RECORDS/control.json" "$CONTROL_RECORDS/surface.headers" \
       "$CONTROL_RECORDS/health.headers" "$CONTROL_RECORDS/surface.json" \
@@ -61,17 +63,35 @@ cleanup_control_fixture() {
   fi
 }
 
+cleanup_sample_helper() {
+  if [ "$PROFILE" = wrapped-source ]; then
+    helper="$SAMPLE_HELPER"
+    if [ -n "$helper" ]; then
+      observed="$(docker container ls -aq --no-trunc --filter "id=$helper")" || return 1
+      [ -z "$observed" ] || [ "$observed" = "$helper" ] || return 1
+    else
+      observed="$(docker container ls -aq --no-trunc --filter "name=^/$NETWORK-http-sample$")" || return 1
+      helper="$observed"
+    fi
+    if [ -n "$observed" ]; then
+      owner="$(docker inspect --format '{{index .Config.Labels "org.openj92.cpk.test-run"}}' "$helper")" || return 1
+      [ "$owner" = "$NETWORK" ] || return 1
+      docker rm -f "$helper" >/dev/null || return 1
+      observed="$(docker container ls -aq --no-trunc --filter "id=$helper")" || return 1
+      [ -z "$observed" ] || return 1
+    fi
+    observed="$(docker container ls -aq --no-trunc --filter "name=^/$NETWORK-http-sample$")" || return 1
+    [ -z "$observed" ] || return 1
+  fi
+}
+
 cleanup() {
   receiver_cleanup_status=0
-  if [ "$PROFILE" = wrapped-source ]; then
-    helper="$(docker container ls -aq --no-trunc --filter "name=^/$NETWORK-http-sample$")" || return 1
-    if [ -n "$helper" ]; then
-      [ "$(docker inspect --format '{{index .Config.Labels "org.openj92.cpk.test-run"}}' "$helper")" = "$NETWORK" ] || return 1
-      [ -z "$SAMPLE_HELPER" ] || [ "$helper" = "$SAMPLE_HELPER" ] || return 1
-      docker rm -f "$helper" >/dev/null || return 1
-      [ -z "$(docker container ls -aq --filter "name=^/$NETWORK-http-sample$")" ] || return 1
-    fi
-  fi
+  cleanup_sample_helper || {
+    echo "source HTTP sample helper cleanup uncertain; records=$CONTROL_RECORDS" >&2
+    SAMPLE_CLEANUP_UNCERTAIN=1
+    receiver_cleanup_status=1
+  }
   cleanup_receiver_fixture || {
     echo "receiver acceptance cleanup incomplete; records=$RECEIVER_RECORDS" >&2
     receiver_cleanup_status=1
@@ -441,7 +461,15 @@ if printf '%s' "$ready" | grep -q 'postgres://'; then
 fi
 if [ "$PROFILE" = wrapped-source ]; then
   : > "$CONTROL_RECORDS/sample.ready"
-  [ "$(docker wait "$SAMPLE_HELPER")" = 0 ] && [ -f "$CONTROL_RECORDS/sample.passed" ] || {
+  sample_completed=0
+  sample_attempt=1
+  while [ "$sample_attempt" -le 20 ]; do
+    sample_state="$(docker inspect --format '{{.State.Status}}|{{.State.ExitCode}}' "$SAMPLE_HELPER")" || exit 1
+    if [ "${sample_state%%|*}" = exited ]; then sample_completed=1; break; fi
+    sleep 1
+    sample_attempt=$((sample_attempt + 1))
+  done
+  [ "$sample_completed" = 1 ] && [ "$sample_state" = 'exited|0' ] && [ -f "$CONTROL_RECORDS/sample.passed" ] || {
     echo 'CPK source signed ready sample failed' >&2; exit 1;
   }
   echo 'CPK source signed named-listener ready sample passed'

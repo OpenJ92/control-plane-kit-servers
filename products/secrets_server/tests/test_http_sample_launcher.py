@@ -48,7 +48,10 @@ class SecretsHttpSampleLauncherTests(unittest.TestCase):
     def test_launcher_passes_one_independent_snapshot_and_binding_to_real_factory_boundary(self):
         with TemporaryDirectory() as directory:
             control_path = Path(directory) / "control.json"
-            sample_path = Path(directory) / "samples.json"
+            sample_path = Path(self.owner.HTTP_SAMPLE_SLOT.target_path)
+            sample_path.parent.mkdir(parents=True,exist_ok=True)
+            self.assertFalse(sample_path.exists())
+            self.addCleanup(sample_path.unlink, missing_ok=True)
             control_path.write_text(self.artifact.content)
             sample_path.write_text(self.samples.content)
             control_path.chmod(0o444)
@@ -64,6 +67,17 @@ class SecretsHttpSampleLauncherTests(unittest.TestCase):
                     self.owner.secrets_http_sample_binding(self.control, self.authority.configuration))
                 self.assertEqual(call["http_sample_clock"](),150.25)
                 factory.reset_mock()
+                wrong = Path(directory) / "samples.json"
+                wrong.write_text(self.samples.content)
+                wrong.chmod(0o444)
+                # Even explicit/process mappings agreeing on a valid alternate
+                # file cannot replace the product's declared delivery slot.
+                with patch.dict(os.environ,{SAMPLE_ENV:str(wrong)}), \
+                        patch.object(self.launcher,"load_http_verification_sample_configuration") as reader:
+                    with self.assertRaises(ProviderConfigurationError):
+                        self.launcher.create_app(environment=dict(os.environ))
+                    reader.assert_not_called()
+                    factory.assert_not_called()
                 sample_path.chmod(0o644)
                 sample_path.write_text("malformed-public-companion")
                 sample_path.chmod(0o444)

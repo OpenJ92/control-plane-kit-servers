@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import control_plane_kit_core as core
 from control_plane_kit_core.configuration import ConfigurationArtifact, ConfigurationMediaType
+from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
 from control_plane_kit_core.products import ProductDescriptorCodec, ProductReference
 from control_plane_kit_core.receiver_configuration import select_receiver_node_control_configuration_artifact
 from control_plane_kit_core.secrets import SecretReference
@@ -134,7 +135,7 @@ class InstallationManagementTests(unittest.TestCase):
             node = actual.node(node_id)
             artifact = artifacts[node_id]
             self.assertIn(artifact,node.configuration_artifacts)
-            self.assertIn(core.PublicStaticEnvironmentBinding(HTTP_VERIFICATION_SAMPLES_CONFIGURATION_ENVIRONMENT,
+            self.assertIn(PublicStaticEnvironmentBinding(HTTP_VERIFICATION_SAMPLES_CONFIGURATION_ENVIRONMENT,
                 artifact.target_path),node.public_environment)
             self.assertEqual(self.receiver(node),self.receiver(before.node(node_id)))
             self.assertEqual(node.block_spec.verification,before.node(node_id).block_spec.verification)

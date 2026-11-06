@@ -665,10 +665,10 @@ def create_app(
 
 def main() -> int:
     try:
-        config = CpkServerBootstrapConfiguration.from_environment()
-        credential_verifier = _credential_verifier(config)
         control = read_cpk_control_configuration()
         samples = read_cpk_http_sample_binding(control)
+        config = CpkServerBootstrapConfiguration.from_environment()
+        credential_verifier = _credential_verifier(config)
         if config.port != 8080:
             raise BootstrapConfigurationError("CPK_PORT must be 8080")
         app = create_app(config, credential_verifier, control=control,

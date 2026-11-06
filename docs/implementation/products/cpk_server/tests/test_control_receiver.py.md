@@ -52,3 +52,9 @@ refusal, and factory rejection of alternate listener metadata before Operations.
 The actual main consumes a public file and publishes the SDK route; malformed
 opt-in stops before private setup/listening. SDK/Core retain their negative
 protocol matrices; the source image smoke owns real signed-listener success.
+
+Review regressions use the actual declared sample slot for successful startup,
+a valid0444 companion at a wrong slot for refusal before the generic reader,
+and malformed canonical-slot input before bootstrap/verifier/Operations/listener
+calls. The smoke consumer is also checked against padded/duplicate/noncanonical
+original result bytes and a correlated unavailable response; Core owns decoding.

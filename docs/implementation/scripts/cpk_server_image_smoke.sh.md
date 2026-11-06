@@ -105,3 +105,9 @@ sample companion. After existing actual readiness, the shell signals the helper
 to mint one fresh15-second grant and read once. Success requires correlated
 inner PASSED/status200 and helper exit0. Exact owned helper identity/label and
 absence are verified during cleanup. Published profiles remain unchanged.
+
+Review correction: helper cleanup now uses captured full identity when known,
+otherwise the exact name/run label. Each post-removal observation independently
+checks status and emptiness. Helper uncertainty fails cleanup, preserves public
+fixture records, and still runs independent receiver/CPK/Postgres/network cleanup.
+Completion after readiness is parent-bounded to20seconds with observed exit0.

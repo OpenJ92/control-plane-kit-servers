@@ -434,7 +434,15 @@ wait_ready
 check_control
 if [ "$PROFILE" = wrapped-source ]; then
   : > "$CONTROL_RECORDS/restart/sample.ready"
-  [ "$(docker wait "$SAMPLE_HELPER")" = 0 ] && [ -f "$CONTROL_RECORDS/restart/sample.passed" ] || {
+  sample_completed=0
+  sample_attempt=1
+  while [ "$sample_attempt" -le 20 ]; do
+    sample_state="$(docker inspect --format '{{.State.Status}}|{{.State.ExitCode}}' "$SAMPLE_HELPER")" || exit 1
+    if [ "${sample_state%%|*}" = exited ]; then sample_completed=1; break; fi
+    sleep 1
+    sample_attempt=$((sample_attempt + 1))
+  done
+  [ "$sample_completed" = 1 ] && [ "$sample_state" = 'exited|0' ] && [ -f "$CONTROL_RECORDS/restart/sample.passed" ] || {
     echo 'Secrets source signed ready sample failed' >&2; exit 1;
   }
   echo 'Secrets source signed named-listener ready sample passed'

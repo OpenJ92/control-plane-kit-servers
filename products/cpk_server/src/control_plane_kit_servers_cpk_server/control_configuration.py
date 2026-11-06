@@ -60,8 +60,15 @@ def read_cpk_http_sample_binding(control) -> HttpVerificationSampleReceiverBindi
     try:
         if HTTP_VERIFICATION_SAMPLES_CONFIGURATION_ENVIRONMENT not in os.environ:
             return None
+        if os.environ[HTTP_VERIFICATION_SAMPLES_CONFIGURATION_ENVIRONMENT] != HTTP_SAMPLE_SLOT.target_path:
+            raise ValueError
         from control_plane_kit_server_sdk.wrapper import load_http_verification_sample_configuration
-        return cpk_http_sample_binding(control, load_http_verification_sample_configuration())
+        from control_plane_kit_server_sdk.http_samples import HttpVerificationSampleReceiver
+        binding = cpk_http_sample_binding(control, load_http_verification_sample_configuration())
+        # Reuse SDK's public setup admission before protected bootstrap reads;
+        # constructing this value performs no sampling or clock/provider call.
+        HttpVerificationSampleReceiver(binding)
+        return binding
     except Exception:
         failure = CpkControlConfigurationError("CPK control configuration is invalid")
     raise failure

@@ -175,3 +175,8 @@ factory also rejects caller-supplied bindings that differ from that original
 metadata, even if the audience/host match. SDK retains its independent host join,
 cryptographic admission and precise sample clock. Ordinary integer V2 time and
 no-companion behavior remain. Fixed SDK setup errors stop main without serving.
+
+Review correction: main now reads/binds/admit-checks independent public control
+and optional samples before bootstrap configuration or credential-verifier
+construction, so rejected opt-in cannot open protected workspace/provider-policy
+configuration. Operations remains after SDK installation.
