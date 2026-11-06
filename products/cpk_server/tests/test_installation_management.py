@@ -7,8 +7,10 @@ import unittest
 from unittest.mock import patch
 
 import control_plane_kit_core as core
+from control_plane_kit_core.configuration import ConfigurationArtifact, ConfigurationMediaType
 from control_plane_kit_core.products import ProductDescriptorCodec, ProductReference
 from control_plane_kit_core.receiver_configuration import select_receiver_node_control_configuration_artifact
+from control_plane_kit_core.secrets import SecretReference
 from control_plane_kit_core.topology import GraphDescriptorCodec, compile_topology, validate_graph
 from control_plane_kit_operations.graph_authoring import product_reference_in_node
 from control_plane_kit_servers_cloudflared_connector import managed
@@ -145,7 +147,7 @@ class InstallationManagementTests(unittest.TestCase):
         self.assertEqual(product_reference_in_node(gateway), ProductReference.from_document(self.gateway))
 
     def test_managed_website_joins_actual_routes_with_child_api_binding_and_cpk_only_auth(self):
-        principals = core.SecretReference("secret://fixture/child-principals")
+        principals = SecretReference("secret://fixture/child-principals")
         artifact = replace(self.website_api.control_configuration_artifact(self.website_control),
             source_digest="a" * 64)
         value = self.installation(website=self.managed_website(managed_control_configuration=artifact),
@@ -217,8 +219,8 @@ class InstallationManagementTests(unittest.TestCase):
             surface=replace(self.website_control.declaration.surface, provider_socket_name=socket))
         configuration = replace(self.website_control, declaration=declaration,
             target=replace(self.website_control.target, provider_socket_name=socket))
-        artifact = core.ConfigurationArtifact("website-control", self.website_api.CONTROL_PATH,
-            core.ConfigurationMediaType.JSON,
+        artifact = ConfigurationArtifact("website-control", self.website_api.CONTROL_PATH,
+            ConfigurationMediaType.JSON,
             core.ReceiverNodeControlConfigurationCodec().encode_bytes(configuration).decode())
         with self.assertRaisesRegex(ValueError, "^installation website configuration is invalid$"):
             self.managed_website(managed_control_configuration=artifact)

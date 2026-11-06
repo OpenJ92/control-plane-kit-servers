@@ -4,6 +4,7 @@ import importlib
 import unittest
 
 import control_plane_kit_core as core
+from control_plane_kit_core.configuration import ConfigurationFileMode, ConfigurationMediaType
 
 
 class ManagedWebsiteTests(unittest.TestCase):
@@ -44,8 +45,8 @@ class ManagedWebsiteTests(unittest.TestCase):
             declaration=managed.control_declaration()))
         for changed in (None, replace(artifact, artifact_id="foreign-control"),
                 replace(artifact, target_path="/etc/cpk/foreign.json"),
-                replace(artifact, media_type=core.ConfigurationMediaType.TEXT),
-                replace(artifact, file_mode=core.ConfigurationFileMode.OWNER_READ_ONLY),
+                replace(artifact, media_type=ConfigurationMediaType.TEXT),
+                replace(artifact, file_mode=ConfigurationFileMode.OWNER_READ_ONLY),
                 replace(artifact, content='{"unexpected":"sentinel-private-content"}')):
             with self.subTest(artifact=changed), self.assertRaises(ValueError) as raised:
                 managed.source_runtime_contract(changed)
