@@ -167,3 +167,11 @@ Provider-only authority permits empty workspace grants in both static credential
 forms. Authentication supplies identity without broadening workspace authority.
 The real environment/verifier/application test proves admitted provider reads
 and ordinary workspace denial with no database lookup (validation pending).
+
+#386's main loads optional sample trust through the accepted SDK reader after
+one independent V2 snapshot, builds a binding from original product metadata,
+and passes it through the existing SDK install before Operations setup. The app
+factory also rejects caller-supplied bindings that differ from that original
+metadata, even if the audience/host match. SDK retains its independent host join,
+cryptographic admission and precise sample clock. Ordinary integer V2 time and
+no-companion behavior remain. Fixed SDK setup errors stop main without serving.

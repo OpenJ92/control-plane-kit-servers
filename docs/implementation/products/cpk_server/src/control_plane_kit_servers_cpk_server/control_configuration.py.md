@@ -30,3 +30,10 @@ gates; authored fixtures and dependency selection are not executed acceptance.
 No secret resolution, new durable state, provider effect or authority store exists
 in this module. Selected-artifact admission and lifecycle production retain their
 existing owners.
+
+#386 adds an optional public0444 sample companion in the exact product slot.
+Core's canonical codec/slot selector and installed binding validate it against
+independent V2 control. The existing original verification and named sockets/
+ports now share one definition with startup binding; no port-based socket join
+or V2 readiness callback is introduced. All three variants preserve the ordinary
+contract when absent. Invalid opt-in produces the fixed product error.

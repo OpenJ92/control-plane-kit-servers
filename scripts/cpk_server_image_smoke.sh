@@ -8,6 +8,7 @@ PRODUCT_PULL_POLICY=missing
 CONTROL_RECORDS=""
 MISSING_CONTROL_CONTAINER=""
 RECEIVER_RECORDS=""
+SAMPLE_HELPER=""
 case "$PROFILE" in
   wrapped-source)
     : "${CPK_SERVERS_TEST_IMAGE:?wrapped-source requires the owning test/controller image}"
@@ -51,7 +52,9 @@ cleanup_control_fixture() {
       "$CONTROL_RECORDS/health.headers" "$CONTROL_RECORDS/surface.json" \
       "$CONTROL_RECORDS/health.json" "$CONTROL_RECORDS/denied.json" \
       "$CONTROL_RECORDS/artifact-provenance.json" "$CONTROL_RECORDS/artifact-provenance.status" \
-      "$CONTROL_RECORDS/artifact-pid1.status" "$CONTROL_RECORDS/artifact-pid1.exit" || return 1
+      "$CONTROL_RECORDS/artifact-pid1.status" "$CONTROL_RECORDS/artifact-pid1.exit" \
+      "$CONTROL_RECORDS/http-samples.json" "$CONTROL_RECORDS/sample.prepared" \
+      "$CONTROL_RECORDS/sample.ready" "$CONTROL_RECORDS/sample.passed" || return 1
     rmdir "$CONTROL_RECORDS" || return 1
     [ ! -e "$CONTROL_RECORDS" ] || return 1
     CONTROL_RECORDS=""
@@ -60,6 +63,15 @@ cleanup_control_fixture() {
 
 cleanup() {
   receiver_cleanup_status=0
+  if [ "$PROFILE" = wrapped-source ]; then
+    helper="$(docker container ls -aq --no-trunc --filter "name=^/$NETWORK-http-sample$")" || return 1
+    if [ -n "$helper" ]; then
+      [ "$(docker inspect --format '{{index .Config.Labels "org.openj92.cpk.test-run"}}' "$helper")" = "$NETWORK" ] || return 1
+      [ -z "$SAMPLE_HELPER" ] || [ "$helper" = "$SAMPLE_HELPER" ] || return 1
+      docker rm -f "$helper" >/dev/null || return 1
+      [ -z "$(docker container ls -aq --filter "name=^/$NETWORK-http-sample$")" ] || return 1
+    fi
+  fi
   cleanup_receiver_fixture || {
     echo "receiver acceptance cleanup incomplete; records=$RECEIVER_RECORDS" >&2
     receiver_cleanup_status=1
@@ -295,6 +307,21 @@ if [ "$PROFILE" != "published-baseline" ]; then
     "$CPK_SERVERS_TEST_IMAGE" \
     python products/cpk_server/tests/source_control_fixture.py generate /fixture
 fi
+if [ "$PROFILE" = wrapped-source ]; then
+  SAMPLE_HELPER="$(docker run -d --name "$NETWORK-http-sample" \
+    --label "org.openj92.cpk.test-run=$NETWORK" --network "$NETWORK" \
+    --read-only --cap-drop ALL --security-opt no-new-privileges \
+    --user "$(id -u):$(id -g)" -e PYTHONDONTWRITEBYTECODE=1 \
+    --mount "type=bind,source=$CONTROL_RECORDS,target=/fixture" \
+    "$CPK_SERVERS_TEST_IMAGE" python scripts/http_sample_fixture.py cpk /fixture)"
+  prepared=0
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    if [ -f "$CONTROL_RECORDS/sample.prepared" ]; then prepared=1; break; fi
+    [ "$(docker inspect --format '{{.State.Running}}' "$SAMPLE_HELPER")" = true ] || break
+    sleep 1
+  done
+  [ "$prepared" = 1 ] || { echo 'CPK source HTTP sample preparation failed' >&2; exit 1; }
+fi
 
 phase "start configured cpk-server"
 set -- \
@@ -330,6 +357,11 @@ if [ "$PROFILE" != "published-baseline" ]; then
   fi
   grep -q 'CPK control configuration is invalid' "$MISSING_CONFIG_OUTPUT"
   set -- "$@" --mount "type=bind,source=$CONTROL_RECORDS/control.json,target=/etc/cpk/cpk-server/control.json,readonly"
+fi
+if [ "$PROFILE" = wrapped-source ]; then
+  set -- "$@" --network-alias cpk-source \
+    -e CPK_HTTP_VERIFICATION_SAMPLES_CONFIGURATION_FILE=/etc/cpk/cpk-server/http-samples.json \
+    --mount "type=bind,source=$CONTROL_RECORDS/http-samples.json,target=/etc/cpk/cpk-server/http-samples.json,readonly"
 fi
 CONTAINER="$(docker run --pull "$PRODUCT_PULL_POLICY" -d \
   --label "$LABEL" \
@@ -406,6 +438,13 @@ printf '%s' "$ready" | grep -q '"configured"'
 if printf '%s' "$ready" | grep -q 'postgres://'; then
   echo "ready response leaked store endpoint" >&2
   exit 1
+fi
+if [ "$PROFILE" = wrapped-source ]; then
+  : > "$CONTROL_RECORDS/sample.ready"
+  [ "$(docker wait "$SAMPLE_HELPER")" = 0 ] && [ -f "$CONTROL_RECORDS/sample.passed" ] || {
+    echo 'CPK source signed ready sample failed' >&2; exit 1;
+  }
+  echo 'CPK source signed named-listener ready sample passed'
 fi
 
 phase "reject unauthenticated HTTP"

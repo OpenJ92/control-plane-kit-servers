@@ -45,3 +45,10 @@ CpkServerOperationsApplication over the existing recording services instead of a
 namespace/mock carrying only a service map. The host now preserves that configured
 application. Existing credential, receiving, forwarding and no-effect assertions
 are unchanged. Validation is pending the owning Docker gate.
+
+#386 product proofs cover optional exact-slot artifact delivery in all three
+variants, unchanged original checks/ports, same-audience receiver crosswire
+refusal, and factory rejection of alternate listener metadata before Operations.
+The actual main consumes a public file and publishes the SDK route; malformed
+opt-in stops before private setup/listening. SDK/Core retain their negative
+protocol matrices; the source image smoke owns real signed-listener success.

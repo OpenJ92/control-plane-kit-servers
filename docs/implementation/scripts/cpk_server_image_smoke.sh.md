@@ -98,3 +98,10 @@ an explicit workflow prerequisite, not a scenario repair step.
 The selected artifact verifier also requires actual PID 1 effective UID 10001
 at startup. Its bounded private status/exit records are part of the existing
 exact fixture cleanup; this does not replace Config.User or container identity checks.
+
+#386 extends wrapped-source only with a bounded in-memory sample witness, a
+source-only cpk-source network alias for the actual CPK listener, and the public
+sample companion. After existing actual readiness, the shell signals the helper
+to mint one fresh15-second grant and read once. Success requires correlated
+inner PASSED/status200 and helper exit0. Exact owned helper identity/label and
+absence are verified during cleanup. Published profiles remain unchanged.
