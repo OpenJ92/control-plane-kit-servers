@@ -48,8 +48,19 @@ HEALTH_ATTEMPTS="${CPK_SERVER_HEALTH_ATTEMPTS:-30}"
 REQUEST_HOST="${CPK_SERVER_SMOKE_HOST:-127.0.0.1}"
 
 cleanup_control_fixture() {
-  [ "$SAMPLE_CLEANUP_UNCERTAIN" = 0 ] || return 1
   if [ -n "$CONTROL_RECORDS" ]; then
+    # Clear owned bearer material independently of uncertain helper absence.
+    # Only public evidence may be retained for diagnosis.
+    if ! rm -f "$CONTROL_RECORDS/surface.headers" "$CONTROL_RECORDS/health.headers"; then
+      echo 'source control credential cleanup incomplete' >&2
+      return 1
+    fi
+    if [ -e "$CONTROL_RECORDS/surface.headers" ] || [ -L "$CONTROL_RECORDS/surface.headers" ] \
+        || [ -e "$CONTROL_RECORDS/health.headers" ] || [ -L "$CONTROL_RECORDS/health.headers" ]; then
+      echo 'source control credential cleanup incomplete' >&2
+      return 1
+    fi
+    [ "$SAMPLE_CLEANUP_UNCERTAIN" = 0 ] || return 1
     rm -f "$CONTROL_RECORDS/control.json" "$CONTROL_RECORDS/surface.headers" \
       "$CONTROL_RECORDS/health.headers" "$CONTROL_RECORDS/surface.json" \
       "$CONTROL_RECORDS/health.json" "$CONTROL_RECORDS/denied.json" \

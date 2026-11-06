@@ -85,6 +85,7 @@ class DockerHarnessTests(unittest.TestCase):
         definitions = (ROOT / "scripts/cpk_server_image_smoke.sh").read_text().split("trap finish EXIT",1)[0]
         commands = r'''
 NETWORK=witness-network
+CONTROL_RECORDS="$WITNESS_RECORDS"
 SAMPLE_HELPER=helper-id
 CONTAINER=cpk-id
 POSTGRES_CONTAINER=postgres-id
@@ -101,20 +102,39 @@ docker() {
       *) return 0 ;;
     esac
 }
+rm() {
+    if [ "$WITNESS_MODE" = unlink ] && [ "$2" = "$WITNESS_RECORDS/surface.headers" ]; then return 7; fi
+    command rm "$@"
+}
 if cleanup; then status=0; else status=$?; fi
 printf 'cleanup-status=%s\n' "$status"
+if cleanup_control_fixture; then status=0; else status=$?; fi
+printf 'control-status=%s\n' "$status"
 '''
-        for mode in ("post-removal-observation-failure", "foreign"):
+        for mode in ("post-removal-observation-failure", "foreign", "unlink"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
                 calls = Path(directory) / "calls"
+                records = Path(directory) / "records"
+                records.mkdir()
+                for name in ("surface.headers", "health.headers"):
+                    (records/name).write_text("synthetic-bearer-do-not-print")
+                (records/"sample.prepared").write_text("public marker")
                 environment = dict(os.environ, CPK_SERVER_SMOKE_PROFILE="wrapped-source",
                     CPK_SERVERS_TEST_IMAGE="fixture-controller", WITNESS_MODE=mode,
-                    WITNESS_CALLS=str(calls), WITNESS_REMOVED=str(Path(directory)/"removed"))
+                    WITNESS_CALLS=str(calls), WITNESS_REMOVED=str(Path(directory)/"removed"),
+                    WITNESS_RECORDS=str(records))
                 result = subprocess.run(["sh","-c",definitions + commands],cwd=ROOT,
                     env=environment,text=True,capture_output=True,check=False)
                 self.assertEqual(result.returncode,0,result.stderr)
-                self.assertEqual(result.stdout,"cleanup-status=1\n")
+                self.assertEqual(result.stdout,"cleanup-status=1\ncontrol-status=1\n")
                 self.assertIn("helper cleanup uncertain",result.stderr)
+                self.assertNotIn("synthetic-bearer-do-not-print",result.stdout+result.stderr)
+                self.assertTrue((records/"sample.prepared").is_file())
+                if mode == "unlink":
+                    self.assertIn("credential cleanup incomplete",result.stderr)
+                else:
+                    self.assertFalse((records/"surface.headers").exists())
+                    self.assertFalse((records/"health.headers").exists())
                 observed = calls.read_text().splitlines()
                 self.assertIn("rm -f cpk-id",observed)
                 self.assertIn("rm -f postgres-id",observed)

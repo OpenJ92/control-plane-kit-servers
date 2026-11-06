@@ -111,3 +111,8 @@ otherwise the exact name/run label. Each post-removal observation independently
 checks status and emptiness. Helper uncertainty fails cleanup, preserves public
 fixture records, and still runs independent receiver/CPK/Postgres/network cleanup.
 Completion after readiness is parent-bounded to20seconds with observed exit0.
+
+Final review correction: independently remove and verify absence of the two
+owned bearer-header files before retaining public evidence on helper uncertainty.
+Unlink/absence failure stays a fixed failed cleanup result; header contents are
+never printed. Other independently owned runtime cleanup still runs first.
