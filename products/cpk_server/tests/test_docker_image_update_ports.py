@@ -2,7 +2,9 @@
 import asyncio
 from dataclasses import replace
 import json
+import os
 from pathlib import Path
+import subprocess
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
@@ -53,8 +55,154 @@ from docker_image_update_ports import (
     AttachedPublicTransport, CompletedRuntimeCall, FixtureBoundaryFailure,
     InstalledGatewaySocketTransport, RecordedDockerRuntime, SyntheticIngressAddressResolver,
     require_committed_call, require_replacement_receipt, failed_apply_evidence, emit_failed_apply_evidence,
+    last_execute_boundary,
 )
+from control_plane_kit_servers_cpk_server.client.transport import ClientTransportError
+from control_plane_kit_servers_cpk_server.client.workflow import _canonical_digest
 from test_topology_client import ScriptedTransport, DeterministicIds
+
+
+class ExecuteFailureProjectionTests(unittest.TestCase):
+    def setUp(self):
+        self.arguments = {"path_parameters":{"workspace_id":"workspace-a","run_id":"run-a"},
+            "payload":{"claim_generation":1,"max_effects":1,"idempotency_key":"execute-a"},
+            "credential_role":"worker"}
+        self.reply = {"run_id":"run-a","coordinator_status":"progressed","run_status":"running",
+            "activity_id":"next-activity","effects_attempted":1}
+        self.inner = Mock()
+        self.inner.call.return_value = self.reply
+        self.transport = AttachedPublicTransport(self.inner,SimpleNamespace(completed=[]),Mock(),"worker-a")
+        self.result = SimpleNamespace(operation_ref="operation-a",run_id="run-a",plan_id="plan-a",
+            status="attention-required",execution="unverified",advancement="not-attempted")
+
+    def journal(self, *, recorded=False, reply=None):
+        body = dict(self.arguments["payload"])
+        pending = {"route_id":"command.deployment.execute","path_parameters":dict(self.arguments["path_parameters"]),
+            "idempotency_key":"execute-a","body":body,"body_sha256":_canonical_digest(body)}
+        row = {"route_id":"command.deployment.execute","idempotency_key":"execute-a",
+            "body_sha256":_canonical_digest(body),"response":dict(self.reply if reply is None else reply)}
+        return {"operation_ref":"operation-a","target":{"workspace_id":"workspace-a"},
+            "coordinates":{"run_id":"run-a","plan_id":"plan-a"},
+            "pending_request":None if recorded else pending,"request_history":[row] if recorded else []}
+
+    def projection(self, journal):
+        return last_execute_boundary(self.transport,"workspace-a",self.result,lambda _ref:journal)
+
+    def test_no_usable_reply_preserves_original_error_and_one_call_without_cause_inference(self):
+        for message, status in (("PRIVATE-timeout",None),("PRIVATE-malformed-reply",None),
+                ("PRIVATE-oversized-reply",None),("PRIVATE-http-error",503)):
+            with self.subTest(status=status):
+                error = ClientTransportError(message,http_status=status)
+                self.inner.call.side_effect = error
+                self.inner.call.reset_mock()
+                with self.assertRaises(ClientTransportError) as caught:
+                    self.transport.call("command.deployment.execute",**self.arguments)
+                self.assertIs(caught.exception,error)
+                self.inner.call.assert_called_once_with("command.deployment.execute",**self.arguments)
+                value = self.projection(self.journal())
+                self.assertEqual(value,{"request_match":"pending","outcome":"no-usable-reply",
+                    "http_status":status,"coordinator_status":"unknown","run_status":"unknown",
+                    "effects_attempted":None})
+                self.assertNotIn("PRIVATE",json.dumps(value))
+
+    def test_received_rejected_binding_is_distinct_from_usable_recorded_disposition(self):
+        wrong = {**self.reply,"run_id":"wrong-run","private":"PRIVATE-payload"}
+        self.inner.call.return_value = wrong
+        self.assertIs(self.transport.call("command.deployment.execute",**self.arguments),wrong)
+        self.assertEqual(self.projection(self.journal())["outcome"],"binding-rejected")
+        self.inner.call.return_value = self.reply
+        self.assertIs(self.transport.call("command.deployment.execute",**self.arguments),self.reply)
+        # An observed valid reply without a matching recorded row proves no
+        # journal acceptance, so it stays unknown.
+        self.assertEqual(self.projection(self.journal())["outcome"],"unknown")
+        value = self.projection(self.journal(recorded=True))
+        self.assertEqual(value,{"request_match":"recorded","outcome":"recorded-disposition",
+            "http_status":None,"coordinator_status":"progressed","run_status":"running","effects_attempted":1})
+        completed_reply = {"run_id":"run-a","coordinator_status":"completed","run_status":"succeeded",
+            "effects_attempted":0}
+        self.inner.call.return_value = completed_reply
+        self.transport.call("command.deployment.execute",**self.arguments)
+        self.assertEqual(self.projection(self.journal(recorded=True,reply=completed_reply))["coordinator_status"],"completed")
+        self.inner.call.return_value = {**completed_reply,"activity_id":{"private":"PRIVATE"}}
+        self.transport.call("command.deployment.execute",**self.arguments)
+        self.assertEqual(self.projection(self.journal())["outcome"],"binding-rejected")
+
+    def test_stale_duplicate_or_contradictory_journal_correlations_stay_unknown(self):
+        self.transport.call("command.deployment.execute",**self.arguments)
+        from copy import deepcopy
+        journal = self.journal(recorded=True)
+        cases = []
+        for field,value in (("operation_ref","other-operation"),("target",{"workspace_id":"other-workspace"}),
+                ("coordinates",{"run_id":"other-run","plan_id":"plan-a"})):
+            cases.append({**journal,field:value})
+        duplicate = deepcopy(journal)
+        duplicate["request_history"] *= 2
+        cases.append(duplicate)
+        conflicting = deepcopy(journal)
+        conflicting["pending_request"] = self.journal()["pending_request"]
+        cases.append(conflicting)
+        for field,value in (("body_sha256","0"*64),("idempotency_key","stale-key"),
+                ("response",{**self.reply,"run_id":"other-run"})):
+            changed = deepcopy(journal)
+            changed["request_history"][0][field] = value
+            cases.append(changed)
+        pending = self.journal()
+        pending["pending_request"]["body"]["claim_generation"] = 2
+        cases.append(pending)
+        for item in cases:
+            with self.subTest(index=cases.index(item)):
+                self.assertEqual(self.projection(item)["outcome"],"unknown")
+
+    def test_unsent_latched_execute_cannot_inherit_the_previous_observation(self):
+        self.transport.call("command.deployment.execute",**self.arguments)
+        self.assertEqual(self.projection(self.journal(recorded=True))["outcome"],"recorded-disposition")
+        self.transport.failure = "fixture-failed"
+        with self.assertRaises(FixtureBoundaryFailure):
+            self.transport.call("command.deployment.execute",**self.arguments)
+        self.assertEqual(self.inner.call.call_count,1)
+        self.assertIsNone(self.transport.last_execute)
+        self.assertEqual(self.projection(self.journal(recorded=True))["outcome"],"unknown")
+
+    def test_journal_failure_keeps_existing_event_and_run_evidence_and_primary_result(self):
+        self.transport.call("command.deployment.execute",**self.arguments)
+        self.inner.call.side_effect = [
+            {"items":[{"run_id":"run-a","event_id":"event-a","ordinal":8,
+                "activity_id":"activity-a","event_type":"step_succeeded"}],"next_cursor":None},
+            {"items":[{"run_id":"run-a","plan_id":"plan-a","status":"running"}],"next_cursor":None}]
+        original = dict(vars(self.result))
+        reader = Mock(side_effect=RuntimeError("PRIVATE-journal-error"))
+        value = failed_apply_evidence(self.transport,"workspace-a",self.result,journal_reader=reader)
+        reader.assert_called_once_with("operation-a")
+        self.assertEqual(value["last_execute_boundary"]["outcome"],"unknown")
+        self.assertEqual(value["events"][0]["ordinal"],8)
+        self.assertEqual(value["run_status"],"running")
+        self.assertEqual(value["docker_image_apply_failure"],"observed")
+        self.assertEqual(vars(self.result),original)
+        self.assertNotIn("PRIVATE",json.dumps(value))
+
+    def test_diagnostic_gate_rejects_invalid_argv_and_runs_only_named_socket_free_module(self):
+        root = Path(__file__).resolve().parents[3]
+        for arguments in (("--receiver-execute-evidence-tests",),
+                ("--receiver-execute-evidence-tests","extra"),("--receiver-execute-evidence-typo",),("",)):
+            with self.subTest(arguments=arguments), TemporaryDirectory() as directory:
+                bin_path = Path(directory)
+                calls = bin_path/"calls"
+                docker = bin_path/"docker"
+                docker.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$CALLS"\nexit 0\n')
+                docker.chmod(0o755)
+                env = {name:value for name,value in os.environ.items() if not name.startswith("CPK_ROOT_")}
+                env.update(PATH=str(bin_path)+os.pathsep+env["PATH"],CALLS=str(calls),CPK_SERVERS_TEST_IMAGE="fixture-controller")
+                result = subprocess.run(["sh",str(root/"test.sh"),*arguments],cwd=root,env=env,
+                    text=True,capture_output=True,check=False)
+                if len(arguments) == 1 and arguments[0] == "--receiver-execute-evidence-tests":
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    invocations = calls.read_text().splitlines()
+                    self.assertIn("package_integrity.py",invocations[2])
+                    self.assertEqual(invocations[-1],"run --rm --network none -e PYTHONPATH=/app/products/cpk_server/tests:/app fixture-controller python -m unittest -v test_docker_image_update_ports")
+                    self.assertFalse(any("docker.sock" in item for item in invocations))
+                else:
+                    self.assertEqual(result.returncode,2)
+                    self.assertFalse(calls.exists())
 
 
 def completed():

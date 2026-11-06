@@ -62,6 +62,22 @@ A failed evidence read returns a fixed unavailable classification without
 raising or changing the original result. Missing client results are reported
 without guessing a run or issuing reads against a previous apply.
 
+#387 adds a failure-only `last_execute_boundary` classification. One transient
+execute observation retains bounded request coordinates/digest and only the
+reply fields consumed by the existing client binding predicate, or a safe HTTP
+error status. It is cleared before a new execute, including a latched unsent
+execute. No raw bodies, headers or exception text enter the receipt. A unique
+pending request must match workspace/run, key and canonical body digest before
+reporting no-usable-reply or binding-rejected. A unique congruent journal history
+row is required for recorded-disposition. The client's existing predicate owns
+reply binding; the witness does not reproduce execution state transitions.
+Missing, conflicting, stale or unreadable state remains unknown. Malformed
+non-null activity values remain invalid after projection. There is no echoed
+claim-generation/fence flag and no inference that a missing reply means timeout
+or that an effect did not occur. Journal projection has its own best-effort
+guard, so failure leaves the existing public event/run evidence intact. The
+original response, exception, one-call behavior and post-response latch remain.
+
 The diagnostic domain includes unverified execution/advancement and unchanged
 advancement so unexpected reconstructed-replay classifications remain precise.
 The same bounded public reporter is reused; no additional observation protocol

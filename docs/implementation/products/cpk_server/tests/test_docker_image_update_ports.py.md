@@ -83,5 +83,15 @@ and runtime cleanup behavior are not changed by adding them.
 #387 diagnostic target first adds a causal failure-receipt test: the public
 event/run projection must remain intact while an unavailable same-attempt
 execute discriminator stays explicitly unknown. This checkpoint precedes the
-reporting implementation and is unvalidated; the frozen failedca225825 and its
+reporting implementation; the frozen failed ca225825 and its
 hosted/local evidence remain unchanged.
+
+The focused target reached the intended missing-field assertion (33 tests, one
+failure). Synthetic implementation checks cover unusable replies with/without
+safe HTTP status, rejected binding, recorded progressed/completed replies,
+same-key changed body, stale/duplicate/conflicting state, a latched unsent next
+execute, journal-read failure, preserved original result/error/response and
+redaction. These prove only the diagnostic witness. The existing module remains
+under unchanged default unittest discovery. A shell command-double check
+requires the exact focused target to stop before runtime stages with no daemon
+mount and rejects invalid/extra arguments before invoking Docker.

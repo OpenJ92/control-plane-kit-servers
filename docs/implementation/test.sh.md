@@ -194,6 +194,8 @@ composition acceptance and is not shortened by this option.
 
 #387 diagnostic branch adds the explicitly reviewed, exact selector
 `--receiver-execute-evidence-tests`. Invalid/extra arguments refuse before Docker.
+Its default controller tag is `control-plane-kit-servers-execute-evidence-test:local`,
+separate from the full gate; an explicit `CPK_SERVERS_TEST_IMAGE` remains supported.
 It reuses the normal coordinate/policy/integrity preamble and Dockerfile.test,
 then invokes the explicitly named existing diagnostic unittest module with
 networking disabled and no daemon mount. It exits with that result before the

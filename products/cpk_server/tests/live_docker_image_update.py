@@ -211,14 +211,16 @@ async def scenario(root, engine, sdk, placement, material, provider, database_ur
                         planned.operation_ref, journal["preparation"])))
                     prepared_observer(planned, prepared_graph)
                 option = "approve_destructive_plan" if planned.destructive else "approve_plan"
+                transport.last_execute = None
                 try:
                     result = await asyncio.to_thread(client.apply, planned.operation_ref,
                         execute_plan=planned.plan_id, **{option: planned.plan_id})
                 except Exception:
-                    emit_failed_apply_evidence(transport, workspace, None)
+                    emit_failed_apply_evidence(transport, workspace, None,journal_reader=client.journal.read)
                     raise
                 if result.status not in {"converged", "no-changes"} or transport.failure is not None:
-                    await asyncio.to_thread(emit_failed_apply_evidence, transport, workspace, result)
+                    await asyncio.to_thread(emit_failed_apply_evidence, transport, workspace, result,
+                        journal_reader=client.journal.read)
                 transport.require_healthy()
                 assert result.status in {"converged", "no-changes"}, result.descriptor()
                 return result, source

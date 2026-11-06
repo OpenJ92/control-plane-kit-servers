@@ -13,6 +13,7 @@ case "${1:-}" in
   --receiver-execute-evidence-tests)
     [ "$#" = 1 ] || invalid_test_arguments
     FOCUSED_EXECUTE_EVIDENCE=1
+    IMAGE="${CPK_SERVERS_TEST_IMAGE:-control-plane-kit-servers-execute-evidence-test:local}"
     ;;
   --postgres-release-tests|--postgres-published-image|--postgres-source-image)
     exec sh scripts/postgres_artifact_shell.sh "$@"

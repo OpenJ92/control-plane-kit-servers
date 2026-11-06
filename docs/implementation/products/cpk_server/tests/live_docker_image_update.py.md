@@ -195,3 +195,11 @@ image-update and receiver-reintroduction. The emitted input record distinguishes
 manifest/config/execution identity and proof form; it does not classify a backend.
 No artifact pulls or registry credentials enter this controller. Admission failure
 precedes scenario effects; runtime and cleanup acceptance still require the gate.
+
+#387 clears the transient execute observation before each apply invocation and
+supplies the owned journal reader to the existing failure reporter before private
+state disposal. Only the closed same-request classification can leave that read;
+the journal itself is never retained in the receipt. The original result,
+assertion, retry behavior, success output and cleanup are unchanged. This source
+change and its synthetic tests cannot explain the earlier local failure without
+a separately released isolated runtime observation.

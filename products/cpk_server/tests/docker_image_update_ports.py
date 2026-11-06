@@ -4,6 +4,8 @@ import json
 import re
 
 import httpx
+from control_plane_kit_servers_cpk_server.client.transport import ClientTransportError, safe_http_status
+from control_plane_kit_servers_cpk_server.client.workflow import _canonical_digest, _response_is_bound
 
 from control_plane_kit_core.planning import StartNode, StartRuntime, ReconcileNode
 from control_plane_kit_core.operations.lifecycle import ActivityEventKind, ActivityRunStatus, FailureCategory
@@ -79,7 +81,102 @@ def public_page(transport, route, workspace, **coordinates):
     raise FixtureBoundaryFailure("public history exceeded fixture bound")
 
 
-def failed_apply_evidence(transport, workspace, result):
+def _unknown_execute_boundary(match="unavailable"):
+    return {"request_match":match,"outcome":"unknown","http_status":None,
+        "coordinator_status":"unknown","run_status":"unknown","effects_attempted":None}
+
+
+def _execute_request(arguments):
+    """Transient correlation only; never retain payloads or credentials."""
+    try:
+        path, body = arguments["path_parameters"], arguments["payload"]
+        values = {name:path[name] for name in ("workspace_id","run_id")}
+        values["key"] = body["idempotency_key"]
+        if not all(type(value) is str and 0 < len(value.encode("utf-8")) <= 512 for value in values.values()):
+            raise ValueError
+        if type(body["max_effects"]) is not int or body["max_effects"] != 1:
+            raise ValueError
+        return {**values,"body_sha256":_canonical_digest(body),"max_effects":1,
+            "return_kind":"unknown","http_status":None,"reply":None}
+    except Exception:
+        return None
+
+
+def _execute_reply(response):
+    """Only fields consumed by the existing execute binding predicate."""
+    def coordinate(value):
+        if value is None:
+            return None
+        if type(value) is str and 0 < len(value.encode("utf-8")) <= 512:
+            return value
+        # A malformed non-null activity must not become the valid null
+        # activity of a completed reply after projection.
+        return ""
+    def domain(value, choices):
+        return value if type(value) is str and value in choices else "unknown"
+    effects = response.get("effects_attempted")
+    return {"run_id":coordinate(response.get("run_id")),
+        "activity_id":coordinate(response.get("activity_id")),
+        "effects_attempted":effects if type(effects) is int and 0 <= effects <= 1 else None,
+        "coordinator_status":domain(response.get("coordinator_status"),
+            {"progressed","completed","in-flight","failed","unsupported","uncertain","blocked"}),
+        "run_status":domain(response.get("run_status"),{item.value for item in ActivityRunStatus})}
+
+
+def last_execute_boundary(transport, workspace, result, journal_reader=None):
+    """Failure-only best-effort projection; absence never becomes a cause."""
+    unknown = _unknown_execute_boundary()
+    try:
+        observation = transport.last_execute
+        if type(observation) is not dict or result is None or not callable(journal_reader):
+            return unknown
+        journal = journal_reader(result.operation_ref)
+        if (type(journal) is not dict or journal.get("operation_ref") != result.operation_ref
+                or journal.get("target",{}).get("workspace_id") != workspace
+                or observation["workspace_id"] != workspace or observation["run_id"] != result.run_id
+                or journal["coordinates"].get("run_id") != result.run_id
+                or journal["coordinates"].get("plan_id") != result.plan_id):
+            return _unknown_execute_boundary("unmatched")
+        history = journal["request_history"]
+        if type(history) is not list:
+            return unknown
+        matches = [row for row in history if row.get("route_id") == "command.deployment.execute"
+            and row.get("idempotency_key") == observation["key"]]
+        pending = journal["pending_request"]
+        reply = observation["reply"]
+        if pending is not None:
+            if (matches or type(pending) is not dict
+                    or pending.get("route_id") != "command.deployment.execute"
+                    or pending.get("idempotency_key") != observation["key"]
+                    or pending.get("body_sha256") != observation["body_sha256"]
+                    or pending.get("path_parameters") != {"workspace_id":workspace,"run_id":result.run_id}
+                    or _canonical_digest(pending["body"]) != observation["body_sha256"]):
+                return _unknown_execute_boundary("unmatched")
+            evidence = _unknown_execute_boundary("pending")
+            if observation["return_kind"] == "no-usable-reply":
+                evidence.update(outcome="no-usable-reply",http_status=safe_http_status(observation["http_status"]))
+            elif (observation["return_kind"] == "reply" and type(reply) is dict
+                    and not _response_is_bound("command.deployment.execute",reply,pending=pending,
+                        body=pending["body"],coordinates=journal["coordinates"],workspace_id=workspace)):
+                evidence["outcome"] = "binding-rejected"
+            return evidence
+        if (len(matches) != 1 or matches[0].get("body_sha256") != observation["body_sha256"]
+                or observation["return_kind"] != "reply" or type(reply) is not dict):
+            return _unknown_execute_boundary("unmatched")
+        recorded = _execute_reply(matches[0]["response"])
+        if (recorded != reply or recorded["run_id"] != result.run_id
+                or not _response_is_bound("command.deployment.execute",recorded,
+                    pending={"path_parameters":{"workspace_id":workspace,"run_id":result.run_id}},
+                    body={"max_effects":observation["max_effects"]},coordinates=journal["coordinates"],
+                    workspace_id=workspace)):
+            return _unknown_execute_boundary("unmatched")
+        return {"request_match":"recorded","outcome":"recorded-disposition","http_status":None,
+            **{name:recorded[name] for name in ("coordinator_status","run_status","effects_attempted")}}
+    except Exception:
+        return unknown
+
+
+def failed_apply_evidence(transport, workspace, result, *, journal_reader=None):
     """Read-only bounded classifications; never replace the primary failure."""
     def token(value):
         return value if type(value) is str and re.fullmatch(r"[A-Za-z0-9_.:/-]{1,128}", value) else None
@@ -89,7 +186,8 @@ def failed_apply_evidence(transport, workspace, result):
 
     evidence = {"docker_image_apply_failure": "evidence-unavailable",
         "fixture_boundary_failed": transport.failure is not None,
-        "client_exception": result is None}
+        "client_exception": result is None,
+        "last_execute_boundary":last_execute_boundary(transport,workspace,result,journal_reader)}
     try:
         if result is None:
             return evidence
@@ -133,10 +231,10 @@ def failed_apply_evidence(transport, workspace, result):
     return {"docker_image_apply_failure": "evidence-unavailable"}
 
 
-def emit_failed_apply_evidence(transport, workspace, result):
+def emit_failed_apply_evidence(transport, workspace, result, *, journal_reader=None):
     """Best-effort diagnostics, including serialization and output failures."""
     try:
-        print(json.dumps(failed_apply_evidence(transport, workspace, result), sort_keys=True), flush=True)
+        print(json.dumps(failed_apply_evidence(transport, workspace, result,journal_reader=journal_reader), sort_keys=True), flush=True)
         return True
     except Exception:
         # Reporting must never replace the original failed apply or cleanup.
@@ -211,17 +309,32 @@ class AttachedPublicTransport:
         self.preparations = []
         self.committed = {}
         self.committed_observer = None
+        self.last_execute = None
 
     def require_healthy(self):
         if self.failure is not None:
             raise FixtureBoundaryFailure("post-response fixture boundary failed") from None
 
     def call(self, route_id, **arguments):
+        if route_id == "command.deployment.execute":
+            self.last_execute = None
         if self.failure is not None and route_id.startswith("command."):
             self.unsent.append(route_id)
             self.require_healthy()
         before = len(self.runtime.completed)
-        response = self.inner.call(route_id, **arguments)
+        observation = _execute_request(arguments) if route_id == "command.deployment.execute" else None
+        self.last_execute = observation if route_id == "command.deployment.execute" else self.last_execute
+        try:
+            response = self.inner.call(route_id, **arguments)
+        except ClientTransportError as error:
+            if observation is not None:
+                observation.update(return_kind="no-usable-reply",http_status=safe_http_status(error.http_status))
+            raise
+        if observation is not None:
+            try:
+                observation.update(return_kind="reply",reply=_execute_reply(response))
+            except Exception:
+                observation.update(return_kind="unknown",reply=None)
         if route_id == "command.deployment.prepare":
             self.preparations.append((arguments, response))
         if route_id != "command.deployment.execute":
