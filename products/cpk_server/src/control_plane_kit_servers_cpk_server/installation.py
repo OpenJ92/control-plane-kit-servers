@@ -28,6 +28,7 @@ from control_plane_kit_core.products import (
     ProductRuntimeContractCodec,
     instantiate_product,
 )
+from control_plane_kit_core import ReceiverNodeControlConfigurationCodec
 from control_plane_kit_core.public_ingress import NamedPublicIngress, PublicIngressTarget
 from control_plane_kit_core.runtime_authority import (
     RuntimeAuthorityAccessDelivery,
@@ -45,7 +46,7 @@ from control_plane_kit_core.secrets import (
 from control_plane_kit_core.verification import PostgresPasswordAuthentication, PostgresQueryCheck
 from .installation_management import (
     DockerCpkConnectorControl, DockerCpkManagement,
-    managed_children, management_ingresses, selected_managed_connector,
+    _require_scope, managed_children, management_ingresses, selected_managed_connector,
 )
 
 
@@ -133,6 +134,7 @@ class DockerCpkWebsite:
     image: OciImageReference
     ingress: ExternalInstallationIngress | NamedPublicIngress
     connector_product: ProductDescriptorDocument | None = None
+    managed_control_configuration: ConfigurationArtifact | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         _website_input(self, allow_managed=True)
@@ -309,6 +311,11 @@ def _website_input(value: DockerCpkWebsite, *, allow_managed=False) -> tuple[str
     try:
         if not isinstance(value, DockerCpkWebsite) or not isinstance(value.image, OciImageReference):
             raise ValueError(_INVALID_WEBSITE)
+        if value.managed_control_configuration is not None:
+            if not allow_managed:
+                raise ValueError(_INVALID_WEBSITE)
+            from control_plane_kit_servers_website_server.managed import source_runtime_contract
+            source_runtime_contract(value.managed_control_configuration)
         if isinstance(value.ingress, NamedPublicIngress):
             connector = _website_connector(value.connector_product, allow_managed=allow_managed)
             return _canonical_origin("https://" + value.ingress.hostname), connector
@@ -334,7 +341,7 @@ def _website_parts(value: DockerCpkInstallation) -> tuple[
 ] | None:
     if value.website is None:
         return None
-    from .client.frontend import _canonical_origin, frontend_product
+    from .client.frontend import _canonical_origin, frontend_product, managed_frontend_product
 
     try:
         origin, connector = _website_input(value.website, allow_managed=value.management is not None)
@@ -359,6 +366,12 @@ def _website_parts(value: DockerCpkInstallation) -> tuple[
         # Compare host identity only; preserve both original origin strings.
         if urlsplit(upstream).hostname.removesuffix(".") == urlsplit(origin).hostname.removesuffix("."):
             raise ValueError(_INVALID_WEBSITE)
+        artifact = value.website.managed_control_configuration
+        if artifact is not None:
+            configuration = ReceiverNodeControlConfigurationCodec().decode_bytes(artifact.content.encode("utf-8"))
+            _require_scope(configuration, value, value.website_node_id)
+            return managed_frontend_product(value.website.image, upstream=upstream,
+                control_configuration=artifact), connector
         return frontend_product(value.website.image, upstream=upstream, port=8080), connector
     except (ValueError, TypeError, AttributeError, KeyError):
         error = ValueError(_INVALID_WEBSITE)

@@ -1,4 +1,5 @@
 """Product declaration and SDK host for the managed website."""
+from dataclasses import replace
 from http.server import BaseHTTPRequestHandler
 import time
 
@@ -48,6 +49,22 @@ def control_configuration_artifact(configuration):
     except Exception:
         raise ValueError("Website control configuration is invalid") from None
     raise ValueError("Website control configuration is invalid")
+
+
+def source_runtime_contract(artifact: ConfigurationArtifact) -> ProductRuntimeContract:
+    """Bind one supplied public receiver artifact without rewriting its bytes."""
+    try:
+        if (type(artifact) is not ConfigurationArtifact or artifact.artifact_id != "website-control"
+                or artifact.target_path != CONTROL_PATH or artifact.media_type is not ConfigurationMediaType.JSON
+                or artifact.file_mode is not ConfigurationFileMode.READ_ONLY):
+            raise ValueError
+        configuration = core.ReceiverNodeControlConfigurationCodec().decode_bytes(artifact.content.encode("utf-8"))
+        control_configuration_artifact(configuration)
+        return replace(declared_runtime_contract(),
+            configuration_requirements=(), configuration_artifacts=(artifact,))
+    except Exception:
+        failure = ValueError("Website control configuration is invalid")
+    raise failure
 
 
 class ManagementHandler(BaseHTTPRequestHandler):

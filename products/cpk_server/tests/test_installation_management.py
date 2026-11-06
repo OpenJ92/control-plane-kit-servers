@@ -2,6 +2,7 @@
 from dataclasses import replace
 import importlib
 from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
@@ -47,6 +48,9 @@ class InstallationManagementTests(unittest.TestCase):
             for index, ingress in enumerate((self.api_ingress, self.website_ingress, self.management_ingress), start=2))
         self.trust = self.transit.GatewayHealthTransitConfiguration(self.gateway_control.target, "parent-cpk",
             core.DelegationKeyPurpose.GATEWAY_NODE_HEALTH_READ_TRANSIT, (self.keys["transit"],))
+        self.website_api = importlib.import_module("control_plane_kit_servers_website_server.managed")
+        self.website_control = self.configuration(template, self.base.website_node_id, "5" * 32,
+            self.website_api.control_declaration())
 
     def document(self, lane, contract):
         original = self.codec.decode_document((ROOT / "products" / lane / "product.cpk.json").read_bytes())
@@ -82,6 +86,12 @@ class InstallationManagementTests(unittest.TestCase):
 
     def graph(self, value=None):
         return compile_topology(self.api.compose_docker_cpk_installation(value or self.installation()))
+
+    def managed_website(self, configuration=None, **changes):
+        values = dict(image=self.base.website.image, ingress=self.website_ingress,
+            connector_product=self.connector, managed_control_configuration=
+                self.website_api.control_configuration_artifact(configuration or self.website_control))
+        return self.api.DockerCpkWebsite(**{**values, **changes})
 
     def receiver(self, node):
         artifact = select_receiver_node_control_configuration_artifact(
@@ -133,6 +143,121 @@ class InstallationManagementTests(unittest.TestCase):
             self.assertEqual(product_reference_in_node(node), ProductReference.from_document(self.connector))
             self.assertEqual(node.secret_deliveries, ())
         self.assertEqual(product_reference_in_node(gateway), ProductReference.from_document(self.gateway))
+
+    def test_managed_website_joins_actual_routes_with_child_api_binding_and_cpk_only_auth(self):
+        principals = core.SecretReference("secret://fixture/child-principals")
+        artifact = replace(self.website_api.control_configuration_artifact(self.website_control),
+            source_digest="a" * 64)
+        value = self.installation(website=self.managed_website(managed_control_configuration=artifact),
+            control_auth=self.api.MultiPrincipalControlAuth(principals))
+        graph = self.graph(value)
+        self.assertTrue(validate_graph(graph).valid)
+        codec = GraphDescriptorCodec()
+        self.assertEqual(codec.encode(codec.decode(codec.encode(graph))), codec.encode(graph))
+        website = graph.node(value.website_node_id)
+        self.assertEqual(self.receiver(website), self.website_control)
+        self.assertEqual(website.configuration_artifacts[0].descriptor(), artifact.descriptor())
+        self.assertEqual(website.non_secret_environment()["CPK_WEB_UPSTREAM"], "https://api.example.test")
+        self.assertEqual(website.non_secret_environment()["PORT"], "8080")
+        self.assertEqual(set(website.endpoints), {"http", "control"})
+        gateway = graph.node(self.gateway_id)
+        targets = next(item for item in gateway.configuration_artifacts if item.artifact_id == "gateway-health-targets")
+        routes = core.ReceiverManagementRoutesCodec().decode_bytes(targets.content.encode())
+        self.assertEqual({item.target.node_id.value for item in routes.targets}, set(graph.nodes))
+        self.assertEqual(len(routes.targets), 8)
+        website_route = next(item for item in routes.targets if item.target.node_id.value == value.website_node_id)
+        self.assertEqual(website_route.target, self.website_control.target)
+        self.assertEqual(website_route.declaration, self.website_api.control_declaration())
+        self.assertEqual(website_route.origin, website.endpoints["control"].address.value)
+        self.assertTrue(website_route.origin.endswith(":8000"))
+        self.assertTrue(website.endpoints["http"].address.value.endswith(":8080"))
+        self.assertEqual({item.ingress_id: item for item in graph.public_ingresses}, {
+            item.ingress_id: item for item in (self.api_ingress, self.website_ingress, self.management_ingress)})
+        for node in graph.nodes.values():
+            self.assertEqual(node.runtime_authority_deliveries, (value.runtime_access,) if node.node_id == value.cpk_node_id else ())
+            references = {item.reference for item in node.secret_deliveries}
+            self.assertEqual(principals in references, node.node_id == value.cpk_node_id)
+        self.assertEqual(website.secret_deliveries, ())
+        topology = self.api.compose_docker_cpk_installation(value)
+        block = next(child for child in topology.root.children if getattr(child, "block_id", None) == value.website_node_id)
+        self.assertEqual(block.implementation.document.product.image, value.website.image)
+
+    def test_managed_website_material_changes_get_distinct_stable_product_identities(self):
+        frontend = importlib.import_module("control_plane_kit_servers_cpk_server.client.frontend")
+        artifact = self.website_api.control_configuration_artifact(self.website_control)
+        image, upstream = self.base.website.image, "https://api.example.test"
+        product = frontend.managed_frontend_product(image, upstream=upstream, control_configuration=artifact)
+        self.assertNotEqual(product.identity, frontend.frontend_product(image, upstream=upstream).identity)
+        for changed_image, changed_upstream, changed_artifact in (
+                (replace(image, digest="sha256:" + "d" * 64), upstream, artifact),
+                (image, "https://another-child.example.test", artifact),
+                (image, upstream, self.website_api.control_configuration_artifact(replace(self.website_control,
+                    target=replace(self.website_control.target, receiver_id="6" * 32))))):
+            with self.subTest(upstream=changed_upstream, image=changed_image.digest):
+                inputs = dict(upstream=changed_upstream, control_configuration=changed_artifact)
+                changed = frontend.managed_frontend_product(changed_image, **inputs)
+                self.assertNotEqual(changed.identity, product.identity)
+                self.assertEqual(changed, frontend.managed_frontend_product(changed_image, **inputs))
+                document = self.codec.encode_document(changed)
+                self.assertEqual(self.codec.decode_document(document.content), document)
+
+    def test_managed_website_refuses_foreign_scope_or_duplicate_receiver(self):
+        roles = core.NodeControlGraphReferenceRole
+        for field, role, foreign in (("workspace_id", roles.WORKSPACE, "foreign-workspace"),
+                ("runtime_id", roles.RUNTIME, "foreign-runtime"),
+                ("node_id", roles.NODE, "foreign-node"),
+                ("provider_socket_name", roles.PROVIDER_SOCKET, "http")):
+            configuration = replace(self.website_control, target=replace(self.website_control.target,
+                **{field: core.NodeControlGraphReference(role, foreign)}))
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                self.graph(self.installation(website=self.managed_website(configuration)))
+        duplicate = replace(self.website_control, target=replace(self.website_control.target,
+            receiver_id=self.gateway_control.target.receiver_id))
+        with self.assertRaises(ValueError):
+            self.graph(self.installation(website=self.managed_website(duplicate)))
+
+    def test_managed_website_requires_management_and_rejects_invalid_artifact_without_echo(self):
+        native = self.base
+        with self.assertRaisesRegex(ValueError, "^installation website configuration is invalid$"):
+            replace(native, website=replace(native.website, managed_control_configuration=
+                self.website_api.control_configuration_artifact(self.website_control)))
+        artifact = self.website_api.control_configuration_artifact(self.website_control)
+        for changed in (replace(artifact, target_path="/etc/cpk/foreign.json"),
+                replace(artifact, content='{"unexpected":"sentinel-private-content"}')):
+            with self.subTest(path=changed.target_path), self.assertRaises(ValueError) as raised:
+                self.managed_website(managed_control_configuration=changed)
+            self.assertEqual(str(raised.exception), "installation website configuration is invalid")
+            self.assertIsNone(raised.exception.__context__)
+
+    def test_reopened_assignment_and_image_update_keep_names_and_receiver_artifact(self):
+        names = importlib.import_module("control_plane_kit_servers_cpk_server.client.child_names")
+        roles = tuple(names.ChildIngressNameBinding(role=role, ingress_id=ingress.ingress_id,
+            authority_ref="zone-" + role, lifecycle=ingress.lifecycle)
+            for role, ingress in (("api", self.api_ingress), ("website", self.website_ingress),
+                                  ("management", self.management_ingress)))
+        binding = names.ChildNameBinding(parent_endpoint="https://parent.example.test",
+            parent_installation_id="parent-a", parent_workspace_id=self.base.workspace_id,
+            child_installation_id=self.base.installation_id, zone_name="example.test", ingresses=roles)
+        with TemporaryDirectory() as directory, patch.object(names, "_assignment_root",
+                return_value=Path(directory) / ".local" / "state" / "cpk" / "child-installations"):
+            assignment = names.create_child_names(binding)
+            assigned = {item.role: item.hostname for item in assignment.ingresses}
+            api = replace(self.api_ingress, hostname=assigned["api"])
+            website = self.managed_website(ingress=replace(self.website_ingress, hostname=assigned["website"]))
+            group = self.group(management_ingress=replace(self.management_ingress, hostname=assigned["management"]))
+            value = self.installation(group, ingress=api, website=website)
+            before = self.graph(value)
+            with patch.object(names, "uuid4", side_effect=AssertionError("identity regenerated")):
+                self.assertEqual(names.reopen_child_names(binding), assignment)
+                self.assertEqual(self.graph(replace(value)), before)
+                updated = self.graph(replace(value, website=replace(website,
+                    image=replace(website.image, digest="sha256:" + "d" * 64))))
+            self.assertEqual(updated.public_ingresses, before.public_ingresses)
+            self.assertEqual(self.receiver(updated.node(value.website_node_id)), self.website_control)
+            self.assertEqual(updated.node(value.website_node_id).configuration_artifacts,
+                before.node(value.website_node_id).configuration_artifacts)
+            self.assertEqual(updated.node(value.website_node_id).non_secret_environment()["CPK_WEB_UPSTREAM"],
+                "https://" + assigned["api"])
 
     def test_cross_wired_connector_receiver_is_refused(self):
         first, second, third = self.controls

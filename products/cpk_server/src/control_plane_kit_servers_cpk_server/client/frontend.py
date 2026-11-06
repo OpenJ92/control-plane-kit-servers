@@ -7,6 +7,7 @@ workspace/host isolation are reviewed by the caller before public submission.
 
 from __future__ import annotations
 
+from dataclasses import replace
 import hashlib
 import ipaddress
 import json
@@ -17,6 +18,7 @@ from control_plane_kit_core.algebra import (
     BlockSockets, DeploymentTopology, DockerRuntime, ProviderSocket,
 )
 from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
+from control_plane_kit_core.configuration import ConfigurationArtifact
 from control_plane_kit_core.products import (
     ContainerServerProduct, OciImageReference, ProductDescriptorCodec,
     ProductDescriptorDocument, ProductIdentity, ProductInstanceConfiguration,
@@ -90,14 +92,36 @@ def frontend_product(
         public_environment=(PublicStaticEnvironmentBinding("CPK_WEB_UPSTREAM", upstream),
                             PublicStaticEnvironmentBinding("PORT", str(port))),
     )
+    return _frontend_value(image, contract, managed=False)
+
+
+def managed_frontend_product(
+    image: OciImageReference, *, upstream: str, control_configuration: ConfigurationArtifact,
+) -> ContainerServerProduct:
+    """Describe the managed website with a fixed visitor port and exact receiver.
+
+    The caller qualifies the managed image separately. This public receiver
+    configuration conveys verification material, never customer credentials.
+    """
+    from control_plane_kit_servers_website_server.managed import source_runtime_contract
+
+    serving = frontend_product(image, upstream=upstream)
+    managed = source_runtime_contract(control_configuration)
+    contract = replace(managed, public_environment=(
+        *managed.public_environment, *serving.runtime_contract.public_environment))
+    return _frontend_value(image, contract, managed=True)
+
+
+def _frontend_value(image, contract, *, managed):
     material = {"image": image.descriptor(),
                 "runtime_contract": ProductRuntimeContractCodec().encode(contract)}
     digest = hashlib.sha256(json.dumps(material, sort_keys=True, separators=(",", ":"),
                                        ensure_ascii=True, allow_nan=False).encode("ascii")).hexdigest()
     return ContainerServerProduct(
-        ProductIdentity("control-plane-kit-web", f"website-{digest}", 1), image, contract,
+        ProductIdentity("control-plane-kit-web", f"website-{'managed-' if managed else ''}{digest}", 1), image, contract,
         display_name="CPK website",
-        description="Topology viewer and plan approval website. Readiness is unverified.",
+        description=("Topology viewer and plan approval website with signed management health."
+                     if managed else "Topology viewer and plan approval website. Readiness is unverified."),
     )
 
 
