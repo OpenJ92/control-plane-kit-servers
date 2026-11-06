@@ -201,3 +201,11 @@ then invokes the explicitly named existing diagnostic unittest module with
 networking disabled and no daemon mount. It exits with that result before the
 ordinary default suite/runtime stages. Normal no-argument collection/flow is
 unchanged. This is a synthetic focused proof, not a full gate or apply replay.
+
+The separately authorized `--receiver-reintroduction-only` retains that same
+preamble/build and synthetic module check, then selects only the existing owning
+CPK smoke's receiver-reintroduction path. It uses the isolated default image tag
+`control-plane-kit-servers-reintroduction-test:local`. Exact one argument is
+required; default full behavior and collection remain unchanged. The owning
+smoke retains real fixture prerequisites, public client and exact cleanup. This
+is a single fresh diagnostic attempt; retries and final acceptance are separate.

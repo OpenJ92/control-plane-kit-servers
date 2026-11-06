@@ -116,3 +116,21 @@ Final review correction: independently remove and verify absence of the two
 owned bearer-header files before retaining public evidence on helper uncertainty.
 Unlink/absence failure stays a fixed failed cleanup result; header contents are
 never printed. Other independently owned runtime cleanup still runs first.
+
+#387's separate diagnostic branch adds exactly `--receiver-reintroduction-only`.
+The owning test.sh retains its normal policy/integrity/build path and requires
+the 40-test synthetic diagnostic green before entering this selector. The
+selector admits the existing local daemon/controller and cached Postgres, then
+uses the same factored network/Postgres setup and exact Docker scenario launcher
+and cleanup as default mode. It runs only the existing receiver-reintroduction
+scenario, including initial state, removal, expected retired-origin refusal,
+fresh-Y, existing history/replay checks and normal desired-empty teardown.
+It does not build/start the unrelated CPK source server or invoke other smokes.
+Fresh workspace/schema/provider state and immutable input qualification remain
+owned by the existing witness. No user credentials or retained resource enters.
+Selected mode refuses missing cached Postgres rather than pulling, records
+network allocation before cleanup can remove it, and independently verifies
+Postgres and network absence after existing cleanup. Witness/managed-resource
+absence remains the existing exact proof. Default mode retains its sequence,
+pull behavior and final residue audit. No default assertion or phase is skipped.
+One invocation is a bounded diagnostic, not full gate or #387 acceptance.

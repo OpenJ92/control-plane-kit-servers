@@ -15,6 +15,11 @@ case "${1:-}" in
     FOCUSED_EXECUTE_EVIDENCE=1
     IMAGE="${CPK_SERVERS_TEST_IMAGE:-control-plane-kit-servers-execute-evidence-test:local}"
     ;;
+  --receiver-reintroduction-only)
+    [ "$#" = 1 ] || invalid_test_arguments
+    FOCUSED_EXECUTE_EVIDENCE=2
+    IMAGE="${CPK_SERVERS_TEST_IMAGE:-control-plane-kit-servers-reintroduction-test:local}"
+    ;;
   --postgres-release-tests|--postgres-published-image|--postgres-source-image)
     exec sh scripts/postgres_artifact_shell.sh "$@"
     ;;
@@ -59,10 +64,14 @@ docker run --rm \
     --gate-file test.sh
 
 docker build -f Dockerfile.test -t "$IMAGE" .
-if [ "$FOCUSED_EXECUTE_EVIDENCE" = 1 ]; then
+if [ "$FOCUSED_EXECUTE_EVIDENCE" -ne 0 ]; then
   docker run --rm --network none \
     -e PYTHONPATH=/app/products/cpk_server/tests:/app \
     "$IMAGE" python -m unittest -v test_docker_image_update_ports
+  if [ "$FOCUSED_EXECUTE_EVIDENCE" = 2 ]; then
+    exec env CPK_SERVER_SMOKE_PROFILE=wrapped-source CPK_SERVERS_TEST_IMAGE="$IMAGE" \
+      sh scripts/cpk_server_image_smoke.sh --receiver-reintroduction-only
+  fi
   exit 0
 fi
 docker run --rm "$IMAGE"

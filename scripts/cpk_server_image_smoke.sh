@@ -1,6 +1,14 @@
 #!/bin/sh
 set -eu
 
+REINTRODUCTION_ONLY=0
+WITNESS_NETWORK_CREATED=0
+case "$#:${1:-}" in
+  0:) ;;
+  1:--receiver-reintroduction-only) REINTRODUCTION_ONLY=1 ;;
+  *) echo 'unsupported cpk-server smoke arguments' >&2; exit 2 ;;
+esac
+
 IMAGE="${CPK_SERVER_IMAGE:-localhost/control-plane-kit-servers/cpk-server:local}"
 BUILD_IMAGE="${CPK_SERVER_BUILD_IMAGE:-1}"
 PROFILE="${CPK_SERVER_SMOKE_PROFILE:-wrapped-source}"
@@ -118,7 +126,9 @@ cleanup() {
   if [ -n "$POSTGRES_CONTAINER" ]; then
     docker rm -f "$POSTGRES_CONTAINER" >/dev/null 2>&1 || true
   fi
-  docker network rm "$NETWORK" >/dev/null 2>&1 || true
+  if [ "$REINTRODUCTION_ONLY" = 0 ] || [ "$WITNESS_NETWORK_CREATED" = 1 ]; then
+    docker network rm "$NETWORK" >/dev/null 2>&1 || true
+  fi
   return "$receiver_cleanup_status"
 }
 
@@ -170,8 +180,36 @@ finish() {
       docker logs --tail 40 "$POSTGRES_CONTAINER" >&2 || true
     fi
   fi
+  isolated_postgres="$POSTGRES_CONTAINER"
   cleanup || status=1
   cleanup_control_fixture || status=1
+  if [ "$REINTRODUCTION_ONLY" = 1 ]; then
+    if [ -n "$isolated_postgres" ]; then
+      if observed="$(docker container ls -aq --no-trunc --filter "id=$isolated_postgres")"; then
+        if [ -z "$observed" ]; then
+          echo 'isolated receiver-reintroduction Postgres absence verified'
+        else
+          status=1
+        fi
+      else
+        status=1
+      fi
+    fi
+    if observed="$(docker network ls -q --filter "name=$NETWORK")"; then
+      if [ -z "$observed" ]; then
+        echo 'isolated receiver-reintroduction network absence verified'
+      else
+        status=1
+      fi
+    else
+      status=1
+    fi
+    if [ "$status" = 0 ]; then
+      echo 'isolated receiver-reintroduction test-owned cleanup verified'
+    else
+      echo 'isolated receiver-reintroduction result or cleanup HOLD' >&2
+    fi
+  fi
   exit "$status"
 }
 
@@ -281,8 +319,87 @@ invalid_published_port() {
     exit 1
 }
 
+prepare_docker_witness_runtime() {
+  if [ "$REINTRODUCTION_ONLY" = 1 ]; then
+    [ -z "$(docker network ls -q --filter "name=$NETWORK")" ]
+    docker image inspect postgres:16-alpine >/dev/null
+  fi
+  phase "create owned runtime network"
+  docker network create --label "$LABEL" "$NETWORK" >/dev/null
+  WITNESS_NETWORK_CREATED=1
+
+  phase "start Postgres dependency"
+  POSTGRES_CONTAINER="$(docker run -d \
+    --pull "$WITNESS_POSTGRES_PULL_POLICY" \
+    --label "$LABEL" \
+    --network "$NETWORK" \
+    --network-alias cpk-postgres \
+    -e POSTGRES_DB=cpk \
+    -e POSTGRES_USER=cpk \
+    -e POSTGRES_PASSWORD=cpk \
+    postgres:16-alpine)"
+
+  phase "wait for Postgres semantic readiness"
+  POSTGRES_READY=0
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    if docker exec -e PGPASSWORD=cpk "$POSTGRES_CONTAINER" psql -h 127.0.0.1 -U cpk -d cpk -c 'SELECT 1' >/dev/null 2>&1; then
+      POSTGRES_READY=1
+      break
+    fi
+    sleep 1
+  done
+
+  if [ "$POSTGRES_READY" != "1" ]; then
+    echo "postgres did not become query-ready" >&2
+    exit 1
+  fi
+}
+
+run_public_docker_scenario() {
+  docker_scenario="$1"
+  case "$docker_scenario" in image-update|receiver-reintroduction) ;; *) return 2 ;; esac
+  phase "public Docker $docker_scenario"
+  # The previous phase's cleanup must finish before allocating another record.
+  [ -z "$RECEIVER_RECORDS" ]
+  RECEIVER_NAME="$NETWORK-docker-$docker_scenario"
+  RECEIVER_RECORDS="$(mktemp -d)"
+  [ -z "$(docker container ls -aq --filter "name=^/$RECEIVER_NAME$")" ]
+  . ./scripts/docker_witness_daemon.sh
+  docker_witness_daemon
+  receiver_id="$(docker create --name "$RECEIVER_NAME" \
+    --cidfile "$RECEIVER_RECORDS/container" --label "$LABEL" \
+    --label "org.openj92.cpk.test-run=$NETWORK" --network "$NETWORK" \
+    --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
+    --mount "type=bind,source=$RECEIVER_RECORDS,target=/witness" \
+    -e CPK_RECEIVER_ACCEPTANCE_DATABASE_URL=postgresql://cpk:cpk@cpk-postgres:5432/cpk \
+    -e "CPK_FROZEN_CONTROLLER_IMAGE=$frozen_controller" \
+    -e "CPK_DOCKER_WITNESS_DAEMON=$image_witness_daemon" \
+    -e "CPK_DOCKER_WITNESS_NAME=$RECEIVER_NAME" \
+    -e "CPK_DOCKER_WITNESS_RUN=$NETWORK" -e CPK_DOCKER_WITNESS_RECORDS=/witness \
+    -e PYTHONPATH=/app \
+    -e DOCKER_CONFIG=/tmp/cpk-image-empty-docker-config \
+    "$frozen_controller" python products/cpk_server/tests/live_docker_image_update.py "$docker_scenario")"
+  [ "$receiver_id" = "$(cat "$RECEIVER_RECORDS/container")" ]
+  docker start -a "$receiver_id"
+  [ "$(docker inspect --format '{{.State.ExitCode}}' "$receiver_id")" = 0 ]
+  [ "$(docker inspect --format '{{.Image}}' "$receiver_id")" = "$frozen_controller" ]
+  cleanup_receiver_fixture
+}
+
 trap finish EXIT
 trap 'exit 130' INT TERM
+
+if [ "$REINTRODUCTION_ONLY" = 1 ]; then
+  [ "$PROFILE" = wrapped-source ] || { echo 'isolated witness requires wrapped-source' >&2; exit 2; }
+  WITNESS_POSTGRES_PULL_POLICY=never
+  frozen_controller="$(docker image inspect --format '{{.Id}}' "$CPK_SERVERS_TEST_IMAGE")"
+  . ./scripts/docker_witness_daemon.sh
+  docker_witness_daemon
+  prepare_docker_witness_runtime
+  run_public_docker_scenario receiver-reintroduction
+  exit 0
+fi
+WITNESS_POSTGRES_PULL_POLICY=missing
 
 phase "build product image"
 if [ "$BUILD_IMAGE" = "1" ]; then
@@ -298,33 +415,7 @@ fi
 phase "verify non-root image contract"
 docker inspect "$IMAGE" --format '{{.Config.User}}' | grep -q '^10001$'
 
-phase "create owned runtime network"
-docker network create --label "$LABEL" "$NETWORK" >/dev/null
-
-phase "start Postgres dependency"
-POSTGRES_CONTAINER="$(docker run -d \
-  --label "$LABEL" \
-  --network "$NETWORK" \
-  --network-alias cpk-postgres \
-  -e POSTGRES_DB=cpk \
-  -e POSTGRES_USER=cpk \
-  -e POSTGRES_PASSWORD=cpk \
-  postgres:16-alpine)"
-
-phase "wait for Postgres semantic readiness"
-POSTGRES_READY=0
-for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
-  if docker exec -e PGPASSWORD=cpk "$POSTGRES_CONTAINER" psql -h 127.0.0.1 -U cpk -d cpk -c 'SELECT 1' >/dev/null 2>&1; then
-    POSTGRES_READY=1
-    break
-  fi
-  sleep 1
-done
-
-if [ "$POSTGRES_READY" != "1" ]; then
-  echo "postgres did not become query-ready" >&2
-  exit 1
-fi
+prepare_docker_witness_runtime
 
 # Generate after image/Postgres preparation so the240-second grants cover only
 # startup and the immediate protected reads. No private key leaves the process.
@@ -688,32 +779,7 @@ exec python products/cpk_server/tests/live_unlisted_receiver.py')"
   [ "$(docker image inspect --format '{{.Id}}' "$CPK_SERVERS_TEST_IMAGE")" = "$frozen_controller" ]
   cleanup_receiver_fixture
   for docker_scenario in image-update receiver-reintroduction; do
-  phase "public Docker $docker_scenario"
-  # The previous phase's cleanup must finish before allocating another record.
-  [ -z "$RECEIVER_RECORDS" ]
-  RECEIVER_NAME="$NETWORK-docker-$docker_scenario"
-  RECEIVER_RECORDS="$(mktemp -d)"
-  [ -z "$(docker container ls -aq --filter "name=^/$RECEIVER_NAME$")" ]
-  . ./scripts/docker_witness_daemon.sh
-  docker_witness_daemon
-  receiver_id="$(docker create --name "$RECEIVER_NAME" \
-    --cidfile "$RECEIVER_RECORDS/container" --label "$LABEL" \
-    --label "org.openj92.cpk.test-run=$NETWORK" --network "$NETWORK" \
-    --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
-    --mount "type=bind,source=$RECEIVER_RECORDS,target=/witness" \
-    -e CPK_RECEIVER_ACCEPTANCE_DATABASE_URL=postgresql://cpk:cpk@cpk-postgres:5432/cpk \
-    -e "CPK_FROZEN_CONTROLLER_IMAGE=$frozen_controller" \
-    -e "CPK_DOCKER_WITNESS_DAEMON=$image_witness_daemon" \
-    -e "CPK_DOCKER_WITNESS_NAME=$RECEIVER_NAME" \
-    -e "CPK_DOCKER_WITNESS_RUN=$NETWORK" -e CPK_DOCKER_WITNESS_RECORDS=/witness \
-    -e PYTHONPATH=/app \
-    -e DOCKER_CONFIG=/tmp/cpk-image-empty-docker-config \
-    "$frozen_controller" python products/cpk_server/tests/live_docker_image_update.py "$docker_scenario")"
-  [ "$receiver_id" = "$(cat "$RECEIVER_RECORDS/container")" ]
-  docker start -a "$receiver_id"
-  [ "$(docker inspect --format '{{.State.ExitCode}}' "$receiver_id")" = 0 ]
-  [ "$(docker inspect --format '{{.Image}}' "$receiver_id")" = "$frozen_controller" ]
-  cleanup_receiver_fixture
+    run_public_docker_scenario "$docker_scenario"
   done
 fi
 
