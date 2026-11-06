@@ -79,3 +79,9 @@ detachment, even when earlier candidates are valid. Existing configuration/secre
 volume, foreign-label, network-membership and resource-ID laws remain intact.
 These targets await the reviewed implementation and released owning gate; source
 and runtime cleanup behavior are not changed by adding them.
+
+#387 diagnostic target first adds a causal failure-receipt test: the public
+event/run projection must remain intact while an unavailable same-attempt
+execute discriminator stays explicitly unknown. This checkpoint precedes the
+reporting implementation and is unvalidated; the frozen failedca225825 and its
+hosted/local evidence remain unchanged.

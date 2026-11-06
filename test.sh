@@ -7,7 +7,13 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 
 cd "$ROOT"
 
+FOCUSED_EXECUTE_EVIDENCE=0
+invalid_test_arguments() { echo 'unsupported test arguments' >&2; exit 2; }
 case "${1:-}" in
+  --receiver-execute-evidence-tests)
+    [ "$#" = 1 ] || invalid_test_arguments
+    FOCUSED_EXECUTE_EVIDENCE=1
+    ;;
   --postgres-release-tests|--postgres-published-image|--postgres-source-image)
     exec sh scripts/postgres_artifact_shell.sh "$@"
     ;;
@@ -17,6 +23,8 @@ case "${1:-}" in
   --managed-connector-candidate)
     exec sh scripts/cloudflared_managed_witness.sh "$@"
     ;;
+  '') [ "$#" = 0 ] || invalid_test_arguments ;;
+  *) invalid_test_arguments ;;
 esac
 
 . ./scripts/root_artifact_shell.sh
@@ -50,6 +58,12 @@ docker run --rm \
     --gate-file test.sh
 
 docker build -f Dockerfile.test -t "$IMAGE" .
+if [ "$FOCUSED_EXECUTE_EVIDENCE" = 1 ]; then
+  docker run --rm --network none \
+    -e PYTHONPATH=/app/products/cpk_server/tests:/app \
+    "$IMAGE" python -m unittest -v test_docker_image_update_ports
+  exit 0
+fi
 docker run --rm "$IMAGE"
 docker run --rm "$IMAGE" \
   sh -c 'cd /tmp && python -c "import control_plane_kit_servers; print(\"control-plane-kit-servers import ok\")"'

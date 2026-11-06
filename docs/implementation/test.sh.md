@@ -191,3 +191,11 @@ acquired controller receipt, clean source and fresh receipts; builds one owned
 current-source fixture; uses the same host-bind helper result channel; and stops
 before stop-profile/fatal work. The default full gate remains mandatory for
 composition acceptance and is not shortened by this option.
+
+#387 diagnostic branch adds the explicitly reviewed, exact selector
+`--receiver-execute-evidence-tests`. Invalid/extra arguments refuse before Docker.
+It reuses the normal coordinate/policy/integrity preamble and Dockerfile.test,
+then invokes the explicitly named existing diagnostic unittest module with
+networking disabled and no daemon mount. It exits with that result before the
+ordinary default suite/runtime stages. Normal no-argument collection/flow is
+unchanged. This is a synthetic focused proof, not a full gate or apply replay.

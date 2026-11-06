@@ -112,6 +112,19 @@ def secret_file_request():
 
 
 class DockerImageBoundaryTests(unittest.TestCase):
+    def test_failure_evidence_keeps_unknown_execute_boundary_without_journal(self):
+        result = SimpleNamespace(run_id="run-a",plan_id="plan-a",status="attention-required",
+            execution="unverified",advancement="not-attempted")
+        transport = Mock(failure=None)
+        transport.call.side_effect = [
+            {"items":[],"next_cursor":None},
+            {"items":[{"run_id":"run-a","plan_id":"plan-a","status":"running"}],"next_cursor":None},
+        ]
+        evidence = failed_apply_evidence(transport,"workspace-a",result)
+        self.assertEqual(evidence["docker_image_apply_failure"],"observed")
+        self.assertIn("last_execute_boundary",evidence)
+        self.assertEqual(evidence["last_execute_boundary"]["outcome"],"unknown")
+
     def test_consumer_fixture_declares_initial_use_and_separates_image_and_content(self):
         material = DockerImageMaterial("workspace-a")
         introduced = material.a
