@@ -7,20 +7,63 @@ on:
       - develop
   pull_request:
   workflow_dispatch:
+    inputs:
+      retained_managed_connector:
+        description: Qualify only the fixed retained managed connector digest
+        type: boolean
+        default: false
+      wrapper_artifact_mode:
+        description: Source artifacts or additionally qualify the reviewed private digest tuple
+        type: choice
+        options: [source-built, published-digest]
+        default: source-built
+      hello_a:
+        description: Exact reviewed private Hello A repository digest
+        type: string
+      hello_b:
+        description: Exact reviewed private Hello B repository digest
+        type: string
+      gateway:
+        description: Exact reviewed private gateway repository digest
+        type: string
+      root_artifact_mode:
+        description: Additionally qualify the reviewed current CPK and Secrets pair
+        type: choice
+        options: [source-built, published-digest]
+        default: source-built
+      root_cpk_image:
+        description: Exact reviewed current CPK repository digest
+        type: string
+      root_secrets_image:
+        description: Exact reviewed current Secrets repository digest
+        type: string
+      root_source_revision:
+        description: Reviewed common producer source commit, independently bound to both artifacts
+        type: string
 
 permissions:
   contents: read
   packages: read
 
 concurrency:
-  group: current-package-tests-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: current-package-tests-${{ github.workflow }}-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.retained_managed_connector && '-retained-managed' || '' }}
+  cancel-in-progress: ${{ !(github.event_name == 'workflow_dispatch' && inputs.retained_managed_connector) }}
 
 jobs:
   docker-tests:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.retained_managed_connector) }}
     name: control-plane-kit-servers
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      CPK_WRAPPER_ARTIFACT_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.wrapper_artifact_mode || 'source-built' }}
+      CPK_WRAPPER_HELLO_A: ${{ inputs.hello_a }}
+      CPK_WRAPPER_HELLO_B: ${{ inputs.hello_b }}
+      CPK_WRAPPER_GATEWAY: ${{ inputs.gateway }}
+      CPK_ROOT_ARTIFACT_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.root_artifact_mode || 'source-built' }}
+      CPK_ROOT_CPK_IMAGE: ${{ inputs.root_cpk_image }}
+      CPK_ROOT_SECRETS_IMAGE: ${{ inputs.root_secrets_image }}
+      CPK_ROOT_SOURCE_REVISION: ${{ inputs.root_source_revision }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/login-action@v3
@@ -28,5 +71,133 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Preload fixed public image-update inputs and optional artifact tuple
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Validate the complete root tuple before even daemon inspection.
+          . ./scripts/root_artifact_shell.sh
+          root_artifact_selection
+          records="$(mktemp -d)"
+          trap 'rm -rf -- "$records"' EXIT
+          inputs=products/cpk_server/tests/docker_image_update_images.json
+          jq -e 'keys == ["connector","gateway","hello_a","hello_b","hello_family"] and
+            all(.[]; (.reference | test("^[a-z0-9./-]+@sha256:[0-9a-f]{64}$")) and
+              (.image_id | test("^sha256:[0-9a-f]{64}$")))' "$inputs" >/dev/null
+          mapfile -t references < <(jq -r '.[].reference' "$inputs")
+          optional_references=()
+          for reference in "${references[@]}"; do
+            [[ "$reference" =~ ^(ghcr\.io/openj92/control-plane-kit-servers/(hello-server|cpk-local-gateway)|registry\.k8s\.io/pause)@sha256:[0-9a-f]{64}$ ]]
+          done
+          if [ "$CPK_WRAPPER_ARTIFACT_MODE" = published-digest ]; then
+            [[ "$CPK_WRAPPER_HELLO_A" =~ ^ghcr\.io/openj92/control-plane-kit-servers/hello-server@sha256:[0-9a-f]{64}$ ]]
+            [[ "$CPK_WRAPPER_HELLO_B" =~ ^ghcr\.io/openj92/control-plane-kit-servers/hello-server@sha256:[0-9a-f]{64}$ ]]
+            [[ "$CPK_WRAPPER_GATEWAY" =~ ^ghcr\.io/openj92/control-plane-kit-servers/cpk-local-gateway@sha256:[0-9a-f]{64}$ ]]
+            [[ "$CPK_WRAPPER_HELLO_A" != "$CPK_WRAPPER_HELLO_B" ]]
+            optional_references=("$CPK_WRAPPER_HELLO_A" "$CPK_WRAPPER_HELLO_B" "$CPK_WRAPPER_GATEWAY")
+            references+=("${optional_references[@]}")
+          fi
+          case "$(docker info --format '{{.OSType}}/{{.Architecture}}')" in
+            linux/x86_64|linux/amd64) ;;
+            *) echo 'Artifact qualification requires the released Linux amd64 daemon' >&2; exit 1 ;;
+          esac
+          daemon_id="$(docker info --format '{{.ID}}')"
+          mapfile -t references < <(printf '%s\n' "${references[@]}" | sort -u)
+          for reference in "${references[@]}"; do
+            docker pull --platform linux/amd64 "$reference"
+            [ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$reference")" = linux/amd64 ]
+            docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$reference" | grep -Fx -- "$reference"
+            docker image inspect --format 'wrapper_preload_image_id={{.Id}}' "$reference"
+            docker image inspect "$reference" | jq --arg reference "$reference" '
+              .[0] | {reference: $reference, image:
+                ({Id, RepoDigests, Os, Architecture,
+                  Config: {User: .Config.User, Entrypoint: .Config.Entrypoint,
+                    Labels: ((.Config.Labels // {}) |
+                      with_entries(select(.key == "org.opencontainers.image.revision")))}} +
+                 (if has("Descriptor") then {Descriptor} else {} end))}' \
+              >> "$records/observations.jsonl"
+          done
+          [ "$(docker info --format '{{.ID}}')" = "$daemon_id" ]
+          jq -n --args '$ARGS.positional' "${optional_references[@]}" > "$records/optional.json"
+          jq -s --arg daemon_id "$daemon_id" --slurpfile optional "$records/optional.json" '
+            {daemon_id: $daemon_id, optional_references: $optional[0],
+             image_attrs_by_reference: (reduce .[] as $row ({}; .[$row.reference] = $row.image))}' \
+            "$records/observations.jsonl" > "$records/input.json"
+          docker run --rm --network none \
+            --mount "type=bind,source=$PWD,target=/source,readonly" \
+            --mount "type=bind,source=$records,target=/evidence,readonly" \
+            "${CPK_SERVERS_POLICY_IMAGE:-python:3.14-slim}" \
+            python /source/products/cpk_server/tests/docker_image_update_identity.py /evidence/input.json
+          # Keep the existing fixed/optional Hello tuple's closed input set intact.
+          if [ "$CPK_ROOT_ARTIFACT_MODE" = published-digest ]; then
+            for reference in "$CPK_ROOT_CPK_IMAGE" "$CPK_ROOT_SECRETS_IMAGE"; do
+              [ "$(docker info --format '{{.ID}}')" = "$daemon_id" ]
+              docker pull --platform linux/amd64 "$reference"
+              [ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$reference")" = linux/amd64 ]
+              digests="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$reference")"
+              printf '%s\n' "$digests" | grep -Fx -- "$reference"
+              [ "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$reference")" = "$CPK_ROOT_SOURCE_REVISION" ]
+              case "$reference" in */cpk-server@*) expected_user=10001 ;; */secrets-server@*) expected_user=10006 ;; esac
+              [ "$(docker image inspect --format '{{.Config.User}}' "$reference")" = "$expected_user" ]
+              docker image inspect --format 'root_preload_image_id={{.Id}}' "$reference"
+            done
+            [ "$(docker info --format '{{.ID}}')" = "$daemon_id" ]
+          fi
       - name: Run Docker-first tests
         run: ./test.sh
+  retained-managed-connector:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.retained_managed_connector }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      DOCKER_HOST: unix:///var/run/docker.sock
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Refuse conflicting artifact selections
+        env:
+          WRAPPER_MODE: ${{ inputs.wrapper_artifact_mode }}
+          ROOT_MODE: ${{ inputs.root_artifact_mode }}
+          HELLO_A: ${{ inputs.hello_a }}
+          HELLO_B: ${{ inputs.hello_b }}
+          GATEWAY: ${{ inputs.gateway }}
+          ROOT_CPK: ${{ inputs.root_cpk_image }}
+          ROOT_SECRETS: ${{ inputs.root_secrets_image }}
+          ROOT_SOURCE: ${{ inputs.root_source_revision }}
+        run: |
+          case "$WRAPPER_MODE" in ''|source-built) ;; *) exit 2 ;; esac
+          case "$ROOT_MODE" in ''|source-built) ;; *) exit 2 ;; esac
+          [ -z "$HELLO_A$HELLO_B$GATEWAY$ROOT_CPK$ROOT_SECRETS$ROOT_SOURCE" ]
+      - uses: actions/checkout@v4
+        with:
+          path: orchestration
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: cc1b8d87b7f895cb56153f3daf2e9683fb59bea2
+          path: owning-source
+          persist-credentials: false
+      - name: Admit actual executor before acquisition
+        working-directory: orchestration
+        run: >-
+          python3 -m products.cloudflared_connector.retained_qualification prepare
+          "$GITHUB_WORKSPACE/owning-source"
+          "$RUNNER_TEMP/managed-qualification-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Qualify fixed retained digest through historical owner
+        working-directory: orchestration
+        run: >-
+          python3 -m products.cloudflared_connector.retained_qualification run
+          "$GITHUB_WORKSPACE/owning-source"
+          "$RUNNER_TEMP/managed-qualification-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+      - name: Retain only bounded new qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: retained-managed-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/managed-qualification-${{ github.run_id }}-${{ github.run_attempt }}/result.json
+          retention-days: 30
+          if-no-files-found: error

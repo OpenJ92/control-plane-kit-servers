@@ -231,8 +231,9 @@ class HttpMultiplexerProductTests(unittest.TestCase):
             PRODUCT_SRC / "control_plane_kit_servers_http_multiplexer" / "server.py"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("MULTIPLEXER_PRIMARY_URL", source)
-        self.assertIn("MULTIPLEXER_OBSERVER_A_URL", source)
+        configuration_source = (PRODUCT_SRC / "control_plane_kit_servers_http_multiplexer" / "configuration.py").read_text(encoding="utf-8")
+        self.assertIn("MULTIPLEXER_PRIMARY_URL", configuration_source)
+        self.assertIn("MULTIPLEXER_OBSERVER_A_URL", configuration_source)
         self.assertIn("MAX_RESPONSE_BYTES", source)
         self.assertIn("MAX_OBSERVER_RESPONSE_BYTES", source)
         self.assertIn("NoRedirects", source)

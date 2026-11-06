@@ -27,6 +27,7 @@ from control_plane_kit_core.products import (
 )
 from control_plane_kit_core.runtime_authority import RuntimeAuthorityReference
 from control_plane_kit_core.secrets import SecretEnvironmentDelivery, SecretReference, SecretUseIntent
+from control_plane_kit_core.secret_selections import author_secret_selections
 from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC, DeploymentGraph, compile_topology
 from control_plane_kit_core.verification import HttpCheck, VerificationContract
 
@@ -115,10 +116,12 @@ def _graph(
     )))
     if connector_id is not None:
         connector = graph.node(connector_id)
-        graph = graph.update_node(replace(connector, secret_deliveries=(
+        deliveries = (
             SecretEnvironmentDelivery("TUNNEL_TOKEN", SecretReference(token_reference),
                                       SecretUseIntent.CLOUDFLARE_TUNNEL_TOKEN),
-        )))
+        )
+        graph = graph.update_node(replace(connector, secret_deliveries=deliveries,
+            secret_selections=author_secret_selections(deliveries, previous=connector.secret_selections)))
     for node in nodes:
         value = graph.node(node["node_id"])
         graph = graph.update_node(replace(value, metadata={

@@ -1,0 +1,51 @@
+{
+   "schemaVersion": 2,
+   "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+   "config": {
+      "mediaType": "application/vnd.docker.container.image.v1+json",
+      "size": 7981,
+      "digest": "sha256:875fe9776eac9a7ecfbcc7c78cc2664f15bece04eaafada6a30c03bad8cc7b0a"
+   },
+   "layers": [
+      {
+         "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+         "size": 30855435,
+         "digest": "sha256:304074f06047f3dee0c586de265e0e27b577930bc80dc7f97f3829b188bc4fb0"
+      },
+      {
+         "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+         "size": 1294052,
+         "digest": "sha256:75b6a36c64a1cf3520fc4b4aae4739d5caa8a6a05c27835a920a61784c9c32f8"
+      },
+      {
+         "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+         "size": 12121637,
+         "digest": "sha256:6912e23eb44595b44dc6d9882b34f305ad6f6e9667cec70b13e5dbc4f8cd97f4"
+      },
+      {
+         "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+         "size": 249,
+         "digest": "sha256:bbc5a12237474ec0b23b5051260d56d6436a24d70d9cad961adebe7a037ed813"
+      },
+      {
+         "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+         "size": 93,
+         "digest": "sha256:900be2137473aeeb782ffb566c02e4ce05fb21cba68c8868e37050aaeeea7aa2"
+      },
+      {
+         "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+         "size": 8965841,
+         "digest": "sha256:825ce71cd76b8de501050c7e0c8c075012d31bdbbe37a8dbdf9be43bf23d5e67"
+      },
+      {
+         "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+         "size": 6471,
+         "digest": "sha256:70a2acf3ede87ced48ac0c623a5390f784d639ecc7545f799d082c73593f9fbc"
+      },
+      {
+         "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+         "size": 9749,
+         "digest": "sha256:56836ae7100d5552a6ca3f3de384ecfcec67774afea9763829b9b874d8901dac"
+      }
+   ]
+}

@@ -1,10 +1,81 @@
 import json
+import os
 from pathlib import Path
 import subprocess
+import tempfile
 import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class DockerWitnessDaemonTests(unittest.TestCase):
+    def preflight(self, endpoint="unix:///var/run/docker.sock", context="default",
+                  daemon="witness-daemon", **overrides):
+        environment = {key: value for key, value in os.environ.items()
+                       if not key.startswith("DOCKER_")}
+        environment.update(WITNESS_ENDPOINT=endpoint, WITNESS_CONTEXT=context,
+                           WITNESS_DAEMON=daemon, **overrides)
+        with tempfile.TemporaryDirectory() as directory:
+            calls = Path(directory) / "calls"
+            environment["WITNESS_CALLS"] = str(calls)
+            result = subprocess.run(
+                ["sh", "-ec", '''
+docker() {
+    printf '%s\n' "$*" >> "$WITNESS_CALLS"
+    case "$*" in
+      'context show') printf '%s\n' "$WITNESS_CONTEXT" ;;
+      "context inspect $WITNESS_CONTEXT --format {{.Endpoints.docker.Host}}")
+        printf '%s\n' "$WITNESS_ENDPOINT" ;;
+      'info --format {{.ID}}') printf '%s\n' "$WITNESS_DAEMON" ;;
+      *) return 1 ;;
+    esac
+}
+. "$1"
+docker_witness_daemon
+printf '%s\n' "$DOCKER_CONTEXT" "$image_witness_daemon"
+''', "witness-test", str(ROOT / "scripts/docker_witness_daemon.sh")],
+                env=environment, text=True, capture_output=True, check=False,
+            )
+            return result, calls.read_text() if calls.exists() else ""
+
+    def test_linux_and_desktop_contexts_preserve_daemon_identity(self):
+        for context, endpoint in (
+            ("default", "unix:///var/run/docker.sock"),
+            ("desktop-linux", "unix:///Users/test/.docker/run/docker.sock"),
+        ):
+            with self.subTest(context=context):
+                result, calls = self.preflight(endpoint, context, DOCKER_CONTEXT=context)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, f"{context}\nwitness-daemon\n")
+                self.assertIn(f"context inspect {context} --format", calls)
+                self.assertIn("info --format {{.ID}}", calls)
+
+    def test_remote_and_missing_endpoints_refuse_before_daemon_read(self):
+        for endpoint in ("tcp://host:2376", "ssh://host", "npipe:////./pipe/docker_engine",
+                         "", "unix:///", "unix://relative"):
+            with self.subTest(endpoint=endpoint):
+                result, calls = self.preflight(endpoint)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                self.assertNotIn("info --format", calls)
+
+    def test_endpoint_and_tls_overrides_refuse_before_cli_calls(self):
+        for key, value in (("DOCKER_HOST", "unix:///another.sock"),
+                           ("DOCKER_HOST", "tcp://host:2376"), ("DOCKER_TLS", "1"),
+                           ("DOCKER_TLS_VERIFY", "1"), ("DOCKER_CERT_PATH", "/certs")):
+            with self.subTest(key=key, value=value):
+                result, calls = self.preflight(DOCKER_CONTEXT="desktop-linux", **{key: value})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                self.assertEqual(calls, "")
+
+    def test_missing_context_or_daemon_identity_refuses(self):
+        for values in ({"context": ""}, {"daemon": ""}):
+            with self.subTest(values=values):
+                result, _ = self.preflight(**values)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
 
 
 class DockerHarnessTests(unittest.TestCase):
@@ -66,6 +137,7 @@ class DockerHarnessTests(unittest.TestCase):
                 "cloudflared-connector",
                 "postgres-server",
                 "secrets-server",
+                "managed-website",
             ],
         )
         self.assertEqual(
@@ -129,6 +201,12 @@ class DockerHarnessTests(unittest.TestCase):
                     "product_id": "secrets-server",
                     "image_source": "local-dockerfile",
                     "dockerfile": "products/secrets_server/Dockerfile",
+                    "status": "image-definition-present",
+                },
+                {
+                    "product_id": "managed-website",
+                    "image_source": "local-dockerfile",
+                    "dockerfile": "products/website_server/Dockerfile",
                     "status": "image-definition-present",
                 },
             ],

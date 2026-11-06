@@ -26,7 +26,8 @@ PRODUCT_SRC = PRODUCT / "src"
 COORDINATES = json.loads(
     (ROOT / "coordinates" / "server-products.json").read_text(encoding="utf-8")
 )
-CPK_PIN = COORDINATES["upstreams"]["control_plane_kit_commit"]
+CORE_PIN = COORDINATES["upstreams"]["control_plane_kit_core_commit"]
+OPERATIONS_PIN = COORDINATES["upstreams"]["control_plane_kit_operations_commit"]
 INTERPRETERS_PIN = COORDINATES["upstreams"][
     "control_plane_kit_interpreters_commit"
 ]
@@ -46,6 +47,7 @@ CONCRETE_PROVIDER_IMPORT_ROOTS = {
     "kubernetes",
 }
 APPROVED_PROVIDER_FUNCTIONS = {
+    "_SecretVersionMetadataBridge.read_version",
     "_GatewayRotationGenerationAdapter.generate",
     "_GatewayRotationRevocationAdapter.revoke_version",
     "_cloudflare_ingress_interpreter",
@@ -53,6 +55,7 @@ APPROVED_PROVIDER_FUNCTIONS = {
     "_docker_runtime_interpreter",
     "_gateway_probe_dispatcher",
     "_public_dns_resolver",
+    "_provider_bootstrap_registry",
     "_secret_provider_composition",
 }
 
@@ -67,12 +70,12 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
         self.assertIn("control_plane_kit_servers_cpk_server.server", dockerfile)
         self.assertIn(
             "control-plane-kit-core @ "
-            f"https://github.com/OpenJ92/control-plane-kit/archive/{CPK_PIN}.zip",
+            f"https://github.com/OpenJ92/control-plane-kit/archive/{CORE_PIN}.zip",
             dockerfile,
         )
         self.assertIn(
             "control-plane-kit-operations @ "
-            f"https://github.com/OpenJ92/control-plane-kit/archive/{CPK_PIN}.zip",
+            f"https://github.com/OpenJ92/control-plane-kit/archive/{OPERATIONS_PIN}.zip",
             dockerfile,
         )
         self.assertIn(
@@ -81,7 +84,12 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             f"{INTERPRETERS_PIN}.zip",
             dockerfile,
         )
-        self.assertIn("fastapi>=0.115", dockerfile)
+        self.assertIn(
+            "control-plane-kit-server-sdk[fastapi] @ "
+            "https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/"
+            f"{COORDINATES['upstreams']['control_plane_kit_server_sdk_commit']}.zip",
+            dockerfile,
+        )
         self.assertIn("uvicorn>=0.30", dockerfile)
         self.assertIn("COPY products/cpk_server/src ./products/cpk_server/src", dockerfile)
         self.assertNotIn("COPY products/cpk_server ./products/cpk_server", dockerfile)
@@ -105,6 +113,10 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
                 "CPK_CONTROL_AUTH_STATIC_WORKSPACE_GRANTS_JSON",
                 "CPK_PORT",
                 "CPK_RUNTIME_INTERPRETERS",
+                "CPK_MANAGED_HEALTH",
+                "CPK_MANAGED_HEALTH_CONFIGURATION_FILE",
+                "CPK_WORKSPACE_AUTHORITY",
+                "CPK_WORKSPACE_AUTHORITY_CONFIGURATION_FILE",
                 "CPK_INGRESS_INTERPRETERS",
                 "CPK_GATEWAY_PROBE_SIGNER",
                 "CPK_PUBLIC_DNS_RESOLVER_ENDPOINT",
@@ -1480,7 +1492,11 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             self.assertNotIn(forbidden, ready_source)
 
     def test_hosted_process_is_fastapi_over_operations_boundary(self) -> None:
-        source = SERVER_SOURCE.read_text(encoding="utf-8")
+        entrypoint = SERVER_SOURCE.read_text(encoding="utf-8")
+        assembly = SERVER_SOURCE.with_name("operations_application.py").read_text(encoding="utf-8")
+        source = entrypoint + "\n" + assembly
+
+        self.assertIn("OperationsApplicationFactory(", entrypoint)
 
         self.assertIn("from fastapi import FastAPI, Request", source)
         self.assertIn("uvicorn.run", source)
@@ -1511,7 +1527,8 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             source,
         )
         self.assertIn("GatewayProbeCommandService", source)
-        self.assertIn("gateway_probes=_gateway_probe_service", source)
+        self.assertIn("gateway_probe_factory=lambda uow, authorizer: _gateway_probe_service(", entrypoint)
+        self.assertIn("gateway_probes=probes", assembly)
         self.assertNotIn("_gateway_key_rotation_application", source)
         self.assertNotIn("gateway_key_rotations=", source)
         self.assertIn("control_plane_kit_interpreters.docker", source)
@@ -1541,9 +1558,13 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
             and isinstance(node.func, ast.Attribute)
             and isinstance(node.func.value, ast.Name)
             and node.func.value.id == "http_boundary"
-            and node.func.attr == "handle"
+            and node.func.attr == "handle_stream_async"
         ]
         self.assertEqual(len(calls), 1)
+        self.assertTrue(any(
+            isinstance(node, ast.Await) and node.value is calls[0]
+            for node in ast.walk(handlers[0])
+        ))
         keywords = {
             keyword.arg: keyword.value
             for keyword in calls[0].keywords

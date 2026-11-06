@@ -1,12 +1,16 @@
-FROM python:3.12-slim
+FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app/products/hello_server/src \
+    CPK_WRAPPER_CONFIGURATION_FILE=/etc/cpk/hello/control.json \
     HELLO_MESSAGE="Hello, world!" \
     HELLO_COLOR="blue" \
     HELLO_DEPENDENCIES_JSON="[]"
 
 WORKDIR /app
+
+RUN python -m pip install --no-cache-dir \
+    "control-plane-kit-server-sdk[verification] @ https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/220f63169e4bac79653937e97727406255279f7b.zip"
 
 COPY products/hello_server/src ./products/hello_server/src
 

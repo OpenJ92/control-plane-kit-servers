@@ -157,7 +157,9 @@ class InstallationControlAuthTests(unittest.TestCase):
                 files[ref] = material.name
             index.write_text(json.dumps({"schema": "cpk.root-bootstrap.material.v1", "files": files}))
             index.chmod(0o600)
-            self.assertEqual(runtime._material(plan, index), {ref: "synthetic-material" for ref in files})
+            material, intent = runtime._material(plan, index)
+            self.assertIsNone(intent)
+            self.assertEqual(material, {ref: "synthetic-material" for ref in files})
             del files[bearer]
             index.write_text(json.dumps({"schema": "cpk.root-bootstrap.material.v1", "files": files}))
             with self.assertRaises(bootstrap.RootBootstrapError):

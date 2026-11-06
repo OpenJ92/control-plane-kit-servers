@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -16,6 +17,53 @@ from products.cpk_server.tests import live_root_bootstrap as witness
 
 
 class RootBootstrapDiagnosticTests(unittest.TestCase):
+    def test_commissioning_child_failure_reports_only_validated_stage(self):
+        stages = ("imports", "provenance", "plan", "prepare", "decode", "reuse", "complete-plan")
+        for index, stage in enumerate(stages, 1):
+            with self.subTest(stage=stage), contextlib.redirect_stdout(io.StringIO()) as output:
+                child = subprocess.CompletedProcess([], 1,
+                    "\n".join("commissioning-stage:" + item for item in stages[:index]),
+                    "PRIVATE KEY credential=private-value /private/material traceback")
+                with self.assertRaises(AssertionError) as caught:
+                    witness.report_commissioning_driver_result(child)
+                self.assertEqual(str(caught.exception),
+                    "root commissioning actual driver witness failed; stage=" + stage)
+                self.assertEqual(output.getvalue(), "")
+
+    def test_commissioning_child_output_never_escapes_closed_projection(self):
+        sentinel = "PRIVATE KEY credential=private-value /private/material traceback"
+        for stdout in ("", sentinel, "commissioning-stage:" + sentinel,
+                "commissioning-stage:imports\n" + sentinel, "commissioning-stage:reuse",
+                "commissioning-stage:imports\ncommissioning-stage:imports",
+                "root commissioning: actual driver factories and exact reuse PASS"):
+            for code in (0, 1):
+                with self.subTest(stdout=stdout, code=code), \
+                        contextlib.redirect_stdout(io.StringIO()) as output:
+                    child = subprocess.CompletedProcess([], code, stdout, sentinel)
+                    with self.assertRaises(AssertionError) as caught:
+                        witness.report_commissioning_driver_result(child)
+                    self.assertEqual(str(caught.exception),
+                        "root commissioning actual driver witness failed; stage=unknown")
+                    self.assertEqual(output.getvalue(), "")
+
+    def test_commissioning_child_success_requires_zero_exit_and_complete_witness(self):
+        success = "root commissioning: actual driver factories and exact reuse PASS"
+        markers = ["commissioning-stage:" + stage for stage in
+            ("imports", "provenance", "plan", "prepare", "decode", "reuse", "complete-plan")]
+        for code, stdout, accepted in ((0, "\n".join([*markers, success]), True),
+                (1, "\n".join([*markers, success]), False),
+                (0, "\n".join(markers), False)):
+            with self.subTest(code=code, accepted=accepted), \
+                    contextlib.redirect_stdout(io.StringIO()) as output:
+                child = subprocess.CompletedProcess([], code, stdout, "private child stderr")
+                if accepted:
+                    witness.report_commissioning_driver_result(child)
+                    self.assertEqual(output.getvalue(), success + "\n")
+                else:
+                    with self.assertRaises(AssertionError):
+                        witness.report_commissioning_driver_result(child)
+                    self.assertEqual(output.getvalue(), "")
+
     def test_numeric_groups_include_sealed_image_membership_and_declared_socket(self):
         baseline = witness.CPK_IMAGE_ACCOUNT
         expected = baseline.expected_groups(baseline.image_reference, 43210)

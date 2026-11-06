@@ -93,6 +93,99 @@ class CpkServerHttpMcpBoundaryTests(unittest.TestCase):
             "HTTP boundary does not accept the raw ASGI query string",
         )
 
+    def test_configured_dynamic_application_is_retained_on_http_and_mcp(self):
+        """A failed current lookup cannot become a successful static dispatch."""
+        import asyncio
+        from control_plane_kit_operations import CpkServerOperationsApplication
+        from control_plane_kit_operations.workspace_permissions import WorkspaceContextResolver
+        from control_plane_kit_servers_cpk_server import (
+            CpkServerApplicationBoundary, CpkServerHttpProcessBoundary, CpkServerMcpProcessBoundary,
+        )
+
+        composition, services, _, verifier = self._application()
+        attempts = []
+        def unavailable():
+            attempts.append(True)
+            raise RuntimeError("synthetic private store detail")
+        configured = CpkServerOperationsApplication(services, authority_mode="dynamic",
+            workspace_context_resolver=WorkspaceContextResolver(unavailable, installation_id="installation-a"))
+        application = CpkServerApplicationBoundary(configured, verifier)
+        http = CpkServerHttpProcessBoundary(composition, application)
+        mcp = CpkServerMcpProcessBoundary(composition, application)
+        http_arguments = dict(method="GET", path="/workspaces/workspace-a/runs/run-a/events",
+            headers={"Authorization": "Bearer valid-token"}, body=b"")
+        mcp_arguments = dict(headers=self._mcp_read_headers(),
+            message=self._read_events_message({"workspace_id": "workspace-a", "run_id": "run-a"}))
+        for response in (http.handle(**http_arguments), mcp.handle(**mcp_arguments),
+                asyncio.run(http.handle_async(**http_arguments)),
+                asyncio.run(mcp.handle_async(**mcp_arguments))):
+            self.assertEqual(response.status, 503)
+            self.assertNotIn("synthetic private", json.dumps(response.body))
+        self.assertEqual(len(attempts), 4)
+        self.assertTrue(all(not service.requests for service in services.values()))
+
+    def test_administration_read_query_preserves_typed_owner_arguments(self):
+        from control_plane_kit_servers_cpk_server import CpkServerHttpProcessBoundary
+        composition, services, application, _ = self._application()
+        http = CpkServerHttpProcessBoundary(composition, application)
+        target = {"issuer": "issuer-a", "subject_id": "operator-a", "kind": "operator"}
+        encoded = quote_from_bytes(json.dumps(target).encode(), safe="").encode()
+        response = http.handle(method="GET", path="/workspaces/workspace-a/permissions/inspect",
+            headers={"Authorization": "Bearer valid-token"}, body=b"", query_string=b"target=" + encoded)
+        self.assertEqual(response.status, 200)
+        self.assertEqual(services[ControlPlaneServiceRole.AUTHORIZATION].requests[-1].payload,
+                         {"target": target})
+        response = http.handle(method="GET", path="/workspaces/workspace-a/runtime-management/inspect",
+            headers={"Authorization": "Bearer valid-token"}, body=b"",
+            query_string=b"runtime_id=runtime-a&authority_ref=authority-a")
+        self.assertEqual(response.status, 200)
+        self.assertEqual(services[ControlPlaneServiceRole.AUTHORIZATION].requests[-1].payload,
+                         {"runtime_id": "runtime-a", "authority_ref": "authority-a"})
+
+    def test_administration_command_rejects_ambiguous_json_before_service(self):
+        from control_plane_kit_servers_cpk_server import CpkServerHttpProcessBoundary
+        composition, services, application, _ = self._application()
+        http = CpkServerHttpProcessBoundary(composition, application)
+        for body in (b'{"name":"first","name":"second"}', b'{"metadata":{"x":NaN}}',
+                     b'{"metadata":{"x":1e999}}', b'{"metadata":' + b'[' * 65 + b'0' + b']' * 65 + b'}'):
+            with self.subTest(body=body):
+                response = http.handle(method="POST", path="/administration/workspaces",
+                    headers={"Authorization": "Bearer valid-token"}, body=body)
+                self.assertEqual(response.status, 400)
+        self.assertEqual(services[ControlPlaneServiceRole.AUTHORIZATION].requests, [])
+
+    def test_administration_mcp_input_and_both_output_budgets_are_enforced(self):
+        from control_plane_kit_servers_cpk_server import CpkServerHttpProcessBoundary, CpkServerMcpProcessBoundary
+        composition, services, application, _ = self._application()
+        http, mcp = CpkServerHttpProcessBoundary(composition, application), CpkServerMcpProcessBoundary(composition, application)
+        headers = {**self._mcp_read_headers(), "Mcp-Method": "tools/call"}
+        message = {"jsonrpc": "2.0", "id": "admin", "method": "tools/call", "params": {
+            "name": "create_workspace_as_administrator", "arguments": {"name": "x" * 65536}}}
+        self.assertEqual(mcp.handle(headers=headers, message=message).status, 413)
+        service = services[ControlPlaneServiceRole.AUTHORIZATION]
+        self.assertEqual(service.requests, [])
+        message["params"]["arguments"] = {}
+        for result, expected_status in (({"value": "small"}, 200), ({"value": "x" * 65536}, 503)):
+            calls = []
+            def returned_result(request):
+                calls.append((request.route_id, request.surface))
+                return result
+            service.handle = returned_result
+            for surface, invoke in (
+                ("mcp", lambda: mcp.handle(headers=headers, message=message)),
+                ("http", lambda: http.handle(method="POST", path="/administration/workspaces",
+                    headers={"Authorization": "Bearer valid-token"}, body=b"{}")),
+            ):
+                with self.subTest(surface=surface, expected_status=expected_status):
+                    before = len(calls)
+                    response = invoke()
+                    self.assertEqual(calls[before:], [("command.workspace-administration.create", surface)])
+                    self.assertEqual(response.status, expected_status)
+                    if expected_status == 200:
+                        self.assertEqual(response.body["result"] if surface == "mcp" else response.body, result)
+                    else:
+                        self.assertLess(len(json.dumps(response.body).encode()), 1024)
+
     @staticmethod
     def _read_events_message(arguments: dict[str, object]) -> dict[str, object]:
         return {
@@ -160,6 +253,114 @@ class CpkServerHttpMcpBoundaryTests(unittest.TestCase):
         )
         self.assertEqual(http_request.payload, {"limit": 100, "after": cursor})
         self.assertEqual(http_request.principal, mcp_request.principal)
+
+    def test_http_receiver_authoring_query_matches_mcp_application_request(self) -> None:
+        from control_plane_kit_servers_cpk_server import (
+            CpkServerHttpProcessBoundary,
+            CpkServerMcpProcessBoundary,
+        )
+
+        composition, services, application, _ = self._application()
+        http = CpkServerHttpProcessBoundary(composition, application)
+        mcp = CpkServerMcpProcessBoundary(composition, application)
+        self._require_raw_query_boundary(http)
+        expected = {
+            "current_graph_id": "graph-current",
+            "current_realized_projection_id": "projection-current",
+            "desired_graph_id": "graph-desired",
+            "desired_realized_projection_id": "projection-desired",
+            "desired_graph_revision": 7,
+        }
+        pending = {"draft_id": "draft-a", "expected_head_revision": 3}
+        query = b"&".join(
+            name.encode("ascii")
+            + b"="
+            + quote_from_bytes(
+                json.dumps(value, separators=(",", ":")).encode("utf-8"),
+                safe="",
+            ).encode("ascii")
+            for name, value in (("expected", expected), ("pending_draft", pending))
+        )
+
+        http_response = http.handle(
+            method="GET",
+            path="/workspaces/workspace-a/receiver-authoring-context",
+            query_string=query,
+            headers={"Authorization": "Bearer valid-token"},
+            body=b"",
+        )
+        mcp_response = mcp.handle(
+            headers=self._mcp_read_headers(),
+            message={
+                "jsonrpc": "2.0",
+                "id": "receiver-authoring-1",
+                "method": "resources/read",
+                "params": {
+                    "name": "read.receiver-authoring-context",
+                    "arguments": {
+                        "workspace_id": "workspace-a",
+                        "expected": expected,
+                        "pending_draft": pending,
+                    },
+                },
+            },
+        )
+
+        self.assertEqual(http_response.status, 200)
+        self.assertEqual(mcp_response.status, 200)
+        http_request, mcp_request = services[ControlPlaneServiceRole.READS].requests
+        self.assertEqual(http_request.route_id, "read.receiver-authoring-context")
+        self.assertEqual(mcp_request.route_id, "read.receiver-authoring-context")
+        self.assertEqual(
+            {**http_request.path_parameters, **http_request.payload},
+            dict(mcp_request.payload),
+        )
+        self.assertEqual(http_request.payload, {"expected": expected, "pending_draft": pending})
+        self.assertEqual(http_request.principal, mcp_request.principal)
+
+    def test_http_receiver_authoring_query_is_route_local_and_transport_only(self) -> None:
+        from control_plane_kit_servers_cpk_server import CpkServerHttpProcessBoundary
+
+        composition, services, application, _ = self._application()
+        http = CpkServerHttpProcessBoundary(composition, application)
+        self._require_raw_query_boundary(http)
+        authoring_path = "/workspaces/workspace-a/receiver-authoring-context"
+
+        unqualified = http.handle(
+            method="GET",
+            path=authoring_path,
+            query_string=b"",
+            headers={"Authorization": "Bearer valid-token"},
+            body=b"",
+        )
+        semantic_scalar = http.handle(
+            method="GET",
+            path=authoring_path,
+            query_string=b"expected=1",
+            headers={"Authorization": "Bearer valid-token"},
+            body=b"",
+        )
+        cross_route = http.handle(
+            method="GET",
+            path="/workspaces/workspace-a/runs/run-a/events",
+            query_string=b"expected=%7B%7D",
+            headers={"Authorization": "Bearer valid-token"},
+            body=b"",
+        )
+        wrong_authoring_field = http.handle(
+            method="GET",
+            path=authoring_path,
+            query_string=b"limit=1",
+            headers={"Authorization": "Bearer valid-token"},
+            body=b"",
+        )
+
+        self.assertEqual(unqualified.status, 200)
+        self.assertEqual(semantic_scalar.status, 200)
+        self.assertEqual(cross_route.status, 400)
+        self.assertEqual(wrong_authoring_field.status, 400)
+        requests = services[ControlPlaneServiceRole.READS].requests
+        self.assertEqual([request.payload for request in requests], [{}, {"expected": 1}])
 
     def test_http_query_decoder_owns_transport_shape_not_operations_semantics(self) -> None:
         from control_plane_kit_servers_cpk_server import CpkServerHttpProcessBoundary
@@ -314,6 +515,50 @@ class CpkServerHttpMcpBoundaryTests(unittest.TestCase):
                 for forbidden in ("workspace-a", "run-a", "credential", "reflect"):
                     self.assertNotIn(forbidden, rendered)
 
+        self.assertEqual(services[ControlPlaneServiceRole.READS].requests, [])
+
+    def test_http_receiver_authoring_query_rejects_transport_grammar_violations(self) -> None:
+        from control_plane_kit_servers_cpk_server import CpkServerHttpProcessBoundary
+
+        composition, services, application, _ = self._application()
+        http = CpkServerHttpProcessBoundary(composition, application)
+        self._require_raw_query_boundary(http)
+        nested_64: object = "bounded"
+        for _ in range(64):
+            nested_64 = [nested_64]
+        depth_65_query = b"expected=" + quote_from_bytes(
+            json.dumps({"nested": nested_64}, separators=(",", ":")).encode("utf-8"),
+            safe="",
+        ).encode("ascii")
+        cases = (
+            b"expected=%7B%7D&expected=%7B%7D",
+            b"e%78pected=%7B%7D&expected=%7B%7D",
+            b"pending_draft=%7B%7D&pending_draft=%7B%7D",
+            b"pending_%64raft=%7B%7D&pending_draft=%7B%7D",
+            b"unknown=%7B%7D",
+            b"workspace_id=workspace-a",
+            b"expected=%",
+            b"expected=%FF",
+            b"expected=%7B",
+            b"expected=%7B%22key%22%3A1%2C%22key%22%3A2%7D",
+            b"expected=%7B%22value%22%3ANaN%7D",
+            b"expected=%7B%22value%22%3AInfinity%7D",
+            b"expected=%7B%22value%22%3A1e9999%7D",
+            depth_65_query,
+        )
+        for query_string in cases:
+            with self.subTest(query_string=query_string[:80]):
+                response = http.handle(
+                    method="GET",
+                    path="/workspaces/workspace-a/receiver-authoring-context",
+                    query_string=query_string,
+                    headers={"Authorization": "Bearer valid-token"},
+                    body=b"",
+                )
+                self.assertEqual(response.status, 400)
+                self.assertEqual(response.body, {
+                    "error": {"status": 400, "message": "invalid query arguments"}
+                })
         self.assertEqual(services[ControlPlaneServiceRole.READS].requests, [])
 
     def test_http_query_size_body_and_command_fail_before_decode_or_dispatch(self) -> None:

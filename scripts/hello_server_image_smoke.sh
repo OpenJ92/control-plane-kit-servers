@@ -1,8 +1,18 @@
 #!/bin/sh
 set -eu
 
-IMAGE="${HELLO_SERVER_IMAGE:-localhost/control-plane-kit-servers/hello-server:local}"
-BUILD_IMAGE="${HELLO_SERVER_BUILD_IMAGE:-1}"
+# Historical unwrapped image witness, invoked by hello_server_published_image_smoke.sh.
+# Current wrapped source requires configured authenticated SDK health instead.
+IMAGE="${HELLO_SERVER_IMAGE:?select the immutable published Hello image}"
+BUILD_IMAGE="${HELLO_SERVER_BUILD_IMAGE:-0}"
+case "$IMAGE" in
+  *@sha256:*) ;;
+  *) echo 'historical Hello smoke requires an immutable published image' >&2; exit 1 ;;
+esac
+if [ "$BUILD_IMAGE" != "0" ]; then
+  echo 'historical Hello smoke does not build current wrapped source' >&2
+  exit 1
+fi
 CONTAINER="cpk-servers-hello-smoke"
 PROJECT_LABEL="org.openj92.project=control-plane-kit-servers"
 PRODUCT_LABEL="org.openj92.product=hello-server"
@@ -14,10 +24,6 @@ cleanup() {
 
 cleanup
 trap cleanup EXIT INT TERM
-
-if [ "$BUILD_IMAGE" = "1" ]; then
-  docker build -f products/hello_server/Dockerfile -t "$IMAGE" .
-fi
 
 docker run -d \
   --name "$CONTAINER" \

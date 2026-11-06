@@ -5,7 +5,12 @@ ENV PIP_DEFAULT_TIMEOUT=120 \
 
 WORKDIR /app
 
-COPY pyproject.toml README.md AGENTS.md GIT-FLOW.md test.sh Dockerfile.test ./
+# The owning workflow-shell targets use its real jq manifest admission.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends jq \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml README.md AGENTS.md GIT-FLOW.md test.sh bootstrap.sh Dockerfile.test ./
 COPY .github ./.github
 COPY coordination ./coordination
 COPY coordinates ./coordinates
