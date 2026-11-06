@@ -209,3 +209,6 @@ CPK smoke's receiver-reintroduction path. It uses the isolated default image tag
 required; default full behavior and collection remain unchanged. The owning
 smoke retains real fixture prerequisites, public client and exact cleanup. This
 is a single fresh diagnostic attempt; retries and final acceptance are separate.
+The runtime selector captures the build's immutable image ID through --iidfile;
+both the synthetic check and socket-bearing handoff consume that same ID rather
+than independently resolving a mutable tag.

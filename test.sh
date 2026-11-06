@@ -65,7 +65,22 @@ docker run --rm \
     --test-root products \
     --gate-file test.sh
 
-docker build -f Dockerfile.test -t "$IMAGE" .
+if [ "$FOCUSED_EXECUTE_EVIDENCE" = 2 ]; then
+  FOCUSED_BUILD_RECORDS="$(mktemp -d)"
+  cleanup_focused_build_records() {
+    rm -f "$FOCUSED_BUILD_RECORDS/controller" || return 1
+    rmdir "$FOCUSED_BUILD_RECORDS" || return 1
+  }
+  trap cleanup_focused_build_records EXIT
+  trap 'exit 130' INT TERM
+  docker build -f Dockerfile.test --iidfile "$FOCUSED_BUILD_RECORDS/controller" -t "$IMAGE" .
+  IMAGE="$(cat "$FOCUSED_BUILD_RECORDS/controller")"
+  [ -n "$IMAGE" ]
+  cleanup_focused_build_records
+  trap - EXIT INT TERM
+else
+  docker build -f Dockerfile.test -t "$IMAGE" .
+fi
 if [ "$FOCUSED_EXECUTE_EVIDENCE" -ne 0 ]; then
   docker run --rm --network none \
     -e PYTHONPATH=/app/products/cpk_server/tests:/app \
