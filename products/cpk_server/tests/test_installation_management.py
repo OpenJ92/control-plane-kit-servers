@@ -205,12 +205,23 @@ class InstallationManagementTests(unittest.TestCase):
         roles = core.NodeControlGraphReferenceRole
         for field, role, foreign in (("workspace_id", roles.WORKSPACE, "foreign-workspace"),
                 ("runtime_id", roles.RUNTIME, "foreign-runtime"),
-                ("node_id", roles.NODE, "foreign-node"),
-                ("provider_socket_name", roles.PROVIDER_SOCKET, "http")):
+                ("node_id", roles.NODE, "foreign-node")):
             configuration = replace(self.website_control, target=replace(self.website_control.target,
                 **{field: core.NodeControlGraphReference(role, foreign)}))
             with self.subTest(field=field), self.assertRaises(ValueError):
                 self.graph(self.installation(website=self.managed_website(configuration)))
+        # A valid V2 receiver for another socket reaches product admission.
+        # A target/declaration mismatch would already fail inside Core.
+        socket = core.NodeControlGraphReference(roles.PROVIDER_SOCKET, "http")
+        declaration = replace(self.website_control.declaration,
+            surface=replace(self.website_control.declaration.surface, provider_socket_name=socket))
+        configuration = replace(self.website_control, declaration=declaration,
+            target=replace(self.website_control.target, provider_socket_name=socket))
+        artifact = core.ConfigurationArtifact("website-control", self.website_api.CONTROL_PATH,
+            core.ConfigurationMediaType.JSON,
+            core.ReceiverNodeControlConfigurationCodec().encode_bytes(configuration).decode())
+        with self.assertRaisesRegex(ValueError, "^installation website configuration is invalid$"):
+            self.managed_website(managed_control_configuration=artifact)
         duplicate = replace(self.website_control, target=replace(self.website_control.target,
             receiver_id=self.gateway_control.target.receiver_id))
         with self.assertRaises(ValueError):
