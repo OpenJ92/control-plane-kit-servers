@@ -157,8 +157,10 @@ def managed_children(value: DockerCpkInstallation, children):
             control_surfaces=block.spec.control_surfaces)
         configuration = core.ReceiverNodeControlConfigurationCodec().decode_bytes(artifact.content.encode())
         routes.append(_route(value, block.block_id, implementation.document.product.runtime_contract, configuration))
-    # Management of this recipe requires all three selected server receivers.
+    # Require the explicitly selected server receivers, including managed Web.
     required = {value.cpk_node_id, value.secrets_node_id, value.postgres_node_id}
+    if value.website.managed_control_configuration is not None:
+        required.add(value.website_node_id)
     if not required.issubset({route.target.node_id.value for route in routes}):
         raise ValueError(_INVALID)
     gateway = group.gateway_product.product

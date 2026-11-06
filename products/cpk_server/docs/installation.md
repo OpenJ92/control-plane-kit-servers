@@ -199,7 +199,7 @@ New website/profile errors are fixed and omit rejected values. Existing backend
 and API validation retains its original errors and runs first. Website-free
 installations retain their existing external-endpoint and connector admission.
 
-The website reuses `frontend_product`; its image and API upstream determine its
+The ordinary website reuses `frontend_product`; its image and API upstream determine its
 product identity. Existing backend nodes, store edges, configuration, credential
 references and runtime access remain unchanged. The website has no secret
 delivery, provider/admin credential, Docker access, retained data, protected
@@ -207,6 +207,53 @@ control surface or verification check. Empty verification means unverified
 readiness. Public browser operation, image compatibility, restart/history and
 survival after managed Hello teardown still require #225/Web #6 evidence.
 This composition performs no acquisition, durable mutation or cleanup.
+
+### Managed website in a managed child
+
+With an explicit `DockerCpkManagement` group, set
+`DockerCpkWebsite.managed_control_configuration` to the concrete public receiver
+artifact produced by the website product's `control_configuration_artifact`.
+Keep that artifact and the assigned ingress names when reopening the child or
+changing its image. The composer never allocates a receiver identity or name.
+
+```python
+from dataclasses import replace
+from control_plane_kit_servers_website_server.managed import control_configuration_artifact
+
+def select_managed_website(installation, qualified_managed_image, receiver_configuration):
+    website = replace(
+        installation.website,
+        image=qualified_managed_image,
+        managed_control_configuration=control_configuration_artifact(receiver_configuration),
+    )
+    return replace(installation, website=website)
+```
+
+The receiver must name the **parent deployment workspace**, this installation's
+`<installation>-docker` runtime, `<installation>-website` node and `control`
+socket. The website product validates its exact declaration and artifact slot.
+Composition preserves the supplied artifact bytes and provenance. The managed
+product identity includes the immutable image and complete runtime contract,
+including the fixed child API upstream and receiver artifact, and differs from
+the ordinary website identity. Source composition does not qualify an image.
+
+One website node exposes visitor `http:8080` and management `control:8000`.
+Website ingress still targets `http`; only gateway relay routing uses `control`.
+The managed child has three ingress connectors and eight relay targets including
+gateway self. Routes are derived from actual configured receivers, with foreign
+scope, duplicate receiver identities and missing required participants refused.
+The website upstream remains this child's canonical API origin. Omitting the
+artifact preserves the existing ordinary website, including its unverified
+readiness. Supplying it without a management group is refused.
+
+The website receives public verification material only. The combined principal
+verifier document remains delivered solely to child CPK, with administrator,
+initializer and customer credential custody unchanged. The customer workspace
+and graph IDs come from child initialization/readback; they are separate from
+the parent deployment workspace used in receiver context. Neither the browser
+bearer nor any private credential belongs in the website artifact. Source tests
+prove values and routing; qualification, a newly reviewed plan, public child
+login and upstream/browser verification remain separate acceptance work.
 
 ## Explicit managed-health configuration
 

@@ -1,5 +1,13 @@
 # Managed website — first packaging/lifecycle slice
 
+The CPK installation recipe can explicitly select this product through
+`DockerCpkWebsite.managed_control_configuration`. `source_runtime_contract`
+validates the product-owned artifact slot and exact receiver declaration while
+preserving the supplied bytes and provenance. The recipe binds the immutable
+managed image and child API upstream into its product identity and includes the
+website receiver in the gateway's derived routes. Ordinary website selection
+remains available. See [installation composition](../cpk_server/docs/installation.md#managed-website-in-a-managed-child).
+
 Decision: Servers #190 comment6671725082. Source base c029dbaf; reuse selected Web immutable OCI as build input. One container supervises Node's existing /app/server/main.mjs and the SDK management listener, exposing http8080 and control8000 on one website node. No accepted graph is changed.
 
 ## Law cards and source dry run

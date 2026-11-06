@@ -1,8 +1,10 @@
 """First #190 product laws; no live backend or credentials."""
+from dataclasses import replace
 import importlib
 import unittest
 
 import control_plane_kit_core as core
+from control_plane_kit_core.configuration import ConfigurationFileMode, ConfigurationMediaType
 
 
 class ManagedWebsiteTests(unittest.TestCase):
@@ -14,6 +16,42 @@ class ManagedWebsiteTests(unittest.TestCase):
         self.assertEqual({(item.provider_socket, item.container_port) for item in contract.provider_ports},
                          {("http", 8080), ("control", 8000)})
         self.assertEqual(len(contract.control_surfaces), 1)
+
+    def test_source_contract_preserves_concrete_public_artifact_and_provenance(self):
+        import json
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "cloudflared_connector" / "tests"))
+        from managed_control_fixtures import fixture
+        managed = self.module("managed")
+        configuration = replace(fixture().config, declaration=managed.control_declaration())
+        artifact = managed.control_configuration_artifact(configuration)
+        artifact = replace(artifact, content=json.dumps(json.loads(artifact.content), indent=2),
+            source_digest="a" * 64)
+        contract = managed.source_runtime_contract(artifact)
+        self.assertEqual(contract.configuration_requirements, ())
+        self.assertIs(contract.configuration_artifacts[0], artifact)
+        self.assertEqual(replace(contract, configuration_artifacts=(),
+            configuration_requirements=managed.declared_runtime_contract().configuration_requirements),
+            managed.declared_runtime_contract())
+
+    def test_source_contract_refuses_wrong_slot_or_malformed_receiver_without_echo(self):
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "cloudflared_connector" / "tests"))
+        from managed_control_fixtures import fixture
+        managed = self.module("managed")
+        artifact = managed.control_configuration_artifact(replace(fixture().config,
+            declaration=managed.control_declaration()))
+        for changed in (None, replace(artifact, artifact_id="foreign-control"),
+                replace(artifact, target_path="/etc/cpk/foreign.json"),
+                replace(artifact, media_type=ConfigurationMediaType.TEXT),
+                replace(artifact, file_mode=ConfigurationFileMode.OWNER_READ_ONLY),
+                replace(artifact, content='{"unexpected":"sentinel-private-content"}')):
+            with self.subTest(artifact=changed), self.assertRaises(ValueError) as raised:
+                managed.source_runtime_contract(changed)
+            self.assertEqual(str(raised.exception), "Website control configuration is invalid")
+            self.assertIsNone(raised.exception.__context__)
 
     def test_child_exit_and_stop_never_reuse_readiness(self):
         process = self.module("process")
