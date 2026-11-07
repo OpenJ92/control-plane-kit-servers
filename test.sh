@@ -29,6 +29,13 @@ case "${1:-}" in
     HTTP_SAMPLE_SOURCE_OPERATIONS=$3
     HTTP_SAMPLE_SOURCE_INTERPRETERS=$4
     ;;
+  --http-sample-source-assembly)
+    [ "$#" -eq 4 ] || { echo 'pure source assembly requires the three reviewed checkouts' >&2; exit 2; }
+    HTTP_SAMPLE_RELAY_ONLY=4
+    HTTP_SAMPLE_SOURCE_CORE=$2
+    HTTP_SAMPLE_SOURCE_OPERATIONS=$3
+    HTTP_SAMPLE_SOURCE_INTERPRETERS=$4
+    ;;
   --postgres-release-tests|--postgres-published-image|--postgres-source-image)
     exec sh scripts/postgres_artifact_shell.sh "$@"
     ;;
@@ -72,7 +79,11 @@ docker run --rm \
 
 docker build -f Dockerfile.test -t "$IMAGE" .
 if [ "$HTTP_SAMPLE_RELAY_ONLY" != 0 ]; then
-  if [ "$HTTP_SAMPLE_RELAY_ONLY" = 3 ]; then
+  if [ "$HTTP_SAMPLE_RELAY_ONLY" = 4 ]; then
+    sh scripts/http_sample_source_assembly.sh "$IMAGE" "$HTTP_SAMPLE_SOURCE_CORE" \
+      "$HTTP_SAMPLE_SOURCE_OPERATIONS" "$HTTP_SAMPLE_SOURCE_INTERPRETERS"
+    exit 0
+  elif [ "$HTTP_SAMPLE_RELAY_ONLY" = 3 ]; then
     sh scripts/http_sample_source_qualification.sh "$IMAGE" "$HTTP_SAMPLE_SOURCE_CORE" \
       "$HTTP_SAMPLE_SOURCE_OPERATIONS" "$HTTP_SAMPLE_SOURCE_INTERPRETERS"
   elif [ "$HTTP_SAMPLE_RELAY_ONLY" = 2 ]; then
