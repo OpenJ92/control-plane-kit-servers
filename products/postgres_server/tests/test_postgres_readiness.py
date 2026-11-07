@@ -100,8 +100,9 @@ class ReadinessProbeTests(unittest.TestCase):
             "-U", "cpk", "-d", "cpk", "-tA", "--quiet", "-c",
             "SET statement_timeout = '2s'; SELECT 1;",
         ))
-        self.assertEqual(set(invocation.environ), {"PATH", "LANG", "LC_ALL", "PGPASSWORD", "PGCONNECT_TIMEOUT"})
+        self.assertEqual(set(invocation.environ), {"PATH", "LANG", "LC_ALL", "PGPASSWORD", "PGCONNECT_TIMEOUT", "PGREQUIREAUTH"})
         self.assertEqual(invocation.environ["PGPASSWORD"], "SECRET_SENTINEL")
+        self.assertEqual(invocation.environ["PGREQUIREAUTH"], "scram-sha-256")
         self.assertNotIn("SECRET_SENTINEL", " ".join(invocation.argv))
         self.assertNotIn("PGHOST", invocation.environ)
         self.assertNotIn("PGSERVICEFILE", invocation.environ)
