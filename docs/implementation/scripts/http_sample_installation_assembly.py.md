@@ -91,3 +91,66 @@ Meridian independently verified the terminal log hash and accepted this pure
 diagnostic while holding the #163 execution claim. Neither review targets the
 CPK child itself; the other two obligations and commissioning material lifetime
 must be resolved before the actual approved run.
+
+Secrets companion and concrete child-input handoff
+
+This belongs to existing [#388](https://github.com/OpenJ92/control-plane-kit-servers/issues/388)
+and [#378](https://github.com/OpenJ92/control-plane-kit-servers/issues/378), not a
+second demonstration or a global restriction on subset receivers. Their existing
+[product-author trace](https://github.com/OpenJ92/control-plane-kit-servers/issues/388#issuecomment-6693730999)
+and [recipe handoff](https://github.com/OpenJ92/control-plane-kit-servers/issues/378#issuecomment-6693748702)
+already distinguish the two responsibilities. The current source has the generic
+binding/artifact functions; the proposed full-pair author and four-response
+witness are not implemented on this checkpoint and #387 remains held.
+
+The missing public value for `root-a-secrets` is a full
+`HttpVerificationSampleReceiverConfiguration` joined to its independently
+selected existing V2 receiver, not a second receiver or a port-inferred target:
+
+| Input | Exact source-checkpoint requirement |
+| --- | --- |
+| Receiver | Existing `root-workspace` / `root-a-docker` / `root-a-secrets` / `control` target, same receiver ID and declaration identity as its selected control artifact. |
+| Original checks | `live`: `/health/live`; `ready`: `/health/ready`, both named socket `control`, original port8081. Preserve expected200, timeout5s, interval1s, maximum10 attempts and evidence16384 bytes. |
+| Check bindings | Both exact ID/digest pairs, derived with selected Core's `http_verification_check_digest` on the original typed checks. Repeating `ready` or a subset is insufficient for this plan. |
+| Sample verifier | `WORKLOAD_HTTP_VERIFICATION_SAMPLE`, explicitly supplied issuer and Ed25519 public keys, with provenance to the active registered key selection used by Operations. No inferred or fixture key may stand for that selection. |
+| Companion artifact | Product-owned `secrets_http_sample_configuration_artifact(control, configuration)`, ID `secrets-http-samples`, path `/etc/cpk/secrets-server/http-samples.json`, canonical JSON, read-only. |
+| Runtime contract | `secrets_source_runtime_contract(original_control_artifact, sample_artifact=companion)`, preserving original verification, retained data, control and port metadata. |
+| Concrete recipe | #378's actual child-product input must include that document and sample environment selection through ordinary composition/artifact delivery. Merely showing that the composer preserves supplied artifacts is insufficient. |
+| Gateway route | Existing `root-a-secrets` target/declaration at `http://root-a-secrets:8081` remains selected from the actual managed installation routes. Transit public trust belongs to the same gateway target; it does not replace the workload verifier. |
+
+The original product's independent canonical Secrets digest expectations recorded
+and reviewed on #388 are `5911cb3dce76dacd9bdea52d33cc07fb8879fb6318a826cf64653316ae3920b7`
+for live and `9168b2fe37d83e63062a3d22be950b90b3be48062755744ff70879c5c0538b1f`
+for ready. Future code must still derive these from the actual original checks
+using Core's canonical function. Sorted Python JSON with integral float spellings
+is not the wire identity. This handoff adds no independently executed digest or
+four-listener evidence.
+
+#388 owns the pure product full-companion author and separately correlated
+CPK/Secrets live+ready source-listener proof; it does not choose registered trust
+or perform the grandparent run. #378/North own the concrete non-smoke caller and
+approved public trust provenance. Operations1815 owns current key/use authority,
+permission admission and history. The real native sender resolves signing
+material only through the returned grants. The SQL review remains independent
+even when the Secrets companion is supplied; this handoff does not unblock or
+waive it.
+
+Fixture signing material lifetime is a separate test apparatus input. Two pure
+fixtures intentionally discard private material: `complete_input()` deletes its
+commissioning directory before returning public artifacts, and
+`InstallationManagementTests.setUp()` keeps only `AuthoredMaterial().public`.
+Consequently neither its original workload verifiers nor the added fixture
+sample/gateway public keys establish an available signing path. An execution
+fixture must own the matching synthetic private inputs until test completion,
+with the actual resolver/provider boundary, ordinary registrations and grants,
+then verify exact owned cleanup. Keeping those fixture inputs alive is not a
+request for live keys, a production credential change, or evidence that the
+installed service lacks credentials. Public companion authoring must never read
+private material or mint a grant.
+
+Next validation remains the same eight-node graph: author/select the real full
+Secrets companion through those owners, preserve every existing check, recompile
+and report all remaining reviews. Only a genuinely executable and normally
+approved plan may reach the real registered execution and history join. No new
+execution, live/provider call, pin adoption, cleanup of retained resources or
+#387 acceptance is authorized or claimed by this documentation.
