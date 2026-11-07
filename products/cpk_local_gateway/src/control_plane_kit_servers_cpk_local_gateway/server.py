@@ -144,6 +144,7 @@ def create_app(
     *,
     verifier: GatewayProbeVerifier | None = None,
     health_relay=None,
+    http_sample_relay=None,
     control_configuration=None,
     clock=lambda:int(time.time()),
 ) -> FastAPI:
@@ -161,6 +162,13 @@ def create_app(
             health.serving = False
     app = FastAPI(title="cpk-local-gateway", redirect_slashes=False, lifespan=lifespan)
     app.state.gateway_local_health = health
+
+    if http_sample_relay is not None:
+        from .http_sample_relay import GatewayHttpSampleRelay
+        if type(http_sample_relay) is not GatewayHttpSampleRelay:
+            raise ValueError("gateway HTTP sample relay composition is invalid")
+        app.add_api_route("/cpk/verification/http", http_sample_relay.handle, methods=["POST"],
+                          include_in_schema=False)
 
     if health_relay is not None:
         from .health_relay import GatewayHealthRelay

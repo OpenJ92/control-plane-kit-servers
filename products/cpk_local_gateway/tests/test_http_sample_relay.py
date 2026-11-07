@@ -75,7 +75,7 @@ class Fixture:
             effect_id="effect-a", request_fingerprint="c" * 64, check_id="ready",
             check_digest=http_verification_check_digest(self.check), sample_ordinal=1, request_id="request-a")
         route = core.ReceiverManagementRouteBinding("child-route", self.target,
-            self.declaration, "http://configured-child:8081")
+            self.declaration, f"http://configured-child:{port}")
         self.routes = core.ReceiverManagementRoutes(self.gateway, (route,))
 
     def credential(self, *, gateway=False, request=None, purpose=None, audience=None):
@@ -153,6 +153,8 @@ class HttpSampleRelayTests(unittest.IsolatedAsyncioTestCase):
             child_calls = []
             sdk = httpx.ASGITransport(app=fixture.receiver())
             async def child(request):
+                self.assertEqual((request.url.scheme, request.url.host, request.url.port),
+                                 ("http", "configured-child", port))
                 authorization = request.headers.get_list("authorization")
                 child_calls.append((request.method, request.url.path, request.url.query,
                     await request.aread(), authorization == ["Bearer " + workload],
@@ -201,4 +203,34 @@ class HttpSampleRelayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         with self.assertRaises(ValueError):
             HttpVerificationSampleResultCodec(fixture.request, fixture.check).decode_canonical_bytes(response.content)
+        self.assertEqual(calls, [True])
+
+    async def test_outer_failures_are_bounded_unavailability_without_retry(self):
+        fixture = Fixture(8081)
+        cases = (
+            (302, b"peer-secret", {}, 502),
+            (500, b"peer-secret", {}, 502),
+            (200, b"x" * 2049, {"content-type": "application/json"}, 502),
+            (200, b"peer-secret", {"content-type": "application/json", "content-encoding": "br"}, 502),
+        )
+        for status, body, headers, expected in cases:
+            calls = []
+            def child(request):
+                calls.append(True)
+                return httpx.Response(status, stream=httpx.ByteStream(body), headers=headers)
+            with self.subTest(status=status, headers=headers):
+                response = await self.supplied_test_sender(
+                    self.relay(fixture, httpx.MockTransport(child)), fixture, fixture.credential())
+                self.assertEqual(response.status_code, expected)
+                self.assertEqual(response.json(), {"code": "gateway.http-sample.target-failure"})
+                self.assertEqual(response.headers["cache-control"], "no-store")
+                self.assertEqual(calls, [True])
+        calls = []
+        def timeout(request):
+            calls.append(True)
+            raise httpx.ReadTimeout("peer-secret")
+        response = await self.supplied_test_sender(
+            self.relay(fixture, httpx.MockTransport(timeout)), fixture, fixture.credential())
+        self.assertEqual(response.status_code, 504)
+        self.assertEqual(response.json(), {"code": "gateway.http-sample.timeout"})
         self.assertEqual(calls, [True])
