@@ -33,6 +33,19 @@ class PackageGateContractTests(unittest.TestCase):
         ):
             self.assertIn(expected, self.source)
 
+    def test_http_sample_focus_preserves_checks_and_exits_before_full_gate(self) -> None:
+        self.assertIn('--http-sample-relay)', self.source)
+        focus = self.source.index('if [ "$HTTP_SAMPLE_RELAY_ONLY" = 1 ]; then')
+        self.assertLess(self.source.index('scripts/apply_coordinates.py --check'), focus)
+        self.assertLess(self.source.index('--test-root products'), focus)
+        end = self.source.index('docker run --rm "$IMAGE"\n', focus)
+        branch = self.source[focus:end]
+        self.assertIn('--network none', branch)
+        self.assertNotIn('docker.sock', branch)
+        self.assertIn('test_http_sample_relay.py', branch)
+        self.assertIn('test_health_relay.py', branch)
+        self.assertIn('exit 0', branch)
+
     def test_image_smoke_cannot_inherit_a_build_disabling_option(self) -> None:
         self.assertIn(
             "CPK_SERVER_BUILD_IMAGE=1 sh scripts/cpk_server_image_smoke.sh",

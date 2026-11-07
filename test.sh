@@ -7,7 +7,12 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 
 cd "$ROOT"
 
+HTTP_SAMPLE_RELAY_ONLY=0
 case "${1:-}" in
+  --http-sample-relay)
+    [ "$#" -eq 1 ] || { echo 'http sample focus takes no extra arguments' >&2; exit 2; }
+    HTTP_SAMPLE_RELAY_ONLY=1
+    ;;
   --postgres-release-tests|--postgres-published-image|--postgres-source-image)
     exec sh scripts/postgres_artifact_shell.sh "$@"
     ;;
@@ -50,6 +55,13 @@ docker run --rm \
     --gate-file test.sh
 
 docker build -f Dockerfile.test -t "$IMAGE" .
+if [ "$HTTP_SAMPLE_RELAY_ONLY" = 1 ]; then
+  docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
+    "$IMAGE" python -m unittest discover -s products/cpk_local_gateway/tests -p test_http_sample_relay.py -v
+  docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
+    "$IMAGE" python -m unittest discover -s products/cpk_local_gateway/tests -p test_health_relay.py -v
+  exit 0
+fi
 docker run --rm "$IMAGE"
 docker run --rm "$IMAGE" \
   sh -c 'cd /tmp && python -c "import control_plane_kit_servers; print(\"control-plane-kit-servers import ok\")"'
