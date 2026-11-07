@@ -91,3 +91,30 @@ class HttpSampleConfigurationTests(unittest.TestCase):
         app = run.call_args.args[0]
         self.assertIn("/cpk/verification/http", {route.path for route in app.routes})
         self.assertIn("/cpk/health/{health_kind}", {route.path for route in app.routes})
+
+    def covered_receiver(self, *, full=True):
+        from test_http_sample_relay import Fixture
+        from control_plane_kit_core.verification import VerificationContract
+        from control_plane_kit_core.http_verification_sample_installation import HttpVerificationSampleCheckBinding
+        from control_plane_kit_core.http_verification_samples import http_verification_check_digest
+        value = Fixture(8081)
+        ready = value.check
+        live = replace(ready, check_id="live", path="/health/live")
+        declared = (ready, live)
+        configured = replace(value.binding.configuration, checks=tuple(
+            HttpVerificationSampleCheckBinding(check.check_id, http_verification_check_digest(check))
+            for check in declared if full or check is ready))
+        return replace(value.binding, configuration=configured, verification_contract=VerificationContract(declared))
+
+    def test_acquired_checks_preserve_declaration_order_with_exact_installed_coverage(self):
+        from control_plane_kit_servers_cpk_server.http_sample_composition import http_sample_original_checks
+        receiver = self.covered_receiver()
+        self.assertEqual(tuple(entry.check.check_id for entry in receiver.checks), ("live", "ready"))
+        self.assertEqual(tuple(check.check_id for check in http_sample_original_checks(receiver)), ("ready", "live"))
+
+    def test_missing_installed_original_check_refuses_acquisition_projection(self):
+        from control_plane_kit_servers_cpk_server.http_sample_composition import (
+            http_sample_original_checks, HttpSampleCompositionUnavailable,
+        )
+        with self.assertRaises(HttpSampleCompositionUnavailable):
+            http_sample_original_checks(self.covered_receiver(full=False))

@@ -26,6 +26,31 @@ class HttpSampleCompositionUnavailable(ValueError):
     """Fixed refusal when an exact supported source composition is unavailable."""
 
 
+def http_sample_original_checks(receiver):
+    """Require full exact coverage while preserving product declaration order."""
+    from dataclasses import replace
+    from control_plane_kit_core.http_verification_sample_installation import HttpVerificationSampleReceiverBinding
+    from control_plane_kit_core.http_verification_samples import http_verification_check_digest
+    from control_plane_kit_core.verification import HttpCheck
+    try:
+        if type(receiver) is not HttpVerificationSampleReceiverBinding:
+            raise ValueError
+        checked = replace(receiver)
+        original = tuple(checked.verification_contract.checks)
+        installed = tuple(entry.check for entry in checked.checks)
+        selected = {check.check_id: check for check in installed}
+        if (not original or len(selected) != len(installed) or len(installed) != len(original)
+                or len({check.check_id for check in original}) != len(original)
+                or any(type(check) is not HttpCheck or selected.get(check.check_id) != check
+                    or http_verification_check_digest(selected[check.check_id]) != http_verification_check_digest(check)
+                    for check in original)):
+            raise ValueError
+        return original
+    except (ValueError, TypeError, AttributeError, KeyError, RecursionError, OverflowError):
+        failure = HttpSampleCompositionUnavailable("HTTP sample composition is unavailable")
+    raise failure
+
+
 def _operations_types():
     try:
         from control_plane_kit_operations.http_sample_compatibility import (
@@ -208,7 +233,7 @@ class _SampleRuntimeInvocations:
         selected = acquired.compatibility
         return HttpSampleRouteInput(SelectedHttpSampleGateway(acquired.ingress,
             selected.gateway_trust.target, selected.route, acquired.transit_provider_socket_name),
-            tuple(entry.check for entry in selected.receiver.checks),
+            http_sample_original_checks(selected.receiver),
             NodeControlAuthorityContext(selected.desired_graph_id, selected.projection_id), selected.workload_product)
 
 
