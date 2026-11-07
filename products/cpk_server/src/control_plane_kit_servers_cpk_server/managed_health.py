@@ -123,6 +123,10 @@ class ManagedHealthBridge:
                         {RuntimeKind.DOCKER: self.http_sample_registration})
                     if not options:
                         return None
+                    from control_plane_kit_core.planning import compile_http_sample_bootstrap_activity_plan
+                    sample = compile_http_sample_bootstrap_activity_plan(*pair)
+                    if plan != sample or not sample.ready_for_execution:
+                        return None
                     node = pair[1].graph.node(operation.target.node_id)
                     runtime = pair[1].graph.runtimes[node.runtime_id]
                     checks = node.block_spec.verification.checks

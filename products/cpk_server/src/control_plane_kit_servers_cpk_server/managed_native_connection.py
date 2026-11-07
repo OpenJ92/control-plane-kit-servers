@@ -8,6 +8,7 @@ from control_plane_kit_core.planning import WaitForHealthy, resolve_management_o
 from control_plane_kit_core.products import ProductDescriptorCodec, ProductDescriptorDocument, ProductReference
 from control_plane_kit_core.runtime_effects import RuntimeEffectRequest
 from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC
+from control_plane_kit_core.types import RuntimeKind
 from control_plane_kit_interpreters.docker.connector_connection import (
     ConnectorConnectionObservation, ConnectorConnectionOutcome, ConnectorConnectionQualification,
     DockerConnectorConnectionObserver, DockerConnectorConnectionQualifier,
@@ -32,6 +33,19 @@ class DockerManagedNativeConnection:
     provider_clients: DockerRuntimeClientSelector
     product_document: ProductDescriptorDocument
     clock: Callable[[], datetime]
+    http_sample_registration: object | None = None
+
+    def _sample_executor(self, plan, pair):
+        """Translation qualification only; Operations verifies the stored profile."""
+        if self.http_sample_registration is None:
+            return None
+        from .http_sample_composition import http_sample_service_options
+        from control_plane_kit_core.planning import compile_http_sample_bootstrap_activity_plan
+        options = http_sample_service_options({RuntimeKind.DOCKER: self.http_sample_registration})
+        canonical = compile_http_sample_bootstrap_activity_plan(*pair)
+        if not options or plan != canonical or not canonical.ready_for_execution:
+            return None
+        return self.http_sample_registration.adapter.http_sample_executor
 
     def _qualified(self, *, plan, current, desired, registered_products, runtime_authorities):
         try:
@@ -44,11 +58,14 @@ class DockerManagedNativeConnection:
                 return None
             reference = ProductReference.from_document(document)
             pair = _graph_pair(current, desired)
+            sampler = self._sample_executor(plan, pair)
             selected = []
             for activity in plan.activities:
                 operation = activity.operation
                 if type(operation) is WaitForHealthy:
-                    return None
+                    if sampler is None:
+                        return None
+                    continue
                 if not is_native_connection_operation(operation):
                     continue
                 resolved = resolve_management_observation(operation, *pair, expected_operation=operation)
@@ -59,7 +76,8 @@ class DockerManagedNativeConnection:
                     return None
                 qualifier = DockerConnectorConnectionQualifier(reference,
                     document.product.image.execution_reference,
-                    profile=ConnectorConnectionProfile.MANAGED_WRAPPER_V1)
+                    profile=ConnectorConnectionProfile.MANAGED_WRAPPER_V1,
+                    **({"http_sample_executor": sampler} if sampler is not None else {}))
                 mode = qualifier.qualify_shape(activity_id=activity.activity_id, plan=plan,
                     current=pair[0], desired=pair[1], product_document=document,
                     authority_ref=authority.authority_ref)
@@ -159,10 +177,12 @@ class DockerManagedNativeConnection:
         try:
             client = (DockerSdkClient.from_authority(binding.local_client_config,
                 connect_on_init=False) if owned else binding.client)
+            sampler = self._sample_executor(inputs["plan"], (inputs["current"], inputs["desired"]))
             observer = DockerConnectorConnectionObserver(client,
                 ProductReference.from_document(self.product_document),
                 self.product_document.product.image.execution_reference, self.clock,
-                profile=ConnectorConnectionProfile.MANAGED_WRAPPER_V1)
+                profile=ConnectorConnectionProfile.MANAGED_WRAPPER_V1,
+                **({"http_sample_executor": sampler} if sampler is not None else {}))
             # Original-proof/material preflight stays in the observer and runs
             # before its first SDK read acquires the explicit Unix transport.
             return observer.observe(request, **inputs)

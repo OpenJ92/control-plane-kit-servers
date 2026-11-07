@@ -162,11 +162,14 @@ def http_sample_service_options(registrations):
         return {}
     try:
         from control_plane_kit_operations.http_sample_execution import HttpSampleExecutionSupport
+        from control_plane_kit_interpreters.probes.http_sample_check import HttpSampleCheckExecutor
         if (type(registration) is not RuntimeAdapterRegistration
                 or type(support) is not HttpSampleExecutionSupport
                 or registration.invocation_profile != "cpk.semantic-invocations.v1"
                 or not registration.ordinary_verification_invocations
-                or registration.adapter.http_sample_support is not support):
+                or registration.adapter.http_sample_support is not support
+                or type(registration.adapter.http_sample_executor) is not HttpSampleCheckExecutor
+                or registration.adapter.http_sample_executor.http_sample_support is not support):
             raise ValueError
         return {"http_sample_support": support, "http_sample_registration": registration}
     except (ImportError, ValueError, TypeError, AttributeError):
@@ -243,6 +246,10 @@ class HttpSampleRuntimeAdapter:
         if adapter.http_sample_support is not support:
             raise HttpSampleCompositionUnavailable("HTTP sample composition is unavailable")
         self.adapter, self.http_sample_support = adapter, support
+
+    @property
+    def http_sample_executor(self):
+        return self.adapter.http_sample_executor
 
     def _invocations(self, original):
         marker = getattr(original, "http_sample_support", None)

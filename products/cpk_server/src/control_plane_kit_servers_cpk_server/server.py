@@ -1019,7 +1019,14 @@ def _operations_effect_ports(config, provider, *, unit_of_work_factory=None):
                 raise BootstrapConfigurationError("managed health composition is invalid") from None
         health = bootstrap.build(provider.authorized_resolver)
         if sample_support is not None:
-            health = replace(health, http_sample_registration=runtimes[RuntimeKind.DOCKER])
+            registration = runtimes[RuntimeKind.DOCKER]
+            native = health.native
+            if native is not None:
+                from .managed_native_connection import DockerManagedNativeConnection
+                if type(native) is not DockerManagedNativeConnection:
+                    raise BootstrapConfigurationError("HTTP sample execution composition is invalid")
+                native = replace(native, http_sample_registration=registration)
+            health = replace(health, native=native, http_sample_registration=registration)
         decoders = health.decoders
         if dynamic:
             from control_plane_kit_operations.coordinator import ManagedHealthAdapterRegistration
