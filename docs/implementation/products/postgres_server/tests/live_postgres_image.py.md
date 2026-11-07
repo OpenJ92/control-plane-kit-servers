@@ -1,5 +1,13 @@
 Source: [live_postgres_image.py](../../../../../products/postgres_server/tests/live_postgres_image.py).
 
+#2089 adds an authentication qualification after the existing native SQL/listener
+gate on the unmodified shipping fresh-init recipe. It records only a bounded
+selected psql version and success booleans for exact SELECT1 with correct/wrong
+synthetic passwords and a require_auth=none control on the same loopback target,
+plus the signed readiness outcome. It never changes HBA, retained data or a live
+installation. A no-challenge shipping listener is a product HOLD, not readiness
+qualification; no SQL fulfillment or deployment acceptance is inferred.
+
 The original source-built ladder also accepts an explicitly borrowed published
 artifact. Selection precedes fixture creation; all containers use the resolved
 immutable ID. The lifecycle/retained-row checks and native-listener-before-SQL

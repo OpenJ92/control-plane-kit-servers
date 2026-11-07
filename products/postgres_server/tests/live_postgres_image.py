@@ -19,6 +19,7 @@ import docker
 
 from postgres_control_fixtures import fixture, health_token, readiness_only
 from control_plane_kit_servers_postgres_server.configuration import postgres_control_configuration_artifact
+from control_plane_kit_servers_postgres_server.readiness import psql_invocation
 from control_plane_kit_servers_postgres_server.process import (
     LIFECYCLE_PREFIX, ROLE_PREFIX, valid_role_diagnostic,
 )
@@ -459,6 +460,31 @@ def wait_health(container, token: str, expected: str, seconds: float = 45.0) -> 
     raise AssertionError("PostgreSQL readiness did not become " + expected)
 
 
+def qualify_password_authentication(container, token):
+    """Observe the shipping loopback target without changing its HBA or data."""
+    version = container.exec_run(["/usr/local/bin/psql", "--version"], stderr=False)
+    match = re.search(rb"psql \(PostgreSQL\) (16\.[0-9]+)", version.output[:256])
+    require(version.exit_code == 0 and match is not None, "selected PostgreSQL client is not qualified")
+    outcomes = {}
+    for name, password, no_challenge in (("correct", PASSWORD, False),
+            ("wrong", "synthetic-wrong-postgres-password", False), ("no_challenge_control", PASSWORD, True)):
+        invocation = psql_invocation(password.encode())
+        environment = dict(invocation.environ)
+        if no_challenge:
+            environment["PGREQUIREAUTH"] = "none"
+        result = container.exec_run(list(invocation.argv), environment=environment, stderr=False)
+        outcomes[name] = result.exit_code == 0 and result.output == b"1\n"
+    status, body = health(container, token)
+    outcome = body.get("outcome") if status == 200 else "unavailable"
+    require(outcome in {"healthy", "unhealthy", "unknown", "unavailable"}, "signed readiness is malformed")
+    print(json.dumps({"postgres_password_qualification": dict(psql_version=match.group(1).decode(),
+        **outcomes, signed_readiness=outcome)}), flush=True)
+    require(outcomes["correct"] and outcome == "healthy",
+        "shipping fresh PostgreSQL cannot prove password-required SQL readiness")
+    require(not outcomes["wrong"], "shipping PostgreSQL accepted the wrong SQL password")
+    require(not outcomes["no_challenge_control"], "shipping PostgreSQL did not require a password challenge")
+
+
 def wait_exit(container, expected: int, seconds: float = 15.0) -> None:
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
@@ -745,6 +771,7 @@ def exercise(client, image) -> None:
         # Management now starts after the final native listener, following init
         # SQL. UNKNOWN remains a SQL-readiness outcome, not a guaranteed phase.
         wait_query(first)
+        qualify_password_authentication(first, valid)
         wait_health(first, valid, "healthy")
         require(first.attrs["HostConfig"]["Binds"] is not None, "expected fixed mounts")
         require("docker.sock" not in repr(first.attrs["Mounts"]), "Docker socket reached product")
