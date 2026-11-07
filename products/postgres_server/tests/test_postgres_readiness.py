@@ -6,12 +6,13 @@ import unittest
 from unittest.mock import Mock, patch
 
 import control_plane_kit_core as core
+from control_plane_kit_core.secrets import SecretValue
 from control_plane_kit_servers_postgres_server import readiness
 
 
 class PasswordFileTests(unittest.TestCase):
     def test_trailing_lf_delivery_is_not_original_sql_password_byte_equivalence(self):
-        original = core.SecretValue("synthetic-password\n")
+        original = SecretValue("synthetic-password\n")
         with TemporaryDirectory() as directory:
             path = Path(directory) / "password"
             path.write_bytes(original.reveal().encode())
