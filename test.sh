@@ -8,10 +8,16 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 cd "$ROOT"
 
 HTTP_SAMPLE_RELAY_ONLY=0
+HTTP_SAMPLE_SENDER_REPOSITORY=''
 case "${1:-}" in
   --http-sample-relay)
     [ "$#" -eq 1 ] || { echo 'http sample focus takes no extra arguments' >&2; exit 2; }
     HTTP_SAMPLE_RELAY_ONLY=1
+    ;;
+  --http-sample-combined)
+    [ "$#" -eq 2 ] || { echo 'combined sample proof requires the reviewed sender checkout' >&2; exit 2; }
+    HTTP_SAMPLE_RELAY_ONLY=2
+    HTTP_SAMPLE_SENDER_REPOSITORY=$2
     ;;
   --postgres-release-tests|--postgres-published-image|--postgres-source-image)
     exec sh scripts/postgres_artifact_shell.sh "$@"
@@ -55,9 +61,13 @@ docker run --rm \
     --gate-file test.sh
 
 docker build -f Dockerfile.test -t "$IMAGE" .
-if [ "$HTTP_SAMPLE_RELAY_ONLY" = 1 ]; then
-  docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
-    "$IMAGE" python -m unittest discover -s products/cpk_local_gateway/tests -p test_http_sample_relay.py -v
+if [ "$HTTP_SAMPLE_RELAY_ONLY" != 0 ]; then
+  if [ "$HTTP_SAMPLE_RELAY_ONLY" = 2 ]; then
+    sh scripts/http_sample_combined.sh "$IMAGE" "$HTTP_SAMPLE_SENDER_REPOSITORY"
+  else
+    docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
+      "$IMAGE" python -m unittest discover -s products/cpk_local_gateway/tests -p test_http_sample_relay.py -v
+  fi
   docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
     "$IMAGE" python -m unittest discover -s products/cpk_local_gateway/tests -p test_health_relay.py -v
   exit 0

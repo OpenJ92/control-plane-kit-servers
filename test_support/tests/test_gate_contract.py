@@ -35,7 +35,7 @@ class PackageGateContractTests(unittest.TestCase):
 
     def test_http_sample_focus_preserves_checks_and_exits_before_full_gate(self) -> None:
         self.assertIn('--http-sample-relay)', self.source)
-        focus = self.source.index('if [ "$HTTP_SAMPLE_RELAY_ONLY" = 1 ]; then')
+        focus = self.source.index('if [ "$HTTP_SAMPLE_RELAY_ONLY" != 0 ]; then')
         self.assertLess(self.source.index('scripts/apply_coordinates.py --check'), focus)
         self.assertLess(self.source.index('--test-root products'), focus)
         end = self.source.index('docker run --rm "$IMAGE"\n', focus)
@@ -45,6 +45,16 @@ class PackageGateContractTests(unittest.TestCase):
         self.assertIn('test_http_sample_relay.py', branch)
         self.assertIn('test_health_relay.py', branch)
         self.assertIn('exit 0', branch)
+
+    def test_combined_sample_fixture_is_exact_read_only_source(self) -> None:
+        fixture = (self.root / 'scripts/http_sample_combined.sh').read_text()
+        self.assertIn('--http-sample-combined)', self.source)
+        self.assertIn('merge-base --is-ancestor', fixture)
+        self.assertIn('git -C "$sender_repository" archive', fixture)
+        self.assertIn('d5765cdffb4c2a02d4be9b81b401e96c17e4624b', fixture)
+        self.assertIn('--network none --read-only', fixture)
+        self.assertIn('target=/reviewed-sender/src,readonly', fixture)
+        self.assertNotIn('docker.sock', fixture)
 
     def test_image_smoke_cannot_inherit_a_build_disabling_option(self) -> None:
         self.assertIn(

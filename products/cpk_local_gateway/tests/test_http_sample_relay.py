@@ -1,11 +1,15 @@
-"""One real sample hop; supplied test caller is not the production sender."""
+"""One real SDK sample, with an explicit caller fixture and provenance receipt."""
 import asyncio
 from contextlib import contextmanager
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib
 import importlib.util
+from importlib import metadata
+import hashlib
 import json
+import os
+from pathlib import Path
 from threading import Thread
 import unittest
 
@@ -78,14 +82,18 @@ class Fixture:
             self.declaration, f"http://configured-child:{port}")
         self.routes = core.ReceiverManagementRoutes(self.gateway, (route,))
 
-    def credential(self, *, gateway=False, request=None, purpose=None, audience=None):
-        private, public = (self.g_private, self.g_key) if gateway else (self.w_private, self.w_key)
+    def grant(self, *, gateway=False, request=None, purpose=None, audience=None):
+        public = self.g_key if gateway else self.w_key
         role = (core.DelegationKeyPurpose.GATEWAY_HTTP_VERIFICATION_SAMPLE_TRANSIT if gateway
                 else core.DelegationKeyPurpose.WORKLOAD_HTTP_VERIFICATION_SAMPLE)
-        grant = HttpVerificationSampleGrant(request=request or self.request, purpose=purpose or role,
+        return HttpVerificationSampleGrant(request=request or self.request, purpose=purpose or role,
             issuer="controller", key_id=public.key_id,
             audience=audience or ("gateway:workspace-a:gateway" if gateway else self.binding.audience),
             issued_at=145, not_before=145, expires_at=160, jti="gateway-jti" if gateway else "workload-jti")
+
+    def credential(self, *, gateway=False, **options):
+        private, public = (self.g_private, self.g_key) if gateway else (self.w_private, self.w_key)
+        grant = self.grant(gateway=gateway, **options)
         prefix = "GATEWAY-HTTP-VERIFICATION-SAMPLE-TRANSIT" if gateway else "WORKLOAD-HTTP-VERIFICATION-SAMPLE"
         claim = "gateway_http_verification_sample_transit" if gateway else "workload_http_verification_sample"
         return jwt.encode(dict(iss=grant.issuer, aud=grant.audience, iat=grant.issued_at,
@@ -161,14 +169,75 @@ class HttpSampleRelayTests(unittest.IsolatedAsyncioTestCase):
                     all(gateway not in item for item in authorization)))
                 return await sdk.handle_async_request(request)
             app = self.relay(fixture, httpx.MockTransport(child))
-            response = await self.supplied_test_sender(app, fixture, workload, token=gateway)
-            self.assertEqual(response.status_code, 200)
-            self.assertLessEqual(len(response.content), 2048)
-            result = HttpVerificationSampleResultCodec(fixture.request, fixture.check).decode_canonical_bytes(response.content)
+            # Both modes assert the same SDK observation below. The opt-in mode
+            # additionally proves actual reviewed sender dispatch and provenance;
+            # the ordinary mode remains honestly credited as a supplied caller.
+            if "CPK_REVIEWED_HTTP_SAMPLE_SENDER" in os.environ:
+                result = await self.reviewed_sender(app, fixture, workload, gateway)
+            else:
+                response = await self.supplied_test_sender(app, fixture, workload, token=gateway)
+                self.assertEqual(response.status_code, 200)
+                self.assertLessEqual(len(response.content), 2048)
+                result = HttpVerificationSampleResultCodec(fixture.request, fixture.check).decode_canonical_bytes(response.content)
             self.assertIs(result.outcome, VerificationOutcome.PASSED)
             self.assertEqual(result.evidence.status_code, 200)
             self.assertEqual(child_calls, [("GET", "/__control/verification/http", b"", b"", True, True)])
             self.assertEqual(ready_calls, [("/health/ready", None)])
+
+    async def reviewed_sender(self, app, fixture, workload, gateway):
+        revision = "d5765cdffb4c2a02d4be9b81b401e96c17e4624b"
+        self.assertEqual(os.environ["CPK_REVIEWED_HTTP_SAMPLE_SENDER"], revision)
+        api = importlib.import_module("control_plane_kit_interpreters.probes.http_sample_transport")
+        source = Path(api.__file__).resolve()
+        self.assertEqual(str(source), "/reviewed-sender/src/control_plane_kit_interpreters/probes/http_sample_transport.py")
+        self.assertEqual(hashlib.sha256(source.read_bytes()).hexdigest(),
+                         "086144625bf8b30cbd7dbf0277a5db2a0db08ef9f133e9686275e3f284b576c6")
+        from control_plane_kit_core.public_ingress import (
+            IngressAuthorityReference, NamedPublicIngress, PublicIngressTarget,
+        )
+        dns_calls, outer_calls = [], []
+        class PublicResolver:
+            async def resolve(self, hostname):
+                dns_calls.append(hostname)
+                return ("8.8.8.8",)
+        outer = httpx.ASGITransport(app=app)
+        async def forward(request):
+            self.assertEqual((request.method, str(request.url)),
+                             ("POST", "https://8.8.8.8/cpk/verification/http"))
+            self.assertEqual(request.headers["host"], "gateway.example.invalid:443")
+            self.assertEqual(request.extensions["sni_hostname"], "gateway.example.invalid")
+            self.assertEqual(request.headers["authorization"], "Bearer " + gateway)
+            outer_calls.append(True)
+            return await outer.handle_async_request(request)
+        destination = api.SelectedHttpSampleGateway(
+            NamedPublicIngress("management", IngressAuthorityReference("synthetic-authority"),
+                PublicIngressTarget("gateway", "transit"), "connector", "gateway.example.invalid"),
+            fixture.gateway, fixture.routes.targets[0], "transit")
+        credentials = api.SignedHttpSampleCredentials(gateway.encode("ascii"), workload.encode("ascii"),
+                                                     fixture.grant(gateway=True), fixture.grant())
+        client = api.SignedGatewayHttpSampleClient(clock=lambda: 150,
+            public_resolver=PublicResolver(), transport=httpx.MockTransport(forward))
+        received = await client.dispatch(request=fixture.request, check=fixture.check,
+                                        destination=destination, credentials=credentials)
+        self.assertEqual(received.code.value, "received")
+        self.assertIsNotNone(received.result)
+        self.assertEqual(received.result.request, fixture.request)
+        self.assertEqual(dns_calls, ["gateway.example.invalid"])
+        self.assertEqual(outer_calls, [True])
+        selected = {}
+        for distribution, expected in (
+                ("control-plane-kit-core", "976901c609d950a557ec1e9966f018e8ff6e16aa"),
+                ("control-plane-kit-server-sdk", "d61b374cb2a23d773c31748f47f88169499298b7")):
+            coordinate = json.loads(metadata.distribution(distribution).read_text("direct_url.json"))
+            self.assertIn(expected, coordinate["url"])
+            selected[distribution] = expected
+        print("Combined sample provenance: " + json.dumps(dict(sender_revision=revision,
+            sender_file=str(source), selected=selected, public_dns="injected-public-answer",
+            outer="ASGI injection after public address validation; Host/SNI asserted",
+            child="configured HTTP origin asserted, ASGI injected real SDK",
+            application="real numeric-loopback ready endpoint; credential-free",
+            result=received.code.value, outer_calls=len(outer_calls)), sort_keys=True))
+        return received.result
 
     async def test_wrong_pair_and_selector_make_zero_child_calls(self):
         fixture = Fixture(8081)
