@@ -117,7 +117,7 @@ def ready_endpoint():
     calls = []
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            calls.append((self.path, self.headers.get("Authorization")))
+            calls.append((self.path, self.headers.get("Authorization") is not None))
             self.send_response(200)
             self.send_header("Content-Length", "5")
             self.end_headers()
@@ -182,7 +182,7 @@ class HttpSampleRelayTests(unittest.IsolatedAsyncioTestCase):
             self.assertIs(result.outcome, VerificationOutcome.PASSED)
             self.assertEqual(result.evidence.status_code, 200)
             self.assertEqual(child_calls, [("GET", "/__control/verification/http", b"", b"", True, True)])
-            self.assertEqual(ready_calls, [("/health/ready", None)])
+            self.assertEqual(ready_calls, [("/health/ready", False)])
 
     async def reviewed_sender(self, app, fixture, workload, gateway):
         revision = "d5765cdffb4c2a02d4be9b81b401e96c17e4624b"
@@ -206,7 +206,8 @@ class HttpSampleRelayTests(unittest.IsolatedAsyncioTestCase):
                              ("POST", "https://8.8.8.8/cpk/verification/http"))
             self.assertEqual(request.headers["host"], "gateway.example.invalid:443")
             self.assertEqual(request.extensions["sni_hostname"], "gateway.example.invalid")
-            self.assertEqual(request.headers["authorization"], "Bearer " + gateway)
+            self.assertTrue(request.headers.get("authorization") == "Bearer " + gateway,
+                            "outer transit bearer recipient differs")
             outer_calls.append(True)
             return await outer.handle_async_request(request)
         destination = api.SelectedHttpSampleGateway(
