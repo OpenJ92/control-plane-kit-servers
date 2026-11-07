@@ -1,22 +1,25 @@
 """#181 acceptance through the existing isolated public Operations driver.
 
-This is a prepared witness, not a completed receipt. Its caller must supply the
+This authenticated command-service fixture injects principals; it does not
+exercise an external HTTP/ingress transport. It is a prepared witness, not a
+completed receipt. Its caller must supply the
 genuine compatible Operations factory/authority and actual acquired route plus
 the real sender/gateway/SDK fixture. It never creates a successful run, returned
 invocation, permission row, observation or history entry directly.
 """
 from control_plane_kit_core.operations import ControlPlaneServiceRole
 from control_plane_kit_core.http_verification_samples import (
-    HttpVerificationSampleRequest, http_verification_check_digest,
+    HttpVerificationSampleRequest, HttpVerificationSampleResult, http_verification_check_digest,
 )
+from control_plane_kit_core.verification import VerificationOutcome
 
 
 async def accept_http_sample_execution(driver, *, desired_graph, approver_principal,
                                        child_node_id, original_checks, exchanges, ready_calls):
     """Execute one fresh approved deployment and join normal public history.
 
-    exchanges contains only admitted Core request values captured at the real
-    SDK boundary, without credentials. ready_calls records path/auth-present
+    exchanges contains decoded Core results captured from the real SDK reply,
+    including their exact Core requests, without credentials. ready_calls records path/auth-present
     booleans from the real loopback listener. Other provider effects in the
     isolated owning fixture must be identified separately in its final receipt.
     """
@@ -32,14 +35,20 @@ async def accept_http_sample_execution(driver, *, desired_graph, approver_princi
     # second actual SDK sample or loopback ready call cannot hide behind a green
     # overall run, generic endpoint_context, or separate component receipts.
     assert len(exchanges) == len(original_checks), "original check coverage or sample count differs"
-    assert tuple(request.check_id for request in exchanges) == tuple(check.check_id for check in original_checks)
-    for sampled, original in zip(exchanges, original_checks):
+    assert all(type(result) is HttpVerificationSampleResult for result in exchanges)
+    requests = tuple(result.request for result in exchanges)
+    assert tuple(request.check_id for request in requests) == tuple(check.check_id for check in original_checks)
+    for result, sampled, original in zip(exchanges, requests, original_checks):
+        assert result.outcome is VerificationOutcome.PASSED
         assert type(sampled) is HttpVerificationSampleRequest
         assert sampled.check_digest == http_verification_check_digest(original)
         assert sampled.sample_ordinal == 1
-    ready = [request for request in exchanges if request.check_id == "ready"]
+        assert sampled.target.node_id.value == child_node_id
+    ready = [result for result in exchanges if result.request.check_id == "ready"]
     assert len(ready) == 1, "expected exactly one actual signed ready sample"
-    request, = ready
+    ready_result, = ready
+    request = ready_result.request
+    assert ready_result.evidence.status_code == 200
     assert type(request) is HttpVerificationSampleRequest
     assert request.target.workspace_id.value == driver.workspace_id
     assert request.target.node_id.value == child_node_id
@@ -61,7 +70,7 @@ async def accept_http_sample_execution(driver, *, desired_graph, approver_princi
             answer["node_id"], answer["check_id"], answer["http_status"])
         == (request.run_id, request.activity_id, request.outer_attempt, request.effect_id,
             child_node_id, "ready", 200)), "public result correlation differs from the actual SDK exchange"
-    assert row["probe_outcome"] == "passed"
+    assert (row["status"], row["probe_outcome"]) == ("verified", "healthy")
     assert row["graph_id"] == accepted.plan["desired_graph_id"]
 
     runs = accepted.history["runs"]["items"]
@@ -75,5 +84,7 @@ async def accept_http_sample_execution(driver, *, desired_graph, approver_princi
     return {"plan_id": accepted.plan["plan_id"], "run_id": request.run_id,
         "activity_id": request.activity_id, "attempt": request.outer_attempt,
         "effect_id": request.effect_id, "child_node_id": child_node_id,
-        "check_id": "ready", "http_status": 200, "sample_count": len(exchanges), "ready_sample_count": 1,
+        "check_id": "ready", "sdk_ready_outcome": "passed", "http_status": 200,
+        "public_status": row["status"], "public_probe_outcome": row["probe_outcome"],
+        "sample_count": len(exchanges), "ready_sample_count": 1,
         "ready_probe_count": 1, "history_surface": "read.observed-state + read.plan-runs + read.run-events"}
