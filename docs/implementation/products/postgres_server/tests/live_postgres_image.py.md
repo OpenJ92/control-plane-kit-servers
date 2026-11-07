@@ -1,5 +1,17 @@
 Source: [live_postgres_image.py](../../../../../products/postgres_server/tests/live_postgres_image.py).
 
+#390 sets the shipping empty-data initdb host policy to SCRAM. The same fresh
+fixture retains its local-socket initializer/sentinel checks and repeats the
+TCP correct/wrong/no-challenge probes plus signed readiness after restart.
+A separate fresh volume overrides only initdb host auth to trust; its independent
+no-challenge SELECT1 must succeed before forced-SCRAM and signed UNKNOWN prove
+refusal. Neither fixture modifies existing data or a retained installation.
+The supported exact-password claim is a nonempty UTF-8 value within the existing
+file bound, with no NUL, CR or LF. File-format trailing LF bytes are stripped;
+the positive fixture includes one. A logical original credential ending in LF
+is therefore not byte-equivalent, as the unit counterexample proves. Embedded
+newline/CR are outside this qualification; the existing parser is unchanged.
+
 #2089 adds an authentication qualification after the existing native SQL/listener
 gate on the unmodified shipping fresh-init recipe. It records only a bounded
 selected psql version and success booleans for exact SELECT1 with correct/wrong

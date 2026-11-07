@@ -460,7 +460,7 @@ def wait_health(container, token: str, expected: str, seconds: float = 45.0) -> 
     raise AssertionError("PostgreSQL readiness did not become " + expected)
 
 
-def qualify_password_authentication(container, token):
+def qualify_password_authentication(container, token, *, phase="fresh", authenticated=True):
     """Observe the shipping loopback target without changing its HBA or data."""
     version = container.exec_run(["/usr/local/bin/psql", "--version"], stderr=False)
     match = re.search(rb"psql \(PostgreSQL\) (16\.[0-9]+)", version.output[:256])
@@ -477,8 +477,13 @@ def qualify_password_authentication(container, token):
     status, body = health(container, token)
     outcome = body.get("outcome") if status == 200 else "unavailable"
     require(outcome in {"healthy", "unhealthy", "unknown", "unavailable"}, "signed readiness is malformed")
-    print(json.dumps({"postgres_password_qualification": dict(psql_version=match.group(1).decode(),
+    print(json.dumps({"postgres_password_qualification": dict(phase=phase, psql_version=match.group(1).decode(),
         **outcomes, signed_readiness=outcome)}), flush=True)
+    if not authenticated:
+        require(outcomes["no_challenge_control"], "no-challenge SQL listener was not independently reachable")
+        require(not outcomes["correct"] and not outcomes["wrong"] and outcome == "unknown",
+            "no-challenge listener produced authenticated readiness")
+        return
     require(outcomes["correct"] and outcome == "healthy",
         "shipping fresh PostgreSQL cannot prove password-required SQL readiness")
     require(not outcomes["wrong"], "shipping PostgreSQL accepted the wrong SQL password")
@@ -509,9 +514,11 @@ def mounts(data_source: str, *, init: bool) -> dict[str, dict[str, str]]:
     return values
 
 
-def create(client, image_id: str, network_name: str, volume_name: str, suffix: str, *, init: bool = False, no_copy: bool = False):
+def create(client, image_id: str, network_name: str, volume_name: str, suffix: str, *, init: bool = False, no_copy: bool = False, trust_fixture: bool = False):
     bindings = mounts(volume_name, init=init)
     options = {}
+    if trust_fixture:
+        options["environment"] = {"POSTGRES_INITDB_ARGS": "--auth-host=trust"}
     if no_copy:
         bindings.pop(volume_name)
         options["mounts"] = [docker.types.Mount(WRONG_OWNER_PATH, volume_name, type="volume", no_copy=True)]
@@ -786,6 +793,7 @@ def exercise(client, image) -> None:
         restarted.start()
         wait_running(restarted)
         wait_query(restarted, observe_native=True)
+        qualify_password_authentication(restarted, valid, phase="restart")
         restarted.exec_run(("python3", "-c", "import os; os.kill(int(open('/var/lib/postgresql/data/postmaster.pid').readline()), 15)"))
         wait_exit(restarted, 1)
         require(PASSWORD.encode() not in restarted.logs(stdout=True, stderr=True), "password reached failure logs")
@@ -811,6 +819,19 @@ def exercise(client, image) -> None:
         wait_exit(recovered, 0)
         recovered.remove()
         containers.remove(recovered)
+
+        trust_data = client.volumes.create(name=f"{RUN}-trust-data", labels=LABELS)
+        volumes.append(trust_data)
+        trust = create(client, image.id, network.name, trust_data.name, "trust", init=True, trust_fixture=True)
+        containers.append(trust)
+        trust.start()
+        wait_running(trust)
+        wait_query(trust)
+        qualify_password_authentication(trust, valid, phase="no-challenge", authenticated=False)
+        trust.stop(timeout=10)
+        wait_exit(trust, 0)
+        trust.remove()
+        containers.remove(trust)
 
         exercise_wrong_owner(client, image, network.name)
     finally:
