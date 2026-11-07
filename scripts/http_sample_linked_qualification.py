@@ -1,4 +1,4 @@
-"""Actual bridge/connector qualification on an explicitly selected source cohort.
+"""Owning explicit bridge/connector qualification for the selected source cohort.
 
 Pure source selection only: no admitted request, permission row or provider call.
 The existing owning runner selects the immutable newer cohort for these tests.

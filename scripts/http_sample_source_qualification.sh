@@ -32,5 +32,5 @@ printf 'pure qualification source Core=%s Operations=%s Interpreters=%s\n' \
 docker run --rm --network none --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
   --mount "type=bind,source=$owned_source,target=/reviewed-http-sample,readonly" \
   -e PYTHONDONTWRITEBYTECODE=1 \
-  -e PYTHONPATH=/reviewed-http-sample/core/src:/reviewed-http-sample/operations/src:/reviewed-http-sample/interpreters/src \
-  "$image" python -m unittest discover -s products/cpk_server/tests -p test_http_sample_linked_qualification.py -v
+  -e PYTHONPATH=/reviewed-http-sample/core/src:/reviewed-http-sample/operations/src:/reviewed-http-sample/interpreters/src:/app/products/cpk_server/tests:/app/scripts \
+  "$image" python -m unittest http_sample_linked_qualification -v
