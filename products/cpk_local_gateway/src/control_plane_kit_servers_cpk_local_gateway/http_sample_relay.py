@@ -19,6 +19,7 @@ from fastapi.responses import Response
 import httpx
 import rfc8785
 import control_plane_kit_core as core
+from control_plane_kit_core._node_control_public_wire import reference_violation, identifier_violation
 from control_plane_kit_core.http_verification_samples import (
     HttpVerificationSampleRequestCodec, HttpVerificationSampleGrantCodec,
     verify_http_verification_sample_grant,
@@ -116,13 +117,13 @@ class GatewayHttpSampleTrust:
             codec = core.NodeControlReceiverTargetCodec()
             if (type(self.gateway_target) is not core.NodeControlReceiverTarget
                     or codec.decode(codec.encode(self.gateway_target)) != self.gateway_target
-                    or type(self.issuer) is not str or not 1 <= len(self.issuer) <= 128
-                    or not self.issuer.isascii() or not self.issuer.isprintable()
-                    or self.issuer.strip() != self.issuer
+                    or type(self.issuer) is not str or reference_violation(self.issuer) is not None
                     or type(self.public_keys) is not tuple or not 1 <= len(self.public_keys) <= 16):
                 raise ValueError
             for key in self.public_keys:
                 _public_key(key)
+                if identifier_violation(key.key_id) is not None:
+                    raise ValueError
             if (len({key.key_id for key in self.public_keys}) != len(self.public_keys)
                     or len({key.fingerprint_sha256 for key in self.public_keys}) != len(self.public_keys)):
                 raise ValueError

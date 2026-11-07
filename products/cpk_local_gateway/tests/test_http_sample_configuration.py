@@ -49,6 +49,18 @@ class HttpSampleConfigurationTests(unittest.TestCase):
             self.api.gateway_http_sample_source_runtime_contract(
                 *self.value.artifacts, self.api.gateway_http_sample_trust_artifact(other))
 
+    def test_product_trust_uses_core_issuer_reference_and_key_identifier_domains(self):
+        raw = json.loads(self.artifact.content)
+        bad_key = raw["public_keys"][0] | {"key_id": "key with space"}
+        for changes in ({"issuer": "sample controller"}, {"public_keys": [bad_key]}):
+            with self.assertRaises(self.api.GatewayHttpSampleConfigurationError):
+                self.api.decode_gateway_http_sample_trust(json.dumps(raw | changes).encode())
+        long = replace(self.trust, issuer="a" * 129)
+        artifact = self.api.gateway_http_sample_trust_artifact(long)
+        self.assertEqual(self.api.gateway_http_sample_trust_from_artifact(artifact), long)
+        self.assertEqual(self.api.gateway_http_sample_source_runtime_contract(
+            *self.value.artifacts, artifact).configuration_artifacts[-1], artifact)
+
     def test_process_explicit_selection_loads_same_routes_and_trust_without_provider_io(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(self.api, "_read") as read:
             self.assertIsNone(self.api.load_http_sample_relay(self.value.relay, self.value.config))
