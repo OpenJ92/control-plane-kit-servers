@@ -69,6 +69,8 @@ if [ "$HTTP_SAMPLE_RELAY_ONLY" != 0 ]; then
       "$IMAGE" python -m unittest discover -s products/cpk_local_gateway/tests -p test_http_sample_relay.py -v
   fi
   docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
+    "$IMAGE" python -m unittest discover -s products/cpk_local_gateway/tests -p test_http_sample_configuration.py -v
+  docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
     "$IMAGE" python -m unittest discover -s products/cpk_local_gateway/tests -p test_health_relay.py -v
   exit 0
 fi

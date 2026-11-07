@@ -246,15 +246,18 @@ def main() -> int:
     try:
         from .health_relay_startup import load_health_relay
         from .control_configuration import read_gateway_control_configuration
+        from .http_sample_configuration import load_http_sample_relay
         configuration = GatewayConfiguration.from_environment()
         if configuration.port != 8000:
             raise ValueError
         health_relay = load_health_relay()
         control = read_gateway_control_configuration()
+        samples = load_http_sample_relay(health_relay, control)
         fields = ("CPK_GATEWAY_PROBE_VERIFIER", "CPK_GATEWAY_PROBE_VERIFICATION_KEYS_JSON",
                   "CPK_GATEWAY_PROBE_ISSUER", "CPK_GATEWAY_PROBE_AUDIENCE", "CPK_GATEWAY_PROBE_NODE_ID")
         verifier = _verifier_from_environment() if any(name in os.environ for name in fields) else None
-        app = create_app(configuration, verifier=verifier, health_relay=health_relay, control_configuration=control)
+        app = create_app(configuration, verifier=verifier, health_relay=health_relay,
+                         http_sample_relay=samples, control_configuration=control)
     except (ValueError, OSError):
         print("gateway startup configuration is invalid", file=sys.stderr)
         return 2
