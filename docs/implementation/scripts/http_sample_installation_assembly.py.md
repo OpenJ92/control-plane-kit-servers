@@ -154,3 +154,125 @@ and report all remaining reviews. Only a genuinely executable and normally
 approved plan may reach the real registered execution and history join. No new
 execution, live/provider call, pin adoption, cleanup of retained resources or
 #387 acceptance is authorized or claimed by this documentation.
+
+Resumed Secrets slice: test context and source dry run
+
+North released the separate stacked source slice after Jacob extended the shared
+budget to44%. No existing registered-key receipt was found. Public inputs here
+are explicitly synthetic; the later isolated Operations run must register and
+activate matching fixture-owned material through the normal APIs, capture only
+public IDs/fingerprints and compare those to the installed companion before
+prepare/admit. Pure compilation is not registration evidence.
+
+The smallest product interface is
+`secrets_full_http_sample_configuration_artifact(control, public_verifier)`.
+It derives the full original pair from the product's independent checks and
+delegates to the existing generic renderer/binding. It does not select keys,
+register authority, read private material, generate credentials or issue grants.
+The general subset receiver remains valid. No Core/SDK protocol changes are
+needed to author this public value.
+
+Governing law cards:
+
+- Strengthened installation law: existing optional companion preservation, plus
+  both original Secrets IDs/digests, same eight nodes/edges/ingresses and removal
+  of only the Secrets review. Negative: ready-only/missing companion cannot
+  satisfy this selected complete-coverage plan. SQL is independently preserved.
+- New product law: supplied public verifier identity is unchanged; independent
+  original typed checks determine digests and control8081; general subsets stay
+  supported. Invalid/forged inputs and crosswired control refuse with fixed,
+  context-free product errors.
+- New fixture law: held synthetic sample/transit keys match the public artifacts,
+  and original commissioning keys match CPK/Secrets public verifiers until the
+  caller's owned fixture lifetime ends. Cleanup then removes that directory.
+
+Target red runs only the first complete-installation law through the owning
+`--http-sample-source-assembly-red` selector against unchanged assembly. This
+must fail for a missing actual Secrets companion, rather than collection/import
+or a missing helper name. The full selector subsequently runs both installation
+laws, the four product laws and the pure compile report. Neither selector can
+create an approved run or change the retained SQL obligation.
+
+Decision log for the Secrets source slice
+
+- Chosen shape: one pure Secrets full-pair author and ordinary product-document
+  installation, using caller-owned public verifier input. Original metadata
+  remains the source of truth. The fixture retains its own matching signing
+  inputs and an optional caller-owned commissioning directory.
+- Why: the missing fact was the selected companion, not a new receiver or
+  transport. A global full-pair restriction would break supported subsets;
+  hand-written fixture digests would obscure the original product contract.
+- Important shape: `secrets_full_http_sample_configuration_artifact(control,
+  public_verifier)` feeds `secrets_source_runtime_contract(control_artifact,
+  sample_artifact=companion)`, then the unchanged installation composer.
+- Tests: the intended red is the missing actual companion in the complete
+  recipe. Focused target tests verify exact original checks and installed keys;
+  affected existing product/import and installation/SQL-preservation laws are
+  also selected. Both graphs are compared at the same descriptor boundary.
+- Risks/handoff: public fixture trust is not registered authority. Real isolated
+  execution must use normal registrations/activations, then actual owner
+  admission, providers, SDK results and history. SQL is independently held.
+
+Security: no new routes, dependencies, permissions, network exposure or provider
+effects. The author only accepts public input and returns a bounded canonical
+artifact; malformed or crosswired input gets a fixed product error. Synthetic
+private material stays within the owning test process/custody and is never
+logged. No production credentials are read. No key registration is inferred.
+
+Data and operational history: the source slice mutates no Operations state and
+creates no approval, returned invocation, secret use or positive observation.
+Default commissioning-fixture cleanup is unchanged; explicit retained test
+custody belongs to the outer fixture, whose removal is verified. No runtime
+retry, compensation or live cleanup occurred. The independent SQL review still
+prevents execution.
+
+Mathematical design: independent receiver configuration, original verification
+contract and supplied public verifier map to a canonical companion artifact.
+Receiver/declaration, key identity, original check digests and socket/port laws
+survive composition into the same graph. Authority and effects remain beyond
+that pure transformation, in their existing Operations/interpreter owners.
+
+Resumed source receipt
+
+The owning full selector completed with exit0:28 support tests plus34 focused
+and affected regression tests (six new laws and28 existing laws,11.237s for the
+latter group). It compiled the same eight nodes/three ingresses, preserved every
+edge, runtime and original check, and reported exactly one remaining
+`unsupported-change` review: `root-a-postgres`. The Secrets review is gone.
+`plan_ready=false`, Operations commands/provider calls are zero, and
+`completed_run=false`. No approved execution or normal history proof exists.
+
+The installed CPK and Secrets workload-sample verifiers and actual gateway
+sample trust match held synthetic signers. Their issuer/target/key identities
+are checked before signature challenges. Original commissioning files remain
+available inside explicit owned custody and match both original control
+verifier families; outer fixture cleanup removes the custody directory. None
+of those inputs is described as registered authority. Source exports were
+removed, disposable controllers exited, and local images remain build cache.
+
+Evidence logs:
+
+- Intended target red, missing actual Secrets companion (exit1):
+  `/private/tmp/cpk181-secrets-pair-red.log`, SHA256
+  `c4a07835d0213a4c935e4016dcb7967a3960d34ddc8185af6fe24c75ab9eb19c`.
+- First green attempt, six tests with one ingress-order representation failure:
+  `/private/tmp/cpk181-secrets-pair-first-green.log`, SHA256
+  `5282ae864b8fbedbc178b278af80966b381e6af3536d695a76289aad514fc445`.
+  The builder now uses the same Core descriptor boundary for baseline and actual
+  graph. The exact ingress equality assertion was retained.
+- Expanded regression attempt,34 cases with one pre-existing scripts namespace
+  import error after changing cwd to writable `/tmp`:
+  `/private/tmp/cpk181-secrets-pair-regression-import.log`, SHA256
+  `19dc7563116bc02257ec594165040c2057d7ae2dfdc2c52f0c42f9e90bb12ad0`.
+  Adding `/app` after the exact Core/Operations/Interpreters source overlays in
+  PYTHONPATH restores the existing import without changing assertions.
+- Terminal green and actual one-review compile report:
+  `/private/tmp/cpk181-secrets-pair-green.log`, SHA256
+  `ad87fcafed32cccee0f85c014f2b51fff479e29e40cdc84ee651e6f7d68ec487`.
+
+The selected cohort remains Core054e / Operations71db / Interpreters2e2 and
+the original pinned SDK/Secrets in the owning image. This source checkpoint
+does not adopt dependencies, merge/accept #387, prove four source listeners,
+publish an image, change credentials or deploy. The next actual deployment test
+still requires the independently reviewed SQL semantic/authority binding and
+the genuine normal Operations registration/admission/execution/history join.

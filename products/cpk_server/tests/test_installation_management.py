@@ -33,7 +33,8 @@ class InstallationManagementTests(unittest.TestCase):
         relay = importlib.import_module("control_plane_kit_servers_cpk_local_gateway.health_relay_configuration")
         self.transit = importlib.import_module("control_plane_kit_servers_cpk_local_gateway.health_transit_configuration")
         bootstrap = importlib.import_module("control_plane_kit_servers_cpk_server.bootstrap")
-        self.base = bootstrap._installation(managed_input())
+        self.base = bootstrap._installation(managed_input(
+            commissioning_directory=getattr(self, "commissioning_directory", None)))
         self.codec = ProductDescriptorCodec()
         self.keys = AuthoredMaterial().public
         self.gateway_id = self.base.installation_id + "-gateway"

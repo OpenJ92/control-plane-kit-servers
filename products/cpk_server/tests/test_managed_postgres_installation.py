@@ -25,8 +25,8 @@ from root_complete_fixtures import complete_input, contract, replace_artifact_co
 from test_root_bootstrap import DRIVER, installation_input
 
 
-def managed_input():
-    document = complete_input()
+def managed_input(*, commissioning_directory=None):
+    document = complete_input(commissioning_directory=commissioning_directory)
     cpk = core.ReceiverNodeControlConfigurationCodec().decode_bytes(
         contract(document, "cpk")["configuration_artifacts"][0]["content"].encode())
     roles = core.NodeControlGraphReferenceRole

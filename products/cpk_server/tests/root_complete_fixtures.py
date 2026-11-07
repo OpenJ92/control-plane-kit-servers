@@ -1,5 +1,6 @@
 """Public-only complete-root fixtures; image identities are not qualified."""
 from dataclasses import replace
+from contextlib import nullcontext
 import importlib
 import json
 import os
@@ -12,12 +13,14 @@ from test_frontend_deployment import FrontendDeploymentTests
 from test_root_bootstrap import DRIVER, installation_input
 
 
-def complete_input():
+def complete_input(*, commissioning_directory=None):
     document = installation_input()
     commissioning = importlib.import_module("control_plane_kit_servers_cpk_server.root_commissioning")
     cpk = importlib.import_module("control_plane_kit_servers_cpk_server.control_configuration")
     secrets = importlib.import_module("control_plane_kit_servers_secrets_server.configuration")
-    with TemporaryDirectory(dir=Path.cwd()) as directory:
+    owner = (TemporaryDirectory(dir=Path.cwd()) if commissioning_directory is None
+        else nullcontext(commissioning_directory))
+    with owner as directory:
         state = Path(directory)
         intent = {"schema": "cpk.root-commissioning.intent.v1", "installation_id": "root-a",
             "workspace_id": "root-workspace", "profile": "operator-offline-read-trust",

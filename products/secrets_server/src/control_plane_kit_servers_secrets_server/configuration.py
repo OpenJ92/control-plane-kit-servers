@@ -16,8 +16,10 @@ from control_plane_kit_core.verification import HttpCheck, VerificationContract,
 from control_plane_kit_core.http_verification_sample_installation import (
     HTTP_VERIFICATION_SAMPLES_CONFIGURATION_ENVIRONMENT,
     HttpVerificationSampleReceiverBinding, HttpVerificationSampleReceiverConfigurationCodec,
+    HttpVerificationSampleReceiverConfiguration, HttpVerificationSampleCheckBinding,
     select_http_verification_sample_configuration_slot,
 )
+from control_plane_kit_core.http_verification_samples import http_verification_check_digest
 from control_plane_kit_secrets.control import (
     decode_secrets_control_configuration,
     encode_secrets_control_configuration,
@@ -57,6 +59,23 @@ def secrets_http_sample_configuration_artifact(control, configuration) -> Config
     content = HttpVerificationSampleReceiverConfigurationCodec().encode_canonical_bytes(configuration)
     return ConfigurationArtifact(HTTP_SAMPLE_SLOT.artifact_id, HTTP_SAMPLE_SLOT.target_path,
         HTTP_SAMPLE_SLOT.media_type, content.decode("utf-8"), HTTP_SAMPLE_SLOT.file_mode)
+
+
+def secrets_full_http_sample_configuration_artifact(control, public_verifier) -> ConfigurationArtifact:
+    """Author every original check using explicitly supplied public trust only.
+
+    This derives public configuration, not registration or current authority.
+    The generic artifact renderer continues to support checked subsets.
+    """
+    try:
+        configuration = HttpVerificationSampleReceiverConfiguration(control.target,
+            control.declaration.identity().value, public_verifier, tuple(
+                HttpVerificationSampleCheckBinding(check.check_id, http_verification_check_digest(check))
+                for check in _verification().checks))
+        return secrets_http_sample_configuration_artifact(control, configuration)
+    except Exception:
+        failure = SecretsProductConfigurationError()
+    raise failure
 
 
 class SecretsProductConfigurationError(ValueError):

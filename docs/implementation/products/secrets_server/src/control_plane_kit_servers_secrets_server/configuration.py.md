@@ -27,3 +27,14 @@ using Core's canonical codec, slot selector and independent installed binding.
 Original verification/socket/port definitions are reused by the ordinary
 contract and launcher binding. The service still owns V2 declaration validation;
 no private initializer or eager server import belongs to these pure values.
+
+The stacked #388 source slice adds
+`secrets_full_http_sample_configuration_artifact(control, public_verifier)`.
+It derives both original ID/digests from `_verification()` and renders the
+canonical companion through the existing product binding. The caller's public
+issuer/keys, independent receiver target/declaration and original control8081
+metadata remain unchanged. It does not choose or register keys, read private
+material, create a grant or execute a check. The generic renderer and receiver
+still accept explicitly selected checked subsets. Full-node coverage belongs to
+the selected planner profile. Four focused laws cover exact independent digest
+expectations, contract preservation/subsets and detached invalid/crosswire refusal.

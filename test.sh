@@ -12,6 +12,7 @@ HTTP_SAMPLE_SENDER_REPOSITORY=''
 HTTP_SAMPLE_SOURCE_CORE=''
 HTTP_SAMPLE_SOURCE_OPERATIONS=''
 HTTP_SAMPLE_SOURCE_INTERPRETERS=''
+HTTP_SAMPLE_ASSEMBLY_PHASE=all
 case "${1:-}" in
   --http-sample-relay)
     [ "$#" -eq 1 ] || { echo 'http sample focus takes no extra arguments' >&2; exit 2; }
@@ -29,12 +30,13 @@ case "${1:-}" in
     HTTP_SAMPLE_SOURCE_OPERATIONS=$3
     HTTP_SAMPLE_SOURCE_INTERPRETERS=$4
     ;;
-  --http-sample-source-assembly)
+  --http-sample-source-assembly|--http-sample-source-assembly-red)
     [ "$#" -eq 4 ] || { echo 'pure source assembly requires the three reviewed checkouts' >&2; exit 2; }
     HTTP_SAMPLE_RELAY_ONLY=4
     HTTP_SAMPLE_SOURCE_CORE=$2
     HTTP_SAMPLE_SOURCE_OPERATIONS=$3
     HTTP_SAMPLE_SOURCE_INTERPRETERS=$4
+    if [ "$1" = --http-sample-source-assembly-red ]; then HTTP_SAMPLE_ASSEMBLY_PHASE=red; fi
     ;;
   --postgres-release-tests|--postgres-published-image|--postgres-source-image)
     exec sh scripts/postgres_artifact_shell.sh "$@"
@@ -81,7 +83,7 @@ docker build -f Dockerfile.test -t "$IMAGE" .
 if [ "$HTTP_SAMPLE_RELAY_ONLY" != 0 ]; then
   if [ "$HTTP_SAMPLE_RELAY_ONLY" = 4 ]; then
     sh scripts/http_sample_source_assembly.sh "$IMAGE" "$HTTP_SAMPLE_SOURCE_CORE" \
-      "$HTTP_SAMPLE_SOURCE_OPERATIONS" "$HTTP_SAMPLE_SOURCE_INTERPRETERS"
+      "$HTTP_SAMPLE_SOURCE_OPERATIONS" "$HTTP_SAMPLE_SOURCE_INTERPRETERS" "$HTTP_SAMPLE_ASSEMBLY_PHASE"
     exit 0
   elif [ "$HTTP_SAMPLE_RELAY_ONLY" = 3 ]; then
     sh scripts/http_sample_source_qualification.sh "$IMAGE" "$HTTP_SAMPLE_SOURCE_CORE" \

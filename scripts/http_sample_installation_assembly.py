@@ -2,7 +2,7 @@
 
 Reuses the owning complete-installation fixture and production composition. No
 Operations rows, provider responses, invocations, credentials or runs are made.
-Only the CPK child's original HTTP checks receive sample trust in this slice.
+Both CPK and Secrets retain their full original HTTP checks in this slice.
 """
 from dataclasses import replace
 import json
@@ -22,6 +22,7 @@ from control_plane_kit_core.products import ProductReference
 from control_plane_kit_core.planning import WaitForHealthy, ReviewChange
 from control_plane_kit_core.topology import compile_topology, validate_graph, DEFAULT_GRAPH_CODEC, DeploymentGraph
 from control_plane_kit_servers_cpk_server import control_configuration as cpk
+from control_plane_kit_servers_secrets_server import configuration as secrets
 from control_plane_kit_servers_cpk_server.installation import compose_docker_cpk_installation
 from control_plane_kit_servers_cpk_local_gateway.http_sample_configuration import (
     gateway_http_sample_trust_artifact, gateway_http_sample_declared_runtime_contract,
@@ -29,14 +30,21 @@ from control_plane_kit_servers_cpk_local_gateway.http_sample_configuration impor
 )
 from control_plane_kit_servers_cpk_local_gateway.http_sample_relay import GatewayHttpSampleTrust
 from test_installation_management import InstallationManagementTests
+from receiver_acceptance_material import AuthoredMaterial
 
 
-def assemble():
+def assemble(*, commissioning_directory=None):
     """Return original installation inputs, full graph and exact sample plan."""
     fixture = InstallationManagementTests()
+    fixture.commissioning_directory = commissioning_directory
     fixture.setUp()
+    # Synthetic source inputs only. An actual isolated run must still admit
+    # matching public keys/references through normal registration/activation.
+    fixture.signing_material = AuthoredMaterial()
+    fixture.keys = fixture.signing_material.public
+    fixture.trust = replace(fixture.trust, public_keys=(fixture.keys["transit"],))
     original = fixture.installation(website=fixture.managed_website())
-    baseline = fixture.graph(original)
+    baseline = DEFAULT_GRAPH_CODEC.decode(DEFAULT_GRAPH_CODEC.encode(fixture.graph(original)))
     control = fixture.receiver(baseline.node(original.cpk_node_id))
     checks = original.cpk_product.product.runtime_contract.verification.checks
     configuration = HttpVerificationSampleReceiverConfiguration(control.target,
@@ -50,6 +58,14 @@ def assemble():
     selected = replace(original, cpk_product=fixture.codec.encode_document(replace(
         original.cpk_product.product, runtime_contract=cpk.cpk_source_runtime_contract(
             cpk.CpkSourceVariant.DOCKER_CLOUDFLARE, control_artifact, sample_artifact=artifact))))
+    secrets_control = fixture.receiver(baseline.node(original.secrets_node_id))
+    companion = secrets.secrets_full_http_sample_configuration_artifact(secrets_control,
+        HttpVerificationSampleVerifierConfiguration(core.DelegationKeyPurpose.WORKLOAD_HTTP_VERIFICATION_SAMPLE,
+            "parent-cpk", (fixture.keys["workload"],)))
+    secrets_control_artifact, = original.secrets_product.product.runtime_contract.configuration_artifacts
+    selected = replace(selected, secrets_product=fixture.codec.encode_document(replace(
+        original.secrets_product.product, runtime_contract=secrets.secrets_source_runtime_contract(
+            secrets_control_artifact, sample_artifact=companion))))
     topology = compose_docker_cpk_installation(selected)
     graph = compile_topology(topology)
     # The installation owner currently selects the health-only gateway
@@ -87,7 +103,9 @@ def main():
     try:
         with TemporaryDirectory(prefix="cpk181-full-child-") as directory:
             os.chdir(directory)
-            fixture, original, baseline, graph, gateway_document, plan = assemble()
+            custody = Path(directory) / "commissioning"
+            custody.mkdir(mode=0o700)
+            fixture, original, baseline, graph, gateway_document, plan = assemble(commissioning_directory=custody)
     finally:
         os.chdir(previous)
     before, child = baseline.node(original.cpk_node_id), graph.node(original.cpk_node_id)
@@ -117,6 +135,8 @@ def main():
         if type(activity.operation) is ReviewChange]
     print(json.dumps(dict(evidence="pure-full-child-assembly-only", graph_valid=True,
         cpk_original_checks=[check.check_id for check in checks], postgres_requirements=sorted(requirements),
+        secrets_original_checks=[check.check_id for check in graph.node(original.secrets_node_id).block_spec.verification.checks],
+        signing_material="synthetic-held-through-fixture-lifetime-unregistered",
         postgres_password="unresolved-original-reference", node_count=len(graph.nodes),
         ingress_count=len(graph.public_ingresses), plan_ready=plan.ready_for_execution,
         ordinary_waits=waits, reviews=reviews, operations_commands=0, provider_calls=0,
