@@ -855,6 +855,8 @@ class PublicOperationsDriver:
         label: str,
         desired_graph: Mapping[str, object] | DeploymentGraph,
         destructive: bool,
+        http_verification_intent: str | None = None,
+        approver_principal: AuthenticatedPrincipal | None = None,
     ) -> AcceptedTransition:
         """Prepare, approve, execute, and advance one nonempty transition."""
 
@@ -887,6 +889,8 @@ class PublicOperationsDriver:
                 ],
                 "title": f"Receiver acceptance {label}",
                 "idempotency_key": f"{label}-prepare",
+                **({"http_verification_intent": http_verification_intent}
+                   if http_verification_intent is not None else {}),
             },
         )
         if preparation.get("status") != "approval-required":
@@ -909,7 +913,7 @@ class PublicOperationsDriver:
             if destructive
             else PolicyScope.PLAN_APPROVE
         )
-        approver = witness_principal(
+        approver = approver_principal or witness_principal(
             self.workspace_id,
             subject_id=f"receiver-acceptance-{label}-approver",
             kind=PrincipalKind.OPERATOR,
