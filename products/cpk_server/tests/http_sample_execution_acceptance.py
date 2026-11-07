@@ -51,12 +51,14 @@ async def accept_http_sample_execution(driver, *, desired_graph, approver_princi
         == (request.run_id, request.activity_id, request.outer_attempt, request.effect_id,
             child_node_id, "ready", 200)), "public result correlation differs from the actual SDK exchange"
     assert row["probe_outcome"] == "passed"
+    assert row["graph_id"] == accepted.plan["desired_graph_id"]
 
     runs = accepted.history["runs"]["items"]
     assert any(run["run_id"] == request.run_id for run in runs), "plan history does not contain the actual run"
     events = accepted.history["events"]["items"]
     assert any(event.get("event_id") == request.effect_id
-        and event.get("activity_id") == request.activity_id for event in events), \
+        and event.get("activity_id") == request.activity_id and event.get("run_id") == request.run_id
+        for event in events), \
         "run history does not identify the actual child check effect"
     assert accepted.execution["run_status"] == "succeeded"
     return {"plan_id": accepted.plan["plan_id"], "run_id": request.run_id,
