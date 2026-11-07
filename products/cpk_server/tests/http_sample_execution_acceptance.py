@@ -43,7 +43,14 @@ async def accept_http_sample_execution(driver, *, desired_graph, approver_princi
         assert type(sampled) is HttpVerificationSampleRequest
         assert sampled.check_digest == http_verification_check_digest(original)
         assert sampled.sample_ordinal == 1
+        assert sampled.target.workspace_id.value == driver.workspace_id
         assert sampled.target.node_id.value == child_node_id
+        assert sampled.run_id == accepted.claim["run_id"]
+        assert sampled.authority_context.authored_graph_id == accepted.plan["desired_graph_id"]
+        assert sampled.authority_context.realized_projection_id == accepted.plan["desired_realized_projection_id"]
+    assert len({(request.activity_id, request.effect_id, request.outer_attempt, request.request_fingerprint)
+                for request in requests}) == 1, "original checks came from different effects"
+    assert len({request.request_id for request in requests}) == len(requests), "original samples reused a request ID"
     ready = [result for result in exchanges if result.request.check_id == "ready"]
     assert len(ready) == 1, "expected exactly one actual signed ready sample"
     ready_result, = ready
