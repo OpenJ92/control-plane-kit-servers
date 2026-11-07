@@ -827,7 +827,7 @@ def exercise(client, image) -> None:
         containers.append(trust)
         trust.start()
         wait_running(trust)
-        wait_query(trust)
+        wait_query(trust, observe_native=True)
         wait_listener_denial(trust)
         _, valid = health_token(value, issued_at=int(time.time()) - 1)
         qualify_password_authentication(trust, valid, phase="no-challenge", authenticated=False)
