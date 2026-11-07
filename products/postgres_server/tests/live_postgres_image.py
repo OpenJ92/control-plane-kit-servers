@@ -764,16 +764,15 @@ def exercise(client, image) -> None:
         data = client.volumes.create(name=f"{RUN}-data", labels=LABELS)
         volumes.append(data)
 
-        issued = int(time.time()) - 1
-        _, valid = health_token(value, issued_at=issued)
-        wrong_target = replace(value.config.target, receiver_id="f" * 32)
-        _, wrong = health_token(value, issued_at=issued, request_changes={"target": wrong_target})
-
         first = create(client, image.id, network.name, data.name, "first", init=True)
         containers.append(first)
         first.start()
         wait_running(first)
         wait_listener_denial(first)
+        issued = int(time.time()) - 1
+        _, valid = health_token(value, issued_at=issued)
+        wrong_target = replace(value.config.target, receiver_id="f" * 32)
+        _, wrong = health_token(value, issued_at=issued, request_changes={"target": wrong_target})
         require(health(first, wrong)[0] == 401, "management accepted mismatched credential")
         # Management now starts after the final native listener, following init
         # SQL. UNKNOWN remains a SQL-readiness outcome, not a guaranteed phase.
@@ -793,6 +792,8 @@ def exercise(client, image) -> None:
         restarted.start()
         wait_running(restarted)
         wait_query(restarted, observe_native=True)
+        wait_listener_denial(restarted)
+        _, valid = health_token(value, issued_at=int(time.time()) - 1)
         qualify_password_authentication(restarted, valid, phase="restart")
         restarted.exec_run(("python3", "-c", "import os; os.kill(int(open('/var/lib/postgresql/data/postmaster.pid').readline()), 15)"))
         wait_exit(restarted, 1)
@@ -827,6 +828,8 @@ def exercise(client, image) -> None:
         trust.start()
         wait_running(trust)
         wait_query(trust)
+        wait_listener_denial(trust)
+        _, valid = health_token(value, issued_at=int(time.time()) - 1)
         qualify_password_authentication(trust, valid, phase="no-challenge", authenticated=False)
         trust.stop(timeout=10)
         wait_exit(trust, 0)

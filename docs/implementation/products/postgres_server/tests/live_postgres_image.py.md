@@ -6,6 +6,9 @@ TCP correct/wrong/no-challenge probes plus signed readiness after restart.
 A separate fresh volume overrides only initdb host auth to trust; its independent
 no-challenge SELECT1 must succeed before forced-SCRAM and signed UNKNOWN prove
 refusal. Neither fixture modifies existing data or a retained installation.
+Each auth phase observes the management listener and mints its signed token
+after that boundary, so initialization delay or an expired earlier token cannot
+substitute for the intended auth observation.
 The supported exact-password claim is a nonempty UTF-8 value within the existing
 file bound, with no NUL, CR or LF. File-format trailing LF bytes are stripped;
 the positive fixture includes one. A logical original credential ending in LF
