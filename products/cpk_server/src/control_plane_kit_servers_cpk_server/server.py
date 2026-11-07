@@ -213,6 +213,7 @@ class CpkServerBootstrapConfiguration:
         default=None, repr=False, compare=False)
     workspace_authority: WorkspaceAuthorityConfiguration | None = None
     provider_policy_authority: ProviderPolicyAuthorityConfiguration | None = field(default=None, repr=False)
+    http_sample_support: object | None = field(default=None, repr=False, compare=False)
 
     @classmethod
     def from_environment(
@@ -960,6 +961,9 @@ def _operations_application(
 def _operations_effect_ports(config, provider, *, unit_of_work_factory=None):
     _validate_managed_health_process(config)
     dynamic = getattr(config, "workspace_authority", None) is not None
+    sample_support = getattr(config, "http_sample_support", None)
+    if sample_support is not None and (not dynamic or not config.runtime_dispatcher.enabled):
+        raise BootstrapConfigurationError("HTTP sample execution composition is invalid")
     runtimes = None
     if config.runtime_dispatcher.enabled:
         if config.runtime_dispatcher.runtime_kinds != (RuntimeKind.DOCKER,):
@@ -971,7 +975,8 @@ def _operations_effect_ports(config, provider, *, unit_of_work_factory=None):
                 exact_version_execute=provider.metadata_reader is not None,
                 exact_version_execute_with_authority=provider.metadata_reader is not None,
                 invocation_profile="cpk.semantic-invocations.v1" if dynamic else None,
-                ordinary_verification_invocations=dynamic)
+                ordinary_verification_invocations=dynamic,
+                **({"http_sample_support": sample_support} if sample_support is not None else {}))
         runtimes = {RuntimeKind.DOCKER: interpreter}
     ingress = (_ingress_interpreters(config, provider) if config.ingress_interpreters.enabled else None)
     if dynamic and ingress is not None:
@@ -1404,19 +1409,26 @@ def _docker_runtime_interpreter(
         if getattr(config, "workspace_authority", None) is not None else {})
     process = getattr(config, "managed_health_process", None)
     if process is not None:
-        return DockerRuntimeInterpreter(
+        interpreter = DockerRuntimeInterpreter(
             local_client_config=process.local_client_config,
             authorized_secret_resolver=provider.authorized_resolver,
             **invocation_options,
         )
-    return DockerRuntimeInterpreter(
-        DockerSdkClient.from_authority(
-            DockerLocalAmbientClientConfig(),
-            connect_on_init=False,
-        ),
-        authorized_secret_resolver=provider.authorized_resolver,
-        **invocation_options,
-    )
+    else:
+        interpreter = DockerRuntimeInterpreter(
+            DockerSdkClient.from_authority(
+                DockerLocalAmbientClientConfig(),
+                connect_on_init=False,
+            ),
+            authorized_secret_resolver=provider.authorized_resolver,
+            **invocation_options,
+        )
+    support = getattr(config, "http_sample_support", None)
+    if support is not None:
+        from .http_sample_composition import compose_http_sample_runtime
+        return compose_http_sample_runtime(interpreter, support=support,
+            resolver=provider.authorized_resolver, public_resolver=_public_dns_resolver(config), clock=time.time)
+    return interpreter
 
 
 def _ingress_interpreters(

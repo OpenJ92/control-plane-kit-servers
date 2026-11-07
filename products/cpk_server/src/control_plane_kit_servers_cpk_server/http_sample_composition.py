@@ -122,3 +122,130 @@ def http_sample_check_input(*, sender_input, ingress, gateway_binding, transit_p
     except (ImportError, ValueError, TypeError, AttributeError, KeyError, RecursionError, OverflowError):
         failure = HttpSampleCompositionUnavailable("HTTP sample composition is unavailable")
     raise failure
+
+
+def http_sample_service_options(registrations):
+    """Use the actual Docker registration as both admission/execution evidence."""
+    from control_plane_kit_core.types import RuntimeKind
+    from control_plane_kit_operations.runtime_adapter_registration import RuntimeAdapterRegistration
+    registration = None if registrations is None else registrations.get(RuntimeKind.DOCKER)
+    support = getattr(registration, "http_sample_support", None)
+    if support is None:
+        adapter = getattr(registration, "adapter", registration)
+        if getattr(adapter, "http_sample_support", None) is not None:
+            raise HttpSampleCompositionUnavailable("HTTP sample composition is unavailable")
+        return {}
+    try:
+        from control_plane_kit_operations.http_sample_execution import HttpSampleExecutionSupport
+        if (type(registration) is not RuntimeAdapterRegistration
+                or type(support) is not HttpSampleExecutionSupport
+                or registration.invocation_profile != "cpk.semantic-invocations.v1"
+                or not registration.ordinary_verification_invocations
+                or registration.adapter.http_sample_support is not support):
+            raise ValueError
+        return {"http_sample_support": support, "http_sample_registration": registration}
+    except (ImportError, ValueError, TypeError, AttributeError):
+        failure = HttpSampleCompositionUnavailable("HTTP sample composition is unavailable")
+    raise failure
+
+
+class _SampleCheckInvocations:
+    """Map only the reached owner's result; keep its admission acknowledgements."""
+    def __init__(self, original, support):
+        self.original, self.support = original, support
+
+    @property
+    def control_error(self):
+        return self.original.control_error
+
+    def admit(self, kind, *, authorization_id=None):
+        return self.original.admit(kind, authorization_id=authorization_id)
+
+    def record_outcome(self, permit, outcome):
+        return self.original.record_outcome(permit, outcome)
+
+    def prepare_http_sample(self):
+        from control_plane_kit_operations.http_sample_execution import PreparedHttpSampleCheck
+        prepared = self.original.prepare_http_sample()
+        if (type(prepared) is not PreparedHttpSampleCheck
+                or prepared.transit_provider_socket_name != self.support.transit_provider_socket_name):
+            raise HttpSampleCompositionUnavailable("HTTP sample composition is unavailable")
+        # The ingress is the producer's own per-plan selection, not a second
+        # hostname supplied by the API caller or inferred by this wrapper.
+        return http_sample_check_input(sender_input=prepared.sender_input, ingress=prepared.ingress,
+            gateway_binding=self.support.gateway_binding,
+            transit_provider_socket_name=prepared.transit_provider_socket_name)
+
+
+class _SampleRuntimeInvocations:
+    def __init__(self, original, support):
+        self.original, self.http_sample_support = original, support
+
+    @property
+    def control_error(self):
+        return self.original.control_error
+
+    def admit(self, kind, *, authorization_id=None):
+        return self.original.admit(kind, authorization_id=authorization_id)
+
+    def record_outcome(self, permit, outcome):
+        return self.original.record_outcome(permit, outcome)
+
+    def for_check(self, check_id):
+        return _SampleCheckInvocations(self.original.for_check(check_id), self.http_sample_support)
+
+    def acquire_http_sample_route(self):
+        from control_plane_kit_operations.http_sample_execution import PreparedHttpSampleRoute
+        from control_plane_kit_core.receiver_identity import NodeControlAuthorityContext
+        from control_plane_kit_interpreters.probes.http_sample_transport import SelectedHttpSampleGateway
+        from control_plane_kit_interpreters.probes.http_sample_check import HttpSampleRouteInput
+        acquired = self.original.acquire_http_sample_route()
+        support = self.http_sample_support
+        if (type(acquired) is not PreparedHttpSampleRoute
+                or acquired.transit_provider_socket_name != support.transit_provider_socket_name
+                or acquired.compatibility.gateway_product != support.gateway_binding.product):
+            raise HttpSampleCompositionUnavailable("HTTP sample composition is unavailable")
+        selected = acquired.compatibility
+        return HttpSampleRouteInput(SelectedHttpSampleGateway(acquired.ingress,
+            selected.gateway_trust.target, selected.route, acquired.transit_provider_socket_name),
+            tuple(entry.check for entry in selected.receiver.checks),
+            NodeControlAuthorityContext(selected.desired_graph_id, selected.projection_id), selected.workload_product)
+
+
+class HttpSampleRuntimeAdapter:
+    """Product composition only; actual runtime effects stay in Interpreters."""
+    def __init__(self, adapter, support):
+        if adapter.http_sample_support is not support:
+            raise HttpSampleCompositionUnavailable("HTTP sample composition is unavailable")
+        self.adapter, self.http_sample_support = adapter, support
+
+    def _invocations(self, original):
+        marker = getattr(original, "http_sample_support", None)
+        if marker is None:
+            return original
+        if marker is not self.http_sample_support:
+            raise HttpSampleCompositionUnavailable("HTTP sample composition is unavailable")
+        return _SampleRuntimeInvocations(original, marker)
+
+    def execute(self, request, *, invocations=None):
+        return self.adapter.execute(request, invocations=self._invocations(invocations))
+
+    def execute_with_authority(self, request, authority, *, invocations=None):
+        return self.adapter.execute_with_authority(request, authority, invocations=self._invocations(invocations))
+
+
+def compose_http_sample_runtime(adapter, *, support, resolver, public_resolver, clock):
+    """Explicit supported composition, never automatic capability discovery."""
+    try:
+        from control_plane_kit_operations.http_sample_execution import HttpSampleExecutionSupport
+        from control_plane_kit_interpreters.probes.http_sample_check import HttpSampleCheckExecutor
+        from control_plane_kit_interpreters.probes.http_sample_transport import SignedGatewayHttpSampleClient
+        from dataclasses import replace
+        if type(support) is not HttpSampleExecutionSupport:
+            raise ValueError
+        native = replace(adapter, http_sample_executor=HttpSampleCheckExecutor(resolver,
+            SignedGatewayHttpSampleClient(clock=clock, public_resolver=public_resolver), clock, support))
+        return HttpSampleRuntimeAdapter(native, support)
+    except (ImportError, ValueError, TypeError, AttributeError):
+        failure = HttpSampleCompositionUnavailable("HTTP sample composition is unavailable")
+    raise failure
