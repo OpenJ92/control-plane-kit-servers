@@ -83,3 +83,11 @@ unproven. Six-role source image qualification is a separate prerequisite under
 Servers#163; the recorded plan is preparation, not a build/deployment release.
 No installation or provider acquisition, image publication or deployment occurs
 in these tests. Source readiness never substitutes for runnable image evidence.
+
+Source/run provenance: green06 launched immediately after committing85b193b on
+the clean checkout; application/tests/gates were held unchanged through terminal
+completion. The post-run readback captured full HEAD85b193b and empty short
+status with the log checksum. The log prints dependency SHAs, not the Servers
+SHA; that coordinate is established by the launch/terminal source receipt.
+Post-run2021b5f only adds these two implementation receipt companions; no
+application, test, script or gate delta from the tested85b source is present.
