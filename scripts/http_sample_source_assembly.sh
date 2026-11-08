@@ -23,7 +23,7 @@ case "$phase" in
       case "$revision" in ''|*[!0-9a-f]*) echo 'exact source revision is required' >&2; exit 2 ;; esac
       [ "${#revision}" -eq 40 ] || exit 2
     done
-    set -- python -m unittest managed_verification_composition_qualification -v
+    set -- python -m unittest managed_verification_composition_qualification test_managed_health_bridge test_managed_native_connection test_operations_application_factory -v
     ;;
   gateway-target)
     core_revision=$6
