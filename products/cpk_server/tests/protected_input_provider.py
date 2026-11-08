@@ -65,6 +65,10 @@ class ProviderTransport(httpx.BaseTransport):
 
 
 class ProtectedProvider:
+    def __init__(self, *, workspace_id=WORKSPACE, write_intents=("cloudflare.api-token",), resolve_intents=()):
+        self.workspace_id = workspace_id
+        self.write_intents, self.resolve_intents = tuple(write_intents), tuple(resolve_intents)
+
     def __enter__(self):
         self.stack = ExitStack()
         try:
@@ -77,10 +81,11 @@ class ProtectedProvider:
             protected_file(credentials, json.dumps([{
                 "subject": "input-test-client", "token": TOKEN,
                 "grants": [
-                    {"action": "secret.generate-delegation-key", "workspace_id": WORKSPACE, "intents": list(INTENTS)},
-                    {"action": "secret.write", "workspace_id": WORKSPACE, "intents": ["cloudflare.api-token"]},
-                    {"action": "secret.metadata", "workspace_id": WORKSPACE, "intents": []},
-                ],
+                    {"action": "secret.generate-delegation-key", "workspace_id": self.workspace_id, "intents": list(INTENTS)},
+                    {"action": "secret.write", "workspace_id": self.workspace_id, "intents": list(self.write_intents)},
+                    {"action": "secret.metadata", "workspace_id": self.workspace_id, "intents": []},
+                ] + ([{"action": "secret.resolve", "workspace_id": self.workspace_id,
+                       "intents": list(self.resolve_intents)}] if self.resolve_intents else []),
             }]))
             def initialize():
                 parsed_credentials = load_provider_credentials({
@@ -101,6 +106,7 @@ class ProtectedProvider:
                 declaration=secrets_control_declaration())
             app = create_app(control=control, initialize_provider=initialize, provider_id=PROVIDER)
             client = self.stack.enter_context(TestClient(app, base_url="https://input-provider.invalid"))
+            self.client = client
             self.transport = ProviderTransport(client)
             return self
         except BaseException:

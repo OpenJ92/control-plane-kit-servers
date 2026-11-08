@@ -3,7 +3,7 @@ Source: [protected_input_provider.py](../../../../../products/cpk_server/tests/p
 The #317 fixture runs the actual Secrets API, credential loader, encrypted store,
 custody admission and audit owner. It creates protected synthetic bootstrap files
 inside one temporary directory. Root/provider wrapper keys only admit those
-apps; managed keys must be generated through authenticated CPK/provider APIs.
+apps; #317's managed keys are generated through authenticated CPK/provider APIs.
 Provider grants name one test workspace and explicit generation/write intents;
 metadata is workspace-wide as the accepted provider contract defines.
 
@@ -15,8 +15,8 @@ outer context owns its lifetime. Observations retain bounded public method/path
 pairs, never authorization or request/response bodies. Cleanup closes the client
 before deleting the test custody directory, including entry failures.
 
-This is an unexecuted fixture checkpoint. The normal integration witness performs
-real test-owned encrypted custody effects, not external provider/TLS validation.
+The normal integration witness performs real test-owned encrypted custody
+effects, not external provider/TLS validation.
 
 #354 adopts accepted Secrets E and replaces the historical three-value initializer.
 Inside the initializer, the protected credential document is parsed once; that
@@ -30,3 +30,12 @@ Docker gate owns compatibility; G #342 retains same-process policy/retained-upgr
 proof, which this in-process bridge does not establish.
 The metadata grant explicitly carries `intents: []`: metadata is intentless in
 the accepted owner. Omitting the field means wildcard, not an empty coordinate.
+
+Optional workspace/write/resolve inputs now support #163's separately authorized
+imported-key fixture. Defaults retain #317's exact grants and generation behavior.
+No wildcard scope, policy-admin capability or generation expansion is introduced.
+The retained TestClient lets that caller import ephemeral matching material and
+confirm its exact version through normal authenticated Secrets write/resolve.
+Its ordinary CPK register/activate/readback belongs to the source registration
+fixture. Custody, authentication, durable policy and directory cleanup stay real;
+these imports are not production keys or original-run signing authority by themselves.

@@ -46,6 +46,9 @@ def assemble(*, commissioning_directory=None, postgres_image=None, secret_versio
     # matching public keys/references through normal registration/activation.
     fixture.signing_material = AuthoredMaterial()
     fixture.keys = fixture.signing_material.public
+    fixture.sample_signing_material = AuthoredMaterial()
+    fixture.sample_signing_material.public = {name: replace(key, key_id="sample-" + name)
+        for name, key in fixture.sample_signing_material.public.items()}
     fixture.trust = replace(fixture.trust, public_keys=(fixture.keys["transit"],))
     original = fixture.installation(website=fixture.managed_website())
     if postgres_image is not None:
@@ -61,7 +64,7 @@ def assemble(*, commissioning_directory=None, postgres_image=None, secret_versio
     configuration = HttpVerificationSampleReceiverConfiguration(control.target,
         control.declaration.identity().value, HttpVerificationSampleVerifierConfiguration(
             core.DelegationKeyPurpose.WORKLOAD_HTTP_VERIFICATION_SAMPLE,
-            "parent-cpk", (fixture.keys["workload"],)), tuple(
+            "parent-cpk", (fixture.sample_signing_material.public["workload"],)), tuple(
                 HttpVerificationSampleCheckBinding(check.check_id, http_verification_check_digest(check))
                 for check in checks))
     artifact = cpk.cpk_http_sample_configuration_artifact(control, configuration)
@@ -72,7 +75,7 @@ def assemble(*, commissioning_directory=None, postgres_image=None, secret_versio
     secrets_control = fixture.receiver(baseline.node(original.secrets_node_id))
     companion = secrets.secrets_full_http_sample_configuration_artifact(secrets_control,
         HttpVerificationSampleVerifierConfiguration(core.DelegationKeyPurpose.WORKLOAD_HTTP_VERIFICATION_SAMPLE,
-            "parent-cpk", (fixture.keys["workload"],)))
+            "parent-cpk", (fixture.sample_signing_material.public["workload"],)))
     secrets_control_artifact, = original.secrets_product.product.runtime_contract.configuration_artifacts
     selected = replace(selected, secrets_product=fixture.codec.encode_document(replace(
         original.secrets_product.product, runtime_contract=secrets.secrets_source_runtime_contract(
@@ -88,7 +91,7 @@ def assemble(*, commissioning_directory=None, postgres_image=None, secret_versio
         runtime_contract=gateway_http_sample_declared_runtime_contract()))
     reference = ProductReference.from_document(document)
     trust = gateway_http_sample_trust_artifact(GatewayHttpSampleTrust(
-        selected.management.gateway_control.target, "parent-cpk", (fixture.keys["transit"],)))
+        selected.management.gateway_control.target, "parent-cpk", (fixture.sample_signing_material.public["transit"],)))
     gateway = replace(gateway, configuration_artifacts=gateway.configuration_artifacts + (trust,),
         public_environment=gateway.public_environment + (PublicStaticEnvironmentBinding(
             CONFIGURATION_ENVIRONMENT, CONFIGURATION_PATH),),

@@ -291,3 +291,11 @@ does not adopt dependencies, merge/accept #387, prove four source listeners,
 publish an image, change credentials or deploy. The next actual deployment test
 still requires the independently reviewed SQL semantic/authority binding and
 the genuine normal Operations registration/admission/execution/history join.
+
+November8 strengthens the source fixture to use separate sample-transit and
+sample-workload keys/IDs, retaining the original gateway health key. The actual
+five-role commissioning guard and installed-artifact checks belong to
+[the registration fixture](http_sample_registration_fixture.py.md). Its real
+encrypted custody/register/activate/readback receipt is distinct from this pure
+plan evidence. The affected34 laws and28 support tests passed again after that
+separation; the independent PostgreSQL review still remains.
