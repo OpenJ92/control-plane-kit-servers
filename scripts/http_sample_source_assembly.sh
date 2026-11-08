@@ -38,5 +38,6 @@ printf 'pure assembly source Core=%s Operations=%s Interpreters=%s\n' \
 docker run --rm --network none --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
   --mount "type=bind,source=$owned_source,target=/reviewed-http-sample,readonly" \
   -e PYTHONDONTWRITEBYTECODE=1 \
+  -e CPK_SOURCE_ASSEMBLY_POSTGRES_IMAGE \
   -e PYTHONPATH=/reviewed-http-sample/core/src:/reviewed-http-sample/operations/src:/reviewed-http-sample/interpreters/src:/app:/app/products/cpk_server/tests:/app/products/secrets_server/tests:/app/scripts \
   "$image" "$@"

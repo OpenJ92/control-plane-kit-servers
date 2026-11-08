@@ -9,6 +9,8 @@ from cryptography.hazmat.primitives import serialization
 from control_plane_kit_core.http_verification_sample_installation import HttpVerificationSampleReceiverConfigurationCodec
 from control_plane_kit_core.http_verification_samples import http_verification_check_digest
 from control_plane_kit_core.planning import ReviewChange
+from control_plane_kit_core.products import OciImageReference, ProductReference
+from control_plane_kit_core.secret_selections import SecretVersionSelection, secret_selections_from_descriptor
 from control_plane_kit_servers_secrets_server import configuration as secrets
 from control_plane_kit_servers_cpk_server import control_configuration as cpk
 from control_plane_kit_servers_cpk_local_gateway.http_sample_configuration import (
@@ -31,6 +33,35 @@ def isolated_directory():
 
 
 class FullInstallationHttpSampleTests(unittest.TestCase):
+    def test_complete_assembly_preserves_supplied_product_image_and_exact_versions(self):
+        # Unit metadata only; this fixture reference is never an acquired image.
+        image = OciImageReference("example.invalid", "fixture/selected-postgres", "sha256:" + "7" * 64)
+        with isolated_directory():
+            _, _, _, unselected, _, _ = assemble()
+            uses = sorted({(entry.reference, entry.intent) for node in unselected.nodes.values()
+                for entry in node.secret_selections}, key=lambda pair: (pair[0].reference_id, pair[1].value))
+            versions = tuple(SecretVersionSelection(reference, intent, "synthetic-version-" + str(index))
+                for index, (reference, intent) in enumerate(uses))
+            fixture, original, baseline, graph, _, _ = assemble(postgres_image=image, secret_versions=versions)
+        postgres = graph.node(original.postgres_node_id)
+        self.assertEqual(original.postgres_product.product.image, image)
+        topology = fixture.api.compose_docker_cpk_installation(original)
+        postgres_instance, = (node for node in topology.root.children
+            if getattr(node, "block_id", None) == original.postgres_node_id)
+        reference = ProductReference.from_document(postgres_instance.implementation.document)
+        self.assertEqual(postgres.metadata["product_descriptor_digest"], reference.descriptor_sha256.value)
+        self.assertEqual(postgres.block_spec.verification, baseline.node(postgres.node_id).block_spec.verification)
+        self.assertEqual(graph.edges, baseline.edges)
+        self.assertEqual(len(graph.nodes), 8)
+        self.assertEqual(len(graph.public_ingresses), 3)
+        for node_id, node in graph.nodes.items():
+            choices = fixture.secret_version_choices.get(node_id, [])
+            self.assertEqual(node.secret_selections, secret_selections_from_descriptor(choices))
+            self.assertTrue(all(type(value) is SecretVersionSelection for value in node.secret_selections))
+        password = lambda node: next(value for value in graph.node(node).secret_selections
+            if value.reference == original.postgres_password)
+        self.assertEqual(password(original.postgres_node_id), password(original.cpk_node_id))
+
     def test_secrets_companion_covers_original_pair_and_removes_only_its_review(self):
         with isolated_directory():
             fixture, original, baseline, graph, _, plan = assemble()

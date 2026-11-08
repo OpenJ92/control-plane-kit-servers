@@ -304,6 +304,45 @@ def compose_docker_cpk_installation(installation: DockerCpkInstallation) -> Depl
     )
 
 
+def installation_secret_version_choices(value: DockerCpkInstallation, selections: tuple) -> dict:
+    """Build complete explicit_secret_choices for the existing public authoring route.
+
+    Versions are supplied metadata, not provider observations or permission.
+    The normal desired-graph.set owner still admits them before execution.
+    """
+    from control_plane_kit_core.secret_selections import SecretVersionSelection, author_secret_selections
+    from control_plane_kit_core.topology import compile_topology
+
+    try:
+        if type(selections) is not tuple:
+            raise ValueError
+        choices = {}
+        for selection in selections:
+            if type(selection) is not SecretVersionSelection:
+                raise ValueError
+            SecretVersionSelection.__post_init__(selection)
+            key = (selection.reference, selection.intent)
+            if key in choices:
+                raise ValueError
+            choices[key] = selection
+        graph = compile_topology(compose_docker_cpk_installation(value))
+        required = {(entry.reference, entry.intent) for node in graph.nodes.values()
+            for entry in node.secret_selections}
+        if set(choices) != required:
+            raise ValueError
+        result = {}
+        for node_id in sorted(graph.nodes):
+            node = graph.node(node_id)
+            if node.secret_selections:
+                selected = author_secret_selections(node.secret_deliveries, explicit=tuple(
+                    choices[(entry.reference, entry.intent)] for entry in node.secret_selections))
+                result[node_id] = [entry.descriptor() for entry in selected]
+        return result
+    except (ValueError, TypeError, AttributeError, KeyError):
+        failure = ValueError("installation secret versions are incomplete or conflicting")
+    raise failure
+
+
 def _website_input(value: DockerCpkWebsite, *, allow_managed=False) -> tuple[str, ContainerServerProduct | None]:
     """Validate enabled-only inputs using the existing frontend owners."""
     from .client.frontend import _canonical_origin

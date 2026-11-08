@@ -14,6 +14,17 @@ and selected product contracts explicit. Existing selected-product validation
 owns allowed secret deliveries and retained mounts before variants rebuild the
 installation credential handoffs.
 
+#2089 adds `installation_secret_version_choices` for the existing public
+desired-graph.set `explicit_secret_choices` field. The caller supplies complete
+immutable version metadata for every resolving use. Core still owns selection
+validation and ordering; the installation maps a shared reference/intent to one
+version across all consuming nodes, including PostgreSQL's password file and
+CPK's PGPASSWORD. Missing, extra or duplicate/conflicting choices refuse with a
+bounded error. The helper does not change the composed graph, resolve material,
+admit metadata or grant authority. The existing Operations authoring route must
+perform its normal metadata/admission transaction. Default composition remains
+unselected; these values alone are not execution readiness or byte-domain proof.
+
 Servers #297 adds an optional, repr-hidden managed-health artifact. None leaves
 the existing path unchanged and imports no optional managed-health/Docker module.
 Enabled validation delegates bytes/digests/schema to Core and the accepted

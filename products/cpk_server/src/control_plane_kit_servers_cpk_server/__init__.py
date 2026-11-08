@@ -6,6 +6,7 @@ from .installation import (
     DynamicWorkspaceAuthority,
     ExternalInstallationIngress,
     compose_docker_cpk_installation,
+    installation_secret_version_choices,
 )
 
 from .boundary import (
@@ -36,6 +37,7 @@ __all__ = (
     "DynamicWorkspaceAuthority",
     "ExternalInstallationIngress",
     "compose_docker_cpk_installation",
+    "installation_secret_version_choices",
     "CpkServerApplicationBoundary",
     "CpkServerBoundaryResponse",
     "CpkServerHttpProcessBoundary",

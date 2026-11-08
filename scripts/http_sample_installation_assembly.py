@@ -18,12 +18,16 @@ from control_plane_kit_core.http_verification_sample_installation import (
     HttpVerificationSampleCheckBinding,
 )
 from control_plane_kit_core.http_verification_samples import http_verification_check_digest
-from control_plane_kit_core.products import ProductReference
+from control_plane_kit_core.products import ProductReference, OciImageReference, OciImageReferenceCodec
+from control_plane_kit_core.secret_selections import SecretVersionSelection, secret_selections_from_descriptor
+from control_plane_kit_core.topology.secret_selection import carry_forward_secret_selections
 from control_plane_kit_core.planning import WaitForHealthy, ReviewChange
 from control_plane_kit_core.topology import compile_topology, validate_graph, DEFAULT_GRAPH_CODEC, DeploymentGraph
 from control_plane_kit_servers_cpk_server import control_configuration as cpk
 from control_plane_kit_servers_secrets_server import configuration as secrets
-from control_plane_kit_servers_cpk_server.installation import compose_docker_cpk_installation
+from control_plane_kit_servers_cpk_server.installation import (
+    compose_docker_cpk_installation, installation_secret_version_choices,
+)
 from control_plane_kit_servers_cpk_local_gateway.http_sample_configuration import (
     gateway_http_sample_trust_artifact, gateway_http_sample_declared_runtime_contract,
     CONFIGURATION_ENVIRONMENT, CONFIGURATION_PATH,
@@ -33,7 +37,7 @@ from test_installation_management import InstallationManagementTests
 from receiver_acceptance_material import AuthoredMaterial
 
 
-def assemble(*, commissioning_directory=None):
+def assemble(*, commissioning_directory=None, postgres_image=None, secret_versions=None):
     """Return original installation inputs, full graph and exact sample plan."""
     fixture = InstallationManagementTests()
     fixture.commissioning_directory = commissioning_directory
@@ -44,6 +48,13 @@ def assemble(*, commissioning_directory=None):
     fixture.keys = fixture.signing_material.public
     fixture.trust = replace(fixture.trust, public_keys=(fixture.keys["transit"],))
     original = fixture.installation(website=fixture.managed_website())
+    if postgres_image is not None:
+        if type(postgres_image) is not OciImageReference:
+            raise ValueError("source assembly requires an explicit immutable PostgreSQL image")
+        original = replace(original, postgres_product=fixture.codec.encode_document(replace(
+            original.postgres_product.product, image=postgres_image)))
+    elif secret_versions is not None:
+        raise ValueError("selected source assembly requires an explicit PostgreSQL image")
     baseline = DEFAULT_GRAPH_CODEC.decode(DEFAULT_GRAPH_CODEC.encode(fixture.graph(original)))
     control = fixture.receiver(baseline.node(original.cpk_node_id))
     checks = original.cpk_product.product.runtime_contract.verification.checks
@@ -86,6 +97,12 @@ def assemble(*, commissioning_directory=None):
     graph = graph.update_node(gateway)
     # Match the actual descriptor boundary before the owning pure compiler.
     graph = DEFAULT_GRAPH_CODEC.decode(DEFAULT_GRAPH_CODEC.encode(graph))
+    fixture.secret_version_choices = None
+    if secret_versions is not None:
+        fixture.secret_version_choices = installation_secret_version_choices(selected, secret_versions)
+        graph = carry_forward_secret_selections(DeploymentGraph(graph.name), graph,
+            {node: secret_selections_from_descriptor(choices)
+                for node, choices in fixture.secret_version_choices.items()})
     pair = validate_graph(DeploymentGraph(graph.name)), validate_graph(graph)
     for validated in pair:
         validated.require_valid()
@@ -100,12 +117,23 @@ def main():
         assert Path(importlib.import_module(name).__file__).resolve().is_relative_to(root)
     # Existing commissioning fixture writes only its owned temporary directory.
     previous = Path.cwd()
+    image_document = os.environ.get("CPK_SOURCE_ASSEMBLY_POSTGRES_IMAGE")
+    postgres_image = None if image_document is None else OciImageReferenceCodec().decode(json.loads(image_document))
     try:
         with TemporaryDirectory(prefix="cpk181-full-child-") as directory:
             os.chdir(directory)
             custody = Path(directory) / "commissioning"
             custody.mkdir(mode=0o700)
-            fixture, original, baseline, graph, gateway_document, plan = assemble(commissioning_directory=custody)
+            fixture, original, baseline, graph, gateway_document, plan = assemble(
+                commissioning_directory=custody, postgres_image=postgres_image)
+            if postgres_image is not None:
+                # Explicit fixture metadata only, never provider-admitted IDs.
+                uses = sorted({(entry.reference, entry.intent) for node in graph.nodes.values()
+                    for entry in node.secret_selections}, key=lambda pair: (pair[0].reference_id, pair[1].value))
+                versions = tuple(SecretVersionSelection(reference, intent, "synthetic-source-version-" + str(index))
+                    for index, (reference, intent) in enumerate(uses))
+                fixture, original, baseline, graph, gateway_document, plan = assemble(
+                    commissioning_directory=custody, postgres_image=postgres_image, secret_versions=versions)
     finally:
         os.chdir(previous)
     before, child = baseline.node(original.cpk_node_id), graph.node(original.cpk_node_id)
@@ -125,6 +153,16 @@ def main():
         if getattr(delivery, "environment_name", None) == "PGPASSWORD")
     assert password.reference == original.postgres_password
     assert password.intent.value == "postgres.password"
+    postgres = graph.node(original.postgres_node_id)
+    check, = postgres.block_spec.verification.checks
+    assert postgres.block_spec.verification == baseline.node(postgres.node_id).block_spec.verification
+    assert check.check_id == "installation-postgres-ready"
+    assert check.authentication.password_reference == original.postgres_password
+    postgres_selection, = (value for value in postgres.secret_selections
+        if value.reference == original.postgres_password)
+    cpk_selection, = (value for value in child.secret_selections
+        if value.reference == original.postgres_password)
+    assert postgres_selection == cpk_selection
     waits = [dict(node_id=activity.operation.target.node_id,
         checks=[dict(check_id=check.check_id, kind=type(check).__name__)
             for check in graph.node(activity.operation.target.node_id).block_spec.verification.checks])
@@ -137,7 +175,14 @@ def main():
         cpk_original_checks=[check.check_id for check in checks], postgres_requirements=sorted(requirements),
         secrets_original_checks=[check.check_id for check in graph.node(original.secrets_node_id).block_spec.verification.checks],
         signing_material="synthetic-held-through-fixture-lifetime-unregistered",
-        postgres_password="unresolved-original-reference", node_count=len(graph.nodes),
+        postgres_password=("unresolved-original-reference" if postgres_image is None
+            else "explicit-synthetic-version-not-provider-admitted"),
+        postgres_image=(None if postgres_image is None else postgres_image.execution_reference),
+        postgres_product_reference={"identity": postgres.metadata["product_identity"],
+            "descriptor_sha256": postgres.metadata["product_descriptor_digest"]},
+        postgres_password_selection=postgres_selection.descriptor(),
+        secret_selection_nodes=(0 if fixture.secret_version_choices is None else len(fixture.secret_version_choices)),
+        node_count=len(graph.nodes),
         ingress_count=len(graph.public_ingresses), plan_ready=plan.ready_for_execution,
         ordinary_waits=waits, reviews=reviews, operations_commands=0, provider_calls=0,
         gateway_extension="explicit-source-fixture-after-normal-installation-composition",

@@ -1,5 +1,20 @@
 Source: [http_sample_installation_assembly.py](../../../scripts/http_sample_installation_assembly.py).
 
+#2089 accepts an explicit immutable `postgres_image` and complete supplied
+`secret_versions` as optional assembly inputs. It rebuilds the original product
+document with that image through the same managed contract, then uses the normal
+installation choices and Core carry-forward owner to project the public
+desired-graph.set selection. No registration or metadata admission is fabricated.
+All eight nodes, three ingresses, four database edges, original checks and full
+CPK/Secrets companions remain. Default structural assembly stays unselected and
+uses its explicitly synthetic image. The new parameterized test also uses unit
+metadata; actual acquired image lookup and provenance are separate receipts.
+The existing source-assembly gate can forward the public image descriptor via
+`CPK_SOURCE_ASSEMBLY_POSTGRES_IMAGE`. With that opt-in input, the pure main call
+uses it in the actual eight-node recipe and supplies explicitly synthetic
+version metadata across every resolving use. Its receipt distinguishes that
+from admitted versions and a completed run. It never queries a daemon or provider.
+
 This is the unfinished complete-child assembly checkpoint for #181/#163. It
 does not execute the approved program and is not source-live, admission,
 signed-sample, or durable-history evidence. Its opt-in owning runner command is:

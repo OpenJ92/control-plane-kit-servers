@@ -15,7 +15,6 @@ from control_plane_kit_core.secrets import SecretReference
 from control_plane_kit_core.secret_selections import SecretVersionSelection, secret_selections_from_descriptor
 from control_plane_kit_core.topology import DeploymentGraph
 from control_plane_kit_core.topology.secret_selection import carry_forward_secret_selections
-from control_plane_kit_servers_cpk_server import installation
 from control_plane_kit_core.topology import GraphDescriptorCodec, compile_topology, validate_graph
 from control_plane_kit_operations.graph_authoring import product_reference_in_node
 from control_plane_kit_servers_cloudflared_connector import managed
@@ -29,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[3]
 
 class InstallationManagementTests(unittest.TestCase):
     def test_normal_installation_choices_cover_all_nodes_and_share_the_password_version(self):
-        author = getattr(installation, "installation_secret_version_choices", None)
+        author = getattr(self.api, "installation_secret_version_choices", None)
         self.assertTrue(callable(author), "normal installation secret-version input is missing")
         original = self.installation(website=self.managed_website())
         graph = self.graph(original)
@@ -44,6 +43,7 @@ class InstallationManagementTests(unittest.TestCase):
             for node, values in payload["explicit_secret_choices"].items()}
         selected = carry_forward_secret_selections(DeploymentGraph("empty"), graph, choices)
         self.assertEqual(selected.edges, graph.edges)
+        self.assertEqual(selected.runtimes, graph.runtimes)
         self.assertEqual(selected.public_ingresses, graph.public_ingresses)
         self.assertEqual(set(selected.nodes), set(graph.nodes))
         for node_id, node in graph.nodes.items():
@@ -60,6 +60,22 @@ class InstallationManagementTests(unittest.TestCase):
         self.assertEqual(check.authentication.password_reference, password(postgres.node_id).reference)
         self.assertEqual(len([edge for edge in selected.edges.values()
             if edge.provider_role == original.postgres_node_id and edge.consumer_role == original.cpk_node_id]), 4)
+
+    def test_normal_installation_choices_refuse_missing_extra_and_conflicting_versions(self):
+        original = self.installation(website=self.managed_website())
+        graph = self.graph(original)
+        uses = sorted({(entry.reference, entry.intent) for node in graph.nodes.values()
+            for entry in node.secret_selections}, key=lambda pair: (pair[0].reference_id, pair[1].value))
+        versions = tuple(SecretVersionSelection(reference, intent, "synthetic-version")
+            for reference, intent in uses)
+        extra = SecretVersionSelection(SecretReference("secret://fixture/unrelated"), versions[0].intent,
+            "synthetic-version")
+        conflicts = (versions[:-1], (*versions, extra), (*versions, versions[0]),
+            (*versions, replace(versions[0], version_id="other-version")))
+        for choices in conflicts:
+            with self.subTest(count=len(choices)), self.assertRaisesRegex(ValueError,
+                    "installation secret versions are incomplete or conflicting"):
+                self.api.installation_secret_version_choices(original, choices)
 
     def setUp(self):
         self.api = importlib.import_module("control_plane_kit_servers_cpk_server.installation")
