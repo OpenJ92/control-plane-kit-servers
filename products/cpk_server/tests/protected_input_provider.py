@@ -65,8 +65,10 @@ class ProviderTransport(httpx.BaseTransport):
 
 
 class ProtectedProvider:
-    def __init__(self, *, workspace_id=WORKSPACE, write_intents=("cloudflare.api-token",), resolve_intents=()):
+    def __init__(self, *, workspace_id=WORKSPACE, provider_id=PROVIDER,
+                 write_intents=("cloudflare.api-token",), resolve_intents=()):
         self.workspace_id = workspace_id
+        self.provider_id = provider_id
         self.write_intents, self.resolve_intents = tuple(write_intents), tuple(resolve_intents)
 
     def __enter__(self):
@@ -93,10 +95,10 @@ class ProtectedProvider:
                 })
                 database_path = self.root / "custody.sqlite3"
                 store, self.audit = admit_provider_custody(database_path,
-                    master_key=load_master_key_file(master), provider_id=PROVIDER,
+                    master_key=load_master_key_file(master), provider_id=self.provider_id,
                     credentials=parsed_credentials)
                 return store, self.audit, parsed_credentials, ProviderPolicyStore(
-                    database_path, provider_id=PROVIDER,
+                    database_path, provider_id=self.provider_id,
                 )
             # Root/provider wrapper trust is test bootstrap only, never a managed signing identity.
             bootstrap = fixture("provider-bootstrap").config
@@ -104,7 +106,7 @@ class ProtectedProvider:
                 provider_socket_name=core.NodeControlGraphReference(
                     core.NodeControlGraphReferenceRole.PROVIDER_SOCKET, "control")),
                 declaration=secrets_control_declaration())
-            app = create_app(control=control, initialize_provider=initialize, provider_id=PROVIDER)
+            app = create_app(control=control, initialize_provider=initialize, provider_id=self.provider_id)
             client = self.stack.enter_context(TestClient(app, base_url="https://input-provider.invalid"))
             self.client = client
             self.transport = ProviderTransport(client)

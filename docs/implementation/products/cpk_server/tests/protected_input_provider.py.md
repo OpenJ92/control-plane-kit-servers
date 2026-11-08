@@ -33,6 +33,9 @@ the accepted owner. Omitting the field means wildcard, not an empty coordinate.
 
 Optional workspace/write/resolve inputs now support #163's separately authorized
 imported-key fixture. Defaults retain #317's exact grants and generation behavior.
+An optional provider identity likewise binds custody, policy and the actual app
+to the selected graph's existing reference provider, retaining `input-provider`
+as the default. It does not remap the graph or forge metadata across providers.
 No wildcard scope, policy-admin capability or generation expansion is introduced.
 The retained TestClient lets that caller import ephemeral matching material and
 confirm its exact version through normal authenticated Secrets write/resolve.

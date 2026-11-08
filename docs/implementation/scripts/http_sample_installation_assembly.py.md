@@ -1,5 +1,12 @@
 Source: [http_sample_installation_assembly.py](../../../scripts/http_sample_installation_assembly.py).
 
+The once-assembled fixture also retains `product_documents`: exact per-node
+implementation documents for normal product import, with the explicit extended
+gateway document replacing its earlier health-only document. Their reference
+digests must match the graph's node metadata as a complete set. The registration
+fixture consumes these in the same custody lifetime; it never reassembles to
+recover documents and thereby generates different verifier material.
+
 #2089 accepts an explicit immutable `postgres_image` and complete supplied
 `secret_versions` as optional assembly inputs. It rebuilds the original product
 document with that image through the same managed contract, then uses the normal

@@ -1,6 +1,54 @@
 Source: [http_sample_registration_fixture.py](../../../scripts/http_sample_registration_fixture.py).
 Maintain alongside its source and the owning source-assembly shell.
 
+November8 extension: when `CPK_SOURCE_ASSEMBLY_POSTGRES_IMAGE` supplies an exact
+Core OCI image descriptor, assemble **once** with that image. Use the same
+commissioning directory, eight-node graph, workspace, five distinct signers and
+actual encrypted provider through normal desired-graph authoring. The provider
+identity is the graph's existing `bootstrap` identity in this mode; the fixture
+provider now accepts an explicit identity without changing its default.
+
+After real signing-key commissioning, authenticated writes store the five
+installation inputs (control credential, password, custody key, provider grants
+document and provider client credential). Their returned version IDs feed the
+existing `installation_secret_version_choices` input. All exact graph products
+are imported normally, followed by session start and `desired-graph.set` with
+complete choices and current lineage. Production metadata reads traverse the
+real provider HTTP bridge. Reconstruct and publicly read desired lineage, then
+replay with zero additional metadata requests. A read-only test assertion also
+compares the persisted authored source to the complete expected selected graph;
+the public graph projection redacts selections and is never decoded as source.
+PostgreSQL and CPK share the exact password version. This remains component
+integration with no deployment command or runtime observation.
+
+The semantic target-red used the same owning registration gate with an explicit
+image: old real key commissioning succeeded, then the selected-graph assertion
+failed for the intended missing behavior. Red log SHA256:
+`5bcd142f2bc0b5f02fc1ba18aac236070fe5a249fabc2bb3326e8f67edee8c2e`.
+See [law cards](selected_registration_laws.md) for the source-conditioned design.
+
+Selected commissioning green receipt: owning gate exit0,28 support tests;
+five active signing-role readbacks, five installation writes, six actual
+metadata observations (the shared password is selected on two nodes), eight
+normal product imports, desired revision1, reconstructed public lineage and
+exact persisted selected-graph equality. Authoring replay makes no additional
+metadata call. The receipt counts38 explicit helper commands/reads, in addition
+to direct public workspace pointer reads. No deployment commands were issued.
+All owned schema/custody/container/network/source exports were cleaned.
+Log `/private/tmp/cpk163-selected-registration-green02.log`, SHA256:
+`d4b6abb6c5a42d269556b881bf8c19e18360581353178d3914504c80b9b5a5ea`.
+
+The first implementation run reached product import, then refused session
+creation because the fixture used the planning service role. The corrected
+normal lifecycle role passed. This was a fixture fix; no owner authorization
+rule, decoder, metadata policy or public application contract changed.
+
+The immutable image input is only an admitted source coordinate in this phase,
+not an acquisition, running child process, physical secret installation or SQL
+success. No independent old receipt is joined to claim such success. Cleanup
+ends this fixture's authority; the eventual execute phase must stay within this
+same live context and retain its actual selected graph/choices.
+
 This is #163's real isolated key-commissioning fixture. It is not an approved
 deployment or child SQL/HTTP result. It composes the production Operations
 factory with current durable workspace authority and actual registered runtime,

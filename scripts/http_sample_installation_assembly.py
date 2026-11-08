@@ -98,6 +98,14 @@ def assemble(*, commissioning_directory=None, postgres_image=None, secret_versio
         metadata={**gateway.metadata, "product_identity": reference.identity.key,
             "product_descriptor_digest": reference.descriptor_sha256.value})
     graph = graph.update_node(gateway)
+    # Exact documents for normal product import in the SAME commissioning
+    # lifetime. The graph's explicit gateway extension supersedes its original.
+    fixture.product_documents = tuple(
+        document if child.block_id == gateway_id else child.implementation.document
+        for child in topology.root.children if hasattr(child, "implementation"))
+    assert {ProductReference.from_document(entry).descriptor_sha256.value
+        for entry in fixture.product_documents} == {
+            node.metadata["product_descriptor_digest"] for node in graph.nodes.values()}
     # Match the actual descriptor boundary before the owning pure compiler.
     graph = DEFAULT_GRAPH_CODEC.decode(DEFAULT_GRAPH_CODEC.encode(graph))
     fixture.secret_version_choices = None
