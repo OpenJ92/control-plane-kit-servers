@@ -1,5 +1,28 @@
 Source: [live_postgres_image.py](../../../../../products/postgres_server/tests/live_postgres_image.py).
 
+#390 sets the shipping empty-data initdb host policy to SCRAM. The same fresh
+fixture retains its local-socket initializer/sentinel checks and repeats the
+TCP correct/wrong/no-challenge probes plus signed readiness after restart.
+A separate fresh volume overrides only initdb host auth to trust; its independent
+no-challenge SELECT1 must succeed before forced-SCRAM and signed UNKNOWN prove
+refusal. Neither fixture modifies existing data or a retained installation.
+Each auth phase observes the management listener and mints its signed token
+after that boundary, so initialization delay or an expired earlier token cannot
+substitute for the intended auth observation.
+The supported exact-password claim is a nonempty UTF-8 value within the existing
+file bound, with no NUL, CR or LF. File-format trailing LF bytes are stripped;
+the positive fixture includes one. A logical original credential ending in LF
+is therefore not byte-equivalent, as the unit counterexample proves. Embedded
+newline/CR are outside this qualification; the existing parser is unchanged.
+
+#2089 adds an authentication qualification after the existing native SQL/listener
+gate on the unmodified shipping fresh-init recipe. It records only a bounded
+selected psql version and success booleans for exact SELECT1 with correct/wrong
+synthetic passwords and a require_auth=none control on the same loopback target,
+plus the signed readiness outcome. It never changes HBA, retained data or a live
+installation. A no-challenge shipping listener is a product HOLD, not readiness
+qualification; no SQL fulfillment or deployment acceptance is inferred.
+
 The original source-built ladder also accepts an explicitly borrowed published
 artifact. Selection precedes fixture creation; all containers use the resolved
 immutable ID. The lifecycle/retained-row checks and native-listener-before-SQL

@@ -78,7 +78,7 @@ def psql_invocation(password: bytes) -> PsqlInvocation:
         "-U", "cpk", "-d", "cpk", "-tA", "--quiet", "-c",
         "SET statement_timeout = '2s'; SELECT 1;",
     ), {"PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8",
-        "PGPASSWORD": secret, "PGCONNECT_TIMEOUT": "2"})
+        "PGPASSWORD": secret, "PGCONNECT_TIMEOUT": "2", "PGREQUIREAUTH": "scram-sha-256"})
 
 
 def classify_psql(returncode: int, output: bytes) -> NodeHealthReadOutcome:

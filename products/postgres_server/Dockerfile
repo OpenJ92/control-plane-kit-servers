@@ -6,6 +6,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     POSTGRES_DB=cpk \
     POSTGRES_USER=cpk \
     POSTGRES_PASSWORD_FILE=/run/secrets/postgres/password \
+    POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256 \
     PGDATA=/var/lib/postgresql/data
 
 WORKDIR /app

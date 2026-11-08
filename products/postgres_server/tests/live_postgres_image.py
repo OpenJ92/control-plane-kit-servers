@@ -19,6 +19,7 @@ import docker
 
 from postgres_control_fixtures import fixture, health_token, readiness_only
 from control_plane_kit_servers_postgres_server.configuration import postgres_control_configuration_artifact
+from control_plane_kit_servers_postgres_server.readiness import psql_invocation
 from control_plane_kit_servers_postgres_server.process import (
     LIFECYCLE_PREFIX, ROLE_PREFIX, valid_role_diagnostic,
 )
@@ -459,6 +460,36 @@ def wait_health(container, token: str, expected: str, seconds: float = 45.0) -> 
     raise AssertionError("PostgreSQL readiness did not become " + expected)
 
 
+def qualify_password_authentication(container, token, *, phase="fresh", authenticated=True):
+    """Observe the shipping loopback target without changing its HBA or data."""
+    version = container.exec_run(["/usr/local/bin/psql", "--version"], stderr=False)
+    match = re.search(rb"psql \(PostgreSQL\) (16\.[0-9]+)", version.output[:256])
+    require(version.exit_code == 0 and match is not None, "selected PostgreSQL client is not qualified")
+    outcomes = {}
+    for name, password, no_challenge in (("correct", PASSWORD, False),
+            ("wrong", "synthetic-wrong-postgres-password", False), ("no_challenge_control", PASSWORD, True)):
+        invocation = psql_invocation(password.encode())
+        environment = dict(invocation.environ)
+        if no_challenge:
+            environment["PGREQUIREAUTH"] = "none"
+        result = container.exec_run(list(invocation.argv), environment=environment, stderr=False)
+        outcomes[name] = result.exit_code == 0 and result.output == b"1\n"
+    status, body = health(container, token)
+    outcome = body.get("outcome") if status == 200 else "unavailable"
+    require(outcome in {"healthy", "unhealthy", "unknown", "unavailable"}, "signed readiness is malformed")
+    print(json.dumps({"postgres_password_qualification": dict(phase=phase, psql_version=match.group(1).decode(),
+        **outcomes, signed_readiness=outcome)}), flush=True)
+    if not authenticated:
+        require(outcomes["no_challenge_control"], "no-challenge SQL listener was not independently reachable")
+        require(not outcomes["correct"] and not outcomes["wrong"] and outcome == "unknown",
+            "no-challenge listener produced authenticated readiness")
+        return
+    require(outcomes["correct"] and outcome == "healthy",
+        "shipping fresh PostgreSQL cannot prove password-required SQL readiness")
+    require(not outcomes["wrong"], "shipping PostgreSQL accepted the wrong SQL password")
+    require(not outcomes["no_challenge_control"], "shipping PostgreSQL did not require a password challenge")
+
+
 def wait_exit(container, expected: int, seconds: float = 15.0) -> None:
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
@@ -483,9 +514,11 @@ def mounts(data_source: str, *, init: bool) -> dict[str, dict[str, str]]:
     return values
 
 
-def create(client, image_id: str, network_name: str, volume_name: str, suffix: str, *, init: bool = False, no_copy: bool = False):
+def create(client, image_id: str, network_name: str, volume_name: str, suffix: str, *, init: bool = False, no_copy: bool = False, trust_fixture: bool = False):
     bindings = mounts(volume_name, init=init)
     options = {}
+    if trust_fixture:
+        options["environment"] = {"POSTGRES_INITDB_ARGS": "--auth-host=trust"}
     if no_copy:
         bindings.pop(volume_name)
         options["mounts"] = [docker.types.Mount(WRONG_OWNER_PATH, volume_name, type="volume", no_copy=True)]
@@ -731,20 +764,20 @@ def exercise(client, image) -> None:
         data = client.volumes.create(name=f"{RUN}-data", labels=LABELS)
         volumes.append(data)
 
-        issued = int(time.time()) - 1
-        _, valid = health_token(value, issued_at=issued)
-        wrong_target = replace(value.config.target, receiver_id="f" * 32)
-        _, wrong = health_token(value, issued_at=issued, request_changes={"target": wrong_target})
-
         first = create(client, image.id, network.name, data.name, "first", init=True)
         containers.append(first)
         first.start()
         wait_running(first)
         wait_listener_denial(first)
+        issued = int(time.time()) - 1
+        _, valid = health_token(value, issued_at=issued)
+        wrong_target = replace(value.config.target, receiver_id="f" * 32)
+        _, wrong = health_token(value, issued_at=issued, request_changes={"target": wrong_target})
         require(health(first, wrong)[0] == 401, "management accepted mismatched credential")
         # Management now starts after the final native listener, following init
         # SQL. UNKNOWN remains a SQL-readiness outcome, not a guaranteed phase.
         wait_query(first)
+        qualify_password_authentication(first, valid)
         wait_health(first, valid, "healthy")
         require(first.attrs["HostConfig"]["Binds"] is not None, "expected fixed mounts")
         require("docker.sock" not in repr(first.attrs["Mounts"]), "Docker socket reached product")
@@ -759,6 +792,9 @@ def exercise(client, image) -> None:
         restarted.start()
         wait_running(restarted)
         wait_query(restarted, observe_native=True)
+        wait_listener_denial(restarted)
+        _, valid = health_token(value, issued_at=int(time.time()) - 1)
+        qualify_password_authentication(restarted, valid, phase="restart")
         restarted.exec_run(("python3", "-c", "import os; os.kill(int(open('/var/lib/postgresql/data/postmaster.pid').readline()), 15)"))
         wait_exit(restarted, 1)
         require(PASSWORD.encode() not in restarted.logs(stdout=True, stderr=True), "password reached failure logs")
@@ -784,6 +820,21 @@ def exercise(client, image) -> None:
         wait_exit(recovered, 0)
         recovered.remove()
         containers.remove(recovered)
+
+        trust_data = client.volumes.create(name=f"{RUN}-trust-data", labels=LABELS)
+        volumes.append(trust_data)
+        trust = create(client, image.id, network.name, trust_data.name, "trust", init=True, trust_fixture=True)
+        containers.append(trust)
+        trust.start()
+        wait_running(trust)
+        wait_query(trust, observe_native=True)
+        wait_listener_denial(trust)
+        _, valid = health_token(value, issued_at=int(time.time()) - 1)
+        qualify_password_authentication(trust, valid, phase="no-challenge", authenticated=False)
+        trust.stop(timeout=10)
+        wait_exit(trust, 0)
+        trust.remove()
+        containers.remove(trust)
 
         exercise_wrong_owner(client, image, network.name)
     finally:

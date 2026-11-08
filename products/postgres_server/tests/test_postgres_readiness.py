@@ -6,10 +6,22 @@ import unittest
 from unittest.mock import Mock, patch
 
 import control_plane_kit_core as core
+from control_plane_kit_core.secrets import SecretValue
 from control_plane_kit_servers_postgres_server import readiness
 
 
 class PasswordFileTests(unittest.TestCase):
+    def test_trailing_lf_delivery_is_not_original_sql_password_byte_equivalence(self):
+        original = SecretValue("synthetic-password\n")
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "password"
+            path.write_bytes(original.reveal().encode())
+            path.chmod(0o400)
+            with patch.object(readiness, "_owner_uid", return_value=70):
+                loaded = readiness.read_password(path)
+        self.assertEqual(loaded, b"synthetic-password")
+        self.assertNotEqual(loaded, original.reveal().encode())
+
     def test_password_bytes_preserve_content_and_strip_only_trailing_lf(self):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "password"
@@ -88,8 +100,9 @@ class ReadinessProbeTests(unittest.TestCase):
             "-U", "cpk", "-d", "cpk", "-tA", "--quiet", "-c",
             "SET statement_timeout = '2s'; SELECT 1;",
         ))
-        self.assertEqual(set(invocation.environ), {"PATH", "LANG", "LC_ALL", "PGPASSWORD", "PGCONNECT_TIMEOUT"})
+        self.assertEqual(set(invocation.environ), {"PATH", "LANG", "LC_ALL", "PGPASSWORD", "PGCONNECT_TIMEOUT", "PGREQUIREAUTH"})
         self.assertEqual(invocation.environ["PGPASSWORD"], "SECRET_SENTINEL")
+        self.assertEqual(invocation.environ["PGREQUIREAUTH"], "scram-sha-256")
         self.assertNotIn("SECRET_SENTINEL", " ".join(invocation.argv))
         self.assertNotIn("PGHOST", invocation.environ)
         self.assertNotIn("PGSERVICEFILE", invocation.environ)
