@@ -106,10 +106,20 @@ class ManagedCompositionTests(unittest.TestCase):
                     value.require_valid()
                 plan = core.compile_managed_verification_bootstrap_activity_plan(*pair)
                 self.assertTrue(plan.ready_for_execution)
-                pg = original.postgres_product.product
+                def selected_document(node_id):
+                    node = desired.node(node_id)
+                    document, = (value for value in fixture.product_documents
+                        if ProductReference.from_document(value).identity.key == node.metadata["product_identity"]
+                        and ProductReference.from_document(value).descriptor_sha256.value == node.metadata["product_descriptor_digest"])
+                    return document
+                # Installation composes real per-node descriptor variants. The
+                # base catalogue document is not the registered selected value.
+                pg_document = selected_document(original.postgres_node_id)
+                pg = pg_document.product
                 check, = desired.node(original.postgres_node_id).block_spec.verification.checks
+                self.assertEqual(pg.runtime_contract.verification.checks, (check,))
                 delivery, = pg.runtime_contract.secret_deliveries
-                observer = PostgresReadinessObserver(ProductReference.from_document(original.postgres_product),
+                observer = PostgresReadinessObserver(ProductReference.from_document(pg_document),
                     image, check.provider_socket, check.authentication.database, check.authentication.username,
                     delivery.target_path, delivery.path_binding.environment_name)
                 support = ManagedVerificationExecutionSupport(HttpSampleExecutionSupport(gateway_http_sample_binding(gateway), "control"),
@@ -122,7 +132,7 @@ class ManagedCompositionTests(unittest.TestCase):
                     managed_verification_support=support)
                 executors = native_verification_executors(registration, plan, pair)
                 self.assertEqual(set(executors), {"http_sample_executor", "postgres_readiness_executor"})
-                connector = original.management.connector_product
+                connector = selected_document(original.management.management_ingress.connector_node_id)
                 qualifier = DockerConnectorConnectionQualifier(ProductReference.from_document(connector),
                     connector.product.image.execution_reference, ConnectorConnectionProfile.MANAGED_WRAPPER_V1, **executors)
                 activities = [item for item in plan.activities if type(item.operation) is core.ObserveManagementBootstrap
