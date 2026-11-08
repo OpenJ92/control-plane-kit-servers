@@ -107,7 +107,7 @@ class ManagedCompositionTests(unittest.TestCase):
                 plan = core.compile_managed_verification_bootstrap_activity_plan(*pair)
                 self.assertTrue(plan.ready_for_execution)
                 pg = original.postgres_product.product
-                check, = pg.runtime_contract.verification.checks
+                check, = desired.node(original.postgres_node_id).block_spec.verification.checks
                 delivery, = pg.runtime_contract.secret_deliveries
                 observer = PostgresReadinessObserver(ProductReference.from_document(original.postgres_product),
                     image, check.provider_socket, check.authentication.database, check.authentication.username,
@@ -135,3 +135,29 @@ class ManagedCompositionTests(unittest.TestCase):
                         authority_ref=runtime.authority_ref), ConnectorConnectionQualification.FRESH)
             finally:
                 os.chdir(previous)
+
+    def test_legacy_http_plan_survives_shared_mixed_registration_in_real_bridge_and_connector(self):
+        from http_sample_linked_qualification import LinkedHttpSampleQualificationTests
+        from control_plane_kit_operations.managed_verification_execution import ManagedVerificationExecutionSupport
+        from control_plane_kit_servers_cpk_server.health_receiver_adapters import health_receiver_decoders
+        from unittest.mock import Mock
+        case = LinkedHttpSampleQualificationTests()
+        case.setUp()
+        gateway = case.value.authored.documents["gateway"]
+        support = ManagedVerificationExecutionSupport(case.support, (self.prepared.binding.observer,),
+            health_receiver_decoders(gateway_documents=(gateway,)))
+        adapter = compose_managed_verification_runtime(case.registration.adapter.adapter, support=support,
+            resolver=Mock(), public_resolver=Mock(), clock_epoch_ms=lambda:150000)
+        registration = RuntimeAdapterRegistration(adapter, invocation_profile="cpk.semantic-invocations.v1",
+            ordinary_verification_invocations=True, http_sample_support=case.support,
+            managed_verification_support=support)
+        case.registration = registration
+        case.native = replace(case.native, http_sample_registration=registration)
+        case.bridge = replace(case.bridge, native=case.native, http_sample_registration=registration)
+        inputs = dict(plan=case.plan, current=case.value.current, desired=case.desired,
+            registered_products=case.products, runtime_authorities=(case.value.authority,))
+        for name, select in (("bridge", case.select), ("connector", lambda:case.native.qualify(**inputs))):
+            with self.subTest(owner=name):
+                self.assertIsNotNone(select(), "upgraded registration lost an exact ready original HTTP-only plan")
+        case.test_unselected_or_legacy_interpretation_retains_refusal()
+        self.assertEqual(case.client.mock_calls, [])
