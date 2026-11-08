@@ -12,6 +12,10 @@ from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
 from control_plane_kit_core.products import ProductDescriptorCodec, ProductReference
 from control_plane_kit_core.receiver_configuration import select_receiver_node_control_configuration_artifact
 from control_plane_kit_core.secrets import SecretReference
+from control_plane_kit_core.secret_selections import SecretVersionSelection, secret_selections_from_descriptor
+from control_plane_kit_core.topology import DeploymentGraph
+from control_plane_kit_core.topology.secret_selection import carry_forward_secret_selections
+from control_plane_kit_servers_cpk_server import installation
 from control_plane_kit_core.topology import GraphDescriptorCodec, compile_topology, validate_graph
 from control_plane_kit_operations.graph_authoring import product_reference_in_node
 from control_plane_kit_servers_cloudflared_connector import managed
@@ -24,6 +28,39 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 class InstallationManagementTests(unittest.TestCase):
+    def test_normal_installation_choices_cover_all_nodes_and_share_the_password_version(self):
+        author = getattr(installation, "installation_secret_version_choices", None)
+        self.assertTrue(callable(author), "normal installation secret-version input is missing")
+        original = self.installation(website=self.managed_website())
+        graph = self.graph(original)
+        uses = {(entry.reference, entry.intent) for node in graph.nodes.values()
+            for entry in node.secret_selections}
+        versions = tuple(SecretVersionSelection(reference, intent, "synthetic-version-" + str(index))
+            for index, (reference, intent) in enumerate(sorted(uses,
+                key=lambda pair: (pair[0].reference_id, pair[1].value))))
+        # The existing public desired-graph.set field and its Core codec.
+        payload = {"explicit_secret_choices": author(original, versions)}
+        choices = {node: secret_selections_from_descriptor(values)
+            for node, values in payload["explicit_secret_choices"].items()}
+        selected = carry_forward_secret_selections(DeploymentGraph("empty"), graph, choices)
+        self.assertEqual(selected.edges, graph.edges)
+        self.assertEqual(selected.public_ingresses, graph.public_ingresses)
+        self.assertEqual(set(selected.nodes), set(graph.nodes))
+        for node_id, node in graph.nodes.items():
+            self.assertEqual(replace(selected.node(node_id), secret_selections=node.secret_selections), node)
+            self.assertTrue(all(type(value) is SecretVersionSelection
+                for value in selected.node(node_id).secret_selections))
+        def password(node):
+            return next(value for value in selected.node(node).secret_selections
+                if value.reference == original.postgres_password)
+        self.assertEqual(password(original.postgres_node_id), password(original.cpk_node_id))
+        postgres = selected.node(original.postgres_node_id)
+        check, = postgres.block_spec.verification.checks
+        self.assertEqual(check.check_id, "installation-postgres-ready")
+        self.assertEqual(check.authentication.password_reference, password(postgres.node_id).reference)
+        self.assertEqual(len([edge for edge in selected.edges.values()
+            if edge.provider_role == original.postgres_node_id and edge.consumer_role == original.cpk_node_id]), 4)
+
     def setUp(self):
         self.api = importlib.import_module("control_plane_kit_servers_cpk_server.installation")
         self.assertTrue(hasattr(self.api, "DockerCpkManagement"), "managed installation group is missing")
