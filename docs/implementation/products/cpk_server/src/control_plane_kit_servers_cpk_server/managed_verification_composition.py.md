@@ -91,3 +91,10 @@ status with the log checksum. The log prints dependency SHAs, not the Servers
 SHA; that coordinate is established by the launch/terminal source receipt.
 Post-run2021b5f only adds these two implementation receipt companions; no
 application, test, script or gate delta from the tested85b source is present.
+
+Meridian independently returned final PASS on tested clean85b193b and the
+green06 receipt/provenance. The prior compatibility HOLD is closed: both exact
+legacy HTTP and canonical mixed selection, refusal controls and owned cleanup
+passed review. Later commits are receipt documentation only. No further defect
+was found in the reviewed selection delta. This closes static source composition
+compatibility, not approved deployment or durable SQL/HTTP run acceptance.
