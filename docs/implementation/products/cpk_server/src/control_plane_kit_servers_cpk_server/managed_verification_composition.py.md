@@ -24,7 +24,7 @@ native executors; its Interpreters owner checks configured SQL observer identity
 This is capability translation only, not execution admission or connection proof.
 
 Owning validation: new named test.sh --managed-verification-source-qualification
-archives exact Core/Ops/I revisions and runs three nominal composition laws.
+archives exact Core/Ops/I revisions and runs nominal composition laws.
 It reuses the Operations owner's supplied-public-record fixture, without copying
 state machines or seeding history. It checks nominal field preservation, actual
 native RuntimeAdapterRegistration identity/options, and structural/crossed
@@ -38,3 +38,20 @@ private material resolvers/signers/client remain native-owned; no sensitive
 material enters descriptors/history. Operational history continues to belong to
 normal Operations invocations and committed outcomes; this candidate fabricates
 none. Actual run/history proof remains a required next milestone.
+
+Review found and reproduced legacy HTTP-plan selection loss with a shared mixed
+registration. Before source correction, owning red03 at7d93a5e exercised the
+existing LinkedHttpSampleQualificationTests value through public bridge.select
+and native.qualify: both returned None for the unchanged ready legacy plan.
+Log `/private/tmp/cpk2089-managed-composition-red03.log` SHA256
+`8bac32ca9215981aa56259bac9a20b493f4ad10f66219719b0006fbaf2699544`.
+It also exposed an independent new-test assumption: the eight-node graph has
+three connector starts/ingress allocations, while only its designated runtime
+management ingress receives a passive CONNECTOR_CONNECTED observation. The
+corrected law asserts all three starts/allocations and the single management
+qualification; no original operation or runtime assertion was removed.
+
+Correction tries exact ready legacy HTTP canonical matching first, regardless
+of the registration's additional powers, then exact ready managed matching when
+its configured support exists. Only matched-plan executors are returned. Altered
+or unsupported plans still receive none. No stored profile or plan is rewritten.

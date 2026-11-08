@@ -14,16 +14,18 @@ def native_verification_executors(registration, plan, pair):
     options = http_sample_service_options({RuntimeKind.DOCKER: registration})
     if not options:
         return {}
+    from control_plane_kit_core.planning import compile_http_sample_bootstrap_activity_plan
+    legacy = compile_http_sample_bootstrap_activity_plan(*pair)
+    if plan == legacy and legacy.ready_for_execution:
+        return dict(http_sample_executor=registration.adapter.http_sample_executor)
     if "managed_verification_support" in options:
         from control_plane_kit_core.planning import compile_managed_verification_bootstrap_activity_plan
         canonical = compile_managed_verification_bootstrap_activity_plan(*pair)
         executors = dict(http_sample_executor=registration.adapter.http_sample_executor,
             postgres_readiness_executor=registration.adapter.postgres_readiness_executor)
-    else:
-        from control_plane_kit_core.planning import compile_http_sample_bootstrap_activity_plan
-        canonical = compile_http_sample_bootstrap_activity_plan(*pair)
-        executors = dict(http_sample_executor=registration.adapter.http_sample_executor)
-    return executors if plan == canonical and canonical.ready_for_execution else {}
+        if plan == canonical and canonical.ready_for_execution:
+            return executors
+    return {}
 
 
 def postgres_readiness_route_input(route, support):

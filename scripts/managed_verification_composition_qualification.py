@@ -63,7 +63,7 @@ class ManagedCompositionTests(unittest.TestCase):
         with self.assertRaises(HttpSampleCompositionUnavailable):
             postgres_readiness_route_input(self.prepared.route, support)
 
-    def test_complete_eight_node_plan_selects_both_native_executors_and_all_three_connectors(self):
+    def test_complete_eight_node_plan_preserves_three_connector_starts_and_management_qualification(self):
         import os
         from pathlib import Path
         from tempfile import TemporaryDirectory
@@ -127,7 +127,17 @@ class ManagedCompositionTests(unittest.TestCase):
                     connector.product.image.execution_reference, ConnectorConnectionProfile.MANAGED_WRAPPER_V1, **executors)
                 activities = [item for item in plan.activities if type(item.operation) is core.ObserveManagementBootstrap
                     and item.operation.stage is core.ManagementBootstrapStage.CONNECTOR_CONNECTED]
-                self.assertEqual(len(activities), 3)
+                # Only the designated runtime-management ingress owns this
+                # passive observation. Preserve the other two ingress/connector
+                # obligations rather than inventing new management stages.
+                self.assertEqual(len(activities), 1)
+                from control_plane_kit_core.planning import StartNode, AllocatePublicIngress
+                connectors = {ingress.connector_node_id for ingress in desired.public_ingresses}
+                self.assertEqual(len(connectors), 3)
+                self.assertEqual({item.operation.target.node_id for item in plan.activities
+                    if type(item.operation) is StartNode and item.operation.target.node_id in connectors}, connectors)
+                self.assertEqual({item.operation.target.ingress_id for item in plan.activities
+                    if type(item.operation) is AllocatePublicIngress}, {ingress.ingress_id for ingress in desired.public_ingresses})
                 for item in activities:
                     runtime = desired.runtimes[item.operation.target.runtime_id]
                     self.assertIs(qualifier.qualify_shape(activity_id=item.activity_id, plan=plan,
