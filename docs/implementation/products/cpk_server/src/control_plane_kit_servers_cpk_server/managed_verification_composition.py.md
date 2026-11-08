@@ -55,3 +55,31 @@ Correction tries exact ready legacy HTTP canonical matching first, regardless
 of the registration's additional powers, then exact ready managed matching when
 its configured support exists. Only matched-plan executors are returned. Altered
 or unsupported plans still receive none. No stored profile or plan is rewritten.
+
+Final owning green06 at85b193bbdc777376c5104029a5ee04e74627cf71: exit0,
+28support+41tests/19.604s (5nominal/pure boundary laws+36existing affected health,
+native connection and factory regressions), source export cleanup verified.
+Exact archive cohort Coref56bb5c4cfde76764d39c5377d4270c5b23c3ba1,
+Ops70154b6698e101159326b08646f2dba90dda87cd,
+Ie438f6e522ad0a23a7acef460be08690f48b2e17. Log
+`/private/tmp/cpk2089-managed-composition-green06.log`, SHA256
+`208706d5000d1fdf259e0fae828dafb7b8dbe57e0147efd15570a4ca6cdba9e3`.
+Both real bridge.select and native.qualify preserve the ready legacy HTTP plan
+on the same mixed registration, with original refusal controls. Complete eight
+node mixed selection uses both native executors, preserves three connector
+starts/ingress allocations and qualifies the designated management connector.
+
+The new eight-node fixture required exact installation variant documents, not
+the catalogue base documents, for observer and managed connector configuration.
+Three connector nodes share a canonical descriptor; repeated identical bytes
+represent the same imported product. The lookup requires at least one matching
+identity+digest and exactly one distinct byte value, refusing missing/conflicting
+inputs. No production qualification law was weakened to correct these fixtures.
+
+Final independent re-review requested via North; earlier ab961 nominal receipt
+alone did not clear the legacy-selection HOLD. Normal public API admission,
+coordinator dispatch and original SQL/HTTP committed outcome/history are still
+unproven. Six-role source image qualification is a separate prerequisite under
+Servers#163; the recorded plan is preparation, not a build/deployment release.
+No installation or provider acquisition, image publication or deployment occurs
+in these tests. Source readiness never substitutes for runnable image evidence.
