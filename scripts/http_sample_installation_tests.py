@@ -68,7 +68,7 @@ class FullInstallationHttpSampleTests(unittest.TestCase):
                     if entry.artifact_id == slot.artifact_id)
                 configured = HttpVerificationSampleReceiverConfigurationCodec().decode_canonical_bytes(artifact.content.encode())
                 self.assertEqual(configured.verifier.issuer, "parent-cpk")
-                self.assertEqual(configured.verifier.public_keys, (fixture.keys["workload"],))
+                self.assertEqual(configured.verifier.public_keys, (fixture.sample_signing_material.public["workload"],))
                 installed.append(("workload", configured.verifier.public_keys[0]))
             gateway = graph.node(original.management.runtime_management.gateway_node_id)
             artifact, = (entry for entry in gateway.configuration_artifacts
@@ -76,10 +76,12 @@ class FullInstallationHttpSampleTests(unittest.TestCase):
             trust = gateway_http_sample_trust_from_artifact(artifact)
             self.assertEqual(trust.issuer, "parent-cpk")
             self.assertEqual(trust.gateway_target, original.management.gateway_control.target)
-            self.assertEqual(trust.public_keys, (fixture.keys["transit"],))
+            self.assertEqual(trust.public_keys, (fixture.sample_signing_material.public["transit"],))
+            self.assertNotEqual(trust.public_keys[0].fingerprint_sha256, fixture.keys["transit"].fingerprint_sha256,
+                "sample transit and health transit must have separate signers")
             installed.append(("transit", trust.public_keys[0]))
             for family, key in installed:
-                private = serialization.load_pem_private_key(fixture.signing_material.private[family], password=None)
+                private = serialization.load_pem_private_key(fixture.sample_signing_material.private[family], password=None)
                 public = serialization.load_pem_public_key(key.public_key_pem.encode("ascii"))
                 public.verify(private.sign(b"isolated-fixture-lifetime"), b"isolated-fixture-lifetime")
             for purpose, filename in (("workload-node-control-surface-read", "surface-read.pem"),
@@ -88,7 +90,7 @@ class FullInstallationHttpSampleTests(unittest.TestCase):
                 self.assertTrue(path.is_file())
                 self.assertEqual(path.stat().st_mode & 0o777, 0o400)
                 private = serialization.load_pem_private_key(path.read_bytes(), password=None)
-                for node_id in (original.cpk_node_id, original.secrets_node_id):
+                for node_id in (original.cpk_node_id, original.secrets_node_id, original.postgres_node_id):
                     verifier, = (entry for entry in fixture.receiver(graph.node(node_id)).verifiers
                         if entry.purpose.value == purpose)
                     public = serialization.load_pem_public_key(verifier.public_keys[0].public_key_pem.encode("ascii"))
