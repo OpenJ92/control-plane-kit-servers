@@ -15,7 +15,20 @@ HTTP_SAMPLE_SOURCE_INTERPRETERS=''
 HTTP_SAMPLE_ASSEMBLY_PHASE=all
 HTTP_SAMPLE_SOURCE_SECRETS=''
 HTTP_SAMPLE_SOURCE_SECRETS_REVISION=''
+GATEWAY_TARGET_CORE_REVISION=''
+GATEWAY_TARGET_OPERATIONS_REVISION=''
+GATEWAY_TARGET_EXPECTATION=''
 case "${1:-}" in
+  --gateway-target-source-qualification)
+    [ "$#" -eq 7 ] || { echo 'gateway target qualification requires three checkouts, exact Core/Ops revisions and legacy/full expectation' >&2; exit 2; }
+    HTTP_SAMPLE_RELAY_ONLY=6
+    HTTP_SAMPLE_SOURCE_CORE=$2
+    HTTP_SAMPLE_SOURCE_OPERATIONS=$3
+    HTTP_SAMPLE_SOURCE_INTERPRETERS=$4
+    GATEWAY_TARGET_CORE_REVISION=$5
+    GATEWAY_TARGET_OPERATIONS_REVISION=$6
+    GATEWAY_TARGET_EXPECTATION=$7
+    ;;
   --http-sample-source-registrations)
     [ "$#" -eq 6 ] || { echo 'source registrations require Core, Operations, Interpreters, Secrets checkout and exact Secrets revision' >&2; exit 2; }
     HTTP_SAMPLE_RELAY_ONLY=5
@@ -92,7 +105,12 @@ docker run --rm \
 
 docker build -f Dockerfile.test -t "$IMAGE" .
 if [ "$HTTP_SAMPLE_RELAY_ONLY" != 0 ]; then
-  if [ "$HTTP_SAMPLE_RELAY_ONLY" = 5 ]; then
+  if [ "$HTTP_SAMPLE_RELAY_ONLY" = 6 ]; then
+    sh scripts/http_sample_source_assembly.sh "$IMAGE" "$HTTP_SAMPLE_SOURCE_CORE" \
+      "$HTTP_SAMPLE_SOURCE_OPERATIONS" "$HTTP_SAMPLE_SOURCE_INTERPRETERS" gateway-target \
+      "$GATEWAY_TARGET_CORE_REVISION" "$GATEWAY_TARGET_OPERATIONS_REVISION" "$GATEWAY_TARGET_EXPECTATION"
+    exit 0
+  elif [ "$HTTP_SAMPLE_RELAY_ONLY" = 5 ]; then
     sh scripts/http_sample_source_assembly.sh "$IMAGE" "$HTTP_SAMPLE_SOURCE_CORE" \
       "$HTTP_SAMPLE_SOURCE_OPERATIONS" "$HTTP_SAMPLE_SOURCE_INTERPRETERS" registrations \
       "$HTTP_SAMPLE_SOURCE_SECRETS" "$HTTP_SAMPLE_SOURCE_SECRETS_REVISION"

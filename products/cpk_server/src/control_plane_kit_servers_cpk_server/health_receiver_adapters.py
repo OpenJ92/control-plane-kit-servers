@@ -1,5 +1,5 @@
 """Pure common receiver selection and separate product-owned transit parsing."""
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 
 from control_plane_kit_core.configuration import ConfigurationFileMode, ConfigurationMediaType
 from control_plane_kit_core.delegation_keys import DelegationKeyPurpose
@@ -100,6 +100,8 @@ class GatewayHealthReceiverDecoder:
                 workspace_id=configured.gateway_target.workspace_id, gateway_node_id=configured.gateway_target.node_id,
                 runtime_id=configured.gateway_target.runtime_id, purpose=configured.purpose, issuer=configured.issuer,
                 audience=configured.audience, public_keys=configured.public_keys,
+                **({"gateway_target": configured.gateway_target}
+                   if any(field.name == "gateway_target" for field in fields(GatewayHealthReceiverTrust)) else {}),
             )
         raise failure
 

@@ -57,3 +57,13 @@ selection scope remain mandatory. The actual selector receives no requirements;
 missing actual material cannot become a declaration-only success. Gateway
 transit parsing/selection is unchanged. This adds no authorization, network or
 current-state owner. Full owning validation remains pending.
+For the #2089 source cohort, GatewayHealthReceiverDecoder preserves
+`configured.gateway_target` when the selected nominal Operations dataclass
+declares that optional field. This is explicit DTO schema compatibility, not
+exception-triggered constructor retry. Older health constructors receive the
+same previous arguments. The new SQL owner requires a full target match and
+refuses an omitted or same-node/different-receiver target. Source qualification
+uses actual earlier and newer Operations constructors and the real decoder;
+there is no second registry or durable schema change. See
+[source cohort tests](../../../../scripts/gateway_target_qualification.py.md).
+

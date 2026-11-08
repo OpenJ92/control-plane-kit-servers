@@ -9,7 +9,25 @@ interpreters_repository=$4
 phase=${5:-all}
 secrets_repository=${6:-}
 secrets_revision=${7:-}
+core_revision=054e5884d89ed6f56141b8fc51ea996f0b6d916b
+operations_revision=71db67c5df666d936860cce35b99394e600b2f1f
+interpreters_revision=2e2a6b880359c6db98f6c1e41b6de450d8bc681f
 case "$phase" in
+  gateway-target)
+    core_revision=$6
+    operations_revision=$7
+    secrets_repository=''
+    secrets_revision=''
+    for revision in "$core_revision" "$operations_revision"; do
+      case "$revision" in ''|*[!0-9a-f]*) echo 'exact source revision is required' >&2; exit 2 ;; esac
+      [ "${#revision}" -eq 40 ] || exit 2
+    done
+    case "${8:-}" in
+      legacy) set -- python -m unittest gateway_target_qualification.LegacyGatewayTargetTests -v ;;
+      full) set -- python -m unittest gateway_target_qualification.FullGatewayTargetTests -v ;;
+      *) echo 'gateway target expectation must be legacy or full' >&2; exit 2 ;;
+    esac
+    ;;
   red) set -- python -m unittest http_sample_installation_tests.FullInstallationHttpSampleTests.test_secrets_companion_covers_original_pair_and_removes_only_its_review -v ;;
   all) set -- sh -c 'cd /tmp && python -m unittest http_sample_installation_tests test_full_http_sample_companion test_source_control_product test_installation_management test_managed_postgres_installation.ManagedPostgresInstallationTests -v && python -m http_sample_installation_assembly' ;;
   registrations)
@@ -19,9 +37,6 @@ case "$phase" in
     ;;
   *) echo 'unsupported source assembly test selection' >&2; exit 2 ;;
 esac
-core_revision=054e5884d89ed6f56141b8fc51ea996f0b6d916b
-operations_revision=71db67c5df666d936860cce35b99394e600b2f1f
-interpreters_revision=2e2a6b880359c6db98f6c1e41b6de450d8bc681f
 owned_source=$(mktemp -d /private/tmp/cpk181-source-assembly.XXXXXX)
 owned_network=''
 owned_database=''
