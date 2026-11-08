@@ -18,7 +18,18 @@ HTTP_SAMPLE_SOURCE_SECRETS_REVISION=''
 GATEWAY_TARGET_CORE_REVISION=''
 GATEWAY_TARGET_OPERATIONS_REVISION=''
 GATEWAY_TARGET_EXPECTATION=''
+MANAGED_COMPOSITION_INTERPRETERS_REVISION=''
 case "${1:-}" in
+  --managed-verification-source-qualification)
+    [ "$#" -eq 7 ] || { echo 'managed source qualification requires three checkouts and three exact revisions' >&2; exit 2; }
+    HTTP_SAMPLE_RELAY_ONLY=7
+    HTTP_SAMPLE_SOURCE_CORE=$2
+    HTTP_SAMPLE_SOURCE_OPERATIONS=$3
+    HTTP_SAMPLE_SOURCE_INTERPRETERS=$4
+    GATEWAY_TARGET_CORE_REVISION=$5
+    GATEWAY_TARGET_OPERATIONS_REVISION=$6
+    MANAGED_COMPOSITION_INTERPRETERS_REVISION=$7
+    ;;
   --gateway-target-source-qualification)
     [ "$#" -eq 7 ] || { echo 'gateway target qualification requires three checkouts, exact Core/Ops revisions and legacy/full expectation' >&2; exit 2; }
     HTTP_SAMPLE_RELAY_ONLY=6
@@ -105,7 +116,12 @@ docker run --rm \
 
 docker build -f Dockerfile.test -t "$IMAGE" .
 if [ "$HTTP_SAMPLE_RELAY_ONLY" != 0 ]; then
-  if [ "$HTTP_SAMPLE_RELAY_ONLY" = 6 ]; then
+  if [ "$HTTP_SAMPLE_RELAY_ONLY" = 7 ]; then
+    sh scripts/http_sample_source_assembly.sh "$IMAGE" "$HTTP_SAMPLE_SOURCE_CORE" \
+      "$HTTP_SAMPLE_SOURCE_OPERATIONS" "$HTTP_SAMPLE_SOURCE_INTERPRETERS" managed-composition \
+      "$GATEWAY_TARGET_CORE_REVISION" "$GATEWAY_TARGET_OPERATIONS_REVISION" "$MANAGED_COMPOSITION_INTERPRETERS_REVISION"
+    exit 0
+  elif [ "$HTTP_SAMPLE_RELAY_ONLY" = 6 ]; then
     sh scripts/http_sample_source_assembly.sh "$IMAGE" "$HTTP_SAMPLE_SOURCE_CORE" \
       "$HTTP_SAMPLE_SOURCE_OPERATIONS" "$HTTP_SAMPLE_SOURCE_INTERPRETERS" gateway-target \
       "$GATEWAY_TARGET_CORE_REVISION" "$GATEWAY_TARGET_OPERATIONS_REVISION" "$GATEWAY_TARGET_EXPECTATION"

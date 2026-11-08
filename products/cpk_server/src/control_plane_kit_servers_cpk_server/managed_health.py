@@ -123,17 +123,23 @@ class ManagedHealthBridge:
                         {RuntimeKind.DOCKER: self.http_sample_registration})
                     if not options:
                         return None
-                    from control_plane_kit_core.planning import compile_http_sample_bootstrap_activity_plan
-                    sample = compile_http_sample_bootstrap_activity_plan(*pair)
-                    if plan != sample or not sample.ready_for_execution:
+                    from .managed_verification_composition import native_verification_executors
+                    executors = native_verification_executors(self.http_sample_registration, plan, pair)
+                    if not executors:
                         return None
                     node = pair[1].graph.node(operation.target.node_id)
                     runtime = pair[1].graph.runtimes[node.runtime_id]
                     checks = node.block_spec.verification.checks
-                    if (runtime.kind is not RuntimeKind.DOCKER or runtime.management is None
-                            or not checks or any(type(check) is not HttpCheck for check in checks)):
+                    if (runtime.kind is not RuntimeKind.DOCKER or runtime.management is None or not checks):
                         return None
                     authority = _authority(runtime_authorities, runtime)
+                    if any(type(check) is not HttpCheck for check in checks):
+                        from control_plane_kit_core.verification import PostgresQueryCheck
+                        from control_plane_kit_operations.runtime_authorities import LocalDockerSocketAuthority
+                        executor = executors.get("postgres_readiness_executor")
+                        if (len(checks) != 1 or type(checks[0]) is not PostgresQueryCheck
+                                or type(authority.authority) is not LocalDockerSocketAuthority or executor is None):
+                            return None
                     gateway = _product(registered_products, authority.workspace_id,
                         pair[1].graph.node(runtime.management.gateway_node_id))
                     if gateway.reference != options["http_sample_support"].gateway_binding.product:

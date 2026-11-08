@@ -214,6 +214,7 @@ class CpkServerBootstrapConfiguration:
     workspace_authority: WorkspaceAuthorityConfiguration | None = None
     provider_policy_authority: ProviderPolicyAuthorityConfiguration | None = field(default=None, repr=False)
     http_sample_support: object | None = field(default=None, repr=False, compare=False)
+    managed_verification_support: object | None = field(default=None, repr=False, compare=False)
 
     @classmethod
     def from_environment(
@@ -962,6 +963,9 @@ def _operations_effect_ports(config, provider, *, unit_of_work_factory=None):
     _validate_managed_health_process(config)
     dynamic = getattr(config, "workspace_authority", None) is not None
     sample_support = getattr(config, "http_sample_support", None)
+    managed_support = getattr(config, "managed_verification_support", None)
+    if managed_support is not None and getattr(managed_support, "http_samples", None) is not sample_support:
+        raise BootstrapConfigurationError("managed verification composition is invalid")
     if sample_support is not None and (not dynamic or not config.runtime_dispatcher.enabled):
         raise BootstrapConfigurationError("HTTP sample execution composition is invalid")
     runtimes = None
@@ -976,7 +980,8 @@ def _operations_effect_ports(config, provider, *, unit_of_work_factory=None):
                 exact_version_execute_with_authority=provider.metadata_reader is not None,
                 invocation_profile="cpk.semantic-invocations.v1" if dynamic else None,
                 ordinary_verification_invocations=dynamic,
-                **({"http_sample_support": sample_support} if sample_support is not None else {}))
+                **({"http_sample_support": sample_support} if sample_support is not None else {}),
+                **({"managed_verification_support": managed_support} if managed_support is not None else {}))
         runtimes = {RuntimeKind.DOCKER: interpreter}
     ingress = (_ingress_interpreters(config, provider) if config.ingress_interpreters.enabled else None)
     if dynamic and ingress is not None:
@@ -1433,6 +1438,12 @@ def _docker_runtime_interpreter(
             **invocation_options,
         )
     support = getattr(config, "http_sample_support", None)
+    managed = getattr(config, "managed_verification_support", None)
+    if managed is not None:
+        from .managed_verification_composition import compose_managed_verification_runtime
+        return compose_managed_verification_runtime(interpreter, support=managed,
+            resolver=provider.authorized_resolver, public_resolver=_public_dns_resolver(config),
+            clock_epoch_ms=lambda: time.time_ns() // 1_000_000)
     if support is not None:
         from .http_sample_composition import compose_http_sample_runtime
         return compose_http_sample_runtime(interpreter, support=support,

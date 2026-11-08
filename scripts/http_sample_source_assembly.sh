@@ -13,6 +13,18 @@ core_revision=054e5884d89ed6f56141b8fc51ea996f0b6d916b
 operations_revision=71db67c5df666d936860cce35b99394e600b2f1f
 interpreters_revision=2e2a6b880359c6db98f6c1e41b6de450d8bc681f
 case "$phase" in
+  managed-composition)
+    core_revision=$6
+    operations_revision=$7
+    interpreters_revision=$8
+    secrets_repository=''
+    secrets_revision=''
+    for revision in "$core_revision" "$operations_revision" "$interpreters_revision"; do
+      case "$revision" in ''|*[!0-9a-f]*) echo 'exact source revision is required' >&2; exit 2 ;; esac
+      [ "${#revision}" -eq 40 ] || exit 2
+    done
+    set -- python -m unittest managed_verification_composition_qualification -v
+    ;;
   gateway-target)
     core_revision=$6
     operations_revision=$7
@@ -66,6 +78,10 @@ git -C "$core_repository" archive --format=tar "$core_revision" control-plane-ki
 tar -xf "$owned_source/core.tar" -C "$owned_source/core" --strip-components=1
 git -C "$operations_repository" archive --format=tar "$operations_revision" control-plane-kit-operations/src/control_plane_kit_operations > "$owned_source/operations.tar"
 tar -xf "$owned_source/operations.tar" -C "$owned_source/operations" --strip-components=1
+if [ "$phase" = managed-composition ]; then
+  git -C "$operations_repository" archive --format=tar "$operations_revision" control-plane-kit-operations/tests > "$owned_source/operations-tests.tar"
+  tar -xf "$owned_source/operations-tests.tar" -C "$owned_source/operations" --strip-components=1
+fi
 git -C "$interpreters_repository" archive --format=tar "$interpreters_revision" src/control_plane_kit_interpreters > "$owned_source/interpreters.tar"
 tar -xf "$owned_source/interpreters.tar" -C "$owned_source/interpreters"
 network=none
@@ -95,5 +111,5 @@ docker run --rm --network "$network" --read-only --tmpfs /tmp --cap-drop ALL --s
   -e CPK_SOURCE_ASSEMBLY_POSTGRES_IMAGE \
   -e CPK_SOURCE_FIXTURE_DATABASE_URL=postgresql://cpk:cpk-fixture@cpk163-postgres:5432/cpk \
   -e "CPK_SOURCE_SECRETS_REVISION=$secrets_revision" \
-  -e PYTHONPATH=/reviewed-http-sample/core/src:/reviewed-http-sample/operations/src:/reviewed-http-sample/interpreters/src:/reviewed-http-sample/secrets/src:/app:/app/products/cpk_server/tests:/app/products/secrets_server/tests:/app/scripts \
+  -e PYTHONPATH=/reviewed-http-sample/core/src:/reviewed-http-sample/operations/src:/reviewed-http-sample/operations:/reviewed-http-sample/interpreters/src:/reviewed-http-sample/secrets/src:/app:/app/products/cpk_server/tests:/app/products/secrets_server/tests:/app/scripts \
   "$image" "$@"

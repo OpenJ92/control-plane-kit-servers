@@ -39,13 +39,12 @@ class DockerManagedNativeConnection:
         """Translation qualification only; Operations verifies the stored profile."""
         if self.http_sample_registration is None:
             return None
-        from .http_sample_composition import http_sample_service_options
-        from control_plane_kit_core.planning import compile_http_sample_bootstrap_activity_plan
-        options = http_sample_service_options({RuntimeKind.DOCKER: self.http_sample_registration})
-        canonical = compile_http_sample_bootstrap_activity_plan(*pair)
-        if not options or plan != canonical or not canonical.ready_for_execution:
-            return None
-        return self.http_sample_registration.adapter.http_sample_executor
+        from .managed_verification_composition import native_verification_executors
+        return native_verification_executors(self.http_sample_registration, plan, pair).get("http_sample_executor")
+
+    def _verification_executors(self, plan, pair):
+        from .managed_verification_composition import native_verification_executors
+        return native_verification_executors(self.http_sample_registration, plan, pair)
 
     def _qualified(self, *, plan, current, desired, registered_products, runtime_authorities):
         try:
@@ -77,7 +76,7 @@ class DockerManagedNativeConnection:
                 qualifier = DockerConnectorConnectionQualifier(reference,
                     document.product.image.execution_reference,
                     profile=ConnectorConnectionProfile.MANAGED_WRAPPER_V1,
-                    **({"http_sample_executor": sampler} if sampler is not None else {}))
+                    **self._verification_executors(plan, pair))
                 mode = qualifier.qualify_shape(activity_id=activity.activity_id, plan=plan,
                     current=pair[0], desired=pair[1], product_document=document,
                     authority_ref=authority.authority_ref)
@@ -182,7 +181,7 @@ class DockerManagedNativeConnection:
                 ProductReference.from_document(self.product_document),
                 self.product_document.product.image.execution_reference, self.clock,
                 profile=ConnectorConnectionProfile.MANAGED_WRAPPER_V1,
-                **({"http_sample_executor": sampler} if sampler is not None else {}))
+                **self._verification_executors(inputs["plan"], (inputs["current"], inputs["desired"])))
             # Original-proof/material preflight stays in the observer and runs
             # before its first SDK read acquires the explicit Unix transport.
             return observer.observe(request, **inputs)

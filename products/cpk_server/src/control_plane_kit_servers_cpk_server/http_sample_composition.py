@@ -171,7 +171,18 @@ def http_sample_service_options(registrations):
                 or type(registration.adapter.http_sample_executor) is not HttpSampleCheckExecutor
                 or registration.adapter.http_sample_executor.http_sample_support is not support):
             raise ValueError
-        return {"http_sample_support": support, "http_sample_registration": registration}
+        options = {"http_sample_support": support, "http_sample_registration": registration}
+        managed = getattr(registration, "managed_verification_support", None)
+        if managed is not None:
+            from control_plane_kit_operations.runtime_adapter_registration import require_managed_verification_execution_support
+            from control_plane_kit_interpreters.probes.postgres_readiness_check import PostgresReadinessCheckExecutor
+            require_managed_verification_execution_support(managed, registration)
+            executor = registration.adapter.postgres_readiness_executor
+            if (managed.http_samples is not support or type(executor) is not PostgresReadinessCheckExecutor
+                    or executor.managed_verification_support is not managed):
+                raise ValueError
+            options.update(managed_verification_support=managed, managed_verification_registration=registration)
+        return options
     except (ImportError, ValueError, TypeError, AttributeError):
         failure = HttpSampleCompositionUnavailable("HTTP sample composition is unavailable")
     raise failure
