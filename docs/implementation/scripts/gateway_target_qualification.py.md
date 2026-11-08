@@ -39,7 +39,9 @@ decoder result. Green log SHA256:
 `d343ac7f86bc859da8f20d1ab40fa3558633d4944a43e87a9ac078f7b0090d5c`.
 Both runs used exact reviewed Core/Ops5fe905f4, no retained plans. The separate
 legacy cohort used actual Core054e/Ops71db and passed its constructor/selected
-trust law. All commands used the repository test.sh entry point, and source
+trust law, log SHA256
+`4075e0886574eb8ef101c98e80a4f317b0ed87fc7c24a7d0d30fa0e2fd5f10f0`.
+All commands used the repository test.sh entry point, and source
 archive cleanup was verified. This closes decoder metadata compatibility only;
 it does not unlock the full-plan rerun without the actual original Wait producer,
 native private-byte/process/route/signing checks and committed SQL evidence.
