@@ -31,7 +31,7 @@ from test_root_bootstrap import installation_input, DRIVER
 
 class RootMaterialPreparationTests(unittest.TestCase):
     def setUp(self):
-        directory = TemporaryDirectory()
+        directory = TemporaryDirectory(dir=os.environ.get("CPK_MATERIAL_TEST_ROOT"))
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
         self.state = self.root / "preparation" / "material"
