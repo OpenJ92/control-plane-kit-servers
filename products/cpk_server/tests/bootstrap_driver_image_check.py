@@ -138,7 +138,7 @@ def normal_cli_plans(driver, fixture, public_input, expected_input_sha256):
             frozen["installation"]["products"]["cpk"]["product"]["runtime_contract"]["configuration_artifacts"]
             if value["artifact_id"] == "cpk-managed-verification")
         product_codec = ProductDescriptorCodec()
-        cpk = product_codec.decode_document(json.dumps(document["bootstrap_input"]["installation"]["products"]["cpk"]).encode())
+        cpk = product_codec.decode_document(document["bootstrap_input"]["installation"]["products"]["cpk"])
         contract = replace(cpk.product.runtime_contract,
             configuration_artifacts=(*cpk.product.runtime_contract.configuration_artifacts, sender),
             public_environment=(*cpk.product.runtime_contract.public_environment,
@@ -175,6 +175,7 @@ def normal_cli_plans(driver, fixture, public_input, expected_input_sha256):
                                 *arguments], capture_output=True, timeout=60)
         assert first.returncode == 0 and len(first.stdout) <= 1048576
         material = json.loads(first.stdout)
+        assert material["input"]["capabilities"] == json.loads(health.content)["capability_ids"]
         second = subprocess.run([sys.executable, "-m", "control_plane_kit_servers_cpk_server.bootstrap_cli", "plan",
                                  "--input", write("bootstrap-input.json", material["bootstrap_plan"]["input"]),
                                  "--driver", driver], capture_output=True, timeout=60)
@@ -211,12 +212,14 @@ def normal_cli_plans(driver, fixture, public_input, expected_input_sha256):
         optional_document = optional_fixture.document()
         optional_document.pop("commissioning")
         optional_document["bootstrap_input"] = copy.deepcopy(document["bootstrap_input"])
+        optional_document["capabilities"] = list(document["capabilities"])
         optional_arguments = list(arguments)
         optional_arguments[optional_arguments.index("--input") + 1] = write("optional-input.json", optional_document)
         optional_process = subprocess.run([sys.executable, "-m", "control_plane_kit_servers_cpk_server.root_material_preparation",
                                            *optional_arguments], capture_output=True, timeout=60)
         assert optional_process.returncode == 0 and len(optional_process.stdout) <= 1048576
         optional_plan = json.loads(optional_process.stdout)
+        assert optional_plan["input"]["capabilities"] == material["input"]["capabilities"]
         assert optional_plan["outputs"] == material["outputs"] + ["external-provisioner.token"]
         optional_bootstrap = subprocess.run([sys.executable, "-m", "control_plane_kit_servers_cpk_server.bootstrap_cli", "plan",
             "--input", write("optional-bootstrap-input.json", optional_plan["bootstrap_plan"]["input"]), "--driver", driver],
@@ -234,6 +237,7 @@ def normal_cli_plans(driver, fixture, public_input, expected_input_sha256):
                 "frozen_health_content_sha256": sha256(health.content.encode()).hexdigest(),
                 "frozen_sender_content_sha256": sha256(sender.content.encode()).hexdigest(),
                 "health_sender_mounts_and_dynamic_authority_projected": True,
+                "both_modes_use_frozen_health_capabilities": True,
                 "http_import_policy_plan_passed": True, "http_generation_policy_plan_refused": True,
                 "real_material_prepared": False, "apply_executed": False, "live_service_started": False}
     finally:

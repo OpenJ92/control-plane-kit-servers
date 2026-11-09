@@ -30,3 +30,4 @@ class BootstrapDriverSourceTests(unittest.TestCase):
         self.assertTrue(result["http_generation_policy_plan_refused"])
         self.assertFalse(result["real_material_prepared"])
         self.assertTrue(result["health_sender_mounts_and_dynamic_authority_projected"])
+        self.assertTrue(result["both_modes_use_frozen_health_capabilities"])

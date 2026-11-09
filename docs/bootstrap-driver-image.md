@@ -107,6 +107,10 @@ Its website remains synthetic; this does not re-render or replace the customer's
 frozen website identity. The actual customer template is not executed or mutated.
 The public snapshot is an input to qualification, not baked customer data or a
 source overlay in the generic driver. A changed snapshot refuses before build.
+Both material modes use the health artifact's exact capability set. Product
+descriptor mappings enter the codec as mappings, preserving its canonical-byte
+entrance contract. These fixture corrections were independently identified
+before either source qualification or image execution.
 
 Real preparation must separately bind the accepted driver ID, qualified parent
 Secrets selection, frozen public sender/gateway/PG/website/health/connector files
