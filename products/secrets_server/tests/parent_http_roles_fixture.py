@@ -9,6 +9,8 @@ ROLES = (
     ("http-workload", "workload.http-verification-sample-signing-key", "workload-http-verification-sample"),
 )
 WORKSPACE = "workspace-image-smoke"
+DENIED = {"detail":{"outcome":"denied", "code":"insufficient-scope"}}
+UNSUPPORTED_GENERATION = {"detail":{"outcome":"malformed", "code":"invalid-delegation-key-generation"}}
 
 
 class BoundedProviderClient:
@@ -34,11 +36,12 @@ def _require(condition):
         raise ValueError("parent HTTP signing witness failed")
 
 
-def exercise(client, private, evidence, phase):
+def exercise(client, private, previous, phase):
     """Transport is real HTTP in the image lane; unit tests double transport only."""
     from source_control_fixture import read_file
     _require(phase in ("initial", "restart"))
-    prior = None if phase == "initial" else json.loads(read_file(evidence / "parent-http-versions.json", 65536))
+    _require((phase == "initial") == (previous is None))
+    prior = None if previous is None else json.loads(read_file(previous, 65536))
     rows = []
     for index, (role, intent, purpose) in enumerate(ROLES):
         token = read_file(private / (role + ".token"), 4096).decode("ascii")
@@ -77,29 +80,25 @@ def exercise(client, private, evidence, phase):
                 (path.replace(WORKSPACE, "foreign-workspace"), headers, "foreign-workspace")):
             denied = client.post(denied_path + "/resolve", headers=denied_headers,
                 json={**request, "correlation_id":role + "-" + correlation + "-" + phase})
-            _require(denied.status_code == 403 and "value_base64" not in denied.json())
+            _require(denied.status_code == 403 and denied.json() == DENIED)
             denied_write = client.post(denied_path, headers=denied_headers,
                 json={"value_base64":base64.b64encode(material).decode(), "intent":intent,
                     "caller_subject":role, "correlation_id":role + "-denied-write-" + correlation + "-" + phase})
-            _require(denied_write.status_code == 403 and "value_base64" not in denied_write.json())
+            _require(denied_write.status_code == 403 and denied_write.json() == DENIED)
         generation = client.post("/v1/workspaces/" + WORKSPACE + "/delegation-keys/" + role + "/generate",
             headers=headers, json={"secret_reference":"secret://control-plane-kit/" + role,
                 "purpose":purpose, "issuer":"synthetic-parent", "caller_subject":role,
                 "correlation_id":role + "-unsupported-generation-" + phase})
-        _require(generation.status_code == 400 and generation.json()["detail"]["code"] == "invalid-delegation-key-generation"
-            and "value_base64" not in generation.json())
+        _require(generation.status_code == 400 and generation.json() == UNSUPPORTED_GENERATION)
         probe_generation = client.post("/v1/workspaces/" + WORKSPACE + "/delegation-keys/" + role + "-probe/generate",
             headers=headers, json={"secret_reference":"secret://control-plane-kit/" + role + "-probe",
                 "purpose":"gateway-probe", "issuer":"synthetic-parent", "caller_subject":role,
                 "correlation_id":role + "-ungranted-generation-" + phase})
-        _require(probe_generation.status_code == 403 and "value_base64" not in probe_generation.json())
+        _require(probe_generation.status_code == 403 and probe_generation.json() == DENIED)
         rows.append({"role":role, "intent":intent, "version_id":version, "exact_version_resolved":True,
             "replay_verified":True, "wrong_role_status":403, "foreign_workspace_status":403,
             "unsupported_generation_status":400, "ungranted_generation_status":403})
     result = {"schema":"cpk.secrets-parent-http-versions.v1", "phase":phase, "roles":rows}
-    if phase == "initial":
-        with (evidence / "parent-http-versions.json").open("x") as stream:
-            json.dump(result, stream, sort_keys=True)
     return result
 
 
@@ -107,8 +106,9 @@ if __name__ == "__main__":
     try:
         import httpx
         _require(len(sys.argv) == 2)
+        previous = None if sys.argv[1] == "initial" else Path("/parent-http-versions.json")
         with httpx.Client(base_url="http://secrets-provider:8081", timeout=5.0, trust_env=False) as client:
-            result = exercise(BoundedProviderClient(client), Path("/client"), Path("/evidence"), sys.argv[1])
+            result = exercise(BoundedProviderClient(client), Path("/client"), previous, sys.argv[1])
         print(json.dumps(result, sort_keys=True))
     except Exception:
         print("parent HTTP signing witness failed", file=sys.stderr)

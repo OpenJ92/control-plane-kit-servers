@@ -705,14 +705,20 @@ assert_logs_redacted() {
 check_parent_http_roles() {
   [ "$PARENT_PROFILE" = 1 ] || return 0
   CHILD_PHASE="$CONTROL_PHASE-parent-http-roles"
+  set --
+  if [ "$CONTROL_PHASE" = restart ]; then
+    set -- --mount "type=bind,source=$CPK_SECRETS_CHILD_RECORDS/initial-parent-http.json,target=/parent-http-versions.json,readonly"
+  fi
   smoke_run "parent-http-$CONTROL_PHASE" --rm --label "$LABEL_KEY=$RUN_ID" --user 0:0 \
     --network "$NETWORK" --read-only --cap-drop ALL --security-opt no-new-privileges \
     --mount "type=volume,src=$CLIENT_BOOTSTRAP,dst=/client,readonly" \
-    --mount "type=bind,source=$CPK_SECRETS_CHILD_RECORDS/evidence,target=/evidence" \
     --mount "type=bind,source=$PWD/products/secrets_server/tests/parent_http_roles_fixture.py,target=/parent_http_roles_fixture.py,readonly" \
     --mount "type=bind,source=$PWD/products/secrets_server/tests/source_control_fixture.py,target=/source_control_fixture.py,readonly" \
-    "$CONTROLLER_IMAGE" python /parent_http_roles_fixture.py "$CONTROL_PHASE" \
+    "$@" "$CONTROLLER_IMAGE" python /parent_http_roles_fixture.py "$CONTROL_PHASE" \
     > "$CPK_SECRETS_CHILD_RECORDS/$CONTROL_PHASE-parent-http.json"
+  # The helper writes only bounded PUBLIC rows to stdout. The host stages one
+  # readable file; restart receives that file alone, never the host0700 directory.
+  if [ "$CONTROL_PHASE" = initial ]; then chmod 0444 "$CPK_SECRETS_CHILD_RECORDS/initial-parent-http.json"; fi
   case "$CONTROL_PHASE" in initial) PARENT_INITIAL_VERIFIED=1 ;; restart) PARENT_RESTART_VERIFIED=1 ;; esac
 }
 

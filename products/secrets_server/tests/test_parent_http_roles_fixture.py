@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from child_bootstrap_fixture import populate
-from parent_http_roles_fixture import ROLES, WORKSPACE, exercise, BoundedProviderClient
+from parent_http_roles_fixture import ROLES, WORKSPACE, exercise, BoundedProviderClient, DENIED, UNSUPPORTED_GENERATION
 from source_control_fixture import verify_logs
 
 
@@ -20,21 +20,27 @@ class Response:
 
 class Transport:
     """Prescribed HTTP responses only, no provider-policy/store reimplementation."""
-    def __init__(self, private, *, generation_status=400, wrong_role_status=403):
+    def __init__(self, private, *, generation_status=400, wrong_role_status=403, denial_leak=None):
         self.private = private
         self.generation_status, self.wrong_role_status = generation_status, wrong_role_status
+        self.denial_leak = denial_leak
         self.writes = 0
 
     def post(self, path, *, headers, json):
         correlation = json["correlation_id"]
         if "wrong-role" in correlation:
-            return Response(self.wrong_role_status, {})
+            body = json.loads(json.dumps(DENIED))
+            if self.denial_leak == "nested":
+                body["detail"]["diagnostic"] = {"payload":(self.private / (ROLES[0][0] + ".key")).read_text()}
+            elif self.denial_leak == "renamed":
+                body["renamed_material"] = base64.b64encode((self.private / (ROLES[0][0] + ".key")).read_bytes()).decode()
+            return Response(self.wrong_role_status, body)
         if "foreign-workspace" in correlation:
-            return Response(403, {})
+            return Response(403, DENIED)
         if "unsupported-generation" in correlation:
-            return Response(self.generation_status, {"detail":{"code":"invalid-delegation-key-generation"}})
+            return Response(self.generation_status, UNSUPPORTED_GENERATION)
         if "ungranted-generation" in correlation:
-            return Response(403, {})
+            return Response(403, DENIED)
         role = next(role for role, _, _ in ROLES if correlation.startswith(role + "-"))
         intent = next(intent for name, intent, _ in ROLES if name == role)
         if correlation.endswith("-write"):
@@ -82,8 +88,11 @@ class ParentHttpRolesFixtureTests(unittest.TestCase):
             evidence = Path(directory) / "evidence"
             evidence.mkdir()
             transport = Transport(private)
-            initial = exercise(transport, private, evidence, "initial")
-            restarted = exercise(transport, private, evidence, "restart")
+            initial = exercise(transport, private, None, "initial")
+            previous = evidence / "initial-public.json"
+            previous.write_text(json.dumps(initial))
+            previous.chmod(0o444)
+            restarted = exercise(transport, private, previous, "restart")
             self.assertEqual(transport.writes, 2)
             self.assertEqual([row["version_id"] for row in initial["roles"]],
                 [row["version_id"] for row in restarted["roles"]])
@@ -94,13 +103,14 @@ class ParentHttpRolesFixtureTests(unittest.TestCase):
                     self.assertTrue(raw not in public and base64.b64encode(raw) not in public)
 
     def test_generation_or_wrong_role_acceptance_prevents_success_evidence(self):
-        for fault in ({"generation_status":200}, {"wrong_role_status":200}):
+        for fault in ({"generation_status":200}, {"wrong_role_status":200},
+                {"denial_leak":"nested"}, {"denial_leak":"renamed"}):
             with self.subTest(fault=fault), TemporaryDirectory() as directory:
                 _, private, _ = self.seed(directory)
                 evidence = Path(directory) / "evidence"
                 evidence.mkdir()
                 with self.assertRaises(ValueError):
-                    exercise(Transport(private, **fault), private, evidence, "initial")
+                    exercise(Transport(private, **fault), private, None, "initial")
                 self.assertEqual(tuple(evidence.iterdir()), ())
 
     def test_parent_log_checker_refuses_encoded_key_or_token_leaks(self):

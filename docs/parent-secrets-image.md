@@ -48,9 +48,17 @@ volume; raw bytes and encoded values are excluded from logs/evidence. Normal
 provider HTTP performs both imports, exact-version resolves and replay. Wrong
 role and foreign workspace writes/resolves must return403 without material;
 HTTP-purpose generation must return400 and ungranted probe generation403.
+Every refusal must equal the complete pinned provider error object; extra fields,
+nested or renamed material fail without printing the body.
 After the existing forced provider-container replacement, those SAME original
 versions must resolve without another authorized write. Both ordinary signed
 health checks and readiness remain required. No current customer data is used.
+
+The cap-dropped UID0 helper never writes into the host UID501/0700 evidence
+directory. It returns bounded PUBLIC initial rows on stdout; only after success
+the host stages that file0444. Restart receives that single public file read-only,
+while the private client volume remains UID0/0700 with0400 files. No DAC override
+or broader directory permissions are introduced.
 
 HTTP has5-second operations and65536-byte response bounds. Public evidence
 contains role/intent/version/status booleans only, never credentials, private
@@ -108,3 +116,10 @@ The actual candidate digest is UNKNOWN. Do not replace parent root input or clai
 qualification until the single receipt, installed provenance, original/new HTTP
 checks and cleanup pass independent review and North accepts the exact digest.
 Child0d365 and the six accepted child choices stay pinned throughout.
+
+First review c29b897 passed the source action but held image execution on the
+host-owned evidence directory and partial error-body checks. Both were corrected
+before ANY gate or image execution; no superseded source suite was run. Transport
+unit negatives now inject nested raw and renamed encoded material into a403 and
+require fixed failure with no public success evidence. Source and image actions
+still require the corrected exact commit's independent review/release.
