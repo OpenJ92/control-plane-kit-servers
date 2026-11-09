@@ -34,6 +34,16 @@ def _closed(value, keys):
     return value
 
 
+def _provider_seed(subject, grants):
+    # Secrets 158b17ed owns the initial-policy vocabulary. Its pure seed
+    # validator needs typed grants but no bearer generation or database.
+    from control_plane_kit_secrets.auth import ProviderCredential, ProviderGrant
+    from control_plane_kit_secrets.provider_policy import _canonical_seed
+    return _canonical_seed((ProviderCredential(subject=subject, token="",
+        grants=tuple(ProviderGrant(grant["action"], grant["workspace_id"],
+            tuple(grant["intents"])) for grant in grants)),))
+
+
 def _commissioning(snapshot):
     """Verify public-only completion, exact bytes and actual role artifacts."""
     from .root_commissioning import _verified
@@ -165,6 +175,7 @@ def _project(document, *, driver_image_id):
             and grant["workspace_id"] == installation["workspace_id"]
             and type(grant["intents"]) is list and bool(grant["intents"])
             and all(type(intent) is str and 1 <= len(intent) <= 128 and intent != "*" for intent in grant["intents"]))
+    _provider_seed("root-" + installation["installation_id"], provider_grants)
     private = {"plan_digest": plan["digest"], "policy": {"file": "workspace-authority.json", "sha256": sha256(policy_raw).hexdigest()},
         "installer": identities["setup"], "initialization_idempotency_key": initialization_key,
         "administration": administration}
@@ -203,14 +214,28 @@ def _write(directory, name, raw, mode=0o400):
     os.fsync(directory)
 
 
+def verify_root_material_plan(plan, *, expected_digest, driver_image_id, host_state, uid, gid):
+    """Pure preflight for the normal shell entrance, before host mkdir."""
+    try:
+        expected = plan_root_material_preparation(plan["input"], driver_image_id=driver_image_id)
+        custody = expected["input"]["custody"]
+        _require(plan == expected and expected_digest == expected["digest"]
+            and host_state == custody["host_directory"] and type(uid) is int and type(gid) is int
+            and (uid, gid) == (custody["uid"], custody["gid"]))
+        return expected
+    except Exception:
+        failure = RootBootstrapError(_INVALID)
+    raise failure
+
+
 def prepare_root_material(plan, *, expected_digest, driver_image_id, state_directory, host_state=None):
     """Fresh exclusive output. Partial or existing state is held, never reused."""
     try:
-        expected = plan_root_material_preparation(plan["input"], driver_image_id=driver_image_id)
-        _require(plan == expected and expected_digest == expected["digest"])
-        custody = plan["input"]["custody"]
         _require(isinstance(state_directory, Path)
-            and (str(state_directory) if host_state is None else host_state) == custody["host_directory"])
+            and state_directory.is_absolute())
+        expected = verify_root_material_plan(plan, expected_digest=expected_digest, driver_image_id=driver_image_id,
+            host_state=str(state_directory) if host_state is None else host_state,
+            uid=os.geteuid(), gid=os.getegid())
         if host_state is not None:
             _require(state_directory.parent == Path("/preparation")
                 and state_directory.name == Path(host_state).name and state_directory.name not in {"", ".", ".."})
@@ -259,18 +284,23 @@ def _prepare(plan, state):
         _write(directory, "bootstrap-input.json", canonical(bootstrap["input"]))
         _write(directory, "bootstrap-plan.json", canonical(bootstrap))
         index = {"schema": "cpk.root-bootstrap.material.v2", "files": files, "dynamic_workspace": private}
-        _write(directory, "index.json", canonical(index))
-        material, admitted = _material(bootstrap, state / "index.json")
+        _write(directory, "index.pending.json", canonical(index))
+        material, admitted = _material(bootstrap, state / "index.pending.json")
         from control_plane_kit_secrets.bootstrap import load_provider_credentials
-        from control_plane_kit_secrets.auth import ProviderAuthorizer
+        from control_plane_kit_secrets.auth import ProviderAuthorizer, ProviderGrant
+        from control_plane_kit_secrets.provider_policy import _canonical_seed
         credentials = load_provider_credentials({"CPK_SECRETS_CREDENTIALS_FILE": str(state / "provider-credentials.json")})
         provider_authorizer = ProviderAuthorizer(credentials)
         authenticated_provider = provider_authorizer.authenticate("Bearer " + provider)
-        _require(authenticated_provider.subject == "root-" + bootstrap["input"]["installation"]["installation_id"])
-        for grant in plan["input"]["provider_grants"]:
-            for intent in grant["intents"]:
-                provider_authorizer.require(authenticated_provider, action=grant["action"],
-                    workspace_id=grant["workspace_id"], intent=intent)
+        # This validates prepared credentials, not active request-time policy.
+        # The pinned Secrets authorizer owns authentication only.
+        _require(len(credentials) == 1 and authenticated_provider is credentials[0]
+            and authenticated_provider.subject == "root-" + bootstrap["input"]["installation"]["installation_id"]
+            and authenticated_provider.grants == tuple(ProviderGrant(grant["action"],
+                grant["workspace_id"], tuple(grant["intents"])) for grant in plan["input"]["provider_grants"])
+            and authenticated_provider.capabilities == ()
+            and _canonical_seed(credentials) == _provider_seed(authenticated_provider.subject,
+                plan["input"]["provider_grants"]))
         installation = bootstrap["input"]["installation"]
         node = next(node for node in bootstrap["resources"]["nodes"] if node["node_id"] == bootstrap["cpk_node_id"])
         environment = {**node["environment"], "CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON":
@@ -290,9 +320,14 @@ def _prepare(plan, state):
                 plan["input"]["commissioning"]["intent_digest"],
             "commissioning_public_sha256": plan["input"]["commissioning"]["public_sha256"],
             "identities": plan["input"]["principals"], "outputs": plan["outputs"]}
-        _require(set(os.listdir(directory)) == set(plan["outputs"]) | {"intent.json"})
+        _require(set(os.listdir(directory)) == (set(plan["outputs"]) - {"index.json"})
+            | {"intent.json", "index.pending.json"})
         _write(directory, "complete.new", canonical(result), 0o600)
         os.rename("complete.new", "complete.json", src_dir_fd=directory, dst_dir_fd=directory)
+        os.fsync(directory)
+        # acquire_root consumes the canonical index directly. Make it visible
+        # only after all validation and the completed receipt are durable.
+        os.rename("index.pending.json", "index.json", src_dir_fd=directory, dst_dir_fd=directory)
         os.fsync(directory)
         return result
     except Exception:
@@ -331,6 +366,9 @@ def main(argv=None):
     for name in ("plan", "digest", "driver", "state"):
         preparing.add_argument("--" + name, required=True)
     preparing.add_argument("--host-state")
+    verification = sub.add_parser("verify")
+    for name in ("plan", "digest", "driver", "host-state", "uid", "gid"):
+        verification.add_argument("--" + name, required=True)
     args = parser.parse_args(argv)
     try:
         if args.action == "plan":
@@ -340,6 +378,10 @@ def main(argv=None):
                 "intent_digest": args.commissioning_digest, "public_utf8": _read_public(args.commission_public).decode(),
                 "public_sha256": args.public_sha256, "completion": decode_document(_read_public(args.commission_complete))}
             result = plan_root_material_preparation(document, driver_image_id=args.driver)
+        elif args.action == "verify":
+            plan = verify_root_material_plan(decode_document(_read_public(args.plan)), expected_digest=args.digest,
+                driver_image_id=args.driver, host_state=args.host_state, uid=int(args.uid), gid=int(args.gid))
+            result = {"preparation_digest": plan["digest"], "bootstrap_plan_digest": plan["bootstrap_plan"]["digest"]}
         else:
             result = prepare_root_material(decode_document(_read_public(args.plan)), expected_digest=args.digest,
                 driver_image_id=args.driver, state_directory=Path(args.state), host_state=args.host_state)

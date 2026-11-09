@@ -48,11 +48,18 @@ locators outside that reference index. Nothing reads or reuses old credentials.
 
 Secret files/index/policy/plan outputs are0400; intent/completion0600; all generated
 files are exclusively created without following links and fsynced. Existing
-bootstrap_runtime._material and admit_workspace_intent verify the final index.
+bootstrap_runtime._material and admit_workspace_intent verify a staged
+index.pending.json that acquisition cannot consume as the canonical index.
 The real credential verifier separately authenticates all three identities and
-checks setup-only administration. Existing Secrets credentials reader/authorizer
-verifies the fresh provider policy/token locally. No provider endpoint is called.
-Completion is atomically renamed only after those owners pass; public output is
+checks setup-only administration. The pinned Secrets158b17ed credentials reader
+and authorizer authenticate the fresh token; exact decoded typed grants and empty
+capabilities must match the plan. Its package-private provider_policy._canonical_seed
+also validates the initial policy during pure planning and again on decoded
+credentials. This reuses the actual seed owner's action/intent vocabulary without
+database initialization. It proves prepared initial policy, not durable grants or
+request-time authorization. No provider endpoint is called.
+Completion is atomically renamed only after those owners pass, then the canonical
+index.json is published and fsynced; public output is
 digests of public plans, role identities and file names, no raw/private hashes.
 Existing/partial output holds without retry, adoption, cleanup or regeneration.
 
@@ -60,8 +67,9 @@ Existing/partial output holds without retry, adoption, cleanup or regeneration.
 
 `bootstrap.sh material-plan DRIVER INPUT COMMISSION_PLAN PUBLIC COMPLETE PUBLIC_SHA INTENT_DIGEST`
 mounts only those public files read-only in a no-network/no-socket controller.
-`bootstrap.sh material-prepare DRIVER PLAN DIGEST STATE` validates/creates a new
-0700 parent and mounts only it plus the public plan; the leaf is created exclusively
+`bootstrap.sh material-prepare DRIVER PLAN DIGEST STATE` first runs read-only
+plan/digest/driver/destination/UID/GID verification, before creating the new
+0700 parent. It then mounts only that parent plus the public plan; the leaf is created exclusively
 by the preparer. CLI inside the image is root_material_preparation plan/prepare.
 Driver must contain this exact reviewed source/cohort; the old cached image alone
 does not contain the new production entry. Never fall back to old fixtures or
@@ -69,12 +77,17 @@ retarget a tag. No real material execution has been released by this source note
 
 The existing cached source-test owner now has a narrow
 --root-material-preparation-source-tests selector: normal support/policy/integrity,
-then seven isolated tests under exact read-only source exports. No build/pull,
+then ten isolated tests under exact read-only source exports. No build/pull,
 network/socket/DB or real commissioning directory. Synthetic test keys exist in
 memory only to obtain actual owner-rendered public records; no PEM files exist.
 Public-only/stale/crossed receipt refusal, real material/identity validation,
 bootstrap-vs-preparation digest and driver binding, strict modes, partial hold,
-no completed-state reuse and bounded CLI output are covered. Evidence pending.
+no completed-state reuse and bounded CLI output are covered. The real shell's
+negative cases each use their own call ledger; the valid control uses an independent
+fresh destination and plan. Its executable Docker fixture stays on private
+container tmpfs and delegates real verification, then stops at a prepare sentinel.
+The prior red and diagnostic failures remain recorded on #384; corrected evidence
+is pending. Temporary stage-diagnostic wrappers are removed from the corrected tests.
 
 Rowan owns parent website projection separately; Lin owns the coherent installer
 driver/runtime image packaging. Merge their reviewed inputs before calculating

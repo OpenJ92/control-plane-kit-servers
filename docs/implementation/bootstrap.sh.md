@@ -37,6 +37,8 @@ That fixture evidence is not authority to acquire or change a retained root.
 
 New material-plan mounts only the approved public input, commissioning plan,
 public.json and complete.json snapshots, no key directory. Material-prepare mounts
-a fresh private parent plus reviewed plan, no network/socket/services. Existing
+a fresh private parent plus reviewed plan, no network/socket/services. A read-only
+verification controller checks the exact plan/digest/driver/host destination and
+UID/GID before the parent is created. Existing
 root material/index/authority owners remain authoritative. Source evidence pending;
 see docs/root-material-preparation.md. Other actions retain their existing scope.

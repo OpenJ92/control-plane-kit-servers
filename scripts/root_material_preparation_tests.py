@@ -1,5 +1,5 @@
 """Offline installer evidence, public-only receiving trust, no service effects."""
-from contextlib import ExitStack, contextmanager, redirect_stdout
+from contextlib import redirect_stdout
 import copy
 from dataclasses import replace
 from hashlib import sha256
@@ -10,7 +10,6 @@ from pathlib import Path
 import stat
 import subprocess
 import sys
-import traceback
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
@@ -80,45 +79,6 @@ class RootMaterialPreparationTests(unittest.TestCase):
         plan = self.plan() if plan is None else plan
         return api.prepare_root_material(plan, expected_digest=plan["digest"], driver_image_id=DRIVER, state_directory=self.state)
 
-    @contextmanager
-    def positive_diagnostics(self):
-        # Only class/function/line witnesses. Never exception messages, locals,
-        # arguments, returned material or private file bytes.
-        import control_plane_kit_servers_cpk_server.bootstrap_workspace as workspace
-        import control_plane_kit_servers_cpk_server.bootstrap_runtime as runtime
-        import control_plane_kit_servers_cpk_server.server as server
-        import control_plane_kit_secrets.bootstrap as provider
-        import control_plane_kit_servers_cpk_server.authentication as authentication
-        diagnostics = []
-        def observed(name, actual):
-            def call(*args, **kwargs):
-                caller = sys._getframe(1)
-                coordinate = (caller.f_code.co_name, caller.f_lineno)
-                if name != "_require":
-                    diagnostics.append((name, "entered"))
-                try:
-                    value = actual(*args, **kwargs)
-                    if name != "_require":
-                        diagnostics.append((name, "returned"))
-                    return value
-                except Exception as error:
-                    frames = traceback.extract_tb(error.__traceback__)
-                    last = frames[-1]
-                    diagnostics.append((name, type(error).__name__, last.name, last.lineno, coordinate))
-                    raise
-            return call
-        with ExitStack() as stack:
-            for owner, name in ((runtime, "_material"), (workspace, "admit_workspace_intent"),
-                    (provider, "load_provider_credentials"), (server, "_credential_verifier"),
-                    (authentication.StaticDevelopmentMultiCredentialVerifier, "authenticate"), (api, "_require")):
-                actual = getattr(owner, name)
-                stack.enter_context(patch.object(owner, name, side_effect=observed(name, actual),
-                    **({"autospec":True} if name == "authenticate" else {})))
-            try:
-                yield diagnostics
-            except api.RootBootstrapHold:
-                self.fail("preparation held; bounded owner witnesses=" + repr(diagnostics))
-
     def test_plan_is_pure_and_uses_public_only_commissioning_with_real_bootstrap_digest(self):
         with patch.object(api.secrets, "token_urlsafe", side_effect=AssertionError("plan generated token")), \
                 patch.object(api.os, "urandom", side_effect=AssertionError("plan generated key")), \
@@ -137,7 +97,7 @@ class RootMaterialPreparationTests(unittest.TestCase):
 
     def test_prepare_passes_existing_material_owner_and_three_real_auth_identities(self):
         plan = self.plan()
-        with self.positive_diagnostics(), patch.object(commissioning, "_reuse", side_effect=AssertionError("private commissioning accessed")):
+        with patch.object(commissioning, "_reuse", side_effect=AssertionError("private commissioning accessed")):
             receipt = self.prepare(plan)
         self.assertEqual(receipt["bootstrap_plan_digest"], plan["bootstrap_plan"]["digest"])
         self.assertEqual(stat.S_IMODE(self.state.stat().st_mode), 0o700)
@@ -165,6 +125,18 @@ class RootMaterialPreparationTests(unittest.TestCase):
         self.assertTrue(all(token not in rendered for token in tokens))
         for path in self.state.iterdir():
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600 if path.name in {"intent.json", "complete.json"} else 0o400)
+
+    def test_unsupported_provider_policy_refuses_during_pure_planning(self):
+        for field, value in (("action", "secret.unsupported"), ("intents", ["unsupported.intent"])):
+            document = copy.deepcopy(self.document)
+            document["provider_grants"][0][field] = value
+            with self.subTest(field=field), \
+                    patch.object(api.secrets, "token_urlsafe", side_effect=AssertionError("plan generated token")), \
+                    patch.object(api.os, "urandom", side_effect=AssertionError("plan generated key")), \
+                    self.assertRaises(api.RootBootstrapError):
+                self.plan(document)
+            self.assertFalse(self.state.exists())
+            self.assertEqual(list(self.state.parent.iterdir()), [])
 
     def test_crossed_or_reserialized_public_receipts_refuse_without_allocation(self):
         variants = []
@@ -208,8 +180,7 @@ class RootMaterialPreparationTests(unittest.TestCase):
             self.prepare()
 
     def test_completed_destination_is_not_reused_or_private_credentials_read(self):
-        with self.positive_diagnostics():
-            self.prepare()
+        self.prepare()
         with patch.object(api.secrets, "token_urlsafe", side_effect=AssertionError("reuse minted token")), \
                 patch("control_plane_kit_servers_cpk_server.bootstrap_runtime.private_read",
                     side_effect=AssertionError("reuse read credential")), self.assertRaises(api.RootBootstrapHold):
@@ -265,9 +236,10 @@ raise SystemExit(status)
 ''')
         docker.chmod(0o700)
         shell = Path(__file__).resolve().parents[1] / "bootstrap.sh"
-        calls = self.root / "docker-calls.jsonl"
         for digest, state in (("f" * 64, requested), (plan["digest"], self.root / "foreign-parent" / "material")):
-            with self.subTest(kind="digest" if digest != plan["digest"] else "path"):
+            kind = "digest" if digest != plan["digest"] else "path"
+            calls = self.root / (kind + "-calls.jsonl")
+            with self.subTest(kind=kind):
                 result = subprocess.run(["sh", str(shell), "material-prepare", DRIVER, str(plan_path), digest, str(state)],
                     env={**os.environ, "PATH":str(binaries) + os.pathsep + os.environ["PATH"], "CPK_TEST_DOCKER_LOG":str(calls)},
                     capture_output=True, timeout=30)
@@ -278,11 +250,16 @@ raise SystemExit(status)
                 observed = [json.loads(line) for line in calls.read_text().splitlines()]
                 self.assertEqual(observed[-1], dict(kind="verify", status=2))
                 self.assertFalse(any(call["kind"] == "prepare" for call in observed))
-        control = subprocess.run(["sh", str(shell), "material-prepare", DRIVER, str(plan_path), plan["digest"], str(requested)],
+        document["custody"]["host_directory"] = str(self.root / "control-parent" / "material")
+        control_plan = self.plan(document)
+        control_path = self.root / "control-plan.json"
+        control_path.write_bytes(canonical(control_plan))
+        calls = self.root / "control-calls.jsonl"
+        control = subprocess.run(["sh", str(shell), "material-prepare", DRIVER, str(control_path), control_plan["digest"], document["custody"]["host_directory"]],
             env={**os.environ, "PATH":str(binaries) + os.pathsep + os.environ["PATH"], "CPK_TEST_DOCKER_LOG":str(calls)},
             capture_output=True, timeout=30)
         self.assertEqual(control.returncode, 87)  # Explicit fake Docker prepare boundary; no credentials.
-        self.assertTrue(requested.parent.exists())
+        self.assertTrue(Path(document["custody"]["host_directory"]).parent.exists())
         observed = [json.loads(line) for line in calls.read_text().splitlines()]
         self.assertEqual(observed[-2:], [dict(kind="verify", status=0), dict(kind="prepare")])
 
@@ -303,10 +280,10 @@ raise SystemExit(status)
         self.assertFalse(self.state.exists())
         (self.root / "plan.json").write_bytes(canonical(plan))
         stdout = io.StringIO()
-        with self.positive_diagnostics() as witnesses, redirect_stdout(stdout):
+        with redirect_stdout(stdout):
             status = api.main(["prepare", "--plan", str(self.root / "plan.json"), "--digest", plan["digest"],
                 "--driver", DRIVER, "--state", str(self.state)])
-            self.assertEqual(status, 0, "bounded owner witnesses=" + repr(witnesses))
+            self.assertEqual(status, 0)
         output = stdout.getvalue().encode()
         for name in ("human.bearer", "setup.bearer", "worker.bearer", "postgres.password", "provider.token", "custody.key"):
             self.assertFalse(private_read(self.state / name) in output, "private material reached public completion")

@@ -79,6 +79,12 @@ case "$ACTION" in
     STATE="$3"
     PARENT="$(dirname -- "$STATE")"
     NAME="$(basename -- "$STATE")"
+    docker run --pull never --rm --network none --read-only --cap-drop ALL --user "$(id -u):$(id -g)" \
+      --security-opt no-new-privileges \
+      --mount "type=bind,source=$PLAN,target=/bootstrap/plan.json,readonly" \
+      "$DRIVER" python -m control_plane_kit_servers_cpk_server.root_material_preparation verify \
+      --plan /bootstrap/plan.json --digest "$2" --driver "$DRIVER" --host-state "$STATE" \
+      --uid "$(id -u)" --gid "$(id -g)" >/dev/null
     [ ! -e "$STATE" ] && [ ! -L "$STATE" ] || commission_hold
     [ ! -e "$PARENT" ] && [ ! -L "$PARENT" ] || commission_hold
     commission_directory "$PARENT"
