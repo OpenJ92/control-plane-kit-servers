@@ -69,6 +69,7 @@ class ManagedVerificationStartupTests(unittest.TestCase):
             "CPK_MANAGED_HEALTH": "docker-unix-v2",
             "CPK_MANAGED_HEALTH_CONFIGURATION_FILE": str(self.root / "health.json"),
             "CPK_CONTROL_AUTH_VERIFIER": "static-development",
+            "CPK_CONTROL_AUTH_STATIC_WORKSPACE_GRANTS_JSON": "{}",
             "CPK_CONTROL_AUTH_STATIC_CREDENTIAL": "synthetic-startup-only", KEY: str(self.path)}
 
     def test_exact_variant_selects_one_support_and_declared_gateway_socket(self):
@@ -114,8 +115,11 @@ class ManagedVerificationStartupTests(unittest.TestCase):
             with self.subTest(path=path.name), patch.dict(os.environ, self.values | {KEY:str(path)}, clear=True), \
                     patch.object(server, "read_cpk_control_configuration", return_value=receiving_fixture().config), \
                     patch.object(server, "_install_operations_schema") as schema, \
-                    patch.object(server, "create_app") as create, patch.object(server.uvicorn, "run") as listen:
+                    patch.object(server, "create_app") as create, patch.object(server.uvicorn, "run") as listen, \
+                    patch("builtins.print") as reported:
                 self.assertEqual(server.main(), 2)
+                reported.assert_called_once_with(
+                    "cpk-server bootstrap error: managed verification process configuration is invalid", flush=True)
                 schema.assert_not_called()
                 create.assert_not_called()
                 listen.assert_not_called()
