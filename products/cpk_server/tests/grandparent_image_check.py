@@ -12,6 +12,9 @@ from pathlib import Path
 import subprocess
 import sys
 
+if not __debug__:
+    raise SystemExit("grandparent cohort verification requires enabled checks")
+
 PUBLIC = Path("/usr/share/cpk-grandparent")
 BUILD = Path("/opt/cpk-grandparent-build")
 PACKAGES = {

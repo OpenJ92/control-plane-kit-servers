@@ -29,7 +29,7 @@ case "$phase" in
       [ "${#revision}" -eq 40 ] || exit 2
     done
     if [ "$phase" = managed-startup ]; then
-      set -- python -m unittest managed_verification_startup_tests managed_verification_composition_qualification.ManagedCompositionTests.test_real_native_registration_supplies_same_objects_to_service_options -v
+      set -- python -m unittest managed_verification_startup_tests managed_verification_composition_qualification.ManagedCompositionTests.test_real_native_registration_supplies_same_objects_to_service_options grandparent_oci_tests -v
     else
       set -- python -m unittest managed_verification_composition_qualification managed_verification_startup_tests test_managed_health_bridge test_managed_native_connection test_operations_application_factory -v
     fi

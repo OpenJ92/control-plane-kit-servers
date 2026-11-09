@@ -1,4 +1,4 @@
-FROM localhost/control-plane-kit-servers/cpk-server@sha256:4846a9005108e925149b2869214c3f32dbdbd4d4953159af532297081e80fe28
+FROM cpk-grandparent-base
 
 USER 0
 COPY cohort /opt/cpk-grandparent-build

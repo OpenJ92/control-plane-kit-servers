@@ -11,7 +11,8 @@ Rowan's exact public variant/configuration input, not a material-driver release.
 ## Selected package and process path
 
 The dedicated `products/cpk_server/Dockerfile.grandparent` derives from retained
-CPK4846, an actual product with default module command and UID10001. It removes
+CPK4846, an actual product with default module command and UID10001, through a
+verified named local OCI context rather than registry metadata. It removes
 inherited server/gateway trees and copies those exact a544016 trees. Local Git
 archives supply full package roots for Coref56, Ops70154 and native e438, including
 pyproject/build metadata and Operations resources. No test-controller base, host
@@ -28,9 +29,14 @@ are supplied by the accepted product base; missing ones fail the gate.
 Build tools only may be acquired from public PyPI: setuptools80.9.0 and wheel0.45.1
 with their normal dependencies. PEP517 isolation is disabled for the local package
 installs; there is no automatic package dependency resolution or source download.
-The exact cached base must already exist on fixed local daemon d23d00aa. Buildx
-uses the local selected builder, linux/amd64, `--pull=false`, one fresh tag and run;
-base resolution/acquisition failure stops without fallback. No registry credential
+The exact cached base and controller1c8 must already exist on fixed local daemon
+d23d00aa. Buildx uses the existing desktop-linux docker driver, linux/amd64,
+`--pull=false`, one fresh tag and run. A bounded local Docker save preserves the
+approved OCI index bytes. Its archive and unpacked layout are each capped256MiB,
+combined512MiB plus one overflow-detection byte. At least1GiB free space is required
+before export. This bounds this action's base transport scratch, not Docker's
+whole image/cache store. No builder or resource setting is changed.
+No registry credential
 or host credential environment is passed. The product image is retained locally.
 Public build-only package sources remain in earlier image layers after their
 final-filesystem removal; no secret is copied.
@@ -71,21 +77,40 @@ DOCKER_CONTEXT=desktop-linux ./test.sh --grandparent-image-build \
   /private/tmp/cpk2089-native-postgres-readiness
 ```
 
-This creates fresh `/private/tmp/cpk163-grandparent-artifact-20261109-01` and tag
-`localhost/control-plane-kit-servers/cpk-grandparent:cpk163-sender-20261109-01`.
+This creates fresh `/private/tmp/cpk163-grandparent-artifact-20261109-02` and tag
+`localhost/control-plane-kit-servers/cpk-grandparent:cpk163-sender-20261109-02`.
 The existing reviewed gateway ownership helper is reused unchanged for CPK's
 bootstrap artifact as a second product consumer. It records the verifier attempt
 before Docker, so failure before CID readback still requires exact name/run/owner
 and absence checks. Failed inventories stop; build-attempt uncertainty never
-becomes a `not-built` claim. There is no network or volume allocation in this phase.
+becomes a `not-built` claim. A network-none controller validates/extracts the owned
+OCI export with1CPU/256MiB/64PIDs, without a socket. The approved index blob, every
+blob hash and reachable descriptor size, selected linux/amd64 manifest/config and
+normal base process are checked. Named context
+`cpk-grandparent-base=oci-layout:///…@sha256:4846…` supplies Dockerfile FROM, with
+no tag substitution or registry fallback. This is supported by
+[Buildx's local OCI context interface](https://docs.docker.com/reference/cli/docker/buildx/build/#additional-build-contexts---build-context).
+The candidate RootFS diff-ID prefix must match the verified base config; candidate
+process/platform checks remain separate. Optimized Python refuses before checks.
+There is no network or volume allocation in this phase.
 The source archives, build metadata, actual RepoDigest/image identity and bounded
 installed-cohort report are retained. One named temporary product-image verifier
 runs network-none/read-only as10001, no host source mount or socket. Cleanup removes
 only that captured owner-matching container if needed and this invocation's build
-context, preserving source archives and candidate. Any ambiguity fails the result.
+context and OCI scratch after terminal build, preserving package source archives,
+public base proof and candidate. A build interruption with unconfirmed termination
+keeps scratch and marks cleanup unverified. Any ambiguity fails the result.
 
 The artifact result explicitly says `listening_startup_verified:false`. It proves
 packaging/provenance, not a listening sender. Actual default-process listening,
 dynamic authority, managed sender public document binding, PG-backed composition,
 HTTP readiness/auth refusals, PID1 UID and exact local fixture cleanup require the
 next concrete reviewed startup packet. No untested plan is called executable.
+
+The first ecd79e8 artifact invocation is preserved as a terminal pre-package
+[BuildKit localhost metadata failure](https://github.com/OpenJ92/control-plane-kit-servers/issues/163#issuecomment-6748699628),
+with no candidate/cohort proof. Read-only diagnosis exported69,618,688 bytes and
+verified the original4846 index blob (not merely Docker save's outer index wrapper),
+manifest0b1185bd and linux/amd64 config. The revised source adds OCI blob/platform/
+wrong-root/optimization regressions to the owning source gate. It needs independent
+review and a new explicit build release; the failed reservation01 is untouched.
