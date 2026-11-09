@@ -12,6 +12,7 @@ COPY products/cpk_server/tests/bootstrap_driver_image_check.py /usr/share/cpk-bo
 # The installed production CLI has no source-overlay dependency.
 COPY cohort/servers/products /usr/share/cpk-bootstrap-driver/fixtures/products
 COPY cohort/servers/scripts/root_material_preparation_tests.py /usr/share/cpk-bootstrap-driver/fixtures/scripts/root_material_preparation_tests.py
+COPY cohort/servers/scripts/root_material_provider_policy_tests.py /usr/share/cpk-bootstrap-driver/fixtures/scripts/root_material_provider_policy_tests.py
 RUN python /usr/share/cpk-bootstrap-driver/check.py seal \
     && python -m pip install --no-cache-dir --index-url https://pypi.org/simple \
        "setuptools==80.9.0" "wheel==0.45.1" \

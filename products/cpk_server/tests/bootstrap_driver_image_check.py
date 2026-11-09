@@ -170,10 +170,31 @@ def normal_cli_plans(driver, fixture):
                                   *refused_arguments], capture_output=True, timeout=60)
         assert refused.returncode == 2 and refused.stdout == b""
         assert refused.stderr == b"root material preparation plan is invalid\n" and not case.state.exists()
+        from root_material_provider_policy_tests import ProviderPreparationTests
+        optional_fixture = ProviderPreparationTests()
+        optional_fixture.fixture = case
+        optional_document = optional_fixture.document()
+        optional_document.pop("commissioning")
+        optional_document["bootstrap_input"] = copy.deepcopy(document["bootstrap_input"])
+        optional_arguments = list(arguments)
+        optional_arguments[optional_arguments.index("--input") + 1] = write("optional-input.json", optional_document)
+        optional_process = subprocess.run([sys.executable, "-m", "control_plane_kit_servers_cpk_server.root_material_preparation",
+                                           *optional_arguments], capture_output=True, timeout=60)
+        assert optional_process.returncode == 0 and len(optional_process.stdout) <= 1048576
+        optional_plan = json.loads(optional_process.stdout)
+        assert optional_plan["outputs"] == material["outputs"] + ["external-provisioner.token"]
+        optional_bootstrap = subprocess.run([sys.executable, "-m", "control_plane_kit_servers_cpk_server.bootstrap_cli", "plan",
+            "--input", write("optional-bootstrap-input.json", optional_plan["bootstrap_plan"]["input"]), "--driver", driver],
+            capture_output=True, timeout=60)
+        assert optional_bootstrap.returncode == 0 and len(optional_bootstrap.stdout) <= 1048576
+        assert json.loads(optional_bootstrap.stdout) == optional_plan["bootstrap_plan"] and not case.state.exists()
         return {"driver_image_id": driver, "material_plan_digest": material["digest"],
                 "bootstrap_plan_digest": bootstrap["digest"], "normal_cli_routes": ["root_material_preparation plan", "bootstrap_cli plan"],
                 "fixture": "synthetic-public-only-read-trust-no-customer-input", "managed_website_included": True,
-                "material_contract": "reviewed-db74a0a-one-workspace-not-later-child-policy",
+                "material_contract": "reviewed-bfed7ab-default-and-optional-pure-plans-only",
+                "optional_material_plan_digest": optional_plan["digest"],
+                "optional_bootstrap_plan_digest": optional_plan["bootstrap_plan"]["digest"],
+                "extra_credential_planned_not_created": True,
                 "http_import_policy_plan_passed": True, "http_generation_policy_plan_refused": True,
                 "real_material_prepared": False, "apply_executed": False, "live_service_started": False}
     finally:

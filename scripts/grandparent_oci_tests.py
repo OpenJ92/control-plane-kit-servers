@@ -14,7 +14,7 @@ from grandparent_oci import validate_export
 
 
 class LocalBaseTests(unittest.TestCase):
-    def fixture(self, directory, *, corrupt=False, platform="amd64", controller=False):
+    def fixture(self, directory, *, corrupt=False, platform="amd64", controller=False, entrypoint=()):
         blobs = {}
 
         def blob(content):
@@ -26,6 +26,8 @@ class LocalBaseTests(unittest.TestCase):
         layer = blob(b"synthetic-compressed-layer")
         process = ({"Cmd": ["python", "scripts/run_all_tests.py"]} if controller else
                    {"User": "10001", "Cmd": ["python", "-m", "control_plane_kit_servers_cpk_server.server"]})
+        if entrypoint:
+            process["Entrypoint"] = list(entrypoint)
         config = blob({"os": "linux", "architecture": platform, "config": process,
             "rootfs": {"type": "layers", "diff_ids": ["sha256:" + "a" * 64]}})
         manifest = blob({"schemaVersion": 2, "config": config, "layers": [layer]})
@@ -86,5 +88,15 @@ class LocalBaseTests(unittest.TestCase):
             self.assertEqual(result["base_user"], "")
         with tempfile.TemporaryDirectory() as name:
             archive, layout, digest = self.fixture(Path(name), controller=True)
+            with self.assertRaises(AssertionError):
+                validate_export(archive, layout, digest)
+
+    def test_explicit_entrypoint_matches_exactly_and_empty_default_still_refuses(self):
+        with tempfile.TemporaryDirectory() as name:
+            archive, layout, digest = self.fixture(Path(name), entrypoint=("cpk-secrets-entrypoint",))
+            result = validate_export(archive, layout, digest, expected_entrypoint=("cpk-secrets-entrypoint",))
+            self.assertEqual(result["base_entrypoint"], ["cpk-secrets-entrypoint"])
+        with tempfile.TemporaryDirectory() as name:
+            archive, layout, digest = self.fixture(Path(name), entrypoint=("cpk-secrets-entrypoint",))
             with self.assertRaises(AssertionError):
                 validate_export(archive, layout, digest)

@@ -16,7 +16,7 @@ LIMIT = 256 * 1024 * 1024
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
 
-def validate_export(archive_path, output, expected=BASE, *, expected_user="10001", expected_cmd=SERVER_CMD):
+def validate_export(archive_path, output, expected=BASE, *, expected_user="10001", expected_cmd=SERVER_CMD, expected_entrypoint=()):
     archive_path, output = Path(archive_path), Path(output)
     assert archive_path.stat().st_size <= LIMIT and not any(output.iterdir())
     assert DIGEST.fullmatch(expected)
@@ -87,7 +87,8 @@ def validate_export(archive_path, output, expected=BASE, *, expected_user="10001
     config_digest = descriptor(manifest["config"])
     config = raw(config_digest)
     assert config["os"] == "linux" and config["architecture"] == "amd64"
-    assert (config["config"].get("User") or "") == expected_user and not config["config"].get("Entrypoint")
+    assert (config["config"].get("User") or "") == expected_user
+    assert (config["config"].get("Entrypoint") or []) == list(expected_entrypoint)
     assert config["config"]["Cmd"] == expected_cmd
     diff_ids = config["rootfs"]["diff_ids"]
     assert config["rootfs"]["type"] == "layers" and len(diff_ids) == len(manifest["layers"])
@@ -96,7 +97,7 @@ def validate_export(archive_path, output, expected=BASE, *, expected_user="10001
             "os": "linux", "architecture": "amd64", "blob_count": len(sizes),
             "export_bytes": archive_path.stat().st_size, "blob_bytes": sum(sizes.values()),
             "all_blob_digests_verified": True, "rootfs_diff_ids": diff_ids,
-            "base_user": expected_user, "base_cmd": config["config"]["Cmd"]}
+            "base_user": expected_user, "base_entrypoint": list(expected_entrypoint), "base_cmd": config["config"]["Cmd"]}
 
 
 if __name__ == "__main__":
