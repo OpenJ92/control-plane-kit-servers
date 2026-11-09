@@ -197,4 +197,3 @@ composition acceptance and is not shortened by this option.
 CPK_SERVERS_TEST_IMAGE. Normal policy/support/integrity and the narrow exact-source
 phase use that image without build/pull/network/host socket; other modes retain
 their behavior. Explicit reviewed release is still required to run it.
-

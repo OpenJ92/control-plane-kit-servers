@@ -17,7 +17,6 @@ from control_plane_kit_core.products import ProductReference, ProductReferenceCo
 from control_plane_kit_core.types import RuntimeKind
 from control_plane_kit_servers_cpk_server import server
 from control_plane_kit_servers_cpk_server import managed_verification_configuration as reader
-from control_plane_kit_servers_cpk_server.http_sample_composition import http_sample_service_options
 from http_sample_installation_assembly import assemble
 from cpk_http_host_fixtures import fixture as receiving_fixture
 from test_secret_provider_bootstrap import _provider_environment
@@ -123,6 +122,16 @@ class ManagedVerificationStartupTests(unittest.TestCase):
 
     def test_ordinary_main_builds_real_factory_with_single_registered_sender(self):
         factories = []
+        constructions = {}
+        application = importlib.import_module("control_plane_kit_servers_cpk_server.operations_application")
+        def delegate(name):
+            constructor = getattr(application, name)
+            constructions[name] = []
+            def observed(*args, **kwargs):
+                value = constructor(*args, **kwargs)
+                constructions[name].append((args, kwargs, value))
+                return value
+            return observed
         actual_factory = server.OperationsApplicationFactory
         def factory(*args, **kwargs):
             value = actual_factory(*args, **kwargs)
@@ -138,6 +147,9 @@ class ManagedVerificationStartupTests(unittest.TestCase):
                 patch.object(server.psycopg, "connect", side_effect=AssertionError("unexpected database I/O")), \
                 patch.object(server, "_secret_provider_composition", return_value=provider), \
                 patch.object(server, "OperationsApplicationFactory", side_effect=factory), \
+                patch.object(application, "ExecutionAdmissionCommandService", side_effect=delegate("ExecutionAdmissionCommandService")), \
+                patch.object(application, "ExecutionInvocationService", side_effect=delegate("ExecutionInvocationService")), \
+                patch.object(application, "RuntimeInterpreterDispatcher", side_effect=delegate("RuntimeInterpreterDispatcher")), \
                 patch.object(server.uvicorn, "run") as listen:
             self.assertEqual(server.main(), 0)
         listen.assert_called_once()
@@ -145,7 +157,11 @@ class ManagedVerificationStartupTests(unittest.TestCase):
         self.assertIsNotNone(listen.call_args.args[0].state.mcp_boundary)
         factory, = factories
         registration = factory.ports.runtime_interpreters[RuntimeKind.DOCKER]
-        options = http_sample_service_options(factory.ports.runtime_interpreters)
-        self.assertIs(options["managed_verification_registration"], registration)
-        self.assertIs(options["http_sample_registration"], registration)
-        self.assertIs(registration.adapter.managed_verification_support, options["managed_verification_support"])
+        for name in ("ExecutionAdmissionCommandService", "ExecutionInvocationService"):
+            (args, kwargs, value), = constructions[name]
+            self.assertIs(kwargs["managed_verification_registration"], registration)
+            self.assertIs(kwargs["http_sample_registration"], registration)
+            self.assertIs(kwargs["managed_verification_support"], registration.adapter.managed_verification_support)
+        (args, kwargs, dispatcher), = constructions["RuntimeInterpreterDispatcher"]
+        self.assertIs(args[0][RuntimeKind.DOCKER], registration)
+        self.assertIs(dispatcher.interpreters[RuntimeKind.DOCKER], registration)
