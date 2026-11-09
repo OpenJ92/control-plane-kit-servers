@@ -1,4 +1,11 @@
 Source: [test.sh](../../test.sh).
+
+Parent managed-website source selection reuses the immutable cached startup
+controller/source-overlay path with parent-website phase. It selects all complete
+root-plan laws and four existing managed-website methods, network none/read-only,
+with no controller/image build or service. The exact reviewed action is in
+[the parent input decision](../parent-managed-website-input.md). Source-gate
+success is not actual driver/image, public route or customer login acceptance.
 Maintain with the normal Docker-backed owning gate and prerequisite effects.
 
 #347's integrated source candidate wraps the existing root case in a shell

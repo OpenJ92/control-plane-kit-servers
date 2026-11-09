@@ -41,6 +41,27 @@ These focused tests are prepared but UNEXECUTED. No service/DNS/credential work
 or packaging edit has occurred; source review and owning cached test selection
 remain pending.
 
+Reviewed-source action candidate (not yet run):
+
+```sh
+DOCKER_CONTEXT=desktop-linux \
+CPK_SERVERS_TEST_IMAGE=sha256:1c8b3fc348936b41bb51e530c9f192c360e3b4e53e7a9f7af6f41b7ba10e83ba \
+./test.sh --parent-managed-website-source-tests \
+  /Users/jacobvartuli/.codex/worktrees/23a6/control-plane-kit \
+  /private/tmp/cpk1815-http-sender /private/tmp/cpk148-native-http-sample \
+  f56bb5c4cfde76764d39c5377d4270c5b23c3ba1 \
+  70154b6698e101159326b08646f2dba90dda87cd \
+  e438f6e522ad0a23a7acef460be08690f48b2e17
+```
+
+The existing cached startup mechanism runs normal support/policy/integrity,
+then all CompleteRootPlanTests and four maintained managed-website laws. Exact
+source/dependency overlays and every required product source/test path precede
+cached /app; controller is immutable, no pull/build, network none, read-only root
+with temporary synthetic test files. No real key/protected input, database,
+Docker socket, service, registry or DNS action is used. Actual installer/driver
+qualification remains separate from the listening runtime image.
+
 Decision: reuse existing public artifact codec and frontend product constructors
 instead of adding another website wrapper or accepting extra environment flags.
 The new shape is one optional public value -> existing installation composition
