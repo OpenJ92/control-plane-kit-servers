@@ -1,5 +1,13 @@
 Source: [http_sample_installation_assembly.py](../../../scripts/http_sample_installation_assembly.py).
 
+Nov9 #163 source preparation: optional `images` selects all six role images
+through existing Core image/product values before graph composition. One connector
+document is shared across the three ingress inputs. Missing/extra/null/conflicting
+inputs refuse before fixture setup; default and legacy PG-only callers remain.
+The same public `CPK_SOURCE_ASSEMBLY_IMAGES` option feeds pure and registration
+entrypoints. See [scope, laws and pending evidence](../../qualified-child-image-inputs.md).
+No Docker validation/recompilation or qualification is claimed by this change.
+
 The once-assembled fixture also retains `product_documents`: exact per-node
 implementation documents for normal product import, with the explicit extended
 gateway document replacing its earlier health-only document. Their reference

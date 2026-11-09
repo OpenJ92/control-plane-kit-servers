@@ -24,7 +24,6 @@ from control_plane_kit_core.identity import PrincipalKind
 from control_plane_kit_core.operations import ControlPlaneServiceRole as Role
 from control_plane_kit_core.policies import PolicyScope
 from control_plane_kit_core.secrets import SecretReference, SecretUseIntent, health_signing_intent_for, http_verification_sample_signing_intent_for
-from control_plane_kit_core.products import OciImageReferenceCodec
 from control_plane_kit_core.secret_selections import SecretVersionSelection, secret_selections_from_descriptor
 from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC, DeploymentGraph
 from control_plane_kit_core.topology.secret_selection import carry_forward_secret_selections
@@ -51,7 +50,7 @@ from control_plane_kit_core.http_verification_sample_installation import HttpVer
 from protected_input_provider import ProtectedProvider, PROVIDER, TOKEN
 from receiver_acceptance_operations import IsolatedOperationsSchema, PublicOperationsDriver, utc_now, witness_principal
 from test_secret_provider_bootstrap import _provider_environment
-from http_sample_installation_assembly import assemble
+from http_sample_installation_assembly import assemble, image_options
 
 
 def signing_inputs(fixture, original, graph, custody, *, provider_id=PROVIDER):
@@ -321,6 +320,8 @@ def main():
         assert path.is_relative_to(root), "registration source cohort differs"
         imports[module] = str(path)
     database = os.environ["CPK_SOURCE_FIXTURE_DATABASE_URL"]
+    options = image_options(os.environ)
+    image = options["images"]["postgres"] if "images" in options else options["postgres_image"]
     previous = Path.cwd()
     with TemporaryDirectory(prefix="cpk163-commission-") as directory:
         root = Path(directory)
@@ -328,10 +329,8 @@ def main():
             os.chdir(root)
             custody = root / "commissioning"
             custody.mkdir(mode=0o700)
-            image_document = os.environ.get("CPK_SOURCE_ASSEMBLY_POSTGRES_IMAGE")
-            image = None if image_document is None else OciImageReferenceCodec().decode(json.loads(image_document))
             fixture, original, _, graph, gateway_document, _ = assemble(
-                commissioning_directory=custody, postgres_image=image)
+                commissioning_directory=custody, **options)
             provider_id = PROVIDER if image is None else original.postgres_password.provider_id.value
             rows = signing_inputs(fixture, original, graph, custody, provider_id=provider_id)
             intents = {row["intent"].value for row in rows}
@@ -345,12 +344,15 @@ def main():
                     patch("docker.from_env", side_effect=AssertionError("registration entered ambient Docker")):
                 result = asyncio.run(commission(schema, root, fixture, original, graph, gateway_document, rows, provider,
                     selected_image=image))
+                if "images" in options:
+                    result["selected_images"] = {role:value.execution_reference
+                        for role, value in options["images"].items()}
                 if image is None:
                     assert not provider.transport.calls, "this stage unexpectedly resolved through an Operations execution"
         finally:
             os.chdir(previous)
     assert not root.exists(), "owned commissioning custody remains"
-    if os.environ.get("CPK_SOURCE_ASSEMBLY_POSTGRES_IMAGE"):
+    if image is not None:
         assert result.get("evidence") == "real-isolated-selected-graph-registration-only", \
             "immutable image input did not commission the same selected installation graph"
     result["cleanup"] = "provider and commissioning directories removed; isolated schema dropped"

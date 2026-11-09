@@ -37,8 +37,41 @@ from test_installation_management import InstallationManagementTests
 from receiver_acceptance_material import AuthoredMaterial
 
 
-def assemble(*, commissioning_directory=None, postgres_image=None, secret_versions=None):
+IMAGE_ROLES = frozenset({"cpk", "postgres", "secrets", "website", "gateway", "connector"})
+
+
+def _images(images):
+    """Complete public values only; qualification remains an operator boundary."""
+    if type(images) is not dict or images.keys() != IMAGE_ROLES:
+        raise ValueError("source assembly requires all six explicit immutable images")
+    codec = OciImageReferenceCodec()
+    if any(type(value) is not OciImageReference or codec.decode(codec.encode(value)) != value
+            for value in images.values()):
+        raise ValueError("source assembly requires all six explicit immutable images")
+    return dict(images)
+
+
+def image_options(environment):
+    """Preserve the legacy PG-only input; never partially fill the full cohort."""
+    full = environment.get("CPK_SOURCE_ASSEMBLY_IMAGES")
+    legacy = environment.get("CPK_SOURCE_ASSEMBLY_POSTGRES_IMAGE")
+    if full is not None:
+        if legacy is not None:
+            raise ValueError("source assembly image inputs conflict")
+        document = json.loads(full)
+        if type(document) is not dict or document.keys() != IMAGE_ROLES:
+            raise ValueError("source assembly requires all six explicit immutable images")
+        return {"images": _images({role: OciImageReferenceCodec().decode(value)
+            for role, value in document.items()})}
+    return {"postgres_image": None if legacy is None else OciImageReferenceCodec().decode(json.loads(legacy))}
+
+
+def assemble(*, commissioning_directory=None, postgres_image=None, secret_versions=None, images=None):
     """Return original installation inputs, full graph and exact sample plan."""
+    if images is not None:
+        images = _images(images)
+        if postgres_image is not None:
+            raise ValueError("source assembly image inputs conflict")
     fixture = InstallationManagementTests()
     fixture.commissioning_directory = commissioning_directory
     fixture.setUp()
@@ -51,7 +84,19 @@ def assemble(*, commissioning_directory=None, postgres_image=None, secret_versio
         for name, key in fixture.sample_signing_material.public.items()}
     fixture.trust = replace(fixture.trust, public_keys=(fixture.keys["transit"],))
     original = fixture.installation(website=fixture.managed_website())
-    if postgres_image is not None:
+    if images is not None:
+        def select(document, role):
+            return fixture.codec.encode_document(replace(document.product, image=images[role]))
+        connector = select(original.connector_product, "connector")
+        management = replace(original.management,
+            gateway_product=select(original.management.gateway_product, "gateway"), connector_product=connector)
+        original = replace(original,
+            cpk_product=select(original.cpk_product, "cpk"),
+            postgres_product=select(original.postgres_product, "postgres"),
+            secrets_product=select(original.secrets_product, "secrets"),
+            website=replace(original.website, image=images["website"], connector_product=connector),
+            connector_product=connector, management=management)
+    elif postgres_image is not None:
         if type(postgres_image) is not OciImageReference:
             raise ValueError("source assembly requires an explicit immutable PostgreSQL image")
         original = replace(original, postgres_product=fixture.codec.encode_document(replace(
@@ -128,23 +173,24 @@ def main():
         assert Path(importlib.import_module(name).__file__).resolve().is_relative_to(root)
     # Existing commissioning fixture writes only its owned temporary directory.
     previous = Path.cwd()
-    image_document = os.environ.get("CPK_SOURCE_ASSEMBLY_POSTGRES_IMAGE")
-    postgres_image = None if image_document is None else OciImageReferenceCodec().decode(json.loads(image_document))
+    options = image_options(os.environ)
+    postgres_image = options["images"]["postgres"] if "images" in options else options["postgres_image"]
+    has_images = options.get("images") is not None or options.get("postgres_image") is not None
     try:
         with TemporaryDirectory(prefix="cpk181-full-child-") as directory:
             os.chdir(directory)
             custody = Path(directory) / "commissioning"
             custody.mkdir(mode=0o700)
             fixture, original, baseline, graph, gateway_document, plan = assemble(
-                commissioning_directory=custody, postgres_image=postgres_image)
-            if postgres_image is not None:
+                commissioning_directory=custody, **options)
+            if has_images:
                 # Explicit fixture metadata only, never provider-admitted IDs.
                 uses = sorted({(entry.reference, entry.intent) for node in graph.nodes.values()
                     for entry in node.secret_selections}, key=lambda pair: (pair[0].reference_id, pair[1].value))
                 versions = tuple(SecretVersionSelection(reference, intent, "synthetic-source-version-" + str(index))
                     for index, (reference, intent) in enumerate(uses))
                 fixture, original, baseline, graph, gateway_document, plan = assemble(
-                    commissioning_directory=custody, postgres_image=postgres_image, secret_versions=versions)
+                    commissioning_directory=custody, secret_versions=versions, **options)
     finally:
         os.chdir(previous)
     before, child = baseline.node(original.cpk_node_id), graph.node(original.cpk_node_id)
@@ -189,6 +235,8 @@ def main():
         postgres_password=("unresolved-original-reference" if postgres_image is None
             else "explicit-synthetic-version-not-provider-admitted"),
         postgres_image=(None if postgres_image is None else postgres_image.execution_reference),
+        selected_images=(None if "images" not in options else
+            {role:value.execution_reference for role, value in options["images"].items()}),
         postgres_product_reference={"identity": postgres.metadata["product_identity"],
             "descriptor_sha256": postgres.metadata["product_descriptor_digest"]},
         postgres_password_selection=postgres_selection.descriptor(),

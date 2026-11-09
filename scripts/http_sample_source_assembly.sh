@@ -109,6 +109,7 @@ docker run --rm --network "$network" --read-only --tmpfs /tmp --cap-drop ALL --s
   --mount "type=bind,source=$owned_source,target=/reviewed-http-sample,readonly" \
   -e PYTHONDONTWRITEBYTECODE=1 \
   -e CPK_SOURCE_ASSEMBLY_POSTGRES_IMAGE \
+  -e CPK_SOURCE_ASSEMBLY_IMAGES \
   -e CPK_SOURCE_FIXTURE_DATABASE_URL=postgresql://cpk:cpk-fixture@cpk163-postgres:5432/cpk \
   -e "CPK_SOURCE_SECRETS_REVISION=$secrets_revision" \
   -e PYTHONPATH=/reviewed-http-sample/core/src:/reviewed-http-sample/operations/src:/reviewed-http-sample/operations:/reviewed-http-sample/interpreters/src:/reviewed-http-sample/secrets/src:/app:/app/products/cpk_server/tests:/app/products/secrets_server/tests:/app/scripts \

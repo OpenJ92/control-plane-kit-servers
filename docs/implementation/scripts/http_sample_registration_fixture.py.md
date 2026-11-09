@@ -1,6 +1,15 @@
 Source: [http_sample_registration_fixture.py](../../../scripts/http_sample_registration_fixture.py).
 Maintain alongside its source and the owning source-assembly shell.
 
+Nov9 #163 source preparation: share the assembly's complete six-role image
+decoder, before any temporary custody/provider/API work. Feed the selected images
+into the single assembly before existing normal commissioning and graph authoring.
+The same product documents/graph flow through the existing import/readback/replay
+laws; no second assembly or direct store mutation is added. Full selection uses
+the existing PG-selected commissioning boundary and reports public selected image
+references separately. Legacy PG-only/default callers are preserved. Unexecuted;
+see [bounded preparation](../../qualified-child-image-inputs.md).
+
 November8 extension: when `CPK_SOURCE_ASSEMBLY_POSTGRES_IMAGE` supplies an exact
 Core OCI image descriptor, assemble **once** with that image. Use the same
 commissioning directory, eight-node graph, workspace, five distinct signers and

@@ -2,13 +2,15 @@
 from contextlib import contextmanager
 from pathlib import Path
 import os
+import json
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from cryptography.hazmat.primitives import serialization
 from control_plane_kit_core.http_verification_sample_installation import HttpVerificationSampleReceiverConfigurationCodec
 from control_plane_kit_core.http_verification_samples import http_verification_check_digest
-from control_plane_kit_core.planning import ReviewChange
+from control_plane_kit_core.planning import ReviewChange, WaitForHealthy
 from control_plane_kit_core.products import OciImageReference, ProductReference
 from control_plane_kit_core.secret_selections import SecretVersionSelection, secret_selections_from_descriptor
 from control_plane_kit_servers_secrets_server import configuration as secrets
@@ -16,7 +18,7 @@ from control_plane_kit_servers_cpk_server import control_configuration as cpk
 from control_plane_kit_servers_cpk_local_gateway.http_sample_configuration import (
     ARTIFACT_ID as GATEWAY_SAMPLE_ARTIFACT_ID, gateway_http_sample_trust_from_artifact,
 )
-from http_sample_installation_assembly import assemble
+from http_sample_installation_assembly import assemble, image_options, IMAGE_ROLES
 
 
 @contextmanager
@@ -33,6 +35,70 @@ def isolated_directory():
 
 
 class FullInstallationHttpSampleTests(unittest.TestCase):
+    def images(self):
+        # Public synthetic unit metadata only; no image is acquired/qualified.
+        return {role: OciImageReference("example.invalid", "fixture/selected-" + role,
+            "sha256:" + str(index) * 64) for index, role in enumerate(sorted(IMAGE_ROLES), start=1)}
+
+    def test_full_image_selection_refuses_incomplete_or_conflicting_inputs_before_fixture_setup(self):
+        images = self.images()
+        invalid = [{role:value for role, value in images.items() if role != missing} for missing in images]
+        invalid.extend(({}, images | {"unknown":images["cpk"]}, images | {"gateway":None},
+            images | {"gateway":"unqualified:tag"}))
+        with patch("http_sample_installation_assembly.InstallationManagementTests.setUp") as setup:
+            for candidate in invalid:
+                with self.subTest(roles=tuple(candidate)), self.assertRaises(ValueError):
+                    assemble(images=candidate)
+            with self.assertRaises(ValueError):
+                assemble(images=images, postgres_image=images["postgres"])
+            setup.assert_not_called()
+
+    def test_full_image_selection_joins_all_products_before_graph_and_preserves_obligations(self):
+        images = self.images()
+        with isolated_directory():
+            fixture, original, baseline, graph, gateway_document, plan = assemble(images=images)
+        connectors = (original.ingress.connector_node_id, original.website.ingress.connector_node_id,
+            original.management.management_ingress.connector_node_id)
+        expected = {original.cpk_node_id:"cpk", original.postgres_node_id:"postgres",
+            original.secrets_node_id:"secrets", original.website_node_id:"website",
+            original.management.runtime_management.gateway_node_id:"gateway",
+            **{node:"connector" for node in connectors}}
+        self.assertEqual(set(graph.nodes), set(expected))
+        documents = {ProductReference.from_document(document).descriptor_sha256.value:document.product
+            for document in fixture.product_documents}
+        for node_id, role in expected.items():
+            self.assertEqual(documents[graph.node(node_id).metadata["product_descriptor_digest"]].image, images[role])
+            self.assertEqual(graph.node(node_id).block_spec.verification, baseline.node(node_id).block_spec.verification)
+        self.assertEqual(gateway_document.product.image, images["gateway"])
+        self.assertEqual(original.secrets_product.product.image, images["secrets"])
+        self.assertEqual(original.connector_product, original.website.connector_product)
+        self.assertEqual(original.connector_product, original.management.connector_product)
+        self.assertEqual(graph.edges, baseline.edges)
+        self.assertEqual(graph.runtimes, baseline.runtimes)
+        self.assertEqual(graph.public_ingresses, baseline.public_ingresses)
+        self.assertEqual(len(graph.public_ingresses), 3)
+        self.assertEqual(len([edge for edge in graph.edges.values()
+            if edge.provider_role == original.postgres_node_id and edge.consumer_role == original.cpk_node_id]), 4)
+        self.assertEqual({entry.operation.target.node_id for entry in plan.activities
+            if type(entry.operation) is WaitForHealthy},
+            {original.cpk_node_id, original.secrets_node_id, original.postgres_node_id})
+        self.assertEqual([check.check_id for check in graph.node(original.cpk_node_id).block_spec.verification.checks], ["live", "ready"])
+        self.assertEqual([check.check_id for check in graph.node(original.secrets_node_id).block_spec.verification.checks], ["live", "ready"])
+        self.assertEqual([check.check_id for check in graph.node(original.postgres_node_id).block_spec.verification.checks], ["installation-postgres-ready"])
+
+    def test_full_image_environment_is_closed_and_preserves_legacy_postgres_selection(self):
+        images = self.images()
+        encoded = {role:value.descriptor() for role, value in images.items()}
+        self.assertEqual(image_options({"CPK_SOURCE_ASSEMBLY_IMAGES":json.dumps(encoded)}), {"images":images})
+        legacy = json.dumps(images["postgres"].descriptor())
+        self.assertEqual(image_options({"CPK_SOURCE_ASSEMBLY_POSTGRES_IMAGE":legacy}), {"postgres_image":images["postgres"]})
+        self.assertEqual(image_options({}), {"postgres_image":None})
+        for invalid in (encoded | {"gateway":None}, {key:value for key, value in encoded.items() if key != "gateway"}):
+            with self.assertRaises(ValueError):
+                image_options({"CPK_SOURCE_ASSEMBLY_IMAGES":json.dumps(invalid)})
+        with self.assertRaises(ValueError):
+            image_options({"CPK_SOURCE_ASSEMBLY_IMAGES":json.dumps(encoded), "CPK_SOURCE_ASSEMBLY_POSTGRES_IMAGE":legacy})
+
     def test_complete_assembly_preserves_supplied_product_image_and_exact_versions(self):
         # Unit metadata only; this fixture reference is never an acquired image.
         image = OciImageReference("example.invalid", "fixture/selected-postgres", "sha256:" + "7" * 64)
