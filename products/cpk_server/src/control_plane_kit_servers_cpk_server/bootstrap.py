@@ -62,6 +62,7 @@ class BootstrapStage(Enum):
     VERIFY_PRODUCT_IMAGE = "verify-product-image"
     VERIFY_PROVIDER_IMAGE = "verify-provider-image"
     PERSIST_RECEIPT = "persist-receipt"
+    INITIALIZATION_TARGET = "initialization-target"
 
 
 class BootstrapReason(Enum):
@@ -79,9 +80,18 @@ class BootstrapReason(Enum):
     PRODUCT_IMAGE_UNVERIFIED = "product-image-unverified"
     CONFIGURATION_USER_UNSUPPORTED = "configuration-user-unsupported"
     PROVIDER_IDENTITY_MISMATCH = "provider-identity-mismatch"
+    INITIALIZATION_TARGET_REFUSED = "initialization-target-refused"
+    SCHEMA_OWNER_UNVERIFIED = "schema-owner-unverified"
 
 
 _FIXED_REASONS = {
+    "bootstrap installed schema owner could not be verified": BootstrapReason.SCHEMA_OWNER_UNVERIFIED,
+    "bootstrap initialization target differs": BootstrapReason.INITIALIZATION_TARGET_REFUSED,
+    "bootstrap initialization lacks fresh resource evidence": BootstrapReason.INITIALIZATION_TARGET_REFUSED,
+    "bootstrap initialization data mounts differ": BootstrapReason.INITIALIZATION_TARGET_REFUSED,
+    "bootstrap initialization volume ownership differs": BootstrapReason.INITIALIZATION_TARGET_REFUSED,
+    "bootstrap initialization driver differs": BootstrapReason.INITIALIZATION_TARGET_REFUSED,
+    "bootstrap initialization requires the exclusive fresh phase": BootstrapReason.INITIALIZATION_TARGET_REFUSED,
     "bootstrap plan does not match reviewed intent": BootstrapReason.PLAN_REFUSED,
     "bootstrap plan could not be verified": BootstrapReason.PLAN_REFUSED,
     "bootstrap driver image identity is invalid": BootstrapReason.DRIVER_REFUSED,

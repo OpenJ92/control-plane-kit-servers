@@ -52,7 +52,8 @@ case "$phase" in
         test_installation_management.InstallationManagementTests.test_managed_website_requires_management_and_rejects_invalid_artifact_without_echo \
         managed_verification_startup_tests \
         managed_verification_composition_qualification.ManagedCompositionTests.test_real_native_registration_supplies_same_objects_to_service_options \
-        grandparent_oci_tests grandparent_build_tests bootstrap_driver_source_tests -v
+        grandparent_oci_tests grandparent_build_tests bootstrap_driver_source_tests \
+        test_bootstrap_schema_correlation -v
     elif [ "$phase" = parent-website ]; then
       set -- python -m unittest test_root_complete.CompleteRootPlanTests \
         test_installation_management.InstallationManagementTests.test_managed_website_joins_actual_routes_with_child_api_binding_and_cpk_only_auth \
@@ -185,3 +186,13 @@ source_controller --rm --network "$network" --read-only --tmpfs "$source_tmpfs" 
   -e "CPK_SOURCE_SECRETS_REVISION=$secrets_revision" \
   -e PYTHONPATH=/reviewed-http-sample/core/src:/reviewed-http-sample/operations/src:/reviewed-http-sample/operations:/reviewed-http-sample/interpreters/src:/reviewed-http-sample/secrets/src:"${source_paths}"/app:/app/products/cpk_server/tests:/app/products/secrets_server/tests:/app/scripts \
   "$image" "$@"
+if [ "$phase" = bootstrap-driver ]; then
+  # CI discovers the whole product in one process: preserve its module lifetime.
+  # This component uses the cached controller's declared dependency cohort.
+  source_controller --rm --network none --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
+    -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONPATH="${source_paths}/app" \
+    "$image" python -m unittest discover -s /source/products/cpk_local_gateway/tests -v
+  source_controller --rm --network none --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
+    -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONPATH="${source_paths}/app" \
+    "$image" python -m unittest discover -s /source/products/cpk_server/tests -p test_process_composition.py -v
+fi

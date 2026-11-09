@@ -130,3 +130,33 @@ records the source, installed provenance and bounded plan/cleanup evidence.
 Independent terminal artifact review and North's disposition are separate from
 this executor receipt. Real material preparation and startup remain unexecuted.
 Any later documentation-only commit is not the image's built Servers source.
+
+## #391 schema-owner correction — source only
+
+The old8134 artifact's one real bootstrap stopped after PostgreSQL. The archive-only
+schema correlation rejects its local installed Operations origin before helper
+creation. This deterministic source defect does not prove which exception fired
+first in that stopped run. Stock PostgreSQL pg_isready is not authenticated SQL
+or Operations initialization evidence. The partial installation remains retained.
+
+The correction preserves supported archive origins and verifies the actual schema
+resource/distribution/RECORD join for both origins. Only the fixed qualified local
+origin may additionally consume the Git-derived public build seal. The cohort now
+independently pins Operations tree48810764562aa6c007d89d2fcb0d4e8ecaf25bb4 and
+schema SHA256d6a2c0f03db48afbd1a4d1f97b6a873dd331cbc381f376868fcc74e0a8a1d3d8.
+Git export must match that tree, and correlation must match the selected commit,
+schema, full installed source map and hashed schema RECORD. Missing, editable,
+shadowed or inconsistent proof refuses; no caller revision selector is added.
+
+Closed diagnostic additions in bootstrap.py are pinned at the precise successor
+cea4d1a23fae098dd2379572670bd6cb9b8b9e6d. The original website ownerb694178 remains
+an explicit ancestor, installation.py must still equal that owner, and bootstrap.py
+must exactly equal the reviewed successor. Loader/material checks stay intact.
+
+Future candidate qualification calls the real package_correlation as UID0 and
+in a separate bounded read-only/network-none/socket-free helper as UID10001.
+It retains the normal offline CLI checks. Its prospective fresh tag is
+localhost/control-plane-kit-servers/cpk-bootstrap-driver:cpk391-20261109-01 and
+run/records cpk391-bootstrap-driver-artifact-20261109-01. These are prepared
+coordinates, not a build authorization or a claimed successor image. No new
+image, changed plan digest, material bundle or retry follows from source tests.

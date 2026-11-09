@@ -6,7 +6,7 @@ import re
 import tarfile
 from datetime import datetime
 
-from .bootstrap import RootBootstrapError, RootBootstrapHold, decode_document
+from .bootstrap import BootstrapStage, RootBootstrapError, RootBootstrapHold, bootstrap_stage, decode_document
 from .bootstrap_initialization import (
     PROGRESS_PATH, PROGRESS_VOLUME_PATH, PROGRESS_SCHEMA, TARGET_SCHEMA, database_target, helper_input_bytes, package_correlation,
 )
@@ -170,7 +170,8 @@ def _run_helper(plan, material, intent, state, receipt, client, sdk, *, inspecti
     from control_plane_kit_core.secrets import SecretFileMode, SecretValue
     from control_plane_kit_interpreters.docker import DockerSdkSecretMount
 
-    target = _target(plan, receipt, client)
+    with bootstrap_stage(BootstrapStage.INITIALIZATION_TARGET):
+        target = _target(plan, receipt, client)
     uid = _helper_uid(plan, receipt, sdk)
     name, names = helper_names(plan, inspection=inspection)
     if (client.containers.list(all=True, filters={"name": "^/" + name + "$"})
@@ -285,9 +286,10 @@ def _run_helper(plan, material, intent, state, receipt, client, sdk, *, inspecti
 
 
 def initialize_acquired_workspace(plan, material, intent, state, receipt, client, sdk):
-    if (receipt.get("phase") != "acquiring" or receipt.get("pending") is not None
-            or set(receipt["resources"]["containers"]) != {plan["postgres_node_id"]}):
-        raise RootBootstrapHold("bootstrap initialization requires the exclusive fresh phase")
+    with bootstrap_stage(BootstrapStage.INITIALIZATION_TARGET):
+        if (receipt.get("phase") != "acquiring" or receipt.get("pending") is not None
+                or set(receipt["resources"]["containers"]) != {plan["postgres_node_id"]}):
+            raise RootBootstrapHold("bootstrap initialization requires the exclusive fresh phase")
     return _run_helper(plan, material, intent, state, receipt, client, sdk, inspection=False)
 
 

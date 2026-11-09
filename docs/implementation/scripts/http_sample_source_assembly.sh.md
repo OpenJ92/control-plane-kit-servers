@@ -23,3 +23,15 @@ The bootstrap-driver phase adds exact Secrets57 exports, default/optional materi
 policy, website, startup, OCI and installed-import prerequisites before building.
 Its public template argument is mounted read-only for the additive normal CLI
 projection test. It allocates no application network, database or provider.
+
+The driver selector also runs the entire gateway component discovery in a
+separate cached controller process, matching CI's per-product collection order.
+It uses the controller's declared installed dependencies (distinct from the
+earlier selected-source composition process), current product sources, and no
+network/socket. This catches module-lifetime fixture failures masked by running
+only the HTTP configuration test file. It is a unit control, not a live gateway.
+
+A third isolated process covers the CPK process-composition file on that same
+declared dependency cohort, including the static disabled-support case exposed
+by full hosted discovery. The selected-source managed startup/registration cases
+continue to own the enabled shared-support assertions. No production check is bypassed.

@@ -29,8 +29,8 @@ if [ "$MODE" = installer ]; then
   CONTEXT_NAME=cpk-bootstrap-driver-base
   EXPECTED_BASE=sha256:1c8b3fc348936b41bb51e530c9f192c360e3b4e53e7a9f7af6f41b7ba10e83ba
   EXPECTED_USER=0 EXPECTED_MODULE=control_plane_kit_servers_cpk_server.bootstrap_cli
-  TAG=$IMAGE_REPOSITORY:cpk384-20261109-01
-  RUN=cpk384-bootstrap-driver-artifact-20261109-01
+  TAG=$IMAGE_REPOSITORY:cpk391-20261109-01
+  RUN=cpk391-bootstrap-driver-artifact-20261109-01
 fi
 SOURCE=$(git rev-parse HEAD)
 worktree=$(git status --porcelain)
@@ -44,6 +44,10 @@ if [ "$MODE" = installer ]; then
   else public_digest=$(shasum -a 256 "$PUBLIC_INPUT")
   fi
   [ "${public_digest%% *}" = "$expected_public" ] || exit 2
+  website_origin=$(jq -er .lineage.parent_website_origin "$COHORT")
+  website_successor=$(jq -er .lineage.parent_website "$COHORT")
+  git merge-base --is-ancestor "$website_origin" "$website_successor"
+  git diff --quiet "$website_origin" "$website_successor" -- products/cpk_server/src/control_plane_kit_servers_cpk_server/installation.py
   for role in loader material parent_website; do
     selected=$(jq -er --arg role "$role" '.lineage[$role]' "$COHORT")
     git merge-base --is-ancestor "$selected" "$SOURCE"
@@ -68,7 +72,9 @@ RECORDS=$CANONICAL_TMP/$RUN
 [ ! -e "$RECORDS" ] && [ ! -L "$RECORDS" ] || exit 2
 existing=$(docker image ls -q --filter "reference=$TAG")
 [ -z "$existing" ] || exit 2
-for role in base-validator provenance qualification; do
+WITNESS_ROLES='base-validator provenance qualification'
+[ "$MODE" != installer ] || WITNESS_ROLES="$WITNESS_ROLES schema-owner"
+for role in $WITNESS_ROLES; do
   existing=$(docker ps -aq --filter "name=^/$RUN-$role$")
   [ -z "$existing" ] || exit 2
 done
@@ -84,9 +90,9 @@ CONTEXT=$RECORDS/context
 LAYOUT=$RECORDS/base-layout
 PHASE=source-export REFERENCE='' IMAGE='' VERIFIED=false CLEANUP=verified BUILD_ATTEMPTED=false
 LOCAL_BASE=false DERIVED_BASE=false BUILD_TERMINATED=false
-QUALIFIED=false
+QUALIFIED=false SCHEMA_VERIFIED=false
 . ./scripts/gateway_packaged_owner.sh
-GW_ROLES='base-validator provenance qualification' GW_RUN=$RUN GW_OWNER=$OWNER GW_RECORDS=$RECORDS GW_RESERVED=1 GW_VOLUMES=''
+GW_ROLES=$WITNESS_ROLES GW_RUN=$RUN GW_OWNER=$OWNER GW_RECORDS=$RECORDS GW_RESERVED=1 GW_VOLUMES=''
 GW_DAEMON=d23d00aa-b281-448d-bc95-c8e47efeeea2
 finish() {
   status=$?
@@ -117,11 +123,12 @@ finish() {
     --arg image "$REFERENCE" --arg base "$BASE" --arg cleanup "$CLEANUP" --arg retention "$retention" \
     --arg base_retained "$base_retained" --argjson attempted "$BUILD_ATTEMPTED" \
     --argjson local_base "$LOCAL_BASE" --argjson derived_base "$DERIVED_BASE" \
-    --arg mode "$MODE" --argjson qualified "$QUALIFIED" \
+    --arg mode "$MODE" --argjson qualified "$QUALIFIED" --argjson schema_owner "$SCHEMA_VERIFIED" \
     --argjson status "$status" --argjson verified "$VERIFIED" \
     '{source:$source,phase:$phase,run:$run,owner:$owner,exit_code:$status,image:$image,base:$base,
       build_attempted:$attempted,local_oci_base_verified:$local_base,derived_base_layers_verified:$derived_base,
       artifact_role:$mode,normal_cli_plans_verified:$qualified,
+      initialization_schema_owner_verified:$schema_owner,
       installed_cohort_verified:$verified,cleanup:$cleanup,retention:$retention,base_retained:$base_retained,
       listening_startup_verified:false,approved_deployment:false}' > "$RECORDS/result.json" || status=1
   exit "$status"
@@ -175,6 +182,9 @@ for role in $ROLES; do
   else
     tree=$(git -C "$repository" rev-parse "$revision:$prefix")
     git -C "$repository" ls-tree -r "$revision" "$prefix" > "$CONTEXT/cohort/$role.git-tree"
+  fi
+  if [ "$MODE" = installer ] && [ "$role" = operations ]; then
+    [ "$tree" = "$(jq -er .operations_tree "$COHORT")" ] || exit 1
   fi
   case "$role" in
     core|operations)
@@ -242,6 +252,13 @@ gw_run provenance --rm --network none --read-only --tmpfs /tmp --cap-drop ALL --
 jq -e --argjson user "$EXPECTED_USER" '.effective_uid==$user' "$RECORDS/installed-cohort.json" >/dev/null
 VERIFIED=true
 if [ "$MODE" = installer ]; then
+  PHASE=schema-owner
+  gw_run schema-owner --rm --network none --read-only --tmpfs /tmp:size=16m \
+    --cpus 1 --memory 256m --pids-limit 64 --cap-drop ALL --security-opt no-new-privileges \
+    --user 10001:10001 --workdir /tmp --entrypoint python \
+    "$IMAGE" "$CHECK_PATH" schema-owner > "$RECORDS/initialization-schema-owner.json"
+  jq -e '.effective_uid==10001' "$RECORDS/initialization-schema-owner.json" >/dev/null
+  SCHEMA_VERIFIED=true
   PHASE=normal-cli-plans
   gw_run qualification --rm --network none --read-only --tmpfs /tmp:size=64m \
     --cpus 2 --memory 512m --pids-limit 128 --cap-drop ALL --security-opt no-new-privileges \
