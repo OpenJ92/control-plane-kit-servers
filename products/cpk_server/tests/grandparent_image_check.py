@@ -41,22 +41,25 @@ def files(root):
             and "__pycache__" not in path.parts and path.suffix != ".pyc"}
 
 
+def verified_git_files(root, prefix, lines):
+    blobs = {}
+    for line in lines:
+        header, path = line.split("\t")
+        mode, kind, blob = header.split()
+        assert mode in ("100644", "100755") and kind == "blob" and path.startswith(prefix)
+        relative = path.removeprefix(prefix)
+        content = (root / relative).read_bytes()
+        assert hashlib.sha1(b"blob " + str(len(content)).encode() + b"\0" + content).hexdigest() == blob
+        blobs[relative] = hashlib.sha256(content).hexdigest()
+    assert blobs and files(root) == blobs
+    return blobs
+
+
 def seal():
     roots = {role: BUILD / role / "src" / package for role, (_, package) in PACKAGES.items()}
     roots.update(PRODUCTS)
-    expected = {}
-    for role, root in roots.items():
-        blobs = {}
-        for line in (BUILD / (role + ".git-tree")).read_text().splitlines():
-            header, path = line.split("\t")
-            mode, kind, blob = header.split()
-            assert mode in ("100644", "100755") and kind == "blob" and path.startswith(SOURCE_PREFIXES[role])
-            relative = path.removeprefix(SOURCE_PREFIXES[role])
-            content = (root / relative).read_bytes()
-            assert hashlib.sha1(b"blob " + str(len(content)).encode() + b"\0" + content).hexdigest() == blob
-            blobs[relative] = hashlib.sha256(content).hexdigest()
-        assert files(root) == blobs
-        expected[role] = blobs
+    expected = {role: verified_git_files(root, SOURCE_PREFIXES[role],
+        (BUILD / (role + ".git-tree")).read_text().splitlines()) for role, root in roots.items()}
     assert all(expected.values())
     (PUBLIC / "source-files.json").write_text(json.dumps(expected, sort_keys=True) + "\n")
     (PUBLIC / "source-objects.json").write_bytes((BUILD / "source-objects.json").read_bytes())

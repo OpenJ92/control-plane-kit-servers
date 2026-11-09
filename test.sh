@@ -20,11 +20,16 @@ GATEWAY_TARGET_OPERATIONS_REVISION=''
 GATEWAY_TARGET_EXPECTATION=''
 MANAGED_COMPOSITION_INTERPRETERS_REVISION=''
 case "${1:-}" in
-  --grandparent-image-build)
+  --grandparent-image-build|--bootstrap-driver-image-build)
     exec sh scripts/grandparent_image_build.sh "$@"
     ;;
   --parent-managed-website-source-tests|--bootstrap-driver-source-tests)
-    [ "$#" -eq 7 ] || exit 2
+    if [ "$1" = --bootstrap-driver-source-tests ]; then
+      [ "$#" -eq 9 ] || exit 2
+      HTTP_SAMPLE_SOURCE_SECRETS=$8
+      HTTP_SAMPLE_SOURCE_SECRETS_REVISION=$9
+    else [ "$#" -eq 7 ] || exit 2
+    fi
     HTTP_SAMPLE_RELAY_ONLY=11
     [ "$1" != --bootstrap-driver-source-tests ] || HTTP_SAMPLE_RELAY_ONLY=12
     HTTP_SAMPLE_SOURCE_CORE=$2
@@ -170,7 +175,8 @@ if [ "$HTTP_SAMPLE_RELAY_ONLY" = 9 ] || [ "$HTTP_SAMPLE_RELAY_ONLY" = 10 ] || [ 
   [ "$HTTP_SAMPLE_RELAY_ONLY" != 12 ] || SOURCE_PHASE=bootstrap-driver
   sh scripts/http_sample_source_assembly.sh "$IMAGE" "$HTTP_SAMPLE_SOURCE_CORE" \
     "$HTTP_SAMPLE_SOURCE_OPERATIONS" "$HTTP_SAMPLE_SOURCE_INTERPRETERS" "$SOURCE_PHASE" \
-    "$GATEWAY_TARGET_CORE_REVISION" "$GATEWAY_TARGET_OPERATIONS_REVISION" "$MANAGED_COMPOSITION_INTERPRETERS_REVISION"
+    "$GATEWAY_TARGET_CORE_REVISION" "$GATEWAY_TARGET_OPERATIONS_REVISION" "$MANAGED_COMPOSITION_INTERPRETERS_REVISION" \
+    "$HTTP_SAMPLE_SOURCE_SECRETS" "$HTTP_SAMPLE_SOURCE_SECRETS_REVISION"
   exit 0
 fi
 docker build -f Dockerfile.test -t "$IMAGE" .

@@ -26,6 +26,11 @@ case "$phase" in
     interpreters_revision=$8
     secrets_repository=''
     secrets_revision=''
+    if [ "$phase" = bootstrap-driver ]; then
+      secrets_repository=$9
+      secrets_revision=${10}
+      [ "$secrets_revision" = 57e4fc61d6931ef078550f98154a585bda61987b ] || exit 2
+    fi
     for revision in "$core_revision" "$operations_revision" "$interpreters_revision"; do
       case "$revision" in ''|*[!0-9a-f]*) echo 'exact source revision is required' >&2; exit 2 ;; esac
       [ "${#revision}" -eq 40 ] || exit 2
@@ -41,7 +46,7 @@ case "$phase" in
         test_installation_management.InstallationManagementTests.test_managed_website_requires_management_and_rejects_invalid_artifact_without_echo \
         managed_verification_startup_tests \
         managed_verification_composition_qualification.ManagedCompositionTests.test_real_native_registration_supplies_same_objects_to_service_options \
-        grandparent_oci_tests grandparent_build_tests -v
+        grandparent_oci_tests grandparent_build_tests bootstrap_driver_source_tests -v
     elif [ "$phase" = parent-website ]; then
       set -- python -m unittest test_root_complete.CompleteRootPlanTests \
         test_installation_management.InstallationManagementTests.test_managed_website_joins_actual_routes_with_child_api_binding_and_cpk_only_auth \
@@ -118,11 +123,13 @@ fi
 git -C "$interpreters_repository" archive --format=tar "$interpreters_revision" src/control_plane_kit_interpreters > "$owned_source/interpreters.tar"
 tar -xf "$owned_source/interpreters.tar" -C "$owned_source/interpreters"
 network=none
-if [ "$phase" = registrations ]; then
+if [ "$phase" = registrations ] || [ "$phase" = bootstrap-driver ]; then
   mkdir "$owned_source/secrets"
   git -C "$secrets_repository" archive --format=tar "$secrets_revision" src/control_plane_kit_secrets > "$owned_source/secrets.tar"
   tar -xf "$owned_source/secrets.tar" -C "$owned_source/secrets"
   printf 'registration Secrets source=%s\n' "$secrets_revision"
+fi
+if [ "$phase" = registrations ]; then
   scope="cpk163-registration-$(date +%s)-$$"
   owned_network=$(docker network create --internal --label "org.openj92.cpk.test-run=$scope" "$scope")
   owned_database=$(docker run -d --pull never --label "org.openj92.cpk.test-run=$scope" \

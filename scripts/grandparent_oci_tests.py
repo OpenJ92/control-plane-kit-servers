@@ -14,7 +14,7 @@ from grandparent_oci import validate_export
 
 
 class LocalBaseTests(unittest.TestCase):
-    def fixture(self, directory, *, corrupt=False, platform="amd64"):
+    def fixture(self, directory, *, corrupt=False, platform="amd64", controller=False):
         blobs = {}
 
         def blob(content):
@@ -24,8 +24,9 @@ class LocalBaseTests(unittest.TestCase):
             return {"digest": digest, "size": len(raw)}
 
         layer = blob(b"synthetic-compressed-layer")
-        config = blob({"os": "linux", "architecture": platform,
-            "config": {"User": "10001", "Cmd": ["python", "-m", "control_plane_kit_servers_cpk_server.server"]},
+        process = ({"Cmd": ["python", "scripts/run_all_tests.py"]} if controller else
+                   {"User": "10001", "Cmd": ["python", "-m", "control_plane_kit_servers_cpk_server.server"]})
+        config = blob({"os": "linux", "architecture": platform, "config": process,
             "rootfs": {"type": "layers", "diff_ids": ["sha256:" + "a" * 64]}})
         manifest = blob({"schemaVersion": 2, "config": config, "layers": [layer]})
         manifest["platform"] = {"architecture": platform, "os": "linux"}
@@ -76,3 +77,14 @@ class LocalBaseTests(unittest.TestCase):
                                     capture_output=True, check=False)
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(list(layout.iterdir()), [])
+
+    def test_controller_role_requires_its_distinct_base_process(self):
+        with tempfile.TemporaryDirectory() as name:
+            archive, layout, digest = self.fixture(Path(name), controller=True)
+            result = validate_export(archive, layout, digest, expected_user="",
+                                     expected_cmd=["python", "scripts/run_all_tests.py"])
+            self.assertEqual(result["base_user"], "")
+        with tempfile.TemporaryDirectory() as name:
+            archive, layout, digest = self.fixture(Path(name), controller=True)
+            with self.assertRaises(AssertionError):
+                validate_export(archive, layout, digest)

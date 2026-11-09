@@ -1,0 +1,18 @@
+{
+  "schema": "cpk384.bootstrap-driver-cohort.v1",
+  "base": "sha256:1c8b3fc348936b41bb51e530c9f192c360e3b4e53e7a9f7af6f41b7ba10e83ba",
+  "servers": null,
+  "core": "f56bb5c4cfde76764d39c5377d4270c5b23c3ba1",
+  "operations": "70154b6698e101159326b08646f2dba90dda87cd",
+  "interpreters": "e438f6e522ad0a23a7acef460be08690f48b2e17",
+  "sdk": "d61b374cb2a23d773c31748f47f88169499298b7",
+  "secrets": "57e4fc61d6931ef078550f98154a585bda61987b",
+  "declared_core": "976901c609d950a557ec1e9966f018e8ff6e16aa",
+  "declared_secrets": "158b17ed10689360c4e1529a395b3ee2b47aecbc",
+  "declared_interpreters": "e4bd35e828d1c44129f64e702de2b1d2b60f7c87",
+  "lineage": {
+    "loader": "a544016ad09ff32e8109c912603096cf8b447e59",
+    "material": "db74a0a5cadf17461bc67753f5e88b8573869614",
+    "parent_website": "b69417850efa1f4aecf4f567621abf79c21cda8b"
+  }
+}

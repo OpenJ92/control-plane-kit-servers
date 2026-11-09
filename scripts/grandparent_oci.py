@@ -10,11 +10,13 @@ if not __debug__:
     raise SystemExit("grandparent local OCI validation requires enabled checks")
 
 BASE = "sha256:4846a9005108e925149b2869214c3f32dbdbd4d4953159af532297081e80fe28"
+CONTROLLER = "sha256:1c8b3fc348936b41bb51e530c9f192c360e3b4e53e7a9f7af6f41b7ba10e83ba"
+SERVER_CMD = ["python", "-m", "control_plane_kit_servers_cpk_server.server"]
 LIMIT = 256 * 1024 * 1024
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
 
-def validate_export(archive_path, output, expected=BASE):
+def validate_export(archive_path, output, expected=BASE, *, expected_user="10001", expected_cmd=SERVER_CMD):
     archive_path, output = Path(archive_path), Path(output)
     assert archive_path.stat().st_size <= LIMIT and not any(output.iterdir())
     assert DIGEST.fullmatch(expected)
@@ -85,8 +87,8 @@ def validate_export(archive_path, output, expected=BASE):
     config_digest = descriptor(manifest["config"])
     config = raw(config_digest)
     assert config["os"] == "linux" and config["architecture"] == "amd64"
-    assert config["config"]["User"] == "10001" and not config["config"].get("Entrypoint")
-    assert config["config"]["Cmd"] == ["python", "-m", "control_plane_kit_servers_cpk_server.server"]
+    assert (config["config"].get("User") or "") == expected_user and not config["config"].get("Entrypoint")
+    assert config["config"]["Cmd"] == expected_cmd
     diff_ids = config["rootfs"]["diff_ids"]
     assert config["rootfs"]["type"] == "layers" and len(diff_ids) == len(manifest["layers"])
     assert all(DIGEST.fullmatch(item) for item in diff_ids)
@@ -94,13 +96,17 @@ def validate_export(archive_path, output, expected=BASE):
             "os": "linux", "architecture": "amd64", "blob_count": len(sizes),
             "export_bytes": archive_path.stat().st_size, "blob_bytes": sum(sizes.values()),
             "all_blob_digests_verified": True, "rootfs_diff_ids": diff_ids,
-            "base_user": "10001", "base_cmd": config["config"]["Cmd"]}
+            "base_user": expected_user, "base_cmd": config["config"]["Cmd"]}
 
 
 if __name__ == "__main__":
     try:
-        assert len(sys.argv) == 3
-        result = validate_export(sys.argv[1], sys.argv[2])
+        if len(sys.argv) == 4 and sys.argv[1] == "--controller":
+            result = validate_export(sys.argv[2], sys.argv[3], CONTROLLER,
+                                     expected_user="", expected_cmd=["python", "scripts/run_all_tests.py"])
+        else:
+            assert len(sys.argv) == 3
+            result = validate_export(sys.argv[1], sys.argv[2])
         print(json.dumps(result, sort_keys=True))
     except Exception:
         print("grandparent local OCI base validation failed", file=sys.stderr)
