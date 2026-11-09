@@ -7,13 +7,18 @@ core_repository=$2
 operations_repository=$3
 interpreters_repository=$4
 phase=${5:-all}
+source_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+source_paths=''
+if [ "$phase" = managed-startup ]; then
+  source_paths=/source:/source/src:/source/scripts:/source/products/cpk_server/src:/source/products/cpk_server/tests:/source/products/secrets_server/src:/source/products/secrets_server/tests:/source/products/cpk_local_gateway/src:/source/products/cloudflared_connector/src:/source/products/postgres_server/src:/source/products/website_server/src:
+fi
 secrets_repository=${6:-}
 secrets_revision=${7:-}
 core_revision=054e5884d89ed6f56141b8fc51ea996f0b6d916b
 operations_revision=71db67c5df666d936860cce35b99394e600b2f1f
 interpreters_revision=2e2a6b880359c6db98f6c1e41b6de450d8bc681f
 case "$phase" in
-  managed-composition)
+  managed-composition|managed-startup)
     core_revision=$6
     operations_revision=$7
     interpreters_revision=$8
@@ -23,7 +28,11 @@ case "$phase" in
       case "$revision" in ''|*[!0-9a-f]*) echo 'exact source revision is required' >&2; exit 2 ;; esac
       [ "${#revision}" -eq 40 ] || exit 2
     done
-    set -- python -m unittest managed_verification_composition_qualification managed_verification_startup_tests test_managed_health_bridge test_managed_native_connection test_operations_application_factory -v
+    if [ "$phase" = managed-startup ]; then
+      set -- python -m unittest managed_verification_startup_tests managed_verification_composition_qualification.ManagedCompositionTests.test_real_native_registration_supplies_same_objects_to_service_options -v
+    else
+      set -- python -m unittest managed_verification_composition_qualification managed_verification_startup_tests test_managed_health_bridge test_managed_native_connection test_operations_application_factory -v
+    fi
     ;;
   gateway-target)
     core_revision=$6
@@ -78,7 +87,7 @@ git -C "$core_repository" archive --format=tar "$core_revision" control-plane-ki
 tar -xf "$owned_source/core.tar" -C "$owned_source/core" --strip-components=1
 git -C "$operations_repository" archive --format=tar "$operations_revision" control-plane-kit-operations/src/control_plane_kit_operations > "$owned_source/operations.tar"
 tar -xf "$owned_source/operations.tar" -C "$owned_source/operations" --strip-components=1
-if [ "$phase" = managed-composition ]; then
+if [ "$phase" = managed-composition ] || [ "$phase" = managed-startup ]; then
   git -C "$operations_repository" archive --format=tar "$operations_revision" control-plane-kit-operations/tests > "$owned_source/operations-tests.tar"
   tar -xf "$owned_source/operations-tests.tar" -C "$owned_source/operations" --strip-components=1
 fi
@@ -105,11 +114,18 @@ if [ "$phase" = registrations ]; then
 fi
 printf 'pure assembly source Core=%s Operations=%s Interpreters=%s\n' \
   "$core_revision" "$operations_revision" "$interpreters_revision"
-docker run --rm --network "$network" --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
+source_controller() {
+  if [ "$phase" = managed-startup ]; then
+    docker run --pull never --mount "type=bind,source=$source_root,target=/source,readonly" --workdir /tmp \
+      -e CPK_STARTUP_SOURCE_ROOT=/source "$@"
+  else docker run "$@"
+  fi
+}
+source_controller --rm --network "$network" --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
   --mount "type=bind,source=$owned_source,target=/reviewed-http-sample,readonly" \
   -e PYTHONDONTWRITEBYTECODE=1 \
   -e CPK_SOURCE_ASSEMBLY_POSTGRES_IMAGE \
   -e CPK_SOURCE_FIXTURE_DATABASE_URL=postgresql://cpk:cpk-fixture@cpk163-postgres:5432/cpk \
   -e "CPK_SOURCE_SECRETS_REVISION=$secrets_revision" \
-  -e PYTHONPATH=/reviewed-http-sample/core/src:/reviewed-http-sample/operations/src:/reviewed-http-sample/operations:/reviewed-http-sample/interpreters/src:/reviewed-http-sample/secrets/src:/app:/app/products/cpk_server/tests:/app/products/secrets_server/tests:/app/scripts \
+  -e PYTHONPATH=/reviewed-http-sample/core/src:/reviewed-http-sample/operations/src:/reviewed-http-sample/operations:/reviewed-http-sample/interpreters/src:/reviewed-http-sample/secrets/src:"${source_paths}"/app:/app/products/cpk_server/tests:/app/products/secrets_server/tests:/app/scripts \
   "$image" "$@"

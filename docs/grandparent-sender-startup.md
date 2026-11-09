@@ -35,8 +35,16 @@ selection: exact variant/support, malformed/crossed config, absent opt-in, bad o
 missing file before schema/listener, and ordinary main/create_app/real factory
 registration. Provider/database/listener are explicit external doubles; no test
 claims a current installation, listener, permission, approved run or SQL result.
-They have NOT RUN. Existing owning test.sh builds a test controller; a reviewed
-source gate/build action is required before invocation. No alternate harness.
+They have NOT RUN. The new narrow owning test.sh selector
+--managed-verification-startup-source-tests requires an explicitly selected
+cached immutable controller, runs normal policy/support/integrity, then only the
+five startup cases plus the existing actual registration regression. All four
+containers use --pull never, network none, read-only root and temporary tmpfs;
+no Docker socket, DB, service, new network or build is used. Exact immutable
+Core/Ops/Interpreters source exports and this checkout at /source override cached
+/app code; tests check source import origins. Missing controller refuses, with
+no fallback. Other gate modes retain their normal behavior. Review/release of
+this source-only action is required before invocation; it has not executed.
 
 Freeze Coref56bb5c4/Ops70154b66/Interpreters e438f6e5 and this Servers successor
 for source-overlay qualification. Default pip/child Dockerfile976/e4bd is not the

@@ -27,6 +27,14 @@ KEY = "CPK_MANAGED_VERIFICATION_CONFIGURATION_FILE"
 
 class ManagedVerificationStartupTests(unittest.TestCase):
     def setUp(self):
+        expected = os.environ.get("CPK_STARTUP_SOURCE_ROOT")
+        if expected is not None:
+            self.assertTrue(Path(server.__file__).resolve().is_relative_to(Path(expected)))
+            self.assertTrue(Path(reader.__file__).resolve().is_relative_to(Path(expected)))
+            for name, root in (("control_plane_kit_core", "/reviewed-http-sample/core/src"),
+                    ("control_plane_kit_operations", "/reviewed-http-sample/operations/src"),
+                    ("control_plane_kit_interpreters", "/reviewed-http-sample/interpreters/src")):
+                self.assertTrue(Path(importlib.import_module(name).__file__).resolve().is_relative_to(root))
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)

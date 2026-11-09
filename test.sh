@@ -20,6 +20,16 @@ GATEWAY_TARGET_OPERATIONS_REVISION=''
 GATEWAY_TARGET_EXPECTATION=''
 MANAGED_COMPOSITION_INTERPRETERS_REVISION=''
 case "${1:-}" in
+  --managed-verification-startup-source-tests)
+    [ "$#" -eq 7 ] || { echo 'startup source tests require three checkouts and three exact revisions' >&2; exit 2; }
+    HTTP_SAMPLE_RELAY_ONLY=9
+    HTTP_SAMPLE_SOURCE_CORE=$2
+    HTTP_SAMPLE_SOURCE_OPERATIONS=$3
+    HTTP_SAMPLE_SOURCE_INTERPRETERS=$4
+    GATEWAY_TARGET_CORE_REVISION=$5
+    GATEWAY_TARGET_OPERATIONS_REVISION=$6
+    MANAGED_COMPOSITION_INTERPRETERS_REVISION=$7
+    ;;
   --managed-verification-source-qualification)
     [ "$#" -eq 7 ] || { echo 'managed source qualification requires three checkouts and three exact revisions' >&2; exit 2; }
     HTTP_SAMPLE_RELAY_ONLY=7
@@ -87,13 +97,28 @@ esac
 . ./scripts/root_artifact_shell.sh
 root_artifact_selection
 
-docker run --rm \
+run_policy() {
+  if [ "$HTTP_SAMPLE_RELAY_ONLY" = 9 ]; then
+    docker run --pull never --network none --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges "$@"
+  else docker run "$@"
+  fi
+}
+if [ "$HTTP_SAMPLE_RELAY_ONLY" = 9 ]; then
+  case "$IMAGE" in sha256:*) ;; *) echo 'startup source tests require cached immutable controller' >&2; exit 2 ;; esac
+  [ "${#IMAGE}" -eq 71 ] || exit 2
+  digest=${IMAGE#sha256:}
+  case "$digest" in *[!0-9a-f]*) exit 2 ;; esac
+  [ "$(docker image inspect "$IMAGE" --format '{{.Id}}')" = "$IMAGE" ] || exit 2
+  POLICY_IMAGE=$IMAGE
+fi
+
+run_policy --rm \
   -v "$ROOT:/source:ro" \
   -e PYTHONDONTWRITEBYTECODE=1 \
   "$POLICY_IMAGE" \
   sh -c 'cd /source && PYTHONPATH=/source/src python scripts/apply_coordinates.py --check'
 
-docker run --rm \
+run_policy --rm \
   -v "$ROOT:/source:ro" \
   -v "$ROOT/test_support:/test-support:ro" \
   -e CPK_PACKAGE_ROOT=/source \
@@ -101,7 +126,7 @@ docker run --rm \
   "$POLICY_IMAGE" \
   sh -c 'cd /test-support && python -m unittest discover -s tests -v'
 
-docker run --rm \
+run_policy --rm \
   -v "$ROOT:/source:ro" \
   -v "$ROOT/test_support:/test-support:ro" \
   -e PYTHONDONTWRITEBYTECODE=1 \
@@ -114,6 +139,12 @@ docker run --rm \
     --test-root products \
     --gate-file test.sh
 
+if [ "$HTTP_SAMPLE_RELAY_ONLY" = 9 ]; then
+  sh scripts/http_sample_source_assembly.sh "$IMAGE" "$HTTP_SAMPLE_SOURCE_CORE" \
+    "$HTTP_SAMPLE_SOURCE_OPERATIONS" "$HTTP_SAMPLE_SOURCE_INTERPRETERS" managed-startup \
+    "$GATEWAY_TARGET_CORE_REVISION" "$GATEWAY_TARGET_OPERATIONS_REVISION" "$MANAGED_COMPOSITION_INTERPRETERS_REVISION"
+  exit 0
+fi
 docker build -f Dockerfile.test -t "$IMAGE" .
 if [ "$HTTP_SAMPLE_RELAY_ONLY" != 0 ]; then
   if [ "$HTTP_SAMPLE_RELAY_ONLY" = 7 ]; then

@@ -1,5 +1,6 @@
 Source: scripts/http_sample_source_assembly.sh.
 
-The existing exact-source managed-composition selection additionally names the
-startup test module. Other phases, immutable exports, lifecycle and cleanup are
-unchanged. No execution or build performed for this source checkpoint.
+The narrow managed-startup phase selects five startup tests and the existing
+actual registration regression, exact immutable source exports plus this actual
+checkout mounted before cached code, no network/socket/DB/build. Existing
+managed-composition also names startup tests. No execution occurred.
