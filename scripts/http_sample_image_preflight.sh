@@ -6,7 +6,7 @@ mode=${2:-}
 core_revision=054e5884d89ed6f56141b8fc51ea996f0b6d916b
 case "$mode" in
   '') ;;
-  --gateway-document|--parent-website|--child-postgres|--sender) core_revision=f56bb5c4cfde76764d39c5377d4270c5b23c3ba1 ;;
+  --gateway-document|--parent-website|--child-postgres|--sender|--parent-connectors) core_revision=f56bb5c4cfde76764d39c5377d4270c5b23c3ba1 ;;
   *) exit 2 ;;
 esac
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -29,10 +29,10 @@ git -C "$1" archive --format=tar "$core_revision" control-plane-kit-core/src/con
 tar -xf "$preflight_source/core.tar" -C "$preflight_source" --strip-components=1
 docker run --pull never --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
   --workdir /tmp -e PYTHONDONTWRITEBYTECODE=1 \
-  -e CPK_SOURCE_ASSEMBLY_IMAGES -e CPK_SOURCE_ASSEMBLY_POSTGRES_IMAGE -e CPK_SOURCE_PARENT_WEBSITE -e CPK_SOURCE_CHILD_POSTGRES \
+  -e CPK_SOURCE_ASSEMBLY_IMAGES -e CPK_SOURCE_ASSEMBLY_POSTGRES_IMAGE -e CPK_SOURCE_PARENT_WEBSITE -e CPK_SOURCE_CHILD_POSTGRES -e CPK_SOURCE_PARENT_CONNECTORS \
   -e CPK_SOURCE_GATEWAY_DOCUMENT -e CPK_SOURCE_POSTGRES_DOCUMENT \
   -e CPK_SOURCE_GATEWAY_DOCUMENT_SHA256 -e CPK_SOURCE_POSTGRES_DOCUMENT_SHA256 \
-  -e PYTHONPATH=/preflight-core/src:/source/src:/source/products/cpk_local_gateway/src:/source/products/website_server/src:/source/products/postgres_server/src:/source/products/cpk_server/src \
+  -e PYTHONPATH=/preflight-core/src:/source/src:/source/products/cpk_local_gateway/src:/source/products/website_server/src:/source/products/postgres_server/src:/source/products/cpk_server/src:/source/products/cloudflared_connector/src \
   --mount "type=bind,source=$preflight_source,target=/preflight-core,readonly" \
   --mount "type=bind,source=$ROOT,target=/source,readonly" \
   "$validator" python /source/scripts/http_sample_image_inputs.py ${mode:+"$mode"}

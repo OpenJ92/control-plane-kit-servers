@@ -14,3 +14,8 @@ both ordered canonical documents by independently frozen hashes. Source gate
 cbb732f1 passed28 support+16 selected laws; the once-created public PG/sender
 outputs and independent review are recorded in
 [the child preparation receipt](../../child-public-postgres-preparation.md).
+
+The parent connectors adapter also reuses the existing connector product
+renderer, with two explicit public receiver identities and unchanged parent
+read verifiers. It never enters commissioning or opens protected files. See
+[the source/action record](../../parent-public-connector-inputs.md).

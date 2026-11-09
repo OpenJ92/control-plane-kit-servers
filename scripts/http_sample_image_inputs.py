@@ -106,6 +106,32 @@ def _commissioned_configuration(value, receiver_id):
     return config
 
 
+def parent_connector_inputs(images, value, *, receiver_ids):
+    """Prepare two independent receiving files from existing public parent trust."""
+    import control_plane_kit_core as core
+    from control_plane_kit_servers_cloudflared_connector import managed
+    images = require_images(images)
+    if (type(value) is not dict or value.keys() != {"commissioning_public_document",
+            "commissioning_public_sha256", "installation_id", "workspace_id"}
+            or type(receiver_ids) is not dict or receiver_ids.keys() != {"api", "website"}
+            or any(type(item) is not str for item in receiver_ids.values())
+            or len(set(receiver_ids.values())) != 2):
+        raise ValueError("parent public connector preparation is invalid")
+    declaration = managed.control_declaration()
+    routes = {}
+    for role in ("api", "website"):
+        config = _commissioned_configuration(value, receiver_ids[role])
+        target = replace(config.target,
+            node_id=replace(config.target.node_id,
+                value=value["installation_id"] + "-external-" + role + "-01"),
+            provider_socket_name=declaration.surface.provider_socket_name,
+            receiver_id=receiver_ids[role])
+        configuration = core.ReceiverNodeControlConfiguration(target, declaration, config.verifiers)
+        routes[role] = managed.control_configuration_artifact(configuration).descriptor()
+    return {"schema":"cpk.parent-connector-public-inputs.v1",
+        "image":images["connector"].descriptor(), "routes":routes}
+
+
 def child_postgres_document(images, value, *, receiver_id):
     """Prepare actual child receiving bytes and the normal installation variant."""
     import control_plane_kit_core as core
@@ -166,6 +192,12 @@ if __name__ == "__main__":
             from uuid import uuid4
             value = json.loads(os.environ["CPK_SOURCE_CHILD_POSTGRES"], object_pairs_hook=_unique)
             sys.stdout.buffer.write(child_postgres_document(options["images"], value, receiver_id=uuid4().hex).content)
+        elif sys.argv[1:] == ["--parent-connectors"]:
+            from uuid import uuid4
+            value = json.loads(os.environ["CPK_SOURCE_PARENT_CONNECTORS"], object_pairs_hook=_unique)
+            result = parent_connector_inputs(options["images"], value,
+                receiver_ids={role:uuid4().hex for role in ("api", "website")})
+            sys.stdout.write(json.dumps(result, sort_keys=True, separators=(",", ":")))
         elif sys.argv[1:] == ["--sender"]:
             result = sender_input(os.environ["CPK_SOURCE_GATEWAY_DOCUMENT"], os.environ["CPK_SOURCE_POSTGRES_DOCUMENT"],
                 gateway_sha256=os.environ["CPK_SOURCE_GATEWAY_DOCUMENT_SHA256"],

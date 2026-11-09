@@ -25,8 +25,12 @@ owner is entered by actual rendering. Tests alone use isolated synthetic fixture
 
 Owning source gate: ./test.sh --parent-public-connector-source-tests CORE OPS
 INTERPRETERS, using the existing immutable cached controller and exact
-Coref56/Ops701/Ie438 exports. Tests are prepared and unexecuted. An unvalidated
-checkpoint precedes any released gate; execution failure stops without retry.
+Coref56/Ops701/Ie438 exports. Target-red at a5fc14a passed28 support and ran both
+focused tests (2.429s), producing nine identical missing-adapter errors across
+the positive and negative subcases. Source setup/imports succeeded. Meridian
+independently passed this intended red. Implementation is now prepared;
+green validation remains unexecuted. An unvalidated checkpoint precedes the
+released green gate; unexpected execution failure stops without retry.
 Actual rendering is a separate reviewed invocation of the existing public-input
 command with mode connectors, fresh exclusive bundle/output paths and preserved
 status/stderr. No one-shot external launcher is introduced.
