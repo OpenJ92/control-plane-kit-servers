@@ -25,11 +25,26 @@ elif a[:2]==["context","inspect"]: print("unix:///var/run/docker.sock")
 elif a[0]=="info": print("wrong-daemon" if mode=="daemon" else "d23d00aa-b281-448d-bc95-c8e47efeeea2")
 elif a[:2]==["image","inspect"]:
     ref=a[2]; source="c04f060fd063b407d858c8a55fe85a247be086cf"
-    if "secrets-server@" in ref: source="1182fccdaed6e8d8410f7ec2b5de697ab8236c4b"
+    role="controller" if ref.startswith("sha256:") else "postgres" if "postgres@" in ref else "secrets" if "secrets-server@" in ref else "cpk"
+    if role=="secrets": source="1182fccdaed6e8d8410f7ec2b5de697ab8236c4b"
+    # These cached images have no Labels map. Reading Config on those roles
+    # models Docker's missing-property failure rather than fabricating labels.
+    if role in ("postgres","controller") and "Config" in a[-1]: sys.exit(34)
+    if role=="postgres" and mode=="inspect-failure":
+        print("PRIVATE_CONFIG_MARKER",file=sys.stderr); sys.exit(35)
     identity=ref if ref.startswith("sha256:") else "sha256:"+ref.rsplit("sha256:",1)[1]
-    print(json.dumps({"id":identity,"digests":[] if mode=="image" else [ref],"os":"linux","architecture":"amd64","source":source,
-        "run":os.environ.get("GW_SECRETS_RUN"),"owner":"a"*64}))
-elif a[:2]==["image","ls"]: pass
+    digest=ref
+    if role=="postgres" and mode!="pg-canonical": digest=ref.removeprefix("docker.io/library/")
+    if role=="postgres" and mode=="pg-wrong-digest": digest=digest.rsplit("sha256:",1)[0]+"sha256:"+"0"*64
+    attrs={"id":identity,"digests":[] if mode=="image" else [digest],"os":"linux","architecture":"amd64"}
+    if role in ("cpk","secrets"):
+        attrs["source"]=None if mode==role+"-missing" else {} if mode==role+"-malformed" else "0"*40 if mode==role+"-source" else source
+    if role=="secrets":
+        attrs.update(run=None if mode=="secrets-missing" else "foreign" if mode=="secrets-run" else os.environ.get("GW_SECRETS_RUN"),
+            owner=None if mode=="secrets-missing" else "c"*64 if mode=="secrets-owner" else "a"*64)
+    print(json.dumps(attrs))
+elif a[:2]==["image","ls"]:
+    if mode in ("metadata-ok","pg-canonical"): print("existing-gateway-tag")
 elif a[:2]==["volume","create"]: print(a[-1])
 elif a[:2]==["volume","inspect"]: print(a[2]+"|local|local|"+run+"|"+"b"*64+"|0")
 elif a[:2]==["volume","ls"]:
@@ -111,6 +126,9 @@ class PackagedImageOwnerTests(unittest.TestCase):
             try:
                 result=subprocess.run(["sh","scripts/gateway_packaged_image.sh",str(path)],cwd=work,
                     env=environment,capture_output=True,text=True,timeout=15,check=False)
+                self.assertNotIn("PRIVATE_CONFIG_MARKER",result.stdout+result.stderr)
+                if mode=="inspect-failure":
+                    self.assertEqual(result.stderr.strip(),"gateway borrowed image inspection failed: postgres")
                 calls=[json.loads(line) for line in (root/"calls").read_text().splitlines()] if (root/"calls").exists() else []
                 return result.returncode,calls,records.exists()
             finally:
@@ -126,7 +144,7 @@ class PackagedImageOwnerTests(unittest.TestCase):
                 self.assertFalse(exists)
 
     def test_daemon_image_and_volume_collision_have_zero_build_or_allocation(self):
-        for mode in ("daemon","image","collision","git-read"):
+        for mode in ("daemon","image","collision","git-read","pg-wrong-digest","inspect-failure"):
             with self.subTest(mode=mode):
                 status,calls,exists=self.admission(mode)
                 self.assertNotEqual(status,0)
@@ -134,6 +152,29 @@ class PackagedImageOwnerTests(unittest.TestCase):
                 self.assertTrue(calls)
                 self.assertFalse(any(a[0] in ("run","build","buildx","rm","pull") or
                     a[:2] in (["volume","create"],["network","create"]) for a in calls))
+
+    def test_label_free_pg_and_controller_and_exact_pg_digest_spellings_pass_metadata_admission(self):
+        for mode in ("metadata-ok","pg-canonical"):
+            with self.subTest(mode=mode):
+                status,calls,exists=self.admission(mode)
+                # Stop safely at the later tag collision, after all four images.
+                self.assertNotEqual(status,0)
+                self.assertFalse(exists)
+                self.assertEqual(len([a for a in calls if a[:2]==["image","inspect"]]),4)
+                self.assertTrue(any(a[:2]==["image","ls"] for a in calls))
+                self.assertFalse(any(a[0] in ("run","build","buildx","rm","pull") or
+                    a[:2] in (["volume","create"],["network","create"]) for a in calls))
+
+    def test_missing_malformed_or_mismatched_protected_labels_stop_before_reservation(self):
+        for mode in ("cpk-missing","cpk-malformed","cpk-source","secrets-missing",
+                     "secrets-malformed","secrets-source","secrets-run","secrets-owner"):
+            with self.subTest(mode=mode):
+                status,calls,exists=self.admission(mode)
+                self.assertNotEqual(status,0)
+                self.assertFalse(exists)
+                self.assertTrue(any(a[:2]==["image","inspect"] for a in calls))
+                self.assertFalse(any(a[0] in ("run","build","buildx","rm","pull") or
+                    a[:2] in (["image","ls"],["volume","create"],["network","create"]) for a in calls))
 
     def test_foreign_reservation_helper_failure_and_failed_readback_stay_failed(self):
         for mode in ("owner","helper","readback"):

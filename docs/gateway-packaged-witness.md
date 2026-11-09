@@ -275,3 +275,30 @@ log tests enforce bounded non-reflecting redaction. These passed in the83-test
 source gate at872e508; no packaged result follows. Source failure, missing accepted Secrets input,
 receipt/hash or cache drift, apparatus failure, process/relay failure, timeout or
 uncertain cleanup stop without retry. North owns the next release.
+
+## Pre-build metadata stop and bounded correction
+
+The released image invocation at04bbd42 stopped before reservation/build:
+[durable stop](https://github.com/OpenJ92/control-plane-kit-servers/issues/163#issuecomment-6747382362).
+No gateway build was consumed or relay/runtime result earned. North subsequently
+released read-only metadata diagnosis and this eligibility-preserving correction.
+On the fixed daemon, PG/controller have no Labels field; canonical and familiar
+PG references both resolve to ID
+`sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777`,
+and Docker reports RepoDigest
+`postgres@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777`.
+
+The corrected inspection selects only required fields by role. PG/controller
+do not access Config/Labels/Env. Product projections read only required labels;
+missing/malformed/mismatched required labels still refuse before reservation.
+CPK keeps exact digest/Linux/amd64/producer checks; Secrets additionally keeps
+accepted run/receipt owner. PG accepts only the two exact equivalent repository
+spellings with its full unchanged approved hash; controller keeps its exact ID.
+Failed inspection reports the bounded role without reflecting Docker stderr.
+Regression cases cover label-free permissive roles, both PG spellings, wrong PG
+digest, failed inspection and missing/malformed/wrong protected provenance.
+
+This correction changes no pin, input, production recipe, fixture, network,
+credential or cleanup authority. It is unvalidated source until its owning
+Docker suite passes. Exact-source independent review and North's next release
+are required before another image-phase invocation; the failed one is terminal.

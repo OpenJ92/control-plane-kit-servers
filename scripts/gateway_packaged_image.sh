@@ -218,12 +218,26 @@ worktree=$(git status --porcelain) || exit 1
 git diff --quiet 85b193bbdc777376c5104029a5ee04e74627cf71 HEAD -- products/cpk_local_gateway/src products/cpk_local_gateway/Dockerfile coordinates/server-products.json
 for role in cpk secrets postgres controller; do
   case "$role" in cpk) reference=$CPK_REF ;; secrets) reference=$SECRETS_REF ;; postgres) reference=$PG_REF ;; controller) reference=$CONTROLLER ;; esac
-  attrs=$(docker image inspect "$reference" --format '{"id":{{json .Id}},"digests":{{json .RepoDigests}},"os":{{json .Os}},"architecture":{{json .Architecture}},"source":{{json (index .Config.Labels "org.opencontainers.image.revision")}},"run":{{json (index .Config.Labels "cpk.test-run")}},"owner":{{json (index .Config.Labels "cpk.test-owner")}}}')
+  # PG/controller eligibility never reads optional Labels or Config/Env.
+  image_format='{"id":{{json .Id}},"digests":{{json .RepoDigests}},"os":{{json .Os}},"architecture":{{json .Architecture}}'
+  case "$role" in
+    cpk) image_format="$image_format"',"source":{{with (index .Config "Labels")}}{{json (index . "org.opencontainers.image.revision")}}{{else}}null{{end}}' ;;
+    secrets) image_format="$image_format"',"source":{{with (index .Config "Labels")}}{{json (index . "org.opencontainers.image.revision")}}{{else}}null{{end}},"run":{{with (index .Config "Labels")}}{{json (index . "cpk.test-run")}}{{else}}null{{end}},"owner":{{with (index .Config "Labels")}}{{json (index . "cpk.test-owner")}}{{else}}null{{end}}' ;;
+  esac
+  attrs=$(docker image inspect "$reference" --format "$image_format}" 2>/dev/null) || {
+    printf 'gateway borrowed image inspection failed: %s\n' "$role" >&2
+    exit 1
+  }
   image_id=$(printf '%s' "$attrs" | jq -er .id)
   if [ "$role" = controller ]; then
     [ "$image_id" = "$CONTROLLER" ] || exit 1
   else
-    printf '%s' "$attrs" | jq -e --arg reference "$reference" '.os=="linux" and (.digests|index($reference)!=null)' >/dev/null
+    # Docker familiarizes this one fixed Docker Hub repository as postgres@….
+    # Both spellings must carry the exact approved digest; no tag/hash fallback.
+    digest_alias=$reference
+    if [ "$role" = postgres ]; then digest_alias="postgres@${PG_REF#*@}"; fi
+    printf '%s' "$attrs" | jq -e --arg reference "$reference" --arg alias "$digest_alias" \
+      '.os=="linux" and ((.digests|index($reference)!=null) or (.digests|index($alias)!=null))' >/dev/null
   fi
   case "$role" in
     cpk) CPK_ID=$image_id; CPK_ATTRS=$attrs; printf '%s' "$attrs" | jq -e '.architecture=="amd64" and .source=="c04f060fd063b407d858c8a55fe85a247be086cf"' >/dev/null ;;
