@@ -7,10 +7,12 @@ This document prepares an action; it releases no build or runtime effect.
 
 ## Last verified boundary
 
-At `a464f85799bf41cd01572b088fc925168e15ef19`, the owning source-only selector
-passed28 support and76 gateway tests, including real-main composition and all
-three new fixture tests. Meridian independently reviewed the saved log SHA256
-`2b90f410147585fafe96f428c00503ef08c11426f42955b51207e9255500a9fd`.
+At `872e508c2d66aafdd79f2db24b25efdff8ef9e86`, the owning source-only selector
+passed28 support and83 gateway tests, including image-owner admission, bounded
+readiness transport observations, real-main composition and fixture tests.
+The saved source log SHA256 is
+`ca5f392e76bd7ecc2bee8f4a091d57d4c0e670cb6637b34e9c24d3a4f58c89bd`;
+[independent evidence PASS](https://github.com/OpenJ92/control-plane-kit-servers/issues/163#issuecomment-6746104948).
 These are source ASGI/external-child-double results. No packaged gateway exchange
 or approved deployment/history result follows from them. The earlier75/76 log
 remains failed evidence; the corrected rerun does not rewrite it.
@@ -29,8 +31,12 @@ must refuse missing/invalid prerequisites before reserving or building its image
 - Accepted CPK reference:
   `localhost/control-plane-kit-servers/cpk-server@sha256:4846a9005108e925149b2869214c3f32dbdbd4d4953159af532297081e80fe28`.
   [Accepted owned-network evidence](https://github.com/OpenJ92/control-plane-kit-servers/issues/163#issuecomment-6743638715).
-- A separately qualified, retained Secrets OCI reference. It is pending and
-  intentionally has no invented value here. Join the exact local digest/image
+- Separately qualified, retained Secrets reference:
+  `localhost/control-plane-kit-servers/secrets-server@sha256:0d36584018d93305045631a1ee981d5a8850e16fd4532d765eb43a1a823dc095`.
+  [North acceptance](https://github.com/OpenJ92/control-plane-kit-servers/issues/163#issuecomment-6746498542)
+  binds producer1182fcc, run `cpk-secrets-image-smoke-cpk163-20261109-01` and
+  raw receipt SHA256 `49168b24836f6b10281a0dd4fac4715d53d8f318680fcdb3f8598bf180ed6020`.
+  Join the exact local digest/image
   to that action's public successful receipt and independent acceptance; missing,
   failed, uncertain, tag-only or substituted inputs stop before gateway build.
   Do not start a Secrets build from this action.
@@ -158,38 +164,39 @@ builds; exact borrowed image/daemon mismatch and run/volume collisions refuse;
 one gateway build only; no borrowed/controller rebuild; helper failure and
 cleanup uncertainty stay failed with no retry. Existing actual fixture tests
 cover the signed wire boundary; preserve normal discovery and original assertions.
-No action implementation or new executable result is claimed by this document.
+No packaged gateway execution result is claimed by this document.
 
 ## Implemented source preparation and current stop
 
 Linnaeus's isolated action now enters through
 `./test.sh --gateway-packaged-image INPUTS.json`, with the existing
-`--gateway-packaged-source-tests` as its source prerequisite. This is unvalidated
-source preparation. No gateway build is released or admissible yet: the tracked
-`products/cpk_local_gateway/tests/packaged_secrets_acceptance.json` deliberately
-contains null reference, acceptance URL, receipt SHA-256 and run. Reading that
-pin from the immutable Git tree fails closed before Docker or run reservation.
+`--gateway-packaged-source-tests` as its source prerequisite. Orchestration source
+passed its Docker gate at872e508. This new pin/document/input-only checkpoint has
+not been executed. No gateway build is released yet. The tracked
+`products/cpk_local_gateway/tests/packaged_secrets_acceptance.json` now binds the
+actual North acceptance, reference, raw receipt SHA-256 and run above. Admission
+reads this pin from the immutable Git tree before Docker or run reservation.
 
-After Secrets is actually qualified and North accepts its exact digest, a later
-reviewed source commit must fill ALL four pin values using the real public
-receipt bytes and exact acceptance comment. Review that new source/pin and exact
-input file before release. No environment override or syntax-only comment can
-substitute for this pin. The source stays1182fcc unless a separate explicit
-supersession is reviewed; do not silently align dependencies or the seed source.
+Secrets qualification and North acceptance are complete. Review this new
+source/pin and exact tracked input file before release. No environment override
+or syntax-only comment can substitute for this pin. The Secrets producer and seed
+source stay1182fcc unless a separate explicit supersession is reviewed; do not
+silently align dependencies or the seed source.
 
 The operator input is one nonempty JSON object, at most64KiB:
 
 ```json
 {
   "schema": "cpk163.gateway-image-inputs.v1",
-  "secrets_reference": "THE_EXACT_PINNED_ACCEPTED_SECRETS_REPODIGEST",
-  "secrets_acceptance": "THE_EXACT_PINNED_NORTH_ACCEPTANCE_COMMENT_URL",
-  "secrets_receipt": "/private/tmp/THE_EXACT_PINNED_SECRETS_RUN/result.json"
+  "secrets_reference": "localhost/control-plane-kit-servers/secrets-server@sha256:0d36584018d93305045631a1ee981d5a8850e16fd4532d765eb43a1a823dc095",
+  "secrets_acceptance": "https://github.com/OpenJ92/control-plane-kit-servers/issues/163#issuecomment-6746498542",
+  "secrets_receipt": "/private/tmp/cpk-secrets-image-smoke-cpk163-20261109-01/result.json"
 }
 ```
 
-Those strings are intentionally invalid placeholders; no fabricated acceptance
-or digest exists in this packet. The real receipt must match the reviewed hash,
+The exact input is tracked at
+`products/cpk_local_gateway/tests/packaged_gateway_inputs.json`.
+The real receipt must match the reviewed hash,
 run/path, source1182fcc, controller/daemon, exact candidate reference, successful
 exit, provenance, both signed phases, custody, exact-version/revocation persistence,
 redaction, cleanup and retention. Receipt and input are copied once to a private
@@ -197,7 +204,7 @@ snapshot; the same validated receipt bytes are archived and rehashed before any
 build. The pin's Git blob is also checked. Multiple/empty JSON objects and any
 substitution refuse. The acceptance pin authorizes no execution by itself.
 
-Future exact command shape, only after that prerequisite/source review/release:
+Exact proposed command, only after this checkpoint's independent review/release:
 
 ```sh
 export DOCKER_CONTEXT=desktop-linux
@@ -207,12 +214,12 @@ export CPK_RECEIVER_DAEMON_ID=d23d00aa-b281-448d-bc95-c8e47efeeea2
 
 CPK_GATEWAY_IMAGE_RUN=cpk-gateway-image-smoke-cpk163-20261109-01 \
 CPK_GATEWAY_IMAGE_TAG=localhost/control-plane-kit-servers/cpk-local-gateway:cpk163-relay-20261109-01 \
-./test.sh --gateway-packaged-image /private/tmp/cpk163-gateway-inputs.json
+./test.sh --gateway-packaged-image products/cpk_local_gateway/tests/packaged_gateway_inputs.json
 ```
 
-Run from the later clean frozen action SHA. Source tests must pass there; a464f85
-is prior source-relay evidence, not validation of the new orchestration. The
-image selector first performs non-Docker admission, retains the existing
+Run from the clean frozen commit containing this pin and input. Source tests must
+pass there before image mode;872e508 is prior source evidence, not a result for
+this new pin checkpoint. The image selector first performs non-Docker admission, retains the existing
 coordinate/support/integrity checks, and then revalidates the image action's
 immutable inputs. It does not run or rebuild the frozen Secrets action.
 
@@ -265,7 +272,7 @@ acceptance comments, substituted reference/receipt bytes, multiple JSON objects,
 wrong daemon/image, volume collision, failed Git read with empty stdout, a foreign
 reservation, helper failure and failed cleanup readback. They use actual owning
 scripts with finite fake CLI responses inside the Docker source suite. Separate
-log tests enforce bounded non-reflecting redaction. No executable outcome is
-claimed for these new tests yet. Source failure, missing accepted Secrets input,
+log tests enforce bounded non-reflecting redaction. These passed in the83-test
+source gate at872e508; no packaged result follows. Source failure, missing accepted Secrets input,
 receipt/hash or cache drift, apparatus failure, process/relay failure, timeout or
 uncertain cleanup stop without retry. North owns the next release.

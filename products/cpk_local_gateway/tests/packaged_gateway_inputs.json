@@ -1,0 +1,6 @@
+{
+  "schema": "cpk163.gateway-image-inputs.v1",
+  "secrets_reference": "localhost/control-plane-kit-servers/secrets-server@sha256:0d36584018d93305045631a1ee981d5a8850e16fd4532d765eb43a1a823dc095",
+  "secrets_acceptance": "https://github.com/OpenJ92/control-plane-kit-servers/issues/163#issuecomment-6746498542",
+  "secrets_receipt": "/private/tmp/cpk-secrets-image-smoke-cpk163-20261109-01/result.json"
+}
