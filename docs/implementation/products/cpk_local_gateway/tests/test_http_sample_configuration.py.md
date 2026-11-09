@@ -10,7 +10,8 @@ in the cleared test environment. This establishes a test-input lifetime issue,
 not a demonstrated product startup defect.
 
 Resolve control_configuration in setUp and use that same module for fixture
-construction and the existing reader patch. Preserve real server.main, artifact
+construction and the existing reader patch; require that active reader mock is
+called exactly once with no arguments. Preserve real server.main, artifact
 loading, actual application composition, captured uvicorn app, expected exit0
 and both HTTP-sample/V2 route assertions. No product checks, fixtures, environment
 requirements or outcomes are weakened. This correction is source-only and has

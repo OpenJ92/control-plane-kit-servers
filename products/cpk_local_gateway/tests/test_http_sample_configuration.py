@@ -82,12 +82,13 @@ class HttpSampleConfigurationTests(unittest.TestCase):
         with patch.object(server, "GatewayConfiguration") as config, \
                 patch("control_plane_kit_servers_cpk_local_gateway.health_relay_startup.load_health_relay",
                       return_value=self.value.relay), \
-                patch.object(self.control_api, "read_gateway_control_configuration", return_value=self.value.config), \
+                patch.object(self.control_api, "read_gateway_control_configuration", return_value=self.value.config) as read_control, \
                 patch.dict(os.environ, {self.api.CONFIGURATION_ENVIRONMENT: self.api.CONFIGURATION_PATH}, clear=True), \
                 patch.object(self.api, "_read", return_value=self.artifact.content.encode()), \
                 patch.object(server.uvicorn, "run") as run:
             config.from_environment.return_value.port = 8000
             self.assertEqual(server.main(), 0)
+            read_control.assert_called_once_with()
         app = run.call_args.args[0]
         self.assertIn("/cpk/verification/http", {route.path for route in app.routes})
         self.assertIn("/cpk/health/{health_kind}", {route.path for route in app.routes})
