@@ -210,8 +210,9 @@ and refusal of other digest inputs/colliding runs. See the smoke's retained-imag
 action packet; no Docker execution is implied by source publication or review.
 
 Servers #163 gateway source-only test action composes Rowan's reviewed gateway
-fixture tip8107ff7ddb6679a10be0d91ec86cc56766d36f10 (including943732c) with one
-owning selector. Its four test/companion files are inherited unchanged. This
+fixture tip8107ff7ddb6679a10be0d91ec86cc56766d36f10 (including943732c), plus her
+67b5404f6b2ff6c2b56c3b319b19a5572c57ba16 import-lifetime correction, with one
+owning selector. Its four test/companion files match her corrected source. This
 checkout is isolated from the frozen Secrets1182fcc image action.
 
 Exact command, only after independent review and explicit test release, from
@@ -233,6 +234,11 @@ and root, no socket, no network and writable temporary /tmp:exec and /etc/cpk ar
 the only runtime mounts; repository root, gateway src/tests and CPK/Secrets src
 are explicit import paths. Temporary test material disappears with the controller.
 Normal/full and existing CPK invocations retain their paths.
+
+The earlier adf9b14 action is superseded: normal product tests unload gateway
+modules, so exact-type gateway imports now resolve when the fixture/case runs
+rather than during collection. The selector and all reviewed assertions remain;
+the correction is Rowan's test-only delta, not a product/dependency change.
 
 Scope is source composition: the real gateway ASGI paths receive explicit
 external child HTTP doubles; their observed wire booleans/counts cannot establish
