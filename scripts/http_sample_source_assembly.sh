@@ -29,7 +29,9 @@ case "$phase" in
       [ "${#revision}" -eq 40 ] || exit 2
     done
     if [ "$phase" = material-preparation ]; then
-      set -- python -m unittest root_material_preparation_tests -v
+      set -- python -m unittest root_material_preparation_tests \
+        test_root_bootstrap.RootBootstrapTests.test_permissive_material_is_refused_before_acquisition_and_redacted \
+        test_root_bootstrap.RootBootstrapTests.test_uncertain_receipt_holds_without_redispatch_or_rewriting_history -v
     elif [ "$phase" = managed-startup ]; then
       set -- python -m unittest managed_verification_startup_tests managed_verification_composition_qualification.ManagedCompositionTests.test_real_native_registration_supplies_same_objects_to_service_options -v
     else

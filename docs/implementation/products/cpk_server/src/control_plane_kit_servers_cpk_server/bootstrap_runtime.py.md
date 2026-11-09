@@ -1,6 +1,10 @@
 Source: [bootstrap_runtime.py](../../../../../../products/cpk_server/src/control_plane_kit_servers_cpk_server/bootstrap_runtime.py).
 
 Root acquisition interprets the verified plan with the existing Docker SDK.
+Offline root preparation shares the existing index/sibling/admission validator
+through _material_document, passing an index value without publishing a file.
+Ordinary _material retains protected file decoding and arbitrary legacy index
+basenames. This factoring adds no acquisition effects or alternate consumer.
 Configuration volumes participate in initial occupancy checks and the ordinary
 ownership receipt. The SDK's archive is root-owned, so owner-only configuration
 requires a root recipient image user; nonroot recipients are refused before

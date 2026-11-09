@@ -187,12 +187,39 @@ class RootMaterialPreparationTests(unittest.TestCase):
             self.prepare()
 
     def test_late_validation_failure_never_publishes_consumable_index(self):
+        plan = self.plan()
         with patch("control_plane_kit_servers_cpk_server.server._credential_verifier",
                 side_effect=ValueError("injected late verifier failure")) as verifier, self.assertRaises(api.RootBootstrapHold):
-            self.prepare()
+            self.prepare(plan)
         verifier.assert_called_once()
         self.assertFalse((self.state / "index.json").exists())
+        self.assertFalse((self.state / "index.pending.json").exists())
         self.assertFalse((self.state / "complete.json").exists())
+        from control_plane_kit_servers_cpk_server.bootstrap import apply_root_bootstrap
+        acquisition_state = self.root / "acquisition"
+        for name in ("index.json", "index.pending.json"):
+            with self.subTest(index=name), patch("control_plane_kit_servers_cpk_server.bootstrap_runtime._acquire") as acquire, \
+                    self.assertRaises(api.RootBootstrapError):
+                apply_root_bootstrap(plan["bootstrap_plan"], expected_digest=plan["bootstrap_plan"]["digest"],
+                    driver_image_id=DRIVER, index_path=self.state / name, state_directory=acquisition_state)
+            acquire.assert_not_called()
+            self.assertFalse(acquisition_state.exists())
+        with patch.object(api.secrets, "token_urlsafe") as entropy, self.assertRaises(api.RootBootstrapHold):
+            self.prepare()
+        entropy.assert_not_called()
+
+    def test_completion_without_index_is_held_without_regeneration(self):
+        rename = api.os.rename
+        def stop_before_index(source, destination, **kwargs):
+            if destination == "index.json":
+                raise OSError("injected publication interruption")
+            return rename(source, destination, **kwargs)
+        with patch.object(api.os, "rename", side_effect=stop_before_index), self.assertRaises(api.RootBootstrapHold):
+            self.prepare()
+        self.assertTrue((self.state / "complete.json").exists())
+        self.assertTrue((self.state / "index.new").exists())
+        self.assertFalse((self.state / "index.json").exists())
+        self.assertFalse((self.state / "index.pending.json").exists())
         with patch.object(api.secrets, "token_urlsafe") as entropy, self.assertRaises(api.RootBootstrapHold):
             self.prepare()
         entropy.assert_not_called()

@@ -250,7 +250,7 @@ def _prepare(plan, state):
     directory = None
     try:
         from .root_commissioning import _directory
-        from .bootstrap_runtime import _material
+        from .bootstrap_runtime import _material_document
         from .server import CpkServerBootstrapConfiguration, _credential_verifier
         from .workspace_authority_configuration import decode_workspace_authority_configuration
         from control_plane_kit_secrets.crypto import encode_master_key_for_file
@@ -284,8 +284,8 @@ def _prepare(plan, state):
         _write(directory, "bootstrap-input.json", canonical(bootstrap["input"]))
         _write(directory, "bootstrap-plan.json", canonical(bootstrap))
         index = {"schema": "cpk.root-bootstrap.material.v2", "files": files, "dynamic_workspace": private}
-        _write(directory, "index.pending.json", canonical(index))
-        material, admitted = _material(bootstrap, state / "index.pending.json")
+        # No consumable index pathname exists while validation is incomplete.
+        material, admitted = _material_document(bootstrap, index, state / "index.json")
         from control_plane_kit_secrets.bootstrap import load_provider_credentials
         from control_plane_kit_secrets.auth import ProviderAuthorizer, ProviderGrant
         from control_plane_kit_secrets.provider_policy import _canonical_seed
@@ -320,14 +320,14 @@ def _prepare(plan, state):
                 plan["input"]["commissioning"]["intent_digest"],
             "commissioning_public_sha256": plan["input"]["commissioning"]["public_sha256"],
             "identities": plan["input"]["principals"], "outputs": plan["outputs"]}
-        _require(set(os.listdir(directory)) == (set(plan["outputs"]) - {"index.json"})
-            | {"intent.json", "index.pending.json"})
+        _require(set(os.listdir(directory)) == (set(plan["outputs"]) - {"index.json"}) | {"intent.json"})
         _write(directory, "complete.new", canonical(result), 0o600)
         os.rename("complete.new", "complete.json", src_dir_fd=directory, dst_dir_fd=directory)
         os.fsync(directory)
         # acquire_root consumes the canonical index directly. Make it visible
         # only after all validation and the completed receipt are durable.
-        os.rename("index.pending.json", "index.json", src_dir_fd=directory, dst_dir_fd=directory)
+        _write(directory, "index.new", canonical(index))
+        os.rename("index.new", "index.json", src_dir_fd=directory, dst_dir_fd=directory)
         os.fsync(directory)
         return result
     except Exception:

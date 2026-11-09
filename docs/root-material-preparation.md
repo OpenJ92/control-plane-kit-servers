@@ -48,8 +48,11 @@ locators outside that reference index. Nothing reads or reuses old credentials.
 
 Secret files/index/policy/plan outputs are0400; intent/completion0600; all generated
 files are exclusively created without following links and fsynced. Existing
-bootstrap_runtime._material and admit_workspace_intent verify a staged
-index.pending.json that acquisition cannot consume as the canonical index.
+bootstrap_runtime._material_document and admit_workspace_intent verify the
+in-memory index and its protected siblings. Ordinary _material shares that same
+validator after reading an existing index. No pending index file is written:
+neither apply nor initialization inspection can consume an incomplete index under
+an alternate name. Existing arbitrary legacy index names keep their behavior.
 The real credential verifier separately authenticates all three identities and
 checks setup-only administration. The pinned Secrets158b17ed credentials reader
 and authorizer authenticate the fresh token; exact decoded typed grants and empty
@@ -59,7 +62,10 @@ credentials. This reuses the actual seed owner's action/intent vocabulary withou
 database initialization. It proves prepared initial policy, not durable grants or
 request-time authorization. No provider endpoint is called.
 Completion is atomically renamed only after those owners pass, then the canonical
-index.json is published and fsynced; public output is
+index is written/fsynced as index.new, atomically renamed to index.json and the
+directory fsynced. Only already validated material can exist under that temporary
+name. Completion without a canonical index is
+incomplete and holds on re-entry without regeneration; public output is
 digests of public plans, role identities and file names, no raw/private hashes.
 Existing/partial output holds without retry, adoption, cleanup or regeneration.
 
@@ -77,7 +83,8 @@ retarget a tag. No real material execution has been released by this source note
 
 The existing cached source-test owner now has a narrow
 --root-material-preparation-source-tests selector: normal support/policy/integrity,
-then ten isolated tests under exact read-only source exports. No build/pull,
+then eleven preparation tests and the two existing legacy material/redaction and
+uncertain-receipt regressions under exact read-only source exports. No build/pull,
 network/socket/DB or real commissioning directory. Synthetic test keys exist in
 memory only to obtain actual owner-rendered public records; no PEM files exist.
 Public-only/stale/crossed receipt refusal, real material/identity validation,
