@@ -14,3 +14,11 @@ checks exact owner lineage, verifies installed sources and normal CLI plans, and
 rehashes the bounded public qualification snapshot before copying and after copy.
 Qualification uses that file read-only, no socket/network/source mount. The
 listening runtime mode retains its existing profile and action identifiers.
+
+#391's future installer action uses a fresh cpk391 tag/run and adds the bounded
+owned schema-owner observation role (UID10001, no network/socket, read-only).
+It compares the actual exported Operations subtree to the cohort's selected tree;
+UID0 installed verification and the UID10001 role call the real schema owner.
+The reviewed diagnostic successor supplies the exact bootstrap.py lineage;
+original website ancestry and installation.py equality remain required. No image
+action or retry of the retained partial installation is implied by source tests.

@@ -1,6 +1,7 @@
 """Socket-free explicit workspace initialization and read-only receipt inspection."""
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import base64
 import hashlib
 from importlib.metadata import distribution
 from importlib.resources import files
@@ -19,7 +20,8 @@ from control_plane_kit_operations.workspace_permissions import (
     WorkspacePermissionNotFound, WorkspacePermissionReadService,
 )
 
-from .bootstrap import RootBootstrapError, RootBootstrapHold, canonical, decode_document, verified_plan
+from .bootstrap import (BootstrapStage, RootBootstrapError, RootBootstrapHold,
+    bootstrap_stage, canonical, decode_document, verified_plan)
 from .bootstrap_runtime import private_read
 from .bootstrap_workspace import load_workspace_helper_intent, workspace_helper_input_bytes
 
@@ -30,6 +32,7 @@ PROGRESS_SCHEMA = "cpk.root-bootstrap.initialization-progress.v1"
 TARGET_SCHEMA = "cpk.root-bootstrap.initialization-target.v1"
 _STORES = ("CPK_WORKPLACE_DATABASE_URL", "CPK_ACTIVITY_HISTORY_DATABASE_URL",
     "CPK_OBSERVER_STATE_DATABASE_URL", "CPK_GRAPH_TOPOLOGY_DATABASE_URL")
+_LOCAL_DRIVER_PROVENANCE = Path("/usr/share/cpk-bootstrap-driver")
 
 
 @dataclass(frozen=True, repr=False)
@@ -42,13 +45,74 @@ class _Inputs:
 
 def package_correlation():
     """Identify the installed owner in this exact driver, never a migration input."""
-    direct = json.loads(distribution("control-plane-kit-operations").read_text("direct_url.json"))
+    with bootstrap_stage(BootstrapStage.INITIALIZATION_TARGET):
+        try:
+            return _package_correlation()
+        except Exception:
+            raise RootBootstrapError("bootstrap installed schema owner could not be verified") from None
+
+
+def _proof_document(name):
+    path = _LOCAL_DRIVER_PROVENANCE / name
+    if not path.is_file() or path.is_symlink():
+        raise ValueError("build proof unavailable")
+    with path.open("rb") as source:
+        raw = source.read(1_048_577)
+    if len(raw) > 1_048_576:
+        raise ValueError("build proof bound")
+    value = json.loads(raw)
+    if type(value) is not dict:
+        raise ValueError("build proof shape")
+    return value
+
+
+def _package_correlation():
+    dist = distribution("control-plane-kit-operations")
+    direct = json.loads(dist.read_text("direct_url.json"))
+    root = Path(files("control_plane_kit_operations"))
+    schema_path = Path(files("control_plane_kit_operations.postgres").joinpath("current_schema.sql"))
+    schema_record = [entry for entry in dist.files or ()
+                     if str(entry) == "control_plane_kit_operations/postgres/current_schema.sql"]
+    if (len(schema_record) != 1 or schema_record[0].hash is None or schema_record[0].hash.mode != "sha256"
+            or root.is_symlink() or schema_path.is_symlink()
+            or root.resolve() != Path(dist.locate_file("control_plane_kit_operations")).resolve()
+            or schema_path.resolve() != Path(dist.locate_file(schema_record[0])).resolve()
+            or not schema_path.resolve().is_relative_to(root.resolve())):
+        raise ValueError("installed schema ownership differs")
+    schema = schema_path.read_bytes()
+    digest = hashlib.sha256(schema).hexdigest()
+    record_digest = base64.urlsafe_b64encode(hashlib.sha256(schema).digest()).decode().rstrip("=")
+    if record_digest != schema_record[0].hash.value:
+        raise ValueError("installed schema RECORD differs")
     match = re.fullmatch(r"https://github\.com/OpenJ92/control-plane-kit/archive/([0-9a-f]{40})\.zip",
         direct["url"])
-    if match is None or direct.get("subdirectory") != "control-plane-kit-operations":
-        raise RootBootstrapError("bootstrap installed schema owner could not be verified")
-    schema = files("control_plane_kit_operations.postgres").joinpath("current_schema.sql").read_bytes()
-    return {"operations_commit": match[1], "schema_sha256": hashlib.sha256(schema).hexdigest()}
+    if match is not None and direct.get("subdirectory") == "control-plane-kit-operations":
+        return {"operations_commit": match[1], "schema_sha256": digest}
+    if direct != {"url": "file:///opt/cpk-bootstrap-driver-build/operations", "dir_info": {}}:
+        raise ValueError("unsupported installed origin")
+    cohort = _proof_document("cohort.json")
+    source = _proof_document("source-objects.json")["operations"]
+    sealed = _proof_document("source-files.json")["control_plane_kit_operations"]
+    if (cohort["schema"] != "cpk384.bootstrap-driver-cohort.v1"
+            or re.fullmatch(r"[0-9a-f]{40}", cohort["operations"]) is None
+            or re.fullmatch(r"[0-9a-f]{40}", cohort["operations_tree"]) is None
+            or source != {"commit": cohort["operations"], "tree": cohort["operations_tree"],
+                          "prefix": "control-plane-kit-operations/src/control_plane_kit_operations"}
+            or sealed["distribution"] != "control-plane-kit-operations" or sealed["role"] != "operations"
+            or digest != cohort["operations_schema_sha256"]
+            or type(sealed["files"]) is not dict or not sealed["files"]):
+        raise ValueError("installed build proof differs")
+    observed = {}
+    for path in root.rglob("*"):
+        if "__pycache__" in path.parts or path.suffix == ".pyc":
+            continue
+        if path.is_symlink():
+            raise ValueError("installed source link differs")
+        if path.is_file():
+            observed[str(path.relative_to(root))] = hashlib.sha256(path.read_bytes()).hexdigest()
+    if observed != sealed["files"] or observed.get("postgres/current_schema.sql") != digest:
+        raise ValueError("installed source bytes differ")
+    return {"operations_commit": cohort["operations"], "schema_sha256": digest}
 
 
 def database_target(plan):

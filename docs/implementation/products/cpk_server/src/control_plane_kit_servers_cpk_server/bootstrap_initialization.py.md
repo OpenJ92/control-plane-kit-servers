@@ -3,7 +3,7 @@ Source: [bootstrap_initialization.py](../../../../../../products/cpk_server/src/
 #346's socket-free helper admits only fixed protected files. It reverifies the
 public plan, #345 private commitment and actual setup bearer identity, selected
 database endpoints, trusted installer target projection and installed Operations
-archive/schema correlation before database access. The projection is controller
+archive or qualified local-build schema correlation before database access. The projection is controller
 custody evidence, not a cryptographic proof or authority supplied by database
 possession. Policy bytes, actor/key, credentials and private intent never enter
 its bounded progress or exceptions. Ambient PG settings are refused.
@@ -43,3 +43,13 @@ claim of independent durable verification is introduced. Correction is unrun.
 password, installed schema correlation and initialization transaction behavior
 remain specific to this helper. Accepted #346 evidence is recorded on its issue;
 new shared-source changes require their own owning gate.
+
+#391 retains the GitHub archive entrance and admits only the exact qualified
+driver file origin. Both origins require the importlib.resources schema to be
+the same resolved distribution file with a matching hashed RECORD entry. Local
+installs also require the fixed cohort's independently selected commit/tree/schema
+pins, matching source-object identity and the complete installed source map
+sealed from Git blobs. Missing, editable, inconsistent, shadowed or changed proof
+refuses as initialization-target/schema-owner-unverified before database access.
+No caller-supplied revision, proof location or migration SQL is introduced.
+The selected immutable driver and its build seal are the provenance trust boundary.

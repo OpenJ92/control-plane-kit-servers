@@ -4,6 +4,8 @@
   "servers": null,
   "core": "f56bb5c4cfde76764d39c5377d4270c5b23c3ba1",
   "operations": "70154b6698e101159326b08646f2dba90dda87cd",
+  "operations_tree": "48810764562aa6c007d89d2fcb0d4e8ecaf25bb4",
+  "operations_schema_sha256": "d6a2c0f03db48afbd1a4d1f97b6a873dd331cbc381f376868fcc74e0a8a1d3d8",
   "interpreters": "e438f6e522ad0a23a7acef460be08690f48b2e17",
   "sdk": "d61b374cb2a23d773c31748f47f88169499298b7",
   "secrets": "57e4fc61d6931ef078550f98154a585bda61987b",

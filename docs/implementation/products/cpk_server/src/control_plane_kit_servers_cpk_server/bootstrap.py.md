@@ -61,3 +61,7 @@ The reviewed wire contract and correspondence formula are in
 bounded inspection controller. Ordinary inspect is unchanged; the intermediate
 dynamic-apply guard was later removed by the integrated #347 path. Inspection creates a temporary
 read helper; it is not a zero-effect provider read or authority to resume apply.
+
+#391 adds only closed initialization-target and schema-owner diagnostic tokens
+and fixed reason mappings. Public failure shape remains bounded; raw exception
+or provider text is never projected. Existing topology/website behavior is intact.

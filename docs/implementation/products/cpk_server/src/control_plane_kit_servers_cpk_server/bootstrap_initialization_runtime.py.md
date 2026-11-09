@@ -39,3 +39,9 @@ not full bootstrap or real Docker helper acceptance. The existing root Docker
 witness now exercises these production storage helpers with real stopped
 containers, including a failed exit with retained partial acknowledgement;
 executable evidence is pending.
+
+#391 wraps the exclusive fresh phase and target verification in the existing
+closed initialization-target diagnostic. Fixed target/ownership failures stay
+distinct from schema-owner-unverified; an earlier daemon/PG failure cannot be
+reported as a schema failure. Verification ends before the first helper record
+or effect. Mutation, retention and the no-redispatch contract are unchanged.

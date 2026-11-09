@@ -65,7 +65,9 @@ def verify():
             result["distributions"][spec["distribution"]] = detail
     sql = [path for path in expected["control_plane_kit_operations"]["files"] if path.endswith(".sql")]
     assert len(sql) == 7
+    assert objects["operations"]["tree"] == cohort["operations_tree"]
     result["sql_resources_verified"] = sorted(sql)
+    result["initialization_schema_owner"] = schema_owner()
     for role, name, module, repository in (
             ("sdk", "control-plane-kit-server-sdk", "control_plane_kit_server_sdk", "control-plane-kit-server-sdk"),):
         detail = distribution(name)
@@ -102,6 +104,15 @@ def verify():
                   explicit_selected_cohort=True, older_declared_dependency_urls_preserved=True)
     result["cryptography_version"] = metadata.version("cryptography")
     return result
+
+
+def schema_owner():
+    from control_plane_kit_servers_cpk_server.bootstrap_initialization import package_correlation
+    cohort = json.loads((PUBLIC / "cohort.json").read_text())
+    correlation = package_correlation()
+    assert correlation == {"operations_commit": cohort["operations"],
+                           "schema_sha256": cohort["operations_schema_sha256"]}
+    return {**correlation, "effective_uid": os.geteuid()}
 
 
 def qualify(driver, public_input):
@@ -250,6 +261,9 @@ if __name__ == "__main__":
             seal()
         elif sys.argv[1:] == ["verify"]:
             print(json.dumps(verify(), sort_keys=True))
+        elif sys.argv[1:] == ["schema-owner"]:
+            assert os.geteuid() == 10001
+            print(json.dumps(schema_owner(), sort_keys=True))
         elif len(sys.argv) == 4 and sys.argv[1] == "qualify":
             print(json.dumps(qualify(sys.argv[2], sys.argv[3]), sort_keys=True))
         else:

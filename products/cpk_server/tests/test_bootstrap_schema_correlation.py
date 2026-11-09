@@ -28,7 +28,9 @@ class SchemaCorrelationTests(unittest.TestCase):
         self.commit = "b" * 40
         self.proof = self.root / "proof"
         self.proof.mkdir()
-        self.cohort = {"schema": "cpk384.bootstrap-driver-cohort.v1", "operations": self.commit}
+        self.cohort = {"schema": "cpk384.bootstrap-driver-cohort.v1", "operations": self.commit,
+            "operations_tree": "c" * 40,
+            "operations_schema_sha256": hashlib.sha256(self.contents["postgres/current_schema.sql"]).hexdigest()}
         self.objects = {"operations": {"commit": self.commit, "tree": "c" * 40,
             "prefix": "control-plane-kit-operations/src/control_plane_kit_operations"}}
         self.source_files = {"control_plane_kit_operations": {
@@ -88,7 +90,7 @@ class SchemaCorrelationTests(unittest.TestCase):
                 elif fault == "commit":
                     self.objects["operations"]["commit"] = "d" * 40
                 elif fault == "tree":
-                    self.objects["operations"]["tree"] = "not-a-tree"
+                    self.objects["operations"]["tree"] = "d" * 40
                 else:
                     relative = "postgres/current_schema.sql" if fault == "schema" else "__init__.py"
                     (self.package / relative).write_bytes(self.contents[relative] + b"changed\n")
