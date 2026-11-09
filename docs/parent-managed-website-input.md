@@ -37,11 +37,10 @@ configuration-file projection and wrapper environment. Host bindings publish
 only visitor8080 on loopback; no management8000 binding is added. Negative cases
 reject child workspace/runtime/node and reused parent receiver IDs. Existing
 ordinary external website, invalid origin/binding and managed-child laws remain.
-These focused tests are prepared but UNEXECUTED. No service/DNS/credential work
-or packaging edit has occurred; source review and owning cached test selection
-remain pending.
+These focused tests passed in the reviewed source action below. No
+service/DNS/credential work or packaging edit has occurred.
 
-Reviewed-source action candidate (not yet run):
+Reviewed-source action:
 
 ```sh
 DOCKER_CONTEXT=desktop-linux \
@@ -98,3 +97,16 @@ cases. No automatic retry or live action has occurred.
 
 Preserved failed log: `/private/tmp/cpk384-parent-website-28be8cd.log`, SHA256
 `a0844438cc5984859459312f38dd8073c7b009b3e12e3395c064ea361cac0839`.
+
+## Reviewed successor receipt
+
+Meridian passed exact test-only successor b69417850efa1f4aecf4f567621abf79c21cda8b;
+North released one unchanged source-suite rerun. It exited0:28 support tests,
+normal policy/integrity checks and all16 selected tests passed (8.422s). Exact
+Coref56/Ops701/Ie438 overlays and the corrected Interpreters checkout above were
+used. Owned public exports were removed with cleanup success verified.
+
+Log `/private/tmp/cpk384-parent-website-b694178.log`, SHA256
+`b5279e0a3c9c72432314c5687187d3288540077b64aec8d4668ad8a2749982c4`.
+This is source unit evidence only: no actual graph registration, installer image,
+service, key preparation, DNS, customer login or deployment was exercised.
