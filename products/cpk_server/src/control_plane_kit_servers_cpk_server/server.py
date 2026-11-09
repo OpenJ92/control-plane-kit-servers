@@ -222,6 +222,28 @@ class CpkServerBootstrapConfiguration:
         environ: Mapping[str, str] | None = None,
     ) -> "CpkServerBootstrapConfiguration":
         values = dict(os.environ if environ is None else environ)
+        config = cls._from_environment_configuration(values)
+        key = "CPK_MANAGED_VERIFICATION_CONFIGURATION_FILE"
+        if key not in values:
+            return config
+        try:
+            # The receiving-only image deliberately retains its older owners.
+            # Import the sender cohort only after explicit process opt-in.
+            from .managed_verification_configuration import read_managed_verification_configuration
+            support = read_managed_verification_configuration(values[key], config)
+            return replace(config, http_sample_support=support.http_samples,
+                managed_verification_support=support)
+        except (OSError, ValueError, TypeError, AttributeError, KeyError,
+                OverflowError, RecursionError, ImportError):
+            failure = BootstrapConfigurationError("managed verification process configuration is invalid")
+        raise failure
+
+    @classmethod
+    def _from_environment_configuration(
+        cls,
+        environ: Mapping[str, str],
+    ) -> "CpkServerBootstrapConfiguration":
+        values = dict(os.environ if environ is None else environ)
         provider_authority = None
         provider_mode = values.get("CPK_PROVIDER_POLICY_AUTHORITY", "disabled")
         provider_path = "CPK_PROVIDER_POLICY_AUTHORITY_CONFIGURATION_FILE"
