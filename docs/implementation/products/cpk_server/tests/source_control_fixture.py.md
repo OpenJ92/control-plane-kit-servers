@@ -31,3 +31,7 @@ with an explicit test-owned AUTHORITY constant, also supplied at signing time;
 it never derives current authority from installed receiver identity. The three
 output files, modes, bounded lifetime, no-follow/exclusive creation and cleanup ABI
 are unchanged. No source smoke was run for the target translation.
+
+The retained diagnostic also calls the existing response verifier in memory
+through `verify_response`; the file-based verifier delegates to that same
+function. No authority/result semantics are added to the network transport.

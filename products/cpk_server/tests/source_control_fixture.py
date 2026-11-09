@@ -51,15 +51,20 @@ def verify(directory: Path) -> None:
             raw=stream.read(MAX_RESPONSE_BYTES+1)
         if len(raw)>MAX_RESPONSE_BYTES:
             raise ValueError("smoke control response exceeds bound")
-        response=json.loads(raw)
-        if name=="surface.json":
-            if response.get("declaration") != control.declaration.descriptor():
-                raise ValueError("smoke control declaration mismatch")
-        else:
-            request=core.ReceiverHealthReadRequest(control.target,AUTHORITY,core.NodeHealthReadKind.LIVENESS,control.declaration.identity(),"health-request")
-            result=core.ReceiverHealthReadResultCodec(request,control.declaration).decode(response)
-            if result.outcome is not core.NodeHealthReadOutcome.HEALTHY:
-                raise ValueError("smoke liveness is not healthy")
+        verify_response(control, name, json.loads(raw))
+
+
+def verify_response(control, name, response):
+    if name=="surface.json":
+        if response.get("declaration") != control.declaration.descriptor():
+            raise ValueError("smoke control declaration mismatch")
+    elif name=="health.json":
+        request=core.ReceiverHealthReadRequest(control.target,AUTHORITY,core.NodeHealthReadKind.LIVENESS,control.declaration.identity(),"health-request")
+        result=core.ReceiverHealthReadResultCodec(request,control.declaration).decode(response)
+        if result.outcome is not core.NodeHealthReadOutcome.HEALTHY:
+            raise ValueError("smoke liveness is not healthy")
+    else:
+        raise ValueError("unknown smoke response")
 
 
 def main() -> int:

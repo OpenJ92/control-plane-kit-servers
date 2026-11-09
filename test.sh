@@ -22,8 +22,8 @@ MANAGED_COMPOSITION_INTERPRETERS_REVISION=''
 CPK_RECEIVER_PHASE=''
 case "${1:-}" in
   --cpk-receiver-packaged)
-    [ "$#" -eq 2 ] || { echo 'CPK receiver gate requires tests or image' >&2; exit 2; }
-    case "$2" in tests|image) CPK_RECEIVER_PHASE=$2 ;; *) exit 2 ;; esac
+    [ "$#" -eq 2 ] || { echo 'CPK receiver gate requires tests, image or diagnostic' >&2; exit 2; }
+    case "$2" in tests|image|diagnostic) CPK_RECEIVER_PHASE=$2 ;; *) exit 2 ;; esac
     case "$IMAGE" in sha256:*) ;; *) echo 'select the exact cached controller ID' >&2; exit 2 ;; esac
     [ "${#IMAGE}" -eq 71 ] || exit 2
     case "${IMAGE#sha256:}" in *[!0-9a-f]*) exit 2 ;; esac
@@ -139,7 +139,10 @@ if [ -n "$CPK_RECEIVER_PHASE" ]; then
       --mount "type=bind,source=$ROOT,target=/source,readonly" \
       -e PYTHONDONTWRITEBYTECODE=1 \
       -e PYTHONPATH=/source:/source/products/cpk_server/src:/source/products/cpk_server/tests \
-      "$IMAGE" python -m unittest test_control_receiver test_cpk_receiver_shell -v
+      "$IMAGE" python -m unittest test_control_receiver test_cpk_receiver_shell test_receiver_network_probe -v
+  elif [ "$CPK_RECEIVER_PHASE" = diagnostic ]; then
+    CPK_SERVERS_TEST_IMAGE="$IMAGE" CPK_SERVER_SMOKE_PROFILE=wrapped-receiver-diagnostic \
+      CPK_SERVER_BUILD_IMAGE=0 sh scripts/cpk_server_image_smoke.sh
   else
     CPK_SERVERS_TEST_IMAGE="$IMAGE" CPK_SERVER_SMOKE_PROFILE=wrapped-receiver \
       CPK_SERVER_BUILD_IMAGE=1 sh scripts/cpk_server_image_smoke.sh

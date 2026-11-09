@@ -82,7 +82,7 @@ else:
 
 
 class CpkReceiverShellTests(unittest.TestCase):
-    def run_fixture(self, mode, *, existing_receipt=False):
+    def run_fixture(self, mode, *, existing_receipt=False, diagnostic=False, image_override=None):
         with TemporaryDirectory() as temporary:
             parent = Path(temporary).resolve()
             run = "cpk163-shell-" + uuid4().hex
@@ -108,6 +108,12 @@ class CpkReceiverShellTests(unittest.TestCase):
                 "CPK_RECEIVER_POSTGRES_IMAGE":"docker.io/library/postgres@sha256:" + "b" * 64,
                 "CPK_RECEIVER_DAEMON_ID":"fixture-daemon", "CPK_RUNTIME_INTERPRETERS":"none",
                 "CPK_SERVER_SMOKE_HOST":"127.0.0.1"}
+            if diagnostic:
+                environment.update(CPK_SERVER_SMOKE_PROFILE="wrapped-receiver-diagnostic",
+                    CPK_SERVER_BUILD_IMAGE="0",
+                    CPK_SERVER_IMAGE="localhost/control-plane-kit-servers/cpk-server@sha256:4846a9005108e925149b2869214c3f32dbdbd4d4953159af532297081e80fe28")
+            if image_override is not None:
+                environment["CPK_SERVER_IMAGE"] = image_override
             for key in ("DOCKER_HOST", "DOCKER_TLS", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH"):
                 environment.pop(key, None)
             try:
@@ -153,3 +159,18 @@ class CpkReceiverShellTests(unittest.TestCase):
         self.assertEqual(sum(call[:2] == ["buildx", "build"] for call in calls), 1)
         self.assertFalse(any(call[:2] == ["network", "create"] or call[:1] == ["run"] for call in calls))
         self.assertEqual(json.loads(receipt)["exit_code"], status)
+
+    def test_retained_diagnostic_rejects_another_image_before_daemon_access(self):
+        status, calls, receipt, exists = self.run_fixture("run-collision", diagnostic=True,
+            image_override="localhost/control-plane-kit-servers/cpk-server@sha256:" + "a" * 64)
+        self.assertNotEqual(status, 0)
+        self.assertEqual(calls, [])
+        self.assertIsNone(receipt)
+        self.assertFalse(exists)
+
+    def test_retained_diagnostic_collision_cannot_build_or_delete(self):
+        status, calls, receipt, exists = self.run_fixture("run-collision", diagnostic=True)
+        self.assertNotEqual(status, 0)
+        self.assertFalse(exists)
+        self.assertIsNone(receipt)
+        self.assertFalse(any("rm" in call or call[:2] == ["buildx", "build"] for call in calls))

@@ -212,3 +212,90 @@ unknown ownership, mutation outcome, daemon change, absent prerequisite, source
 change, image identity mismatch, import/pip failure, unexpected refusal/read or
 sample result, and uncertain cleanup remain failed or uncertain. Do not retry,
 rebaseline, change dependencies or claim qualification from partial evidence.
+
+## Servers #163 retained-image diagnostic action
+
+Preparation only; no execution follows from publication of this packet. The
+first c04f060 attempt's [bounded result](https://github.com/OpenJ92/control-plane-kit-servers/issues/163#issuecomment-6743209633)
+proved installed origins/pip/import, default process/UID and all four binding
+refusals, then stopped before listener reads at `docker port`. The saved receipt
+has no process-state or mapping observation at that lookup. This action reuses
+that exact retained image and the existing owned fixture/cleanup code. It does
+not rebuild, pull, reinstall, repeat the four mismatches or change networking
+in response to a failure. Production source, recipe and pins remain identical.
+
+After Meridian reviews the new clean frozen harness SHA and North releases this
+single action, run its focused tests first, then diagnostic only on PASS:
+
+```sh
+export DOCKER_CONTEXT=desktop-linux
+export CPK_SERVERS_TEST_IMAGE=sha256:1c8b3fc348936b41bb51e530c9f192c360e3b4e53e7a9f7af6f41b7ba10e83ba
+export CPK_RECEIVER_DAEMON_ID=d23d00aa-b281-448d-bc95-c8e47efeeea2
+./test.sh --cpk-receiver-packaged tests
+
+CPK_SERVER_IMAGE=localhost/control-plane-kit-servers/cpk-server@sha256:4846a9005108e925149b2869214c3f32dbdbd4d4953159af532297081e80fe28 \
+CPK_RECEIVER_RUN=cpk163-cpk-portdiag-20261109-01 \
+CPK_RECEIVER_RECORDS=/private/tmp/cpk163-cpk-portdiag-20261109-01 \
+CPK_RECEIVER_POSTGRES_IMAGE=docker.io/library/postgres@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777 \
+./test.sh --cpk-receiver-packaged diagnostic
+```
+
+The retained reference is closed to the literal digest above, with cached
+linux/amd64/default-command identity and producer-source label c04f060 checked.
+The current clean harness source is recorded separately from that producer.
+All images must be present on the same previously reviewed local daemon. There
+are no permitted acquisitions in this action. Missing prerequisites or denied
+access stop; no implicit acquisition, source replacement or retry. Policy and
+source tests borrow the same controller with no network/socket; the isolated
+test tmpfs permits only the fake CLI execution already reviewed.
+
+The diagnostic creates one internal run-labelled network, one named PG volume,
+one exact cached PG container, one control generator, one all-checks sample
+helper, one main product with its default command and the same loopback publish
+request, and one short-lived socket-free network probe. All resources use a fresh
+reserved canonical run directory, exact names/cidfiles and the existing
+attempt/owner/absence cleanup. The probe has a read-only root, drops capabilities,
+uses no-new-privileges, and mounts only its source plus owned fixture data
+read-only. All four DB URLs are forced to the owned PG instance and effects are
+disabled. The prior missing-control and four mismatch cases are not repeated.
+
+The stage changes before port observation. Selected-field inspect snapshots are
+saved at initial observation, immediately after the explicitly status-captured
+`docker port` command, after5/10/15seconds while still running, after the reads,
+and before cleanup. They record actual ID/image/name/run label, selected State
+status/running/exit/OOM/dead/timestamps, network mode and requested/effective
+8080 bindings. Each snapshot is limited to16KiB and separately records inspect
+success or unavailability. Port stdout is bounded to1024bytes; its own exit code
+is recorded independently. No Env, full inspect, State.Error or raw logs are
+collected. A stopped product or failed observation ends this diagnostic with
+its last/final snapshot, followed by exact cleanup.
+
+A running process continues to the owned-network probe at cpk-source:8080,
+regardless of whether host publication was observed. This is the predeclared
+transport for this action, not an automatic network change. The probe has
+bounded liveness waiting, validates readiness's configured-store response,
+uses existing surface/health verifiers and authority refusals, and requires the
+same authenticated Operations404 `missing workspace 'root-workspace'` plus
+unauthorized401. Responses are bounded to65,536bytes; only fixed stage/status
+and proof fields are printed. Private headers remain private. Readiness alone
+is not SQL evidence. The helper has a65-second alarm.
+
+Once owned-network readiness is verified, the shell signals the existing
+in-memory all-checks helper even if later source-control/workspace reads fail.
+Each branch retains its result; either failure fails the overall action. The
+sampler uses the original live and
+ready checks/digests, distinct request IDs and ordinal one, canonical bounded
+PASSED/status200 results, and the same absent401 and same-key signed foreign
+issuer401 refusals for each. The shell requires observed helper exit0 within
+45polls, then records the separate public sample outcomes.
+
+Success means this diagnostic's owned-network reads and signed pair passed;
+its port receipt still owns the host-publication result. Missing host mapping
+is not silently converted into a successful host route or install. The result
+keeps owned-network/DB/signed proof booleans, retained producer versus harness
+source, cleanup and retention separate. Prior provenance/mismatch flags are not
+re-earned in this attempt. No deployment, provider transit, child R/run/history,
+registry publication, parent installation or full capstone acceptance follows.
+CLI polling assumes responsive Docker; apparatus failure and uncertain effects
+or cleanup stop without repair/retry. Final failure snapshots are taken before
+cleanup, and independent private-header deletion still runs on uncertainty.

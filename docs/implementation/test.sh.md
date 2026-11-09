@@ -203,3 +203,8 @@ acquired controller receipt, clean source and fresh receipts; builds one owned
 current-source fixture; uses the same host-bind helper result channel; and stops
 before stop-profile/fatal work. The default full gate remains mandatory for
 composition acceptance and is not shortened by this option.
+
+The #163 retained `diagnostic` phase enters build-disabled, literal-digest-only
+admission in the same owning smoke. Its tests add bounded network-probe evidence
+and refusal of other digest inputs/colliding runs. See the smoke's retained-image
+action packet; no Docker execution is implied by source publication or review.
