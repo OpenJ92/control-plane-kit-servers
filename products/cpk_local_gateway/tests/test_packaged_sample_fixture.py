@@ -52,10 +52,46 @@ class PackagedSampleFixtureTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(FileExistsError):
                 fixture.write(public)
 
+    def test_wrong_transit_purpose_preserves_other_transit_authority_fields(self):
+        fixture = self.fixture
+        request = fixture.request("cpk", fixture.receivers["cpk"].contract.verification.checks[0])
+        control = fixture.token(request, transit=True)
+        candidate = fixture.token(request, transit=True,
+            purpose=core.DelegationKeyPurpose.WORKLOAD_HTTP_VERIFICATION_SAMPLE)
+        self.assertTrue(jwt.get_unverified_header(control) == jwt.get_unverified_header(candidate))
+        def claims(token):
+            # Both signatures must validate against the transit key, while the
+            # fixed synthetic clock deliberately differs from the host clock.
+            value = jwt.decode(token, fixture.transit_public.public_key_pem, algorithms=["EdDSA"],
+                options={"verify_exp":False, "verify_iat":False, "verify_nbf":False, "verify_aud":False})
+            value.pop("jti")
+            grant = value["gateway_http_verification_sample_transit"]
+            grant.pop("jti")
+            purpose = grant.pop("purpose")
+            return value, purpose
+        control_claims, control_purpose = claims(control)
+        candidate_claims, candidate_purpose = claims(candidate)
+        self.assertTrue(control_claims == candidate_claims)
+        self.assertEqual(control_purpose, core.DelegationKeyPurpose.GATEWAY_HTTP_VERIFICATION_SAMPLE_TRANSIT.value)
+        self.assertEqual(candidate_purpose, core.DelegationKeyPurpose.WORKLOAD_HTTP_VERIFICATION_SAMPLE.value)
+
     async def test_actual_gateway_forwards_workload_only_and_distinguishes_refusal_paths(self):
         fixture = self.fixture
         observed = []
         health_observed = []
+        def clean_wire(request, receiver, path, credential):
+            # Boolean assertions deliberately exclude bearer-bearing values
+            # from failure output. Check every permitted header, not just auth.
+            expected = {"host":httpx.URL(receiver.origin).netloc.decode("ascii"),
+                "accept":"application/json", "accept-encoding":"identity",
+                "connection":"keep-alive", "user-agent":"python-httpx/" + httpx.__version__,
+                "authorization":"Bearer " + credential}
+            clean = (request.method == "GET" and str(request.url) == receiver.origin + path
+                and request.url.query == b"" and request.content == b""
+                and len(request.headers.raw) == len(expected)
+                and dict(request.headers) == expected)
+            self.assertTrue(clean, "outbound request exceeded the workload-only wire contract")
+            return clean
         def child(request):
             # Observe only public facts, never retain an authorization value.
             credential = request.headers.get("authorization", "").removeprefix("Bearer ")
@@ -70,26 +106,24 @@ class PackagedSampleFixtureTests(unittest.IsolatedAsyncioTestCase):
                     if value.control.target == grant.target)
                 supplied = core.ReceiverHealthReadRequest(grant.target, grant.authority_context,
                     grant.kind, grant.declaration_identity, grant.request_id)
-                self.assertEqual(request.method, "GET")
-                self.assertTrue(str(request.url).startswith(receiver.origin + "/"))
+                wire_clean = clean_wire(request, receiver, "/__control/health/liveness", credential)
                 self.assertEqual(header["typ"], "CPK-WORKLOAD-NODE-HEALTH-READ+JWT")
                 self.assertEqual(header["kid"], fixture.health_public.key_id)
                 self.assertEqual(grant.kind, core.NodeHealthReadKind.LIVENESS)
                 self.assertEqual(grant.request_digest, supplied.canonical_digest())
-                health_observed.append(dict(role=role, workload_signature=True, transit_credential_forwarded=False))
+                health_observed.append(dict(role=role, workload_signature=True, workload_only_wire=wire_clean))
                 result = core.ReceiverHealthReadResult(supplied, receiver.control.declaration,
                     core.NodeHealthReadOutcome.HEALTHY)
                 return httpx.Response(200, content=result.canonical_bytes(), headers={"Content-Type":"application/json"})
             supplied = HttpVerificationSampleRequestCodec().decode(payload["workload_http_verification_sample"]["request"])
             receiver = fixture.receivers[supplied.route_id]
             check, = (value for value in receiver.contract.verification.checks if value.check_id == supplied.check_id)
-            self.assertTrue(request.method == "GET" and request.url.path == "/__control/verification/http")
-            self.assertTrue(str(request.url).startswith(receiver.origin + "/"))
+            wire_clean = clean_wire(request, receiver, "/__control/verification/http", credential)
             self.assertTrue(header["typ"] == "CPK-WORKLOAD-HTTP-VERIFICATION-SAMPLE+JWT")
             self.assertTrue(header["kid"] == fixture.workload_public.key_id)
             foreign = payload["iss"] == "foreign-source-witness"
             observed.append(dict(role=supplied.route_id, check_id=supplied.check_id, foreign=foreign,
-                workload_signature=True, transit_credential_forwarded=False))
+                workload_signature=True, workload_only_wire=wire_clean))
             # Explicit external HTTP reply fixture: this does not implement or
             # establish a child SDK authorization/health decision.
             if foreign:
@@ -108,10 +142,10 @@ class PackagedSampleFixtureTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(Counter((value["role"], value["check_id"], value["foreign"]) for value in observed),
             Counter((role, check, foreign) for role in ("cpk", "secrets") for check in ("live", "ready") for foreign in (False, True)))
         for value in observed:
-            self.assertTrue(value["workload_signature"] and not value["transit_credential_forwarded"])
+            self.assertTrue(value["workload_signature"] and value["workload_only_wire"])
         self.assertEqual(Counter(value["role"] for value in health_observed), Counter(("cpk", "secrets")))
         for value in health_observed:
-            self.assertTrue(value["workload_signature"] and not value["transit_credential_forwarded"])
+            self.assertTrue(value["workload_signature"] and value["workload_only_wire"])
         self.assertEqual(len(receipt["health_relays"]), 2)
         for value in receipt["health_relays"]:
             self.assertEqual(value["kind"], "liveness")
@@ -120,6 +154,9 @@ class PackagedSampleFixtureTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(receipt["approved_run"])
         self.assertEqual(receipt["child_health_probe_count"], "not-observed")
         for sample in receipt["samples"]:
+            for refusal in sample["refusals"].values():
+                self.assertEqual(refusal["forwarding"], "not-observed")
+                self.assertEqual(refusal["child_refusal"], "not-observed")
             self.assertEqual({name:value["status"] for name, value in sample["refusals"].items()}, {
                 "missing_transit":401, "foreign_transit_issuer":401, "wrong_transit_purpose":401,
                 "unknown_selector":403, "expired_transit":504, "expired_workload":504,

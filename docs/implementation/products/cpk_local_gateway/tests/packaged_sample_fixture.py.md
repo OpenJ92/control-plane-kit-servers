@@ -17,7 +17,12 @@ codec, PASSED outcome and status200. Missing, foreign-issuer or wrong-purpose
 transit refuses401; unknown/crossed selectors and mismatched workload target or
 check refuse403; expired transit/workload refuses504. A structurally matching
 foreign workload issuer reaches the fixed child verification endpoint and its
-401 becomes gateway502. This last case is not a zero-forwarding observation.
+401 becomes gateway502 in the explicit unit double. A packaged outer502 alone
+can also mean transport/protocol failure; its receipt records that status and
+leaves forwarding and child refusal unobserved. No refusal row infers a path
+from status alone. Each refusal mints fresh control credentials immediately
+before dispatch. Wrong transit purpose retains the transit signing key, issuer,
+audience and token type, changing only the grant purpose (plus fresh token ID).
 
 Separate generic V2 LIVENESS exchanges cover both existing child declarations.
 HTTP transit on the V2 route and V2 transit on the HTTP route must each refuse401.

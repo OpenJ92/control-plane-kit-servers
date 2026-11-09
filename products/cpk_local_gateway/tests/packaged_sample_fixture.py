@@ -148,9 +148,9 @@ class GatewaySampleFixture:
             effect_id="source-163-effect", request_fingerprint="c" * 64, check_id=check.check_id,
             check_digest=http_verification_check_digest(check), sample_ordinal=1, request_id=uuid4().hex)
 
-    def token(self, request, *, transit=False, foreign_issuer=False, expired=False):
+    def token(self, request, *, transit=False, foreign_issuer=False, expired=False, purpose=None):
         public = self.transit_public if transit else self.workload_public
-        purpose = (core.DelegationKeyPurpose.GATEWAY_HTTP_VERIFICATION_SAMPLE_TRANSIT if transit
+        purpose = purpose or (core.DelegationKeyPurpose.GATEWAY_HTTP_VERIFICATION_SAMPLE_TRANSIT if transit
             else core.DelegationKeyPurpose.WORKLOAD_HTTP_VERIFICATION_SAMPLE)
         issuer = self.transit_issuer if transit else self.workload_issuer
         if foreign_issuer:
@@ -228,22 +228,27 @@ class GatewaySampleFixture:
                     crossed_target = replace(request, target=self.receivers[other_role].control.target)
                     crossed_check = replace(request, check_digest="e" * 64)
                     negatives = (
-                        ("missing_transit", workload, None, None, 401, "before-forwarding-source-path"),
-                        ("foreign_transit_issuer", workload, self.token(request, transit=True, foreign_issuer=True), None, 401, "before-forwarding-source-path"),
-                        ("wrong_transit_purpose", workload, workload, None, 401, "before-forwarding-source-path"),
-                        ("unknown_selector", workload, transit, "not-installed", 403, "before-forwarding-source-path"),
-                        ("crossed_selector", workload, transit, other_role, 403, "before-forwarding-source-path"),
-                        ("crossed_workload_target", self.token(crossed_target), transit, None, 403, "before-forwarding-source-path"),
-                        ("crossed_workload_check", self.token(crossed_check), transit, None, 403, "before-forwarding-source-path"),
-                        ("expired_transit", workload, self.token(request, transit=True, expired=True), None, 504, "before-forwarding-source-path"),
-                        ("expired_workload", self.token(request, expired=True), transit, None, 504, "before-forwarding-source-path"),
-                        ("foreign_workload_issuer", self.token(request, foreign_issuer=True), transit, None, 502, "child-verification-refusal"),
+                        ("missing_transit", request, {}, None, None, 401),
+                        ("foreign_transit_issuer", request, {}, {"foreign_issuer":True}, None, 401),
+                        ("wrong_transit_purpose", request, {}, {"purpose":core.DelegationKeyPurpose.WORKLOAD_HTTP_VERIFICATION_SAMPLE}, None, 401),
+                        ("unknown_selector", request, {}, {}, "not-installed", 403),
+                        ("crossed_selector", request, {}, {}, other_role, 403),
+                        ("crossed_workload_target", crossed_target, {}, {}, None, 403),
+                        ("crossed_workload_check", crossed_check, {}, {}, None, 403),
+                        ("expired_transit", request, {}, {"expired":True}, None, 504),
+                        ("expired_workload", request, {"expired":True}, {}, None, 504),
+                        ("foreign_workload_issuer", request, {"foreign_issuer":True}, {}, None, 502),
                     )
                     refusals = {}
-                    for name, candidate_workload, candidate_transit, selector, expected, path in negatives:
+                    for name, workload_request, workload_options, transit_options, selector, expected in negatives:
+                        # Fresh control tokens per exchange: a slow earlier refusal
+                        # cannot turn a later selector/purpose test into expiry.
+                        candidate_workload = self.token(workload_request, **workload_options)
+                        candidate_transit = (None if transit_options is None else
+                            self.token(request, transit=True, **transit_options))
                         status, raw = await post(request, candidate_workload, candidate_transit, selector=selector)
                         _require(status == expected and set(json.loads(raw)) == {"code"})
-                        refusals[name] = dict(status=status, path=path)
+                        refusals[name] = dict(status=status, forwarding="not-observed", child_refusal="not-observed")
                     rows.append(dict(role=role, check_id=check.check_id, request_id=request.request_id,
                         check_digest=request.check_digest, target=request.target.descriptor(), passed=True,
                         refusals=refusals))
@@ -256,10 +261,14 @@ class GatewaySampleFixture:
                 result = core.ReceiverHealthReadResultCodec(request, receiver.control.declaration).decode(json.loads(raw))
                 _require(result.outcome is core.NodeHealthReadOutcome.HEALTHY)
                 # A valid HTTP-transit credential is not generic V2 authority.
+                request, attempt, workload, _ = self.health_pair(role)
+                frame = dict(profile="cpk-gateway-health-relay-request.v2", target_id=role,
+                    attempt_id=attempt, request=request.descriptor(), workload_credential=workload)
                 sample = self.request(role, receiver.contract.verification.checks[0])
                 status, _ = await send_frame("/cpk/health/liveness", frame, self.token(sample, transit=True))
                 _require(status == 401)
                 # Nor is a valid generic V2 transit a named HTTP sample grant.
+                _, _, _, transit = self.health_pair(role)
                 status, _ = await post(sample, self.token(sample), transit)
                 _require(status == 401)
                 health_rows.append(dict(role=role, kind="liveness", passed=True,
