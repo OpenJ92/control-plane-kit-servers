@@ -11,6 +11,12 @@ version/status evidence is retained. Normal child recipe/coordinates/digest are
 unchanged. Source/action packet is [here](../../parent-secrets-image.md), still
 UNEXECUTED; no qualified parent digest or active grants are claimed.
 
+Parent source selection now requires an explicit local repository holding57,
+archives that immutable commit with a64MiB bound and preserves commit/tree/blob
+identities. The build receives this as a separate named local context, with no
+Secret-package URL fetch. Public source scratch joins only the NEW attempt's
+checked cleanup; previous receipts/scratch are never adopted or removed.
+
 #191 adds wrapped-artifact/build0/controller-build0 for the explicitly selected
 current digest. Existing public-file factories, signed reads, provider storage and
 restart checks are reused. The selected process is pinned to the admitted actual

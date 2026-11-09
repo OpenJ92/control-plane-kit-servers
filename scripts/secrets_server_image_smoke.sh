@@ -16,6 +16,7 @@ PARENT_DERIVED_VERIFIED=0
 PARENT_BUILD_ATTEMPTED=0
 PARENT_BUILD_TERMINATED=0
 PARENT_BASE_REFERENCE=localhost/control-plane-kit-servers/secrets-server@sha256:0d36584018d93305045631a1ee981d5a8850e16fd4532d765eb43a1a823dc095
+PARENT_SECRETS_COMMIT=57e4fc61d6931ef078550f98154a585bda61987b
 CHILD_RESERVED=0
 CHILD_SOURCE=''
 CHILD_REFERENCE=''
@@ -38,7 +39,11 @@ if [ -z "$PROFILE" ]; then
 fi
 case "$PROFILE:$BUILD_IMAGE" in
   wrapped-child:1|wrapped-parent:1)
-    if [ "$PROFILE" = wrapped-parent ]; then PARENT_PROFILE=1; fi
+    if [ "$PROFILE" = wrapped-parent ]; then
+      PARENT_PROFILE=1
+      : "${CPK_SECRETS_PARENT_SOURCE_REPOSITORY:?select the exact local Secrets source repository}"
+      [ "$(git -C "$CPK_SECRETS_PARENT_SOURCE_REPOSITORY" rev-parse "$PARENT_SECRETS_COMMIT^{commit}")" = "$PARENT_SECRETS_COMMIT" ] || invalid_inputs
+    fi
     CHILD_PROFILE=1
     PRODUCT_PULL_POLICY=never
     [ "$BUILD_CONTROLLER" = 0 ] || invalid_inputs
@@ -270,8 +275,11 @@ finish() {
       status=1; child_cleanup=unverified
     else
       rm -rf "$CPK_SECRETS_CHILD_RECORDS/base-layout" || { status=1; child_cleanup=unverified; }
+      rm -rf "$CPK_SECRETS_CHILD_RECORDS/parent-source-context" || { status=1; child_cleanup=unverified; }
       rm -f "$CPK_SECRETS_CHILD_RECORDS/base.tar" "$CPK_SECRETS_CHILD_RECORDS/export.status" || { status=1; child_cleanup=unverified; }
-      for parent_scratch in base-layout base.tar export.status; do
+      rm -f "$CPK_SECRETS_CHILD_RECORDS/parent-source.tar" || { status=1; child_cleanup=unverified; }
+      rm -f "$CPK_SECRETS_CHILD_RECORDS/parent-source-export.status" || { status=1; child_cleanup=unverified; }
+      for parent_scratch in base-layout base.tar export.status parent-source-context parent-source.tar parent-source-export.status; do
         [ ! -e "$CPK_SECRETS_CHILD_RECORDS/$parent_scratch" ] || { status=1; child_cleanup=unverified; }
       done
     fi
@@ -373,6 +381,25 @@ if [ "$BUILD_IMAGE" = "1" ]; then
       parent_available=$(awk 'NR==2 {print $4}' "$CPK_SECRETS_CHILD_RECORDS/disk-before.txt")
       case "$parent_available" in ''|*[!0-9]*) exit 1 ;; esac
       [ "$parent_available" -ge 1048576 ] || exit 1
+      CHILD_PHASE=parent-source-export
+      parent_source_context="$CPK_SECRETS_CHILD_RECORDS/parent-source-context"
+      parent_source_tree=$(git -C "$CPK_SECRETS_PARENT_SOURCE_REPOSITORY" rev-parse "$PARENT_SECRETS_COMMIT:src/control_plane_kit_secrets")
+      [ "$parent_source_tree" = 248bc639f5c219fa0b37bcb6e94ced483fae1fc1 ] || exit 1
+      (set +e; git -C "$CPK_SECRETS_PARENT_SOURCE_REPOSITORY" archive --format=tar "$PARENT_SECRETS_COMMIT";
+        parent_source_status=$?; printf '%s\n' "$parent_source_status" > "$CPK_SECRETS_CHILD_RECORDS/parent-source-export.status") \
+        | head -c 67108865 > "$CPK_SECRETS_CHILD_RECORDS/parent-source.tar"
+      [ "$(cat "$CPK_SECRETS_CHILD_RECORDS/parent-source-export.status")" = 0 ] || exit 1
+      parent_source_bytes=$(wc -c < "$CPK_SECRETS_CHILD_RECORDS/parent-source.tar")
+      [ "$parent_source_bytes" -le 67108864 ] || exit 1
+      mkdir -m 700 "$parent_source_context"
+      tar -xf "$CPK_SECRETS_CHILD_RECORDS/parent-source.tar" -C "$parent_source_context"
+      git -C "$CPK_SECRETS_PARENT_SOURCE_REPOSITORY" ls-tree -r "$PARENT_SECRETS_COMMIT" src/control_plane_kit_secrets \
+        > "$parent_source_context/.cpk-secrets.git-tree"
+      jq -n --arg commit "$PARENT_SECRETS_COMMIT" --arg tree "$parent_source_tree" \
+        '{commit:$commit,tree:$tree,prefix:"src/control_plane_kit_secrets/"}' > "$parent_source_context/.cpk-source-objects.json"
+      cp "$parent_source_context/.cpk-source-objects.json" "$CPK_SECRETS_CHILD_RECORDS/parent-source-objects.json"
+      cp "$parent_source_context/.cpk-secrets.git-tree" "$CPK_SECRETS_CHILD_RECORDS/parent-secrets.git-tree"
+      CHILD_PHASE=parent-local-base
       (set +e; docker image save "$PARENT_BASE_REFERENCE"; parent_export_status=$?;
         printf '%s\n' "$parent_export_status" > "$CPK_SECRETS_CHILD_RECORDS/export.status") \
         | head -c 268435457 > "$CPK_SECRETS_CHILD_RECORDS/base.tar"
@@ -395,7 +422,8 @@ print(json.dumps(validate_export("/base.tar", "/layout",
 ' > "$CPK_SECRETS_CHILD_RECORDS/parent-local-base.json"
       PARENT_BASE_VERIFIED=1
       secrets_recipe=products/secrets_server/Dockerfile.parent
-      set -- --pull=false --build-context "cpk-secrets-parent-base=oci-layout://$parent_layout@${PARENT_BASE_REFERENCE#*@}"
+      set -- --pull=false --build-context "cpk-secrets-parent-base=oci-layout://$parent_layout@${PARENT_BASE_REFERENCE#*@}" \
+        --build-context "cpk-secrets-parent-source=$parent_source_context"
       CHILD_PHASE=build
       PARENT_BUILD_ATTEMPTED=1
     fi

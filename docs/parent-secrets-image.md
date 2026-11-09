@@ -27,10 +27,14 @@ entrypoint and command. Original normal Dockerfile/coordinates still pin158.
 
 Dockerfile.parent adds only the Secrets57 distribution over that child product,
 using no dependency resolver for Core/SDK. Pinned setuptools80.9.0/wheel0.45.1
-and normal public build-tool dependencies are acquired from PyPI; the exact57
-archive is public GitHub. Installed Core976/SDKd61 origins, Secrets57 direct URL,
+and normal public build-tool dependencies are acquired from PyPI. Exact57 is
+exported from an explicitly selected local Git repository, never its mutable
+worktree or a remote package URL. Commit/tree and Git blob identities are sealed
+before local no-index/no-deps/no-build-isolation installation. Installed
+Core976/SDKd61 origins, the truthful local file:// Secrets origin,
 actual imported policy source SHA532d51ee8f3bece38a379651c16d503a86201380f7e4cb04f1b4ed6a8de86285,
-pip check and packaged wrapper import are verified INSIDE the candidate. The
+all installed Secrets source files and distribution RECORDs, pip check and
+packaged wrapper import are verified INSIDE the candidate. The
 candidate must retain the verified base RootFS prefix and the normal process
 contract. The wrapper/source/entrypoint remain equal to reviewed85b193b.
 
@@ -69,7 +73,8 @@ they do not qualify a packaged provider or reimplement provider policy.
 
 Existing daemon/context/nonce/attempt/cid/role/volume/network ownership and
 checked absence cleanup remain. Parent OCI scratch is newly allocated under
-its fresh records, bounded to256MiB export/256MiB extracted plus at least1GiB
+its fresh records, bounded to256MiB OCI export/256MiB extracted and64MiB source
+export plus at least1GiB
 free-space preflight. Cleanup preserves scratch if build termination is uncertain.
 Both candidate and child base must remain retained. A failed status/inventory,
 unknown object, source drift or uncertain cleanup fails the action with no retry.
@@ -100,16 +105,17 @@ Only after source PASS and exact separate image-action release:
 DOCKER_CONTEXT=desktop-linux \
 CPK_RECEIVER_DAEMON_ID=d23d00aa-b281-448d-bc95-c8e47efeeea2 \
 CPK_SERVERS_TEST_IMAGE=sha256:1c8b3fc348936b41bb51e530c9f192c360e3b4e53e7a9f7af6f41b7ba10e83ba \
-CPK_SECRETS_IMAGE=localhost/control-plane-kit-servers/secrets-server:cpk163-parent57-20261109-01 \
-CPK_SECRETS_CHILD_RUN=cpk-secrets-image-smoke-cpk163-parent57-20261109-01 \
-CPK_SECRETS_CHILD_RECORDS=/private/tmp/cpk-secrets-image-smoke-cpk163-parent57-20261109-01 \
+CPK_SECRETS_PARENT_SOURCE_REPOSITORY=SECRETS_REPOSITORY_WITH_EXACT_57 \
+CPK_SECRETS_IMAGE=localhost/control-plane-kit-servers/secrets-server:cpk163-parent57-20261109-02 \
+CPK_SECRETS_CHILD_RUN=cpk-secrets-image-smoke-cpk163-parent57-20261109-02 \
+CPK_SECRETS_CHILD_RECORDS=/private/tmp/cpk-secrets-image-smoke-cpk163-parent57-20261109-02 \
 ./test.sh --secrets-parent-packaged image
 ```
 
 One build only, one candidate, normal initial/restart provider processes on one
 owned internal network, exactly three owned synthetic custody volumes, existing
 bounded test helpers and no host port/socket in workloads. It may download ONLY
-the public named source/build dependencies during build; no registry publication,
+the public named build-tool dependencies during build; no registry publication,
 private pull credential, customer credential, actual material-plan, provider grant
 mutation outside the fixture, graph submission, DNS, deployment or live adoption.
 Fresh tag/run/records admission happens before allocation; collisions stop.
@@ -118,6 +124,15 @@ The actual candidate digest is UNKNOWN. Do not replace parent root input or clai
 qualification until the single receipt, installed provenance, original/new HTTP
 checks and cleanup pass independent review and North accepts the exact digest.
 Child0d365 and the six accepted child choices stay pinned throughout.
+
+The local-export recipe is a NEW PROPOSED action, not a retry release. Resolve
+SECRETS_REPOSITORY_WITH_EXACT_57 to the reviewed local repository in the concrete
+private action packet before execution. The selected commit is
+57e4fc61d6931ef078550f98154a585bda61987b, package tree
+248bc639f5c219fa0b37bcb6e94ced483fae1fc1. New source tests cover seal integrity,
+wrong tuple/blob/extra file/symlink refusals, installed content and RECORD drift
+using explicitly synthetic public-code fixtures. They do not impersonate57.
+No earlier receipt, scratch, root input, image, grant or real material is altered.
 
 First review c29b897 passed the source action but held image execution on the
 host-owned evidence directory and partial error-body checks. Both were corrected
