@@ -55,8 +55,8 @@ class ParentHttpRolesFixtureTests(unittest.TestCase):
     def test_transport_refuses_oversize_response(self):
         import httpx
         with httpx.Client(base_url="http://unit.invalid", transport=httpx.MockTransport(
-                lambda request:httpx.Response(200, content=b"x" * 65537))) as client:
-            with self.assertRaises(ValueError):
+                lambda request:httpx.Response(200, json={"payload":"x" * 65537}))) as client:
+            with self.assertRaisesRegex(ValueError, "^parent HTTP signing witness failed$"):
                 BoundedProviderClient(client).post("/unit")
 
     def seed(self, directory):

@@ -131,3 +131,12 @@ the imported module while copying the denial object. The successor uses deepcopy
 and requires the fixed witness ValueError for each negative, so incidental test
 apparatus errors cannot count as denial/redaction proof. No source test or image
 effect ran at either superseded checkpoint.
+
+The first complete source action at31d2212 passed28support,56product tests and
+6sharedOCI cases (12.880s/0.268s). Log
+/private/tmp/cpk384-parent-secrets-source-31d2212.log SHA256
+5a7fd54f162b906c606ed174873ef33511ef3e57e1aeb1c6b4f44ce277df26ac.
+Before building, self-review strengthened the response-bound unit to use VALID
+oversize JSON and require the fixed witness error. An unrelated JSON parse error
+must not count as overflow proof. Production/witness/build code is unchanged;
+the narrow test successor needs review/validation before using its image action.
