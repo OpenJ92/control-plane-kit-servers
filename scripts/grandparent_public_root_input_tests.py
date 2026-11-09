@@ -30,6 +30,9 @@ class PublicRootInputTests(unittest.TestCase):
             for role in ("cpk", "secrets")}
         control = ReceiverNodeControlConfigurationCodec().decode_bytes(artifacts["cpk"].content.encode())
         website = base["installation"].pop("website")
+        base["installation"]["workspace_grants"] = []
+        base["installation"]["control_auth"] = {"kind":"multi-principal",
+            "principals_document":"secret://bootstrap/root-a/principals"}
         declaration = control_declaration()
         website["managed_control_configuration"] = control_configuration_artifact(replace(control,
             target=replace(control.target, node_id=replace(control.target.node_id, value="root-a-website"),
@@ -64,6 +67,8 @@ class PublicRootInputTests(unittest.TestCase):
             actual = prepare_root_input(request)
         item = actual["installation"]
         self.assertNotIn("workspace_authority", item)
+        self.assertEqual(item["workspace_grants"], [])
+        self.assertEqual(item["control_auth"], request["base_input"]["installation"]["control_auth"])
         self.assertEqual(item["products"]["postgres"], request["base_input"]["installation"]["products"]["postgres"])
         self.assertEqual(actual["setup"], request["base_input"]["setup"])
         self.assertEqual(item["website"], request["website"])

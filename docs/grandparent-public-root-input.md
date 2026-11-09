@@ -10,7 +10,8 @@ the later action boundary. No protected preparation or startup occurs here.
 ## Source trace and decisions
 
 The production root_bootstrap_input example already exposes the normal input
-shape. bootstrap._installation validates that input; CPK/Secrets product factories
+shape. Normal bootstrap/material projection owns full installation admission;
+CPK/Secrets product factories
 accept their approved public receiving artifacts; existing Core configuration
 artifacts and public environment bindings carry files into the CPK product.
 installation._cpk_variant preserves these files and adds the normal managed-health
@@ -48,17 +49,18 @@ for the root database, or treating the listening runtime image as the installer.
 
 ## Prepared actual inputs and limits
 
-Public request /private/tmp/rowan-384-root-public-preparation.json SHA256
-90fcd12df5942da93598c485ee2d2030bd8c027e76c4cab44568981ce8b44bbf;
-normal base /private/tmp/rowan-384-root-bootstrap-base-input.json SHA256
-cb51c23f89f275960285ec7225f21e5e782ff49d0c84bd812eef9b4d98e5da3d.
+Current public request /private/tmp/rowan-384-root-public-preparation-v2.json SHA256
+effe76e193208c6aa3042042e89637d22013342a91ed5884395a24528fa2dc0a;
+normal base /private/tmp/rowan-384-root-bootstrap-base-input-v2.json SHA256
+4fa921cbe4e5a60129e3dd78f484dcd063b79e9ca516f50f67a5b5e3cc98c5f5.
 They use North's parent names/local Docker authority/provider endpoint/capability,
 Vale's explicit multi-principal logical refs/setup provider rules, display name
 Grandparent, loopback18163/API origin and the separately prepared website18164.
 No initial secret-reference/pull/ingress authority registrations are inserted.
 
-Parent CPK candidate62e4ee7f… is PROVISIONAL pending North's image acceptance;
-Secrets0d365840, websiteb680, connector812262a6 and the exact public parent
+Parent CPK62e4ee7f… has North's source-product acceptance6749258323;
+Secrets0d365840 is now TEMPLATE ONLY pending a separately qualified parent
+provider image with the later signer capabilities. Websiteb680, connector812262a6 and the exact public parent
 commissioning2dabc0ce are selected. Parent root stock PostgreSQL57c72fd2… is
 distinct from wrapped child PG8ddc8477… in the frozen sender/child document.
 Senderbe90e87a embeds PG03fb5bd7 and gateway284f5fe4. No unverified driver ID or
@@ -118,3 +120,33 @@ Failed log /private/tmp/cpk384-public-root-185d7a7.log, SHA256
 4e54c23bbd0b66ffa302fadf9b0be359c8a0c87ddd4ad973e42944f561e966e3.
 No actual input was rendered. The successor requires review and one separately
 released same-two-case rerun; there has been no automatic retry.
+
+## Empty-grants preprojection correction
+
+The f77182e same-two-case source rerun passed after separate release (the first
+invocation had a mistyped image ID rejected before Docker/tests). Corrected log
+/private/tmp/cpk384-public-root-f77182e-correct-controller.log SHA256
+09f40f5935fc803530c0ea0e6cf7617f68e5a88b4a54ffd9a7071454981093f9,
+28support+2cases0.805s/cleanup. It did NOT prove actual empty-grants authoring.
+
+The reviewed real90fcd request metadata then stopped exit2 with fixed refusal;
+output /private/tmp/rowan-384-root-bootstrap-input.template.json is EMPTY and
+must not be consumed. Stderr /private/tmp/rowan-384-root-template-preparation.log
+SHA256047115c7fe6b925ecfe0c50666f4ff40487b560ceed9792e6e204fa5adad4dac.
+No public root input or runtime effect was produced and no retry occurred.
+
+Cause: the renderer prematurely called _installation on the pre-projection base.
+Without a commitment, that constructor takes static admission and requires a
+nonempty legacy grant. The real shape intentionally has empty grants; the unit
+fixture previously did not. The successor positive uses empty grants, explicit
+multi-principal material reference and no commitment. The renderer validates
+only public values with existing Core/ControlAuth codecs, preserving that shape;
+Vale's actual material-plan remains the full dynamic construction/validation owner.
+
+The current v2 public request additionally corrects inherited earlier proposed
+runtime/provider names to North's chosen cpk163-gparent-local-docker and
+cpk163-gparent-secrets, with matching runtime-access reference. Old90fcd/cb51
+files remain immutable failed-input evidence. No image, receiving artifact or
+grants changed; Secrets0d365 remains a visible template choice until the final
+parent provider digest is independently qualified. Review the successor and
+v2 request before one new source test/render release; preserve all failed files.

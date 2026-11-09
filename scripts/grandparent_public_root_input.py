@@ -10,8 +10,11 @@ import sys
 from control_plane_kit_core.configuration import ConfigurationArtifact, ConfigurationMediaType
 from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
 from control_plane_kit_core.products import OciImageReferenceCodec, ProductDescriptorCodec, ProductReference, ProductReferenceCodec
+from control_plane_kit_core.runtime_authority import RuntimeAuthorityReference, RuntimeAuthorityAccessDeliveryCodec
+from control_plane_kit_core.secrets import SecretReference, SecretProviderEndpointReference
 from control_plane_kit_core.receiver_configuration import ReceiverNodeControlConfigurationCodec
-from control_plane_kit_servers_cpk_server.bootstrap import _installation, canonical, decode_document
+from control_plane_kit_servers_cpk_server.bootstrap import canonical, decode_document
+from control_plane_kit_servers_cpk_server.installation import ControlAuthCodec, MultiPrincipalControlAuth
 from control_plane_kit_servers_cpk_server.control_configuration import CpkSourceVariant, cpk_source_runtime_contract
 from control_plane_kit_servers_cpk_server.managed_health_configuration import (
     MANAGED_HEALTH_ARTIFACT_ID, MANAGED_HEALTH_CONFIGURATION_PATH,
@@ -52,7 +55,21 @@ def prepare_root_input(value):
     # and setup administration are frozen. Never invent one for actual inputs.
     if "workspace_authority" in item or "managed_health_configuration" in item or "website" in item:
         raise ValueError("public root input requires the unprojected base")
-    _installation(document)
+    # Empty legacy grants and no private commitment are intentional here. A
+    # full DockerCpkInstallation would select static admission too early.
+    # Decode public values only; Vale's real material projection constructs the
+    # dynamic installation after computing its own commitment.
+    if document["schema"] != "cpk.root-bootstrap.input.v1" or item["workspace_grants"] != []:
+        raise ValueError("public root input requires empty unprojected grants")
+    authority = RuntimeAuthorityReference(item["runtime_authority"])
+    access = RuntimeAuthorityAccessDeliveryCodec().decode(item["runtime_access"])
+    if access.authority_ref != authority:
+        raise ValueError("public root runtime delivery differs")
+    if not isinstance(ControlAuthCodec().decode(item["control_auth"]), MultiPrincipalControlAuth):
+        raise ValueError("public root input requires explicit principal material reference")
+    for reference in item["references"].values():
+        SecretReference(reference)
+    SecretProviderEndpointReference(item["provider_endpoint_ref"])
     codec, images = ProductDescriptorCodec(), OciImageReferenceCodec()
     stock = codec.decode_document((ROOT / "products/postgres_server/product.cpk.json").read_bytes())
     if codec.decode_document(item["products"]["postgres"]) != stock:
