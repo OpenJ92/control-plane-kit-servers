@@ -98,8 +98,12 @@ installed-cohort report are retained. One named temporary product-image verifier
 runs network-none/read-only as10001, no host source mount or socket. Cleanup removes
 only that captured owner-matching container if needed and this invocation's build
 context and OCI scratch after terminal build, preserving package source archives,
-public base proof and candidate. A build interruption with unconfirmed termination
-keeps scratch and marks cleanup unverified. Any ambiguity fails the result.
+public base proof and candidate. Any submitted build without positive successful
+termination confirmation keeps scratch and marks cleanup unverified, including a
+failed/disconnected/interrupted buildx child without a signal to this wrapper.
+Pre-build failures with no submitted solve can clean owned scratch normally.
+An owning fake-CLI regression exercises the actual wrapper's nonzero child path
+and verifies retained scratch, failed receipt and no retry. Any ambiguity fails.
 
 The artifact result explicitly says `listening_startup_verified:false`. It proves
 packaging/provenance, not a listening sender. Actual default-process listening,

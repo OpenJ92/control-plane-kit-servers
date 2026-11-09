@@ -19,7 +19,8 @@ CONTROLLER=sha256:1c8b3fc348936b41bb51e530c9f192c360e3b4e53e7a9f7af6f41b7ba10e83
 [ "$(docker image inspect "$CONTROLLER" --format '{{.Id}}')" = "$CONTROLLER" ] || exit 2
 TAG=localhost/control-plane-kit-servers/cpk-grandparent:cpk163-sender-20261109-02
 RUN=cpk163-grandparent-artifact-20261109-02
-RECORDS=/private/tmp/$RUN
+CANONICAL_TMP=$(CDPATH= cd -- /tmp && pwd -P)
+RECORDS=$CANONICAL_TMP/$RUN
 [ ! -e "$RECORDS" ] && [ ! -L "$RECORDS" ] || exit 2
 existing=$(docker image ls -q --filter "reference=$TAG")
 [ -z "$existing" ] || exit 2
@@ -36,7 +37,7 @@ OWNER=$(od -An -N32 -tx1 /dev/urandom | tr -d '[:space:]')
 CONTEXT=$RECORDS/context
 LAYOUT=$RECORDS/base-layout
 PHASE=source-export REFERENCE='' IMAGE='' VERIFIED=false CLEANUP=verified BUILD_ATTEMPTED=false
-LOCAL_BASE=false DERIVED_BASE=false BUILD_SIGNALLED=false BUILD_TERMINATED=false
+LOCAL_BASE=false DERIVED_BASE=false BUILD_TERMINATED=false
 . ./scripts/gateway_packaged_owner.sh
 GW_ROLES='base-validator provenance' GW_RUN=$RUN GW_OWNER=$OWNER GW_RECORDS=$RECORDS GW_RESERVED=1 GW_VOLUMES=''
 GW_DAEMON=d23d00aa-b281-448d-bc95-c8e47efeeea2
@@ -44,7 +45,7 @@ finish() {
   status=$?
   trap - EXIT INT TERM
   gw_cleanup || { status=1; CLEANUP=unverified; }
-  if [ "$BUILD_SIGNALLED" = true ] && [ "$BUILD_TERMINATED" = false ]; then
+  if [ "$BUILD_ATTEMPTED" = true ] && [ "$BUILD_TERMINATED" = false ]; then
     status=1; CLEANUP=unverified
   else
     rm -rf "$CONTEXT" "$LAYOUT" || { status=1; CLEANUP=unverified; }
@@ -77,8 +78,8 @@ finish() {
   exit "$status"
 }
 trap finish EXIT
-trap 'BUILD_SIGNALLED=true; exit 130' INT
-trap 'BUILD_SIGNALLED=true; exit 143' TERM
+trap 'exit 130' INT
+trap 'exit 143' TERM
 mkdir -p "$CONTEXT/cohort/core" "$CONTEXT/cohort/operations" "$CONTEXT/cohort/interpreters"
 git archive --format=tar "$SOURCE" products/cpk_server/Dockerfile.grandparent \
   products/cpk_server/grandparent-cohort.json products/cpk_server/tests/grandparent_image_check.py > "$RECORDS/recipe.tar"

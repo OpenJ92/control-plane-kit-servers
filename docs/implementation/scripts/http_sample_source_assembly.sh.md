@@ -6,4 +6,6 @@ checkout mounted before cached code, no network/socket/DB/build. Existing
 managed-composition also names startup tests. The grandparent artifact successor
 adds its standard-library local OCI integrity regressions to the same owning
 managed-startup selection. They exercise synthetic bounded tar data only, not a
-Docker base fetch or build. Source-gate receipts remain revision-specific.
+Docker base fetch or build. The owning fake-CLI build-termination regression also
+checks that a nonzero buildx child retains unconfirmed scratch without retry.
+Source-gate receipts remain revision-specific.
