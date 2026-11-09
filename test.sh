@@ -20,6 +20,11 @@ GATEWAY_TARGET_OPERATIONS_REVISION=''
 GATEWAY_TARGET_EXPECTATION=''
 MANAGED_COMPOSITION_INTERPRETERS_REVISION=''
 case "${1:-}" in
+  --prepare-grandparent-public-inputs)
+    [ "$#" -eq 3 ] || exit 2
+    case "$3" in gateway) public_mode=--gateway-document ;; website) public_mode=--parent-website ;; *) exit 2 ;; esac
+    exec sh scripts/http_sample_image_preflight.sh "$2" "$public_mode"
+    ;;
   --http-sample-source-image-input-tests)
     [ "$#" -eq 4 ] || exit 2
     HTTP_SAMPLE_RELAY_ONLY=8

@@ -2,6 +2,8 @@
 import json
 import os
 import sys
+from dataclasses import replace
+from pathlib import Path
 
 from control_plane_kit_core.products import OciImageReference, OciImageReferenceCodec
 
@@ -42,9 +44,75 @@ def image_options(environment):
     return {"postgres_image":None if legacy is None else OciImageReferenceCodec().decode(json.loads(legacy))}
 
 
+def gateway_document(images):
+    """Freeze only declared public slots; no live receiver/trust is needed."""
+    from control_plane_kit_core.products import ProductDescriptorCodec
+    from control_plane_kit_servers_cpk_local_gateway.http_sample_configuration import gateway_http_sample_declared_runtime_contract
+    images = require_images(images)
+    codec = ProductDescriptorCodec()
+    base = codec.decode_document((Path(__file__).resolve().parents[1] /
+        "products/cpk_local_gateway/product.cpk.json").read_bytes())
+    return codec.encode_document(replace(base.product, image=images["gateway"],
+        runtime_contract=gateway_http_sample_declared_runtime_contract()))
+
+
+def parent_website_input(images, value, *, receiver_id):
+    """Public preparation only; caller allocates a fresh parent receiver once."""
+    from hashlib import sha256
+    from urllib.parse import urlsplit
+    import control_plane_kit_core as core
+    from control_plane_kit_servers_website_server import managed
+    from control_plane_kit_servers_cpk_server.client.frontend import _canonical_origin
+    images = require_images(images)
+    expected = {"commissioning_public_document", "commissioning_public_sha256", "installation_id",
+        "workspace_id", "api_origin", "website_origin", "host_binding"}
+    if type(value) is not dict or value.keys() != expected:
+        raise ValueError("parent public website preparation is invalid")
+    raw = value["commissioning_public_document"]
+    if type(raw) is not str or sha256(raw.encode()).hexdigest() != value["commissioning_public_sha256"]:
+        raise ValueError("parent public website preparation is invalid")
+    public = json.loads(raw, object_pairs_hook=_unique)
+    config = core.ReceiverNodeControlConfigurationCodec().decode_bytes(public["artifacts"]["cpk"]["content"].encode())
+    target = config.target
+    purposes = {core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ,
+        core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ}
+    if (public["schema"] != "cpk.root-commissioning.public.v1" or
+            {item.purpose for item in config.verifiers} != purposes or len(config.verifiers) != 2 or
+            target.workspace_id.value != value["workspace_id"] or
+            target.runtime_id.value != value["installation_id"] + "-docker" or
+            target.node_id.value != value["installation_id"] + "-cpk" or
+            receiver_id in public["receiver_ids"].values()):
+        raise ValueError("parent public website preparation is invalid")
+    api, site = _canonical_origin(value["api_origin"]), _canonical_origin(value["website_origin"])
+    binding = value["host_binding"]
+    if (urlsplit(api).hostname.removesuffix(".") == urlsplit(site).hostname.removesuffix(".") or
+            type(binding) is not dict or binding.keys() != {"address", "port"} or
+            binding["address"] != "127.0.0.1" or type(binding["port"]) is not int or not 1024 <= binding["port"] <= 65535):
+        raise ValueError("parent public website preparation is invalid")
+    declaration = managed.control_declaration()
+    configuration = core.ReceiverNodeControlConfiguration(replace(target,
+        node_id=replace(target.node_id, value=value["installation_id"] + "-website"),
+        provider_socket_name=declaration.surface.provider_socket_name, receiver_id=receiver_id),
+        declaration, config.verifiers)
+    artifact = managed.control_configuration_artifact(configuration)
+    return {"image":images["website"].descriptor(), "external_endpoint":site,
+        "host_binding":binding, "managed_control_configuration":artifact.descriptor()}
+
+
 if __name__ == "__main__":
     try:
-        image_options(os.environ)
+        options = image_options(os.environ)
+        if sys.argv[1:] == ["--gateway-document"]:
+            sys.stdout.buffer.write(gateway_document(options["images"]).content)
+        elif sys.argv[1:] == ["--parent-website"]:
+            from uuid import uuid4
+            value = json.loads(os.environ["CPK_SOURCE_PARENT_WEBSITE"], object_pairs_hook=_unique)
+            # A fresh PUBLIC lifecycle ID, never a key/credential. Persist the
+            # output once; preparing again requires a separate owner decision.
+            result = parent_website_input(options["images"], value, receiver_id=uuid4().hex)
+            sys.stdout.write(json.dumps(result, sort_keys=True, separators=(",", ":")))
+        elif sys.argv[1:]:
+            raise ValueError("unknown public preparation mode")
     except Exception:
         print("source assembly image input refused", file=sys.stderr)
         raise SystemExit(2) from None

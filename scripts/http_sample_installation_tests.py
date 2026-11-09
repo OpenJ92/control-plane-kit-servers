@@ -19,7 +19,7 @@ from control_plane_kit_servers_cpk_local_gateway.http_sample_configuration impor
     ARTIFACT_ID as GATEWAY_SAMPLE_ARTIFACT_ID, gateway_http_sample_trust_from_artifact,
 )
 from http_sample_installation_assembly import assemble
-from http_sample_image_inputs import image_options, IMAGE_ROLES
+from http_sample_image_inputs import image_options, IMAGE_ROLES, gateway_document, parent_website_input
 
 
 @contextmanager
@@ -73,6 +73,8 @@ class FullInstallationHttpSampleTests(unittest.TestCase):
             self.assertEqual(graph.node(node_id).metadata["oci_image"], images[role].execution_reference)
             self.assertEqual(graph.node(node_id).block_spec.verification, baseline.node(node_id).block_spec.verification)
         self.assertEqual(gateway_document.product.image, images["gateway"])
+        from http_sample_image_inputs import gateway_document as declared_gateway
+        self.assertEqual(gateway_document, declared_gateway(images))
         self.assertEqual(original.secrets_product.product.image, images["secrets"])
         self.assertEqual(original.connector_product, original.website.connector_product)
         self.assertEqual(original.connector_product, original.management.connector_product)
@@ -117,6 +119,39 @@ class FullInstallationHttpSampleTests(unittest.TestCase):
         legacy = legacy[:-1] + ',"digest":"sha256:' + '9' * 64 + '"}'
         self.assertEqual(image_options({"CPK_SOURCE_ASSEMBLY_POSTGRES_IMAGE":legacy})["postgres_image"].digest,
             "sha256:" + "9" * 64)
+
+    def test_public_gateway_authoring_never_enters_fixture_or_key_preparation(self):
+        with patch("http_sample_installation_assembly.InstallationManagementTests.setUp",
+                side_effect=AssertionError("fixture entered")), \
+                patch("http_sample_installation_assembly.AuthoredMaterial",
+                    side_effect=AssertionError("private material entered")):
+            document = gateway_document(self.images())
+        self.assertEqual(document.product.image, self.images()["gateway"])
+        self.assertEqual(document.product.runtime_contract.configuration_artifacts, ())
+
+    def test_parent_public_website_reuses_only_parent_verifiers_and_new_receiver(self):
+        from hashlib import sha256
+        from control_plane_kit_core.receiver_configuration import ReceiverNodeControlConfigurationCodec
+        with isolated_directory():
+            fixture, original, baseline, _, _, _ = assemble()
+        parent = fixture.receiver(baseline.node(original.cpk_node_id))
+        artifact, = original.cpk_product.product.runtime_contract.configuration_artifacts
+        raw = json.dumps({"schema":"cpk.root-commissioning.public.v1",
+            "artifacts":{"cpk":artifact.descriptor()}, "receiver_ids":{"cpk":parent.target.receiver_id}})
+        value = dict(commissioning_public_document=raw, commissioning_public_sha256=sha256(raw.encode()).hexdigest(),
+            installation_id=original.installation_id, workspace_id=original.workspace_id,
+            api_origin="https://parent-api.example.test", website_origin="https://parent-web.example.test",
+            host_binding={"address":"127.0.0.1", "port":18164})
+        public = parent_website_input(self.images(), value, receiver_id="a" * 32)
+        actual = ReceiverNodeControlConfigurationCodec().decode_bytes(public["managed_control_configuration"]["content"].encode())
+        self.assertEqual(actual.verifiers, parent.verifiers)
+        self.assertEqual(actual.target.node_id.value, original.installation_id + "-website")
+        self.assertNotEqual(actual.target.receiver_id, parent.target.receiver_id)
+        self.assertEqual(public["image"], self.images()["website"].descriptor())
+        with self.assertRaises(ValueError):
+            parent_website_input(self.images(), value, receiver_id=parent.target.receiver_id)
+        with self.assertRaises(ValueError):
+            parent_website_input(self.images(), value | {"workspace_id":"foreign-child"}, receiver_id="a" * 32)
 
     def test_complete_assembly_preserves_supplied_product_image_and_exact_versions(self):
         # Unit metadata only; this fixture reference is never an acquired image.

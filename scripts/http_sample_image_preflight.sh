@@ -1,7 +1,14 @@
 #!/bin/sh
 # One isolated cached validation controller, before build/network/provider work.
 set -eu
-[ "$#" = 1 ] || exit 2
+[ "$#" = 1 ] || [ "$#" = 2 ] || exit 2
+mode=${2:-}
+core_revision=054e5884d89ed6f56141b8fc51ea996f0b6d916b
+case "$mode" in
+  '') ;;
+  --gateway-document|--parent-website) core_revision=f56bb5c4cfde76764d39c5377d4270c5b23c3ba1 ;;
+  *) exit 2 ;;
+esac
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 validator=${CPK_SOURCE_IMAGE_VALIDATOR:?select an exact cached validation controller}
 case "$validator" in sha256:*) ;; *) exit 2 ;; esac
@@ -18,12 +25,12 @@ finish_preflight() {
 }
 trap finish_preflight EXIT
 trap 'exit 130' INT TERM
-git -C "$1" archive --format=tar 054e5884d89ed6f56141b8fc51ea996f0b6d916b control-plane-kit-core/src/control_plane_kit_core > "$preflight_source/core.tar"
+git -C "$1" archive --format=tar "$core_revision" control-plane-kit-core/src/control_plane_kit_core > "$preflight_source/core.tar"
 tar -xf "$preflight_source/core.tar" -C "$preflight_source" --strip-components=1
 docker run --pull never --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
   --workdir /tmp -e PYTHONDONTWRITEBYTECODE=1 \
-  -e CPK_SOURCE_ASSEMBLY_IMAGES -e CPK_SOURCE_ASSEMBLY_POSTGRES_IMAGE \
-  -e PYTHONPATH=/preflight-core/src \
+  -e CPK_SOURCE_ASSEMBLY_IMAGES -e CPK_SOURCE_ASSEMBLY_POSTGRES_IMAGE -e CPK_SOURCE_PARENT_WEBSITE \
+  -e PYTHONPATH=/preflight-core/src:/source/src:/source/products/cpk_local_gateway/src:/source/products/website_server/src:/source/products/cpk_server/src \
   --mount "type=bind,source=$preflight_source,target=/preflight-core,readonly" \
   --mount "type=bind,source=$ROOT,target=/source,readonly" \
-  "$validator" python /source/scripts/http_sample_image_inputs.py
+  "$validator" python /source/scripts/http_sample_image_inputs.py ${mode:+"$mode"}
