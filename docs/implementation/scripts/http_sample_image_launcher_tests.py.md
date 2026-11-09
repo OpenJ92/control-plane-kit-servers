@@ -7,4 +7,5 @@ validation-controller startup may occur: no build, custom network or PostgreSQL.
 Only the cached image-input phase collects this executable-CLI regression,
 alongside pure assembly/default/PG-only laws. Ordinary full phases retain their
 non-executable /tmp mount and previous collection. The dedicated test itself
-still exercises both ordinary launchers. It has not executed.
+still exercises both ordinary launchers. It passed in the63645d0 owning source
+gate with7 pure assembly tests, including existing default/PG-only cases.

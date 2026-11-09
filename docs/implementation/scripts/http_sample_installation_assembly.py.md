@@ -6,7 +6,8 @@ document is shared across the three ingress inputs. Missing/extra/null/conflicti
 inputs refuse before fixture setup; default and legacy PG-only callers remain.
 The same public `CPK_SOURCE_ASSEMBLY_IMAGES` option feeds pure and registration
 entrypoints. See [scope, laws and pending evidence](../../qualified-child-image-inputs.md).
-No Docker validation/recompilation or qualification is claimed by this change.
+Owning source gate63645d0 passed28support+8pure/launcher tests; no actual qualified
+cohort recompilation, image qualification or registration is claimed.
 
 The once-assembled fixture also retains `product_documents`: exact per-node
 implementation documents for normal product import, with the explicit extended

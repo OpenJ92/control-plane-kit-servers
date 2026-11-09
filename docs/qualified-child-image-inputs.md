@@ -1,4 +1,4 @@
-# #163 explicit child image inputs — unexecuted source preparation
+# #163 explicit child image inputs — source validation
 
 The earlier complete assembly accepted an explicit PostgreSQL image only. Its
 other product documents retained fixture/catalogue defaults. A qualified Secrets
@@ -41,17 +41,17 @@ pending its independent packaged qualification; do not insert a placeholder or
 borrow a synthetic unit-test digest. Every eventual role needs its exact accepted
 image/evidence and normal reviewed input. Image syntax is not qualification.
 
-Validation is PENDING. Focused new-law tests cover incomplete/conflicting
+Released source-only validation passed at63645d0. Focused new-law tests cover incomplete/conflicting
 inputs before fixture setup, all eight nodes' image/document joins and one shared
 connector, original three waits/checks, four PostgreSQL-to-CPK edges and all three
 ingress/runtime bindings, distinct connector IDs, every node's execution image
 metadata, and the full/legacy environment boundary. Duplicate role AND nested
 descriptor keys refuse in the new full JSON; legacy duplicate parsing is unchanged.
-Existing
-PG-image/version, full companion, signer-lifetime and normal registration laws
+Existing PG-image/version, full companion, signer-lifetime and normal registration laws
 are retained. Tests use explicitly synthetic `example.invalid` values only; they
-never acquire or qualify an image. No Docker, source recompile, provider
-commissioning, submission or deployment ran for this candidate.
+never acquire or qualify an image. The Docker source-only suite compiled pure
+synthetic graphs; no qualified real-image cohort was recompiled, and no provider
+commissioning, submission or deployment ran.
 
 Meridian's first review held the launcher boundary: although Python refused
 before fixture/provider work, ordinary registrations allocated a network/PG and
@@ -87,7 +87,28 @@ It retains ordinary policy/support/integrity checks and runs all focused pure
 assembly tests (including unchanged default/PG-only cases) plus launcher refusal.
 No provider, registration network, PostgreSQL or API authoring runs in this phase.
 Actual registration remains a separately released data-affecting action.
-No host Python or automatic retry. `git diff --check` is the sole completed check.
+No host Python, build, acquisition or registration is part of this action.
+
+## Owning source receipt — 63645d0
+
+Meridian PASSed exact source/action
+`63645d0813c0bf82bc3a81098b0cc6634ff12ba2`; North released one source-only run.
+The initial sandbox invocation failed before Docker/tests with socket permission
+denied. Its log remains `/private/tmp/cpk163-qualified-image-inputs-63645d0.log`,
+SHA256 `c7f6ecaa6185d3a6d5acc0e023badc1588f5b50d070492d796b43917669dcb06`.
+North separately released the identical command with approved host Docker access.
+No effect was replayed and no automatic retry occurred.
+
+That host-context invocation exited0: coordinate/integrity checks,28 support
+tests and all8 focused tests passed (17.974s), including all default/PG-only laws
+and both ordinary-launcher refusals. Public source exports were removed and the
+owner emitted its cleanup success marker. Terminal log
+`/private/tmp/cpk163-qualified-image-inputs-63645d0-host.log`, SHA256
+`cecfbc138724e46215c564de363df8b35905a81a0e25e9b12b46c33d8baa248f`.
+Core054e5884/Ops71db67c5/I2e2a6b88 exact exports and this checkout's mounted
+source were used; the controller was borrowed by immutable ID. No real provider,
+PostgreSQL, custom registration network, image build/pull or deployment ran.
+This documentation-only receipt does not change tested source or qualify images.
 
 Security/history: public image inputs only; no new route, permission, network or
 credential surface. Pure selection performs no durable mutation. The normal

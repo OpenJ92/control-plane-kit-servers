@@ -1,6 +1,6 @@
 Source: [test.sh](../../test.sh).
 
-Nov9 #163 unexecuted source prep adds `--http-sample-source-image-input-tests`
+Nov9 #163 source-validated preparation adds `--http-sample-source-image-input-tests`
 with the existing three source-repository arguments. An exact cached controller
 runs normal policy/support/integrity then the focused pure/launcher suite, network
 none and without controller build/pull. The exact checkout is mounted ahead of

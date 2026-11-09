@@ -6,4 +6,6 @@ private scratch cleanup. That isolated validation-controller start is an explici
 effect, distinct from downstream registration. Invalid input stops with its exit
 code; it does not silently repair prerequisites. See
 [source action and evidence limits](../../qualified-child-image-inputs.md).
-No executable validation has run.
+Owning source gate63645d0 passed the pure/ordinary-launcher refusal tests. The
+launcher uses external Docker/Git transport doubles there; no real registration
+preflight/runtime or image qualification is claimed by that source result.
