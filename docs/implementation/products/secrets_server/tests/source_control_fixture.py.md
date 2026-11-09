@@ -1,6 +1,10 @@
 Source: [source_control_fixture.py](../../../../../products/secrets_server/tests/source_control_fixture.py).
 Maintain with the maintained smoke's fixed file and CLI boundaries.
 
+logs-parent adds exact raw/base64 checks for the two scoped HTTP fixture keys
+and tokens, using bounded/no-follow reads. It emits the same fixed error and
+no private values. Existing logs mode and signed control behavior remain.
+
 generate reuses SourceControlAuthority and the actual product artifact factory.
 It exclusively creates public control.json0444 and two private headers0600;
 keys remain in memory. Stable run identity across phases preserves target/runtime

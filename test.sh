@@ -21,9 +21,11 @@ GATEWAY_TARGET_EXPECTATION=''
 MANAGED_COMPOSITION_INTERPRETERS_REVISION=''
 CPK_RECEIVER_PHASE=''
 SECRETS_PACKAGED_PHASE=''
+SECRETS_PACKAGED_PROFILE=wrapped-child
 case "${1:-}" in
-  --secrets-packaged)
+  --secrets-packaged|--secrets-parent-packaged)
     [ "$#" -eq 2 ] || exit 2
+    if [ "$1" = --secrets-parent-packaged ]; then SECRETS_PACKAGED_PROFILE=wrapped-parent; fi
     case "$2" in tests|image) SECRETS_PACKAGED_PHASE=$2 ;; *) exit 2 ;; esac
     case "$IMAGE" in sha256:*) ;; *) exit 2 ;; esac
     [ "${#IMAGE}" -eq 71 ] || exit 2
@@ -149,8 +151,13 @@ if [ -n "$SECRETS_PACKAGED_PHASE" ]; then
       -e PYTHONDONTWRITEBYTECODE=1 \
       -e PYTHONPATH=/source:/source/products/secrets_server/src:/source/products/secrets_server/tests \
       "$IMAGE" python -m unittest discover -s products/secrets_server/tests -v
+    if [ "$SECRETS_PACKAGED_PROFILE" = wrapped-parent ]; then
+      docker run --pull never --rm --network none --read-only --tmpfs /tmp:exec --workdir /source \
+        --mount "type=bind,source=$ROOT,target=/source,readonly" -e PYTHONDONTWRITEBYTECODE=1 \
+        -e PYTHONPATH=/source/scripts "$IMAGE" python -m unittest grandparent_oci_tests -v
+    fi
   else
-    CPK_SERVERS_TEST_IMAGE="$IMAGE" CPK_SECRETS_SMOKE_PROFILE=wrapped-child \
+    CPK_SERVERS_TEST_IMAGE="$IMAGE" CPK_SECRETS_SMOKE_PROFILE="$SECRETS_PACKAGED_PROFILE" \
       CPK_SECRETS_BUILD_CONTROLLER=0 CPK_SECRETS_BUILD_IMAGE=1 sh scripts/secrets_server_image_smoke.sh
   fi
   exit 0

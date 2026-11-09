@@ -8,6 +8,14 @@ BUILD_CONTROLLER="${CPK_SECRETS_BUILD_CONTROLLER:-1}"
 PROFILE="${CPK_SECRETS_SMOKE_PROFILE:-}"
 PRODUCT_PULL_POLICY=missing
 CHILD_PROFILE=0
+PARENT_PROFILE=0
+PARENT_INITIAL_VERIFIED=0
+PARENT_RESTART_VERIFIED=0
+PARENT_BASE_VERIFIED=0
+PARENT_DERIVED_VERIFIED=0
+PARENT_BUILD_ATTEMPTED=0
+PARENT_BUILD_TERMINATED=0
+PARENT_BASE_REFERENCE=localhost/control-plane-kit-servers/secrets-server@sha256:0d36584018d93305045631a1ee981d5a8850e16fd4532d765eb43a1a823dc095
 CHILD_RESERVED=0
 CHILD_SOURCE=''
 CHILD_REFERENCE=''
@@ -29,7 +37,8 @@ if [ -z "$PROFILE" ]; then
   case "$BUILD_IMAGE" in 1) PROFILE=wrapped-source ;; 0) PROFILE=published-baseline ;; esac
 fi
 case "$PROFILE:$BUILD_IMAGE" in
-  wrapped-child:1)
+  wrapped-child:1|wrapped-parent:1)
+    if [ "$PROFILE" = wrapped-parent ]; then PARENT_PROFILE=1; fi
     CHILD_PROFILE=1
     PRODUCT_PULL_POLICY=never
     [ "$BUILD_CONTROLLER" = 0 ] || invalid_inputs
@@ -71,6 +80,7 @@ CLIENT_BOOTSTRAP="$RUN_ID-client-bootstrap"
 DATA_VOLUME="$RUN_ID-data"
 PROVIDER="$RUN_ID-provider"
 CHILD_ROLES='provenance bootstrap control-initial control-restart http-sample-initial http-sample-restart wait-initial wait-restart check-initial check-restart logs-initial logs-restart custody-initial custody-restart provider-initial provider-restart'
+if [ "$PARENT_PROFILE" = 1 ]; then CHILD_ROLES="$CHILD_ROLES base-validator parent-http-initial parent-http-restart"; fi
 
 child_track() {
   case " $CHILD_ROLES " in *" $1 "*) ;; *) return 1 ;; esac
@@ -254,6 +264,24 @@ finish() {
     child_cleanup=unverified
   fi
   cleanup_records || { echo 'secrets-server fixture cleanup incomplete' >&2; status=1; child_cleanup=unverified; }
+  parent_base_retention=not-applicable
+  if [ "$PARENT_PROFILE" = 1 ] && [ "$CHILD_RESERVED" = 1 ]; then
+    if [ "$PARENT_BUILD_ATTEMPTED" = 1 ] && [ "$PARENT_BUILD_TERMINATED" != 1 ]; then
+      status=1; child_cleanup=unverified
+    else
+      rm -rf "$CPK_SECRETS_CHILD_RECORDS/base-layout" || { status=1; child_cleanup=unverified; }
+      rm -f "$CPK_SECRETS_CHILD_RECORDS/base.tar" "$CPK_SECRETS_CHILD_RECORDS/export.status" || { status=1; child_cleanup=unverified; }
+      for parent_scratch in base-layout base.tar export.status; do
+        [ ! -e "$CPK_SECRETS_CHILD_RECORDS/$parent_scratch" ] || { status=1; child_cleanup=unverified; }
+      done
+    fi
+    parent_base_retention=unverified
+    if child_daemon && parent_retained_id=$(docker image inspect "$PARENT_BASE_REFERENCE" --format '{{.Id}}') &&
+        [ "$parent_retained_id" = "${PARENT_BASE_REFERENCE#*@}" ]; then
+      parent_base_retention=verified
+    else status=1
+    fi
+  fi
   if [ "$CHILD_RESERVED" = 1 ]; then
     child_retention=unverified
     if [ -n "$CHILD_REFERENCE" ] && child_daemon; then
@@ -270,6 +298,10 @@ finish() {
       --argjson restart_samples "$RESTART_SAMPLES_VERIFIED" \
       --arg owner "$CHILD_OWNER" --arg daemon "$CPK_RECEIVER_DAEMON_ID" --arg controller "$CONTROLLER_IMAGE" \
       --argjson provenance "$PROVENANCE_VERIFIED" --argjson logs "$LOGS_VERIFIED" \
+      --argjson parent "$PARENT_PROFILE" --argjson parent_initial "$PARENT_INITIAL_VERIFIED" \
+      --argjson parent_restart "$PARENT_RESTART_VERIFIED" --argjson parent_base "$PARENT_BASE_VERIFIED" \
+      --argjson parent_derived "$PARENT_DERIVED_VERIFIED" \
+      --arg parent_base_retention "$parent_base_retention" \
       '{source:$source,run:$run,phase:$phase,exit_code:$status,candidate_reference:$reference,
         product_source_base:"85b193bbdc777376c5104029a5ee04e74627cf71",owner_nonce:$owner,
         daemon_id:$daemon,controller_id:$controller,installed_provenance_verified:($provenance==1),
@@ -277,7 +309,9 @@ finish() {
         retained_restart_verified:($restart==1),signed_pair_verified:($samples==1),
         initial_signed_pair_verified:($initial_samples==1),restart_signed_pair_verified:($restart_samples==1),
         revocation_persistence_verified:($restart==1),logs_redacted_verified:($logs==1),
-        approved_child_run:false}' \
+        parent_only_profile:($parent==1),parent_http_initial_verified:($parent_initial==1),
+        parent_http_restart_verified:($parent_restart==1),parent_local_oci_base_verified:($parent_base==1),
+        parent_base_layers_verified:($parent_derived==1),parent_base_retention:$parent_base_retention,approved_child_run:false}' \
       > "$CPK_SECRETS_CHILD_RECORDS/result.json" || status=1
   fi
   if [ "$status" = 0 ]; then
@@ -299,6 +333,9 @@ if [ "$BUILD_IMAGE" = "1" ]; then
     git diff --quiet 85b193bbdc777376c5104029a5ee04e74627cf71 HEAD -- \
       products/secrets_server/src products/secrets_server/Dockerfile products/secrets_server/entrypoint.sh
     [ "$(docker image inspect "$CONTROLLER_IMAGE" --format '{{.Id}}')" = "$CONTROLLER_IMAGE" ] || exit 1
+    if [ "$PARENT_PROFILE" = 1 ]; then
+      [ "$(docker image inspect "$PARENT_BASE_REFERENCE" --format '{{.Id}}')" = "${PARENT_BASE_REFERENCE#*@}" ] || exit 1
+    fi
     child_existing=$(docker image ls -q --filter "reference=$IMAGE")
     [ -z "$child_existing" ] || exit 1
     for child_kind in container volume network; do
@@ -326,11 +363,48 @@ if [ "$BUILD_IMAGE" = "1" ]; then
     (umask 077; printf '%s\n' "$CHILD_OWNER" > "$CPK_SECRETS_CHILD_RECORDS/owner.txt")
     CHILD_PHASE=build
     git archive --format=tar "$CHILD_SOURCE" > "$CPK_SECRETS_CHILD_RECORDS/source.tar"
-    docker buildx build --builder "$DOCKER_CONTEXT" --platform linux/amd64 --load \
-      -f products/secrets_server/Dockerfile --label "org.opencontainers.image.revision=$CHILD_SOURCE" \
+    set --
+    secrets_recipe=products/secrets_server/Dockerfile
+    if [ "$PARENT_PROFILE" = 1 ]; then
+      CHILD_PHASE=parent-local-base
+      parent_layout="$CPK_SECRETS_CHILD_RECORDS/base-layout"
+      mkdir -m 700 "$parent_layout"
+      df -Pk "$CPK_SECRETS_CHILD_RECORDS" > "$CPK_SECRETS_CHILD_RECORDS/disk-before.txt"
+      parent_available=$(awk 'NR==2 {print $4}' "$CPK_SECRETS_CHILD_RECORDS/disk-before.txt")
+      case "$parent_available" in ''|*[!0-9]*) exit 1 ;; esac
+      [ "$parent_available" -ge 1048576 ] || exit 1
+      (set +e; docker image save "$PARENT_BASE_REFERENCE"; parent_export_status=$?;
+        printf '%s\n' "$parent_export_status" > "$CPK_SECRETS_CHILD_RECORDS/export.status") \
+        | head -c 268435457 > "$CPK_SECRETS_CHILD_RECORDS/base.tar"
+      [ "$(cat "$CPK_SECRETS_CHILD_RECORDS/export.status")" = 0 ] || exit 1
+      parent_export_bytes=$(wc -c < "$CPK_SECRETS_CHILD_RECORDS/base.tar")
+      [ "$parent_export_bytes" -le 268435456 ] || exit 1
+      smoke_run base-validator --rm --label "$LABEL_KEY=$RUN_ID" --network none --read-only --tmpfs /tmp:size=16m \
+        --cpus 1 --memory 256m --pids-limit 64 --cap-drop ALL --security-opt no-new-privileges \
+        --user "$(id -u):$(id -g)" --workdir / \
+        --mount "type=bind,source=$PWD/scripts/grandparent_oci.py,target=/grandparent_oci.py,readonly" \
+        --mount "type=bind,source=$CPK_SECRETS_CHILD_RECORDS/base.tar,target=/base.tar,readonly" \
+        --mount "type=bind,source=$parent_layout,target=/layout" \
+        "$CONTROLLER_IMAGE" python -c '
+import json
+from grandparent_oci import validate_export
+print(json.dumps(validate_export("/base.tar", "/layout",
+    "sha256:0d36584018d93305045631a1ee981d5a8850e16fd4532d765eb43a1a823dc095",
+    expected_user="10006", expected_entrypoint=("cpk-secrets-entrypoint",),
+    expected_cmd=["uvicorn","control_plane_kit_servers_secrets_server.server:create_app","--factory","--host","0.0.0.0","--port","8081"]), sort_keys=True))
+' > "$CPK_SECRETS_CHILD_RECORDS/parent-local-base.json"
+      PARENT_BASE_VERIFIED=1
+      secrets_recipe=products/secrets_server/Dockerfile.parent
+      set -- --pull=false --build-context "cpk-secrets-parent-base=oci-layout://$parent_layout@${PARENT_BASE_REFERENCE#*@}"
+      CHILD_PHASE=build
+      PARENT_BUILD_ATTEMPTED=1
+    fi
+    docker buildx build --builder "$DOCKER_CONTEXT" --platform linux/amd64 --load "$@" \
+      -f "$secrets_recipe" --label "org.opencontainers.image.revision=$CHILD_SOURCE" \
       --label "$LABEL_KEY=$RUN_ID" --label "cpk.test-owner=$CHILD_OWNER" --iidfile "$CPK_SECRETS_CHILD_RECORDS/image.id" \
       --metadata-file "$CPK_SECRETS_CHILD_RECORDS/build-metadata.json" -t "$IMAGE" - \
       < "$CPK_SECRETS_CHILD_RECORDS/source.tar" > "$CPK_SECRETS_CHILD_RECORDS/build.log" 2>&1
+    if [ "$PARENT_PROFILE" = 1 ]; then PARENT_BUILD_TERMINATED=1; fi
     IMAGE=$(cat "$CPK_SECRETS_CHILD_RECORDS/image.id")
     child_daemon
     child_source
@@ -342,13 +416,22 @@ if [ "$BUILD_IMAGE" = "1" ]; then
       '[.repo_digests[]|select(.==("localhost/control-plane-kit-servers/secrets-server@"+$metadata[0]["containerimage.digest"]))]|unique|if length==1 then .[0] else error("missing exact candidate digest") end' \
       "$CPK_SECRETS_CHILD_RECORDS/image.json")
     [ "$(docker image inspect "$CHILD_REFERENCE" --format '{{.Id}}')" = "$IMAGE" ] || exit 1
+    if [ "$PARENT_PROFILE" = 1 ]; then
+      docker image inspect "$IMAGE" --format '{{json .RootFS.Layers}}' > "$CPK_SECRETS_CHILD_RECORDS/parent-derived-layers.json"
+      jq -e --slurpfile base "$CPK_SECRETS_CHILD_RECORDS/parent-local-base.json" \
+        'length>=($base[0].rootfs_diff_ids|length) and .[0:($base[0].rootfs_diff_ids|length)]==$base[0].rootfs_diff_ids' \
+        "$CPK_SECRETS_CHILD_RECORDS/parent-derived-layers.json" >/dev/null
+      PARENT_DERIVED_VERIFIED=1
+    fi
     printf '%s\n' "$CHILD_REFERENCE" > "$CPK_SECRETS_CHILD_RECORDS/candidate-reference.txt"
     CHILD_PHASE=installed-provenance
+    set --
+    if [ "$PARENT_PROFILE" = 1 ]; then set -- --parent; fi
     smoke_run provenance --rm --label "$LABEL_KEY=$RUN_ID" \
       --network none --read-only \
       --mount "type=bind,source=$PWD/products/secrets_server/tests/image_check.py,target=/witness.py,readonly" \
       --mount "type=bind,source=$PWD/coordinates/server-products.json,target=/coordinates.json,readonly" \
-      --entrypoint python "$IMAGE" /witness.py /coordinates.json > "$CPK_SECRETS_CHILD_RECORDS/installed-origins.json"
+      --entrypoint python "$IMAGE" /witness.py /coordinates.json "$@" > "$CPK_SECRETS_CHILD_RECORDS/installed-origins.json"
     PROVENANCE_VERIFIED=1
   else
     docker build -f products/secrets_server/Dockerfile -t "$IMAGE" .
@@ -378,12 +461,15 @@ if [ "$CHILD_PROFILE" = 1 ]; then
   for child_volume in "$PROVIDER_BOOTSTRAP" "$CLIENT_BOOTSTRAP" "$DATA_VOLUME"; do child_create_volume "$child_volume"; done
   CHILD_PHASE=exclusive-bootstrap
   for child_volume in "$PROVIDER_BOOTSTRAP" "$CLIENT_BOOTSTRAP" "$DATA_VOLUME"; do child_volume_identity "$child_volume"; done
+  set --
+  if [ "$PARENT_PROFILE" = 1 ]; then set -- --parent; fi
   smoke_run bootstrap --rm --label "$LABEL_KEY=$RUN_ID" --network none --user 0:0 \
     --mount "type=volume,src=$PROVIDER_BOOTSTRAP,dst=/provider-bootstrap" \
     --mount "type=volume,src=$CLIENT_BOOTSTRAP,dst=/client-bootstrap" \
     --mount "type=volume,src=$DATA_VOLUME,dst=/provider-data" \
     --mount "type=bind,source=$PWD/products/secrets_server/tests/child_bootstrap_fixture.py,target=/seed.py,readonly" \
-    --entrypoint python "$IMAGE" /seed.py
+    --mount "type=bind,source=$PWD/products/secrets_server/tests/parent_http_roles_fixture.py,target=/parent_http_roles_fixture.py,readonly" \
+    --entrypoint python "$IMAGE" /seed.py "$@"
 else
 docker volume create --label "$LABEL_KEY=$RUN_ID" "$PROVIDER_BOOTSTRAP" >/dev/null
 docker volume create --label "$LABEL_KEY=$RUN_ID" "$CLIENT_BOOTSTRAP" >/dev/null
@@ -604,13 +690,30 @@ assert_logs_redacted() {
     return 1
   fi
   set -- logs /fixture /client
+  if [ "$PARENT_PROFILE" = 1 ]; then set -- logs-parent /fixture /client; fi
   if [ "$PROFILE" != published-baseline ]; then
     set -- "$@" "/fixture/$CONTROL_PHASE"
   fi
   smoke_run "logs-$CONTROL_PHASE" --pull "$PRODUCT_PULL_POLICY" --rm --label "$LABEL_KEY=$RUN_ID" --user 0:0 --network none \
     --mount "type=bind,source=$CONTROL_RECORDS,target=/fixture,readonly" \
     --mount "type=volume,src=$CLIENT_BOOTSTRAP,dst=/client,readonly" \
+    --mount "type=bind,source=$PWD/products/secrets_server/tests/source_control_fixture.py,target=/app/products/secrets_server/tests/source_control_fixture.py,readonly" \
+    --mount "type=bind,source=$PWD/products/secrets_server/tests/parent_http_roles_fixture.py,target=/app/products/secrets_server/tests/parent_http_roles_fixture.py,readonly" \
     "$CONTROLLER_IMAGE" python products/secrets_server/tests/source_control_fixture.py "$@"
+}
+
+check_parent_http_roles() {
+  [ "$PARENT_PROFILE" = 1 ] || return 0
+  CHILD_PHASE="$CONTROL_PHASE-parent-http-roles"
+  smoke_run "parent-http-$CONTROL_PHASE" --rm --label "$LABEL_KEY=$RUN_ID" --user 0:0 \
+    --network "$NETWORK" --read-only --cap-drop ALL --security-opt no-new-privileges \
+    --mount "type=volume,src=$CLIENT_BOOTSTRAP,dst=/client,readonly" \
+    --mount "type=bind,source=$CPK_SECRETS_CHILD_RECORDS/evidence,target=/evidence" \
+    --mount "type=bind,source=$PWD/products/secrets_server/tests/parent_http_roles_fixture.py,target=/parent_http_roles_fixture.py,readonly" \
+    --mount "type=bind,source=$PWD/products/secrets_server/tests/source_control_fixture.py,target=/source_control_fixture.py,readonly" \
+    "$CONTROLLER_IMAGE" python /parent_http_roles_fixture.py "$CONTROL_PHASE" \
+    > "$CPK_SECRETS_CHILD_RECORDS/$CONTROL_PHASE-parent-http.json"
+  case "$CONTROL_PHASE" in initial) PARENT_INITIAL_VERIFIED=1 ;; restart) PARENT_RESTART_VERIFIED=1 ;; esac
 }
 
 prepare_control initial
@@ -761,6 +864,7 @@ if os.environ.get("CPK_SECRETS_EXACT_VERSION_WITNESS") == "1":
 print("secrets-server initial contract passed")
 PY
 INITIAL_VERIFIED=1
+check_parent_http_roles
 
 assert_logs_redacted
 if [ "$CHILD_PROFILE" = 1 ]; then
@@ -886,7 +990,12 @@ if os.environ.get("CPK_SECRETS_EXACT_VERSION_WITNESS") == "1":
 print("secrets-server restart contract passed")
 PY
 RESTART_VERIFIED=1
+check_parent_http_roles
 
 assert_logs_redacted
 LOGS_VERIFIED=1
+if [ "$PARENT_PROFILE" = 1 ]; then
+  [ "$PARENT_INITIAL_VERIFIED" = 1 ] && [ "$PARENT_RESTART_VERIFIED" = 1 ] &&
+    [ "$PARENT_BASE_VERIFIED" = 1 ] && [ "$PARENT_DERIVED_VERIFIED" = 1 ] || exit 1
+fi
 if [ "$CHILD_PROFILE" = 1 ]; then child_daemon; child_source; CHILD_PHASE=complete; fi

@@ -1,6 +1,16 @@
 Source: [secrets_server_image_smoke.sh](../../../scripts/secrets_server_image_smoke.sh).
 Maintain with the owning product recipe, fixture and image profiles.
 
+#384 wrapped-parent reuses the focused child owner, default entry, custody,
+restart, signed checks and cleanup. Its parent-only derived recipe uses the
+retained child0d365 via the shared bounded local OCI validator a9872bd, exact
+UID10006/entrypoint/command and base-layer prefix. Parent fixtures exercise two
+actual imported HTTP signer roles before/after restart; negative role/workspace
+writes/resolves and unsupported/ungranted generation are mandatory. Only public
+version/status evidence is retained. Normal child recipe/coordinates/digest are
+unchanged. Source/action packet is [here](../../parent-secrets-image.md), still
+UNEXECUTED; no qualified parent digest or active grants are claimed.
+
 #191 adds wrapped-artifact/build0/controller-build0 for the explicitly selected
 current digest. Existing public-file factories, signed reads, provider storage and
 restart checks are reused. The selected process is pinned to the admitted actual

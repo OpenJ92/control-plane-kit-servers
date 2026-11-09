@@ -108,7 +108,7 @@ def check(directory: Path) -> None:
         raise ValueError
 
 
-def verify_logs(directory: Path, client: Path, phase: Path | None = None) -> None:
+def verify_logs(directory: Path, client: Path, phase: Path | None = None, *, parent=False) -> None:
     if read_file(directory / "log.status", 32) != b"0\n":
         raise ValueError
     # Empty logs are valid; all other file and overflow laws are the same.
@@ -122,6 +122,13 @@ def verify_logs(directory: Path, client: Path, phase: Path | None = None) -> Non
         raise ValueError
     forbidden = [b"Bearer ", b"PRIVATE KEY", b"provider-token"]
     forbidden.extend(read_file(client / name, 4096) for name in ("provider-token", "application-value"))
+    if parent:
+        import base64
+        from parent_http_roles_fixture import ROLES
+        for role, _, _ in ROLES:
+            for suffix in (".key", ".token"):
+                value = read_file(client / (role + suffix), 4096)
+                forbidden.extend((value, base64.b64encode(value)))
     if phase is not None:
         forbidden.extend(header_token(phase / name).encode("ascii")
                          for name in ("surface.headers", "health.headers"))
@@ -136,9 +143,9 @@ def main(argv: list[str] | None = None) -> int:
             generate(Path(arguments[1]), arguments[2], child=arguments[0] == "generate-child")
         elif len(arguments) == 2 and arguments[0] == "check":
             check(Path(arguments[1]))
-        elif len(arguments) in (3, 4) and arguments[0] == "logs":
+        elif len(arguments) in (3, 4) and arguments[0] in ("logs", "logs-parent"):
             verify_logs(Path(arguments[1]), Path(arguments[2]),
-                        Path(arguments[3]) if len(arguments) == 4 else None)
+                        Path(arguments[3]) if len(arguments) == 4 else None, parent=arguments[0] == "logs-parent")
         else:
             raise ValueError
     except Exception:

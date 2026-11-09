@@ -7,3 +7,8 @@ existing credentials/master material; unknown entries or a second initialization
 are refused. File ownership/modes preserve the native product's protected-file
 requirements. No secret is returned or printed. This helper does not initialize
 the provider database, implement custody semantics or earn runtime acceptance.
+
+Optional parent mode adds two synthetic Ed25519 key/token files and distinct
+clients, each limited to write/resolve of one exact HTTP signer role in the
+fixture workspace. All new private files are exclusive0400 and UID0 in the
+existing protected client volume. Default child seed/grants stay unchanged.

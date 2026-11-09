@@ -1,6 +1,12 @@
 Source: [test.sh](../../test.sh).
 Maintain with the normal Docker-backed owning gate and prerequisite effects.
 
+#384 adds --secrets-parent-packaged tests|image as a separate explicit profile of
+the SAME Secrets owner. tests retains all current product laws and adds synthetic
+parent fixture/transport and shared OCI regressions in cached isolated controllers.
+image selects the distinct derived parent recipe/witness; no ordinary child
+coordinate is changed. Review/source PASS precede any single-build image release.
+
 Servers #163 adds `--cpk-receiver-packaged tests|image`, using an explicitly
 selected cached controller by immutable image ID. Both phases retain coordinate,
 test-support and integrity checks, use the admitted local daemon and exit before
