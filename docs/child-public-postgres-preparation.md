@@ -66,7 +66,7 @@ Maintained tests select five pure ManagedPostgresInstallationTests laws: origina
 SQL/file-control projection, scope with/without website, verifier/receiver refusal,
 wrong file/contract rejection, and native historical behavior. No process/DB is
 started. Existing owning policy/support/integrity and cached source export cleanup
-remain. All source tests are PREPARED, UNEXECUTED at this checkpoint.
+remain. These source tests passed at reviewed cbb732f1, as recorded below.
 
 After exact independent review/release, the source-only owning action is:
 
@@ -106,3 +106,28 @@ contract, and sender input roles were not independently bound to accepted bytes.
 The successor preserves isinstance with a focused reference-subtype regression,
 and requires the ordered frozen hashes with swapped/alternate-document refusal.
 No test, metadata retry or receiver allocation preceded this correction.
+
+## Terminal source and public output receipt
+
+Meridian passed cbb732f1f289e03a309041caecaf417a280355c1 and North released one
+owning source run: exit0,28 support +16/16 selected tests (22.314s), exact source
+overlays and cleanup verified. Log /private/tmp/cpk163-child-public-postgres-cbb732f.log,
+SHA25628d333458fea7d1875d992e80ddb704221eb2dd10d489a0a1fbf0765e97e2499.
+
+The ordered reviewed public metadata actions then each exited0 once, with empty
+separate stderr. PG canonical document /private/tmp/rowan-163-child-postgres.product.json,
+SHA25603fb5bd783515cb4a63c02f2ef15c064a9ba6720957306854d468dd3e54b01ce;
+product identity postgres-installation-d4406d0107669e5a1d9361e87e606747e095a7d13718a65bf5d168b64d3ac867.
+Its fresh public receiver55884d01f3ab422e82ba2db9eb812a11 targets
+cpk163-child-20261109-postgres/management in the child's own workspace/runtime.
+It retains accepted wrapped PG8ddc, original SQL check and the same logical
+password reference in SQL authentication and the0400 password-file delivery.
+
+Sender /private/tmp/rowan-163-child-sender.json,
+SHA256be90e87a155ba4e6ffe8dffb37d17b0e5fa3f1aea564c3d53fd73d135c18dd42,
+embeds those exact PG bytes and the accepted gateway document reference284f5fe4….
+Both literal expected document hashes were frozen before sender invocation.
+Meridian independently verified source log, both outputs, exact embedded bytes,
+gateway reference and distinct receiver/scope. No repeat is needed or authorized
+by this receipt. No selected secret version, runtime SQL, DB, registration,
+deployment, service startup or ingress was observed.

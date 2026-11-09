@@ -1,5 +1,13 @@
 Source: [installation.py](../../../../../../products/cpk_server/src/control_plane_kit_servers_cpk_server/installation.py).
 
+#163 exposes installation_postgres_product(document,password_reference) as the
+pure variant owner for public child preparation. _postgres_variant delegates;
+managed/native SQL laws, file versus environment delivery and _variant identity
+are preserved. Existing isinstance SecretReference subtype admission remains.
+The independent renderer equals normal composition for the same input; source
+cbb732f1 passed its owning16-case group plus28support, independently reviewed.
+No secret resolution, receiver private key or runtime effect occurs here.
+
 Servers #378 adds optional `DockerCpkManagement` composition. The installation
 supplies a complete group of selected declared gateway/connector documents,
 public receiver configurations, transit trust and a separate management ingress.
