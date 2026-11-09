@@ -44,6 +44,10 @@ if [ "$MODE" = installer ]; then
   else public_digest=$(shasum -a 256 "$PUBLIC_INPUT")
   fi
   [ "${public_digest%% *}" = "$expected_public" ] || exit 2
+  website_origin=$(jq -er .lineage.parent_website_origin "$COHORT")
+  website_successor=$(jq -er .lineage.parent_website "$COHORT")
+  git merge-base --is-ancestor "$website_origin" "$website_successor"
+  git diff --quiet "$website_origin" "$website_successor" -- products/cpk_server/src/control_plane_kit_servers_cpk_server/installation.py
   for role in loader material parent_website; do
     selected=$(jq -er --arg role "$role" '.lineage[$role]' "$COHORT")
     git merge-base --is-ancestor "$selected" "$SOURCE"
