@@ -52,7 +52,8 @@ case "$phase" in
         test_installation_management.InstallationManagementTests.test_managed_website_requires_management_and_rejects_invalid_artifact_without_echo \
         managed_verification_startup_tests \
         managed_verification_composition_qualification.ManagedCompositionTests.test_real_native_registration_supplies_same_objects_to_service_options \
-        grandparent_oci_tests grandparent_build_tests bootstrap_driver_source_tests -v
+        grandparent_oci_tests grandparent_build_tests bootstrap_driver_source_tests \
+        test_bootstrap_schema_correlation -v
     elif [ "$phase" = parent-website ]; then
       set -- python -m unittest test_root_complete.CompleteRootPlanTests \
         test_installation_management.InstallationManagementTests.test_managed_website_joins_actual_routes_with_child_api_binding_and_cpk_only_auth \
