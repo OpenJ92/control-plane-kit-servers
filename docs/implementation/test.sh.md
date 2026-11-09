@@ -259,9 +259,10 @@ source review and whitespace checks until its released Docker tests finish.
 
 The prepared #163 `--gateway-packaged-image INPUTS.json` routes only the gateway
 image owner after non-Docker acceptance admission and the retained policy checks.
-Its immutable Secrets pin is intentionally unfilled, so this source cannot admit
-a build. The new owner and redaction tests enter normal gateway discovery. The
-[one action packet](../gateway-packaged-witness.md) owns actual future pinning,
+Its immutable Secrets pin now binds North's actual accepted digest, URL, run and
+raw receipt hash; the pin alone grants no execution release. The owner and
+redaction tests enter normal gateway discovery. The
+[one action packet](../gateway-packaged-witness.md) owns the exact tracked inputs,
 source/commands, exact cached prerequisites, permitted gateway-only acquisition,
 setup order, resource/authority ceiling, stop conditions and cleanup. Existing
 source-only/full/CPK selectors retain their paths; no image release follows from

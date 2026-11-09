@@ -210,8 +210,7 @@ Exact proposed command, only after this checkpoint's independent review/release:
 export DOCKER_CONTEXT=desktop-linux
 export CPK_SERVERS_TEST_IMAGE=sha256:1c8b3fc348936b41bb51e530c9f192c360e3b4e53e7a9f7af6f41b7ba10e83ba
 export CPK_RECEIVER_DAEMON_ID=d23d00aa-b281-448d-bc95-c8e47efeeea2
-./test.sh --gateway-packaged-source-tests
-
+./test.sh --gateway-packaged-source-tests && \
 CPK_GATEWAY_IMAGE_RUN=cpk-gateway-image-smoke-cpk163-20261109-01 \
 CPK_GATEWAY_IMAGE_TAG=localhost/control-plane-kit-servers/cpk-local-gateway:cpk163-relay-20261109-01 \
 ./test.sh --gateway-packaged-image products/cpk_local_gateway/tests/packaged_gateway_inputs.json
