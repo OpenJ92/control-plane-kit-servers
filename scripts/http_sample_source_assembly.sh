@@ -119,7 +119,7 @@ printf 'pure assembly source Core=%s Operations=%s Interpreters=%s\n' \
 source_controller() {
   if [ "$phase" = material-preparation ]; then
     docker run --pull never --mount "type=bind,source=$source_root,target=/source,readonly" --workdir /tmp \
-      --tmpfs /preparation-tests:mode=0700 -e CPK_MATERIAL_TEST_ROOT=/preparation-tests \
+      --tmpfs /preparation-tests:exec,mode=0700 -e CPK_MATERIAL_TEST_ROOT=/preparation-tests \
       -e CPK_STARTUP_SOURCE_ROOT=/source "$@"
   elif [ "$phase" = managed-startup ]; then
     docker run --pull never --mount "type=bind,source=$source_root,target=/source,readonly" --workdir /tmp \
