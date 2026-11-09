@@ -8,6 +8,8 @@ import json
 import os
 from pathlib import Path
 import stat
+import subprocess
+import sys
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
@@ -171,6 +173,52 @@ class RootMaterialPreparationTests(unittest.TestCase):
                 patch("control_plane_kit_servers_cpk_server.bootstrap_runtime.private_read",
                     side_effect=AssertionError("reuse read credential")), self.assertRaises(api.RootBootstrapHold):
             self.prepare()
+
+    def test_late_validation_failure_never_publishes_consumable_index(self):
+        with patch("control_plane_kit_servers_cpk_server.server._credential_verifier",
+                side_effect=ValueError("injected late verifier failure")), self.assertRaises(api.RootBootstrapHold):
+            self.prepare()
+        self.assertFalse((self.state / "index.json").exists())
+        self.assertFalse((self.state / "complete.json").exists())
+        with patch.object(api.secrets, "token_urlsafe") as entropy, self.assertRaises(api.RootBootstrapHold):
+            self.prepare()
+        entropy.assert_not_called()
+
+    def test_normal_shell_wrong_digest_or_path_creates_no_host_parent(self):
+        document = copy.deepcopy(self.document)
+        requested = self.root / "shell-preparation" / "material"
+        document["custody"]["host_directory"] = str(requested)
+        plan = self.plan(document)
+        plan_path = self.root / "shell-plan.json"
+        plan_path.write_bytes(canonical(plan))
+        binaries = self.root / "bin"
+        binaries.mkdir()
+        docker = binaries / "docker"
+        docker.write_text("#!" + sys.executable + "\n" + '''
+import sys
+from control_plane_kit_servers_cpk_server.root_material_preparation import main
+args = sys.argv[1:]
+if args[0] == "image":
+    print("sha256:" + "a" * 64)
+    raise SystemExit(0)
+if args[0] != "run" or "verify" not in args:
+    raise SystemExit(87)
+mounts = [args[i+1] for i,value in enumerate(args[:-1]) if value == "--mount"]
+source = next(value.split(",target=")[0].removeprefix("type=bind,source=")
+    for value in mounts if "target=/bootstrap/plan.json" in value)
+command = args[args.index("verify"):]
+command[command.index("--plan") + 1] = source
+raise SystemExit(main(command))
+''')
+        docker.chmod(0o700)
+        shell = Path(__file__).resolve().parents[1] / "bootstrap.sh"
+        for digest, state in (("f" * 64, requested), (plan["digest"], self.root / "foreign-parent" / "material")):
+            with self.subTest(kind="digest" if digest != plan["digest"] else "path"):
+                result = subprocess.run(["sh", str(shell), "material-prepare", DRIVER, str(plan_path), digest, str(state)],
+                    env={**os.environ, "PATH":str(binaries) + os.pathsep + os.environ["PATH"]},
+                    capture_output=True, timeout=30)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(state.parent.exists())
 
     def test_cli_public_plan_and_completion_never_print_generated_material(self):
         snapshot = self.document["commissioning"]
