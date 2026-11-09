@@ -10,6 +10,8 @@ read-only source mount and temporary `/tmp` and `/etc/cpk`. `image` enters only
 the focused product smoke. The normal invocation is unchanged. This checkpoint
 is unvalidated; the exact proposed invocation and authority boundary are in the
 [owning smoke companion](scripts/cpk_server_image_smoke.sh.md).
+The isolated tests-phase `/tmp` explicitly permits execution of its temporary
+fake Docker/Git scripts; no product or image-phase mount is changed.
 
 #347's integrated source candidate wraps the existing root case in a shell
 function, always runs the historical static invocation, and adds one dynamic

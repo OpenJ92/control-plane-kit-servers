@@ -135,7 +135,7 @@ docker run "$@" --rm \
 
 if [ -n "$CPK_RECEIVER_PHASE" ]; then
   if [ "$CPK_RECEIVER_PHASE" = tests ]; then
-    docker run --pull never --rm --network none --read-only --tmpfs /tmp --tmpfs /etc/cpk --workdir /source \
+    docker run --pull never --rm --network none --read-only --tmpfs /tmp:exec --tmpfs /etc/cpk --workdir /source \
       --mount "type=bind,source=$ROOT,target=/source,readonly" \
       -e PYTHONDONTWRITEBYTECODE=1 \
       -e PYTHONPATH=/source:/source/products/cpk_server/src:/source/products/cpk_server/tests \
