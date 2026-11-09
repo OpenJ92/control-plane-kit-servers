@@ -385,7 +385,8 @@ if [ "$BUILD_IMAGE" = "1" ]; then
       parent_source_context="$CPK_SECRETS_CHILD_RECORDS/parent-source-context"
       parent_source_tree=$(git -C "$CPK_SECRETS_PARENT_SOURCE_REPOSITORY" rev-parse "$PARENT_SECRETS_COMMIT:src/control_plane_kit_secrets")
       [ "$parent_source_tree" = 248bc639f5c219fa0b37bcb6e94ced483fae1fc1 ] || exit 1
-      (set +e; git -C "$CPK_SECRETS_PARENT_SOURCE_REPOSITORY" archive --format=tar "$PARENT_SECRETS_COMMIT";
+      (set +e; git -C "$CPK_SECRETS_PARENT_SOURCE_REPOSITORY" archive --format=tar "$PARENT_SECRETS_COMMIT" \
+          src/control_plane_kit_secrets pyproject.toml README.md;
         parent_source_status=$?; printf '%s\n' "$parent_source_status" > "$CPK_SECRETS_CHILD_RECORDS/parent-source-export.status") \
         | head -c 67108865 > "$CPK_SECRETS_CHILD_RECORDS/parent-source.tar"
       [ "$(cat "$CPK_SECRETS_CHILD_RECORDS/parent-source-export.status")" = 0 ] || exit 1
@@ -393,12 +394,15 @@ if [ "$BUILD_IMAGE" = "1" ]; then
       [ "$parent_source_bytes" -le 67108864 ] || exit 1
       mkdir -m 700 "$parent_source_context"
       tar -xf "$CPK_SECRETS_CHILD_RECORDS/parent-source.tar" -C "$parent_source_context"
-      git -C "$CPK_SECRETS_PARENT_SOURCE_REPOSITORY" ls-tree -r "$PARENT_SECRETS_COMMIT" src/control_plane_kit_secrets \
-        > "$parent_source_context/.cpk-secrets.git-tree"
+      git -C "$CPK_SECRETS_PARENT_SOURCE_REPOSITORY" ls-tree -r "$PARENT_SECRETS_COMMIT" \
+        src/control_plane_kit_secrets pyproject.toml README.md > "$parent_source_context/.cpk-source.git-tree"
       jq -n --arg commit "$PARENT_SECRETS_COMMIT" --arg tree "$parent_source_tree" \
         '{commit:$commit,tree:$tree,prefix:"src/control_plane_kit_secrets/"}' > "$parent_source_context/.cpk-source-objects.json"
       cp "$parent_source_context/.cpk-source-objects.json" "$CPK_SECRETS_CHILD_RECORDS/parent-source-objects.json"
-      cp "$parent_source_context/.cpk-secrets.git-tree" "$CPK_SECRETS_CHILD_RECORDS/parent-secrets.git-tree"
+      cp "$parent_source_context/.cpk-source.git-tree" "$CPK_SECRETS_CHILD_RECORDS/parent-source.git-tree"
+      git -C "$CPK_SECRETS_PARENT_SOURCE_REPOSITORY" ls-tree -r --name-only "$PARENT_SECRETS_COMMIT" \
+        src/control_plane_kit_secrets pyproject.toml README.md > "$CPK_SECRETS_CHILD_RECORDS/parent-build-context-files.txt"
+      printf '%s\n' .cpk-source.git-tree .cpk-source-objects.json >> "$CPK_SECRETS_CHILD_RECORDS/parent-build-context-files.txt"
       CHILD_PHASE=parent-local-base
       (set +e; docker image save "$PARENT_BASE_REFERENCE"; parent_export_status=$?;
         printf '%s\n' "$parent_export_status" > "$CPK_SECRETS_CHILD_RECORDS/export.status") \

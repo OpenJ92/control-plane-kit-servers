@@ -12,8 +12,10 @@ unchanged. Source/action packet is [here](../../parent-secrets-image.md), still
 UNEXECUTED; no qualified parent digest or active grants are claimed.
 
 Parent source selection now requires an explicit local repository holding57,
-archives that immutable commit with a64MiB bound and preserves commit/tree/blob
-identities. The build receives this as a separate named local context, with no
+archives only its17 package files plus pyproject.toml/README.md with a64MiB
+bound and preserves commit/tree/blob identities. Two generated provenance files
+complete the21-file named context; the operator receives its exact inventory.
+The build receives this as a separate named local context, with no
 Secret-package URL fetch. Public source scratch joins only the NEW attempt's
 checked cleanup; previous receipts/scratch are never adopted or removed.
 

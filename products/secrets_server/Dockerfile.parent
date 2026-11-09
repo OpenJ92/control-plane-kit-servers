@@ -3,13 +3,16 @@ FROM cpk-secrets-parent-base
 # The verified accepted child product remains the base; only the provider
 # distribution changes. Existing Core/SDK, wrapper and normal entry stay intact.
 USER 0
-COPY --from=cpk-secrets-parent-source / /opt/cpk-secrets-parent-build/source
 COPY products/secrets_server/tests/image_check.py /usr/share/cpk-secrets-parent/check.py
-RUN python /usr/share/cpk-secrets-parent/check.py seal-parent \
+RUN --mount=type=bind,from=cpk-secrets-parent-source,target=/parent-source-input,readonly \
+    --mount=type=tmpfs,target=/opt/cpk-secrets-parent-build \
+    --mount=type=tmpfs,target=/tmp \
+    mkdir -p /opt/cpk-secrets-parent-build/source \
+    && cp -a /parent-source-input/. /opt/cpk-secrets-parent-build/source/ \
+    && python /usr/share/cpk-secrets-parent/check.py seal-parent \
     && python -m pip install --no-cache-dir --index-url https://pypi.org/simple \
       "setuptools==80.9.0" "wheel==0.45.1" \
     && python -m pip install --no-cache-dir --no-index --no-deps --no-build-isolation --force-reinstall \
       /opt/cpk-secrets-parent-build/source \
-    && python -m pip check \
-    && rm -rf /opt/cpk-secrets-parent-build
+    && python -m pip check
 USER 10006

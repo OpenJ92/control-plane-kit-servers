@@ -18,11 +18,13 @@ class ParentSourceProvenanceTests(unittest.TestCase):
         module = source / image_check.PARENT_PREFIX
         module.mkdir(parents=True)
         lines = []
-        for name, raw in (("__init__.py", b"# public unit source\n"), ("py.typed", b"")):
-            (module / name).write_bytes(raw)
+        for path, raw in ((image_check.PARENT_PREFIX + "__init__.py", b"# public unit source\n"),
+                (image_check.PARENT_PREFIX + "py.typed", b""),
+                ("pyproject.toml", b"# synthetic build metadata\n"), ("README.md", b"Synthetic readme\n")):
+            (source / path).write_bytes(raw)
             digest = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
-            lines.append("100644 blob " + digest + "\t" + image_check.PARENT_PREFIX + name)
-        (source / ".cpk-secrets.git-tree").write_text("\n".join(lines) + "\n")
+            lines.append("100644 blob " + digest + "\t" + path)
+        (source / ".cpk-source.git-tree").write_text("\n".join(lines) + "\n")
         # Explicit fake tuple: these unit bytes do not impersonate source57.
         (source / ".cpk-source-objects.json").write_text(json.dumps({
             "commit":"e" * 40, "tree":"f" * 40, "prefix":image_check.PARENT_PREFIX}))
@@ -37,13 +39,14 @@ class ParentSourceProvenanceTests(unittest.TestCase):
             result = image_check.seal_parent(source, public)
             self.assertEqual(result["git_commit"], "e" * 40)
             self.assertEqual(result["source_files_sealed"], 2)
+            self.assertEqual(len(result["build_context_files"]), 6)
             self.assertEqual(json.loads((public / "source-files.json").read_text()), image_check.source_files(module))
             self.assertEqual((public / "source-files.json").stat().st_mode & 0o777, 0o444)
             with self.assertRaises(FileExistsError):
                 image_check.seal_parent(source, public)
 
     def test_changed_blob_wrong_tuple_extra_source_and_symlink_refuse(self):
-        for fault in ("blob", "tuple", "extra", "symlink"):
+        for fault in ("blob", "tuple", "extra", "symlink", "build-file", "repository-extra"):
             with self.subTest(fault=fault), TemporaryDirectory() as directory, self.selected_fixture():
                 source, public, module = self.fixture(Path(directory))
                 if fault == "blob":
@@ -52,6 +55,11 @@ class ParentSourceProvenanceTests(unittest.TestCase):
                     (source / ".cpk-source-objects.json").write_text("{}")
                 elif fault == "extra":
                     (module / "extra.py").write_text("# extra")
+                elif fault == "build-file":
+                    (source / "pyproject.toml").write_text("# changed metadata")
+                elif fault == "repository-extra":
+                    (source / ".github").mkdir()
+                    (source / ".github" / "unexpected.yml").write_text("# unrelated")
                 else:
                     (module / "extra.py").symlink_to("__init__.py")
                 with self.assertRaises(ValueError):

@@ -29,12 +29,16 @@ Dockerfile.parent adds only the Secrets57 distribution over that child product,
 using no dependency resolver for Core/SDK. Pinned setuptools80.9.0/wheel0.45.1
 and normal public build-tool dependencies are acquired from PyPI. Exact57 is
 exported from an explicitly selected local Git repository, never its mutable
-worktree or a remote package URL. Commit/tree and Git blob identities are sealed
+worktree or a remote package URL. The named source context contains ONLY the17
+package files, pyproject.toml, README.md and two generated provenance files.
+Commit/tree and all19 tracked Git blob identities are sealed
 before local no-index/no-deps/no-build-isolation installation. Installed
 Core976/SDKd61 origins, the truthful local file:// Secrets origin,
 actual imported policy source SHA532d51ee8f3bece38a379651c16d503a86201380f7e4cb04f1b4ed6a8de86285,
 all installed Secrets source files and distribution RECORDs, pip check and
 packaged wrapper import are verified INSIDE the candidate. The
+source export and build temporary files use transient bind/tmpfs build mounts;
+only the installed package and public provenance persist. The
 candidate must retain the verified base RootFS prefix and the normal process
 contract. The wrapper/source/entrypoint remain equal to reviewed85b193b.
 

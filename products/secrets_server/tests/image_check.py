@@ -15,13 +15,13 @@ PARENT_BUILD = Path("/opt/cpk-secrets-parent-build/source")
 PARENT_PUBLIC = Path("/usr/share/cpk-secrets-parent")
 
 
-def source_files(root):
+def source_files(root, *, include_generated=False):
     """Public source content only; same blob-to-file pattern as installer b46d471."""
     result = {}
     for path in sorted(root.rglob("*")):
         if path.is_symlink():
             raise ValueError("source symlink refused")
-        if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc":
+        if path.is_file() and (include_generated or ("__pycache__" not in path.parts and path.suffix != ".pyc")):
             result[str(path.relative_to(root))] = hashlib.sha256(path.read_bytes()).hexdigest()
     return result
 
@@ -32,29 +32,37 @@ def seal_parent(source=PARENT_BUILD, public=PARENT_PUBLIC):
         raise ValueError("parent source objects differ")
     root = source / PARENT_PREFIX
     observed_files = source_files(root)
+    context_files = source_files(source, include_generated=True)
     blobs = {}
-    for line in (source / ".cpk-secrets.git-tree").read_text().splitlines():
+    context_blobs = {}
+    for line in (source / ".cpk-source.git-tree").read_text().splitlines():
         header, path = line.split("\t")
         mode, kind, blob = header.split()
-        if mode not in ("100644", "100755") or kind != "blob" or not path.startswith(PARENT_PREFIX):
+        if (mode not in ("100644", "100755") or kind != "blob" or
+                not (path.startswith(PARENT_PREFIX) or path in ("pyproject.toml", "README.md"))):
             raise ValueError("parent source tree differs")
-        relative = path.removeprefix(PARENT_PREFIX)
-        if ".." in Path(relative).parts or not relative or relative in blobs:
+        if ".." in Path(path).parts or path in context_blobs:
             raise ValueError("parent source tree differs")
-        content = (root / relative).read_bytes()
+        content = (source / path).read_bytes()
         if hashlib.sha1(b"blob " + str(len(content)).encode() + b"\0" + content).hexdigest() != blob:
             raise ValueError("parent source blob differs")
-        blobs[relative] = hashlib.sha256(content).hexdigest()
-    if not blobs or observed_files != blobs:
+        context_blobs[path] = hashlib.sha256(content).hexdigest()
+        if path.startswith(PARENT_PREFIX):
+            blobs[path.removeprefix(PARENT_PREFIX)] = context_blobs[path]
+    if (not blobs or observed_files != blobs or not {"pyproject.toml", "README.md"} <= context_blobs.keys()
+            or set(context_files) != set(context_blobs) | {".cpk-source.git-tree", ".cpk-source-objects.json"}):
         raise ValueError("parent exported source differs")
     public.mkdir(mode=0o755, parents=True, exist_ok=True)
     with (public / "source-files.json").open("x") as stream:
         json.dump(blobs, stream, sort_keys=True)
     with (public / "source-objects.json").open("x") as stream:
         json.dump(objects, stream, sort_keys=True)
+    with (public / "build-context.json").open("x") as stream:
+        json.dump(context_files, stream, sort_keys=True)
     (public / "source-files.json").chmod(0o444)
     (public / "source-objects.json").chmod(0o444)
-    return {"git_commit":PARENT_SECRETS, "source_files_sealed":len(blobs)}
+    (public / "build-context.json").chmod(0o444)
+    return {"git_commit":PARENT_SECRETS, "source_files_sealed":len(blobs), "build_context_files":sorted(context_files)}
 
 
 def parent_source_provenance(public=PARENT_PUBLIC):
@@ -81,8 +89,9 @@ def parent_source_provenance(public=PARENT_PUBLIC):
         records += 1
     if not records:
         raise ValueError("parent distribution records absent")
+    context_files = json.loads((public / "build-context.json").read_text())
     return {"origin":"local-git-export", **objects, "source_files_verified":len(expected),
-        "record_files_verified":records, "import_path":str(module.__file__)}
+        "record_files_verified":records, "import_path":str(module.__file__), "build_context_files":context_files}
 
 
 def provenance(coordinates, *, parent=False):
