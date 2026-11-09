@@ -192,4 +192,7 @@ if [ "$phase" = bootstrap-driver ]; then
   source_controller --rm --network none --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
     -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONPATH="${source_paths}/app" \
     "$image" python -m unittest discover -s /source/products/cpk_local_gateway/tests -v
+  source_controller --rm --network none --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
+    -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONPATH="${source_paths}/app" \
+    "$image" python -m unittest discover -s /source/products/cpk_server/tests -p test_process_composition.py -v
 fi
