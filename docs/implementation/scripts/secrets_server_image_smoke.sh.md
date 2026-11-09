@@ -72,3 +72,126 @@ Published profiles and retained-custody assertions remain unchanged.
 Review correction: after readiness the parent polls helper completion for at
 most20seconds, requires authoritative exited/status0, and fails into the normal
 owned cleanup on timeout/inspection failure; no unbounded docker wait remains.
+
+## Servers #163 focused child Secrets action
+
+Source preparation only. Read the frozen checkpoint's exact command and obtain
+Meridian/North review/release before any Docker command, including its tests.
+The product source, Dockerfile and entrypoint remain byte-identical to reviewed
+85b193bbdc777376c5104029a5ee04e74627cf71. The existing recipe selects Secrets
+158b17ed10689360c4e1529a395b3ee2b47aecbc, whose pyproject selects Core
+976901c609d950a557ec1e9966f018e8ff6e16aa and SDK
+d61b374cb2a23d773c31748f47f88169499298b7. No dependency change is proposed.
+
+The source trace at that Secrets revision is: product entrypoint execs the
+unchanged uvicorn factory; product server:create_app reads the independent
+public control/optional HTTP companion before application.app_from_environment;
+the service composes API authentication and admit_provider_custody over its own
+native SQLite path, master key, provider ID and seed credentials. The custody
+owner verifies/initializes its binding and encrypted store. Authenticated client
+write/resolve/generate/replay/revoke use that real HTTP service. Replacing the
+process against the SAME bootstrap/master/data volumes re-enters custody
+admission; explicit version resolution and a private value comparison prove
+continuity. No host database, fake store or Operations history is introduced.
+
+The smallest missing packaged connection was the maintained smoke's ready-only
+sample and absent focused selector/provenance receipt. Existing restart checks
+resolved latest and tested revocation only before restart. This action uses the
+same owner flow, adds exact written-version resolution before/after replacement
+and explicitly checks the revoked version after replacement. The evidence is
+kept separate from signed receiver checks and cleanup.
+
+After exact-head review/release, run from that clean committed checkout:
+
+```sh
+export DOCKER_CONTEXT=desktop-linux
+export CPK_SERVERS_TEST_IMAGE=sha256:1c8b3fc348936b41bb51e530c9f192c360e3b4e53e7a9f7af6f41b7ba10e83ba
+export CPK_RECEIVER_DAEMON_ID=d23d00aa-b281-448d-bc95-c8e47efeeea2
+./test.sh --secrets-packaged tests
+
+CPK_SECRETS_IMAGE=localhost/control-plane-kit-servers/secrets-server:cpk163-receiver-20261109-01 \
+CPK_SECRETS_CHILD_RUN=cpk-secrets-image-smoke-cpk163-20261109-01 \
+CPK_SECRETS_CHILD_RECORDS=/private/tmp/cpk-secrets-image-smoke-cpk163-20261109-01 \
+./test.sh --secrets-packaged image
+```
+
+Tests must pass before image mode. They retain policy/support/integrity checks
+and discover the maintained Secrets unit tests, including the new refusal,
+reservation-ownership and exclusive-bootstrap cases. Focused source tests are
+not packaged acceptance. Controller/daemon absence or mismatch stops; do not
+build another controller or repair/acquire prerequisites implicitly.
+
+Image mode performs ONE local linux/amd64 build from a clean tracked Git archive,
+with the exact local-context builder. Permitted acquisitions are only the
+unchanged public recipe's python:3.12-slim base, public pinned Secrets/Core/SDK
+archives and normal PyPI dependencies (including cryptography50 and uvicorn).
+No registry credentials, protected files or user credential environment values
+are passed to the build. It records actual build metadata and local RepoDigest,
+requires the exact reference to resolve to the built execution ID, checks
+installed direct-URL origins/import/pip consistency inside that image, and
+retains the image. No registry push, catalogue update or CPK rebuild occurs.
+
+The canonical fresh `/tmp/<run>` directory reserves the run after successful
+source/daemon/controller/tag/name/label inventories. A fresh32-byte nonsecret
+owner identity is read from OS randomness and attached to each allocation.
+Existing volumes must not be adopted just because they have the public run
+label. Every volume is verified for exact name, run+reservation owner, local
+scope/driver and no driver options immediately after create and again before
+seed mounting. Wrong ownership or failed readback stops without bootstrap or
+foreign removal. The seed opens all three directories without following links,
+requires empty contents, creates each fixed credential/master path exclusively
+with no-follow, verifies only its expected files exist and sets exact private
+modes/owners. It never rewrites an existing credential or custody file.
+
+Fixtures: one internal network; three owned native local volumes (provider
+bootstrap, client bootstrap, encrypted data); one exclusive bootstrap process;
+one provider on each of two sequential startups using the same image/storage;
+one initial and one restart in-memory sample helper; and short-lived named,
+tracked controllers for provenance, public-control generation, readiness,
+protected reads, custody clients and redaction checks. No Docker socket or host
+port is mounted/published. Networked reads use secrets-provider:8081; generation,
+bootstrap, provenance and log checks have no network. All run/cid/owner checks
+and exact cleanup remain within this run; images are retained.
+
+Rowan's public tuple is root-workspace / root-a-docker / root-a-secrets / control
+on8081. Each public artifact is0444 at the product-owned control/sample slot.
+The service-owned generic V2 declaration stays liveness-only; named HTTP live
+AND ready use their original paths, policies and check digests. On each startup,
+after actual readiness and image/default-entrypoint/PID1 UID10006 checks, one
+still-running synthetic sample signer proves BOTH original checks with distinct
+requests and ordinal1. Each also requires absent401 and same-key validly signed
+foreign-issuer401. The sampler must exit0 within45polls. Results are copied to
+separate initial/restart public receipts BEFORE later custody operations, so a
+custody failure cannot suppress completed signed observations. A failed phase
+stops the action; not-reached stages remain not reached. Overall acceptance
+requires every stage, both full pairs, redaction and cleanup to pass.
+
+Provider authentication/private custody remain the original synthetic scoped
+workspace-image-smoke seed and provider ID control-plane-kit, distinct from the
+public child receiver tuple. Fresh phase receiver trust does not reinitialize
+the private custody volumes. Initial write records only public version IDs and
+numbers, resolves that exact version and compares material privately. After
+FORCED container removal and replacement, the same version is resolved/compared,
+and the separately recorded revoked delegation version must return REVOKED.
+Only bounded public metadata/booleans are retained. No graceful-stop claim, real
+application password, installed-child authority or approved run is earned.
+
+Cleanup removes only recorded attempted container roles with matching cid/name,
+run AND reservation owner, exact verified unreferenced volumes and the verified
+network. Unexpected objects sharing a public run label are left untouched and
+make cleanup fail. Every inventory/absence query must succeed. Known private
+header deletion is attempted for both phases independently before other file
+cleanup. Unknown residue/failed reads/deletion remain unverified; no repeated
+removal, broad prune, silent retry, credential repair or rebaseline. The final
+receipt separates installed provenance, initial custody, retained exact-version
+retrieval/revocation, each signed phase, logs, cleanup and candidate retention.
+CLI polling assumes responsive Docker; apparatus failure is a stop.
+
+Gateway relay remains Rowan's owner and a later distinct effect boundary. This
+action exports no private signer, gateway transit token or workload credential.
+The custody test's legacy gateway-probe key is synthetic provider evidence,
+not the gateway HTTP transit or workload-sample signer. Return the actual Secrets
+RepoDigest and public receiving/check coordinates for Rowan/North routing; a
+later gateway test creates its own fresh live fixture receiver/trust. No provider
+transit, parent installation, deployed SQL wait or approved durable run/history
+is claimed here.

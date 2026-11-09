@@ -20,7 +20,16 @@ GATEWAY_TARGET_OPERATIONS_REVISION=''
 GATEWAY_TARGET_EXPECTATION=''
 MANAGED_COMPOSITION_INTERPRETERS_REVISION=''
 CPK_RECEIVER_PHASE=''
+SECRETS_PACKAGED_PHASE=''
 case "${1:-}" in
+  --secrets-packaged)
+    [ "$#" -eq 2 ] || exit 2
+    case "$2" in tests|image) SECRETS_PACKAGED_PHASE=$2 ;; *) exit 2 ;; esac
+    case "$IMAGE" in sha256:*) ;; *) exit 2 ;; esac
+    [ "${#IMAGE}" -eq 71 ] || exit 2
+    case "${IMAGE#sha256:}" in *[!0-9a-f]*) exit 2 ;; esac
+    POLICY_IMAGE=$IMAGE
+    ;;
   --cpk-receiver-packaged)
     [ "$#" -eq 2 ] || { echo 'CPK receiver gate requires tests, image or diagnostic' >&2; exit 2; }
     case "$2" in tests|image|diagnostic) CPK_RECEIVER_PHASE=$2 ;; *) exit 2 ;; esac
@@ -96,7 +105,7 @@ esac
 . ./scripts/root_artifact_shell.sh
 root_artifact_selection
 
-if [ -n "$CPK_RECEIVER_PHASE" ]; then
+if [ -n "$CPK_RECEIVER_PHASE$SECRETS_PACKAGED_PHASE" ]; then
   : "${CPK_RECEIVER_DAEMON_ID:?select the expected local daemon}"
   . ./scripts/docker_witness_daemon.sh
   docker_witness_daemon
@@ -104,7 +113,7 @@ if [ -n "$CPK_RECEIVER_PHASE" ]; then
   [ "$(docker image inspect "$IMAGE" --format '{{.Id}}')" = "$IMAGE" ] || exit 1
 fi
 set --
-if [ -n "$CPK_RECEIVER_PHASE" ]; then set -- --pull never --network none; fi
+if [ -n "$CPK_RECEIVER_PHASE$SECRETS_PACKAGED_PHASE" ]; then set -- --pull never --network none; fi
 
 docker run "$@" --rm \
   -v "$ROOT:/source:ro" \
@@ -132,6 +141,20 @@ docker run "$@" --rm \
     --test-root tests \
     --test-root products \
     --gate-file test.sh
+
+if [ -n "$SECRETS_PACKAGED_PHASE" ]; then
+  if [ "$SECRETS_PACKAGED_PHASE" = tests ]; then
+    docker run --pull never --rm --network none --read-only --tmpfs /tmp:exec --tmpfs /etc/cpk --workdir /source \
+      --mount "type=bind,source=$ROOT,target=/source,readonly" \
+      -e PYTHONDONTWRITEBYTECODE=1 \
+      -e PYTHONPATH=/source:/source/products/secrets_server/src:/source/products/secrets_server/tests \
+      "$IMAGE" python -m unittest discover -s products/secrets_server/tests -v
+  else
+    CPK_SERVERS_TEST_IMAGE="$IMAGE" CPK_SECRETS_SMOKE_PROFILE=wrapped-child \
+      CPK_SECRETS_BUILD_CONTROLLER=0 CPK_SECRETS_BUILD_IMAGE=1 sh scripts/secrets_server_image_smoke.sh
+  fi
+  exit 0
+fi
 
 if [ -n "$CPK_RECEIVER_PHASE" ]; then
   if [ "$CPK_RECEIVER_PHASE" = tests ]; then

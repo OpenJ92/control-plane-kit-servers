@@ -42,3 +42,10 @@ implementation/dependency adoption. All original method identities remain. No
 source-live run, restart acceptance or new canonical green is credited before
 the unchanged whole owning gate. Existing accepted Secrets Z owns its service
 implementation; Servers merely packages/adapts that public configuration.
+
+For #163 `generate-child`, keep the service-owned V2 declaration and control
+socket while setting root-workspace / root-a-docker / root-a-secrets. The run's
+fresh synthetic receiver stays the same across forced provider replacement;
+phase-specific public control keys/headers remain fresh. This changes public
+fixture coordinates only, not retained private custody. Default generation is
+unchanged. Named HTTP ready remains separate from generic V2 liveness.

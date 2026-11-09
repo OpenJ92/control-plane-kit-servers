@@ -35,3 +35,8 @@ implementation/dependency adoption. All original method identities remain. No
 source-live run, restart acceptance or new canonical green is credited before
 the unchanged whole owning gate. Existing accepted Secrets Z owns its service
 implementation; Servers merely packages/adapts that public configuration.
+
+The child regression checks the exact child tuple, stable receiver/declaration
+and fresh phase trust across replacement. The shared full-pair author must bind
+the unchanged original live/ready contract and distinct requests; actual signed
+listener and private custody continuity are owned by the image smoke.

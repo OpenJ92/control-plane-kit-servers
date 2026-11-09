@@ -208,3 +208,12 @@ The #163 retained `diagnostic` phase enters build-disabled, literal-digest-only
 admission in the same owning smoke. Its tests add bounded network-probe evidence
 and refusal of other digest inputs/colliding runs. See the smoke's retained-image
 action packet; no Docker execution is implied by source publication or review.
+
+Servers #163 adds `--secrets-packaged tests|image`, borrowing the same exact cached
+controller and daemon admission as the CPK focus. Policy/support/integrity checks
+remain. Tests discover only the maintained Secrets product tests inside the
+read-only, network-disabled controller with temporary `/tmp:exec` and `/etc/cpk`.
+Image mode exits through the existing Secrets smoke's `wrapped-child` profile,
+with controller rebuilding disabled. Default/full and existing CPK selectors
+retain their paths. The exact action is in the Secrets smoke companion; this
+source preparation itself does not release Docker effects.

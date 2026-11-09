@@ -12,6 +12,31 @@ import source_control_fixture as fixture
 
 
 class SourceControlFixtureTests(unittest.TestCase):
+    def test_child_target_preserves_v2_liveness_and_full_named_pair_across_restart(self):
+        from scripts.http_sample_fixture import SampleAuthority
+        from control_plane_kit_servers_secrets_server.configuration import secrets_source_runtime_contract, secrets_http_sample_binding
+        controls = []
+        with TemporaryDirectory() as directory:
+            for phase in ("initial", "restart"):
+                root = Path(directory) / phase
+                root.mkdir()
+                fixture.generate(root, "fresh-child-fixture", child=True)
+                control = decode_secrets_control_configuration((root / "control.json").read_bytes())
+                self.assertEqual((control.target.workspace_id.value, control.target.runtime_id.value,
+                    control.target.node_id.value, control.target.provider_socket_name.value),
+                    ("root-workspace", "root-a-docker", "root-a-secrets", "control"))
+                ordinary = secrets_source_runtime_contract(secrets_control_configuration_artifact(control))
+                sample = SampleAuthority(control, ordinary, all_checks=True)
+                self.assertEqual(tuple(entry.check for entry in secrets_http_sample_binding(
+                    control, sample.configuration).checks), ordinary.verification.checks)
+                requests = tuple(sample.request(check) for check in ordinary.verification.checks)
+                self.assertEqual(tuple(request.check_id for request in requests), ("live", "ready"))
+                self.assertNotEqual(requests[0].request_id, requests[1].request_id)
+                controls.append(control)
+        self.assertEqual(controls[0].target, controls[1].target)
+        self.assertEqual(controls[0].declaration, controls[1].declaration)
+        self.assertNotEqual(controls[0].verifiers, controls[1].verifiers)
+
     def test_phase_files_preserve_identity_with_fresh_public_keys(self):
         with TemporaryDirectory() as directory:
             configurations = []

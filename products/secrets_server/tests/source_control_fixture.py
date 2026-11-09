@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 import os
 from pathlib import Path
 import stat
@@ -24,11 +25,19 @@ def read_file(path: Path, limit: int) -> bytes:
     return raw
 
 
-def generate(directory: Path, run_id: str) -> None:
+def generate(directory: Path, run_id: str, *, child=False) -> None:
     from secrets_control_fixtures import SourceControlAuthority
     from control_plane_kit_servers_secrets_server.configuration import secrets_control_configuration_artifact
 
     authority = SourceControlAuthority(run_id)
+    if child:
+        import control_plane_kit_core as core
+        roles = core.NodeControlGraphReferenceRole
+        authority.target = replace(authority.target,
+            workspace_id=core.NodeControlGraphReference(roles.WORKSPACE, "root-workspace"),
+            runtime_id=core.NodeControlGraphReference(roles.RUNTIME, "root-a-docker"),
+            node_id=core.NodeControlGraphReference(roles.NODE, "root-a-secrets"))
+        authority.runtime = authority.target.runtime_id
     artifact = secrets_control_configuration_artifact(authority.configuration())
     issued_at = int(time.time()) - 1
     files = [("control.json", artifact.content.encode("utf-8"), 0o444)]
@@ -123,8 +132,8 @@ def verify_logs(directory: Path, client: Path, phase: Path | None = None) -> Non
 def main(argv: list[str] | None = None) -> int:
     arguments = sys.argv[1:] if argv is None else argv
     try:
-        if len(arguments) == 3 and arguments[0] == "generate":
-            generate(Path(arguments[1]), arguments[2])
+        if len(arguments) == 3 and arguments[0] in ("generate", "generate-child"):
+            generate(Path(arguments[1]), arguments[2], child=arguments[0] == "generate-child")
         elif len(arguments) == 2 and arguments[0] == "check":
             check(Path(arguments[1]))
         elif len(arguments) in (3, 4) and arguments[0] == "logs":
