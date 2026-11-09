@@ -212,7 +212,9 @@ action packet; no Docker execution is implied by source publication or review.
 Servers #163 gateway source-only test action composes Rowan's reviewed gateway
 fixture tip8107ff7ddb6679a10be0d91ec86cc56766d36f10 (including943732c), plus her
 67b5404f6b2ff6c2b56c3b319b19a5572c57ba16 import-lifetime correction, with one
-owning selector. Its four test/companion files match her corrected source. This
+owning selector. The later main-test patch2bb625c and active-reader assertion
+6d46066b9f5744b028ad1387eb58694f7ec7c4c8 are also included unchanged. All six
+gateway test/companion files match her corrected source. This
 checkout is isolated from the frozen Secrets1182fcc image action.
 
 Exact command, only after independent review and explicit test release, from
@@ -239,6 +241,11 @@ The earlier adf9b14 action is superseded: normal product tests unload gateway
 modules, so exact-type gateway imports now resolve when the fixture/case runs
 rather than during collection. The selector and all reviewed assertions remain;
 the correction is Rowan's test-only delta, not a product/dependency change.
+The8a9838d source run then exposed one existing real-main test holding a stale
+reader patch after teardown. The current module is now resolved for fixture and
+patching, with an explicit called-once assertion; real main and both route
+assertions remain. The original failed log is retained. Rerun only the full
+same gateway discovery after review of the new combined source and its release.
 
 Scope is source composition: the real gateway ASGI paths receive explicit
 external child HTTP doubles; their observed wire booleans/counts cannot establish
