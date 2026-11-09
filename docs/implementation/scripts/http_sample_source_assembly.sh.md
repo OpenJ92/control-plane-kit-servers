@@ -9,3 +9,7 @@ managed-startup selection. They exercise synthetic bounded tar data only, not a
 Docker base fetch or build. The owning fake-CLI build-termination regression also
 checks that a nonzero buildx child retains unconfirmed scratch without retry.
 Source-gate receipts remain revision-specific.
+
+Only managed-startup uses `/tmp:exec` so finite fake CLIs can execute; other phases
+retain their previous tmpfs mode. The fake-build test supplies its own disk-space
+observation rather than depending on the source container's tmpfs capacity.

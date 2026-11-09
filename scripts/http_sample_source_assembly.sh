@@ -9,7 +9,9 @@ interpreters_repository=$4
 phase=${5:-all}
 source_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 source_paths=''
+source_tmpfs=/tmp
 if [ "$phase" = managed-startup ]; then
+  source_tmpfs=/tmp:exec
   source_paths=/source:/source/src:/source/scripts:/source/products/cpk_server/src:/source/products/cpk_server/tests:/source/products/secrets_server/src:/source/products/secrets_server/tests:/source/products/cpk_local_gateway/src:/source/products/cloudflared_connector/src:/source/products/postgres_server/src:/source/products/website_server/src:
 fi
 secrets_repository=${6:-}
@@ -121,7 +123,7 @@ source_controller() {
   else docker run "$@"
   fi
 }
-source_controller --rm --network "$network" --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
+source_controller --rm --network "$network" --read-only --tmpfs "$source_tmpfs" --cap-drop ALL --security-opt no-new-privileges \
   --mount "type=bind,source=$owned_source,target=/reviewed-http-sample,readonly" \
   -e PYTHONDONTWRITEBYTECODE=1 \
   -e CPK_SOURCE_ASSEMBLY_POSTGRES_IMAGE \

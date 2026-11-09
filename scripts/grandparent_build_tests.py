@@ -44,6 +44,7 @@ elif a[0]=="archive":
 elif a[0] in ("status","ls-tree"): pass
 else: sys.exit(98)
 '''
+DF = 'print("Filesystem 1024-blocks Used Available Capacity Mounted-on\\nfixture 2097152 0 2097152 0% /tmp")\n'
 
 
 class BuildTerminationTests(unittest.TestCase):
@@ -59,7 +60,7 @@ class BuildTerminationTests(unittest.TestCase):
                 for filename in ("grandparent_image_build.sh", "gateway_packaged_owner.sh", "docker_witness_daemon.sh"):
                     shutil.copy2(ROOT / "scripts" / filename, work / "scripts" / filename)
                 shutil.copy2(ROOT / "products/cpk_server/grandparent-cohort.json", work / "products/cpk_server")
-                for binary, source in (("docker", DOCKER), ("git", GIT)):
+                for binary, source in (("docker", DOCKER), ("git", GIT), ("df", DF)):
                     path = root / binary
                     path.write_text("#!" + sys.executable + "\n" + source.lstrip())
                     path.chmod(0o700)

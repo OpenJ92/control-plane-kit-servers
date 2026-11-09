@@ -104,6 +104,9 @@ failed/disconnected/interrupted buildx child without a signal to this wrapper.
 Pre-build failures with no submitted solve can clean owned scratch normally.
 An owning fake-CLI regression exercises the actual wrapper's nonzero child path
 and verifies retained scratch, failed receipt and no retry. Any ambiguity fails.
+Only the managed-startup source test container uses `/tmp:exec` for its finite
+fake CLI tools. The fake disk observation isolates that regression from real
+tmpfs capacity; the actual artifact still enforces its real1GiB space gate.
 
 The artifact result explicitly says `listening_startup_verified:false`. It proves
 packaging/provenance, not a listening sender. Actual default-process listening,
