@@ -48,7 +48,7 @@ DOCKER_CONTEXT=desktop-linux \
 CPK_SERVERS_TEST_IMAGE=sha256:1c8b3fc348936b41bb51e530c9f192c360e3b4e53e7a9f7af6f41b7ba10e83ba \
 ./test.sh --parent-managed-website-source-tests \
   /Users/jacobvartuli/.codex/worktrees/23a6/control-plane-kit \
-  /private/tmp/cpk1815-http-sender /private/tmp/cpk148-native-http-sample \
+  /private/tmp/cpk1815-http-sender /private/tmp/cpk2089-native-postgres-readiness \
   f56bb5c4cfde76764d39c5377d4270c5b23c3ba1 \
   70154b6698e101159326b08646f2dba90dda87cd \
   e438f6e522ad0a23a7acef460be08690f48b2e17
@@ -78,3 +78,23 @@ Vale retains offline material preparation and its CLI; Rowan's bootstrap.py
 ownership is restricted to this optional website stanza and receiving-identity
 check. Linnaeus owns packaging/gate integration. Governing parent work is #384
 with the child/source boundary coordinated under #163.
+
+## First source run and narrow fixture correction
+
+Meridian reviewed source/action28be8cd4; North released one cached run with the
+Interpreters checkout corrected above to supply the SAME required e438f6e SHA.
+That run exited1:28 support checks passed;15 of16 selected cases passed, including
+both new parent cases. The maintained named-ingress negative failed earlier at
+the connector's provider-port validation. Removing a management group while
+retaining its managed connector was not a valid standalone named baseline.
+This was a fixture error, not evidence that the website rule had been reached.
+
+The corrected fixture uses the existing ordinary connector document for BOTH
+named ingress inputs and proves baseline graph composition before adding the
+website control artifact. The expected website-specific refusal and invalid
+artifact/nonreflection assertions are unchanged. Production source is unchanged.
+The successor needs independent review before one released rerun of the SAME16
+cases. No automatic retry or live action has occurred.
+
+Preserved failed log: `/private/tmp/cpk384-parent-website-28be8cd.log`, SHA256
+`a0844438cc5984859459312f38dd8073c7b009b3e12e3395c064ea361cac0839`.

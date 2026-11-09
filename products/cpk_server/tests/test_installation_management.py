@@ -323,9 +323,16 @@ class InstallationManagementTests(unittest.TestCase):
             self.graph(self.installation(website=self.managed_website(duplicate)))
 
     def test_managed_website_requires_management_and_rejects_invalid_artifact_without_echo(self):
-        native = self.installation()
+        # A standalone named installation needs the ordinary connector, whose
+        # process contract has no management port. Prove this baseline reaches
+        # graph composition before testing the website's management rule.
+        ordinary = test_frontend_deployment.FrontendDeploymentTests().inputs()["connector_product"]
+        website = self.api.DockerCpkWebsite(image=self.base.website.image,
+            ingress=self.website_ingress, connector_product=ordinary)
+        native = replace(self.base, ingress=self.api_ingress, connector_product=ordinary, website=website)
+        self.graph(native)
         with self.assertRaisesRegex(ValueError, "^installation website configuration is invalid$"):
-            replace(native, management=None, website=replace(native.website, managed_control_configuration=
+            replace(native, website=replace(native.website, managed_control_configuration=
                 self.website_api.control_configuration_artifact(self.website_control)))
         artifact = self.website_api.control_configuration_artifact(self.website_control)
         for changed in (replace(artifact, target_path="/etc/cpk/foreign.json"),
