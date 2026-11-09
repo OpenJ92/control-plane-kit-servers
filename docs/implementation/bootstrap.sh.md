@@ -33,3 +33,10 @@ replays schema or initialization. The integrated #347 path separately supports
 fresh dynamic apply; its actual current-pair gate and retained initialization
 inspection passed at8bb96f9 with [combined review](https://github.com/OpenJ92/control-plane-kit-servers/issues/347#issuecomment-6488312730).
 That fixture evidence is not authority to acquire or change a retained root.
+# Offline material plan/prepare
+
+New material-plan mounts only the approved public input, commissioning plan,
+public.json and complete.json snapshots, no key directory. Material-prepare mounts
+a fresh private parent plus reviewed plan, no network/socket/services. Existing
+root material/index/authority owners remain authoritative. Source evidence pending;
+see docs/root-material-preparation.md. Other actions retain their existing scope.

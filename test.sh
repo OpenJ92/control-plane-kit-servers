@@ -20,6 +20,16 @@ GATEWAY_TARGET_OPERATIONS_REVISION=''
 GATEWAY_TARGET_EXPECTATION=''
 MANAGED_COMPOSITION_INTERPRETERS_REVISION=''
 case "${1:-}" in
+  --root-material-preparation-source-tests)
+    [ "$#" -eq 7 ] || { echo 'material source tests require three checkouts and three exact revisions' >&2; exit 2; }
+    HTTP_SAMPLE_RELAY_ONLY=10
+    HTTP_SAMPLE_SOURCE_CORE=$2
+    HTTP_SAMPLE_SOURCE_OPERATIONS=$3
+    HTTP_SAMPLE_SOURCE_INTERPRETERS=$4
+    GATEWAY_TARGET_CORE_REVISION=$5
+    GATEWAY_TARGET_OPERATIONS_REVISION=$6
+    MANAGED_COMPOSITION_INTERPRETERS_REVISION=$7
+    ;;
   --managed-verification-startup-source-tests)
     [ "$#" -eq 7 ] || { echo 'startup source tests require three checkouts and three exact revisions' >&2; exit 2; }
     HTTP_SAMPLE_RELAY_ONLY=9
@@ -98,12 +108,12 @@ esac
 root_artifact_selection
 
 run_policy() {
-  if [ "$HTTP_SAMPLE_RELAY_ONLY" = 9 ]; then
+  if [ "$HTTP_SAMPLE_RELAY_ONLY" = 9 ] || [ "$HTTP_SAMPLE_RELAY_ONLY" = 10 ]; then
     docker run --pull never --network none --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges "$@"
   else docker run "$@"
   fi
 }
-if [ "$HTTP_SAMPLE_RELAY_ONLY" = 9 ]; then
+if [ "$HTTP_SAMPLE_RELAY_ONLY" = 9 ] || [ "$HTTP_SAMPLE_RELAY_ONLY" = 10 ]; then
   case "$IMAGE" in sha256:*) ;; *) echo 'startup source tests require cached immutable controller' >&2; exit 2 ;; esac
   [ "${#IMAGE}" -eq 71 ] || exit 2
   digest=${IMAGE#sha256:}
@@ -139,9 +149,11 @@ run_policy --rm \
     --test-root products \
     --gate-file test.sh
 
-if [ "$HTTP_SAMPLE_RELAY_ONLY" = 9 ]; then
+if [ "$HTTP_SAMPLE_RELAY_ONLY" = 9 ] || [ "$HTTP_SAMPLE_RELAY_ONLY" = 10 ]; then
+  SOURCE_PHASE=managed-startup
+  [ "$HTTP_SAMPLE_RELAY_ONLY" != 10 ] || SOURCE_PHASE=material-preparation
   sh scripts/http_sample_source_assembly.sh "$IMAGE" "$HTTP_SAMPLE_SOURCE_CORE" \
-    "$HTTP_SAMPLE_SOURCE_OPERATIONS" "$HTTP_SAMPLE_SOURCE_INTERPRETERS" managed-startup \
+    "$HTTP_SAMPLE_SOURCE_OPERATIONS" "$HTTP_SAMPLE_SOURCE_INTERPRETERS" "$SOURCE_PHASE" \
     "$GATEWAY_TARGET_CORE_REVISION" "$GATEWAY_TARGET_OPERATIONS_REVISION" "$MANAGED_COMPOSITION_INTERPRETERS_REVISION"
   exit 0
 fi

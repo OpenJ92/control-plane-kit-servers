@@ -2,7 +2,7 @@
 # External root acquisition using ordinary Docker. No host Python or Compose.
 set -eu
 usage() {
-  echo 'usage: bootstrap.sh plan DRIVER INPUT | apply DRIVER PLAN DIGEST INDEX STATE | inspect DRIVER STATE | inspect-initialization DRIVER PLAN DIGEST INDEX STATE | commission-plan DRIVER INPUT | commission-prepare DRIVER PLAN DIGEST STATE' >&2
+  echo 'usage: bootstrap.sh plan DRIVER INPUT | apply DRIVER PLAN DIGEST INDEX STATE | inspect DRIVER STATE | inspect-initialization DRIVER PLAN DIGEST INDEX STATE | commission-plan DRIVER INPUT | commission-prepare DRIVER PLAN DIGEST STATE | material-plan DRIVER INPUT COMMISSION_PLAN PUBLIC COMPLETE PUBLIC_SHA INTENT_DIGEST | material-prepare DRIVER PLAN DIGEST STATE' >&2
   exit 2
 }
 [ "$#" -ge 2 ] || usage
@@ -56,6 +56,40 @@ commission_directory() {
   done
 }
 case "$ACTION" in
+  material-plan)
+    [ "$#" = 6 ] || usage
+    INPUT="$(CDPATH= cd -- "$(dirname -- "$1")" && pwd)/$(basename -- "$1")"
+    COMMISSION="$(CDPATH= cd -- "$(dirname -- "$2")" && pwd)/$(basename -- "$2")"
+    PUBLIC="$(CDPATH= cd -- "$(dirname -- "$3")" && pwd)/$(basename -- "$3")"
+    COMPLETE="$(CDPATH= cd -- "$(dirname -- "$4")" && pwd)/$(basename -- "$4")"
+    exec docker run --pull never --rm --network none --read-only --cap-drop ALL --user "$(id -u):$(id -g)" \
+      --security-opt no-new-privileges \
+      --mount "type=bind,source=$INPUT,target=/bootstrap/input.json,readonly" \
+      --mount "type=bind,source=$COMMISSION,target=/bootstrap/commission-plan.json,readonly" \
+      --mount "type=bind,source=$PUBLIC,target=/bootstrap/public.json,readonly" \
+      --mount "type=bind,source=$COMPLETE,target=/bootstrap/complete.json,readonly" \
+      "$DRIVER" python -m control_plane_kit_servers_cpk_server.root_material_preparation plan \
+      --input /bootstrap/input.json --commission-plan /bootstrap/commission-plan.json \
+      --commission-public /bootstrap/public.json --commission-complete /bootstrap/complete.json \
+      --public-sha256 "$5" --commissioning-digest "$6" --driver "$DRIVER"
+    ;;
+  material-prepare)
+    [ "$#" = 3 ] || usage
+    PLAN="$(CDPATH= cd -- "$(dirname -- "$1")" && pwd)/$(basename -- "$1")"
+    STATE="$3"
+    PARENT="$(dirname -- "$STATE")"
+    NAME="$(basename -- "$STATE")"
+    [ ! -e "$STATE" ] && [ ! -L "$STATE" ] || commission_hold
+    [ ! -e "$PARENT" ] && [ ! -L "$PARENT" ] || commission_hold
+    commission_directory "$PARENT"
+    exec docker run --pull never --rm --network none --read-only --cap-drop ALL --user "$(id -u):$(id -g)" \
+      --security-opt no-new-privileges \
+      --mount "type=bind,source=$PLAN,target=/bootstrap/plan.json,readonly" \
+      --mount "type=bind,source=$PARENT,target=/preparation" \
+      "$DRIVER" python -m control_plane_kit_servers_cpk_server.root_material_preparation prepare \
+      --plan /bootstrap/plan.json --digest "$2" --driver "$DRIVER" \
+      --state "/preparation/$NAME" --host-state "$STATE"
+    ;;
   commission-plan)
     [ "$#" = 1 ] || usage
     INPUT="$(CDPATH= cd -- "$(dirname -- "$1")" && pwd)/$(basename -- "$1")"

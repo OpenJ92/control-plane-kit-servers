@@ -9,7 +9,7 @@ interpreters_repository=$4
 phase=${5:-all}
 source_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 source_paths=''
-if [ "$phase" = managed-startup ]; then
+if [ "$phase" = managed-startup ] || [ "$phase" = material-preparation ]; then
   source_paths=/source:/source/src:/source/scripts:/source/products/cpk_server/src:/source/products/cpk_server/tests:/source/products/secrets_server/src:/source/products/secrets_server/tests:/source/products/cpk_local_gateway/src:/source/products/cloudflared_connector/src:/source/products/postgres_server/src:/source/products/website_server/src:
 fi
 secrets_repository=${6:-}
@@ -18,7 +18,7 @@ core_revision=054e5884d89ed6f56141b8fc51ea996f0b6d916b
 operations_revision=71db67c5df666d936860cce35b99394e600b2f1f
 interpreters_revision=2e2a6b880359c6db98f6c1e41b6de450d8bc681f
 case "$phase" in
-  managed-composition|managed-startup)
+  managed-composition|managed-startup|material-preparation)
     core_revision=$6
     operations_revision=$7
     interpreters_revision=$8
@@ -28,7 +28,9 @@ case "$phase" in
       case "$revision" in ''|*[!0-9a-f]*) echo 'exact source revision is required' >&2; exit 2 ;; esac
       [ "${#revision}" -eq 40 ] || exit 2
     done
-    if [ "$phase" = managed-startup ]; then
+    if [ "$phase" = material-preparation ]; then
+      set -- python -m unittest root_material_preparation_tests -v
+    elif [ "$phase" = managed-startup ]; then
       set -- python -m unittest managed_verification_startup_tests managed_verification_composition_qualification.ManagedCompositionTests.test_real_native_registration_supplies_same_objects_to_service_options -v
     else
       set -- python -m unittest managed_verification_composition_qualification managed_verification_startup_tests test_managed_health_bridge test_managed_native_connection test_operations_application_factory -v
@@ -87,7 +89,7 @@ git -C "$core_repository" archive --format=tar "$core_revision" control-plane-ki
 tar -xf "$owned_source/core.tar" -C "$owned_source/core" --strip-components=1
 git -C "$operations_repository" archive --format=tar "$operations_revision" control-plane-kit-operations/src/control_plane_kit_operations > "$owned_source/operations.tar"
 tar -xf "$owned_source/operations.tar" -C "$owned_source/operations" --strip-components=1
-if [ "$phase" = managed-composition ] || [ "$phase" = managed-startup ]; then
+if [ "$phase" = managed-composition ] || [ "$phase" = managed-startup ] || [ "$phase" = material-preparation ]; then
   git -C "$operations_repository" archive --format=tar "$operations_revision" control-plane-kit-operations/tests > "$owned_source/operations-tests.tar"
   tar -xf "$owned_source/operations-tests.tar" -C "$owned_source/operations" --strip-components=1
 fi
@@ -115,7 +117,7 @@ fi
 printf 'pure assembly source Core=%s Operations=%s Interpreters=%s\n' \
   "$core_revision" "$operations_revision" "$interpreters_revision"
 source_controller() {
-  if [ "$phase" = managed-startup ]; then
+  if [ "$phase" = managed-startup ] || [ "$phase" = material-preparation ]; then
     docker run --pull never --mount "type=bind,source=$source_root,target=/source,readonly" --workdir /tmp \
       -e CPK_STARTUP_SOURCE_ROOT=/source "$@"
   else docker run "$@"

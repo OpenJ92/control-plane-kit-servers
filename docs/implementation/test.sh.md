@@ -199,3 +199,9 @@ phase use that image without build/pull/network/host socket; other modes retain
 their behavior. Reviewed released a544016 invocation passed28 support and six
 focused tests6.978s plus cleanup; no live service/DB/provider. Later invocations
 retain their own scope and review boundary.
+# Offline material source selector
+
+--root-material-preparation-source-tests reuses the reviewed cached immutable
+controller path for normal policy/support/integrity plus seven focused offline
+material tests under exact exports/current source. No broad suite/build/service.
+It does not select or authorize real protected preparation. Evidence pending.
