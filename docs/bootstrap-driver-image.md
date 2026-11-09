@@ -115,3 +115,18 @@ before either source qualification or image execution.
 Real preparation must separately bind the accepted driver ID, qualified parent
 Secrets selection, frozen public sender/gateway/PG/website/health/connector files
 and reviewed customer policy. The child six-image tuple remains unchanged.
+
+## Completed offline qualification
+
+Reviewed/tested build source is b46d4715964fcd4a0b89130e2774cece2481b0ed.
+The separately released source gate passed28 support and49 focused tests
+(75.405s), with policy/integrity and owned cleanup. The single local artifact
+action completed exit0, retained both base and candidate, and verified cleanup.
+The immutable installer is
+`localhost/control-plane-kit-servers/cpk-bootstrap-driver@sha256:8134f1032d1fb78947f367c9e848506021b8da4d76c66d465fb7057112aa962d`.
+Both installed normal CLI modes passed the public/synthetic projection checks.
+The [durable receipt](https://github.com/OpenJ92/control-plane-kit-servers/issues/384#issuecomment-6750722926)
+records the source, installed provenance and bounded plan/cleanup evidence.
+Independent terminal artifact review and North's disposition are separate from
+this executor receipt. Real material preparation and startup remain unexecuted.
+Any later documentation-only commit is not the image's built Servers source.
