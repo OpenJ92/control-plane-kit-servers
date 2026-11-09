@@ -14,6 +14,12 @@ Docker base fetch or build. The owning fake-CLI build-termination regression als
 checks that a nonzero buildx child retains unconfirmed scratch without retry.
 Source-gate receipts remain revision-specific.
 
-Only managed-startup uses `/tmp:exec` so finite fake CLIs can execute; other phases
-retain their previous tmpfs mode. The fake-build test supplies its own disk-space
+Managed-startup, material-preparation and bootstrap-driver use `/tmp:exec` so
+finite fake CLIs can execute; parent-website retains its previous tmpfs mode.
+The fake-build test supplies its own disk-space
 observation rather than depending on the source container's tmpfs capacity.
+
+The bootstrap-driver phase adds exact Secrets57 exports, default/optional material
+policy, website, startup, OCI and installed-import prerequisites before building.
+Its public template argument is mounted read-only for the additive normal CLI
+projection test. It allocates no application network, database or provider.

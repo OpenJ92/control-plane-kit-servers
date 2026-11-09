@@ -4,7 +4,7 @@ set -eu
 MODE=runtime
 case "${1:-}" in
   --grandparent-image-build) [ "$#" = 4 ] || exit 2 ;;
-  --bootstrap-driver-image-build) [ "$#" = 5 ] || exit 2; MODE=installer; SECRETS_REPOSITORY=$5 ;;
+  --bootstrap-driver-image-build) [ "$#" = 6 ] || exit 2; MODE=installer; SECRETS_REPOSITORY=$5; PUBLIC_INPUT=$6 ;;
   *) exit 2 ;;
 esac
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -36,6 +36,14 @@ SOURCE=$(git rev-parse HEAD)
 worktree=$(git status --porcelain)
 [ -z "$worktree" ] || exit 2
 if [ "$MODE" = installer ]; then
+  [ -f "$PUBLIC_INPUT" ] && [ ! -L "$PUBLIC_INPUT" ] || exit 2
+  [ "$(wc -c < "$PUBLIC_INPUT")" -le 1048576 ] || exit 2
+  expected_public=$(jq -er .qualification_public_input_sha256 "$COHORT")
+  if command -v sha256sum >/dev/null 2>&1; then
+    public_digest=$(sha256sum "$PUBLIC_INPUT")
+  else public_digest=$(shasum -a 256 "$PUBLIC_INPUT")
+  fi
+  [ "${public_digest%% *}" = "$expected_public" ] || exit 2
   for role in loader material parent_website; do
     selected=$(jq -er --arg role "$role" '.lineage[$role]' "$COHORT")
     git merge-base --is-ancestor "$selected" "$SOURCE"
@@ -121,6 +129,15 @@ finish() {
 trap finish EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+if [ "$MODE" = installer ]; then
+  cp -P "$PUBLIC_INPUT" "$RECORDS/qualification-public-root.json"
+  [ -f "$RECORDS/qualification-public-root.json" ] && [ ! -L "$RECORDS/qualification-public-root.json" ] || exit 1
+  if command -v sha256sum >/dev/null 2>&1; then
+    copied_public=$(sha256sum "$RECORDS/qualification-public-root.json")
+  else copied_public=$(shasum -a 256 "$RECORDS/qualification-public-root.json")
+  fi
+  [ "${copied_public%% *}" = "$expected_public" ] || exit 1
+fi
 mkdir -p "$CONTEXT/cohort/core" "$CONTEXT/cohort/operations" "$CONTEXT/cohort/interpreters"
 set --
 [ "$MODE" != installer ] || set -- products/cpk_server/tests/bootstrap_driver_imports.py
@@ -229,7 +246,8 @@ if [ "$MODE" = installer ]; then
   gw_run qualification --rm --network none --read-only --tmpfs /tmp:size=64m \
     --cpus 2 --memory 512m --pids-limit 128 --cap-drop ALL --security-opt no-new-privileges \
     --user "$(id -u):$(id -g)" --workdir /tmp --entrypoint python \
-    "$IMAGE" "$CHECK_PATH" qualify "$IMAGE" > "$RECORDS/normal-cli-plans.json"
+    --mount "type=bind,source=$RECORDS/qualification-public-root.json,target=/public-root.json,readonly" \
+    "$IMAGE" "$CHECK_PATH" qualify "$IMAGE" /public-root.json > "$RECORDS/normal-cli-plans.json"
   QUALIFIED=true
 fi
 worktree=$(git status --porcelain)

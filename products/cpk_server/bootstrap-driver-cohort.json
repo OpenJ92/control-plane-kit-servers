@@ -10,6 +10,7 @@
   "declared_core": "976901c609d950a557ec1e9966f018e8ff6e16aa",
   "declared_secrets": "158b17ed10689360c4e1529a395b3ee2b47aecbc",
   "declared_interpreters": "e4bd35e828d1c44129f64e702de2b1d2b60f7c87",
+  "qualification_public_input_sha256": "f81ba76a8dad762c202a5ed856121c6fd92bf300bfc0af5c5d682c3790ee24b7",
   "lineage": {
     "loader": "a544016ad09ff32e8109c912603096cf8b447e59",
     "material": "bfed7ab7737f067039c1015f9e7b47392889a0d8",

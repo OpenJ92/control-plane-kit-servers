@@ -6,3 +6,11 @@ Git objects, builds a distinct product-based image and verifies installed conten
 using that finished image without a source mount. It retains the candidate and
 public provenance, cleans only its own context/helper, and reports listening
 startup as unobserved. It does not bootstrap a sibling or generate credentials.
+
+Installer mode uses the distinct cached controller OCI profile and full selected
+Servers/Core/Operations/Interpreters/Secrets exports in the
+[driver packet](../../bootstrap-driver-image.md). It stamps the actual clean HEAD,
+checks exact owner lineage, verifies installed sources and normal CLI plans, and
+rehashes the bounded public qualification snapshot before copying and after copy.
+Qualification uses that file read-only, no socket/network/source mount. The
+listening runtime mode retains its existing profile and action identifiers.

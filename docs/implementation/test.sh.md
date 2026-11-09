@@ -217,3 +217,11 @@ retain their own scope and review boundary.
 controller path for normal policy/support/integrity plus seven focused offline
 material tests under exact exports/current source. No broad suite/build/service.
 It does not select or authorize real protected preparation. Evidence pending.
+
+The separate bootstrap-driver source selector takes three repositories, three
+immutable source revisions, the Secrets repository/revision and the frozen public
+template. It retains policy/support/integrity and selects the composition tests
+documented in [the driver packet](../bootstrap-driver-image.md). The driver image
+selector enters the shared artifact owner with an installer-specific recipe and
+base policy. Neither selector starts the normal listening service or prepares
+customer material; those remain separate approved boundaries.

@@ -33,6 +33,9 @@ case "$phase" in
     fi
     if [ "$phase" = bootstrap-driver ]; then
       [ "$secrets_revision" = 57e4fc61d6931ef078550f98154a585bda61987b ] || exit 2
+      public_input=${11}
+      [ -f "$public_input" ] && [ ! -L "$public_input" ] || exit 2
+      [ "$(wc -c < "$public_input")" -le 1048576 ] || exit 2
     fi
     for revision in "$core_revision" "$operations_revision" "$interpreters_revision"; do
       case "$revision" in ''|*[!0-9a-f]*) echo 'exact source revision is required' >&2; exit 2 ;; esac
@@ -158,7 +161,13 @@ fi
 printf 'pure assembly source Core=%s Operations=%s Interpreters=%s\n' \
   "$core_revision" "$operations_revision" "$interpreters_revision"
 source_controller() {
-  if [ "$phase" = material-preparation ] || [ "$phase" = bootstrap-driver ]; then
+  if [ "$phase" = bootstrap-driver ]; then
+    docker run --pull never --mount "type=bind,source=$source_root,target=/source,readonly" --workdir /tmp \
+      --tmpfs /preparation-tests:exec,mode=0700 -e CPK_MATERIAL_TEST_ROOT=/preparation-tests \
+      --mount "type=bind,source=$public_input,target=/qualification/public-root.json,readonly" \
+      -e CPK_BOOTSTRAP_DRIVER_PUBLIC_INPUT=/qualification/public-root.json \
+      -e CPK_STARTUP_SOURCE_ROOT=/source "$@"
+  elif [ "$phase" = material-preparation ]; then
     docker run --pull never --mount "type=bind,source=$source_root,target=/source,readonly" --workdir /tmp \
       --tmpfs /preparation-tests:exec,mode=0700 -e CPK_MATERIAL_TEST_ROOT=/preparation-tests \
       -e CPK_STARTUP_SOURCE_ROOT=/source "$@"

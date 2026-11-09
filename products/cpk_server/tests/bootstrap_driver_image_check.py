@@ -9,9 +9,10 @@ from pathlib import Path
 import subprocess
 import sys
 import tomllib
+from hashlib import sha256
 
 from grandparent_image_check import distribution, files, verified_git_files
-from bootstrap_driver_imports import REQUIRED_IMPORTS
+from bootstrap_driver_imports import REQUIRED_IMPORTS, RUNTIME_DEPENDENCIES
 
 if not __debug__:
     raise SystemExit("bootstrap driver verification requires enabled checks")
@@ -74,6 +75,8 @@ def verify():
         detail["import_path"] = str(imported.__file__)
         result["distributions"][name] = detail
     result["required_imports"] = {name: importlib.import_module(name).__file__ for name in REQUIRED_IMPORTS}
+    result["runtime_dependencies"] = {name: {"import_path": importlib.import_module(name).__file__,
+                                             "version": metadata.version(name)} for name in RUNTIME_DEPENDENCIES}
     core_url = "https://github.com/OpenJ92/control-plane-kit/archive/" + cohort["declared_core"] + ".zip#subdirectory=control-plane-kit-core"
     sdk_url = "https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/" + cohort["sdk"] + ".zip"
     required_urls = {
@@ -101,13 +104,18 @@ def verify():
     return result
 
 
-def qualify(driver):
+def qualify(driver, public_input):
     verify()
-    return normal_cli_plans(driver, PUBLIC / "fixtures")
+    expected = json.loads((PUBLIC / "cohort.json").read_text())["qualification_public_input_sha256"]
+    return normal_cli_plans(driver, PUBLIC / "fixtures", public_input, expected)
 
 
-def normal_cli_plans(driver, fixture):
+def normal_cli_plans(driver, fixture, public_input, expected_input_sha256):
     assert driver.startswith("sha256:") and len(driver) == 71
+    with Path(public_input).open("rb") as source:
+        raw = source.read(1048577)
+    assert len(raw) <= 1048576 and sha256(raw).hexdigest() == expected_input_sha256
+    frozen = json.loads(raw)
     sys.path[:0] = [str(fixture / "scripts"), str(fixture / "products/cpk_server/tests")]
     import root_material_preparation_tests as maintained
     maintained.DRIVER = driver
@@ -115,12 +123,28 @@ def normal_cli_plans(driver, fixture):
     case.setUp()
     try:
         from control_plane_kit_core.configuration import ConfigurationArtifact
+        from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
+        from control_plane_kit_core.products import ProductDescriptorCodec
         from control_plane_kit_core.receiver_configuration import ReceiverNodeControlConfigurationCodec
         from control_plane_kit_core.topology import GraphDescriptorCodec
         from control_plane_kit_servers_website_server.managed import control_declaration, control_configuration_artifact
         from test_frontend_deployment import FrontendDeploymentTests
         document = copy.deepcopy(case.document)
         commissioning = document.pop("commissioning")
+        health = ConfigurationArtifact.from_descriptor(frozen["installation"]["managed_health_configuration"])
+        document["bootstrap_input"]["installation"]["managed_health_configuration"] = health.descriptor()
+        document["capabilities"] = json.loads(health.content)["capability_ids"]
+        sender = next(ConfigurationArtifact.from_descriptor(value) for value in
+            frozen["installation"]["products"]["cpk"]["product"]["runtime_contract"]["configuration_artifacts"]
+            if value["artifact_id"] == "cpk-managed-verification")
+        product_codec = ProductDescriptorCodec()
+        cpk = product_codec.decode_document(json.dumps(document["bootstrap_input"]["installation"]["products"]["cpk"]).encode())
+        contract = replace(cpk.product.runtime_contract,
+            configuration_artifacts=(*cpk.product.runtime_contract.configuration_artifacts, sender),
+            public_environment=(*cpk.product.runtime_contract.public_environment,
+                PublicStaticEnvironmentBinding("CPK_MANAGED_VERIFICATION_CONFIGURATION_FILE", sender.target_path)))
+        document["bootstrap_input"]["installation"]["products"]["cpk"] = json.loads(
+            product_codec.encode_document(replace(cpk.product, runtime_contract=contract)).content)
         public = json.loads(commissioning["public_utf8"])
         selected = ConfigurationArtifact.from_descriptor(public["artifacts"]["secrets"])
         codec = ReceiverNodeControlConfigurationCodec()
@@ -159,6 +183,17 @@ def normal_cli_plans(driver, fixture):
         assert bootstrap == material["bootstrap_plan"] and bootstrap["driver_image_id"] == driver
         graph = GraphDescriptorCodec().decode(bootstrap["graph"])
         assert graph.node("root-a-website").configuration_artifacts == (website_artifact,)
+        cpk_node = graph.node("root-a-cpk")
+        assert health in cpk_node.configuration_artifacts and sender in cpk_node.configuration_artifacts
+        environment = cpk_node.non_secret_environment()
+        assert environment["CPK_MANAGED_HEALTH"] == "docker-unix-v2"
+        assert environment["CPK_MANAGED_HEALTH_CONFIGURATION_FILE"] == health.target_path
+        assert environment["CPK_MANAGED_VERIFICATION_CONFIGURATION_FILE"] == sender.target_path
+        assert environment["CPK_WORKSPACE_AUTHORITY"] == "dynamic-v1"
+        files = next(node for node in bootstrap["resources"]["nodes"] if node["node_id"] == "root-a-cpk")["configuration_files"]
+        for artifact in (health, sender):
+            assert any(item["artifact"] == artifact.descriptor() and item["sha256"] == sha256(artifact.content.encode()).hexdigest()
+                       for item in files)
         assert not case.state.exists()
         assert "PRIVATE KEY" not in first.stdout.decode() + second.stdout.decode()
         bad = copy.deepcopy(document)
@@ -195,6 +230,10 @@ def normal_cli_plans(driver, fixture):
                 "optional_material_plan_digest": optional_plan["digest"],
                 "optional_bootstrap_plan_digest": optional_plan["bootstrap_plan"]["digest"],
                 "extra_credential_planned_not_created": True,
+                "public_wiring_input_sha256": expected_input_sha256,
+                "frozen_health_content_sha256": sha256(health.content.encode()).hexdigest(),
+                "frozen_sender_content_sha256": sha256(sender.content.encode()).hexdigest(),
+                "health_sender_mounts_and_dynamic_authority_projected": True,
                 "http_import_policy_plan_passed": True, "http_generation_policy_plan_refused": True,
                 "real_material_prepared": False, "apply_executed": False, "live_service_started": False}
     finally:
@@ -207,8 +246,8 @@ if __name__ == "__main__":
             seal()
         elif sys.argv[1:] == ["verify"]:
             print(json.dumps(verify(), sort_keys=True))
-        elif len(sys.argv) == 3 and sys.argv[1] == "qualify":
-            print(json.dumps(qualify(sys.argv[2]), sort_keys=True))
+        elif len(sys.argv) == 4 and sys.argv[1] == "qualify":
+            print(json.dumps(qualify(sys.argv[2], sys.argv[3]), sort_keys=True))
         else:
             raise ValueError
     except Exception:
