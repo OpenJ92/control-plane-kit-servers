@@ -5,7 +5,8 @@ An explicit CPK_MANAGED_VERIFICATION_CONFIGURATION_FILE opts into the source
 sender loader after base/managed-health configuration. New imports remain lazy;
 missing/invalid input refuses before create_app/schema/listener. Existing main,
 authentication, factory and same registration remain the process path. This
-source checkpoint is untested; see docs/grandparent-sender-startup.md.
+source startup gate passed at a544016; DB/provider/listener were external doubles.
+See docs/grandparent-sender-startup.md for evidence and live limitations.
 
 ## #341 typed startup readiness
 

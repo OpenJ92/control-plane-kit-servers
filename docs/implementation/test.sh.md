@@ -201,4 +201,12 @@ the real default product process; it grants no listening/deployment acceptance.
 --managed-verification-startup-source-tests requires a cached immutable
 CPK_SERVERS_TEST_IMAGE. Normal policy/support/integrity and the narrow exact-source
 phase use that image without build/pull/network/host socket; other modes retain
-their behavior. Explicit reviewed release is still required to run it.
+their behavior. Reviewed released a544016 invocation passed28 support and six
+focused tests6.978s plus cleanup; no live service/DB/provider. Later invocations
+retain their own scope and review boundary.
+# Offline material source selector
+
+--root-material-preparation-source-tests reuses the reviewed cached immutable
+controller path for normal policy/support/integrity plus seven focused offline
+material tests under exact exports/current source. No broad suite/build/service.
+It does not select or authorize real protected preparation. Evidence pending.

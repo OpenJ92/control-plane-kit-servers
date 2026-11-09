@@ -44,6 +44,16 @@ def private_read(path: Path) -> bytes:
 def _material(plan, index_path):
     try:
         index = decode_document(private_read(index_path))
+    except (RootBootstrapError, ValueError, TypeError, KeyError, OSError, AttributeError, OverflowError, RecursionError):
+        failure = RootBootstrapError("bootstrap material could not be verified")
+    else:
+        return _material_document(plan, index, index_path)
+    raise failure
+
+
+def _material_document(plan, index, index_path):
+    """Validate one index value and its protected siblings without publishing it."""
+    try:
         required = set(plan["required_material"]) | set(plan["input"].get("image_pull_credentials", {}).values())
         dynamic = "workspace_authority" in plan["input"]["installation"]
         if (set(index) != ({"schema", "files", "dynamic_workspace"} if dynamic else {"schema", "files"})
