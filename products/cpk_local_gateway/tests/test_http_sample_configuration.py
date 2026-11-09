@@ -9,13 +9,13 @@ from unittest.mock import patch
 import control_plane_kit_core as core
 from control_plane_kit_core.products import ProductRuntimeContractCodec
 from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
-from control_plane_kit_servers_cpk_local_gateway import control_configuration as control_api
 from gateway_control_fixtures import fixture
 
 
 class HttpSampleConfigurationTests(unittest.TestCase):
     def setUp(self):
-        self.value = fixture(control_api)
+        self.control_api = importlib.import_module("control_plane_kit_servers_cpk_local_gateway.control_configuration")
+        self.value = fixture(self.control_api)
         self.api = importlib.import_module("control_plane_kit_servers_cpk_local_gateway.http_sample_configuration")
         from control_plane_kit_servers_cpk_local_gateway.http_sample_relay import GatewayHttpSampleTrust
         self.trust = GatewayHttpSampleTrust(self.value.config.target, "sample-controller",
@@ -82,7 +82,7 @@ class HttpSampleConfigurationTests(unittest.TestCase):
         with patch.object(server, "GatewayConfiguration") as config, \
                 patch("control_plane_kit_servers_cpk_local_gateway.health_relay_startup.load_health_relay",
                       return_value=self.value.relay), \
-                patch.object(control_api, "read_gateway_control_configuration", return_value=self.value.config), \
+                patch.object(self.control_api, "read_gateway_control_configuration", return_value=self.value.config), \
                 patch.dict(os.environ, {self.api.CONFIGURATION_ENVIRONMENT: self.api.CONFIGURATION_PATH}, clear=True), \
                 patch.object(self.api, "_read", return_value=self.artifact.content.encode()), \
                 patch.object(server.uvicorn, "run") as run:
