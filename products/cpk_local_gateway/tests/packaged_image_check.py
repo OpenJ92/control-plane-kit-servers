@@ -30,14 +30,15 @@ def provenance(coordinates):
     return {"installed_origins":origins,"pip_check":"passed","gateway_import":"passed"}
 
 
-def readiness():
+def readiness(*,transport=None,clock=time.monotonic,pause=time.sleep):
     import httpx
     pending = {"cpk":("http://cpk-source:8080/health/ready",200),
         "secrets":("http://secrets-provider:8081/health/ready",200),
         "gateway":("http://gateway-source:8000/__control/capabilities",401)}
     results = {}
-    deadline = time.monotonic()+30
-    with httpx.Client(timeout=1,trust_env=False,follow_redirects=False) as client:
+    observations={role:{"observation":"not-observed","transport_unavailable_seen":False} for role in pending}
+    deadline = clock()+30
+    with httpx.Client(timeout=1,trust_env=False,follow_redirects=False,transport=transport) as client:
         while pending:
             for role,(url,expected) in tuple(pending.items()):
                 try:
@@ -47,19 +48,24 @@ def readiness():
                             if len(body)+len(chunk)>65_536:
                                 raise ValueError
                             body.extend(chunk)
+                        observations[role]["last_http_status"]=response.status_code
                         if response.status_code != expected:
+                            observations[role]["observation"]="not-ready"
                             continue
                         if role != "gateway" and json.loads(body).get("status") != "ready":
                             raise ValueError
                         results[role] = {"status":expected,"transport":"owned-network"}
+                        observations[role]["observation"]="ready"
                         del pending[role]
                 except httpx.HTTPError:
-                    pass
+                    observations[role].update(observation="transport-unavailable",transport_unavailable_seen=True)
             if pending:
-                if time.monotonic()>=deadline:
-                    raise ValueError
-                time.sleep(0.25)
-    return {"readiness":results,"gateway_observation":"unsigned protected route refuses401"}
+                if clock()>=deadline:
+                    return {"complete":False,"deadline_exceeded":True,"readiness":results,
+                        "observations":observations,"pending_roles":sorted(pending)}
+                pause(0.25)
+    return {"complete":True,"deadline_exceeded":False,"readiness":results,"observations":observations,
+        "pending_roles":[],"gateway_observation":"unsigned protected route refuses401"}
 
 
 def bounded(path,limit,*,empty=False):
@@ -92,11 +98,14 @@ def main():
         raise TimeoutError
     signal.signal(signal.SIGALRM,timed_out)
     signal.alarm(60)
+    status=0
     try:
         if len(sys.argv)==3 and sys.argv[1]=="provenance":
             result=provenance(json.loads(Path(sys.argv[2]).read_text()))
         elif len(sys.argv)==2 and sys.argv[1]=="readiness":
             result=readiness()
+            if not result["complete"]:
+                status=1
         elif len(sys.argv)==3 and sys.argv[1]=="logs":
             result=logs(Path(sys.argv[2]),Path("/provider"),Path("/client"))
         else:
@@ -104,8 +113,11 @@ def main():
     except Exception:
         print("gateway packaged inspection failed",file=sys.stderr)
         return 1
+    finally:
+        signal.alarm(0)
+    result["exit_code"]=status
     print(json.dumps(result,sort_keys=True))
-    return 0
+    return status
 
 
 if __name__=="__main__":
