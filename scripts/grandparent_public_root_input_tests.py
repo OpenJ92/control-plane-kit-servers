@@ -79,6 +79,11 @@ class PublicRootInputTests(unittest.TestCase):
         self.assertEqual(cpk["environment"]["CPK_MANAGED_VERIFICATION_CONFIGURATION_FILE"], SENDER_PATH)
         self.assertEqual(cpk["environment"]["CPK_MANAGED_HEALTH"], "docker-unix-v2")
         health = json.loads(item["managed_health_configuration"]["content"])
+        from control_plane_kit_servers_cpk_server.managed_health_configuration import managed_health_configuration_artifact
+        # Static artifact authoring keeps rejecting v2; this renderer explicitly
+        # selects the existing dynamic admission owner.
+        with self.assertRaises(ValueError):
+            managed_health_configuration_artifact(item["managed_health_configuration"]["content"].encode())
         self.assertEqual(health["gateway_documents"], [request["gateway_document"]])
         self.assertEqual(health["capability_ids"], request["capability_ids"])
         website = next(node for node in plan["resources"]["nodes"] if node["node_id"] == "root-a-website")

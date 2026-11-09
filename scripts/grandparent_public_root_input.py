@@ -13,7 +13,10 @@ from control_plane_kit_core.products import OciImageReferenceCodec, ProductDescr
 from control_plane_kit_core.receiver_configuration import ReceiverNodeControlConfigurationCodec
 from control_plane_kit_servers_cpk_server.bootstrap import _installation, canonical, decode_document
 from control_plane_kit_servers_cpk_server.control_configuration import CpkSourceVariant, cpk_source_runtime_contract
-from control_plane_kit_servers_cpk_server.managed_health_configuration import managed_health_configuration_artifact
+from control_plane_kit_servers_cpk_server.managed_health_configuration import (
+    MANAGED_HEALTH_ARTIFACT_ID, MANAGED_HEALTH_CONFIGURATION_PATH,
+    _managed_health_configuration_from_artifact,
+)
 from control_plane_kit_servers_secrets_server.configuration import secrets_source_runtime_contract
 from control_plane_kit_servers_cloudflared_connector.managed import declared_runtime_contract
 
@@ -102,7 +105,13 @@ def prepare_root_input(value):
         "docker":{"socket_path":"/var/run/docker.sock", "request_timeout":5.0},
         "capability_ids":value["capability_ids"], "gateway_documents":[gateway_raw],
         "native_product_document":connector.content.decode()}, sort_keys=True, separators=(",", ":")).encode()
-    item["managed_health_configuration"] = managed_health_configuration_artifact(health_raw).descriptor()
+    # The convenience artifact factory intentionally admits static v1 only.
+    # Use the established explicit dynamic admission path, as root projection
+    # does after the real workspace intent is supplied by its owner.
+    health_artifact = ConfigurationArtifact(MANAGED_HEALTH_ARTIFACT_ID,
+        MANAGED_HEALTH_CONFIGURATION_PATH, ConfigurationMediaType.JSON, health_raw.decode())
+    _managed_health_configuration_from_artifact(health_artifact, dynamic_workspace=True)
+    item["managed_health_configuration"] = health_artifact.descriptor()
     cpk = codec.decode_document(item["products"]["cpk"])
     sender_artifact = ConfigurationArtifact("cpk-managed-verification", SENDER_PATH, ConfigurationMediaType.JSON, sender_raw)
     contract = cpk.product.runtime_contract

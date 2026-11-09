@@ -22,7 +22,7 @@ root base and explicit public image/artifact inputs. It preserves the exact stoc
 root PostgreSQL catalogue document, replaces CPK/Secrets source contracts using
 their own factories and actual parent public receiver bytes, and selects the
 explicit runtime/Secrets images. It adds the already prepared independent
-managed website stanza. The existing managed_health_configuration_artifact factory
+managed website stanza. The existing explicit dynamic artifact decoder
 validates v2 with the exact accepted child gateway document, declared managed
 connector and explicit dynamic capability IDs. The exact frozen sender document
 is one public ConfigurationArtifact at
@@ -102,3 +102,19 @@ Security/history: public metadata only, no new route/grant/exposure/durable stat
 Logical material refs are inert; no secret values/versions or private PEMs are
 read/generated. Descriptor syntax/source-unit evidence does not qualify an image,
 allocate DNS, admit material, verify a login or advance deployment history.
+
+## Preserved first-run failure and bounded correction
+
+The reviewed185d7a7 source gate exited1:28support passed, the negative case passed,
+and the positive failed at managed_health_configuration_artifact. That convenience
+helper deliberately defaults to static/v1 admission; dynamic v2 already has an
+explicit _managed_health_configuration_from_artifact(...,dynamic_workspace=True)
+owner used by root composition. The renderer now constructs the normal fixed
+Core artifact and selects that existing dynamic decoder. The static helper and
+all production server/bootstrap semantics remain unchanged. The target positive
+also requires the static helper to keep refusing the same v2 bytes.
+
+Failed log /private/tmp/cpk384-public-root-185d7a7.log, SHA256
+4e54c23bbd0b66ffa302fadf9b0be359c8a0c87ddd4ad973e42944f561e966e3.
+No actual input was rendered. The successor requires review and one separately
+released same-two-case rerun; there has been no automatic retry.
