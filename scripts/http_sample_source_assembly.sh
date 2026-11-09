@@ -16,7 +16,7 @@ fi
 source_paths=''
 source_mounted=0
 source_tmpfs=/tmp
-if [ "$phase" = image-inputs ] || [ "$phase" = public-postgres ] || [ "${CPK_SOURCE_ASSEMBLY_IMAGES+x}" = x ]; then
+if [ "$phase" = image-inputs ] || [ "$phase" = public-postgres ] || [ "$phase" = public-connectors ] || [ "${CPK_SOURCE_ASSEMBLY_IMAGES+x}" = x ]; then
   source_mounted=1
   source_tmpfs=/tmp:exec
   source_paths=/source:/source/src:/source/scripts:/source/products/cpk_server/src:/source/products/cpk_server/tests:/source/products/secrets_server/src:/source/products/secrets_server/tests:/source/products/cpk_local_gateway/src:/source/products/cloudflared_connector/src:/source/products/postgres_server/src:/source/products/website_server/src:
@@ -25,6 +25,12 @@ core_revision=054e5884d89ed6f56141b8fc51ea996f0b6d916b
 operations_revision=71db67c5df666d936860cce35b99394e600b2f1f
 interpreters_revision=2e2a6b880359c6db98f6c1e41b6de450d8bc681f
 case "$phase" in
+  public-connectors)
+    core_revision=f56bb5c4cfde76764d39c5377d4270c5b23c3ba1
+    operations_revision=70154b6698e101159326b08646f2dba90dda87cd
+    interpreters_revision=e438f6e522ad0a23a7acef460be08690f48b2e17
+    set -- python -m unittest parent_connector_public_inputs_tests -v
+    ;;
   public-postgres)
     core_revision=f56bb5c4cfde76764d39c5377d4270c5b23c3ba1
     operations_revision=70154b6698e101159326b08646f2dba90dda87cd

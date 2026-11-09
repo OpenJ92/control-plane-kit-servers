@@ -22,12 +22,16 @@ MANAGED_COMPOSITION_INTERPRETERS_REVISION=''
 case "${1:-}" in
   --prepare-grandparent-public-inputs)
     [ "$#" -eq 3 ] || exit 2
-    case "$3" in gateway) public_mode=--gateway-document ;; website) public_mode=--parent-website ;; postgres) public_mode=--child-postgres ;; sender) public_mode=--sender ;; *) exit 2 ;; esac
+    case "$3" in gateway) public_mode=--gateway-document ;; website) public_mode=--parent-website ;; postgres) public_mode=--child-postgres ;; sender) public_mode=--sender ;; connectors) public_mode=--parent-connectors ;; *) exit 2 ;; esac
     exec sh scripts/http_sample_image_preflight.sh "$2" "$public_mode"
     ;;
-  --http-sample-source-image-input-tests|--child-public-postgres-source-tests)
+  --http-sample-source-image-input-tests|--child-public-postgres-source-tests|--parent-public-connector-source-tests)
     [ "$#" -eq 4 ] || exit 2
-    if [ "$1" = --child-public-postgres-source-tests ]; then HTTP_SAMPLE_ASSEMBLY_PHASE=public-postgres; else HTTP_SAMPLE_ASSEMBLY_PHASE=image-inputs; fi
+    case "$1" in
+      --child-public-postgres-source-tests) HTTP_SAMPLE_ASSEMBLY_PHASE=public-postgres ;;
+      --parent-public-connector-source-tests) HTTP_SAMPLE_ASSEMBLY_PHASE=public-connectors ;;
+      *) HTTP_SAMPLE_ASSEMBLY_PHASE=image-inputs ;;
+    esac
     HTTP_SAMPLE_RELAY_ONLY=8
     HTTP_SAMPLE_SOURCE_CORE=$2
     HTTP_SAMPLE_SOURCE_OPERATIONS=$3
