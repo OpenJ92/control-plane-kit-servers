@@ -58,7 +58,6 @@ def gateway_document(images):
 
 def parent_website_input(images, value, *, receiver_id):
     """Public preparation only; caller allocates a fresh parent receiver once."""
-    from hashlib import sha256
     from urllib.parse import urlsplit
     import control_plane_kit_core as core
     from control_plane_kit_servers_website_server import managed
@@ -68,21 +67,8 @@ def parent_website_input(images, value, *, receiver_id):
         "workspace_id", "api_origin", "website_origin", "host_binding"}
     if type(value) is not dict or value.keys() != expected:
         raise ValueError("parent public website preparation is invalid")
-    raw = value["commissioning_public_document"]
-    if type(raw) is not str or sha256(raw.encode()).hexdigest() != value["commissioning_public_sha256"]:
-        raise ValueError("parent public website preparation is invalid")
-    public = json.loads(raw, object_pairs_hook=_unique)
-    config = core.ReceiverNodeControlConfigurationCodec().decode_bytes(public["artifacts"]["cpk"]["content"].encode())
+    config = _commissioned_configuration(value, receiver_id)
     target = config.target
-    purposes = {core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ,
-        core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ}
-    if (public["schema"] != "cpk.root-commissioning.public.v1" or
-            {item.purpose for item in config.verifiers} != purposes or len(config.verifiers) != 2 or
-            target.workspace_id.value != value["workspace_id"] or
-            target.runtime_id.value != value["installation_id"] + "-docker" or
-            target.node_id.value != value["installation_id"] + "-cpk" or
-            receiver_id in public["receiver_ids"].values()):
-        raise ValueError("parent public website preparation is invalid")
     api, site = _canonical_origin(value["api_origin"]), _canonical_origin(value["website_origin"])
     binding = value["host_binding"]
     if (urlsplit(api).hostname.removesuffix(".") == urlsplit(site).hostname.removesuffix(".") or
@@ -99,6 +85,67 @@ def parent_website_input(images, value, *, receiver_id):
         "host_binding":binding, "managed_control_configuration":artifact.descriptor()}
 
 
+def _commissioned_configuration(value, receiver_id):
+    from hashlib import sha256
+    import control_plane_kit_core as core
+    raw = value["commissioning_public_document"]
+    if type(raw) is not str or sha256(raw.encode()).hexdigest() != value["commissioning_public_sha256"]:
+        raise ValueError("parent public website preparation is invalid")
+    public = json.loads(raw, object_pairs_hook=_unique)
+    config = core.ReceiverNodeControlConfigurationCodec().decode_bytes(public["artifacts"]["cpk"]["content"].encode())
+    target = config.target
+    purposes = {core.DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ,
+        core.DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ}
+    if (public["schema"] != "cpk.root-commissioning.public.v1" or
+            {item.purpose for item in config.verifiers} != purposes or len(config.verifiers) != 2 or
+            target.workspace_id.value != value["workspace_id"] or
+            target.runtime_id.value != value["installation_id"] + "-docker" or
+            target.node_id.value != value["installation_id"] + "-cpk" or
+            receiver_id in public["receiver_ids"].values()):
+        raise ValueError("parent public website preparation is invalid")
+    return config
+
+
+def child_postgres_document(images, value, *, receiver_id):
+    """Prepare actual child receiving bytes and the normal installation variant."""
+    import control_plane_kit_core as core
+    from control_plane_kit_core.products import ProductDescriptorCodec
+    from control_plane_kit_core.secrets import SecretReference
+    from control_plane_kit_servers_postgres_server import configuration as postgres
+    from control_plane_kit_servers_cpk_server.installation import installation_postgres_product
+    images = require_images(images)
+    if type(value) is not dict or value.keys() != {"commissioning_public_document",
+            "commissioning_public_sha256", "installation_id", "workspace_id", "password_reference"}:
+        raise ValueError("child public PostgreSQL preparation is invalid")
+    config = _commissioned_configuration(value, receiver_id)
+    target = config.target
+    declaration = postgres.postgres_control_declaration()
+    configuration = core.ReceiverNodeControlConfiguration(replace(target,
+        node_id=replace(target.node_id, value=value["installation_id"] + "-postgres"),
+        provider_socket_name=declaration.surface.provider_socket_name, receiver_id=receiver_id),
+        declaration, config.verifiers)
+    artifact = postgres.postgres_control_configuration_artifact(configuration)
+    codec = ProductDescriptorCodec()
+    base = codec.decode_document((Path(__file__).resolve().parents[1] /
+        "products/postgres_server/product.cpk.json").read_bytes())
+    selected = codec.encode_document(replace(base.product, image=images["postgres"],
+        runtime_contract=postgres.postgres_source_runtime_contract(artifact)))
+    return codec.encode_document(installation_postgres_product(selected, SecretReference(value["password_reference"])))
+
+
+def sender_input(gateway_raw, postgres_raw):
+    """Existing startup schema; preserve the exact once-prepared PG document."""
+    from control_plane_kit_core.products import ProductDescriptorCodec, ProductReference, ProductReferenceCodec
+    codec = ProductDescriptorCodec()
+    gateway = codec.decode_document(gateway_raw.encode())
+    postgres = codec.decode_document(postgres_raw.encode())
+    if gateway.content.decode() != gateway_raw or postgres.content.decode() != postgres_raw:
+        raise ValueError("sender inputs must be canonical product document bytes")
+    return {"schema":"cpk-server.managed-verification.v1",
+        "gateway_product":ProductReferenceCodec().encode(ProductReference.from_document(gateway)),
+        "postgres_product_document":postgres_raw}
+
+
 if __name__ == "__main__":
     try:
         options = image_options(os.environ)
@@ -110,6 +157,13 @@ if __name__ == "__main__":
             # A fresh PUBLIC lifecycle ID, never a key/credential. Persist the
             # output once; preparing again requires a separate owner decision.
             result = parent_website_input(options["images"], value, receiver_id=uuid4().hex)
+            sys.stdout.write(json.dumps(result, sort_keys=True, separators=(",", ":")))
+        elif sys.argv[1:] == ["--child-postgres"]:
+            from uuid import uuid4
+            value = json.loads(os.environ["CPK_SOURCE_CHILD_POSTGRES"], object_pairs_hook=_unique)
+            sys.stdout.buffer.write(child_postgres_document(options["images"], value, receiver_id=uuid4().hex).content)
+        elif sys.argv[1:] == ["--sender"]:
+            result = sender_input(os.environ["CPK_SOURCE_GATEWAY_DOCUMENT"], os.environ["CPK_SOURCE_POSTGRES_DOCUMENT"])
             sys.stdout.write(json.dumps(result, sort_keys=True, separators=(",", ":")))
         elif sys.argv[1:]:
             raise ValueError("unknown public preparation mode")

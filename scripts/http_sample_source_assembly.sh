@@ -16,7 +16,7 @@ fi
 source_paths=''
 source_mounted=0
 source_tmpfs=/tmp
-if [ "$phase" = image-inputs ] || [ "${CPK_SOURCE_ASSEMBLY_IMAGES+x}" = x ]; then
+if [ "$phase" = image-inputs ] || [ "$phase" = public-postgres ] || [ "${CPK_SOURCE_ASSEMBLY_IMAGES+x}" = x ]; then
   source_mounted=1
   source_tmpfs=/tmp:exec
   source_paths=/source:/source/src:/source/scripts:/source/products/cpk_server/src:/source/products/cpk_server/tests:/source/products/secrets_server/src:/source/products/secrets_server/tests:/source/products/cpk_local_gateway/src:/source/products/cloudflared_connector/src:/source/products/postgres_server/src:/source/products/website_server/src:
@@ -25,6 +25,17 @@ core_revision=054e5884d89ed6f56141b8fc51ea996f0b6d916b
 operations_revision=71db67c5df666d936860cce35b99394e600b2f1f
 interpreters_revision=2e2a6b880359c6db98f6c1e41b6de450d8bc681f
 case "$phase" in
+  public-postgres)
+    core_revision=f56bb5c4cfde76764d39c5377d4270c5b23c3ba1
+    operations_revision=70154b6698e101159326b08646f2dba90dda87cd
+    interpreters_revision=e438f6e522ad0a23a7acef460be08690f48b2e17
+    set -- python -m unittest http_sample_installation_tests http_sample_image_launcher_tests \
+      test_managed_postgres_installation.ManagedPostgresInstallationTests.test_managed_graph_preserves_file_control_data_and_adds_authenticated_sql \
+      test_managed_postgres_installation.ManagedPostgresInstallationTests.test_target_is_validated_with_or_without_optional_website \
+      test_managed_postgres_installation.ManagedPostgresInstallationTests.test_receiver_alias_and_missing_verifier_families_are_rejected \
+      test_managed_postgres_installation.ManagedPostgresInstallationTests.test_managed_socket_alone_does_not_admit_wrong_file_identity_or_contract \
+      test_managed_postgres_installation.ManagedPostgresInstallationTests.test_native_input_keeps_environment_delivery_and_historical_plan -v
+    ;;
   image-inputs)
     set -- python -m unittest http_sample_installation_tests http_sample_image_launcher_tests -v
     ;;

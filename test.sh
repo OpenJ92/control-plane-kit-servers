@@ -22,11 +22,12 @@ MANAGED_COMPOSITION_INTERPRETERS_REVISION=''
 case "${1:-}" in
   --prepare-grandparent-public-inputs)
     [ "$#" -eq 3 ] || exit 2
-    case "$3" in gateway) public_mode=--gateway-document ;; website) public_mode=--parent-website ;; *) exit 2 ;; esac
+    case "$3" in gateway) public_mode=--gateway-document ;; website) public_mode=--parent-website ;; postgres) public_mode=--child-postgres ;; sender) public_mode=--sender ;; *) exit 2 ;; esac
     exec sh scripts/http_sample_image_preflight.sh "$2" "$public_mode"
     ;;
-  --http-sample-source-image-input-tests)
+  --http-sample-source-image-input-tests|--child-public-postgres-source-tests)
     [ "$#" -eq 4 ] || exit 2
+    if [ "$1" = --child-public-postgres-source-tests ]; then HTTP_SAMPLE_ASSEMBLY_PHASE=public-postgres; else HTTP_SAMPLE_ASSEMBLY_PHASE=image-inputs; fi
     HTTP_SAMPLE_RELAY_ONLY=8
     HTTP_SAMPLE_SOURCE_CORE=$2
     HTTP_SAMPLE_SOURCE_OPERATIONS=$3
@@ -138,7 +139,7 @@ docker run "$@" --rm \
 
 if [ "$HTTP_SAMPLE_RELAY_ONLY" = 8 ]; then
   sh scripts/http_sample_source_assembly.sh "$IMAGE" "$HTTP_SAMPLE_SOURCE_CORE" \
-    "$HTTP_SAMPLE_SOURCE_OPERATIONS" "$HTTP_SAMPLE_SOURCE_INTERPRETERS" image-inputs
+    "$HTTP_SAMPLE_SOURCE_OPERATIONS" "$HTTP_SAMPLE_SOURCE_INTERPRETERS" "$HTTP_SAMPLE_ASSEMBLY_PHASE"
   exit 0
 fi
 docker build -f Dockerfile.test -t "$IMAGE" .

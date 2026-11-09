@@ -508,17 +508,26 @@ def _managed_health_artifact(value: DockerCpkInstallation) -> ConfigurationArtif
 
 
 def _postgres_variant(value: DockerCpkInstallation) -> ContainerServerProduct:
-    base = value.postgres_product.product
+    return installation_postgres_product(value.postgres_product, value.postgres_password)
+
+
+def installation_postgres_product(
+    document: ProductDescriptorDocument, password_reference: SecretReference,
+) -> ContainerServerProduct:
+    """Pure installation variant shared by composition and public preparation."""
+    if type(password_reference) is not SecretReference:
+        raise TypeError("installation PostgreSQL password requires a SecretReference")
+    base = _selected_product(document, "postgres-server")
     contract = base.runtime_contract
     if _managed_postgres_configuration(contract) is not None:
         # The managed source contract advertises signed health. Installation
         # startup additionally requires semantic SQL using the same credential.
         check = PostgresQueryCheck(check_id="installation-postgres-ready", provider_socket="postgres",
-            authentication=PostgresPasswordAuthentication("cpk", "cpk", value.postgres_password))
+            authentication=PostgresPasswordAuthentication("cpk", "cpk", password_reference))
         contract = replace(contract,
             verification=replace(contract.verification, checks=(check,)),
-            secret_deliveries=(replace(contract.secret_deliveries[0], reference=value.postgres_password),))
-        return _variant(value.postgres_product, "postgres", contract)
+            secret_deliveries=(replace(contract.secret_deliveries[0], reference=password_reference),))
+        return _variant(document, "postgres", contract)
     environment = {item.name: item.value for item in contract.public_environment}
     checks = []
     for check in contract.verification.checks:
@@ -527,15 +536,15 @@ def _postgres_variant(value: DockerCpkInstallation) -> ContainerServerProduct:
                     or check.authentication.username != environment.get("POSTGRES_USER")):
                 raise ValueError("PostgreSQL verification must match its declared database and username")
             checks.append(replace(check, authentication=replace(check.authentication,
-                          password_reference=value.postgres_password)))
+                          password_reference=password_reference)))
         else:
             raise ValueError("installation requires password-authenticated PostgreSQL verification")
     if not checks:
         raise ValueError("installation requires PostgreSQL verification")
     contract = replace(contract, verification=replace(contract.verification, checks=tuple(checks)),
                        secret_deliveries=(SecretEnvironmentDelivery("POSTGRES_PASSWORD",
-                                          value.postgres_password, SecretUseIntent.POSTGRES_PASSWORD),))
-    return _variant(value.postgres_product, "postgres", contract)
+                                          password_reference, SecretUseIntent.POSTGRES_PASSWORD),))
+    return _variant(document, "postgres", contract)
 
 
 def _secrets_variant(value: DockerCpkInstallation) -> ContainerServerProduct:

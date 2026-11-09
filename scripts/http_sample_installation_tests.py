@@ -19,7 +19,7 @@ from control_plane_kit_servers_cpk_local_gateway.http_sample_configuration impor
     ARTIFACT_ID as GATEWAY_SAMPLE_ARTIFACT_ID, gateway_http_sample_trust_from_artifact,
 )
 from http_sample_installation_assembly import assemble
-from http_sample_image_inputs import image_options, IMAGE_ROLES, gateway_document, parent_website_input
+from http_sample_image_inputs import image_options, IMAGE_ROLES, gateway_document, parent_website_input, child_postgres_document, sender_input
 
 
 @contextmanager
@@ -152,6 +152,55 @@ class FullInstallationHttpSampleTests(unittest.TestCase):
             parent_website_input(self.images(), value, receiver_id=parent.target.receiver_id)
         with self.assertRaises(ValueError):
             parent_website_input(self.images(), value | {"workspace_id":"foreign-child"}, receiver_id="a" * 32)
+
+    def test_public_postgres_matches_the_normal_installation_variant_and_password_law(self):
+        from hashlib import sha256
+        from control_plane_kit_core.products import ProductReference
+        from control_plane_kit_core.secrets import SecretReference
+        from control_plane_kit_servers_cpk_server.installation import installation_postgres_product
+        from control_plane_kit_servers_postgres_server.configuration import decode_postgres_control_configuration
+        images = self.images()
+        with isolated_directory():
+            fixture, original, baseline, graph, _, _ = assemble(images=images)
+        cpk = fixture.receiver(baseline.node(original.cpk_node_id))
+        artifact, = original.cpk_product.product.runtime_contract.configuration_artifacts
+        pg_artifact, = original.postgres_product.product.runtime_contract.configuration_artifacts
+        pg = decode_postgres_control_configuration(pg_artifact.content.encode())
+        raw = json.dumps({"schema":"cpk.root-commissioning.public.v1", "artifacts":{"cpk":artifact.descriptor()},
+            "receiver_ids":{"cpk":cpk.target.receiver_id}})
+        value = dict(commissioning_public_document=raw, commissioning_public_sha256=sha256(raw.encode()).hexdigest(),
+            installation_id=original.installation_id, workspace_id=original.workspace_id,
+            password_reference=original.postgres_password.reference_id)
+        with patch("http_sample_installation_assembly.InstallationManagementTests.setUp",
+                side_effect=AssertionError("fixture entered")), \
+                patch("http_sample_installation_assembly.AuthoredMaterial",
+                    side_effect=AssertionError("private material entered")):
+            document = child_postgres_document(images, value, receiver_id=pg.target.receiver_id)
+        product = installation_postgres_product(original.postgres_product, original.postgres_password)
+        self.assertEqual(document, fixture.codec.encode_document(product))
+        self.assertEqual(ProductReference.from_document(document).descriptor_sha256.value,
+            graph.node(original.postgres_node_id).metadata["product_descriptor_digest"])
+        check, = document.product.runtime_contract.verification.checks
+        delivery, = document.product.runtime_contract.secret_deliveries
+        self.assertEqual(check.check_id, "installation-postgres-ready")
+        self.assertEqual(check.authentication.password_reference, delivery.reference)
+        self.assertEqual(delivery.reference, original.postgres_password)
+        self.assertEqual(delivery.path_binding.environment_name, "POSTGRES_PASSWORD_FILE")
+        gateway = gateway_document(images)
+        sender = sender_input(gateway.content.decode(), document.content.decode())
+        self.assertEqual(sender["schema"], "cpk-server.managed-verification.v1")
+        self.assertEqual(sender["postgres_product_document"], document.content.decode())
+        self.assertEqual(sender["gateway_product"], ProductReference.from_document(gateway).descriptor())
+        changed = child_postgres_document(images, value | {"password_reference":"secret://fixture/other"},
+            receiver_id=pg.target.receiver_id)
+        self.assertNotEqual(document.content_digest, changed.content_digest)
+        self.assertEqual(changed.product.runtime_contract.secret_deliveries[0].reference,
+            SecretReference("secret://fixture/other"))
+        for mutation, receiver in (({"workspace_id":"foreign-parent"}, pg.target.receiver_id),
+                ({"commissioning_public_sha256":"0" * 64}, pg.target.receiver_id),
+                ({}, cpk.target.receiver_id)):
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                child_postgres_document(images, value | mutation, receiver_id=receiver)
 
     def test_complete_assembly_preserves_supplied_product_image_and_exact_versions(self):
         # Unit metadata only; this fixture reference is never an acquired image.
