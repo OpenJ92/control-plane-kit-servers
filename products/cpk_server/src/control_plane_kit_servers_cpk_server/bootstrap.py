@@ -234,9 +234,11 @@ def _installation(document):
         from control_plane_kit_core.products import OciImageReferenceCodec
         from .installation import DockerCpkWebsite
         selected = item["website"]
-        _closed(selected, {"image", "external_endpoint", "host_binding"})
+        _closed(selected, {"image", "external_endpoint", "host_binding"}, {"managed_control_configuration"})
         website["website"] = DockerCpkWebsite(image=OciImageReferenceCodec().decode(selected["image"]),
-            ingress=ExternalInstallationIngress(selected["external_endpoint"]))
+            ingress=ExternalInstallationIngress(selected["external_endpoint"]),
+            managed_control_configuration=(ConfigurationArtifact.from_descriptor(selected["managed_control_configuration"])
+                if "managed_control_configuration" in selected else None))
     installation = DockerCpkInstallation(
         installation_id=item["installation_id"], workspace_id=item["workspace_id"],
         runtime_authority=RuntimeAuthorityReference(item["runtime_authority"]),
@@ -294,6 +296,11 @@ def _complete_control_configuration(installation, products):
     postgres = _managed_postgres_configuration(products["postgres"].product.runtime_contract)
     if postgres is not None:
         receivers.append(postgres.target.receiver_id)
+    if installation.website is not None and installation.website.managed_control_configuration is not None:
+        from control_plane_kit_core.receiver_configuration import ReceiverNodeControlConfigurationCodec
+        website = ReceiverNodeControlConfigurationCodec().decode_bytes(
+            installation.website.managed_control_configuration.content.encode("utf-8"))
+        receivers.append(website.target.receiver_id)
     if len(set(receivers)) != len(receivers):
         raise RootBootstrapError("bootstrap receiving configuration is invalid")
 

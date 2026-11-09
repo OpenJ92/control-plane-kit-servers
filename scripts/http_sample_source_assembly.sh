@@ -10,8 +10,8 @@ phase=${5:-all}
 source_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 source_paths=''
 source_tmpfs=/tmp
-if [ "$phase" = managed-startup ] || [ "$phase" = material-preparation ]; then
-  source_tmpfs=/tmp:exec
+if [ "$phase" = managed-startup ] || [ "$phase" = material-preparation ] || [ "$phase" = parent-website ] || [ "$phase" = bootstrap-driver ]; then
+  [ "$phase" = parent-website ] || source_tmpfs=/tmp:exec
   source_paths=/source:/source/src:/source/scripts:/source/products/cpk_server/src:/source/products/cpk_server/tests:/source/products/secrets_server/src:/source/products/secrets_server/tests:/source/products/cpk_local_gateway/src:/source/products/cloudflared_connector/src:/source/products/postgres_server/src:/source/products/website_server/src:
 fi
 secrets_repository=${6:-}
@@ -20,7 +20,7 @@ core_revision=054e5884d89ed6f56141b8fc51ea996f0b6d916b
 operations_revision=71db67c5df666d936860cce35b99394e600b2f1f
 interpreters_revision=2e2a6b880359c6db98f6c1e41b6de450d8bc681f
 case "$phase" in
-  managed-composition|managed-startup|material-preparation)
+  managed-composition|managed-startup|material-preparation|parent-website|bootstrap-driver)
     core_revision=$6
     operations_revision=$7
     interpreters_revision=$8
@@ -30,7 +30,25 @@ case "$phase" in
       case "$revision" in ''|*[!0-9a-f]*) echo 'exact source revision is required' >&2; exit 2 ;; esac
       [ "${#revision}" -eq 40 ] || exit 2
     done
-    if [ "$phase" = material-preparation ]; then
+    if [ "$phase" = bootstrap-driver ]; then
+      set -- python -m unittest root_material_preparation_tests \
+        test_root_bootstrap.RootBootstrapTests.test_permissive_material_is_refused_before_acquisition_and_redacted \
+        test_root_bootstrap.RootBootstrapTests.test_uncertain_receipt_holds_without_redispatch_or_rewriting_history \
+        test_root_complete.CompleteRootPlanTests \
+        test_installation_management.InstallationManagementTests.test_managed_website_joins_actual_routes_with_child_api_binding_and_cpk_only_auth \
+        test_installation_management.InstallationManagementTests.test_managed_website_material_changes_get_distinct_stable_product_identities \
+        test_installation_management.InstallationManagementTests.test_managed_website_refuses_foreign_scope_or_duplicate_receiver \
+        test_installation_management.InstallationManagementTests.test_managed_website_requires_management_and_rejects_invalid_artifact_without_echo \
+        managed_verification_startup_tests \
+        managed_verification_composition_qualification.ManagedCompositionTests.test_real_native_registration_supplies_same_objects_to_service_options \
+        grandparent_oci_tests grandparent_build_tests -v
+    elif [ "$phase" = parent-website ]; then
+      set -- python -m unittest test_root_complete.CompleteRootPlanTests \
+        test_installation_management.InstallationManagementTests.test_managed_website_joins_actual_routes_with_child_api_binding_and_cpk_only_auth \
+        test_installation_management.InstallationManagementTests.test_managed_website_material_changes_get_distinct_stable_product_identities \
+        test_installation_management.InstallationManagementTests.test_managed_website_refuses_foreign_scope_or_duplicate_receiver \
+        test_installation_management.InstallationManagementTests.test_managed_website_requires_management_and_rejects_invalid_artifact_without_echo -v
+    elif [ "$phase" = material-preparation ]; then
       set -- python -m unittest root_material_preparation_tests \
         test_root_bootstrap.RootBootstrapTests.test_permissive_material_is_refused_before_acquisition_and_redacted \
         test_root_bootstrap.RootBootstrapTests.test_uncertain_receipt_holds_without_redispatch_or_rewriting_history -v
@@ -93,7 +111,7 @@ git -C "$core_repository" archive --format=tar "$core_revision" control-plane-ki
 tar -xf "$owned_source/core.tar" -C "$owned_source/core" --strip-components=1
 git -C "$operations_repository" archive --format=tar "$operations_revision" control-plane-kit-operations/src/control_plane_kit_operations > "$owned_source/operations.tar"
 tar -xf "$owned_source/operations.tar" -C "$owned_source/operations" --strip-components=1
-if [ "$phase" = managed-composition ] || [ "$phase" = managed-startup ] || [ "$phase" = material-preparation ]; then
+if [ "$phase" = managed-composition ] || [ "$phase" = managed-startup ] || [ "$phase" = material-preparation ] || [ "$phase" = parent-website ] || [ "$phase" = bootstrap-driver ]; then
   git -C "$operations_repository" archive --format=tar "$operations_revision" control-plane-kit-operations/tests > "$owned_source/operations-tests.tar"
   tar -xf "$owned_source/operations-tests.tar" -C "$owned_source/operations" --strip-components=1
 fi
@@ -121,11 +139,11 @@ fi
 printf 'pure assembly source Core=%s Operations=%s Interpreters=%s\n' \
   "$core_revision" "$operations_revision" "$interpreters_revision"
 source_controller() {
-  if [ "$phase" = material-preparation ]; then
+  if [ "$phase" = material-preparation ] || [ "$phase" = bootstrap-driver ]; then
     docker run --pull never --mount "type=bind,source=$source_root,target=/source,readonly" --workdir /tmp \
       --tmpfs /preparation-tests:exec,mode=0700 -e CPK_MATERIAL_TEST_ROOT=/preparation-tests \
       -e CPK_STARTUP_SOURCE_ROOT=/source "$@"
-  elif [ "$phase" = managed-startup ]; then
+  elif [ "$phase" = managed-startup ] || [ "$phase" = parent-website ]; then
     docker run --pull never --mount "type=bind,source=$source_root,target=/source,readonly" --workdir /tmp \
       -e CPK_STARTUP_SOURCE_ROOT=/source "$@"
   else docker run "$@"

@@ -1,5 +1,12 @@
 Source: [bootstrap.py](../../../../../../products/cpk_server/src/control_plane_kit_servers_cpk_server/bootstrap.py).
 
+The external sibling parent may now supply website.managed_control_configuration
+as a normal public ConfigurationArtifact descriptor. The optional closed stanza
+reaches DockerCpkWebsite unchanged; normal root configuration_files/env projection
+carries it to the managed image. Receiving identity validation includes website
+alongside CPK/Secrets/PG. No offline-material logic/CLI or packaging change.
+See [scope and pending tests](../../../../../parent-managed-website-input.md).
+
 The pure root projection compiles the existing installation value, validates its
 graph, and derives the inspectable acquisition plan. Each node's
 `configuration_files` carries the complete compiled artifact descriptor, exact
