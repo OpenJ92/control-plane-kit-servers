@@ -186,14 +186,25 @@ class FullInstallationHttpSampleTests(unittest.TestCase):
         self.assertEqual(check.authentication.password_reference, delivery.reference)
         self.assertEqual(delivery.reference, original.postgres_password)
         self.assertEqual(delivery.path_binding.environment_name, "POSTGRES_PASSWORD_FILE")
+        class ScopedReference(SecretReference):
+            pass
+        subtype = ScopedReference(original.postgres_password.reference_id)
+        subtype_product = installation_postgres_product(original.postgres_product, subtype)
+        self.assertIs(subtype_product.runtime_contract.secret_deliveries[0].reference, subtype)
+        self.assertIs(subtype_product.runtime_contract.verification.checks[0].authentication.password_reference, subtype)
         gateway = gateway_document(images)
-        sender = sender_input(gateway.content.decode(), document.content.decode())
+        hashes = dict(gateway_sha256=gateway.content_digest, postgres_sha256=document.content_digest)
+        sender = sender_input(gateway.content.decode(), document.content.decode(), **hashes)
         self.assertEqual(sender["schema"], "cpk-server.managed-verification.v1")
         self.assertEqual(sender["postgres_product_document"], document.content.decode())
         self.assertEqual(sender["gateway_product"], ProductReference.from_document(gateway).descriptor())
+        with self.assertRaises(ValueError):
+            sender_input(document.content.decode(), gateway.content.decode(), **hashes)
         changed = child_postgres_document(images, value | {"password_reference":"secret://fixture/other"},
             receiver_id=pg.target.receiver_id)
         self.assertNotEqual(document.content_digest, changed.content_digest)
+        with self.assertRaises(ValueError):
+            sender_input(gateway.content.decode(), changed.content.decode(), **hashes)
         self.assertEqual(changed.product.runtime_contract.secret_deliveries[0].reference,
             SecretReference("secret://fixture/other"))
         for mutation, receiver in (({"workspace_id":"foreign-parent"}, pg.target.receiver_id),

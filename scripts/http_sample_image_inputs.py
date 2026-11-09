@@ -133,9 +133,13 @@ def child_postgres_document(images, value, *, receiver_id):
     return codec.encode_document(installation_postgres_product(selected, SecretReference(value["password_reference"])))
 
 
-def sender_input(gateway_raw, postgres_raw):
+def sender_input(gateway_raw, postgres_raw, *, gateway_sha256, postgres_sha256):
     """Existing startup schema; preserve the exact once-prepared PG document."""
+    from hashlib import sha256
     from control_plane_kit_core.products import ProductDescriptorCodec, ProductReference, ProductReferenceCodec
+    if (sha256(gateway_raw.encode()).hexdigest() != gateway_sha256 or
+            sha256(postgres_raw.encode()).hexdigest() != postgres_sha256):
+        raise ValueError("sender inputs do not match the frozen document hashes")
     codec = ProductDescriptorCodec()
     gateway = codec.decode_document(gateway_raw.encode())
     postgres = codec.decode_document(postgres_raw.encode())
@@ -163,7 +167,9 @@ if __name__ == "__main__":
             value = json.loads(os.environ["CPK_SOURCE_CHILD_POSTGRES"], object_pairs_hook=_unique)
             sys.stdout.buffer.write(child_postgres_document(options["images"], value, receiver_id=uuid4().hex).content)
         elif sys.argv[1:] == ["--sender"]:
-            result = sender_input(os.environ["CPK_SOURCE_GATEWAY_DOCUMENT"], os.environ["CPK_SOURCE_POSTGRES_DOCUMENT"])
+            result = sender_input(os.environ["CPK_SOURCE_GATEWAY_DOCUMENT"], os.environ["CPK_SOURCE_POSTGRES_DOCUMENT"],
+                gateway_sha256=os.environ["CPK_SOURCE_GATEWAY_DOCUMENT_SHA256"],
+                postgres_sha256=os.environ["CPK_SOURCE_POSTGRES_DOCUMENT_SHA256"])
             sys.stdout.write(json.dumps(result, sort_keys=True, separators=(",", ":")))
         elif sys.argv[1:]:
             raise ValueError("unknown public preparation mode")

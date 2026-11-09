@@ -40,6 +40,11 @@ codecs and emits the EXISTING cpk-server.managed-verification.v1 startup schema:
 gateway ProductReference plus the exact PG canonical document string. It does
 not replace the ordinary startup reader's support/observer checks. Sender mode
 allocates no ID. PostgreSQL mode allocates one public UUID, never a signing key.
+Sender preparation additionally requires independent frozen SHA256 values for
+both ordered inputs. It refuses swapped roles and any otherwise valid alternate
+document before emitting output. Use the previously accepted gateway hash and
+the exact PG hash captured after its single preparation; do not recalculate an
+expected hash from an unreviewed replacement during sender generation.
 
 Rejected: using AuthoredMaterial/managed_input fixtures for actual documents,
 borrowing parent receivers or trust, constructing a fake installation object,
@@ -83,7 +88,9 @@ CPK_SOURCE_ASSEMBLY_IMAGES and CPK_SOURCE_CHILD_POSTGRES (the reviewed public
 preparation JSON) and writes one canonical PG document to a fresh exclusive file.
 Mode sender then takes CPK_SOURCE_GATEWAY_DOCUMENT/CPK_SOURCE_POSTGRES_DOCUMENT
 with those exact bytes and emits the existing sender JSON to another exclusive
-file. Preserve status/stderr/output hashes and stop on any failure; no retries.
+file. Sender also requires CPK_SOURCE_GATEWAY_DOCUMENT_SHA256 and
+CPK_SOURCE_POSTGRES_DOCUMENT_SHA256 frozen as described above. Preserve
+status/stderr/output hashes and stop on any failure; no retries.
 Do not rerun gateway or parent website allocation during these steps.
 
 Security/history: no new route, grant, network exposure or durable mutation.
@@ -92,3 +99,10 @@ decoded; no private PEM, bearer, selected secret version, run or receipt is read
 or invented. Public IDs and output hashes are recorded on the governing issue
 through North. Real installer qualification, protected preparation, graph
 submission, runtime startup and ingress remain separately bounded.
+
+Meridian's first review held two details before any test or PG allocation:
+the extraction's exact-type reference check narrowed the existing isinstance
+contract, and sender input roles were not independently bound to accepted bytes.
+The successor preserves isinstance with a focused reference-subtype regression,
+and requires the ordered frozen hashes with swapped/alternate-document refusal.
+No test, metadata retry or receiver allocation preceded this correction.

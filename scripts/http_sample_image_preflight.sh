@@ -31,6 +31,7 @@ docker run --pull never --rm --network none --read-only --cap-drop ALL --securit
   --workdir /tmp -e PYTHONDONTWRITEBYTECODE=1 \
   -e CPK_SOURCE_ASSEMBLY_IMAGES -e CPK_SOURCE_ASSEMBLY_POSTGRES_IMAGE -e CPK_SOURCE_PARENT_WEBSITE -e CPK_SOURCE_CHILD_POSTGRES \
   -e CPK_SOURCE_GATEWAY_DOCUMENT -e CPK_SOURCE_POSTGRES_DOCUMENT \
+  -e CPK_SOURCE_GATEWAY_DOCUMENT_SHA256 -e CPK_SOURCE_POSTGRES_DOCUMENT_SHA256 \
   -e PYTHONPATH=/preflight-core/src:/source/src:/source/products/cpk_local_gateway/src:/source/products/website_server/src:/source/products/postgres_server/src:/source/products/cpk_server/src \
   --mount "type=bind,source=$preflight_source,target=/preflight-core,readonly" \
   --mount "type=bind,source=$ROOT,target=/source,readonly" \

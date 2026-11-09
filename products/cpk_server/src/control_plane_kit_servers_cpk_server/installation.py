@@ -515,7 +515,7 @@ def installation_postgres_product(
     document: ProductDescriptorDocument, password_reference: SecretReference,
 ) -> ContainerServerProduct:
     """Pure installation variant shared by composition and public preparation."""
-    if type(password_reference) is not SecretReference:
+    if not isinstance(password_reference, SecretReference):
         raise TypeError("installation PostgreSQL password requires a SecretReference")
     base = _selected_product(document, "postgres-server")
     contract = base.runtime_contract
