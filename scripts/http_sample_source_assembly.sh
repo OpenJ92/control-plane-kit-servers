@@ -24,11 +24,14 @@ case "$phase" in
     core_revision=$6
     operations_revision=$7
     interpreters_revision=$8
-    secrets_repository=''
-    secrets_revision=''
+    secrets_repository=${9:-}
+    secrets_revision=${10:-}
+    if [ -n "$secrets_repository$secrets_revision" ]; then
+      { [ "$phase" = material-preparation ] || [ "$phase" = bootstrap-driver ]; } && [ -n "$secrets_repository" ] || exit 2
+      case "$secrets_revision" in ''|*[!0-9a-f]*) exit 2 ;; esac
+      [ "${#secrets_revision}" -eq 40 ] || exit 2
+    fi
     if [ "$phase" = bootstrap-driver ]; then
-      secrets_repository=$9
-      secrets_revision=${10}
       [ "$secrets_revision" = 57e4fc61d6931ef078550f98154a585bda61987b ] || exit 2
     fi
     for revision in "$core_revision" "$operations_revision" "$interpreters_revision"; do
@@ -36,7 +39,7 @@ case "$phase" in
       [ "${#revision}" -eq 40 ] || exit 2
     done
     if [ "$phase" = bootstrap-driver ]; then
-      set -- python -m unittest root_material_preparation_tests \
+      set -- python -m unittest root_material_preparation_tests root_material_provider_policy_tests \
         test_root_bootstrap.RootBootstrapTests.test_permissive_material_is_refused_before_acquisition_and_redacted \
         test_root_bootstrap.RootBootstrapTests.test_uncertain_receipt_holds_without_redispatch_or_rewriting_history \
         test_root_complete.CompleteRootPlanTests \
@@ -54,7 +57,10 @@ case "$phase" in
         test_installation_management.InstallationManagementTests.test_managed_website_refuses_foreign_scope_or_duplicate_receiver \
         test_installation_management.InstallationManagementTests.test_managed_website_requires_management_and_rejects_invalid_artifact_without_echo -v
     elif [ "$phase" = material-preparation ]; then
-      set -- python -m unittest root_material_preparation_tests \
+      if [ -n "$secrets_repository" ]; then
+        set -- root_material_provider_policy_tests
+      else set --; fi
+      set -- python -m unittest "$@" root_material_preparation_tests \
         test_root_bootstrap.RootBootstrapTests.test_permissive_material_is_refused_before_acquisition_and_redacted \
         test_root_bootstrap.RootBootstrapTests.test_uncertain_receipt_holds_without_redispatch_or_rewriting_history -v
     elif [ "$phase" = managed-startup ]; then
@@ -122,6 +128,12 @@ if [ "$phase" = managed-composition ] || [ "$phase" = managed-startup ] || [ "$p
 fi
 git -C "$interpreters_repository" archive --format=tar "$interpreters_revision" src/control_plane_kit_interpreters > "$owned_source/interpreters.tar"
 tar -xf "$owned_source/interpreters.tar" -C "$owned_source/interpreters"
+if [ "$phase" = material-preparation ] && [ -n "$secrets_repository" ]; then
+  mkdir "$owned_source/secrets"
+  git -C "$secrets_repository" archive --format=tar "$secrets_revision" src/control_plane_kit_secrets > "$owned_source/secrets.tar"
+  tar -xf "$owned_source/secrets.tar" -C "$owned_source/secrets"
+  printf 'material policy Secrets source=%s\n' "$secrets_revision"
+fi
 network=none
 if [ "$phase" = registrations ] || [ "$phase" = bootstrap-driver ]; then
   mkdir "$owned_source/secrets"

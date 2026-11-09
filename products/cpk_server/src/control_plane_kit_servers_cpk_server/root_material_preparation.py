@@ -22,6 +22,11 @@ _ROLES = ("human", "setup", "worker")
 _FILES = {"control_credential": "setup.bearer", "postgres_password": "postgres.password",
     "custody_root_key": "custody.key", "provider_client_credential": "provider.token",
     "provider_credentials_document": "provider-credentials.json"}
+_CHILD_MATERIAL_INTENTS = frozenset({"postgres.password", "application.control-token",
+    "secrets.custody-root-key", "secrets.provider-credentials-document", "cloudflare.api-token",
+    "cloudflare.tunnel-token", "gateway.probe-signing-key", "workload.node-health-read-signing-key",
+    "gateway.node-health-read-transit-signing-key", "workload.http-verification-sample-signing-key",
+    "gateway.http-verification-sample-transit-signing-key"})
 
 
 def _require(condition):
@@ -35,13 +40,55 @@ def _closed(value, keys):
 
 
 def _provider_seed(subject, grants):
-    # Secrets 158b17ed owns the initial-policy vocabulary. Its pure seed
+    # The selected Secrets owner defines the initial-policy vocabulary. Its pure seed
     # validator needs typed grants but no bearer generation or database.
     from control_plane_kit_secrets.auth import ProviderCredential, ProviderGrant
     from control_plane_kit_secrets.provider_policy import _canonical_seed
     return _canonical_seed((ProviderCredential(subject=subject, token="",
         grants=tuple(ProviderGrant(grant["action"], grant["workspace_id"],
             tuple(grant["intents"])) for grant in grants)),))
+
+
+def _provider_rows(value, installation):
+    """Closed optional split, never provider administration or path authority."""
+    root = installation["workspace_id"]
+    subject = "root-" + installation["installation_id"]
+    base = value["provider_grants"]
+    if "provider_policy" not in value:
+        return ({"subject": subject, "grants": base},)
+    option = _closed(value["provider_policy"], {"child_workspace_id", "cpk_grants",
+        "external_provisioner_subject", "external_provisioner_grants"})
+    child = option["child_workspace_id"]
+    _require(type(child) is str and child not in {root, "*"})
+    parent_base = {"postgres.password", "application.control-token"}
+    parent_intents = parent_base | {"cloudflare.tunnel-token"}
+    _require(all(grant["action"] == "secret.resolve" and set(grant["intents"]).issubset(parent_base)
+        for grant in base))
+    grants = option["cpk_grants"]
+    _require(type(grants) is list and 1 <= len(grants) <= 32)
+    for grant in grants:
+        _closed(grant, {"action", "workspace_id", "intents"})
+        _require(type(grant["intents"]) is list)
+        if grant["workspace_id"] == root:
+            _require(grant["action"] == "secret.resolve" and bool(grant["intents"])
+                and set(grant["intents"]).issubset(parent_intents))
+        else:
+            _require(grant["workspace_id"] == child)
+            _require((grant["action"] == "secret.metadata" and grant["intents"] == [])
+                or (grant["action"] in {"secret.write", "secret.resolve"} and bool(grant["intents"])
+                    and set(grant["intents"]).issubset(_CHILD_MATERIAL_INTENTS)))
+    _require(any(grant == {"action": "secret.metadata", "workspace_id": child, "intents": []}
+        for grant in grants))
+    primary = _provider_seed(subject, grants)
+    _require(len(primary) == sum(max(1, len(grant["intents"])) for grant in grants))
+    _require(set(_provider_seed(subject, base)).issubset(primary))
+    external = option["external_provisioner_subject"]
+    _require(type(external) is str and external not in {subject, "*"})
+    external_grants = option["external_provisioner_grants"]
+    _require(external_grants == [{"action": "secret.write", "workspace_id": root,
+        "intents": ["cloudflare.tunnel-token"]}])
+    _provider_seed(external, external_grants)
+    return ({"subject": subject, "grants": grants}, {"subject": external, "grants": external_grants})
 
 
 def _commissioning(snapshot):
@@ -98,8 +145,9 @@ def _project(document, *, driver_image_id):
     from .bootstrap_workspace import workspace_intent_commitment
     from .root_commissioning import _absolute
     value = decode_document(canonical(document))
-    _closed(value, {"schema", "bootstrap_input", "principals", "permissions", "capabilities",
-        "management", "provider_grants", "custody", "commissioning"})
+    keys = {"schema", "bootstrap_input", "principals", "permissions", "capabilities",
+        "management", "provider_grants", "custody", "commissioning"}
+    _closed(value, keys | ({"provider_policy"} if "provider_policy" in value else set()))
     _require(value["schema"] == "cpk.root-material.intent.v1")
     custody = _closed(value["custody"], {"host_directory", "uid", "gid"})
     _absolute(custody["host_directory"])
@@ -176,6 +224,7 @@ def _project(document, *, driver_image_id):
             and type(grant["intents"]) is list and bool(grant["intents"])
             and all(type(intent) is str and 1 <= len(intent) <= 128 and intent != "*" for intent in grant["intents"]))
     _provider_seed("root-" + installation["installation_id"], provider_grants)
+    _provider_rows(value, installation)
     private = {"plan_digest": plan["digest"], "policy": {"file": "workspace-authority.json", "sha256": sha256(policy_raw).hexdigest()},
         "installer": identities["setup"], "initialization_idempotency_key": initialization_key,
         "administration": administration}
@@ -192,6 +241,8 @@ def plan_root_material_preparation(document, *, driver_image_id):
             "driver_image_id": driver_image_id, "bootstrap_plan": bootstrap,
             "files": files, "outputs": [*files.values(), "human.bearer", "worker.bearer",
                 "workspace-authority.json", "index.json", "bootstrap-input.json", "bootstrap-plan.json"]}
+        if "provider_policy" in original:
+            result["outputs"].append("external-provisioner.token")
         result["digest"] = sha256(canonical(result)).hexdigest()
         return result
     except Exception:
@@ -269,16 +320,23 @@ def _prepare(plan, state):
         # No private commissioning files or existing credentials are opened.
         tokens = {role: secrets.token_urlsafe(48) for role in _ROLES}
         provider = secrets.token_urlsafe(48)
+        provider_rows = _provider_rows(plan["input"], bootstrap["input"]["installation"])
+        provider_tokens = [provider]
+        if len(provider_rows) == 2:
+            provider_tokens.append(secrets.token_urlsafe(48))
+            _require(len(set([*tokens.values(), *provider_tokens])) == 5)
+        credential_rows = [{**row, "token": token} for row, token in zip(provider_rows, provider_tokens)]
         principal_rows = [{"credential": tokens[role], "subject_id": plan["input"]["principals"][role]["subject_id"],
             "kind": plan["input"]["principals"][role]["kind"], "workspace_grants": {}} for role in _ROLES]
         values = dict(control_credential=tokens["setup"], postgres_password=secrets.token_urlsafe(48),
             custody_root_key=encode_master_key_for_file(os.urandom(32)), provider_client_credential=provider,
-            provider_credentials_document=json.dumps([{"subject": "root-" + bootstrap["input"]["installation"]["installation_id"],
-                "token": provider, "grants": plan["input"]["provider_grants"]}]))
+            provider_credentials_document=json.dumps(credential_rows))
         for role, filename in _FILES.items():
             _write(directory, filename, values[role].encode())
         _write(directory, "human.bearer", tokens["human"].encode())
         _write(directory, "worker.bearer", tokens["worker"].encode())
+        if len(provider_rows) == 2:
+            _write(directory, "external-provisioner.token", provider_tokens[1].encode())
         _write(directory, "principals.json", canonical(principal_rows))
         _write(directory, "workspace-authority.json", policy_raw)
         _write(directory, "bootstrap-input.json", canonical(bootstrap["input"]))
@@ -291,16 +349,18 @@ def _prepare(plan, state):
         from control_plane_kit_secrets.provider_policy import _canonical_seed
         credentials = load_provider_credentials({"CPK_SECRETS_CREDENTIALS_FILE": str(state / "provider-credentials.json")})
         provider_authorizer = ProviderAuthorizer(credentials)
-        authenticated_provider = provider_authorizer.authenticate("Bearer " + provider)
         # This validates prepared credentials, not active request-time policy.
         # The pinned Secrets authorizer owns authentication only.
-        _require(len(credentials) == 1 and authenticated_provider is credentials[0]
-            and authenticated_provider.subject == "root-" + bootstrap["input"]["installation"]["installation_id"]
-            and authenticated_provider.grants == tuple(ProviderGrant(grant["action"],
-                grant["workspace_id"], tuple(grant["intents"])) for grant in plan["input"]["provider_grants"])
-            and authenticated_provider.capabilities == ()
-            and _canonical_seed(credentials) == _provider_seed(authenticated_provider.subject,
-                plan["input"]["provider_grants"]))
+        _require(len(credentials) == len(provider_rows))
+        expected_seed = []
+        for credential, row, token in zip(credentials, provider_rows, provider_tokens):
+            authenticated = provider_authorizer.authenticate("Bearer " + token)
+            _require(authenticated is credential and authenticated.subject == row["subject"]
+                and authenticated.grants == tuple(ProviderGrant(grant["action"], grant["workspace_id"],
+                    tuple(grant["intents"])) for grant in row["grants"])
+                and authenticated.capabilities == ())
+            expected_seed.extend(_provider_seed(row["subject"], row["grants"]))
+        _require(_canonical_seed(credentials) == tuple(sorted(expected_seed)))
         installation = bootstrap["input"]["installation"]
         node = next(node for node in bootstrap["resources"]["nodes"] if node["node_id"] == bootstrap["cpk_node_id"])
         environment = {**node["environment"], "CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON":

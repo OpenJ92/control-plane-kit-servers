@@ -40,7 +40,7 @@ case "${1:-}" in
     MANAGED_COMPOSITION_INTERPRETERS_REVISION=$7
     ;;
   --root-material-preparation-source-tests)
-    [ "$#" -eq 7 ] || { echo 'material source tests require three checkouts and three exact revisions' >&2; exit 2; }
+    { [ "$#" -eq 7 ] || [ "$#" -eq 9 ]; } || { echo 'material source tests require three checkouts/revisions and optional exact Secrets checkout/revision' >&2; exit 2; }
     HTTP_SAMPLE_RELAY_ONLY=10
     HTTP_SAMPLE_SOURCE_CORE=$2
     HTTP_SAMPLE_SOURCE_OPERATIONS=$3
@@ -48,6 +48,8 @@ case "${1:-}" in
     GATEWAY_TARGET_CORE_REVISION=$5
     GATEWAY_TARGET_OPERATIONS_REVISION=$6
     MANAGED_COMPOSITION_INTERPRETERS_REVISION=$7
+    HTTP_SAMPLE_SOURCE_SECRETS=${8:-}
+    HTTP_SAMPLE_SOURCE_SECRETS_REVISION=${9:-}
     ;;
   --managed-verification-startup-source-tests)
     [ "$#" -eq 7 ] || { echo 'startup source tests require three checkouts and three exact revisions' >&2; exit 2; }
