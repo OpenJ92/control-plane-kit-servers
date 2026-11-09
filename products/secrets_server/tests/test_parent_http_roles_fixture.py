@@ -1,5 +1,6 @@
 """Synthetic fixture/transport checks; packaged HTTP remains a separate action."""
 import base64
+from copy import deepcopy
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -29,7 +30,7 @@ class Transport:
     def post(self, path, *, headers, json):
         correlation = json["correlation_id"]
         if "wrong-role" in correlation:
-            body = json.loads(json.dumps(DENIED))
+            body = deepcopy(DENIED)
             if self.denial_leak == "nested":
                 body["detail"]["diagnostic"] = {"payload":(self.private / (ROLES[0][0] + ".key")).read_text()}
             elif self.denial_leak == "renamed":
@@ -109,7 +110,7 @@ class ParentHttpRolesFixtureTests(unittest.TestCase):
                 _, private, _ = self.seed(directory)
                 evidence = Path(directory) / "evidence"
                 evidence.mkdir()
-                with self.assertRaises(ValueError):
+                with self.assertRaisesRegex(ValueError, "^parent HTTP signing witness failed$"):
                     exercise(Transport(private, **fault), private, None, "initial")
                 self.assertEqual(tuple(evidence.iterdir()), ())
 

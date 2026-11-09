@@ -89,7 +89,9 @@ CPK_SERVERS_TEST_IMAGE=sha256:1c8b3fc348936b41bb51e530c9f192c360e3b4e53e7a9f7af6
 
 It retains policy/support/integrity, runs all existing Secrets product tests plus
 the parent fixture tests, and the shared OCI transport regressions in immutable
-cached controllers/network none/read-only/tmpfs/no engine socket. No build/pull,
+cached controllers/network none/no engine socket. The first policy/support/
+integrity containers have disposable writable roots and read-only source mounts;
+the product/OCI test runners have read-only roots with temporary tmpfs. No build/pull,
 provider, volume or application network allocation occurs in the source phase.
 
 Only after source PASS and exact separate image-action release:
@@ -123,3 +125,9 @@ before ANY gate or image execution; no superseded source suite was run. Transpor
 unit negatives now inject nested raw and renamed encoded material into a403 and
 require fixed failure with no public success evidence. Source and image actions
 still require the corrected exact commit's independent review/release.
+
+Second review caught the test transport's httpx-compatible json keyword shadowing
+the imported module while copying the denial object. The successor uses deepcopy
+and requires the fixed witness ValueError for each negative, so incidental test
+apparatus errors cannot count as denial/redaction proof. No source test or image
+effect ran at either superseded checkpoint.
