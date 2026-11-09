@@ -20,7 +20,16 @@ GATEWAY_TARGET_OPERATIONS_REVISION=''
 GATEWAY_TARGET_EXPECTATION=''
 MANAGED_COMPOSITION_INTERPRETERS_REVISION=''
 CPK_RECEIVER_PHASE=''
+GATEWAY_PACKAGED_SOURCE=0
 case "${1:-}" in
+  --gateway-packaged-source-tests)
+    [ "$#" -eq 1 ] || exit 2
+    case "$IMAGE" in sha256:*) ;; *) exit 2 ;; esac
+    [ "${#IMAGE}" -eq 71 ] || exit 2
+    case "${IMAGE#sha256:}" in *[!0-9a-f]*) exit 2 ;; esac
+    GATEWAY_PACKAGED_SOURCE=1
+    POLICY_IMAGE=$IMAGE
+    ;;
   --cpk-receiver-packaged)
     [ "$#" -eq 2 ] || { echo 'CPK receiver gate requires tests, image or diagnostic' >&2; exit 2; }
     case "$2" in tests|image|diagnostic) CPK_RECEIVER_PHASE=$2 ;; *) exit 2 ;; esac
@@ -96,7 +105,7 @@ esac
 . ./scripts/root_artifact_shell.sh
 root_artifact_selection
 
-if [ -n "$CPK_RECEIVER_PHASE" ]; then
+if [ -n "$CPK_RECEIVER_PHASE" ] || [ "$GATEWAY_PACKAGED_SOURCE" = 1 ]; then
   : "${CPK_RECEIVER_DAEMON_ID:?select the expected local daemon}"
   . ./scripts/docker_witness_daemon.sh
   docker_witness_daemon
@@ -104,7 +113,7 @@ if [ -n "$CPK_RECEIVER_PHASE" ]; then
   [ "$(docker image inspect "$IMAGE" --format '{{.Id}}')" = "$IMAGE" ] || exit 1
 fi
 set --
-if [ -n "$CPK_RECEIVER_PHASE" ]; then set -- --pull never --network none; fi
+if [ -n "$CPK_RECEIVER_PHASE" ] || [ "$GATEWAY_PACKAGED_SOURCE" = 1 ]; then set -- --pull never --network none; fi
 
 docker run "$@" --rm \
   -v "$ROOT:/source:ro" \
@@ -132,6 +141,15 @@ docker run "$@" --rm \
     --test-root tests \
     --test-root products \
     --gate-file test.sh
+
+if [ "$GATEWAY_PACKAGED_SOURCE" = 1 ]; then
+  docker run --pull never --rm --network none --read-only --tmpfs /tmp:exec --tmpfs /etc/cpk --workdir /source \
+    --mount "type=bind,source=$ROOT,target=/source,readonly" \
+    -e PYTHONDONTWRITEBYTECODE=1 \
+    -e PYTHONPATH=/source:/source/products/cpk_local_gateway/src:/source/products/cpk_local_gateway/tests:/source/products/cpk_server/src:/source/products/secrets_server/src \
+    "$IMAGE" python -m unittest discover -s products/cpk_local_gateway/tests -v
+  exit 0
+fi
 
 if [ -n "$CPK_RECEIVER_PHASE" ]; then
   if [ "$CPK_RECEIVER_PHASE" = tests ]; then

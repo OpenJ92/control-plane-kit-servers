@@ -208,3 +208,38 @@ The #163 retained `diagnostic` phase enters build-disabled, literal-digest-only
 admission in the same owning smoke. Its tests add bounded network-probe evidence
 and refusal of other digest inputs/colliding runs. See the smoke's retained-image
 action packet; no Docker execution is implied by source publication or review.
+
+Servers #163 gateway source-only test action composes Rowan's reviewed gateway
+fixture tip8107ff7ddb6679a10be0d91ec86cc56766d36f10 (including943732c) with one
+owning selector. Its four test/companion files are inherited unchanged. This
+checkout is isolated from the frozen Secrets1182fcc image action.
+
+Exact command, only after independent review and explicit test release, from
+this clean frozen selector commit:
+
+```sh
+DOCKER_CONTEXT=desktop-linux \
+CPK_SERVERS_TEST_IMAGE=sha256:1c8b3fc348936b41bb51e530c9f192c360e3b4e53e7a9f7af6f41b7ba10e83ba \
+CPK_RECEIVER_DAEMON_ID=d23d00aa-b281-448d-bc95-c8e47efeeea2 \
+./test.sh --gateway-packaged-source-tests
+```
+
+Admission requires the reviewed local Unix context/daemon and cached immutable
+controller. No acquisition/build is permitted if either is missing. The ordinary
+coordinate, support and integrity checks run with pull disabled and network none.
+Then normal unittest discovery for products/cpk_local_gateway/tests includes the
+new packaged fixture tests and existing product/relay tests. Read-only source
+and root, no socket, no network and writable temporary /tmp:exec and /etc/cpk are
+the only runtime mounts; repository root, gateway src/tests and CPK/Secrets src
+are explicit import paths. Temporary test material disappears with the controller.
+Normal/full and existing CPK invocations retain their paths.
+
+Scope is source composition: the real gateway ASGI paths receive explicit
+external child HTTP doubles; their observed wire booleans/counts cannot establish
+packaged-child authorization, probes or deployed transit. Actual image/controller
+witnesses, CPK/Secrets/gateway builds, provider bootstrap, registry access,
+installation, cleanup of external resources and approved-run history are excluded.
+Stop on prerequisite, collection, behavioral or apparatus failure; no retry,
+repair, skipped assertion or weakened fixture. PASS permits only North's next
+source/image boundary, not packaged acceptance. This prepared source has only
+source review and whitespace checks until its released Docker tests finish.
