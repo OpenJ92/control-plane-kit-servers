@@ -17,10 +17,6 @@ from control_plane_kit_core.http_verification_samples import (
     HttpVerificationSampleRequestCodec, HttpVerificationSampleResult, http_verification_check_digest,
 )
 from control_plane_kit_core.verification import VerificationOutcome, HttpVerificationEvidence
-from control_plane_kit_servers_cpk_local_gateway.http_sample_relay import GatewayHttpSampleRelay
-from control_plane_kit_servers_cpk_local_gateway.health_relay import GatewayHealthRelay
-from control_plane_kit_servers_cpk_local_gateway.health_transit_verification import gateway_health_transit_verifier_from_artifact
-from control_plane_kit_servers_cpk_local_gateway import server
 from packaged_sample_fixture import GatewaySampleFixture
 
 
@@ -76,6 +72,10 @@ class PackagedSampleFixtureTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(candidate_purpose, core.DelegationKeyPurpose.WORKLOAD_HTTP_VERIFICATION_SAMPLE.value)
 
     async def test_actual_gateway_forwards_workload_only_and_distinguishes_refusal_paths(self):
+        from control_plane_kit_servers_cpk_local_gateway.http_sample_relay import GatewayHttpSampleRelay
+        from control_plane_kit_servers_cpk_local_gateway.health_relay import GatewayHealthRelay
+        from control_plane_kit_servers_cpk_local_gateway.health_transit_verification import gateway_health_transit_verifier_from_artifact
+        from control_plane_kit_servers_cpk_local_gateway import server
         fixture = self.fixture
         observed = []
         health_observed = []

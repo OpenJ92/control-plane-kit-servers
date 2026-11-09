@@ -33,15 +33,6 @@ from control_plane_kit_core.wrapper_configuration import NodeControlVerification
 from control_plane_kit_servers_cpk_server import control_configuration as cpk
 from control_plane_kit_servers_secrets_server import configuration as secrets
 from control_plane_kit_secrets.control import secrets_control_declaration
-from control_plane_kit_servers_cpk_local_gateway import control_configuration as gateway
-from control_plane_kit_servers_cpk_local_gateway.health_transit_configuration import (
-    GatewayHealthTransitConfiguration, gateway_health_transit_configuration_artifact,
-)
-from control_plane_kit_servers_cpk_local_gateway.health_relay_configuration import gateway_health_relay_configuration_artifact
-from control_plane_kit_servers_cpk_local_gateway.http_sample_configuration import (
-    gateway_http_sample_source_runtime_contract, gateway_http_sample_trust_artifact,
-)
-from control_plane_kit_servers_cpk_local_gateway.http_sample_relay import GatewayHttpSampleTrust
 from scripts.http_sample_fixture import require_passed_sample, write_public
 
 
@@ -76,6 +67,17 @@ class ReceiverMaterial:
 class GatewaySampleFixture:
     """Test-owned authority, never authorization from Operations or a provider."""
     def __init__(self, *, clock=time.time):
+        # The existing product tests unload gateway modules between cases.
+        # Resolve this family's exact-type values at construction, not collection.
+        from control_plane_kit_servers_cpk_local_gateway import control_configuration as gateway
+        from control_plane_kit_servers_cpk_local_gateway.health_transit_configuration import (
+            GatewayHealthTransitConfiguration, gateway_health_transit_configuration_artifact,
+        )
+        from control_plane_kit_servers_cpk_local_gateway.health_relay_configuration import gateway_health_relay_configuration_artifact
+        from control_plane_kit_servers_cpk_local_gateway.http_sample_configuration import (
+            gateway_http_sample_source_runtime_contract, gateway_http_sample_trust_artifact,
+        )
+        from control_plane_kit_servers_cpk_local_gateway.http_sample_relay import GatewayHttpSampleTrust
         self.clock = clock
         self._surface_private, surface = _key("fixture-surface")
         self._health_private, health = _key("fixture-health")

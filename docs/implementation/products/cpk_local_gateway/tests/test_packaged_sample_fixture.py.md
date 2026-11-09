@@ -21,8 +21,13 @@ public signature booleans are test-local observations, not packaged-image
 claims. No authorization string is retained. The packaged controller explicitly
 reports that forwarding and child health-probe instrumentation are absent.
 
+Full product discovery includes an existing test that unloads gateway modules
+between cases. Resolve gateway-family imports at fixture construction and relay
+test invocation, preserving current exact-type identities after those unloads.
+No production identity check or existing test cleanup is relaxed.
+
 Owning execution must be integrated by Lin through `./test.sh` using its selected
 cached controller and required policy/integrity phases, with no new image build
-for the source-only phase. Until that gate runs, neither test has green evidence.
+for the source-only phase. Until that gate runs, these tests have no green evidence.
 Preserve existing gateway relay suites and full-suite discovery. No Core or
 Operations stores, histories or state machines are recreated by these tests.
