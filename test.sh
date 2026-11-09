@@ -20,6 +20,25 @@ GATEWAY_TARGET_OPERATIONS_REVISION=''
 GATEWAY_TARGET_EXPECTATION=''
 MANAGED_COMPOSITION_INTERPRETERS_REVISION=''
 case "${1:-}" in
+  --prepare-grandparent-public-root-input)
+    [ "$#" -eq 4 ] || exit 2
+    case "$IMAGE" in sha256:*) ;; *) exit 2 ;; esac
+    [ "${#IMAGE}" = 71 ] || exit 2
+    case "${IMAGE#sha256:}" in *[!0-9a-f]*) exit 2 ;; esac
+    [ "$(docker image inspect "$IMAGE" --format '{{.Id}}')" = "$IMAGE" ] || exit 1
+    exec sh scripts/http_sample_source_assembly.sh "$IMAGE" "$2" "$3" "$4" root-input \
+      f56bb5c4cfde76764d39c5377d4270c5b23c3ba1 70154b6698e101159326b08646f2dba90dda87cd e438f6e522ad0a23a7acef460be08690f48b2e17
+    ;;
+  --grandparent-public-root-source-tests)
+    [ "$#" -eq 4 ] || exit 2
+    HTTP_SAMPLE_RELAY_ONLY=11
+    HTTP_SAMPLE_SOURCE_CORE=$2
+    HTTP_SAMPLE_SOURCE_OPERATIONS=$3
+    HTTP_SAMPLE_SOURCE_INTERPRETERS=$4
+    GATEWAY_TARGET_CORE_REVISION=f56bb5c4cfde76764d39c5377d4270c5b23c3ba1
+    GATEWAY_TARGET_OPERATIONS_REVISION=70154b6698e101159326b08646f2dba90dda87cd
+    MANAGED_COMPOSITION_INTERPRETERS_REVISION=e438f6e522ad0a23a7acef460be08690f48b2e17
+    ;;
   --parent-managed-website-source-tests)
     [ "$#" -eq 7 ] || exit 2
     HTTP_SAMPLE_RELAY_ONLY=10
@@ -108,12 +127,12 @@ esac
 root_artifact_selection
 
 run_policy() {
-  if [ "$HTTP_SAMPLE_RELAY_ONLY" = 9 ] || [ "$HTTP_SAMPLE_RELAY_ONLY" = 10 ]; then
+  if [ "$HTTP_SAMPLE_RELAY_ONLY" = 9 ] || [ "$HTTP_SAMPLE_RELAY_ONLY" = 10 ] || [ "$HTTP_SAMPLE_RELAY_ONLY" = 11 ]; then
     docker run --pull never --network none --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges "$@"
   else docker run "$@"
   fi
 }
-if [ "$HTTP_SAMPLE_RELAY_ONLY" = 9 ] || [ "$HTTP_SAMPLE_RELAY_ONLY" = 10 ]; then
+if [ "$HTTP_SAMPLE_RELAY_ONLY" = 9 ] || [ "$HTTP_SAMPLE_RELAY_ONLY" = 10 ] || [ "$HTTP_SAMPLE_RELAY_ONLY" = 11 ]; then
   case "$IMAGE" in sha256:*) ;; *) echo 'startup source tests require cached immutable controller' >&2; exit 2 ;; esac
   [ "${#IMAGE}" -eq 71 ] || exit 2
   digest=${IMAGE#sha256:}
@@ -149,7 +168,12 @@ run_policy --rm \
     --test-root products \
     --gate-file test.sh
 
-if [ "$HTTP_SAMPLE_RELAY_ONLY" = 10 ]; then
+if [ "$HTTP_SAMPLE_RELAY_ONLY" = 11 ]; then
+  sh scripts/http_sample_source_assembly.sh "$IMAGE" "$HTTP_SAMPLE_SOURCE_CORE" \
+    "$HTTP_SAMPLE_SOURCE_OPERATIONS" "$HTTP_SAMPLE_SOURCE_INTERPRETERS" root-input-tests \
+    "$GATEWAY_TARGET_CORE_REVISION" "$GATEWAY_TARGET_OPERATIONS_REVISION" "$MANAGED_COMPOSITION_INTERPRETERS_REVISION"
+  exit $?
+elif [ "$HTTP_SAMPLE_RELAY_ONLY" = 10 ]; then
   sh scripts/http_sample_source_assembly.sh "$IMAGE" "$HTTP_SAMPLE_SOURCE_CORE" \
     "$HTTP_SAMPLE_SOURCE_OPERATIONS" "$HTTP_SAMPLE_SOURCE_INTERPRETERS" parent-website \
     "$GATEWAY_TARGET_CORE_REVISION" "$GATEWAY_TARGET_OPERATIONS_REVISION" "$MANAGED_COMPOSITION_INTERPRETERS_REVISION"

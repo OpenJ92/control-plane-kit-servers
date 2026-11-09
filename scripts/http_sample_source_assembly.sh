@@ -9,7 +9,7 @@ interpreters_repository=$4
 phase=${5:-all}
 source_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 source_paths=''
-if [ "$phase" = managed-startup ] || [ "$phase" = parent-website ]; then
+if [ "$phase" = managed-startup ] || [ "$phase" = parent-website ] || [ "$phase" = root-input ] || [ "$phase" = root-input-tests ]; then
   source_paths=/source:/source/src:/source/scripts:/source/products/cpk_server/src:/source/products/cpk_server/tests:/source/products/secrets_server/src:/source/products/secrets_server/tests:/source/products/cpk_local_gateway/src:/source/products/cloudflared_connector/src:/source/products/postgres_server/src:/source/products/website_server/src:
 fi
 secrets_repository=${6:-}
@@ -18,7 +18,7 @@ core_revision=054e5884d89ed6f56141b8fc51ea996f0b6d916b
 operations_revision=71db67c5df666d936860cce35b99394e600b2f1f
 interpreters_revision=2e2a6b880359c6db98f6c1e41b6de450d8bc681f
 case "$phase" in
-  managed-composition|managed-startup|parent-website)
+  managed-composition|managed-startup|parent-website|root-input|root-input-tests)
     core_revision=$6
     operations_revision=$7
     interpreters_revision=$8
@@ -28,7 +28,11 @@ case "$phase" in
       case "$revision" in ''|*[!0-9a-f]*) echo 'exact source revision is required' >&2; exit 2 ;; esac
       [ "${#revision}" -eq 40 ] || exit 2
     done
-    if [ "$phase" = parent-website ]; then
+    if [ "$phase" = root-input ]; then
+      set -- python /source/scripts/grandparent_public_root_input.py
+    elif [ "$phase" = root-input-tests ]; then
+      set -- python -m unittest grandparent_public_root_input_tests -v
+    elif [ "$phase" = parent-website ]; then
       set -- python -m unittest test_root_complete.CompleteRootPlanTests \
         test_installation_management.InstallationManagementTests.test_managed_website_joins_actual_routes_with_child_api_binding_and_cpk_only_auth \
         test_installation_management.InstallationManagementTests.test_managed_website_material_changes_get_distinct_stable_product_identities \
@@ -82,7 +86,11 @@ finish() {
   fi
   rm -rf "$owned_source" || result=1
   [ ! -e "$owned_source" ] || result=1
-  [ "$result" != 0 ] || echo 'source fixture exports and owned resources cleanup verified; no approved run executed'
+  if [ "$result" = 0 ]; then
+    if [ "$phase" = root-input ]; then
+      echo 'source fixture exports and owned resources cleanup verified; no approved run executed' >&2
+    else echo 'source fixture exports and owned resources cleanup verified; no approved run executed'; fi
+  fi
   exit "$result"
 }
 trap finish EXIT
@@ -118,10 +126,12 @@ if [ "$phase" = registrations ]; then
   [ "$ready" = 1 ] || { echo 'owned PostgreSQL fixture did not become ready' >&2; exit 1; }
   network=$owned_network
 fi
-printf 'pure assembly source Core=%s Operations=%s Interpreters=%s\n' \
-  "$core_revision" "$operations_revision" "$interpreters_revision"
+if [ "$phase" != root-input ]; then
+  printf 'pure assembly source Core=%s Operations=%s Interpreters=%s\n' \
+    "$core_revision" "$operations_revision" "$interpreters_revision"
+fi
 source_controller() {
-  if [ "$phase" = managed-startup ] || [ "$phase" = parent-website ]; then
+  if [ "$phase" = managed-startup ] || [ "$phase" = parent-website ] || [ "$phase" = root-input ] || [ "$phase" = root-input-tests ]; then
     docker run --pull never --mount "type=bind,source=$source_root,target=/source,readonly" --workdir /tmp \
       -e CPK_STARTUP_SOURCE_ROOT=/source "$@"
   else docker run "$@"
@@ -130,6 +140,7 @@ source_controller() {
 source_controller --rm --network "$network" --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
   --mount "type=bind,source=$owned_source,target=/reviewed-http-sample,readonly" \
   -e PYTHONDONTWRITEBYTECODE=1 \
+  -e CPK_GRANDPARENT_PUBLIC_INPUTS \
   -e CPK_SOURCE_ASSEMBLY_POSTGRES_IMAGE \
   -e CPK_SOURCE_FIXTURE_DATABASE_URL=postgresql://cpk:cpk-fixture@cpk163-postgres:5432/cpk \
   -e "CPK_SOURCE_SECRETS_REVISION=$secrets_revision" \
