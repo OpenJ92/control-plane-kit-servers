@@ -1,7 +1,8 @@
 # Isolated source grandparent sender startup
 
-Unexecuted source checkpoint. The installed grandparent and existing website
-are excluded. No Docker action, credentials, build or live startup ran.
+Source-only gate PASS at a544016; live startup remains unexecuted. The installed
+grandparent and existing website are excluded. No credentials, build or service
+startup ran. See the terminal receipt below for the scoped Docker test action.
 
 Normal server.main selects CPK_MANAGED_VERIFICATION_CONFIGURATION_FILE only when
 explicitly supplied. New sender imports stay inside that opt-in. Missing or bad
@@ -35,7 +36,7 @@ selection: exact variant/support, malformed/crossed config, absent opt-in, bad o
 missing file before schema/listener, and ordinary main/create_app/real factory
 registration. Provider/database/listener are explicit external doubles; no test
 claims a current installation, listener, permission, approved run or SQL result.
-They have NOT RUN. The new narrow owning test.sh selector
+The new narrow owning test.sh selector
 --managed-verification-startup-source-tests requires an explicitly selected
 cached immutable controller, runs normal policy/support/integrity, then only the
 five startup cases plus the existing actual registration regression. All four
@@ -44,7 +45,7 @@ no Docker socket, DB, service, new network or build is used. Exact immutable
 Core/Ops/Interpreters source exports and this checkout at /source override cached
 /app code; tests check source import origins. Missing controller refuses, with
 no fallback. Other gate modes retain their normal behavior. Review/release of
-this source-only action is required before invocation; it has not executed.
+this source-only action preceded the terminal run recorded below.
 
 Freeze Coref56bb5c4/Ops70154b66/Interpreters e438f6e5 and this Servers successor
 for source-overlay qualification. Default pip/child Dockerfile976/e4bd is not the
@@ -62,3 +63,19 @@ network/DB/Secrets/CPK bootstrap, normal API commissioning, and inspected child
 execution have separate concrete boundaries in
 /private/tmp/vale-163-grandparent-startup-inputs-nov9.md. No automatic retry,
 cutover, publication, foreign resource cleanup or retained volume removal.
+
+## Terminal source receipt
+
+At a544016ad09ff32e8109c912603096cf8b447e59 the separately reviewed/released
+cached-controller action exited0:28 support tests and six focused tests6.978s,
+coordinate/integrity/import-origin checks and owned export cleanup. Log
+/private/tmp/cpk163-grandparent-startup-a544016.log SHA256
+fba1a1e1b7bab268c4202498c044a8f66d663eb36db132e15e07ba68b94c6043.
+Kepler independently reviewed terminal evidence: PASS, source construction only.
+First85d3803 run's fixture failure remains preserved (missing mandatory empty
+static-auth grants map); a544016 only supplies that map and requires the exact
+sender-specific invalid-file diagnostic. No production validator was weakened.
+Real main/create_app/factory construction passes same registration to all three
+consumers. Database, provider and Uvicorn are external doubles; main's listening
+log line is not an actual open socket. No live startup, OCI install or SQL result.
+Durable receipt: https://github.com/OpenJ92/control-plane-kit-servers/issues/163#issuecomment-6747935748.

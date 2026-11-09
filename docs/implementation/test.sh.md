@@ -191,9 +191,11 @@ acquired controller receipt, clean source and fresh receipts; builds one owned
 current-source fixture; uses the same host-bind helper result channel; and stops
 before stop-profile/fatal work. The default full gate remains mandatory for
 composition acceptance and is not shortened by this option.
-# Isolated sender source selector (unexecuted)
+# Isolated sender source selector
 
 --managed-verification-startup-source-tests requires a cached immutable
 CPK_SERVERS_TEST_IMAGE. Normal policy/support/integrity and the narrow exact-source
 phase use that image without build/pull/network/host socket; other modes retain
-their behavior. Explicit reviewed release is still required to run it.
+their behavior. Reviewed released a544016 invocation passed28 support and six
+focused tests6.978s plus cleanup; no live service/DB/provider. Later invocations
+retain their own scope and review boundary.
