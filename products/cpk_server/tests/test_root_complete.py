@@ -34,6 +34,74 @@ class CompleteRootPlanTests(unittest.TestCase):
         with self.assertRaises(self.api.RootBootstrapError):
             self.api.plan_root_bootstrap(document, driver_image_id=DRIVER)
 
+    def parent_managed_website(self):
+        from dataclasses import replace
+        from control_plane_kit_core.configuration import ConfigurationArtifact
+        from control_plane_kit_core.receiver_configuration import ReceiverNodeControlConfigurationCodec
+        from control_plane_kit_servers_website_server.managed import control_declaration, control_configuration_artifact
+        value = copy.deepcopy(self.document)
+        parent, workspace = "isolated-parent", "parent-workspace"
+        value["installation"].update(installation_id=parent, workspace_id=workspace,
+            external_endpoint="https://cpk163-gparent-api.openj92.dev")
+        for grant in value["installation"]["workspace_grants"]:
+            grant["workspace_id"] = workspace
+        codec = ReceiverNodeControlConfigurationCodec()
+        for role in ("cpk", "secrets"):
+            raw = contract(value, role)["configuration_artifacts"][0]
+            artifact = ConfigurationArtifact.from_descriptor(raw)
+            config = codec.decode_bytes(artifact.content.encode())
+            config = replace(config, target=replace(config.target,
+                workspace_id=replace(config.target.workspace_id, value=workspace),
+                runtime_id=replace(config.target.runtime_id, value=parent + "-docker"),
+                node_id=replace(config.target.node_id, value=parent + "-" + role)))
+            contract(value, role)["configuration_artifacts"][0] = replace(artifact,
+                content=codec.encode_bytes(config).decode()).descriptor()
+        site = replace(config, target=replace(config.target,
+            node_id=replace(config.target.node_id, value=parent + "-website"), receiver_id="c" * 32),
+            declaration=control_declaration())
+        artifact = replace(control_configuration_artifact(site), source_digest="a" * 64)
+        value["installation"]["website"].update(external_endpoint="https://cpk163-gparent.openj92.dev",
+            managed_control_configuration=artifact.descriptor())
+        return value, artifact, site
+
+    def test_external_parent_managed_website_projects_exact_artifact_and_private_control(self):
+        value, artifact, site = self.parent_managed_website()
+        plan = self.plan(value)
+        graph = GraphDescriptorCodec().decode(plan["graph"])
+        website = graph.node("isolated-parent-website")
+        self.assertEqual(set(graph.nodes), {"isolated-parent-" + role for role in ("cpk", "secrets", "postgres", "website")})
+        self.assertEqual(website.configuration_artifacts, (artifact,))
+        self.assertEqual(website.non_secret_environment()["CPK_WEB_UPSTREAM"], "https://cpk163-gparent-api.openj92.dev")
+        self.assertEqual(website.non_secret_environment()["CPK_WRAPPER_CONFIGURATION_FILE"], "/etc/cpk/website/control.json")
+        self.assertEqual(website.non_secret_environment()["PORT"], "8080")
+        self.assertEqual(set(website.endpoints), {"http", "control"})
+        self.assertEqual(plan["input"]["installation"]["website"]["external_endpoint"], "https://cpk163-gparent.openj92.dev")
+        self.assertEqual(plan["external_endpoint"], "https://cpk163-gparent-api.openj92.dev")
+        node, = (node for node in plan["resources"]["nodes"] if node["node_id"] == website.node_id)
+        entry, = node["configuration_files"]
+        self.assertEqual(entry["artifact"], artifact.descriptor())
+        self.assertEqual(entry["sha256"], sha256(artifact.content.encode()).hexdigest())
+        bindings = [entry for entry in plan["host_bindings"] if entry["node_id"] == website.node_id]
+        self.assertEqual(bindings, [{"node_id":website.node_id, "provider_socket":"http", "container_port":8080,
+            "address":"127.0.0.1", "port":18081}])
+        self.assertFalse(any(entry["container_port"] == 8000 for entry in plan["host_bindings"]))
+
+    def test_external_parent_website_refuses_child_scope_and_reused_receiver_identity(self):
+        from dataclasses import replace
+        from control_plane_kit_core.receiver_configuration import ReceiverNodeControlConfigurationCodec
+        from control_plane_kit_servers_website_server.managed import control_configuration_artifact
+        value, _, site = self.parent_managed_website()
+        cpk = ReceiverNodeControlConfigurationCodec().decode_bytes(contract(value, "cpk")["configuration_artifacts"][0]["content"].encode())
+        secrets = ReceiverNodeControlConfigurationCodec().decode_bytes(contract(value, "secrets")["configuration_artifacts"][0]["content"].encode())
+        targets = (replace(site.target, workspace_id=replace(site.target.workspace_id, value="child-workspace")),
+            replace(site.target, runtime_id=replace(site.target.runtime_id, value="child-docker")),
+            replace(site.target, node_id=replace(site.target.node_id, value="child-website")),
+            replace(site.target, receiver_id=cpk.target.receiver_id), replace(site.target, receiver_id=secrets.target.receiver_id))
+        for target in targets:
+            changed = copy.deepcopy(value)
+            changed["installation"]["website"]["managed_control_configuration"] = control_configuration_artifact(replace(site, target=target)).descriptor()
+            self.refused(changed)
+
     def test_enabled_plan_is_pure_four_node_topology_with_exact_derived_setup_product(self):
         with ExitStack() as stack:
             effects = [stack.enter_context(patch(target, side_effect=AssertionError("unexpected effect")))

@@ -1,5 +1,11 @@
 Source: [installation.py](../../../../../../products/cpk_server/src/control_plane_kit_servers_cpk_server/installation.py).
 
+External-parent API+website inputs may explicitly select a managed website
+artifact without the managed CHILD ingress group. Existing product validation,
+exact parent target scope and distinct origin checks remain. Ordinary external
+web and named child ingress paths are unchanged; no connector or public control
+route is manufactured. [Decision/test boundary](../../../../../parent-managed-website-input.md).
+
 Servers #378 adds optional `DockerCpkManagement` composition. The installation
 supplies a complete group of selected declared gateway/connector documents,
 public receiver configurations, transit trust and a separate management ingress.

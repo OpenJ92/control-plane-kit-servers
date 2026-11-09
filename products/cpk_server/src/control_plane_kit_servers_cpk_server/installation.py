@@ -383,7 +383,11 @@ def _website_parts(value: DockerCpkInstallation) -> tuple[
     from .client.frontend import _canonical_origin, frontend_product, managed_frontend_product
 
     try:
-        origin, connector = _website_input(value.website, allow_managed=value.management is not None)
+        external_managed = (isinstance(value.ingress, ExternalInstallationIngress)
+            and isinstance(value.website.ingress, ExternalInstallationIngress)
+            and value.website.managed_control_configuration is not None)
+        origin, connector = _website_input(value.website,
+            allow_managed=value.management is not None or external_managed)
         ingress = value.website.ingress
         if isinstance(value.ingress, NamedPublicIngress) and isinstance(ingress, NamedPublicIngress):
             _website_connector(value.connector_product, allow_managed=value.management is not None)
