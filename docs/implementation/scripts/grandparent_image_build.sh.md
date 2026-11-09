@@ -22,3 +22,9 @@ UID0 installed verification and the UID10001 role call the real schema owner.
 The reviewed diagnostic successor supplies the exact bootstrap.py lineage;
 original website ancestry and installation.py equality remain required. No image
 action or retry of the retained partial installation is implied by source tests.
+
+The separately reviewed final attempt uses fresh cpk391-20261109-02 coordinates;
+attempt01 and its candidate/receipts remain intact. Public image readability is
+normalized by the installer recipe, preserving private host evidence permissions.
+Jacob's limit allows only this one further installer qualification, then pause
+on success, failure or blocker. No live application or cleanup is included.

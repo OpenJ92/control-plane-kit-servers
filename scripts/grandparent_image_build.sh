@@ -29,8 +29,8 @@ if [ "$MODE" = installer ]; then
   CONTEXT_NAME=cpk-bootstrap-driver-base
   EXPECTED_BASE=sha256:1c8b3fc348936b41bb51e530c9f192c360e3b4e53e7a9f7af6f41b7ba10e83ba
   EXPECTED_USER=0 EXPECTED_MODULE=control_plane_kit_servers_cpk_server.bootstrap_cli
-  TAG=$IMAGE_REPOSITORY:cpk391-20261109-01
-  RUN=cpk391-bootstrap-driver-artifact-20261109-01
+  TAG=$IMAGE_REPOSITORY:cpk391-20261109-02
+  RUN=cpk391-bootstrap-driver-artifact-20261109-02
 fi
 SOURCE=$(git rev-parse HEAD)
 worktree=$(git status --porcelain)
