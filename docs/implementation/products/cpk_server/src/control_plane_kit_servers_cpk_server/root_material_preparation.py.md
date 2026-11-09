@@ -11,3 +11,11 @@ provider_policy._canonical_seed. Real decoded credentials authenticate and must
 match exact planned typed grants with empty capabilities. No request-time policy
 or live grant acceptance is claimed. No services/provider.
 See docs/root-material-preparation.md. Executable evidence pending.
+
+The optional provider_policy branch uses the selected Secrets57 seed owner for
+two known workspaces and two independent service credentials, empty capabilities,
+exact role-specific intent bounds and duplicate-coordinate refusal. The ordinary
+CPK service owns child writes/resolves/intentless metadata; the external principal
+only writes parent tunnel tokens. No CPK control-role grants change. No option
+preserves the legacy plan digest/output contract. Source tests/effective policy
+approval are separate; provider policy has no exact-reference restriction.

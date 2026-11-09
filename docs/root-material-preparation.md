@@ -101,3 +101,50 @@ driver/runtime image packaging. Merge their reviewed inputs before calculating
 the real root digest. Existing website/grandparent/tunnel/DNS/token/volumes are
 not touched. Actual protected preparation goes to North for verification/release
 within Jacob's approval; no duplicate permission request is needed.
+
+## Optional fixed two-workspace provider policy
+
+Default input, digest and twelve-file output inventory retain the db74 behavior.
+An explicit provider_policy object opts into a separate reviewed authority shape:
+child_workspace_id, cpk_grants, external_provisioner_subject and
+external_provisioner_grants. It does not change human/setup/worker scopes.
+
+The ordinary provider subject remains root-<installation_id>. Its original parent
+resolve seed must be retained; optional-mode parent intents are limited to
+postgres.password, application.control-token and cloudflare.tunnel-token resolve.
+Only one distinct named child workspace is allowed. There, write/resolve is limited
+to four ordinary graph materials, Cloudflare API/tunnel tokens, and five explicit
+signer import intents. Child-only secret.metadata uses an empty intent list and
+is required for immutable-version selection. Duplicate seed coordinates refuse.
+No third workspace, wildcard, provider administration, generation or revocation
+is admitted by this mode.
+
+The second provider subject is distinct and has exactly one parent-workspace
+secret.write/cloudflare.tunnel-token row. Its fresh external-provisioner.token is
+0400 in private custody, outside the CPK runtime credential registry, reference
+index and all login/worker surfaces. It differs from the ordinary provider token
+and all three control bearers. Actual decoded credentials must match both planned
+subjects/grants with empty capabilities before index publication.
+
+Provider grants are workspace/action/intent authority, not exact-reference rights.
+The reviewed sample policy has five rows and27 unique coordinates, with exact
+references further bounded by CPK registrations and approved operator actions.
+The ordinary CPK provider identity owns child runtime tunnel-token custody and
+delivery; the distinct external identity writes the parent's two returned tokens.
+The CPK worker is a correlated actor, not the Secrets authentication subject.
+
+Secrets57e4fc61d6931ef078550f98154a585bda61987b is the selected owner for this
+optional vocabulary, including explicit HTTP-signer write/import and resolve;
+Secrets158 rejects those two intents. Do not grant native generation for them.
+The established source gate can take two additional args (exact Secrets checkout
+and revision), exporting that source ahead of the cached package and checking its
+actual import root. The no-option gate still runs without that export.
+
+CPK secret-material.provision currently supports only Cloudflare API tokens and
+OCI pull credentials. Other ordinary/key imports require separately approved
+bounded authenticated Secrets writes, then normal CPK reference/key registration
+and immutable graph selection; no generic CPK import route is invented here.
+The optional source capability does not apply an expanded manifest. Jacob must
+review the actual additional authority before the extra bearer or broader seed
+is generated. Parent provider/installer images require separate qualification;
+the accepted child receiving image stays distinct.

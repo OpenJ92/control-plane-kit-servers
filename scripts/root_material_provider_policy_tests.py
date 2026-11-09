@@ -152,8 +152,10 @@ class ProviderPreparationTests(unittest.TestCase):
                 replace(original.product, runtime_contract=contract)).content)
         value["custody"]["host_directory"] = "/fixture/preparation/material"
         result = self.fixture.plan(value)
-        print("legacy_plan_digest=" + result["digest"])
-        print("legacy_output_inventory=" + json.dumps(result["outputs"]))
+        self.assertEqual(result["digest"], "3aa071a54b00b6d0c99c382914e4cb08affda2c80bfa37cad57dd914b23ed18b")
+        self.assertEqual(result["outputs"], ["setup.bearer", "postgres.password", "custody.key", "provider.token",
+            "provider-credentials.json", "principals.json", "human.bearer", "worker.bearer",
+            "workspace-authority.json", "index.json", "bootstrap-input.json", "bootstrap-plan.json"])
         self.assertNotIn("external-provisioner.token", result["outputs"])
 
 
