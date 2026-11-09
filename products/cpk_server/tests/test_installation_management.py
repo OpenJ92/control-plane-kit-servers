@@ -323,9 +323,9 @@ class InstallationManagementTests(unittest.TestCase):
             self.graph(self.installation(website=self.managed_website(duplicate)))
 
     def test_managed_website_requires_management_and_rejects_invalid_artifact_without_echo(self):
-        native = self.base
+        native = self.installation()
         with self.assertRaisesRegex(ValueError, "^installation website configuration is invalid$"):
-            replace(native, website=replace(native.website, managed_control_configuration=
+            replace(native, management=None, website=replace(native.website, managed_control_configuration=
                 self.website_api.control_configuration_artifact(self.website_control)))
         artifact = self.website_api.control_configuration_artifact(self.website_control)
         for changed in (replace(artifact, target_path="/etc/cpk/foreign.json"),

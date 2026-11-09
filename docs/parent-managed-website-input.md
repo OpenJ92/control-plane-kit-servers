@@ -17,6 +17,12 @@ website behavior stay on their existing paths. The normal website factory still
 requires distinct HTTPS API/site origins, fixed visitor8080, authenticated
 management8000 and the exact product control slot/declaration.
 
+Review corrected the old management-required negative to a NAMED-ingress input
+without its management group; its original invalid-artifact/nonreflection
+assertions remain. The new external-parent positive is a deliberate separate
+admission case. The focused action must include all CompleteRootPlanTests and
+existing managed-website cases, not just the two new tests.
+
 Target scope must match the parent installation workspace/runtime/website node
 and control socket. Root receiving validation additionally refuses a website
 receiver ID reused from its CPK, Secrets or managed PostgreSQL receiver. A child
