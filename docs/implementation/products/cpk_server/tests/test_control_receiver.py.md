@@ -1,6 +1,13 @@
 Source: [test_control_receiver.py](../../../../../products/cpk_server/tests/test_control_receiver.py).
 Maintain with CPK receiving, startup and authority contracts.
 
+The #163 additions verify that the full-pair fixture retains the original
+live/ready checks, gives them distinct requests, and refuses absent or validly
+signed foreign-issuer authority through the real receiving application. A
+separate generation proof checks child coordinates and fresh receiver identity.
+These source tests use existing recording services; actual packaged startup,
+shared-store read and signed positive samples belong to the image smoke.
+
 #315 updates only the schema-failure double's new explicit authority keyword and
 call expectation, requiring None for this injected-verifier fixture. The actual
 SDK-before-schema ordering and failure propagation assertions remain intact.

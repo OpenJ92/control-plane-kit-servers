@@ -1,6 +1,19 @@
 Source: [http_sample_fixture.py](../../../scripts/http_sample_fixture.py).
 Maintain alongside both source image smokes.
 
+For #163, optional `all-checks` binds the unchanged CPK Docker/Cloudflare
+contract's live and ready checks to one fresh synthetic receiver and one
+in-memory sample signer. Each original check gets a distinct request ID and
+ordinal one. The Core codec checks the bounded canonical PASSED/status200
+response. Each check also requires 401 for absent credentials and for a
+cryptographically valid same-key/kid token with foreign issuer in both JWT and
+grant. No token is emitted. The public result records these separate outcomes
+and the synthetic fixture delta, without claiming an approved child run.
+Existing ready-only CPK and Secrets callers retain their behavior. The helper's
+alarm bounds its lifetime; the focused parent requires observed exit zero within
+45 polls after signalling readiness. Docker CLI polling assumes a responsive
+daemon and does not establish a hard deadline for a hung Docker process.
+
 Shared test-only evidence has two consumers: CPK and Secrets. Each supplies its
 independent V2 snapshot and original product runtime contract. The fixture
 creates ephemeral separate sample trust, renders the product's public artifact,

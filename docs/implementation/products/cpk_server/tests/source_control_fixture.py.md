@@ -1,6 +1,13 @@
 Source: [source_control_fixture.py](../../../../../products/cpk_server/tests/source_control_fixture.py).
 Maintain with the source smoke's synthetic authority and cleanup plan.
 
+The #163 `generate-child` mode preserves ordinary generation and substitutes
+only the owned `root-workspace` / `root-a-docker` / `root-a-cpk` target values.
+Every generation has fresh receiver identity and synthetic signers. The public
+control artifact remains 0444; bearer headers remain private and are erased
+independently of uncertain helper cleanup. These are local fixture identities,
+not installed-child custody or an approved deployment run.
+
 The existing owning test image runs this fixed generate/verify process with
 --network none, host UID/GID and one explicitly bound private fixture directory.
 Generate creates a random synthetic workspace/node/runtime/receiver, separate

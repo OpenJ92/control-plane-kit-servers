@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 import os
 from pathlib import Path
 import sys
@@ -19,9 +20,15 @@ MAX_RESPONSE_BYTES = 65_536
 AUTHORITY = core.NodeControlAuthorityContext("source-smoke", "source-smoke-projection")
 
 
-def generate(directory: Path) -> None:
+def generate(directory: Path, *, child=False) -> None:
     from control_plane_kit_servers_cpk_server.control_configuration import cpk_control_configuration_artifact
     authority=fixture(uuid4().hex,issued_at=int(time.time()),lifetime=LIFETIME_SECONDS)
+    if child:
+        roles = core.NodeControlGraphReferenceRole
+        authority.config = replace(authority.config, target=replace(authority.config.target,
+            workspace_id=core.NodeControlGraphReference(roles.WORKSPACE, "root-workspace"),
+            runtime_id=core.NodeControlGraphReference(roles.RUNTIME, "root-a-docker"),
+            node_id=core.NodeControlGraphReference(roles.NODE, "root-a-cpk")))
     authority.authority = AUTHORITY
     artifact=cpk_control_configuration_artifact(authority.config)
     files={
@@ -59,11 +66,11 @@ def main() -> int:
     # Fixed errors prevent tracebacks from exposing header or response material.
     accepted=False
     try:
-        if len(sys.argv)!=3 or sys.argv[1] not in {"generate","verify"}:
+        if len(sys.argv)!=3 or sys.argv[1] not in {"generate","generate-child","verify"}:
             raise ValueError
         directory=Path(sys.argv[2])
-        if sys.argv[1]=="generate":
-            generate(directory)
+        if sys.argv[1] in {"generate", "generate-child"}:
+            generate(directory, child=sys.argv[1] == "generate-child")
         else:
             verify(directory)
         accepted=True

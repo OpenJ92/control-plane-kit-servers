@@ -19,7 +19,16 @@ GATEWAY_TARGET_CORE_REVISION=''
 GATEWAY_TARGET_OPERATIONS_REVISION=''
 GATEWAY_TARGET_EXPECTATION=''
 MANAGED_COMPOSITION_INTERPRETERS_REVISION=''
+CPK_RECEIVER_PHASE=''
 case "${1:-}" in
+  --cpk-receiver-packaged)
+    [ "$#" -eq 2 ] || { echo 'CPK receiver gate requires tests or image' >&2; exit 2; }
+    case "$2" in tests|image) CPK_RECEIVER_PHASE=$2 ;; *) exit 2 ;; esac
+    case "$IMAGE" in sha256:*) ;; *) echo 'select the exact cached controller ID' >&2; exit 2 ;; esac
+    [ "${#IMAGE}" -eq 71 ] || exit 2
+    case "${IMAGE#sha256:}" in *[!0-9a-f]*) exit 2 ;; esac
+    POLICY_IMAGE=$IMAGE
+    ;;
   --managed-verification-source-qualification)
     [ "$#" -eq 7 ] || { echo 'managed source qualification requires three checkouts and three exact revisions' >&2; exit 2; }
     HTTP_SAMPLE_RELAY_ONLY=7
@@ -87,13 +96,23 @@ esac
 . ./scripts/root_artifact_shell.sh
 root_artifact_selection
 
-docker run --rm \
+if [ -n "$CPK_RECEIVER_PHASE" ]; then
+  : "${CPK_RECEIVER_DAEMON_ID:?select the expected local daemon}"
+  . ./scripts/docker_witness_daemon.sh
+  docker_witness_daemon
+  [ "$image_witness_daemon" = "$CPK_RECEIVER_DAEMON_ID" ] || exit 1
+  [ "$(docker image inspect "$IMAGE" --format '{{.Id}}')" = "$IMAGE" ] || exit 1
+fi
+set --
+if [ -n "$CPK_RECEIVER_PHASE" ]; then set -- --pull never --network none; fi
+
+docker run "$@" --rm \
   -v "$ROOT:/source:ro" \
   -e PYTHONDONTWRITEBYTECODE=1 \
   "$POLICY_IMAGE" \
   sh -c 'cd /source && PYTHONPATH=/source/src python scripts/apply_coordinates.py --check'
 
-docker run --rm \
+docker run "$@" --rm \
   -v "$ROOT:/source:ro" \
   -v "$ROOT/test_support:/test-support:ro" \
   -e CPK_PACKAGE_ROOT=/source \
@@ -101,7 +120,7 @@ docker run --rm \
   "$POLICY_IMAGE" \
   sh -c 'cd /test-support && python -m unittest discover -s tests -v'
 
-docker run --rm \
+docker run "$@" --rm \
   -v "$ROOT:/source:ro" \
   -v "$ROOT/test_support:/test-support:ro" \
   -e PYTHONDONTWRITEBYTECODE=1 \
@@ -113,6 +132,20 @@ docker run --rm \
     --test-root tests \
     --test-root products \
     --gate-file test.sh
+
+if [ -n "$CPK_RECEIVER_PHASE" ]; then
+  if [ "$CPK_RECEIVER_PHASE" = tests ]; then
+    docker run --pull never --rm --network none --read-only --tmpfs /tmp --tmpfs /etc/cpk --workdir /source \
+      --mount "type=bind,source=$ROOT,target=/source,readonly" \
+      -e PYTHONDONTWRITEBYTECODE=1 \
+      -e PYTHONPATH=/source:/source/products/cpk_server/src:/source/products/cpk_server/tests \
+      "$IMAGE" python -m unittest test_control_receiver test_cpk_receiver_shell -v
+  else
+    CPK_SERVERS_TEST_IMAGE="$IMAGE" CPK_SERVER_SMOKE_PROFILE=wrapped-receiver \
+      CPK_SERVER_BUILD_IMAGE=1 sh scripts/cpk_server_image_smoke.sh
+  fi
+  exit 0
+fi
 
 docker build -f Dockerfile.test -t "$IMAGE" .
 if [ "$HTTP_SAMPLE_RELAY_ONLY" != 0 ]; then

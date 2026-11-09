@@ -116,3 +116,99 @@ Final review correction: independently remove and verify absence of the two
 owned bearer-header files before retaining public evidence on helper uncertainty.
 Unlink/absence failure stays a fixed failed cleanup result; header contents are
 never printed. Other independently owned runtime cleanup still runs first.
+
+## Servers #163 focused packaged receiver action
+
+This is an unvalidated source checkpoint. `wrapped-receiver` builds only the
+CPK product, retaining the production source and Dockerfile byte-for-byte from
+`85b193bbdc777376c5104029a5ee04e74627cf71`. It does not run broader deployment,
+retained-connector, history or update scenarios. The unchanged product recipe
+selects Core/Operations `976901c609d950a557ec1e9966f018e8ff6e16aa`,
+Interpreters `e4bd35e828d1c44129f64e702de2b1d2b60f7c87`, and SDK
+`d61b374cb2a23d773c31748f47f88169499298b7`. A normal install, installed-origin
+inspection, `pip check` and actual default-entrypoint startup decide whether
+that tuple works; no parent dependency upgrade is inferred.
+
+Run from the clean committed selector checkout, only after Meridian's review
+of that exact head and North's execution release. The `tests` phase must pass
+before `image`. The source SHA is obtained from the frozen clean Git head;
+tracked source is archived as the build context, and the head/clean state is
+checked again after build and the witness. Proposed commands:
+
+```sh
+export DOCKER_CONTEXT=desktop-linux
+export CPK_SERVERS_TEST_IMAGE=sha256:1c8b3fc348936b41bb51e530c9f192c360e3b4e53e7a9f7af6f41b7ba10e83ba
+export CPK_RECEIVER_DAEMON_ID=d23d00aa-b281-448d-bc95-c8e47efeeea2
+./test.sh --cpk-receiver-packaged tests
+
+CPK_SERVER_IMAGE=localhost/control-plane-kit-servers/cpk-server:cpk163-receiver-20261109-01 \
+CPK_RECEIVER_RUN=cpk163-cpk-receiver-20261109-01 \
+CPK_RECEIVER_RECORDS=/private/tmp/cpk163-cpk-receiver-20261109-01 \
+CPK_RECEIVER_POSTGRES_IMAGE=docker.io/library/postgres@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777 \
+./test.sh --cpk-receiver-packaged image
+```
+
+The controller is borrowed by immutable ID from the existing reviewed source
+controller build; it is never rebuilt. The context helper admits only a local
+Unix endpoint with no endpoint/TLS overrides, checks the expected daemon ID,
+and the build explicitly selects that context's builder. The exact PostgreSQL
+fixture must already be cached. Availability has not yet been observed for this
+checkpoint. Missing controller/fixture or apparatus failure stops the action;
+there is no implicit pull, repair or retry. Any exact-digest prerequisite
+acquisition needs its explicit release. The product build may acquire the
+unchanged recipe's public `python:3.12-slim` base, pinned public GitHub archives
+and ordinary PyPI dependencies. No credentials or private source are supplied.
+
+The candidate is loaded locally as linux/amd64 with a run label and revision
+label. The gate records the build artifact descriptor/digest and config digest
+separately, and requires an actual matching local repository digest lookup.
+A platform-manifest digest is recorded only when the observed descriptor is a
+manifest. The main container uses that built image with its unmodified default
+command; observed runtime image identity and PID 1 effective UID 10001 are
+separate evidence. No registry push or installed-grandparent change occurs.
+
+Fixtures comprise one internal run-labelled network, one run-labelled named
+PostgreSQL data volume, one exact-digest PostgreSQL container, one sample helper,
+one main CPK container, one missing-control negative, and four sequential
+binding-refusal containers. Short-lived policy/test, provenance, control
+configuration and response-verification containers use borrowed images with no
+Docker socket; policy/tests/provenance/control generation have no network.
+The product publishes only an ephemeral loopback port. All four database URLs
+are forced to the same owned fixture, regardless of inherited operator values.
+Runtime interpreters are explicitly disabled. No real provider call, credential
+change or application workload is included.
+
+A fresh synthetic public control artifact targets root-workspace / root-a-docker
+/ root-a-cpk on http-api:8080. A separate sample signer remains in one helper's
+memory for both original live and ready checks. The gate separately verifies:
+
+- installed origins, dependency consistency and server import;
+- actual default-entrypoint startup and non-root PID 1;
+- four valid-but-mismatched database bindings each refused with the known
+  same-instance configuration error;
+- readiness reporting configured stores, plus an authenticated Operations
+  workspace read returning exact 404 `missing workspace 'root-workspace'`;
+- canonical signed PASSED/status200 samples for live and ready, distinct requests
+  and ordinal one, with absent and validly signed foreign-issuer authority each
+  refused with 401 for each check.
+
+Readiness alone does not prove a database query. The workspace read exercises
+the selected Operations shared store, not four independently observed SQL reads.
+Fresh fixture identity/signers are not installed-child custody, an approved child
+R/run/history, provider transit, gateway or capstone acceptance.
+
+The canonical fresh `/tmp/<run>` directory atomically reserves the run. Existing
+receipts, image tag, run-labelled containers or fixture names cause refusal.
+Cleanup runs only after that reservation and only for attempted allocations,
+using captured IDs/cidfiles or exact reserved-name recovery plus matching name
+and run label. Every readback's exit status matters. Containers, the unreferenced
+owned volume and network are removed with absence checks; private bearer files
+are erased independently of uncertain helper cleanup. Candidate/controller/PG
+images remain, with a final exact candidate digest lookup. No broad prune runs.
+
+The public result keeps stage, exit code, source/daemon/controller correlation,
+separate proof booleans, cleanup and candidate retention. First failure stops;
+unknown ownership, mutation outcome, daemon change, absent prerequisite, source
+change, image identity mismatch, import/pip failure, unexpected refusal/read or
+sample result, and uncertain cleanup remain failed or uncertain. Do not retry,
+rebaseline, change dependencies or claim qualification from partial evidence.

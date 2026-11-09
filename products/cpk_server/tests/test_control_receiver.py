@@ -126,6 +126,43 @@ class CpkControlReceiverTests(unittest.TestCase):
                 control=self.control, http_verification_binding=changed))
             operations.assert_not_called()
 
+    def test_full_pair_fixture_preserves_checks_and_refuses_absent_or_foreign_issuer(self):
+        from scripts.http_sample_fixture import SampleAuthority
+        ordinary = self.config.cpk_source_runtime_contract(self.config.CpkSourceVariant.DOCKER_CLOUDFLARE,
+            self.artifact)
+        authority = SampleAuthority(self.control, ordinary, all_checks=True)
+        binding = self.config.cpk_http_sample_binding(self.control, authority.configuration)
+        self.assertEqual(tuple(entry.check for entry in binding.checks), ordinary.verification.checks)
+        requests = tuple(authority.request(check) for check in ordinary.verification.checks)
+        self.assertEqual(tuple(request.check_id for request in requests), ("live", "ready"))
+        self.assertNotEqual(requests[0].request_id, requests[1].request_id)
+        with patch.object(self.server, "_operations_application",
+                return_value=self.server.CpkServerOperationsApplication(self.services)):
+            app = self.server.create_app(self.bootstrap, self.verifier, control=self.control,
+                http_verification_binding=binding, clock=lambda:150, http_sample_clock=lambda:150.0)
+        with TestClient(app) as client:
+            for request in requests:
+                with self.subTest(check=request.check_id):
+                    self.assertEqual(request.target, self.control.target)
+                    self.assertEqual(client.get("/__control/verification/http").status_code, 401)
+                    foreign = authority.token(request, 145, issuer="foreign-source-witness")
+                    self.assertEqual(client.get("/__control/verification/http",
+                        headers={"Authorization":"Bearer " + foreign}).status_code, 401)
+
+    def test_child_control_fixture_has_fresh_receiver_and_owned_child_coordinates(self):
+        from source_control_fixture import generate
+        configured = []
+        for _ in range(2):
+            with TemporaryDirectory() as directory:
+                generate(Path(directory), child=True)
+                control = self.config.decode_cpk_control_configuration((Path(directory) / "control.json").read_bytes())
+                self.assertEqual((control.target.workspace_id.value, control.target.runtime_id.value,
+                    control.target.node_id.value, control.target.provider_socket_name.value),
+                    ("root-workspace", "root-a-docker", "root-a-cpk", "http-api"))
+                self.assertEqual(control.declaration, self.control.declaration)
+                configured.append(control)
+        self.assertNotEqual(configured[0].target.receiver_id, configured[1].target.receiver_id)
+
     def test_actual_main_reads_optional_public_companion_before_operations(self):
         from scripts.http_sample_fixture import SampleAuthority
         from control_plane_kit_core.http_verification_sample_installation import HTTP_VERIFICATION_SAMPLES_CONFIGURATION_ENVIRONMENT

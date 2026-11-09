@@ -1,6 +1,16 @@
 Source: [test.sh](../../test.sh).
 Maintain with the normal Docker-backed owning gate and prerequisite effects.
 
+Servers #163 adds `--cpk-receiver-packaged tests|image`, using an explicitly
+selected cached controller by immutable image ID. Both phases retain coordinate,
+test-support and integrity checks, use the admitted local daemon and exit before
+the normal controller build or broader scenarios. `tests` runs the receiver
+tests and fake-CLI cleanup regressions with no network or Docker socket, a
+read-only source mount and temporary `/tmp` and `/etc/cpk`. `image` enters only
+the focused product smoke. The normal invocation is unchanged. This checkpoint
+is unvalidated; the exact proposed invocation and authority boundary are in the
+[owning smoke companion](scripts/cpk_server_image_smoke.sh.md).
+
 #347's integrated source candidate wraps the existing root case in a shell
 function, always runs the historical static invocation, and adds one dynamic
 invocation for the existing admitted published pair. It passes actual driver and

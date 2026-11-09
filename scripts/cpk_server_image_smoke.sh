@@ -10,9 +10,33 @@ MISSING_CONTROL_CONTAINER=""
 RECEIVER_RECORDS=""
 SAMPLE_HELPER=""
 SAMPLE_CLEANUP_UNCERTAIN=0
+SOURCE_SAMPLES=0
+RECEIVER_ONLY=0
 case "$PROFILE" in
   wrapped-source)
+    SOURCE_SAMPLES=1
     : "${CPK_SERVERS_TEST_IMAGE:?wrapped-source requires the owning test/controller image}"
+    ;;
+  wrapped-receiver)
+    SOURCE_SAMPLES=1
+    RECEIVER_ONLY=1
+    PRODUCT_PULL_POLICY=never
+    : "${CPK_SERVERS_TEST_IMAGE:?select the cached controller ID}"
+    : "${CPK_RECEIVER_RECORDS:?select a fresh absolute receipt directory}"
+    : "${CPK_RECEIVER_RUN:?select the owned run name}"
+    : "${CPK_RECEIVER_POSTGRES_IMAGE:?select the cached immutable PostgreSQL fixture image}"
+    : "${CPK_RECEIVER_DAEMON_ID:?select the expected local daemon}"
+    case "$CPK_RECEIVER_POSTGRES_IMAGE" in docker.io/library/postgres@sha256:*) ;; *) exit 2 ;; esac
+    receiver_pg_digest=${CPK_RECEIVER_POSTGRES_IMAGE#*@sha256:}
+    [ "${#receiver_pg_digest}" = 64 ] || exit 2
+    case "$receiver_pg_digest" in *[!0-9a-f]*) exit 2 ;; esac
+    printf '%s\n' "$CPK_RECEIVER_RUN" | grep -Eq '^cpk163-[a-z0-9-]{4,48}$' || exit 2
+    case "$CPK_RECEIVER_RECORDS" in /*) ;; *) exit 2 ;; esac
+    receiver_parent=$(CDPATH= cd -- /tmp && pwd -P)
+    [ "$CPK_RECEIVER_RECORDS" = "$receiver_parent/$CPK_RECEIVER_RUN" ] || exit 2
+    [ ! -e "$CPK_RECEIVER_RECORDS" ] && [ ! -L "$CPK_RECEIVER_RECORDS" ] || exit 2
+    case "$IMAGE" in localhost/control-plane-kit-servers/cpk-server:cpk163-*) ;; *) exit 2 ;; esac
+    [ "$BUILD_IMAGE" = 1 ] || exit 2
     ;;
   wrapped-artifact)
     [ "$BUILD_IMAGE" = 0 ] || { echo 'current root artifact input is invalid' >&2; exit 2; }
@@ -29,6 +53,25 @@ esac
 CONTAINER=""
 POSTGRES_CONTAINER=""
 NETWORK="cpk-server-smoke-$$"
+NETWORK_ID=''
+POSTGRES_VOLUME=''
+NETWORK_ATTEMPTED=0
+VOLUME_ATTEMPTED=0
+RECEIVER_RESERVED=0
+RECORDS_OWNED=0
+CONTROL_ATTEMPTED=0
+PROVENANCE_ATTEMPTED=0
+SAMPLE_ATTEMPTED=0
+PRODUCT_ATTEMPTED=0
+MISSING_ATTEMPTED=0
+POSTGRES_ATTEMPTED=0
+BINDING_ATTEMPTS=0
+if [ "$RECEIVER_ONLY" = 1 ]; then NETWORK=$CPK_RECEIVER_RUN; fi
+RECEIVER_SOURCE=''
+ORIGINS_VERIFIED=0
+BINDINGS_VERIFIED=0
+DB_READ_VERIFIED=0
+SAMPLES_VERIFIED=0
 PHASE="bootstrap"
 LABEL="org.openj92.project=control-plane-kit-servers"
 MISSING_CONFIG_OUTPUT="/tmp/cpk-server-missing-config-$$.out"
@@ -46,6 +89,100 @@ RUNTIME_INTERPRETERS="${CPK_RUNTIME_INTERPRETERS:-none}"
 STATIC_WORKSPACE_GRANTS_JSON="${CPK_CONTROL_AUTH_STATIC_WORKSPACE_GRANTS_JSON:-{\"workspace-a\":[\"hub:instance:create\",\"instance:workspace:read\",\"instance:workspace:edit\",\"plan:request\"]}}"
 HEALTH_ATTEMPTS="${CPK_SERVER_HEALTH_ATTEMPTS:-30}"
 REQUEST_HOST="${CPK_SERVER_SMOKE_HOST:-127.0.0.1}"
+if [ "$RECEIVER_ONLY" = 1 ]; then
+  [ "$RUNTIME_INTERPRETERS" = none ] && [ "$REQUEST_HOST" = 127.0.0.1 ] || exit 2
+  # Closed fixture destination; inherited operator/store settings cannot redirect
+  # the proof or schema initialization to a different reachable database.
+  DATABASE_URL=postgresql://cpk:cpk@cpk-postgres:5432/cpk
+  WORKPLACE_DATABASE_URL=$DATABASE_URL
+  ACTIVITY_HISTORY_DATABASE_URL=$DATABASE_URL
+  OBSERVER_STATE_DATABASE_URL=$DATABASE_URL
+  GRAPH_TOPOLOGY_DATABASE_URL=$DATABASE_URL
+  STATIC_WORKSPACE_GRANTS_JSON='{"root-workspace":["instance:workspace:read"]}'
+  MISSING_CONFIG_OUTPUT="$CPK_RECEIVER_RECORDS/missing-config.private"
+  UNAUTHORIZED_BODY="$CPK_RECEIVER_RECORDS/unauthorized.private"
+  MCP_UNAUTHORIZED_BODY="$CPK_RECEIVER_RECORDS/mcp-unauthorized.private"
+  HOST_CURL_ERROR="$CPK_RECEIVER_RECORDS/host-curl.private"
+fi
+
+receiver_daemon() {
+  daemon_id=$(docker info --format '{{.ID}}') || return 1
+  [ "$daemon_id" = "$CPK_RECEIVER_DAEMON_ID" ]
+}
+
+receiver_remove_container() {
+  identity=$1 name=$2
+  receiver_daemon || return 1
+  if [ -z "$identity" ]; then
+    identity=$(docker container ls -aq --no-trunc --filter "name=^/$name$") || return 1
+  fi
+  [ -n "$identity" ] || return 0
+  [ "${#identity}" = 64 ] || return 1
+  case "$identity" in *[!0-9a-f]*) return 1 ;; esac
+  found=$(docker container ls -aq --no-trunc --filter "id=$identity") || return 1
+  [ -n "$found" ] || return 0
+  [ "$found" = "$identity" ] || return 1
+  owner=$(docker inspect --format '{{index .Config.Labels "org.openj92.cpk.test-run"}}' "$identity") || return 1
+  [ "$owner" = "$NETWORK" ] || return 1
+  observed_name=$(docker inspect --format '{{.Name}}' "$identity") || return 1
+  [ "$observed_name" = "/$name" ] || return 1
+  docker rm -f "$identity" >/dev/null || return 1
+  remaining=$(docker container ls -aq --no-trunc --filter "id=$identity") || return 1
+  [ -z "$remaining" ]
+}
+
+receiver_remove_created() {
+  key=$1 fallback=$2
+  identity=$fallback
+  if [ -s "$CPK_RECEIVER_RECORDS/$key.cid" ]; then
+    identity=$(cat "$CPK_RECEIVER_RECORDS/$key.cid") || return 1
+  fi
+  receiver_remove_container "$identity" "$NETWORK-$key"
+}
+
+receiver_cleanup() {
+  [ "$RECEIVER_RESERVED" = 1 ] || return 0
+  failed=0
+  if [ "$SAMPLE_ATTEMPTED" = 1 ]; then receiver_remove_created http-sample "$SAMPLE_HELPER" || failed=1; fi
+  if [ "$PRODUCT_ATTEMPTED" = 1 ]; then receiver_remove_created product "$CONTAINER" || failed=1; fi
+  if [ "$MISSING_ATTEMPTED" = 1 ]; then receiver_remove_created missing-control "$MISSING_CONTROL_CONTAINER" || failed=1; fi
+  if [ "$CONTROL_ATTEMPTED" = 1 ]; then receiver_remove_created control '' || failed=1; fi
+  if [ "$PROVENANCE_ATTEMPTED" = 1 ]; then receiver_remove_created provenance '' || failed=1; fi
+  number=1
+  while [ "$number" -le "$BINDING_ATTEMPTS" ]; do
+    receiver_remove_created "binding-$number" '' || failed=1
+    number=$((number + 1))
+  done
+  if [ "$POSTGRES_ATTEMPTED" = 1 ]; then receiver_remove_created postgres "$POSTGRES_CONTAINER" || failed=1; fi
+  if [ "$VOLUME_ATTEMPTED" = 1 ]; then
+    receiver_daemon || return 1
+    volume="$NETWORK-postgres-data"
+    present=$(docker volume ls -q --filter "name=$volume") || return 1
+    if [ -n "$present" ]; then
+      [ "$present" = "$volume" ] || return 1
+      owner=$(docker volume inspect --format '{{index .Labels "org.openj92.cpk.test-run"}}' "$volume") || return 1
+      [ "$owner" = "$NETWORK" ] || return 1
+      holders=$(docker container ls -aq --filter "volume=$volume") || return 1
+      [ -z "$holders" ] || return 1
+      docker volume rm "$volume" >/dev/null || failed=1
+      remaining=$(docker volume ls -q --filter "name=$volume") || return 1
+      [ -z "$remaining" ] || failed=1
+    fi
+  fi
+  if [ "$NETWORK_ATTEMPTED" = 1 ]; then
+    receiver_daemon || return 1
+    network_id=$NETWORK_ID
+    if [ -z "$network_id" ]; then network_id=$(docker network ls --no-trunc -q --filter "name=^$NETWORK$") || return 1; fi
+    if [ -n "$network_id" ]; then
+      owner=$(docker network inspect --format '{{index .Labels "org.openj92.cpk.test-run"}}' "$network_id") || return 1
+      [ "$owner" = "$NETWORK" ] || return 1
+      docker network rm "$network_id" >/dev/null || failed=1
+      remaining=$(docker network ls -q --filter "id=$network_id") || return 1
+      [ -z "$remaining" ] || failed=1
+    fi
+  fi
+  return "$failed"
+}
 
 cleanup_control_fixture() {
   if [ -n "$CONTROL_RECORDS" ]; then
@@ -60,6 +197,7 @@ cleanup_control_fixture() {
       echo 'source control credential cleanup incomplete' >&2
       return 1
     fi
+    rm -f "$CONTROL_RECORDS/binding-refusal.log" "$CONTROL_RECORDS/db-read.json" || return 1
     [ "$SAMPLE_CLEANUP_UNCERTAIN" = 0 ] || return 1
     rm -f "$CONTROL_RECORDS/control.json" "$CONTROL_RECORDS/surface.headers" \
       "$CONTROL_RECORDS/health.headers" "$CONTROL_RECORDS/surface.json" \
@@ -67,7 +205,8 @@ cleanup_control_fixture() {
       "$CONTROL_RECORDS/artifact-provenance.json" "$CONTROL_RECORDS/artifact-provenance.status" \
       "$CONTROL_RECORDS/artifact-pid1.status" "$CONTROL_RECORDS/artifact-pid1.exit" \
       "$CONTROL_RECORDS/http-samples.json" "$CONTROL_RECORDS/sample.prepared" \
-      "$CONTROL_RECORDS/sample.ready" "$CONTROL_RECORDS/sample.passed" || return 1
+      "$CONTROL_RECORDS/sample.ready" "$CONTROL_RECORDS/sample.passed" \
+      "$CONTROL_RECORDS/binding-refusal.log" "$CONTROL_RECORDS/db-read.json" || return 1
     rmdir "$CONTROL_RECORDS" || return 1
     [ ! -e "$CONTROL_RECORDS" ] || return 1
     CONTROL_RECORDS=""
@@ -75,7 +214,7 @@ cleanup_control_fixture() {
 }
 
 cleanup_sample_helper() {
-  if [ "$PROFILE" = wrapped-source ]; then
+  if [ "$SOURCE_SAMPLES" = 1 ]; then
     helper="$SAMPLE_HELPER"
     if [ -n "$helper" ]; then
       observed="$(docker container ls -aq --no-trunc --filter "id=$helper")" || return 1
@@ -159,6 +298,44 @@ cleanup_receiver_fixture() {
 finish() {
   status=$?
   trap - EXIT INT TERM
+  if [ "$RECEIVER_ONLY" = 1 ]; then
+    cleanup_state=not-started
+    candidate_retention=not-observed
+    retained_reference=''
+    if [ "$RECEIVER_RESERVED" = 1 ]; then
+      cleanup_state=verified
+      receiver_cleanup || { status=1; cleanup_state=unverified; SAMPLE_CLEANUP_UNCERTAIN=1; }
+      cleanup_control_fixture || { status=1; cleanup_state=unverified; }
+      rm -f "$MISSING_CONFIG_OUTPUT" "$UNAUTHORIZED_BODY" "$MCP_UNAUTHORIZED_BODY" "$HOST_CURL_ERROR" || { status=1; cleanup_state=unverified; }
+    fi
+    if [ "$RECORDS_OWNED" = 1 ]; then
+      if [ -s "$CPK_RECEIVER_RECORDS/candidate-reference.txt" ]; then
+        retained_reference=$(cat "$CPK_RECEIVER_RECORDS/candidate-reference.txt") || status=1
+        candidate_retention=unverified
+        if receiver_daemon; then
+          if retained_id=$(docker image inspect "$retained_reference" --format '{{.Id}}'); then
+            if [ "$retained_id" = "$IMAGE" ]; then candidate_retention=verified; else status=1; fi
+          else status=1
+          fi
+        else status=1
+        fi
+      fi
+      jq -n --arg source "$RECEIVER_SOURCE" --arg stage "$PHASE" --arg cleanup "$cleanup_state" \
+        --arg run "$NETWORK" --arg daemon "$CPK_RECEIVER_DAEMON_ID" --arg controller "$CPK_SERVERS_TEST_IMAGE" \
+        --arg reference "$retained_reference" --arg retention "$candidate_retention" \
+        --argjson exit_code "$status" --argjson origins "$ORIGINS_VERIFIED" \
+        --argjson bindings "$BINDINGS_VERIFIED" --argjson read "$DB_READ_VERIFIED" \
+        --argjson samples "$SAMPLES_VERIFIED" \
+        '{source:$source,product_source_base:"85b193bbdc777376c5104029a5ee04e74627cf71",
+          run:$run,daemon_id:$daemon,controller_id:$controller,stage:$stage,exit_code:$exit_code,cleanup:$cleanup,
+          candidate_reference:$reference,candidate_retention:$retention,
+          installed_provenance_verified:($origins==1),four_binding_refusals_verified:($bindings==1),
+          shared_store_read_verified:($read==1),signed_pair_verified:($samples==1),
+          approved_child_run:false}' > "$CPK_RECEIVER_RECORDS/result.json" || status=1
+    fi
+    [ "$status" != 0 ] || echo 'CPK receiver packaged gate passed with exact owned cleanup'
+    exit "$status"
+  fi
   if [ "$status" -ne 0 ]; then
     echo "cpk-server image smoke failed during phase: $PHASE" >&2
     if [ -n "$CONTAINER" ]; then
@@ -286,22 +463,104 @@ trap 'exit 130' INT TERM
 
 phase "build product image"
 if [ "$BUILD_IMAGE" = "1" ]; then
-  docker build -f products/cpk_server/Dockerfile -t "$IMAGE" .
+  if [ "$RECEIVER_ONLY" = 1 ]; then
+    . ./scripts/docker_witness_daemon.sh
+    docker_witness_daemon
+    receiver_daemon
+    source_status=$(git status --porcelain)
+    [ -z "$source_status" ] || exit 1
+    RECEIVER_SOURCE=$(git rev-parse HEAD)
+    git diff --quiet 85b193bbdc777376c5104029a5ee04e74627cf71 HEAD -- \
+      products/cpk_server/src products/cpk_local_gateway/src products/cpk_server/Dockerfile
+    existing=$(docker image ls -q --filter "reference=$IMAGE")
+    [ -z "$existing" ] || exit 1
+    existing=$(docker network ls -q --filter "name=^$NETWORK$")
+    [ -z "$existing" ] || exit 1
+    existing=$(docker container ls -aq --filter "label=org.openj92.cpk.test-run=$NETWORK")
+    [ -z "$existing" ] || exit 1
+    for suffix in product missing-control control provenance http-sample postgres binding-1 binding-2 binding-3 binding-4; do
+      existing=$(docker container ls -aq --filter "name=^/$NETWORK-$suffix$")
+      [ -z "$existing" ] || exit 1
+    done
+    docker image inspect "$CPK_RECEIVER_POSTGRES_IMAGE" >/dev/null
+    mkdir -m 700 "$CPK_RECEIVER_RECORDS"
+    RECORDS_OWNED=1
+    RECEIVER_RESERVED=1
+    git rev-parse HEAD:products/cpk_server/Dockerfile > "$CPK_RECEIVER_RECORDS/recipe.blob"
+    git archive --format=tar "$RECEIVER_SOURCE" > "$CPK_RECEIVER_RECORDS/source.tar"
+    docker buildx build --builder "$DOCKER_CONTEXT" --platform linux/amd64 --load -f products/cpk_server/Dockerfile \
+      --label "org.opencontainers.image.revision=$RECEIVER_SOURCE" \
+      --label "org.openj92.cpk.test-run=$NETWORK" \
+      --iidfile "$CPK_RECEIVER_RECORDS/image.id" \
+      --metadata-file "$CPK_RECEIVER_RECORDS/build-metadata.json" -t "$IMAGE" - \
+      < "$CPK_RECEIVER_RECORDS/source.tar" \
+      > "$CPK_RECEIVER_RECORDS/build.log" 2>&1
+    IMAGE=$(cat "$CPK_RECEIVER_RECORDS/image.id")
+    receiver_daemon
+    source_status=$(git status --porcelain)
+    [ -z "$source_status" ] || exit 1
+    observed_source=$(git rev-parse HEAD)
+    [ "$observed_source" = "$RECEIVER_SOURCE" ] || exit 1
+    docker image inspect "$IMAGE" --format '{"id":{{json .Id}},"repo_digests":{{json .RepoDigests}},"os":{{json .Os}},"architecture":{{json .Architecture}},"cmd":{{json .Config.Cmd}}}' > "$CPK_RECEIVER_RECORDS/image.json"
+    jq -e '.os=="linux" and .architecture=="amd64" and .cmd==["python","-m","control_plane_kit_servers_cpk_server.server"]' "$CPK_RECEIVER_RECORDS/image.json" >/dev/null
+    candidate_reference=$(jq -er --slurpfile metadata "$CPK_RECEIVER_RECORDS/build-metadata.json" \
+      '[.repo_digests[] | select(.==("localhost/control-plane-kit-servers/cpk-server@"+$metadata[0]["containerimage.digest"]))] | unique | if length==1 then .[0] else error("candidate repository digest is unavailable") end' \
+      "$CPK_RECEIVER_RECORDS/image.json")
+    reference_id=$(docker image inspect "$candidate_reference" --format '{{.Id}}')
+    [ "$reference_id" = "$IMAGE" ] || exit 1
+    receiver_daemon
+    printf '%s\n' "$candidate_reference" > "$CPK_RECEIVER_RECORDS/candidate-reference.txt"
+    jq '{artifact_digest:.["containerimage.digest"],artifact_descriptor:.["containerimage.descriptor"],
+      config_digest:.["containerimage.config.digest"],platform:"linux/amd64",
+      platform_manifest_digest:(if .["containerimage.descriptor"].mediaType=="application/vnd.oci.image.manifest.v1+json"
+        then .["containerimage.descriptor"].digest else null end)}' \
+      "$CPK_RECEIVER_RECORDS/build-metadata.json" > "$CPK_RECEIVER_RECORDS/image-coordinates.json"
+    phase "verify packaged installed origins and dependency consistency"
+    PROVENANCE_ATTEMPTED=1
+    docker run --pull never --rm --name "$NETWORK-provenance" \
+      --cidfile "$CPK_RECEIVER_RECORDS/provenance.cid" \
+      --label "org.openj92.cpk.test-run=$NETWORK" --network none --read-only \
+      --mount "type=bind,source=$PWD/products/cpk_server/tests/receiver_image_check.py,target=/witness.py,readonly" \
+      --mount "type=bind,source=$PWD/coordinates/server-products.json,target=/coordinates.json,readonly" \
+      --entrypoint python "$IMAGE" /witness.py /coordinates.json > "$CPK_RECEIVER_RECORDS/installed-origins.json"
+    ORIGINS_VERIFIED=1
+  else
+    docker build -f products/cpk_server/Dockerfile -t "$IMAGE" .
+  fi
 fi
 
+if [ "$RECEIVER_ONLY" != 1 ]; then
 phase "reject missing bootstrap configuration"
 if docker run --pull "$PRODUCT_PULL_POLICY" --rm "$IMAGE" >"$MISSING_CONFIG_OUTPUT" 2>&1; then
   echo "cpk-server started without required configuration" >&2
   exit 1
+fi
 fi
 
 phase "verify non-root image contract"
 docker inspect "$IMAGE" --format '{{.Config.User}}' | grep -q '^10001$'
 
 phase "create owned runtime network"
-docker network create --label "$LABEL" "$NETWORK" >/dev/null
+if [ "$RECEIVER_ONLY" = 1 ]; then
+  NETWORK_ATTEMPTED=1
+  NETWORK_ID=$(docker network create --internal --label "$LABEL" --label "org.openj92.cpk.test-run=$NETWORK" "$NETWORK")
+  existing=$(docker volume ls -q --filter "name=$NETWORK-postgres-data")
+  [ -z "$existing" ] || exit 1
+  VOLUME_ATTEMPTED=1
+  POSTGRES_VOLUME=$(docker volume create --label "org.openj92.cpk.test-run=$NETWORK" "$NETWORK-postgres-data")
+else
+  docker network create --label "$LABEL" "$NETWORK" >/dev/null
+fi
 
 phase "start Postgres dependency"
+if [ "$RECEIVER_ONLY" = 1 ]; then
+POSTGRES_ATTEMPTED=1
+POSTGRES_CONTAINER=$(docker run --pull never -d --name "$NETWORK-postgres" \
+  --cidfile "$CPK_RECEIVER_RECORDS/postgres.cid" \
+  --label "org.openj92.cpk.test-run=$NETWORK" --network "$NETWORK" --network-alias cpk-postgres \
+  --mount "type=volume,source=$POSTGRES_VOLUME,target=/var/lib/postgresql/data" \
+  -e POSTGRES_DB=cpk -e POSTGRES_USER=cpk -e POSTGRES_PASSWORD=cpk "$CPK_RECEIVER_POSTGRES_IMAGE")
+else
 POSTGRES_CONTAINER="$(docker run -d \
   --label "$LABEL" \
   --network "$NETWORK" \
@@ -310,6 +569,7 @@ POSTGRES_CONTAINER="$(docker run -d \
   -e POSTGRES_USER=cpk \
   -e POSTGRES_PASSWORD=cpk \
   postgres:16-alpine)"
+fi
 
 phase "wait for Postgres semantic readiness"
 POSTGRES_READY=0
@@ -332,19 +592,40 @@ if [ "$PROFILE" != "published-baseline" ]; then
   phase "prepare synthetic source control authority"
   CONTROL_RECORDS="$(mktemp -d)"
   chmod 700 "$CONTROL_RECORDS"
-  docker run --rm --network none --user "$(id -u):$(id -g)" \
+  set --
+  CONTROL_GENERATOR=generate
+  if [ "$RECEIVER_ONLY" = 1 ]; then
+    CONTROL_GENERATOR=generate-child
+    CONTROL_ATTEMPTED=1
+    set -- --pull never --name "$NETWORK-control" --label "org.openj92.cpk.test-run=$NETWORK" \
+      --cidfile "$CPK_RECEIVER_RECORDS/control.cid" \
+      --mount "type=bind,source=$PWD/products/cpk_server/tests/source_control_fixture.py,target=/app/products/cpk_server/tests/source_control_fixture.py,readonly"
+  fi
+  docker run "$@" --rm --network none --user "$(id -u):$(id -g)" \
     -e PYTHONDONTWRITEBYTECODE=1 \
     --mount "type=bind,source=$CONTROL_RECORDS,target=/fixture" \
     "$CPK_SERVERS_TEST_IMAGE" \
-    python products/cpk_server/tests/source_control_fixture.py generate /fixture
+    python products/cpk_server/tests/source_control_fixture.py "$CONTROL_GENERATOR" /fixture
 fi
-if [ "$PROFILE" = wrapped-source ]; then
+if [ "$SOURCE_SAMPLES" = 1 ]; then
+  if [ "$RECEIVER_ONLY" = 1 ]; then
+    SAMPLE_ATTEMPTED=1
+    SAMPLE_HELPER=$(docker run --pull never -d --name "$NETWORK-http-sample" \
+      --cidfile "$CPK_RECEIVER_RECORDS/http-sample.cid" \
+      --label "org.openj92.cpk.test-run=$NETWORK" --network "$NETWORK" \
+      --read-only --cap-drop ALL --security-opt no-new-privileges \
+      --user "$(id -u):$(id -g)" -e PYTHONDONTWRITEBYTECODE=1 \
+      --mount "type=bind,source=$PWD/scripts/http_sample_fixture.py,target=/app/scripts/http_sample_fixture.py,readonly" \
+      --mount "type=bind,source=$CONTROL_RECORDS,target=/fixture" \
+      "$CPK_SERVERS_TEST_IMAGE" python scripts/http_sample_fixture.py cpk /fixture all-checks)
+  else
   SAMPLE_HELPER="$(docker run -d --name "$NETWORK-http-sample" \
     --label "org.openj92.cpk.test-run=$NETWORK" --network "$NETWORK" \
     --read-only --cap-drop ALL --security-opt no-new-privileges \
     --user "$(id -u):$(id -g)" -e PYTHONDONTWRITEBYTECODE=1 \
     --mount "type=bind,source=$CONTROL_RECORDS,target=/fixture" \
     "$CPK_SERVERS_TEST_IMAGE" python scripts/http_sample_fixture.py cpk /fixture)"
+  fi
   prepared=0
   for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
     if [ -f "$CONTROL_RECORDS/sample.prepared" ]; then prepared=1; break; fi
@@ -368,6 +649,7 @@ set -- \
   -e CPK_GRAPH_TOPOLOGY_DATABASE_URL="$GRAPH_TOPOLOGY_DATABASE_URL"
 if [ "$PROFILE" != "published-baseline" ]; then
   phase "reject missing required source control file"
+  if [ "$RECEIVER_ONLY" = 1 ]; then MISSING_ATTEMPTED=1; fi
   MISSING_CONTROL_CONTAINER="$(docker create --label "$LABEL" --pull "$PRODUCT_PULL_POLICY" \
     --label "org.openj92.cpk.test-run=$NETWORK" --name "$NETWORK-missing-control" \
     --network "$NETWORK" "$@" "$IMAGE")"
@@ -389,16 +671,65 @@ if [ "$PROFILE" != "published-baseline" ]; then
   grep -q 'CPK control configuration is invalid' "$MISSING_CONFIG_OUTPUT"
   set -- "$@" --mount "type=bind,source=$CONTROL_RECORDS/control.json,target=/etc/cpk/cpk-server/control.json,readonly"
 fi
-if [ "$PROFILE" = wrapped-source ]; then
+if [ "$RECEIVER_ONLY" = 1 ]; then
+  phase "reject each inconsistent database binding"
+  number=0
+  for binding in CPK_WORKPLACE_DATABASE_URL CPK_ACTIVITY_HISTORY_DATABASE_URL CPK_OBSERVER_STATE_DATABASE_URL CPK_GRAPH_TOPOLOGY_DATABASE_URL; do
+    number=$((number + 1))
+    BINDING_ATTEMPTS=$number
+    receiver_daemon
+    mismatch=$(docker create --pull never --name "$NETWORK-binding-$number" \
+      --cidfile "$CPK_RECEIVER_RECORDS/binding-$number.cid" \
+      --label "org.openj92.cpk.test-run=$NETWORK" --network "$NETWORK" "$@" \
+      -e "$binding=postgresql://cpk:cpk@cpk-postgres:5432/different-valid-database" "$IMAGE")
+    docker start "$mismatch" >/dev/null
+    stopped=0
+    for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+      state=$(docker inspect --format '{{.State.Running}}|{{.State.ExitCode}}' "$mismatch")
+      case "$state" in false\|*) stopped=1; break ;; esac
+      sleep 1
+    done
+    [ "$stopped" = 1 ] || exit 1
+    [ "${state#*|}" != 0 ] || exit 1
+    docker logs --tail 10 "$mismatch" > "$CONTROL_RECORDS/binding-refusal.log" 2>&1
+    grep -q 'current operations package requires all CPK_.*DATABASE_URL values to point at one instance database' "$CONTROL_RECORDS/binding-refusal.log"
+    receiver_remove_container "$mismatch" "$NETWORK-binding-$number"
+  done
+  BINDINGS_VERIFIED=1
+fi
+if [ "$SOURCE_SAMPLES" = 1 ]; then
   set -- "$@" --network-alias cpk-source \
     -e CPK_HTTP_VERIFICATION_SAMPLES_CONFIGURATION_FILE=/etc/cpk/cpk-server/http-samples.json \
     --mount "type=bind,source=$CONTROL_RECORDS/http-samples.json,target=/etc/cpk/cpk-server/http-samples.json,readonly"
+fi
+if [ "$RECEIVER_ONLY" = 1 ]; then
+  receiver_daemon
+  PRODUCT_ATTEMPTED=1
+  set -- "$@" --name "$NETWORK-product" --label "org.openj92.cpk.test-run=$NETWORK"
+  set -- "$@" --cidfile "$CPK_RECEIVER_RECORDS/product.cid"
 fi
 CONTAINER="$(docker run --pull "$PRODUCT_PULL_POLICY" -d \
   --label "$LABEL" \
   --network "$NETWORK" \
   -p 127.0.0.1::8080 \
   "$@" "$IMAGE")"
+if [ "$RECEIVER_ONLY" = 1 ]; then
+  receiver_daemon
+  docker inspect "$CONTAINER" --format '{"image":{{json .Image}},"path":{{json .Path}},"args":{{json .Args}}}' > "$CPK_RECEIVER_RECORDS/runtime-image.json"
+  jq -e --arg built "$IMAGE" --slurpfile metadata "$CPK_RECEIVER_RECORDS/build-metadata.json" \
+    '(.image==$built or .image==$metadata[0]["containerimage.config.digest"]) and .path=="python" and .args==["-m","control_plane_kit_servers_cpk_server.server"]' "$CPK_RECEIVER_RECORDS/runtime-image.json" >/dev/null
+  docker exec "$CONTAINER" python -c '
+import json
+with open("/proc/1/status", "rb") as stream:
+    raw = stream.read(16385)
+if len(raw) > 16384:
+    raise SystemExit(1)
+rows = [line.split()[1:] for line in raw.splitlines() if line.startswith(b"Uid:")]
+if len(rows) != 1 or len(rows[0]) != 4 or int(rows[0][1]) != 10001:
+    raise SystemExit(1)
+print(json.dumps({"pid":1,"effective_uid":10001}))
+' > "$CPK_RECEIVER_RECORDS/process-identity.json"
+fi
 
 if [ "$PROFILE" = wrapped-artifact ]; then
   root_artifact_verify_container "$CONTAINER" "$CONTROL_RECORDS"
@@ -470,11 +801,13 @@ if printf '%s' "$ready" | grep -q 'postgres://'; then
   echo "ready response leaked store endpoint" >&2
   exit 1
 fi
-if [ "$PROFILE" = wrapped-source ]; then
+if [ "$SOURCE_SAMPLES" = 1 ]; then
   : > "$CONTROL_RECORDS/sample.ready"
   sample_completed=0
   sample_attempt=1
-  while [ "$sample_attempt" -le 20 ]; do
+  sample_limit=20
+  if [ "$RECEIVER_ONLY" = 1 ]; then sample_limit=45; fi
+  while [ "$sample_attempt" -le "$sample_limit" ]; do
     sample_state="$(docker inspect --format '{{.State.Status}}|{{.State.ExitCode}}' "$SAMPLE_HELPER")" || exit 1
     if [ "${sample_state%%|*}" = exited ]; then sample_completed=1; break; fi
     sleep 1
@@ -484,6 +817,31 @@ if [ "$PROFILE" = wrapped-source ]; then
     echo 'CPK source signed ready sample failed' >&2; exit 1;
   }
   echo 'CPK source signed named-listener ready sample passed'
+fi
+
+if [ "$RECEIVER_ONLY" = 1 ]; then
+  phase "verify focused signed pair and authenticated shared-store read"
+  jq -e '.checks|map(.check_id)==["live","ready"]' "$CONTROL_RECORDS/sample.passed" >/dev/null
+  jq -e 'all(.checks[]; .passed==true and .absent_authority_status==401 and .wrong_issuer_status==401)' "$CONTROL_RECORDS/sample.passed" >/dev/null
+  cp "$CONTROL_RECORDS/sample.passed" "$CPK_RECEIVER_RECORDS/samples.json"
+  SAMPLES_VERIFIED=1
+  unsigned=$(curl --connect-timeout 1 --max-time 3 --max-filesize 65536 --silent --show-error \
+    -o "$UNAUTHORIZED_BODY" -w '%{http_code}' "$BASE/workspaces/root-workspace")
+  [ "$unsigned" = 401 ]
+  read_status=$(curl --connect-timeout 1 --max-time 3 --max-filesize 65536 --silent --show-error \
+    -H 'Authorization: Bearer valid-token' -o "$CONTROL_RECORDS/db-read.json" \
+    -w '%{http_code}' "$BASE/workspaces/root-workspace")
+  [ "$read_status" = 404 ]
+  jq -e --arg expected "missing workspace 'root-workspace'" \
+    '.error.status==404 and .error.message==$expected' "$CONTROL_RECORDS/db-read.json" >/dev/null
+  DB_READ_VERIFIED=1
+  receiver_daemon
+  source_status=$(git status --porcelain)
+  [ -z "$source_status" ] || exit 1
+  observed_source=$(git rev-parse HEAD)
+  [ "$observed_source" = "$RECEIVER_SOURCE" ] || exit 1
+  phase "focused receiver proof complete"
+  exit 0
 fi
 
 phase "reject unauthenticated HTTP"
