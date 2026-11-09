@@ -56,7 +56,7 @@ case "$phase" in
     esac
     ;;
   red) set -- python -m unittest http_sample_installation_tests.FullInstallationHttpSampleTests.test_secrets_companion_covers_original_pair_and_removes_only_its_review -v ;;
-  all) set -- sh -c 'cd /tmp && python -m unittest http_sample_installation_tests http_sample_image_launcher_tests test_full_http_sample_companion test_source_control_product test_installation_management test_managed_postgres_installation.ManagedPostgresInstallationTests -v && python -m http_sample_installation_assembly' ;;
+  all) set -- sh -c 'cd /tmp && python -m unittest http_sample_installation_tests test_full_http_sample_companion test_source_control_product test_installation_management test_managed_postgres_installation.ManagedPostgresInstallationTests -v && python -m http_sample_installation_assembly' ;;
   registrations)
     case "$secrets_revision" in ''|*[!0-9a-f]*) echo 'exact Secrets source revision is required' >&2; exit 2 ;; esac
     [ "${#secrets_revision}" -eq 40 ] || exit 2

@@ -4,5 +4,7 @@ duplicate and conflicting full image JSON. Docker and archive transport are
 external CLI doubles; the validation command runs the actual shared codec with
 the outer gate's exact Core overlay. Only cached-image inspection and isolated
 validation-controller startup may occur: no build, custom network or PostgreSQL.
-The existing source assembly full phase and cached image-input phase collect this
-regression alongside pure assembly/default/PG-only laws. It has not executed.
+Only the cached image-input phase collects this executable-CLI regression,
+alongside pure assembly/default/PG-only laws. Ordinary full phases retain their
+non-executable /tmp mount and previous collection. The dedicated test itself
+still exercises both ordinary launchers. It has not executed.
