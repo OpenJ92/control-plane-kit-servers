@@ -75,8 +75,8 @@ to prove normal plan read-only file projection, sender environment, managed-heal
 v2 and exact API upstream. This is the existing root plan owner, not a new planner.
 Negative cases reject crossed parent scope, reused website receiver and three
 input hash mismatches. Private commissioning is forbidden during renderer calls.
-Tests are PREPARED/UNEXECUTED. Historical parent16-case evidence predates these
-two cases and is not relabeled as their result.
+Tests passed at b43d562 with the corrected empty-grants preprojection shape, as
+recorded below. Historical parent16-case evidence remains separate.
 
 After exact source review/release:
 
@@ -148,5 +148,43 @@ runtime/provider names to North's chosen cpk163-gparent-local-docker and
 cpk163-gparent-secrets, with matching runtime-access reference. Old90fcd/cb51
 files remain immutable failed-input evidence. No image, receiving artifact or
 grants changed; Secrets0d365 remains a visible template choice until the final
-parent provider digest is independently qualified. Review the successor and
-v2 request before one new source test/render release; preserve all failed files.
+parent provider digest is independently qualified. The successor and v2 request
+were reviewed before one new source test/render release; all failed files remain
+preserved.
+
+## Reviewed b43d562 template receipt
+
+Meridian passed b43d562556d07b215660daaa989c2b2ba4afccdc and the exact v2 request;
+North separately released one same-two-case gate and one new public template
+render. Gate exited0:28support+2/2focused0.743s, exact Coref56/Ops701/Ie438 overlays,
+actual source and owned cleanup verified. Log
+/private/tmp/cpk384-public-root-b43d562.log SHA256
+1a5fcbba155f9b8d05f7bbdddb6b14766f577ced567addbebf6cf81364e7c019.
+
+Public metadata render exited0 and verified cleanup. The canonical25,871-byte
+template /private/tmp/rowan-384-root-bootstrap-input.template-v2.json SHA256
+f81ba76a8dad762c202a5ed856121c6fd92bf300bfc0af5c5d682c3790ee24b7
+preserves both parent artifacts, empty grants/multi-principal refs/no commitment,
+corrected authority/delivery/provider names and exact website/sender bindings.
+The root DB decodes as the unchanged stock57c72 catalogue document. JSON numeric
+spellings1/1.0 and10/10.0 differ after general input serialization; Core decoded
+document equality and parsed JSON equality hold. No descriptor drift is claimed.
+
+Independent saved-byte comparisons: senderbe90e87a…, embedded childPG03fb5bd7…,
+gateway284f5fe4… and websitef19fb679… each exactly match their frozen source file.
+Generated health content SHA256
+601d0fe624fbf36a303f2bba0bfb5baeae9719bdb473141e2075ee98820c5be2,
+native connector canonical document SHA256
+1ec6c66365a37580f36c7c739b80b8af2fe20cece392b3d4e6b54045d93e1560,
+selecting accepted connector812262a6. These public projections are separately
+retained under /private/tmp/rowan-384-template-v2-*.
+
+Meridian independently passed the source log, cleanup and every public output
+join, including both parent receivers and the exact connector image. This PASS
+is TEMPLATE ONLY: parent Secrets0d365 must be replaced by the separately qualified
+parent provider image if its required signer operations demand that successor.
+The renderer already accepts secrets_image independently from all six child
+choices and preserves the root receiving configuration. No placeholder image,
+private commitment, driver ID, material plan, credential, registration or runtime
+effect was invented. Vale/Linnaeus receive the frozen template through North;
+the final root/material plan waits for final provider/seed and driver disposition.
