@@ -1,4 +1,15 @@
 Source: [test.sh](../../test.sh).
+
+Nov9 #163 unexecuted source prep adds `--http-sample-source-image-input-tests`
+with the existing three source-repository arguments. An exact cached controller
+runs normal policy/support/integrity then the focused pure/launcher suite, network
+none and without controller build/pull. The exact checkout is mounted ahead of
+cached /app scripts and dependencies are the existing pinned exports. For the
+new full image JSON, ordinary assembly/registration dispatch calls its shared
+cached-validator preflight BEFORE policy/build stages; ordinary source launcher
+rechecks before network/PG. Isolated validator startup is explicit, distinct from
+registration effects. Legacy no-input/PG-only dispatch remains unchanged.
+See [pending action and scope](../qualified-child-image-inputs.md).
 Maintain with the normal Docker-backed owning gate and prerequisite effects.
 
 #347's integrated source candidate wraps the existing root case in a shell

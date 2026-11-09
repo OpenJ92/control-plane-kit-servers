@@ -18,7 +18,8 @@ from control_plane_kit_servers_cpk_server import control_configuration as cpk
 from control_plane_kit_servers_cpk_local_gateway.http_sample_configuration import (
     ARTIFACT_ID as GATEWAY_SAMPLE_ARTIFACT_ID, gateway_http_sample_trust_from_artifact,
 )
-from http_sample_installation_assembly import assemble, image_options, IMAGE_ROLES
+from http_sample_installation_assembly import assemble
+from http_sample_image_inputs import image_options, IMAGE_ROLES
 
 
 @contextmanager
@@ -59,6 +60,7 @@ class FullInstallationHttpSampleTests(unittest.TestCase):
             fixture, original, baseline, graph, gateway_document, plan = assemble(images=images)
         connectors = (original.ingress.connector_node_id, original.website.ingress.connector_node_id,
             original.management.management_ingress.connector_node_id)
+        self.assertEqual(len(set(connectors)), 3)
         expected = {original.cpk_node_id:"cpk", original.postgres_node_id:"postgres",
             original.secrets_node_id:"secrets", original.website_node_id:"website",
             original.management.runtime_management.gateway_node_id:"gateway",
@@ -68,6 +70,7 @@ class FullInstallationHttpSampleTests(unittest.TestCase):
             for document in fixture.product_documents}
         for node_id, role in expected.items():
             self.assertEqual(documents[graph.node(node_id).metadata["product_descriptor_digest"]].image, images[role])
+            self.assertEqual(graph.node(node_id).metadata["oci_image"], images[role].execution_reference)
             self.assertEqual(graph.node(node_id).block_spec.verification, baseline.node(node_id).block_spec.verification)
         self.assertEqual(gateway_document.product.image, images["gateway"])
         self.assertEqual(original.secrets_product.product.image, images["secrets"])
@@ -98,6 +101,22 @@ class FullInstallationHttpSampleTests(unittest.TestCase):
                 image_options({"CPK_SOURCE_ASSEMBLY_IMAGES":json.dumps(invalid)})
         with self.assertRaises(ValueError):
             image_options({"CPK_SOURCE_ASSEMBLY_IMAGES":json.dumps(encoded), "CPK_SOURCE_ASSEMBLY_POSTGRES_IMAGE":legacy})
+
+    def test_new_full_json_refuses_duplicate_role_and_nested_descriptor_keys_only(self):
+        encoded = {role:value.descriptor() for role, value in self.images().items()}
+        full = json.dumps(encoded)
+        duplicate_role = full[:-1] + ',"gateway":' + json.dumps(encoded["gateway"]) + '}'
+        gateway = json.dumps(encoded["gateway"])
+        duplicate_digest = gateway[:-1] + ',"digest":"sha256:' + '9' * 64 + '"}'
+        nested = '{' + ','.join(json.dumps(role) + ':' + (duplicate_digest if role == "gateway"
+            else json.dumps(value)) for role, value in encoded.items()) + '}'
+        for document in (duplicate_role, nested):
+            with self.assertRaisesRegex(ValueError, "duplicate"):
+                image_options({"CPK_SOURCE_ASSEMBLY_IMAGES":document})
+        legacy = json.dumps(encoded["postgres"])
+        legacy = legacy[:-1] + ',"digest":"sha256:' + '9' * 64 + '"}'
+        self.assertEqual(image_options({"CPK_SOURCE_ASSEMBLY_POSTGRES_IMAGE":legacy})["postgres_image"].digest,
+            "sha256:" + "9" * 64)
 
     def test_complete_assembly_preserves_supplied_product_image_and_exact_versions(self):
         # Unit metadata only; this fixture reference is never an acquired image.

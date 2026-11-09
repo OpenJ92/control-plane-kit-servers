@@ -50,7 +50,8 @@ from control_plane_kit_core.http_verification_sample_installation import HttpVer
 from protected_input_provider import ProtectedProvider, PROVIDER, TOKEN
 from receiver_acceptance_operations import IsolatedOperationsSchema, PublicOperationsDriver, utc_now, witness_principal
 from test_secret_provider_bootstrap import _provider_environment
-from http_sample_installation_assembly import assemble, image_options
+from http_sample_installation_assembly import assemble
+from http_sample_image_inputs import image_options
 
 
 def signing_inputs(fixture, original, graph, custody, *, provider_id=PROVIDER):

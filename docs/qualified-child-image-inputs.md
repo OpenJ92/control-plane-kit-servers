@@ -41,20 +41,53 @@ pending its independent packaged qualification; do not insert a placeholder or
 borrow a synthetic unit-test digest. Every eventual role needs its exact accepted
 image/evidence and normal reviewed input. Image syntax is not qualification.
 
-Validation is PENDING. Three focused new-law tests cover incomplete/conflicting
+Validation is PENDING. Focused new-law tests cover incomplete/conflicting
 inputs before fixture setup, all eight nodes' image/document joins and one shared
 connector, original three waits/checks, four PostgreSQL-to-CPK edges and all three
-ingress/runtime bindings, and the full/legacy environment boundary. Existing
+ingress/runtime bindings, distinct connector IDs, every node's execution image
+metadata, and the full/legacy environment boundary. Duplicate role AND nested
+descriptor keys refuse in the new full JSON; legacy duplicate parsing is unchanged.
+Existing
 PG-image/version, full companion, signer-lifetime and normal registration laws
 are retained. Tests use explicitly synthetic `example.invalid` values only; they
 never acquire or qualify an image. No Docker, source recompile, provider
 commissioning, submission or deployment ran for this candidate.
 
-Next validation belongs to the existing Docker-backed owning source assembly
-selector, with the exact reviewed source cohort and normal discovery of
-`http_sample_installation_tests`; registration validation is a separate released
-data-affecting action. No new gate, host Python, controller build or automatic
-retry is proposed. `git diff --check` is the sole completed source check.
+Meridian's first review held the launcher boundary: although Python refused
+before fixture/provider work, ordinary registrations allocated a network/PG and
+the root gate built a controller first. Shared `http_sample_image_inputs` now
+provides the same decoder to a preflight CLI. For the NEW full input only, the
+root gate invokes it before policy/build stages; the ordinary source launcher
+also invokes it before registration exports/network/PG. It requires an explicit
+cached immutable `CPK_SOURCE_IMAGE_VALIDATOR`, exports exact Core054 source and
+mounts this checkout's actual codec into one network-none/read-only controller.
+Invalid input may start that isolated validator and create/remove public source
+scratch files; it cannot build a controller, create the registration network or
+start PostgreSQL. Valid input does not grant registration permission. Legacy
+no-input/PG-only launcher behavior is retained.
+
+The fake-CLI regression enters BOTH ordinary root and registration launchers,
+runs the actual shared codec against the outer owning gate's pinned Core, and
+requires refusal with only image-inspect/validation-controller calls. Docker and
+Git archive transport are explicit external doubles; no Core state is faked.
+
+Prepared minimal source-only action, ONLY after exact source review/release:
+
+```sh
+DOCKER_CONTEXT=desktop-linux \
+CPK_SERVERS_TEST_IMAGE=sha256:1c8b3fc348936b41bb51e530c9f192c360e3b4e53e7a9f7af6f41b7ba10e83ba \
+./test.sh --http-sample-source-image-input-tests CORE_REPOSITORY OPERATIONS_REPOSITORY INTERPRETERS_REPOSITORY
+```
+
+The three repository paths must hold the existing pinned Core054e5884,
+Operations71db67c5 and Interpreters2e2a6b88 Git objects. The owning launcher exports
+those exact sources, uses the cached controller without build/pull, network none,
+and mounts THIS checkout at `/source` ahead of stale `/app` scripts/product code.
+It retains ordinary policy/support/integrity checks and runs all focused pure
+assembly tests (including unchanged default/PG-only cases) plus launcher refusal.
+No provider, registration network, PostgreSQL or API authoring runs in this phase.
+Actual registration remains a separately released data-affecting action.
+No host Python or automatic retry. `git diff --check` is the sole completed check.
 
 Security/history: public image inputs only; no new route, permission, network or
 credential surface. Pure selection performs no durable mutation. The normal

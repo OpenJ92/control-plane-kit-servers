@@ -9,10 +9,25 @@ interpreters_repository=$4
 phase=${5:-all}
 secrets_repository=${6:-}
 secrets_revision=${7:-}
+source_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+if [ "${CPK_SOURCE_ASSEMBLY_IMAGES+x}" = x ]; then
+  case "$phase" in all|red|registrations) sh "$source_root/scripts/http_sample_image_preflight.sh" "$core_repository" ;; esac
+fi
+source_paths=''
+source_mounted=0
+source_tmpfs=/tmp
+if [ "$phase" = image-inputs ] || [ "${CPK_SOURCE_ASSEMBLY_IMAGES+x}" = x ]; then
+  source_mounted=1
+  source_tmpfs=/tmp:exec
+  source_paths=/source:/source/src:/source/scripts:/source/products/cpk_server/src:/source/products/cpk_server/tests:/source/products/secrets_server/src:/source/products/secrets_server/tests:/source/products/cpk_local_gateway/src:/source/products/cloudflared_connector/src:/source/products/postgres_server/src:/source/products/website_server/src:
+fi
 core_revision=054e5884d89ed6f56141b8fc51ea996f0b6d916b
 operations_revision=71db67c5df666d936860cce35b99394e600b2f1f
 interpreters_revision=2e2a6b880359c6db98f6c1e41b6de450d8bc681f
 case "$phase" in
+  image-inputs)
+    set -- python -m unittest http_sample_installation_tests http_sample_image_launcher_tests -v
+    ;;
   managed-composition)
     core_revision=$6
     operations_revision=$7
@@ -41,7 +56,7 @@ case "$phase" in
     esac
     ;;
   red) set -- python -m unittest http_sample_installation_tests.FullInstallationHttpSampleTests.test_secrets_companion_covers_original_pair_and_removes_only_its_review -v ;;
-  all) set -- sh -c 'cd /tmp && python -m unittest http_sample_installation_tests test_full_http_sample_companion test_source_control_product test_installation_management test_managed_postgres_installation.ManagedPostgresInstallationTests -v && python -m http_sample_installation_assembly' ;;
+  all) set -- sh -c 'cd /tmp && python -m unittest http_sample_installation_tests http_sample_image_launcher_tests test_full_http_sample_companion test_source_control_product test_installation_management test_managed_postgres_installation.ManagedPostgresInstallationTests -v && python -m http_sample_installation_assembly' ;;
   registrations)
     case "$secrets_revision" in ''|*[!0-9a-f]*) echo 'exact Secrets source revision is required' >&2; exit 2 ;; esac
     [ "${#secrets_revision}" -eq 40 ] || exit 2
@@ -105,12 +120,18 @@ if [ "$phase" = registrations ]; then
 fi
 printf 'pure assembly source Core=%s Operations=%s Interpreters=%s\n' \
   "$core_revision" "$operations_revision" "$interpreters_revision"
-docker run --rm --network "$network" --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
+source_controller() {
+  if [ "$source_mounted" = 1 ]; then
+    docker run --pull never --mount "type=bind,source=$source_root,target=/source,readonly" --workdir /tmp "$@"
+  else docker run "$@"
+  fi
+}
+source_controller --rm --network "$network" --read-only --tmpfs "$source_tmpfs" --cap-drop ALL --security-opt no-new-privileges \
   --mount "type=bind,source=$owned_source,target=/reviewed-http-sample,readonly" \
   -e PYTHONDONTWRITEBYTECODE=1 \
   -e CPK_SOURCE_ASSEMBLY_POSTGRES_IMAGE \
   -e CPK_SOURCE_ASSEMBLY_IMAGES \
   -e CPK_SOURCE_FIXTURE_DATABASE_URL=postgresql://cpk:cpk-fixture@cpk163-postgres:5432/cpk \
   -e "CPK_SOURCE_SECRETS_REVISION=$secrets_revision" \
-  -e PYTHONPATH=/reviewed-http-sample/core/src:/reviewed-http-sample/operations/src:/reviewed-http-sample/operations:/reviewed-http-sample/interpreters/src:/reviewed-http-sample/secrets/src:/app:/app/products/cpk_server/tests:/app/products/secrets_server/tests:/app/scripts \
+  -e PYTHONPATH=/reviewed-http-sample/core/src:/reviewed-http-sample/operations/src:/reviewed-http-sample/operations:/reviewed-http-sample/interpreters/src:/reviewed-http-sample/secrets/src:"${source_paths}"/app:/app/products/cpk_server/tests:/app/products/secrets_server/tests:/app/scripts \
   "$image" "$@"

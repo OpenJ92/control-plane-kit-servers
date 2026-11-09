@@ -18,7 +18,7 @@ from control_plane_kit_core.http_verification_sample_installation import (
     HttpVerificationSampleCheckBinding,
 )
 from control_plane_kit_core.http_verification_samples import http_verification_check_digest
-from control_plane_kit_core.products import ProductReference, OciImageReference, OciImageReferenceCodec
+from control_plane_kit_core.products import ProductReference, OciImageReference
 from control_plane_kit_core.secret_selections import SecretVersionSelection, secret_selections_from_descriptor
 from control_plane_kit_core.topology.secret_selection import carry_forward_secret_selections
 from control_plane_kit_core.planning import WaitForHealthy, ReviewChange
@@ -35,41 +35,13 @@ from control_plane_kit_servers_cpk_local_gateway.http_sample_configuration impor
 from control_plane_kit_servers_cpk_local_gateway.http_sample_relay import GatewayHttpSampleTrust
 from test_installation_management import InstallationManagementTests
 from receiver_acceptance_material import AuthoredMaterial
-
-
-IMAGE_ROLES = frozenset({"cpk", "postgres", "secrets", "website", "gateway", "connector"})
-
-
-def _images(images):
-    """Complete public values only; qualification remains an operator boundary."""
-    if type(images) is not dict or images.keys() != IMAGE_ROLES:
-        raise ValueError("source assembly requires all six explicit immutable images")
-    codec = OciImageReferenceCodec()
-    if any(type(value) is not OciImageReference or codec.decode(codec.encode(value)) != value
-            for value in images.values()):
-        raise ValueError("source assembly requires all six explicit immutable images")
-    return dict(images)
-
-
-def image_options(environment):
-    """Preserve the legacy PG-only input; never partially fill the full cohort."""
-    full = environment.get("CPK_SOURCE_ASSEMBLY_IMAGES")
-    legacy = environment.get("CPK_SOURCE_ASSEMBLY_POSTGRES_IMAGE")
-    if full is not None:
-        if legacy is not None:
-            raise ValueError("source assembly image inputs conflict")
-        document = json.loads(full)
-        if type(document) is not dict or document.keys() != IMAGE_ROLES:
-            raise ValueError("source assembly requires all six explicit immutable images")
-        return {"images": _images({role: OciImageReferenceCodec().decode(value)
-            for role, value in document.items()})}
-    return {"postgres_image": None if legacy is None else OciImageReferenceCodec().decode(json.loads(legacy))}
+from http_sample_image_inputs import require_images, image_options
 
 
 def assemble(*, commissioning_directory=None, postgres_image=None, secret_versions=None, images=None):
     """Return original installation inputs, full graph and exact sample plan."""
     if images is not None:
-        images = _images(images)
+        images = require_images(images)
         if postgres_image is not None:
             raise ValueError("source assembly image inputs conflict")
     fixture = InstallationManagementTests()

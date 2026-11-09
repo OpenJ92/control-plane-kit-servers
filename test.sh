@@ -20,6 +20,17 @@ GATEWAY_TARGET_OPERATIONS_REVISION=''
 GATEWAY_TARGET_EXPECTATION=''
 MANAGED_COMPOSITION_INTERPRETERS_REVISION=''
 case "${1:-}" in
+  --http-sample-source-image-input-tests)
+    [ "$#" -eq 4 ] || exit 2
+    HTTP_SAMPLE_RELAY_ONLY=8
+    HTTP_SAMPLE_SOURCE_CORE=$2
+    HTTP_SAMPLE_SOURCE_OPERATIONS=$3
+    HTTP_SAMPLE_SOURCE_INTERPRETERS=$4
+    case "$IMAGE" in sha256:*) ;; *) exit 2 ;; esac
+    [ "${#IMAGE}" = 71 ] || exit 2
+    case "${IMAGE#sha256:}" in *[!0-9a-f]*) exit 2 ;; esac
+    POLICY_IMAGE=$IMAGE
+    ;;
   --managed-verification-source-qualification)
     [ "$#" -eq 7 ] || { echo 'managed source qualification requires three checkouts and three exact revisions' >&2; exit 2; }
     HTTP_SAMPLE_RELAY_ONLY=7
@@ -84,16 +95,22 @@ case "${1:-}" in
     ;;
 esac
 
+if [ "${CPK_SOURCE_ASSEMBLY_IMAGES+x}" = x ]; then
+  case "$HTTP_SAMPLE_RELAY_ONLY" in 4|5) sh scripts/http_sample_image_preflight.sh "$HTTP_SAMPLE_SOURCE_CORE" ;; esac
+fi
+
 . ./scripts/root_artifact_shell.sh
 root_artifact_selection
 
-docker run --rm \
+set --
+if [ "$HTTP_SAMPLE_RELAY_ONLY" = 8 ]; then set -- --pull never --network none; fi
+docker run "$@" --rm \
   -v "$ROOT:/source:ro" \
   -e PYTHONDONTWRITEBYTECODE=1 \
   "$POLICY_IMAGE" \
   sh -c 'cd /source && PYTHONPATH=/source/src python scripts/apply_coordinates.py --check'
 
-docker run --rm \
+docker run "$@" --rm \
   -v "$ROOT:/source:ro" \
   -v "$ROOT/test_support:/test-support:ro" \
   -e CPK_PACKAGE_ROOT=/source \
@@ -101,7 +118,7 @@ docker run --rm \
   "$POLICY_IMAGE" \
   sh -c 'cd /test-support && python -m unittest discover -s tests -v'
 
-docker run --rm \
+docker run "$@" --rm \
   -v "$ROOT:/source:ro" \
   -v "$ROOT/test_support:/test-support:ro" \
   -e PYTHONDONTWRITEBYTECODE=1 \
@@ -114,6 +131,11 @@ docker run --rm \
     --test-root products \
     --gate-file test.sh
 
+if [ "$HTTP_SAMPLE_RELAY_ONLY" = 8 ]; then
+  sh scripts/http_sample_source_assembly.sh "$IMAGE" "$HTTP_SAMPLE_SOURCE_CORE" \
+    "$HTTP_SAMPLE_SOURCE_OPERATIONS" "$HTTP_SAMPLE_SOURCE_INTERPRETERS" image-inputs
+  exit 0
+fi
 docker build -f Dockerfile.test -t "$IMAGE" .
 if [ "$HTTP_SAMPLE_RELAY_ONLY" != 0 ]; then
   if [ "$HTTP_SAMPLE_RELAY_ONLY" = 7 ]; then
