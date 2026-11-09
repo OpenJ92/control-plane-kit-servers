@@ -21,7 +21,18 @@ GATEWAY_TARGET_EXPECTATION=''
 MANAGED_COMPOSITION_INTERPRETERS_REVISION=''
 CPK_RECEIVER_PHASE=''
 GATEWAY_PACKAGED_SOURCE=0
+GATEWAY_PACKAGED_INPUTS=''
 case "${1:-}" in
+  --gateway-packaged-image)
+    [ "$#" -eq 2 ] || exit 2
+    # Invalid or unqualified Secrets evidence refuses before even policy
+    # containers. The image owner repeats admission before its first effect.
+    sh scripts/gateway_packaged_image.sh --admit "$2"
+    GATEWAY_PACKAGED_INPUTS=$2
+    [ "$IMAGE" = sha256:1c8b3fc348936b41bb51e530c9f192c360e3b4e53e7a9f7af6f41b7ba10e83ba ] || exit 2
+    [ "${CPK_RECEIVER_DAEMON_ID:-}" = d23d00aa-b281-448d-bc95-c8e47efeeea2 ] || exit 2
+    POLICY_IMAGE=$IMAGE
+    ;;
   --gateway-packaged-source-tests)
     [ "$#" -eq 1 ] || exit 2
     case "$IMAGE" in sha256:*) ;; *) exit 2 ;; esac
@@ -105,7 +116,7 @@ esac
 . ./scripts/root_artifact_shell.sh
 root_artifact_selection
 
-if [ -n "$CPK_RECEIVER_PHASE" ] || [ "$GATEWAY_PACKAGED_SOURCE" = 1 ]; then
+if [ -n "$CPK_RECEIVER_PHASE$GATEWAY_PACKAGED_INPUTS" ] || [ "$GATEWAY_PACKAGED_SOURCE" = 1 ]; then
   : "${CPK_RECEIVER_DAEMON_ID:?select the expected local daemon}"
   . ./scripts/docker_witness_daemon.sh
   docker_witness_daemon
@@ -113,7 +124,7 @@ if [ -n "$CPK_RECEIVER_PHASE" ] || [ "$GATEWAY_PACKAGED_SOURCE" = 1 ]; then
   [ "$(docker image inspect "$IMAGE" --format '{{.Id}}')" = "$IMAGE" ] || exit 1
 fi
 set --
-if [ -n "$CPK_RECEIVER_PHASE" ] || [ "$GATEWAY_PACKAGED_SOURCE" = 1 ]; then set -- --pull never --network none; fi
+if [ -n "$CPK_RECEIVER_PHASE$GATEWAY_PACKAGED_INPUTS" ] || [ "$GATEWAY_PACKAGED_SOURCE" = 1 ]; then set -- --pull never --network none; fi
 
 docker run "$@" --rm \
   -v "$ROOT:/source:ro" \
@@ -141,6 +152,11 @@ docker run "$@" --rm \
     --test-root tests \
     --test-root products \
     --gate-file test.sh
+
+if [ -n "$GATEWAY_PACKAGED_INPUTS" ]; then
+  sh scripts/gateway_packaged_image.sh "$GATEWAY_PACKAGED_INPUTS"
+  exit 0
+fi
 
 if [ "$GATEWAY_PACKAGED_SOURCE" = 1 ]; then
   docker run --pull never --rm --network none --read-only --tmpfs /tmp:exec --tmpfs /etc/cpk --workdir /source \
