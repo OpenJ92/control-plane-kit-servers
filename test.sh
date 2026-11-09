@@ -20,6 +20,9 @@ GATEWAY_TARGET_OPERATIONS_REVISION=''
 GATEWAY_TARGET_EXPECTATION=''
 MANAGED_COMPOSITION_INTERPRETERS_REVISION=''
 case "${1:-}" in
+  --grandparent-image-build)
+    exec sh scripts/grandparent_image_build.sh "$@"
+    ;;
   --managed-verification-startup-source-tests)
     [ "$#" -eq 7 ] || { echo 'startup source tests require three checkouts and three exact revisions' >&2; exit 2; }
     HTTP_SAMPLE_RELAY_ONLY=9

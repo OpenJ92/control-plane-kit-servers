@@ -191,7 +191,12 @@ acquired controller receipt, clean source and fresh receipts; builds one owned
 current-source fixture; uses the same host-bind helper result channel; and stops
 before stop-profile/fatal work. The default full gate remains mandatory for
 composition acceptance and is not shortened by this option.
-# Isolated sender source selector (unexecuted)
+# Isolated sender source selector
+
+The dedicated `--grandparent-image-build` enters the separate product artifact
+owner described in [the grandparent packet](../grandparent-image.md). It follows
+the reviewed source gate, with explicit local package selection/provenance and
+the real default product process; it grants no listening/deployment acceptance.
 
 --managed-verification-startup-source-tests requires a cached immutable
 CPK_SERVERS_TEST_IMAGE. Normal policy/support/integrity and the narrow exact-source

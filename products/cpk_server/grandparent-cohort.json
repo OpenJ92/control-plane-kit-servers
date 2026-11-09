@@ -1,0 +1,10 @@
+{
+  "schema": "cpk163.grandparent-cohort.v1",
+  "base": "localhost/control-plane-kit-servers/cpk-server@sha256:4846a9005108e925149b2869214c3f32dbdbd4d4953159af532297081e80fe28",
+  "servers": "a544016ad09ff32e8109c912603096cf8b447e59",
+  "core": "f56bb5c4cfde76764d39c5377d4270c5b23c3ba1",
+  "operations": "70154b6698e101159326b08646f2dba90dda87cd",
+  "interpreters": "e438f6e522ad0a23a7acef460be08690f48b2e17",
+  "sdk": "d61b374cb2a23d773c31748f47f88169499298b7",
+  "declared_core": "976901c609d950a557ec1e9966f018e8ff6e16aa"
+}

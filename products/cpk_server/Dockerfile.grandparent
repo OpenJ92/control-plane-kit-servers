@@ -1,0 +1,24 @@
+FROM localhost/control-plane-kit-servers/cpk-server@sha256:4846a9005108e925149b2869214c3f32dbdbd4d4953159af532297081e80fe28
+
+USER 0
+COPY cohort /opt/cpk-grandparent-build
+COPY products/cpk_server/grandparent-cohort.json /usr/share/cpk-grandparent/cohort.json
+COPY products/cpk_server/tests/grandparent_image_check.py /usr/share/cpk-grandparent/check.py
+# Remove the inherited product code before copying the exact tested source.
+RUN rm -rf /app/products/cpk_server/src /app/products/cpk_local_gateway/src
+COPY products/cpk_server/src /app/products/cpk_server/src
+COPY products/cpk_local_gateway/src /app/products/cpk_local_gateway/src
+RUN python /usr/share/cpk-grandparent/check.py seal \
+    && python -m pip install --no-cache-dir --index-url https://pypi.org/simple \
+       "setuptools==80.9.0" "wheel==0.45.1" \
+    && python -m pip install --no-cache-dir --no-index --no-deps \
+       --no-build-isolation --force-reinstall \
+       /opt/cpk-grandparent-build/core /opt/cpk-grandparent-build/operations \
+       /opt/cpk-grandparent-build/interpreters \
+    && python /usr/share/cpk-grandparent/check.py verify \
+    && rm -rf /opt/cpk-grandparent-build
+
+USER 10001
+WORKDIR /app
+EXPOSE 8080
+CMD ["python", "-m", "control_plane_kit_servers_cpk_server.server"]
