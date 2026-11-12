@@ -21,3 +21,9 @@ Published descriptors/digests retain their historical meaning. Accepted Secrets 
 owns common receiver/service behavior; this repository adopts its real immutable
 coordinate and preserves the existing numeric/bootstrap/source witness paths.
 Actual whole-gate execution and image qualification remain separate evidence.
+
+#386 adds optional public0444 sample artifacts at the exact Secrets-owned slot,
+using Core's canonical codec, slot selector and independent installed binding.
+Original verification/socket/port definitions are reused by the ordinary
+contract and launcher binding. The service still owns V2 declaration validation;
+no private initializer or eager server import belongs to these pure values.

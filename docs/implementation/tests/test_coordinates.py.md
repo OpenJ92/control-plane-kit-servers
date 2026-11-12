@@ -264,3 +264,11 @@ The unchanged Servers Docker gate must establish this consumer's compatibility.
 G #342 separately owns real-process policy mutation/readback and retained-upgrade
 proof. Paused wildcard-seeding source-live scripts remain held; this adoption
 neither repairs live state nor authorizes their execution or publication.
+
+#386 selects accepted Core/Operations976901c6, SDKd61b374c, Secrets158b17ed
+and Interpreterse4bd35e8 through the canonical generator. Current source
+provenance expectations advance together; all historical product, catalogue and
+image coordinates are preserved. Ops976 resolves the newly exposed workspace
+inventory handler mismatch. Its accepted #2087 historical over-limit aggregate
+read/exact-replay limitation is carried without history scan, repair or retry.
+This source checkpoint is unvalidated, with no installed or live claim.

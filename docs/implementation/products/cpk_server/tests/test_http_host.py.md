@@ -85,3 +85,12 @@ fixture used form-plus encoding for JSON whitespace. The fixture now uses
 `urlencode(..., quote_via=quote)`, matching the maintained client and existing
 workspace witness. Strict percent decoding and every mapping assertion remain
 unchanged; the failed attempt does not establish real Components behavior.
+
+#386 adds the actual HTTP inventory page handoff through the accepted dynamic
+Operations application and its real inventory reader/cursor. Only store I/O is
+replaced by two bounded pages; the returned opaque token is submitted unchanged
+through the second HTTP request. Duplicate/unknown/invalid encoding still refuses
+at transport. Existing object-cursor route assertions remain. Durable filtering,
+operator-kind denial and grant changes are proven by Operations' owning
+`test_postgres_workspace_inventory.py`, not reimplemented here. This checkpoint
+intentionally precedes the narrow transport correction and is unvalidated.

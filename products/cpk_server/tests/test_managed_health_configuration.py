@@ -428,6 +428,7 @@ class ManagedHealthConfigurationTests(unittest.TestCase):
         run.assert_called_once()
         self.path.write_bytes(b"private malformed configuration")
         with patch.dict(os.environ, values, clear=True), \
+                patch.object(self.server, "read_cpk_control_configuration", return_value=fixture().config), \
                 patch.object(self.server, "_install_operations_schema") as schema, \
                 patch.object(self.server, "_secret_provider_composition") as provider, \
                 patch.object(self.server.uvicorn, "run") as run, patch("sys.stdout", new_callable=io.StringIO) as output:

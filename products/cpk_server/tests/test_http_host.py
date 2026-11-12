@@ -5,8 +5,9 @@ import json
 from pathlib import Path
 import re
 import sys
+from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from urllib.parse import quote, urlencode
 
 from fastapi import FastAPI, Request
@@ -53,6 +54,45 @@ class CpkHttpHostTests(unittest.TestCase):
 
     def assert_no_service_work(self):
         self.assertEqual([request for service in self.services.values() for request in service.requests], [])
+
+    def test_workspace_inventory_returns_opaque_cursor_through_second_http_page(self):
+        from control_plane_kit_operations import CpkServerReadService, WorkspaceContextResolver
+        # The store supplies two bounded pages; Operations alone creates and
+        # validates the inventory cursor. No permission algorithm lives here.
+        unit = MagicMock()
+        store = unit.__enter__.return_value.stores.workspace_permissions
+        store.readable_workspaces.side_effect = [
+            (((SimpleNamespace(workspace_id="workspace-a"), "Alpha", "created"),
+              (SimpleNamespace(workspace_id="workspace-c"), "Gamma", "created")), True),
+            (((SimpleNamespace(workspace_id="workspace-c"), "Gamma", "created"),), True),
+        ]
+        factory = lambda: unit
+        services = dict(self.services)
+        services[ControlPlaneServiceRole.READS] = CpkServerReadService(factory)
+        operations = self.server.CpkServerOperationsApplication(services, authority_mode="dynamic",
+            workspace_context_resolver=WorkspaceContextResolver(factory, installation_id="installation-a"))
+        with patch.object(self.server, "_operations_application", return_value=operations):
+            app = self.server.create_app(self.config, self.verifier,
+                control=self.authority.config, clock=lambda:150)
+        with TestClient(app) as client:
+            headers = {"Authorization": "Bearer valid-token"}
+            first = client.get("/workspaces?limit=1", headers=headers)
+            self.assertEqual(first.status_code, 200)
+            self.assertEqual(first.json()["items"], [{"workspace_id":"workspace-a",
+                "name":"Alpha", "lifecycle":"created"}])
+            cursor = first.json()["next_cursor"]
+            self.assertIsInstance(cursor, str)
+            second = client.get("/workspaces?" + urlencode({"limit":1, "after":cursor},
+                quote_via=quote), headers=headers)
+            self.assertEqual(second.status_code, 200)
+            self.assertEqual(second.json(), {"items":[{"workspace_id":"workspace-c",
+                "name":"Gamma", "lifecycle":"created"}], "next_cursor":None})
+            for query in ("after=%", "after=%FF", "after=x&after=y", "unknown=x"):
+                with self.subTest(query=query):
+                    response = client.get("/workspaces?" + query, headers=headers)
+                    self.assertEqual(response.status_code, 400)
+        self.assertEqual(store.readable_workspaces.call_count, 2)
+        self.assertEqual(store.readable_workspaces.call_args.kwargs["after"], "workspace-a")
 
     def test_component_reads_use_the_actual_authenticated_host_and_mcp_catalogue(self):
         digest = 'a' * 64

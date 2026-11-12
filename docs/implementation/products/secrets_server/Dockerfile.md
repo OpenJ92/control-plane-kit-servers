@@ -175,3 +175,9 @@ The unchanged Servers Docker gate must establish this consumer's compatibility.
 G #342 separately owns real-process policy mutation/readback and retained-upgrade
 proof. Paused wildcard-seeding source-live scripts remain held; this adoption
 neither repairs live state nor authorizes their execution or publication.
+
+#386 copies the product's import-safe launcher module and selects its Uvicorn
+factory at8081. PYTHONPATH includes that copied source; UID10006, exec entrypoint,
+protected-file defaults and retained-data contract are preserved. The optional
+sample environment is never set by the image. Generic upstream server:app
+remains supported by Secrets, while this source product joins its own metadata.
