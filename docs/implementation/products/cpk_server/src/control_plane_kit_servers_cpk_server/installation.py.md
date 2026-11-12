@@ -70,7 +70,7 @@ delivery. Imports of PostgreSQL authoring code are lazy on this selected path.
 reviewed private intent. It is not a secret reference or generic file delivery.
 Explicit dynamic input requires empty legacy grants, reserves the fixed policy
 path and environment names, and emits dynamic-v1. Policy stays outside Core
-configuration artifacts. Only this installer entrance can select health v2;
+configuration artifacts. Explicit dynamic authority is required for health v2;
 static and standalone artifact helpers retain their v1 behavior. Enabled health
 must use the matching mode and the existing Core artifact bounds.
 
@@ -79,3 +79,32 @@ graph does not deliver it. The integrated #346/#347 root path now composes
 initialization and authenticated enrollment. The authoring slice alone does not
 qualify an image; actual current-pair launcher acceptance is bound to8bb96f9 and
 [combined review](https://github.com/OpenJ92/control-plane-kit-servers/issues/347#issuecomment-6488312730).
+
+# Supplied child authority delivery (#379)
+
+`SuppliedChildWorkspaceAuthority` is the separate reference-only child input.
+It requires `MultiPrincipalControlAuth`, a distinct authority-document reference
+and explicitly empty legacy grants. The external supplier owns both protected
+documents; composition never reads, generates or validates their private bytes.
+
+The installation owner appends a normal Core `SecretFileDelivery`, purpose
+`APPLICATION_CONTROL_TOKEN`, mode0400, only to the CPK variant. Its fixed child
+path is `/run/secrets/cpk-installation/workspace-authority.json`, preserving
+Core's protected secret namespace. The existing dynamic-v1 environment selects
+that path and the existing process reader consumes it. The principal document
+keeps its existing reference delivery; neither document is copied to the website.
+Normal Core graph encoding/secret selection and provider/interpreter admission
+own delivery thereafter.
+
+The overlap check still refuses caller-owned policy artifacts, environment or
+delivery. Only the explicit child mode additionally reserves its child slot.
+Root `DynamicWorkspaceAuthority` and its original `/etc` policy path, private
+intent commitment, root input decoder and acquisition staging remain unchanged.
+No root action envelope or invented commitment is supplied for a child.
+
+The existing installation/auth tests own reference-only composition, child
+admission and collision refusal. Root bootstrap and workspace process tests
+retain root delivery and real file-reader ownership. The supplied-auth adapter
+continues to own private identity/document correspondence; this composition
+does not claim that a reference or parse proves that correspondence, current
+child association, active grants, image adoption or live #163 acceptance.

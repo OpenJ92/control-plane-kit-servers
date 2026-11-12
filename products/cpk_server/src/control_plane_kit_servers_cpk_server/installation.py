@@ -58,6 +58,7 @@ _STORES = ("activity-history-store", "graph-topology-store", "observer-state-sto
 _PROVIDER_CLIENT_FILE = "/run/secrets/cpk-installation/provider-client"
 _INVALID_WEBSITE = "installation website configuration is invalid"
 WORKSPACE_AUTHORITY_PATH = "/etc/cpk/cpk-server/workspace-authority.json"
+CHILD_WORKSPACE_AUTHORITY_PATH = "/run/secrets/cpk-installation/workspace-authority.json"
 WORKSPACE_AUTHORITY_SCHEMA = "cpk-server.workspace-authority.v1"
 
 
@@ -71,6 +72,17 @@ class DynamicWorkspaceAuthority:
         if (type(self.private_intent_sha256) is not str
                 or re.fullmatch(r"[0-9a-f]{64}", self.private_intent_sha256) is None):
             raise ValueError("installation workspace authority commitment is invalid")
+
+
+@dataclass(frozen=True)
+class SuppliedChildWorkspaceAuthority:
+    """External protected policy delivered by the graph, without root intent."""
+
+    authority_document: SecretReference
+
+    def __post_init__(self):
+        if not isinstance(self.authority_document, SecretReference):
+            raise TypeError("supplied child authority requires a SecretReference")
 
 
 @dataclass(frozen=True)
@@ -173,7 +185,7 @@ class DockerCpkInstallation:
     ingress: ExternalInstallationIngress | NamedPublicIngress
     connector_product: ProductDescriptorDocument | None
     control_auth: SingleOperatorControlAuth | MultiPrincipalControlAuth = SingleOperatorControlAuth()
-    workspace_authority: DynamicWorkspaceAuthority | None = None
+    workspace_authority: DynamicWorkspaceAuthority | SuppliedChildWorkspaceAuthority | None = None
     managed_health_configuration: ConfigurationArtifact | None = field(default=None, repr=False)
     website: DockerCpkWebsite | None = field(default=None, repr=False)
     management: DockerCpkManagement | None = field(default=None, repr=False)
@@ -207,10 +219,16 @@ class DockerCpkInstallation:
         if self.workspace_authority is None:
             _workspace_grants_json(self.workspace_grants)
         else:
-            if type(self.workspace_authority) is not DynamicWorkspaceAuthority or self.workspace_grants != ():
+            if (type(self.workspace_authority) not in (DynamicWorkspaceAuthority, SuppliedChildWorkspaceAuthority)
+                    or self.workspace_grants != ()):
                 raise ValueError("dynamic installation requires explicit empty legacy grants")
             self.workspace_authority.__post_init__()
-            _workspace_authority_slot(self.cpk_product.product.runtime_contract)
+            if type(self.workspace_authority) is SuppliedChildWorkspaceAuthority:
+                if (type(self.control_auth) is not MultiPrincipalControlAuth
+                        or self.workspace_authority.authority_document == self.control_auth.principals_document):
+                    raise ValueError("supplied child authority requires distinct multi-principal documents")
+            _workspace_authority_slot(self.cpk_product.product.runtime_contract,
+                supplied_child=type(self.workspace_authority) is SuppliedChildWorkspaceAuthority)
         if isinstance(self.ingress, NamedPublicIngress):
             if self.ingress.target != PublicIngressTarget(self.cpk_node_id, "http-api"):
                 raise ValueError("installation ingress must target its CPK HTTP provider")
@@ -399,7 +417,9 @@ def _cpk_variant(value: DockerCpkInstallation, postgres: ContainerServerProduct)
     }
     if value.workspace_authority is not None:
         additions.update({"CPK_WORKSPACE_AUTHORITY": "dynamic-v1",
-            "CPK_WORKSPACE_AUTHORITY_CONFIGURATION_FILE": WORKSPACE_AUTHORITY_PATH})
+            "CPK_WORKSPACE_AUTHORITY_CONFIGURATION_FILE": (
+                CHILD_WORKSPACE_AUTHORITY_PATH if type(value.workspace_authority) is SuppliedChildWorkspaceAuthority
+                else WORKSPACE_AUTHORITY_PATH)})
     if managed_health is not None:
         additions.update({
             "CPK_MANAGED_HEALTH": "docker-unix-v2" if value.workspace_authority else "docker-unix-v1",
@@ -419,22 +439,26 @@ def _cpk_variant(value: DockerCpkInstallation, postgres: ContainerServerProduct)
             environment.pop(name, None)
         auth_delivery = SecretEnvironmentDelivery("CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON",
             value.control_auth.principals_document, SecretUseIntent.APPLICATION_CONTROL_TOKEN)
+    authority_delivery = ()
+    if type(value.workspace_authority) is SuppliedChildWorkspaceAuthority:
+        authority_delivery = (SecretFileDelivery(CHILD_WORKSPACE_AUTHORITY_PATH,
+            value.workspace_authority.authority_document, SecretUseIntent.APPLICATION_CONTROL_TOKEN),)
     contract = replace(contract, public_environment=tuple(environment.values()), secret_deliveries=(
         SecretEnvironmentDelivery("PGPASSWORD", value.postgres_password, SecretUseIntent.POSTGRES_PASSWORD),
         auth_delivery,
         SecretFileDelivery(_PROVIDER_CLIENT_FILE, value.provider_client_credential,
                            SecretUseIntent.APPLICATION_CONTROL_TOKEN),
-    ))
+    ) + authority_delivery)
     return _variant(value.cpk_product, "cpk", contract)
 
 
-def _workspace_authority_slot(contract: ProductRuntimeContract) -> None:
-    """Reserve the installer-owned file without declaring a public artifact."""
+def _workspace_authority_slot(contract: ProductRuntimeContract, *, supplied_child=False) -> None:
+    """Reserve mode-owned policy slots against caller product delivery."""
     names = {"CPK_WORKSPACE_AUTHORITY", "CPK_WORKSPACE_AUTHORITY_CONFIGURATION_FILE"}
+    paths = (WORKSPACE_AUTHORITY_PATH, CHILD_WORKSPACE_AUTHORITY_PATH) if supplied_child else (WORKSPACE_AUTHORITY_PATH,)
     def overlaps(path):
-        return path is not None and (path == WORKSPACE_AUTHORITY_PATH
-            or path.startswith(WORKSPACE_AUTHORITY_PATH + "/")
-            or WORKSPACE_AUTHORITY_PATH.startswith(path.rstrip("/") + "/"))
+        return path is not None and any(path == reserved or path.startswith(reserved + "/")
+            or reserved.startswith(path.rstrip("/") + "/") for reserved in paths)
     if (any(item.name in names for item in contract.public_environment)
             or any(getattr(item, "environment_name", None) in names
                 or getattr(getattr(item, "path_binding", None), "environment_name", None) in names
