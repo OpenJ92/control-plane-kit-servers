@@ -6,14 +6,75 @@ import unittest
 import tempfile
 from pathlib import Path
 
-from control_plane_kit_core.identity import IdentityContractError
+from control_plane_kit_core.identity import IdentityContractError, WorkspaceGrant
+from control_plane_kit_core.policies import PolicyScope
 from control_plane_kit_core.products import ProductDescriptorCodec
-from control_plane_kit_core.secrets import SecretEnvironmentDelivery, SecretReference, SecretUseIntent
+from control_plane_kit_core.secrets import SecretEnvironmentDelivery, SecretFileDelivery, SecretReference, SecretUseIntent
+from control_plane_kit_core.public_ingress import NamedPublicIngress, PublicIngressTarget
 from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
 from control_plane_kit_core.topology import GraphDescriptorCodec, compile_topology
 from control_plane_kit_operations.cpk_server import CpkServerApplicationError, _ROUTE_AUTHORIZATION_POLICIES
 import test_docker_installation as installation_fixture
+import test_frontend_deployment as frontend_fixture
 from test_root_bootstrap import installation_input, DRIVER
+
+
+class SuppliedChildWorkspaceAuthorityTests(unittest.TestCase):
+    def value(self):
+        api = importlib.import_module("control_plane_kit_servers_cpk_server.installation")
+        supplier = getattr(api, "SuppliedChildWorkspaceAuthority", None)
+        self.assertTrue(callable(supplier), "supplied child authority delivery is missing")
+        original = installation_fixture.DockerInstallationTests().installation(api)
+        value = replace(original, workspace_grants=(),
+            control_auth=api.MultiPrincipalControlAuth(SecretReference("secret://parent/child/principals")),
+            workspace_authority=supplier(SecretReference("secret://parent/child/authority")))
+        return api, value
+
+    def test_child_authority_uses_normal_protected_delivery_only_to_cpk(self):
+        api, value = self.value()
+        image = frontend_fixture.FrontendDeploymentTests().image()
+        value = replace(value, website=api.DockerCpkWebsite(image=image,
+            ingress=NamedPublicIngress("child-web", value.ingress.authority_ref,
+                PublicIngressTarget(value.website_node_id, "http"), "child-web-connector", "web.example.test"),
+            connector_product=value.connector_product))
+        graph = compile_topology(api.compose_docker_cpk_installation(value))
+        node = graph.node(value.cpk_node_id)
+        delivery, = (entry for entry in node.secret_deliveries
+            if isinstance(entry, SecretFileDelivery) and entry.target_path == api.CHILD_WORKSPACE_AUTHORITY_PATH)
+        self.assertEqual(delivery.reference, value.workspace_authority.authority_document)
+        self.assertEqual(delivery.intent, SecretUseIntent.APPLICATION_CONTROL_TOKEN)
+        self.assertEqual(delivery.file_mode.value, "0400")
+        self.assertEqual(node.non_secret_environment()["CPK_WORKSPACE_AUTHORITY"], "dynamic-v1")
+        self.assertEqual(node.non_secret_environment()["CPK_WORKSPACE_AUTHORITY_CONFIGURATION_FILE"], delivery.target_path)
+        self.assertIn(delivery.reference, {entry.reference for entry in node.secret_selections})
+        protected = {delivery.reference, value.control_auth.principals_document}
+        for other in graph.nodes.values():
+            if other.node_id != node.node_id:
+                self.assertTrue(protected.isdisjoint(entry.reference for entry in other.secret_deliveries))
+        codec = GraphDescriptorCodec()
+        self.assertEqual(codec.decode(codec.encode(graph)), graph)
+
+    def test_supplied_child_requires_distinct_documents_multi_principal_and_no_legacy_grants(self):
+        api, value = self.value()
+        with self.assertRaises(TypeError):
+            api.SuppliedChildWorkspaceAuthority("secret://parent/child/authority")
+        with self.assertRaises(ValueError):
+            replace(value, control_auth=api.SingleOperatorControlAuth())
+        with self.assertRaises(ValueError):
+            replace(value, workspace_grants=(WorkspaceGrant("child-workspace", (PolicyScope.INSTANCE_WORKSPACE_READ,)),))
+        with self.assertRaises(ValueError):
+            replace(value, workspace_authority=api.SuppliedChildWorkspaceAuthority(value.control_auth.principals_document))
+
+    def test_supplied_child_preserves_existing_policy_slot_collision_refusal(self):
+        api, value = self.value()
+        product = value.cpk_product.product
+        collision = SecretFileDelivery(api.CHILD_WORKSPACE_AUTHORITY_PATH,
+            SecretReference("secret://parent/other-policy"), SecretUseIntent.APPLICATION_CONTROL_TOKEN)
+        document = ProductDescriptorCodec().encode_document(replace(product,
+            runtime_contract=replace(product.runtime_contract,
+                secret_deliveries=product.runtime_contract.secret_deliveries + (collision,))))
+        with self.assertRaises(ValueError):
+            replace(value, cpk_product=document)
 
 
 class InstallationControlAuthTests(unittest.TestCase):

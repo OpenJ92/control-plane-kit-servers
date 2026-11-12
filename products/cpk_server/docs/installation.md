@@ -1,5 +1,46 @@
 # Shared Docker installation value
 
+## Supplied child workspace policy
+
+For a child using externally supplied multi-principal authentication, declare
+its protected authority document alongside its protected principals document:
+
+```python
+from dataclasses import replace
+from control_plane_kit_core.secrets import SecretReference
+from control_plane_kit_servers_cpk_server.installation import (
+    MultiPrincipalControlAuth, SuppliedChildWorkspaceAuthority,
+)
+
+child = replace(
+    child,
+    control_auth=MultiPrincipalControlAuth(SecretReference("secret://parent/child/principals")),
+    workspace_authority=SuppliedChildWorkspaceAuthority(
+        SecretReference("secret://parent/child/workspace-authority")),
+    workspace_grants=(),
+)
+```
+
+These are two distinct unresolved configuration references, not issued
+credentials or active permissions. The external supplier owns their actual
+bytes. Composition delivers the policy only to CPK as an owner-readable file at
+`/run/secrets/cpk-installation/workspace-authority.json`, using the existing
+`application.control-token` material purpose, and selects its existing dynamic-v1
+file reader. The website receives neither protected document. Caller products
+cannot collide with the reserved child policy slot or root policy slot.
+
+Standalone `DynamicWorkspaceAuthority` retains its installer-private commitment
+and `/etc/cpk/cpk-server/workspace-authority.json` delivery; the root input format
+does not accept this new child mode. A child-supplied reference needs no invented
+root initialization commitment.
+
+This source contract does not prove that a selected image supports the profile,
+that material was provisioned/delivered, that the two documents correspond to the
+intended child/identities, or that workspace permissions were granted. #379 still
+requires actual destination/material binding, authorized supplied-document
+admission, enrollment/readback, initializer revocation/denial and browser evidence.
+Image qualification and live execution remain separate from graph authoring.
+
 For explicit first-root public read trust, see
 [offline root commissioning](root-commissioning.md). Private commissioning
 custody stays separate from installation material; it is never a service mount.
