@@ -101,10 +101,14 @@ class OperationsApplicationFactory:
 
     def __call__(self) -> CpkServerOperationsApplication:
         unit_of_work, ports, ids, clock = self.unit_of_work_factory, self.ports, self.ids, self.clock
+        from .http_sample_composition import http_sample_service_options
+        sample_options = http_sample_service_options(ports.runtime_interpreters)
         principal_authorizer = self.principal_authorizer
         policy_options, execution_options, ingress_options = {}, {}, {}
         service_options, application_options = {}, {}
         authority = self.workspace_authority
+        if sample_options and authority is None:
+            raise ValueError("HTTP sample execution requires dynamic workspace authority")
         if authority is None:
             workspaces = WorkspaceCommandService(unit_of_work, clock=clock, id_factory=ids.service)
         else:
@@ -118,7 +122,7 @@ class OperationsApplicationFactory:
             policy_options = {"permission_policy": policy}
             execution_options = {**policy_options, "invocation_service": ExecutionInvocationService(
                 unit_of_work, permission_policy=policy, clock=clock,
-                health_receiver_decoders=ports.health_receiver_decoders)}
+                health_receiver_decoders=ports.health_receiver_decoders, **sample_options)}
             ingress_options = {"invocation_service": IngressInvocationService(
                 unit_of_work, permission_policy=policy, clock=clock)}
             workspaces = WorkspaceCommandService(unit_of_work, clock=clock, id_factory=ids.service,
@@ -204,7 +208,8 @@ class OperationsApplicationFactory:
             desired_graphs=DesiredGraphCommandService(unit_of_work, clock=clock, id_factory=ids.service,
                 secret_metadata_reader=ports.secret_metadata_reader),
             approval=ApprovalCommandService(unit_of_work, clock=clock, id_factory=ids.service),
-            admission=ExecutionAdmissionCommandService(unit_of_work, clock=clock, id_factory=ids.service),
+            admission=ExecutionAdmissionCommandService(unit_of_work, clock=clock, id_factory=ids.service,
+                                                       **sample_options),
             lifecycle=lifecycle,
             operations=OperationCommandService(unit_of_work, clock=clock, id_factory=ids.service),
             execution=execution,

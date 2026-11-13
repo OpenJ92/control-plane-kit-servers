@@ -8,6 +8,7 @@ from control_plane_kit_core.planning import WaitForHealthy, resolve_management_o
 from control_plane_kit_core.products import ProductDescriptorCodec, ProductDescriptorDocument, ProductReference
 from control_plane_kit_core.runtime_effects import RuntimeEffectRequest
 from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC
+from control_plane_kit_core.types import RuntimeKind
 from control_plane_kit_interpreters.docker.connector_connection import (
     ConnectorConnectionObservation, ConnectorConnectionOutcome, ConnectorConnectionQualification,
     DockerConnectorConnectionObserver, DockerConnectorConnectionQualifier,
@@ -32,6 +33,18 @@ class DockerManagedNativeConnection:
     provider_clients: DockerRuntimeClientSelector
     product_document: ProductDescriptorDocument
     clock: Callable[[], datetime]
+    http_sample_registration: object | None = None
+
+    def _sample_executor(self, plan, pair):
+        """Translation qualification only; Operations verifies the stored profile."""
+        if self.http_sample_registration is None:
+            return None
+        from .managed_verification_composition import native_verification_executors
+        return native_verification_executors(self.http_sample_registration, plan, pair).get("http_sample_executor")
+
+    def _verification_executors(self, plan, pair):
+        from .managed_verification_composition import native_verification_executors
+        return native_verification_executors(self.http_sample_registration, plan, pair)
 
     def _qualified(self, *, plan, current, desired, registered_products, runtime_authorities):
         try:
@@ -44,11 +57,14 @@ class DockerManagedNativeConnection:
                 return None
             reference = ProductReference.from_document(document)
             pair = _graph_pair(current, desired)
+            sampler = self._sample_executor(plan, pair)
             selected = []
             for activity in plan.activities:
                 operation = activity.operation
                 if type(operation) is WaitForHealthy:
-                    return None
+                    if sampler is None:
+                        return None
+                    continue
                 if not is_native_connection_operation(operation):
                     continue
                 resolved = resolve_management_observation(operation, *pair, expected_operation=operation)
@@ -59,7 +75,8 @@ class DockerManagedNativeConnection:
                     return None
                 qualifier = DockerConnectorConnectionQualifier(reference,
                     document.product.image.execution_reference,
-                    profile=ConnectorConnectionProfile.MANAGED_WRAPPER_V1)
+                    profile=ConnectorConnectionProfile.MANAGED_WRAPPER_V1,
+                    **self._verification_executors(plan, pair))
                 mode = qualifier.qualify_shape(activity_id=activity.activity_id, plan=plan,
                     current=pair[0], desired=pair[1], product_document=document,
                     authority_ref=authority.authority_ref)
@@ -159,10 +176,12 @@ class DockerManagedNativeConnection:
         try:
             client = (DockerSdkClient.from_authority(binding.local_client_config,
                 connect_on_init=False) if owned else binding.client)
+            sampler = self._sample_executor(inputs["plan"], (inputs["current"], inputs["desired"]))
             observer = DockerConnectorConnectionObserver(client,
                 ProductReference.from_document(self.product_document),
                 self.product_document.product.image.execution_reference, self.clock,
-                profile=ConnectorConnectionProfile.MANAGED_WRAPPER_V1)
+                profile=ConnectorConnectionProfile.MANAGED_WRAPPER_V1,
+                **self._verification_executors(inputs["plan"], (inputs["current"], inputs["desired"])))
             # Original-proof/material preflight stays in the observer and runs
             # before its first SDK read acquires the explicit Unix transport.
             return observer.observe(request, **inputs)

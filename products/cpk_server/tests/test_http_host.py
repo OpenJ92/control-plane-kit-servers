@@ -35,6 +35,7 @@ class CpkHttpHostTests(unittest.TestCase):
         environ = {
             "CPK_SERVER_MODE":"execution-capable", "CPK_CONTROL_AUTH_CONFIGURED":"true",
             "CPK_PORT":"8080", "CPK_RUNTIME_INTERPRETERS":"none",
+            "CPK_MCP_PROFILE": getattr(self, "mcp_profile", "standard"),
             **{f"CPK_{store}_DATABASE_URL":"postgres://fixture:fixture@database.invalid/db"
                for store in ("WORKPLACE", "ACTIVITY_HISTORY", "OBSERVER_STATE", "GRAPH_TOPOLOGY")},
         }
