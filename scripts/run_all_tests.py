@@ -45,6 +45,8 @@ def main() -> int:
         ):
             run([sys.executable, "-m", "unittest", "discover", "-s",
                  "products/cpk_server/tests", "-p", name, "-v"])
+        run([sys.executable, "-m", "unittest", "discover", "-s", "products/cpk_local_gateway/tests",
+             "-p", "test_wrapper_artifact_provenance.py", "-v"])
         return 0
     if sys.argv[1:]:
         raise ValueError("unsupported test selection")

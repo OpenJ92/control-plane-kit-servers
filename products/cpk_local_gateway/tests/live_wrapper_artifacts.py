@@ -31,6 +31,18 @@ from health_relay_fixtures import World
 ATTRIBUTION = b"<p>Served by Control Plane Kit Hello.</p>"
 
 
+def _transport_error_category(error):
+    """Fixed diagnostic vocabulary; never render transport messages/requests."""
+    for kind, category in (
+        (httpx.ConnectTimeout, "connect-timeout"), (httpx.ReadTimeout, "read-timeout"),
+        (httpx.ConnectError, "connect-error"), (httpx.ReadError, "read-error"),
+        (httpx.ProtocolError, "protocol-error"),
+    ):
+        if isinstance(error, kind):
+            return category
+    return "transport-error"
+
+
 def _require_hello_provenance(installed, *, mode):
     """Source builds follow canonical inputs; the published family stays fixed."""
     assert mode in ("source-built", "published-digest")
@@ -176,8 +188,8 @@ def exercise_wrapper_artifacts(*, engine, sdk, resources, labels, network_id,
     try:
         hello_process = launch("hello", (hello_artifact,), environment(world.contract), "wrapped-db")
         gateway_process = launch("gateway", gateway.artifacts, environment(gateway_contract), "wrapped-gateway")
-        for process, origin in ((hello_process, "http://wrapped-db:8000"),
-                                (gateway_process, "http://wrapped-gateway:8000")):
+        for role, process, origin in (("hello", hello_process, "http://wrapped-db:8000"),
+                                      ("gateway", gateway_process, "http://wrapped-gateway:8000")):
             readiness = "not-observed"
             for _ in range(30):
                 process.reload()
@@ -187,11 +199,11 @@ def exercise_wrapper_artifacts(*, engine, sdk, resources, labels, network_id,
                     readiness = str(_read("GET", origin, "/__control/capabilities")[0])
                     if readiness == "401":
                         break
-                except httpx.TransportError:
-                    readiness = "transport-unavailable"
+                except httpx.TransportError as error:
+                    readiness = "transport-unavailable/" + _transport_error_category(error)
                 time.sleep(0.2)
             else:
-                raise AssertionError("artifact listener did not become available: " + readiness)
+                raise AssertionError("artifact listener did not become available: role=" + role + " readiness=" + readiness)
         status, body = _read("GET", "http://wrapped-db:8000", "/")
         assert status == 200 and b"<h1>Hello, world!</h1>" in body
         assert (ATTRIBUTION in body) is expected_attribution, "artifact business response differs"

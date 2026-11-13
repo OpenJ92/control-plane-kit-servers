@@ -207,3 +207,18 @@ test-only successor catches only its dedicated injection subtype across the
 whole context; unmatched errors propagate. A focused SDK lifecycle regression
 and renewed packaged/owning execution still require terminal evidence. No
 product behavior, source pins or response-loss assertions are weakened.
+
+The corrected ordinary run at `a0a2ab3` passed all 1,370 unit tests but stopped
+earlier in the existing source-built Hello declaration-family listener check.
+Its last readiness category was transport-unavailable; the recorded evidence
+does not identify which role or underlying transport condition failed. The MCP
+PostgreSQL witness was not reached. No retry, timeout increase, apparatus repair
+or hosted substitution is implied. The narrow source-only diagnostic successor
+adds fixed role/category reporting without raw URLs, headers, messages or
+payloads; polling, assertions and cleanup are unchanged.
+
+Independent review also identified exception-context disclosure when a send
+failed while raw validation/auth errors were active. The successor defers fixed
+rejection sends until after the catch and adds an actual ASGI failing-send canary
+regression. This is a source finding, not evidence of a deployed leak. Focused
+successor qualification and the next owning-gate disposition remain pending.
