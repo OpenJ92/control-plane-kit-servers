@@ -62,6 +62,7 @@ def main() -> int:
                          "test_structural_prepared_value_and_crossed_registered_gateway_refuse"):
                 run([sys.executable, "-m", "unittest",
                      "scripts.managed_verification_composition_qualification.ManagedCompositionTests." + name, "-v"])
+            run([sys.executable, "-m", "unittest", "scripts.grandparent_startup_qualification", "-v"])
         return 0
     if sys.argv[1:]:
         raise ValueError("unsupported test selection")

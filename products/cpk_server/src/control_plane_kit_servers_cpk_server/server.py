@@ -82,7 +82,8 @@ from control_plane_kit_operations.desired_topology_drafts import DesiredTopology
 
 from .control_configuration import (
     CpkControlConfigurationError,
-    cpk_control_configuration_artifact, read_cpk_control_configuration,
+    cpk_control_configuration_artifact, read_cpk_control_configuration, read_cpk_http_sample_binding,
+    cpk_http_sample_binding,
 )
 from .http_host import install_operator_http_routes
 from .mcp_adapter import StandardMcpAdapter
@@ -95,6 +96,7 @@ from .operations_application import (
 from .managed_health import ManagedHealthBootstrap
 from control_plane_kit_core.receiver_configuration import ReceiverNodeControlConfiguration
 from control_plane_kit_server_sdk.fastapi import install_cpk_wrapper
+from control_plane_kit_server_sdk.wrapper import WrapperSetupError
 from .boundary import (
     CpkServerApplicationBoundary,
     CpkServerHttpProcessBoundary,
@@ -214,6 +216,8 @@ class CpkServerBootstrapConfiguration:
     workspace_authority: WorkspaceAuthorityConfiguration | None = None
     provider_policy_authority: ProviderPolicyAuthorityConfiguration | None = field(default=None, repr=False)
     mcp_profile: str = "standard"
+    http_sample_support: object | None = field(default=None, repr=False, compare=False)
+    managed_verification_support: object | None = field(default=None, repr=False, compare=False)
 
     @classmethod
     def from_environment(
@@ -224,7 +228,21 @@ class CpkServerBootstrapConfiguration:
         profile = values.get("CPK_MCP_PROFILE", "standard")
         if profile not in ("standard", "grandparent-read-only-v1"):
             raise BootstrapConfigurationError("MCP exposure profile is invalid")
-        return replace(cls._from_environment_configuration(values), mcp_profile=profile)
+        config = replace(cls._from_environment_configuration(values), mcp_profile=profile)
+        key = "CPK_MANAGED_VERIFICATION_CONFIGURATION_FILE"
+        if key not in values:
+            return config
+        try:
+            # The receiving-only image deliberately retains its older owners.
+            # Import the sender cohort only after explicit process opt-in.
+            from .managed_verification_configuration import read_managed_verification_configuration
+            support = read_managed_verification_configuration(values[key], config)
+            return replace(config, http_sample_support=support.http_samples,
+                managed_verification_support=support)
+        except (OSError, ValueError, TypeError, AttributeError, KeyError,
+                OverflowError, RecursionError, ImportError):
+            failure = BootstrapConfigurationError("managed verification process configuration is invalid")
+        raise failure
 
     @classmethod
     def _from_environment_configuration(
@@ -587,12 +605,26 @@ def create_app(
     credential_verifier: CredentialVerifier,
     *, control: ReceiverNodeControlConfiguration,
     clock: Callable[[], int] = lambda: int(time.time()),
+    http_verification_binding: HttpVerificationSampleReceiverBinding | None = None,
+    http_sample_clock: Callable[[], float] | None = None,
     principal_authorizer: PrincipalAuthorizer | None = None,
 ) -> FastAPI:
     """Create the hosted cpk-server FastAPI application."""
 
     _validate_managed_health_process(config)
     cpk_control_configuration_artifact(control)
+    if http_verification_binding is not None:
+        from control_plane_kit_core.http_verification_sample_installation import HttpVerificationSampleReceiverBinding
+        valid = False
+        try:
+            if (type(http_verification_binding) is not HttpVerificationSampleReceiverBinding
+                    or http_verification_binding != cpk_http_sample_binding(control, http_verification_binding.configuration)):
+                raise ValueError
+            valid = True
+        except Exception:
+            valid = False
+        if not valid:
+            raise CpkControlConfigurationError("CPK control configuration is invalid")
     composition = create_cpk_server_composition(config.process_configuration())
 
     @asynccontextmanager
@@ -655,7 +687,9 @@ def create_app(
         return _json_response(response.status, response.body)
 
     install_operator_http_routes(app, composition.http_api, http)
-    install_cpk_wrapper(app, configuration=control, clock=clock)
+    sample_options = ({} if http_verification_binding is None else
+        {"http_verification_binding": http_verification_binding, "http_sample_clock": http_sample_clock})
+    install_cpk_wrapper(app, configuration=control, clock=clock, **sample_options)
     # No application/listener escapes before both admitted routes and existing
     # Operations schema/services are ready. Callbacks never perform schema work.
     application = CpkServerApplicationBoundary(
@@ -675,14 +709,16 @@ def create_app(
 
 def main() -> int:
     try:
+        control = read_cpk_control_configuration()
+        samples = read_cpk_http_sample_binding(control)
         config = CpkServerBootstrapConfiguration.from_environment()
         credential_verifier = _credential_verifier(config)
-        control = read_cpk_control_configuration()
         if config.port != 8080:
             raise BootstrapConfigurationError("CPK_PORT must be 8080")
         app = create_app(config, credential_verifier, control=control,
+                         http_verification_binding=samples,
                          principal_authorizer=_configured_principal_authorizer(config))
-    except (BootstrapConfigurationError, CpkServerCompositionError, CpkControlConfigurationError) as error:
+    except (BootstrapConfigurationError, CpkServerCompositionError, CpkControlConfigurationError, WrapperSetupError) as error:
         print(f"cpk-server bootstrap error: {error}", flush=True)
         return 2
     print(f"cpk-server listening on 0.0.0.0:{config.port}", flush=True)
@@ -968,6 +1004,12 @@ def _operations_application(
 def _operations_effect_ports(config, provider, *, unit_of_work_factory=None):
     _validate_managed_health_process(config)
     dynamic = getattr(config, "workspace_authority", None) is not None
+    sample_support = getattr(config, "http_sample_support", None)
+    managed_support = getattr(config, "managed_verification_support", None)
+    if managed_support is not None and getattr(managed_support, "http_samples", None) is not sample_support:
+        raise BootstrapConfigurationError("managed verification composition is invalid")
+    if sample_support is not None and (not dynamic or not config.runtime_dispatcher.enabled):
+        raise BootstrapConfigurationError("HTTP sample execution composition is invalid")
     runtimes = None
     if config.runtime_dispatcher.enabled:
         if config.runtime_dispatcher.runtime_kinds != (RuntimeKind.DOCKER,):
@@ -979,7 +1021,9 @@ def _operations_effect_ports(config, provider, *, unit_of_work_factory=None):
                 exact_version_execute=provider.metadata_reader is not None,
                 exact_version_execute_with_authority=provider.metadata_reader is not None,
                 invocation_profile="cpk.semantic-invocations.v1" if dynamic else None,
-                ordinary_verification_invocations=dynamic)
+                ordinary_verification_invocations=dynamic,
+                **({"http_sample_support": sample_support} if sample_support is not None else {}),
+                **({"managed_verification_support": managed_support} if managed_support is not None else {}))
         runtimes = {RuntimeKind.DOCKER: interpreter}
     ingress = (_ingress_interpreters(config, provider) if config.ingress_interpreters.enabled else None)
     if dynamic and ingress is not None:
@@ -1021,6 +1065,15 @@ def _operations_effect_ports(config, provider, *, unit_of_work_factory=None):
             except (ValueError, TypeError, AttributeError):
                 raise BootstrapConfigurationError("managed health composition is invalid") from None
         health = bootstrap.build(provider.authorized_resolver)
+        if sample_support is not None:
+            registration = runtimes[RuntimeKind.DOCKER]
+            native = health.native
+            if native is not None:
+                from .managed_native_connection import DockerManagedNativeConnection
+                if type(native) is not DockerManagedNativeConnection:
+                    raise BootstrapConfigurationError("HTTP sample execution composition is invalid")
+                native = replace(native, http_sample_registration=registration)
+            health = replace(health, native=native, http_sample_registration=registration)
         decoders = health.decoders
         if dynamic:
             from control_plane_kit_operations.coordinator import ManagedHealthAdapterRegistration
@@ -1412,19 +1465,32 @@ def _docker_runtime_interpreter(
         if getattr(config, "workspace_authority", None) is not None else {})
     process = getattr(config, "managed_health_process", None)
     if process is not None:
-        return DockerRuntimeInterpreter(
+        interpreter = DockerRuntimeInterpreter(
             local_client_config=process.local_client_config,
             authorized_secret_resolver=provider.authorized_resolver,
             **invocation_options,
         )
-    return DockerRuntimeInterpreter(
-        DockerSdkClient.from_authority(
-            DockerLocalAmbientClientConfig(),
-            connect_on_init=False,
-        ),
-        authorized_secret_resolver=provider.authorized_resolver,
-        **invocation_options,
-    )
+    else:
+        interpreter = DockerRuntimeInterpreter(
+            DockerSdkClient.from_authority(
+                DockerLocalAmbientClientConfig(),
+                connect_on_init=False,
+            ),
+            authorized_secret_resolver=provider.authorized_resolver,
+            **invocation_options,
+        )
+    support = getattr(config, "http_sample_support", None)
+    managed = getattr(config, "managed_verification_support", None)
+    if managed is not None:
+        from .managed_verification_composition import compose_managed_verification_runtime
+        return compose_managed_verification_runtime(interpreter, support=managed,
+            resolver=provider.authorized_resolver, public_resolver=_public_dns_resolver(config),
+            clock_epoch_ms=lambda: time.time_ns() // 1_000_000)
+    if support is not None:
+        from .http_sample_composition import compose_http_sample_runtime
+        return compose_http_sample_runtime(interpreter, support=support,
+            resolver=provider.authorized_resolver, public_resolver=_public_dns_resolver(config), clock=time.time)
+    return interpreter
 
 
 def _ingress_interpreters(

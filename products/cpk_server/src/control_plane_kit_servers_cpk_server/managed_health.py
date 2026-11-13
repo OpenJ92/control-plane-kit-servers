@@ -1,6 +1,6 @@
 """Operations-to-Interpreter managed health composition; no admission or stores."""
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from control_plane_kit_core.delegation_keys import DelegationKeyPurpose
@@ -15,6 +15,7 @@ from control_plane_kit_core.receiver_configuration import (
 from control_plane_kit_core.runtime_management import GatewayTransitProtocol
 from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC, validate_graph
 from control_plane_kit_core.types import Protocol, RuntimeKind
+from control_plane_kit_core.verification import HttpCheck
 from control_plane_kit_interpreters.probes.health_signing import HealthSigningContext, HealthSigningKey
 from control_plane_kit_interpreters.probes.health_transport import GatewayHealthTransportCode, SelectedManagementGateway
 from control_plane_kit_interpreters.invocations import control_errors, invoke_async
@@ -84,6 +85,7 @@ class ManagedHealthBridge:
     endpoints: object | None
     decoders: object
     native: object | None = None
+    http_sample_registration: object | None = field(default=None, kw_only=True)
 
     def __post_init__(self):
         from .managed_health_placement import DockerRuntimeClientSelector
@@ -92,6 +94,10 @@ class ManagedHealthBridge:
                 or (self.native is not None
                     and getattr(self.native, "provider_clients", None) is not self.provider_clients)):
             raise ValueError("managed provider composition is invalid")
+        if self.http_sample_registration is not None:
+            from .http_sample_composition import http_sample_service_options
+            if not http_sample_service_options({RuntimeKind.DOCKER: self.http_sample_registration}):
+                raise ValueError("managed sample composition is invalid")
 
     def select(self, *, plan, current, desired, registered_products, runtime_authorities):
         return self._select(plan=plan, current=current, desired=desired,
@@ -108,7 +114,37 @@ class ManagedHealthBridge:
             for activity in plan.activities:
                 operation = activity.operation
                 if type(operation) is WaitForHealthy:
-                    return None
+                    # The health bridge selects health activities only. A
+                    # separately configured actual native sample executor owns
+                    # these original checks; Operations still qualifies the
+                    # registered route/profile and current execution authority.
+                    from .http_sample_composition import http_sample_service_options
+                    options = http_sample_service_options(
+                        {RuntimeKind.DOCKER: self.http_sample_registration})
+                    if not options:
+                        return None
+                    from .managed_verification_composition import native_verification_executors
+                    executors = native_verification_executors(self.http_sample_registration, plan, pair)
+                    if not executors:
+                        return None
+                    node = pair[1].graph.node(operation.target.node_id)
+                    runtime = pair[1].graph.runtimes[node.runtime_id]
+                    checks = node.block_spec.verification.checks
+                    if (runtime.kind is not RuntimeKind.DOCKER or runtime.management is None or not checks):
+                        return None
+                    authority = _authority(runtime_authorities, runtime)
+                    if any(type(check) is not HttpCheck for check in checks):
+                        from control_plane_kit_core.verification import PostgresQueryCheck
+                        from control_plane_kit_operations.runtime_authorities import LocalDockerSocketAuthority
+                        executor = executors.get("postgres_readiness_executor")
+                        if (len(checks) != 1 or type(checks[0]) is not PostgresQueryCheck
+                                or type(authority.authority) is not LocalDockerSocketAuthority or executor is None):
+                            return None
+                    gateway = _product(registered_products, authority.workspace_id,
+                        pair[1].graph.node(runtime.management.gateway_node_id))
+                    if gateway.reference != options["http_sample_support"].gateway_binding.product:
+                        return None
+                    continue
                 if type(operation) not in (ObserveManagementBootstrap, ObserveNodeHealth):
                     continue
                 resolved = resolve_management_observation(operation, *pair,
