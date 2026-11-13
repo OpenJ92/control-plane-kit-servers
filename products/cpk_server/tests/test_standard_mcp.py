@@ -4,10 +4,14 @@ from dataclasses import replace
 import io
 import json
 import logging
+import os
+from pathlib import Path
+import subprocess
 import unittest
 from unittest.mock import MagicMock, Mock
 
 import httpx2
+import httpx
 from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 from control_plane_kit_core.operations import ControlPlaneServiceRole
@@ -247,3 +251,26 @@ class StandardMcpTests(unittest.IsolatedAsyncioTestCase):
                 if name == "get_desired_topology_draft_revision":
                     self.assertEqual((result.structured_content["draft_id"], result.structured_content["revision"],
                                       result.structured_content["graph_id"]), ("draft-a", 7, saved.graph_id))
+
+    def test_legacy_endpoint_selection_is_explicit_and_never_falls_back(self):
+        from scripts.cpk_server_public_graph_convergence import McpTransport, PublicConvergenceError
+        paths = []
+        def received(request):
+            paths.append(request.url.path)
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": "fixture", "result": {"fixture": True}})
+        with httpx.Client(base_url="http://fixture.invalid", transport=httpx.MockTransport(received)) as http:
+            for endpoint in ("/mcp/legacy", "/mcp"):
+                result = McpTransport(http, endpoint=endpoint).invoke("read.workspace", {"workspace_id": "workspace-a"},
+                    authorization="Bearer synthetic-fixture")
+                self.assertEqual(result, {"fixture": True})
+            self.assertEqual(paths, ["/mcp/legacy", "/mcp"])
+            with self.assertRaises(PublicConvergenceError):
+                McpTransport(http, endpoint="/unknown")
+            self.assertEqual(len(paths), 2)
+        root = Path(__file__).resolve().parents[3]
+        for name in ("cpk_server_image_smoke.sh", "cpk_server_hosted_activity_smoke.sh",
+                     "cpk_server_public_graph_convergence_smoke.sh"):
+            result = subprocess.run(["sh", str(root / "scripts" / name)], cwd=root,
+                env={**os.environ, "CPK_LEGACY_MCP_PATH": "/unknown"}, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(result.stderr.strip(), "unsupported legacy MCP endpoint")

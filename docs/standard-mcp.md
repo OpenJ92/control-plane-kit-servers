@@ -96,11 +96,15 @@ Official references: [SDK ASGI integration](https://py.sdk.modelcontextprotocol.
 The framework-neutral legacy boundary API is unchanged. Source host tests and
 current composition acceptance callers use `/mcp/legacy`. The maintained image
 smoke selects that path for wrapped source/current artifacts, retaining `/mcp`
-for its explicit historical `published-baseline` profile.
+for its explicit historical `published-baseline` profile. An explicit closed
+`CPK_LEGACY_MCP_PATH` override also supports older retained wrapped artifacts.
 The hosted-activity and graph-convergence scripts default to `/mcp/legacy`;
 when intentionally targeting a pre-#397 image, set
 `CPK_LEGACY_MCP_PATH=/mcp`. Only these two literal paths are admitted; no automatic
-fallback or mutation redispatch occurs. They remain legacy callers, not the
+fallback or mutation redispatch occurs. The hosted-activity shell launcher
+defaults explicitly to `/mcp` for its existing historical catalogue image and
+forwards a supplied override; the convergence launchers forward their explicit
+selection too. They remain legacy callers, not the
 ordinary-client interoperability witness. Retirement requires a later decision;
 there is no guessed end-of-support date.
 

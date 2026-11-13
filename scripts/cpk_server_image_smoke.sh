@@ -5,6 +5,9 @@ IMAGE="${CPK_SERVER_IMAGE:-localhost/control-plane-kit-servers/cpk-server:local}
 BUILD_IMAGE="${CPK_SERVER_BUILD_IMAGE:-1}"
 PROFILE="${CPK_SERVER_SMOKE_PROFILE:-wrapped-source}"
 MCP_PATH=/mcp/legacy
+if [ "$PROFILE" = published-baseline ]; then MCP_PATH=/mcp; fi
+MCP_PATH="${CPK_LEGACY_MCP_PATH:-$MCP_PATH}"
+case "$MCP_PATH" in /mcp|/mcp/legacy) ;; *) echo 'unsupported legacy MCP endpoint' >&2; exit 2 ;; esac
 PRODUCT_PULL_POLICY=missing
 CONTROL_RECORDS=""
 MISSING_CONTROL_CONTAINER=""
@@ -22,7 +25,7 @@ case "$PROFILE" in
     CPK_SERVERS_TEST_IMAGE="$ROOT_ARTIFACT_CONTROLLER"
     PRODUCT_PULL_POLICY=never
     ;;
-  published-baseline) MCP_PATH=/mcp ;;
+  published-baseline) ;;
   *) echo "cpk-server image smoke: invalid profile" >&2; exit 1 ;;
 esac
 CONTAINER=""
