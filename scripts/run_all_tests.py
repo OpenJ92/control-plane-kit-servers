@@ -48,6 +48,7 @@ def main() -> int:
             "test_standard_mcp_planning.py",
             "test_grandparent_mcp.py",
             "test_managed_configuration_selection.py",
+            "test_control_receiver.py", "test_managed_health_configuration.py",
             "test_secret_provider_bootstrap.py", "test_operations_application_factory.py",
             "test_managed_health_bridge.py", "test_managed_native_connection.py", "test_dynamic_effect_composition.py",
         ):
@@ -64,6 +65,10 @@ def main() -> int:
                 run([sys.executable, "-m", "unittest",
                      "scripts.managed_verification_composition_qualification.ManagedCompositionTests." + name, "-v"])
             run([sys.executable, "-m", "unittest", "scripts.grandparent_startup_qualification", "-v"])
+            for name in ("test_optional_samples_bind_original_metadata_and_preserve_ordinary_contract",
+                         "test_actual_main_reads_optional_public_companion_before_operations"):
+                run([sys.executable, "-m", "unittest",
+                     "scripts.grandparent_sample_admission_qualification.GrandparentSampleAdmissionTests." + name, "-v"])
         return 0
     if sys.argv[1:]:
         raise ValueError("unsupported test selection")

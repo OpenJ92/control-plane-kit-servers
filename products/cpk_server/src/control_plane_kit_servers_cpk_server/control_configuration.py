@@ -158,11 +158,12 @@ def cpk_source_runtime_contract(
             )
             environment[HTTP_VERIFICATION_SAMPLES_CONFIGURATION_ENVIRONMENT] = HTTP_SAMPLE_SLOT.target_path
         public_environment = tuple(PublicStaticEnvironmentBinding(name, value) for name, value in sorted(environment.items()))
-        selected = select_http_verification_sample_configuration_slot(expected_slot=HTTP_SAMPLE_SLOT,
-            artifacts=artifacts, environment=public_environment)
-        if selected is not None:
-            samples = HttpVerificationSampleReceiverConfigurationCodec().decode_canonical_bytes(selected.content.encode("utf-8"))
-            cpk_http_sample_binding(control, samples)
+        if sample_artifact is not None:
+            selected = select_http_verification_sample_configuration_slot(expected_slot=HTTP_SAMPLE_SLOT,
+                artifacts=artifacts, environment=public_environment)
+            if selected is not None:
+                samples = HttpVerificationSampleReceiverConfigurationCodec().decode_canonical_bytes(selected.content.encode("utf-8"))
+                cpk_http_sample_binding(control, samples)
         return ProductRuntimeContract(
             sockets=BlockSockets(
                 requirements=tuple(RequirementSocket(name, Protocol.POSTGRES, (binding,)) for name,binding in (
