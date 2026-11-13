@@ -7,7 +7,8 @@ import re
 from control_plane_kit_core.operations import HTTP_ONLY_COMMAND_ROUTE_IDS
 from jsonschema import Draft202012Validator
 from mcp.server import Server
-from mcp.types import CallToolResult, ListToolsResult, TextContent, Tool, ToolAnnotations
+from mcp.types import CallToolResult, JSONRPCMessage, ListToolsResult, TextContent, Tool, ToolAnnotations
+from pydantic import TypeAdapter, ValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -17,6 +18,9 @@ from .boundary import (
     _json_frame_error, _strict_json_object, _validate_reobserve_frame,
 )
 from .request_body import MCP_ENVELOPE_MAX_BYTES, RequestBodyTooLarge, collect_request_body
+
+
+_MESSAGE = TypeAdapter(JSONRPCMessage)
 
 
 # Deliberately curated: route semantics and authorization remain with Operations.
@@ -34,7 +38,6 @@ _READS = {
     "read.session-detail": "Inspect one durable session.",
     "read.plan-detail": "Inspect an existing plan; reading it does not approve or execute it.",
     "read.plan-runs": "Read runs associated with a plan.",
-    "read.run-detail": "Inspect a durable run outcome; an interrupted call alone does not prove rollback.",
     "read.run-events": "Read durable events for one run.",
     "read.workspace-permission": "Inspect an explicit principal's workspace permissions; this grants no authority.",
     "read.managed-runtime-assignment": "Inspect an explicit runtime management assignment; this grants no authority.",
@@ -144,8 +147,12 @@ class StandardMcpAdapter:
             return
         if body is not None:
             try:
-                _strict_json_object(body.decode("utf-8"))
-            except (UnicodeDecodeError, ValueError, RecursionError):
+                decoded = _strict_json_object(body.decode("utf-8"))
+                # The released SDK's legacy transport renders Pydantic envelope
+                # diagnostics with input values. Admit using that SDK model but
+                # reject privately here; the SDK still owns protocol semantics.
+                _MESSAGE.validate_python(decoded, by_name=False)
+            except (UnicodeDecodeError, ValueError, ValidationError, RecursionError):
                 await self._reject(scope, receive, send, 400, "invalid JSON request body")
                 return
         scope = {**scope, "state": {**scope.get("state", {}), "cpk_mcp_principal": principal}}

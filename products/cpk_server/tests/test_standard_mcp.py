@@ -1,12 +1,18 @@
 """Ordinary released MCP client against the actual authenticated ASGI host."""
 import asyncio
 from dataclasses import replace
+import io
+import json
+import logging
 import unittest
+from unittest.mock import MagicMock, Mock
 
 import httpx2
 from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 from control_plane_kit_core.operations import ControlPlaneServiceRole
+from control_plane_kit_core.identity import WorkspaceGrant
+from control_plane_kit_core.policies import PolicyScope
 from control_plane_kit_operations.cpk_server import CpkServerReadService
 
 import test_http_host as host_fixture
@@ -19,9 +25,17 @@ class StandardMcpTests(unittest.IsolatedAsyncioTestCase):
         self.host.setUp()
         self.addCleanup(self.host.tearDown)
         self.app = self.host.app
-        self.lifecycle = self.app.router.lifespan_context(self.app)
-        await self.lifecycle.__aenter__()
-        self.addAsyncCleanup(self.lifecycle.__aexit__, None, None, None)
+        started, stopped = asyncio.Event(), asyncio.Event()
+        async def lifespan():
+            async with self.app.router.lifespan_context(self.app):
+                started.set()
+                await stopped.wait()
+        lifecycle = asyncio.create_task(lifespan())
+        await started.wait()
+        async def close_lifespan():
+            stopped.set()
+            await lifecycle
+        self.addAsyncCleanup(close_lifespan)
         self.http = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=self.app),
             base_url="http://127.0.0.1:8080", headers={"Authorization": "Bearer valid-token"})
         self.addAsyncCleanup(self.http.aclose)
@@ -34,7 +48,7 @@ class StandardMcpTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(mode=mode):
                 async with self.client(mode) as client:
                     self.assertEqual(client.protocol_version, protocol)
-                    tools = {tool.name: tool for tool in await client.list_tools()}
+                    tools = {tool.name: tool for tool in (await client.list_tools()).tools}
                     for name, arguments, path in (
                         ("get_workspace", {"workspace_id": "workspace-a"}, "/workspaces/workspace-a"),
                         ("get_desired_graph", {"workspace_id": "workspace-a"}, "/workspaces/workspace-a/graphs/desired"),
@@ -136,7 +150,7 @@ class StandardMcpTests(unittest.IsolatedAsyncioTestCase):
                     result = await client.call_tool("get_workspace", {"workspace_id": "workspace-a"})
                     return result.structured_content["principal"]
         results = await asyncio.gather(read("first"), read("second"))
-        self.assertEqual(results, [principals[name].descriptor() for name in ("first", "second")])
+        self.assertEqual(results, json.loads(json.dumps([principals[name].descriptor() for name in ("first", "second")])))
         async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=self.app),
                 headers={"Authorization": "Bearer first"}) as http:
             async with self.client(http=http) as client:
@@ -145,3 +159,76 @@ class StandardMcpTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(Exception):
                     await client.call_tool("get_workspace", {"workspace_id": "workspace-a"})
                 self.assertEqual(len(reads.requests), count)
+
+    async def test_malformed_sdk_frames_and_arguments_never_reflect_private_canary(self):
+        canary = "private-input-canary-not-for-diagnostics"
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        logging.getLogger("mcp").addHandler(handler)
+        self.addCleanup(logging.getLogger("mcp").removeHandler, handler)
+        before = sum(len(service.requests) for service in self.host.services.values())
+        for version in ("2025-11-25", "2026-07-28"):
+            for frame in (
+                {"jsonrpc": canary, "id": 1, "method": "tools/list"},
+                {"jsonrpc": "2.0", "id": {"private": canary}, "method": "tools/list"},
+                {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "get_workspace", "arguments": canary}},
+                {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "get_workspace",
+                    "arguments": {"workspace_id": "workspace-a", "unknown": canary}}},
+            ):
+                response = await self.http.post("/mcp", json=frame, headers={
+                    "MCP-Protocol-Version": version, "Accept": "application/json, text/event-stream",
+                    "Mcp-Method": frame["method"], "Mcp-Name": "get_workspace"})
+                self.assertNotIn(canary, response.text)
+                self.assertLess(len(response.content), 8192)
+                self.assertIn(response.status_code, (200, 400))
+        self.assertNotIn(canary, stream.getvalue())
+        self.assertEqual(sum(len(service.requests) for service in self.host.services.values()), before)
+
+    async def test_actual_owner_reads_preserve_revision_identity_and_redacted_http_parity(self):
+        from control_plane_kit_operations.records import GraphVersionRecord, WorkspaceRecord
+        from control_plane_kit_operations.desired_topology_drafts import DesiredTopologyDraftRevisionRecord
+        from control_plane_kit_operations.read_pages import ReadPage
+        canary = "synthetic-private-graph-value"
+        instant = "2026-11-12T00:00:00.000000Z"
+        graph = {"name": "saved", "runtimes": {}, "nodes": {}, "edges": {}, "public_ingresses": []}
+        saved = GraphVersionRecord("graph-saved", "workspace-a", 7, graph, "fixture", instant)
+        # Immutable store-return fixtures only; actual owner projections perform
+        # redaction, catalogue validation and page construction. No store/state
+        # machine, persistence or mutation behavior is implemented in this test.
+        desired = GraphVersionRecord("graph-desired", "workspace-a", 8,
+            {**graph, "nodes": {"fixture": {"environment": {"SYNTHETIC": canary}}}}, "fixture", instant)
+        workspace = WorkspaceRecord("workspace-a", "Fixture", desired_graph_id=desired.graph_id,
+            desired_realized_projection_id="projection-desired", desired_graph_revision=1)
+        stores = Mock()
+        stores.workspaces.get.return_value = workspace
+        stores.graphs.get.side_effect = {saved.graph_id: saved, desired.graph_id: desired}.__getitem__
+        stores.desired_topology_drafts.revision.return_value = DesiredTopologyDraftRevisionRecord(
+            "workspace-a", "draft-a", 7, saved.graph_id, "fixture", instant)
+        stores.revision_history.presence.return_value = {"preparations": False, "attempts": False}
+        stores.revision_history.page.side_effect = lambda request: ReadPage.from_candidates(request, ())
+        unit = MagicMock()
+        unit.__enter__.return_value = unit
+        unit.stores = stores
+        service = CpkServerReadService(lambda: unit)
+        self.host.services[ControlPlaneServiceRole.READS].handle = service.handle
+        principal = replace(_principal(), workspace_grants=(WorkspaceGrant(
+            "workspace-a", (PolicyScope.INSTANCE_WORKSPACE_READ,)),))
+        self.host.verifier.authenticate = lambda credential: principal
+        async with self.client() as client:
+            for name, arguments, path in (
+                ("get_workspace", {"workspace_id": "workspace-a"}, "/workspaces/workspace-a"),
+                ("get_desired_graph", {"workspace_id": "workspace-a"}, "/workspaces/workspace-a/graphs/desired"),
+                ("get_desired_topology_draft_revision", {"workspace_id": "workspace-a", "draft_id": "draft-a", "revision": 7},
+                    "/workspaces/workspace-a/desired-topology-drafts/draft-a/revisions/7"),
+                ("list_desired_topology_draft_revision_attempts", {"workspace_id": "workspace-a", "draft_id": "draft-a", "revision": 7},
+                    "/workspaces/workspace-a/desired-topology-drafts/draft-a/revisions/7/attempts"),
+            ):
+                result = await client.call_tool(name, arguments)
+                self.assertFalse(result.is_error, result.structured_content)
+                http = await self.http.get(path)
+                self.assertEqual(http.status_code, 200)
+                self.assertEqual(result.structured_content, http.json())
+                self.assertNotIn(canary, json.dumps(result.structured_content))
+                if name == "get_desired_topology_draft_revision":
+                    self.assertEqual((result.structured_content["draft_id"], result.structured_content["revision"],
+                                      result.structured_content["graph_id"]), ("draft-a", 7, saved.graph_id))
