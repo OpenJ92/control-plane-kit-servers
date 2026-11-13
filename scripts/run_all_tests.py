@@ -47,6 +47,7 @@ def main() -> int:
             "test_current_cpk_server_composition.py", "test_revision_history_composition.py",
             "test_standard_mcp_planning.py",
             "test_grandparent_mcp.py",
+            "test_managed_configuration_selection.py",
             "test_secret_provider_bootstrap.py", "test_operations_application_factory.py",
         ):
             run([sys.executable, "-m", "unittest", "discover", "-s",
