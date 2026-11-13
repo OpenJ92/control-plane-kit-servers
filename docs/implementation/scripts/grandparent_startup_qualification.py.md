@@ -13,3 +13,6 @@ not successful public file decode, loaded credentials, current authority, SQL
 execution or installed-client behavior. The real parser's invalid-opt-in law
 and unchanged qualified reader source are separate evidence. Non-null metadata
 bridge and DesiredGraph service wiring are proved by their existing tests.
+The Cloudflare-enabled fixture supplies the required resolver and custodian;
+custodian store/revoke operations fail if called and the test asserts no calls.
+This preserves the production refusal guard without performing material I/O.

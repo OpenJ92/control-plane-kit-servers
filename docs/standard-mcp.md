@@ -23,6 +23,20 @@ about the deployed grandparent's cohort or an installed Codex connection.
 
 ## Selected composition
 
+Current evidence: PR #400 was accepted at source
+`8b8e87c43c31d7afadda72302a6cddca744e3a8e` and merged as `a2b10cbc`.
+Its full owning gate passed 1,373 unit checks, the packaged PostgreSQL
+preparation/response-loss/reconnect and receiver-restart witnesses, downstream
+checks and final cleanup audit. Hosted run `43377819873` passed the same source.
+The chronological #398 failures below remain historical evidence; the earlier
+Hello listener failure did not recur and its cause remains unresolved.
+
+The additive #401 grandparent source has focused default169 and grandparent174
+PASS evidence. Its current full package gate and PR CI remain outstanding;
+deployable grandparent artifact, existing-state replacement and installed Codex
+connection remain separate, uncompleted boundaries. See
+[the compatibility record](grandparent-mcp-compatibility.md).
+
 Use official `mcp==2.3.0` (release source
 `2118f14f8a19bc158d8a1cf90af58d85d187f849`) without CLI extras. Its low-level
 `Server` accepts explicit schemas and standard results; its normal Streamable
@@ -206,11 +220,14 @@ ambiguous; do not choose the newest/sole-looking record in general or blindly
 resend. An unavailable result or cancellation is not proof of rollback.
 
 The source tests use actual command construction and permission checks with a
-recording program port. The proposed final durable witness extends the existing
+recording program port. The accepted final durable witness extends the existing
 packaged PostgreSQL smoke: explicit fixture selection once, one ordinary SDK
 preparation, injected response loss, reconnect and owner queries. Its known
 single-fixture association is not a general concurrency/recovery guarantee.
-Packaged persistence qualification and final combined acceptance remain incomplete.
+PR #400 completed packaged persistence qualification and combined acceptance;
+that result does not qualify the later #401 changes or a deployed grandparent.
+
+### Historical implementation attempts (before PR #400 acceptance)
 
 The first ordinary gate at `e778fbc` passed all 1,369 unit tests and reached the
 new packaged witness, then stopped: the deliberate response-loss exception also
@@ -252,5 +269,6 @@ service dispatch plus released-client discovery/read in both protocol eras on
 each lifespan. The bounded successor creates a fresh paired transport/manager
 through the SDK public factory and enters its own lifespan; it does not reset
 SDK internals, rebuild CPK management state or weaken the receiver witness.
-Focused green and independent source review are pending; no full retry is
-released by this correction.
+At that checkpoint focused green and independent source review were pending;
+the later `8b8e87c` source and PR #400 acceptance closed those source/package
+requirements. That historical correction did not itself authorize a full retry.

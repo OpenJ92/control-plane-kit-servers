@@ -5,6 +5,15 @@ The accepted default remains the roadmap composition. The explicit
 default and exact grandparent-cohort focused gates each passed 120 checks at
 c754e7d. This is a source profile qualification, not artifact/live acceptance.
 
+Managed preservation then passed the focused default cohort's 169 checks at
+`14a4277` and the frozen grandparent cohort's 174 checks at `4138ab2`, with
+source-context absence verified. The first grandparent managed green stopped
+after 173 preceding passes because its startup fixture omitted the required
+custodian; the test-only successor supplies forbidden store/revoke operations
+and asserts no calls. Production guards and real constructor assertions remain
+unchanged. Full current-source package/PR CI and independent combined acceptance
+remain outstanding; these focused results do not qualify an installed product.
+
 The managed preservation stage reconciles the qualified23bcab/a544 product
 changes with that accepted source. It restores existing managed/HTTP sample
 configuration, native registration and service options. The shared factory,
@@ -19,7 +28,7 @@ to admission, invocation, dispatcher and managed observers. External cohort
 selection is explicit; no package-version detection selects behavior.
 
 The public invalid-config law first failed because the flag was silently ignored
-(0c8fbf2, original exit1). Green must preserve the existing non-null metadata
+(0c8fbf2, original exit1). Green preserves the existing non-null metadata
 bridge/factory tests, actual HTTP701 managed-intent/fences/key forwarding,
 three unchanged nominal native composition laws, and ordinary-main real factory
 wiring. The startup fixture supplies predecoded Operations-owned records and
