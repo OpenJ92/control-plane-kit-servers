@@ -54,9 +54,8 @@ def main() -> int:
         run([sys.executable, "-m", "unittest", "discover", "-s", "products/cpk_local_gateway/tests",
              "-p", "test_wrapper_artifact_provenance.py", "-v"])
         if os.environ.get("CPK_TEST_COHORT") == "grandparent":
-            run([sys.executable, "-m", "unittest", "discover", "-s", "products/cpk_server/tests",
-                 "-p", "test_grandparent_http_planning.py", "-v"])
-            os.environ["PYTHONPATH"] = os.environ.get("PYTHONPATH", "") + ":/opt/cpk-test-cohort/operations:/app/scripts"
+            os.environ["PYTHONPATH"] = os.environ.get("PYTHONPATH", "") + ":/app/products/cpk_server/tests:/opt/cpk-test-cohort/operations:/app/scripts"
+            run([sys.executable, "-m", "unittest", "scripts.grandparent_http_planning_qualification", "-v"])
             for name in ("test_actual_nominal_route_and_check_preserve_selected_values",
                          "test_real_native_registration_supplies_same_objects_to_service_options",
                          "test_structural_prepared_value_and_crossed_registered_gateway_refuse"):
