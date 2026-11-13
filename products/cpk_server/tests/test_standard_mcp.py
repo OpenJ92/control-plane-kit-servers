@@ -61,9 +61,11 @@ class StandardMcpLifespanTests(unittest.IsolatedAsyncioTestCase):
                     async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app),
                             base_url="http://127.0.0.1:8080",
                             headers={"Authorization": "Bearer valid-token"}) as http:
+                        before = sum(len(service.requests) for service in host.services.values())
                         denied = await http.post("/mcp", content=b"{}",
                             headers={"Authorization": "Bearer rejected"})
                         self.assertEqual(denied.status_code, 401)
+                        self.assertEqual(sum(len(service.requests) for service in host.services.values()), before)
                         expected = await http.get("/workspaces/workspace-a")
                         self.assertEqual(expected.status_code, 200)
                         for mode in ("auto", "legacy"):
