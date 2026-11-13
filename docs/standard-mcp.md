@@ -197,7 +197,7 @@ recording program port. The proposed final durable witness extends the existing
 packaged PostgreSQL smoke: explicit fixture selection once, one ordinary SDK
 preparation, injected response loss, reconnect and owner queries. Its known
 single-fixture association is not a general concurrency/recovery guarantee.
-That packaged witness and the final combined owning gate are not yet run.
+Packaged persistence qualification and final combined acceptance remain incomplete.
 
 The first ordinary gate at `e778fbc` passed all 1,369 unit tests and reached the
 new packaged witness, then stopped: the deliberate response-loss exception also

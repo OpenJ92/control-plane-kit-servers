@@ -139,6 +139,8 @@ class StandardMcpPlanningTests(fixture.StandardMcpFixture, unittest.IsolatedAsyn
         self.assertTrue(await exercise(FixtureResponseLost("synthetic fixture response loss")))
         self.assertEqual(self.program.prepare.call_count, 1)
         self.program.prepare.reset_mock()
-        with self.assertRaises(BaseExceptionGroup):
-            await exercise(httpx2.ReadError("unrelated transport failure"))
+        foreign = httpx2.ReadError("unrelated transport failure")
+        with self.assertRaises(BaseExceptionGroup) as caught:
+            await exercise(foreign)
+        self.assertIsNotNone(caught.exception.subgroup(lambda error: error is foreign))
         self.assertEqual(self.program.prepare.call_count, 1)
