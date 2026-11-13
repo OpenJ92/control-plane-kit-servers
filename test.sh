@@ -50,6 +50,11 @@ docker run --rm \
     --gate-file test.sh
 
 docker build -f Dockerfile.test -t "$IMAGE" .
+if [ "${1:-}" = --mcp-source-tests ]; then
+  [ "$#" = 1 ] || exit 2
+  docker run --rm --network none "$IMAGE" python scripts/run_all_tests.py --mcp-source-tests
+  exit 0
+fi
 docker run --rm "$IMAGE"
 docker run --rm "$IMAGE" \
   sh -c 'cd /tmp && python -c "import control_plane_kit_servers; print(\"control-plane-kit-servers import ok\")"'
