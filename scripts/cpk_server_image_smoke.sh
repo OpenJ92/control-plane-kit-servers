@@ -4,6 +4,145 @@ set -eu
 IMAGE="${CPK_SERVER_IMAGE:-localhost/control-plane-kit-servers/cpk-server:local}"
 BUILD_IMAGE="${CPK_SERVER_BUILD_IMAGE:-1}"
 PROFILE="${CPK_SERVER_SMOKE_PROFILE:-wrapped-source}"
+
+# Closed, opt-in qualification of the separately built grandparent artifact.
+# Uses the existing resource owner, real normal PID1, file readers and database;
+# no default smoke path, existing installation or client configuration changes.
+grandparent_artifact_smoke() (
+  [ "$BUILD_IMAGE" = 0 ] && [ "$#" = 4 ] || exit 2
+  GP_IMAGE=$1 GP_RECEIPT=$2 GP_POSTGRES=$3 GW_RUN=$4
+  case "$GP_IMAGE:$GP_POSTGRES" in *[!a-z0-9:]* ) exit 2 ;; esac
+  printf '%s\n' "$GP_IMAGE" "$GP_POSTGRES" | awk 'length!=71 || $0!~/^sha256:[0-9a-f]+$/ {exit 1}' || exit 2
+  case "$GP_RECEIPT" in /*) ;; *) exit 2 ;; esac
+  case "$GW_RUN" in cpk399-mcp-qualification-*) ;; *) exit 2 ;; esac
+  case "$GW_RUN" in *[!a-z0-9-]* ) exit 2 ;; esac
+  [ "${#GW_RUN}" -le 80 ] || exit 2
+  [ -z "$(git status --porcelain)" ] || exit 2
+  GP_SOURCE=$(git rev-parse HEAD)
+  . ./scripts/docker_witness_daemon.sh
+  docker_witness_daemon
+  GW_DAEMON=$image_witness_daemon
+  [ "$GW_DAEMON" = d23d00aa-b281-448d-bc95-c8e47efeeea2 ] || exit 2
+  [ "$(docker image inspect "$GP_IMAGE" --format '{{.Id}}')" = "$GP_IMAGE" ] || exit 2
+  [ "$(docker image inspect "$GP_POSTGRES" --format '{{.Id}}')" = "$GP_POSTGRES" ] || exit 2
+  jq -e --arg source "$GP_SOURCE" '.mode=="build" and .source==$source and
+    .product_source=="0610e9454dd9a75a6e6bf5e89fe281c8631cccaa" and .exit_code==0 and
+    .installed_cohort_verified==true and .derived_base_layers_verified==true and
+    .cleanup=="verified" and .retention=="verified" and .base_retained=="verified" and
+    .approved_deployment==false' "$GP_RECEIPT" >/dev/null
+  GP_REFERENCE=$(jq -er .image "$GP_RECEIPT")
+  [ "$(docker image inspect "$GP_REFERENCE" --format '{{.Id}}')" = "$GP_IMAGE" ] || exit 2
+  [ "$(docker image inspect "$GP_IMAGE" --format '{{.Config.User}}|{{len .Config.Entrypoint}}|{{json .Config.Cmd}}|{{.Os}}|{{.Architecture}}')" = \
+    '10001|0|["python","-m","control_plane_kit_servers_cpk_server.server"]|linux|amd64' ] || exit 2
+  GP_TMP=$(CDPATH= cd /tmp && pwd -P)
+  GW_RECORDS=$GP_TMP/$GW_RUN
+  [ ! -e "$GW_RECORDS" ] && [ ! -L "$GW_RECORDS" ] || exit 2
+  . ./scripts/gateway_packaged_owner.sh
+  GW_ROLES='generate initialize postgres cpk seed verify-before verify-after provenance'
+  GW_VOLUMES="$GW_RUN-database" GW_RESERVED=0
+  # Check exact names as well as labels before reserving any resource.
+  for GP_ROLE in $GW_ROLES; do
+    [ -z "$(docker ps -aq --filter "name=^/$GW_RUN-$GP_ROLE$")" ] || exit 2
+  done
+  [ -z "$(docker volume ls -q --filter "name=^$GW_RUN-database$")" ] || exit 2
+  [ -z "$(docker network ls -q --filter "name=^$GW_RUN$")" ] || exit 2
+  for GP_KIND in container volume network; do
+    case "$GP_KIND" in container) set -- ps -aq ;; volume) set -- volume ls -q ;; network) set -- network ls -q ;; esac
+    [ -z "$(docker "$@" --filter "label=cpk.test-run=$GW_RUN")" ] || exit 2
+  done
+  mkdir -m 700 "$GW_RECORDS"
+  GW_OWNER=$(od -An -N32 -tx1 /dev/urandom | tr -d '[:space:]')
+  [ "${#GW_OWNER}" = 64 ] || exit 1
+  GP_FIXTURE=$GW_RECORDS/private
+  mkdir -m 700 "$GP_FIXTURE"
+  GW_RESERVED=1 GP_VERIFIED=false GP_PHASE=fixture
+  gp_finish() {
+    gp_status=$?
+    trap - EXIT INT TERM
+    gp_cleanup=verified
+    gw_cleanup || { gp_status=1; gp_cleanup=unverified; }
+    # This directory was exclusively reserved above and contains only generated
+    # synthetic authority. Failure output never prints it or container logs.
+    if [ "$gp_cleanup" = verified ]; then
+      rm -rf "$GP_FIXTURE" || { gp_status=1; gp_cleanup=unverified; }
+      [ ! -e "$GP_FIXTURE" ] || { gp_status=1; gp_cleanup=unverified; }
+    fi
+    jq -n --arg source "$GP_SOURCE" --arg image "$GP_IMAGE" --arg postgres "$GP_POSTGRES" \
+      --arg run "$GW_RUN" --arg owner "$GW_OWNER" --arg cleanup "$gp_cleanup" --arg phase "$GP_PHASE" \
+      --argjson status "$gp_status" --argjson verified "$GP_VERIFIED" \
+      '{schema:"cpk399.isolated-mcp-qualification.v1",source:$source,image:$image,postgres:$postgres,
+        run:$run,owner:$owner,phase:$phase,exit_code:$status,isolated_process_verified:$verified,
+        cleanup:$cleanup,existing_installation_verified:false,client_connected:false,acceptance:false}' \
+      > "$GW_RECORDS/result.json" || gp_status=1
+    exit "$gp_status"
+  }
+  trap gp_finish EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  gp_helper() {
+    gp_role=$1 gp_network=$2 gp_mode=$3
+    shift 3
+    gw_run "$gp_role" --rm --network "$gp_network" --read-only --tmpfs /tmp:size=64m \
+      --cpus 1 --memory 512m --pids-limit 128 --cap-drop ALL --security-opt no-new-privileges \
+      --user "$(id -u):$(id -g)" --workdir /witness -e PYTHONDONTWRITEBYTECODE=1 \
+      --mount "type=bind,source=$PWD/scripts,target=/witness,readonly" \
+      --mount "type=bind,source=$PWD/products/cpk_server/tests/cpk_http_host_fixtures.py,target=/witness/cpk_http_host_fixtures.py,readonly" \
+      --mount "type=bind,source=$PWD/products/cpk_server/tests/receiver_acceptance_material.py,target=/witness/receiver_acceptance_material.py,readonly" \
+      --mount "type=bind,source=$PWD/products/cpk_server/tests/managed_native_material.py,target=/witness/managed_native_material.py,readonly" \
+      --mount "type=bind,source=$PWD/products/postgres_server/product.cpk.json,target=/witness/postgres.json,readonly" \
+      --mount "type=bind,source=$GP_FIXTURE,target=/fixture" "$@" --entrypoint python \
+      "$GP_IMAGE" /witness/grandparent_artifact_fixture.py "$gp_mode" /fixture
+  }
+  gp_helper generate none generate
+  cp "$GP_FIXTURE/public-inputs.json" "$GW_RECORDS/public-inputs.json"
+  (umask 077; : > "$GW_RECORDS/network.attempt")
+  docker network create --internal --label "cpk.test-run=$GW_RUN" --label "cpk.test-owner=$GW_OWNER" "$GW_RUN" >/dev/null
+  gw_network_identity "$GW_RUN"
+  gw_volume_create "$GW_RUN-database"
+  GP_DATABASE=$(gw_run postgres -d --network "$GW_RUN" --network-alias database \
+    --cpus 1 --memory 512m --pids-limit 128 \
+    -e POSTGRES_DB=cpk -e POSTGRES_USER=cpk -e POSTGRES_PASSWORD=cpk \
+    --mount "type=volume,source=$GW_RUN-database,target=/var/lib/postgresql/data" "$GP_POSTGRES")
+  GP_READY=false
+  for GP_ATTEMPT in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    if docker exec -e PGPASSWORD=cpk "$GP_DATABASE" psql -h 127.0.0.1 -U cpk -d cpk -c 'SELECT 1' >/dev/null 2>&1; then GP_READY=true; break; fi
+    sleep 1
+  done
+  [ "$GP_READY" = true ] || exit 1
+  set --
+  for GP_FILE in authority health sender control; do
+    set -- "$@" --mount "type=bind,source=$GP_FIXTURE/$GP_FILE.json,target=/fixture/$GP_FILE.json,readonly"
+  done
+  GP_PHASE=bootstrap
+  gp_helper initialize "$GW_RUN" initialize --env-file "$GP_FIXTURE/server.env" "$@"
+  GP_PHASE=normal-process
+  GP_CONTAINER=$(gw_run cpk -d --network "$GW_RUN" --network-alias server \
+    --read-only --tmpfs /tmp:size=64m --cpus 1 --memory 512m --pids-limit 128 \
+    --cap-drop ALL --security-opt no-new-privileges --env-file "$GP_FIXTURE/server.env" \
+    --mount "type=bind,source=$GP_FIXTURE/control.json,target=/etc/cpk/cpk-server/control.json,readonly" \
+    "$@" "$GP_IMAGE")
+  [ "$(docker inspect "$GP_CONTAINER" --format '{{.Image}}|{{len .HostConfig.PortBindings}}|{{.Config.User}}')" = "$GP_IMAGE|0|10001" ] || exit 1
+  gw_run provenance --rm --network none --read-only --tmpfs /tmp:size=32m \
+    --cap-drop ALL --security-opt no-new-privileges --entrypoint python "$GP_IMAGE" \
+    /usr/share/cpk-grandparent/check.py verify > "$GW_RECORDS/installed-cohort.json"
+  jq -e --arg source "$GP_SOURCE" '.effective_uid==10001 and .cohort.packaging_source==$source' "$GW_RECORDS/installed-cohort.json" >/dev/null
+  gp_helper seed "container:$GP_CONTAINER" seed
+  GP_PHASE=verify-before-restart
+  gp_helper verify-before "container:$GP_CONTAINER" verify
+  GP_PHASE=normal-restart
+  gw_daemon
+  docker restart --time 10 "$GP_CONTAINER" >/dev/null
+  GP_PHASE=verify-after-restart
+  gp_helper verify-after "container:$GP_CONTAINER" verify
+  docker exec "$GP_CONTAINER" python -I -c 'import os,pathlib; assert os.geteuid()==10001; assert pathlib.Path("/proc/1/cmdline").read_bytes().split(b"\0")[:-1]==[b"python",b"-m",b"control_plane_kit_servers_cpk_server.server"]; assert os.environ["CPK_MCP_PROFILE"]=="grandparent-read-only-v1"'
+  [ -z "$(git status --porcelain)" ] && [ "$(git rev-parse HEAD)" = "$GP_SOURCE" ] || exit 1
+  GP_VERIFIED=true GP_PHASE=complete
+)
+
+if [ "$PROFILE" = grandparent-artifact ]; then
+  grandparent_artifact_smoke "$@"
+  exit $?
+fi
 MCP_PATH=/mcp/legacy
 if [ "$PROFILE" = published-baseline ]; then MCP_PATH=/mcp; fi
 MCP_PATH="${CPK_LEGACY_MCP_PATH:-$MCP_PATH}"

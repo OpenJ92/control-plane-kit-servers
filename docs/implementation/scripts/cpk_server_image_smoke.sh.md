@@ -1,6 +1,20 @@
 Source: [cpk_server_image_smoke.sh](../../../scripts/cpk_server_image_smoke.sh).
 Maintain with the owning smoke profiles and local synthetic effect plan.
 
+#399 adds only an explicit closed `grandparent-artifact` profile through
+`./test.sh --grandparent-artifact-qualification IMAGE_ID BUILD_RECEIPT POSTGRES_ID RUN`.
+Its source is prepared but unexecuted. It admits the exact clean-head successful
+build receipt and cached image IDs with no pull/build. Existing resource-owner
+functions capture named/labelled actors before allocation and verify exact
+cleanup, including the isolated PostgreSQL volume and internal network.
+Normal UID10001/PID1 startup uses actual public file readers, installed sealed
+cohort and real PostgreSQL; candidate-image helper processes generate only new
+synthetic authority and exercise real HTTP/SDK reads. No product source mount,
+daemon socket, public port, provider effect or existing installation is involved.
+The fixture's assertions and residuals are described in its implementation
+companion and `docs/grandparent-mcp-artifact-packet.md`. Default profiles retain
+their existing entrance and acceptance scope.
+
 #225 admits Linux and Docker Desktop context-selected local Unix endpoints via
 `docker_witness_daemon.sh`. Endpoint/TLS environment overrides are refused;
 the resolved context is exported for subsequent CLI calls. The host client

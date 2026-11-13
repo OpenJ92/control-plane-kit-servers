@@ -20,6 +20,11 @@ case "${1:-}" in
     [ "$#" = 1 ] || exit 2
     exec sh scripts/grandparent_artifact_source_tests.sh
     ;;
+  --grandparent-artifact-qualification)
+    [ "$#" = 5 ] || exit 2
+    CPK_SERVER_SMOKE_PROFILE=grandparent-artifact CPK_SERVER_BUILD_IMAGE=0 \
+      exec sh scripts/cpk_server_image_smoke.sh "$2" "$3" "$4" "$5"
+    ;;
   --grandparent-image-plan|--grandparent-image-build)
     exec sh scripts/grandparent_image_build.sh "$@"
     ;;

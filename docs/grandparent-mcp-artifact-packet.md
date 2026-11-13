@@ -1,7 +1,9 @@
 # Grandparent MCP artifact and connection packet (#401 / #399)
 
-Prepared source and plan only. No command below has run. This checkpoint is
-unvalidated; it does not release a build, pull, publication, credential read,
+Prepared artifact source and plan only. The packaging source gate passed at
+eb38e313b105fc7870d77d874d6e75943b7a58d8 (support26/packaging7 plus policy and
+integrity); later normal-process qualification source below is unvalidated.
+This packet does not release a build, pull, publication, credential read,
 current-installation inspection, replacement or client configuration change.
 
 ## Accepted source and selected inputs
@@ -49,8 +51,8 @@ No Secrets distribution may be present.
 
 ## Existing owner entrances and proposed identities
 
-These are prepared extensions of the historical grandparent owner, not executed
-commands. All require independent source review and the stated release.
+These are extensions of the historical grandparent owner. Only the source-only
+gate has run; all artifact actions require independent review and the stated release.
 
 1. Source-only owning Docker gate:
 
@@ -112,11 +114,22 @@ commands. All require independent source review and the stated release.
 
 ## Named isolated built-image qualification proposal
 
-Use the existing owner `scripts/cpk_server_image_smoke.sh`, with a narrowly
-implemented `grandparent-artifact` profile through `test.sh`; do not point the
-current wrapped-artifact mode at this different cohort or claim that unsupported
-profile already exists. This profile/fixture extension is REQUIRED source work
-before an actual qualification release. It is not a new control-plane owner.
+The existing owner `scripts/cpk_server_image_smoke.sh` now contains a closed
+`grandparent-artifact` profile, entered only by this separately released command:
+
+```sh
+DOCKER_CONTEXT=desktop-linux ./test.sh --grandparent-artifact-qualification \
+  "$CANDIDATE_IMAGE_ID" "$PUBLIC_BUILD_RECEIPT" "$CACHED_POSTGRES_IMAGE_ID" \
+  cpk399-mcp-qualification-20261113-01
+```
+
+This is prepared, UNEXECUTED source. Both image IDs must be full cached sha256
+IDs; the successful public build receipt must match the clean packaging head,
+accepted product0610, exact candidate digest/cache identity and verified retained
+base/cleanup/cohort. A missing image or receipt stops without pull/build. Exact
+PostgreSQL image ID and source must be reviewed before execution. The proposed
+run is not reserved. This profile does not use wrapped-artifact's different
+CPK/Secrets admission tuple and does not change the ordinary smoke profiles.
 
 The proposed fixture is a new labeled private network and disposable PostgreSQL
 database, no published port or provider/daemon socket in the product. A candidate-
@@ -135,13 +148,28 @@ Record canonical public input hashes and versions; keep generated values private
 The reader credential has only workspace read; a distinct setup actor owns the
 explicit fixture setup/HTTP planning request. No authority is inferred from MCP.
 
+The source reuses `gateway_packaged_owner.sh` for daemon/name/label/cid capture,
+owned volume/network cleanup and residue verification. New helpers use the
+candidate image with a different entrypoint and read-only witness source only;
+the normal product has only its four generated public files, no source overlay,
+provider socket or published port. Client helpers share the candidate network
+namespace and call loopback HTTP. Generated credentials/env/saved fixtures stay
+in a newly reserved0700 directory and are never printed. Success removes that
+private directory after exact resource cleanup; uncertainty preserves it.
+
 Required observed proof: real file decode and listening/readiness, installed
 cohort/public lock and PID1 identity; exactly four MCP reads and HTTP parity for
 the seeded saved revision/history; missing/wrong auth and direct command refusal
 even with setup authority; both protocol eras; normal unchanged-state restart;
 actual HTTP managed-intent/fences/key forwarding and preserved saved state.
-If a recording program port is used for a separate composition assertion, label
-that as a double and do not call it a real planner or normal-process witness.
+The fixture deliberately saves an empty graph, so real managed SQL/HTTP planning
+must return `review-blocked`; its public plan must show the managed profile and
+exact observed fences. One explicit replay of a known successful HTTP response
+checks the same caller key keeps the same plan/history. This is no claim of a
+deployable managed graph or ambiguous-effect recovery. Both pre/post restart
+checks preserve the actual saved revision, preparation and empty attempt history.
+The separate accepted recording-port test remains a composition double, not this
+real-planner witness.
 No approval, provider effect, material write or child deployment is needed.
 Capture all owner IDs before effects; prove exact fixture cleanup and preserve
 uncertainty on failed reads. This isolated state never substitutes for #163.

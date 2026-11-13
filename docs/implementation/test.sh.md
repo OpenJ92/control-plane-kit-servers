@@ -1,6 +1,12 @@
 Source: [test.sh](../../test.sh).
 Maintain with the normal Docker-backed owning gate and prerequisite effects.
 
+#399's separately released `--grandparent-artifact-qualification` mode selects
+only the closed `grandparent-artifact` profile in the existing image-smoke owner
+with build0. It requires candidate image ID, public build receipt, cached
+PostgreSQL image ID and fresh run name; no implicit inventory/build or default
+suite change. Source-only preparation does not release this runtime gate.
+
 #347's integrated source candidate wraps the existing root case in a shell
 function, always runs the historical static invocation, and adds one dynamic
 invocation for the existing admitted published pair. It passes actual driver and

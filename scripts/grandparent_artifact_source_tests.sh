@@ -9,6 +9,14 @@ CONTROLLER=sha256:4eb536f196cb67260426f8902fca63959d414673c43bcd6e0008ff4712fd8c
 docker run --pull never --rm --network none --read-only --tmpfs /tmp:exec,size=128m \
   --cap-drop ALL --security-opt no-new-privileges \
   --mount "type=bind,source=$ROOT,target=/source,readonly" --workdir /source \
+  -e PYTHONPYCACHEPREFIX=/tmp/pycache --entrypoint sh "$CONTROLLER" -ec '
+    sh -n test.sh
+    sh -n scripts/cpk_server_image_smoke.sh
+    python -m py_compile scripts/grandparent_artifact_fixture.py
+  '
+docker run --pull never --rm --network none --read-only --tmpfs /tmp:exec,size=128m \
+  --cap-drop ALL --security-opt no-new-privileges \
+  --mount "type=bind,source=$ROOT,target=/source,readonly" --workdir /source \
   -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONPATH=/source/src \
   --entrypoint python "$CONTROLLER" scripts/apply_coordinates.py --check
 docker run --pull never --rm --network none --read-only --tmpfs /tmp:exec,size=128m \
