@@ -163,17 +163,22 @@ class TopologyClient:
         from .catalogue import read
         return read(self, "draft-revision", draft_id=draft_id, revision_number=revision)
 
-    def draft_save(self, path: Path, *, title: str | None = None) -> CatalogueResult:
+    def draft_save(self, path: Path, *, title: str | None = None,
+                   receiver_lifecycle: Mapping[str, object] | None = None) -> CatalogueResult:
         from .catalogue import mutate
-        return mutate(self, "create", path=path, title=title)
+        return mutate(self, "create", path=path, title=title, receiver_lifecycle=receiver_lifecycle)
 
-    def draft_revise(self, draft_id: str, path: Path, expected_head_revision: int) -> CatalogueResult:
+    def draft_revise(self, draft_id: str, path: Path, expected_head_revision: int, *,
+                     receiver_lifecycle: Mapping[str, object] | None = None) -> CatalogueResult:
         from .catalogue import mutate
-        return mutate(self, "revise", path=path, draft_id=draft_id, expected_head_revision=expected_head_revision)
+        return mutate(self, "revise", path=path, draft_id=draft_id, expected_head_revision=expected_head_revision,
+                      receiver_lifecycle=receiver_lifecycle)
 
-    def draft_select(self, draft_id: str, revision: int) -> CatalogueResult:
+    def draft_select(self, draft_id: str, revision: int, *,
+                     receiver_lifecycle: Mapping[str, object] | None = None) -> CatalogueResult:
         from .catalogue import mutate
-        return mutate(self, "select", draft_id=draft_id, revision_number=revision)
+        return mutate(self, "select", draft_id=draft_id, revision_number=revision,
+                      receiver_lifecycle=receiver_lifecycle)
 
     def draft_resume(self, operation_ref: str) -> CatalogueResult:
         from .catalogue import resume

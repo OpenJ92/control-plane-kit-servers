@@ -7,6 +7,19 @@ Earlier pending-validation statements below describe historical slices.
 
 # `client/journal.py`
 
+#394 adds the closed `cpk.client-catalogue-invocation.v2` variant only for new
+catalogue calls with an explicit receiver expectation. It requires the bounded
+five-field mapping in intent; v1 still forbids that member and keeps its exact
+previous meaning. The common dispatcher sends both variants to the catalogue
+validator, without admitting them to deployment commands.
+
+The complete expectation is persisted before session creation. It is included
+in the draft body hash before dispatch and reconstructed unchanged on resume.
+Source-byte, target, ownership/mode, locking and size checks are unchanged.
+Malformed v2 intent or a changed pending body refuses; no refresh, rebase or
+v1-to-v2 upgrade occurs. Reports continue projecting only the existing bounded
+catalogue receipt, not the stored input.
+
 `topology-client-preparation.v1` extends the existing private invocation journal
 without changing file-v1 or saved-v1 meanings. Its `preparation` descriptor names
 only `<operation_ref>.graph.json` and records the exact size and SHA-256.

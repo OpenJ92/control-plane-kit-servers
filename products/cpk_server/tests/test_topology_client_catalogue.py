@@ -124,6 +124,8 @@ class CatalogueClientTests(unittest.TestCase):
                 state = "receiver-" + kind
                 transport = CatalogueTransport()
                 supplied = self.receiver_expectation()
+                if kind == "save":
+                    supplied.update(desired_graph_id=None, desired_realized_projection_id=None, desired_graph_revision=0)
                 reviewed = dict(supplied)
                 def before(call):
                     retained = json.loads(next((self.root / state / "invocations").glob("*.json")).read_text())

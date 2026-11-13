@@ -18,6 +18,28 @@ occurred before directory fsync, so no retry, restoration or saved/absent claim 
 made. The existing result schema is unchanged in this slice. Source review and
 consolidated green remain pending; Operations pins are not changed here.
 
+## Explicit catalogue receiver expectations (#394)
+
+`draft_save`, `draft_revise` and `draft_select` accept the optional keyword
+`receiver_lifecycle`. It is a copied, closed mapping of `current_graph_id`,
+`current_realized_projection_id`, `desired_graph_id`,
+`desired_realized_projection_id` and `desired_graph_revision`. Current references
+must be supplied, never derived from an authored graph. The selected Operations
+receiver-expectation contract requires paired desired references, absent exactly
+at generation zero; identifiers use the existing public Core reference law.
+This is an input contract, not a new invariant on every legacy workspace record.
+
+Save/revise forward exactly the reviewed input. Select keeps its existing
+workspace read and refuses stale supplied values before starting a session. Its
+ordinary desired-selection fields must agree with the same expectation. The
+server still owns atomic admission, authority and receiver history.
+
+An explicit input selects the closed catalogue v2 journal; omission retains
+v1 unchanged. Resume accepts no new input and uses only the original stored
+expectation, keys and verified source bytes. A caller must create a new invocation
+for a changed body, with separate authorization for any later live attempt.
+No historical journal is migrated or repaired.
+
 `TopologyClient.plan` keeps its existing file and saved-revision paths and adds
 `AuthoredDesiredGraph`. The authored path reads workspace fences, requests exact
 receiver context, reads only required public verifier families, performs the pure

@@ -346,7 +346,9 @@ class JournalStore:
 
 
 def _validate_journal(value: object, operation_ref: str) -> None:
-    if isinstance(value, dict) and value.get("schema") == "cpk.client-catalogue-invocation.v1":
+    if isinstance(value, dict) and value.get("schema") in {
+        "cpk.client-catalogue-invocation.v1", "cpk.client-catalogue-invocation.v2"
+    }:
         from .catalogue import validate_journal
         validate_journal(value, operation_ref)
         return
