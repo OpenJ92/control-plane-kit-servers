@@ -112,8 +112,11 @@ def verify():
         assert files(root) == expected[role]
         evidence["products"][role] = {"candidate_source": evidence["candidate_source"],
             "import_path": str(module.__file__), "source_files": len(expected[role])}
-    distribution("mcp")
+    mcp_dist = distribution("mcp")
+    mcp_module = importlib.import_module("mcp")
+    assert Path(mcp_module.__file__).resolve().parent == Path(mcp_dist.locate_file("mcp")).resolve()
     assert metadata.version("mcp") == cohort["mcp"]
+    evidence["mcp"] = {"version": cohort["mcp"], "import_path": str(mcp_module.__file__), "record_verified": True}
     try:
         metadata.distribution("control-plane-kit-secrets")
     except metadata.PackageNotFoundError:

@@ -66,7 +66,21 @@ if [ "$COHORT" = grandparent ]; then
   [ "$#" = 4 ] || exit 2
   CORE_REVISION=$1 OPERATIONS_REVISION=$2 INTERPRETERS_REVISION=$3 SDK_REVISION=$4
   COHORT_CONTEXT=$(mktemp -d /private/tmp/cpk401-test-context.XXXXXX)
-  trap 'status=$?; trap - 0; rm -rf "$COHORT_CONTEXT"; exit "$status"' 0
+  finish_cohort_context() {
+    status=$?
+    trap - 0
+    cleanup_failed=0
+    rm -rf "$COHORT_CONTEXT" || cleanup_failed=1
+    if [ -e "$COHORT_CONTEXT" ] || [ -L "$COHORT_CONTEXT" ]; then cleanup_failed=1; fi
+    if [ "$cleanup_failed" = 0 ]; then
+      echo 'cohort source context absence verified'
+    else
+      echo 'cohort source context cleanup unverified' >&2
+      [ "$status" != 0 ] || status=1
+    fi
+    exit "$status"
+  }
+  trap finish_cohort_context 0
   git archive "$CANDIDATE_SOURCE" | tar -x -C "$COHORT_CONTEXT"
   mkdir "$COHORT_CONTEXT/cohort"
   printf '%s\n' "$CANDIDATE_SOURCE" > "$COHORT_CONTEXT/cohort/candidate.txt"
