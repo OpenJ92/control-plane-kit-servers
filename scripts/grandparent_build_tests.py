@@ -36,7 +36,7 @@ else: sys.exit(99)
 GIT = r'''
 import sys,tarfile
 a=sys.argv[1:]
-if a[0]=="-C": a=a[2:]
+while a and a[0] in ("-C", "-c"): a=a[2:]
 if a[0]=="rev-parse":
     value=a[1]
     print(value.removesuffix("^{commit}") if value.endswith("^{commit}") else
@@ -107,7 +107,7 @@ class BuildTerminationTests(unittest.TestCase):
                                             capture_output=True, check=False, timeout=20)
                     self.assertNotEqual(result.returncode, 0)
                     receipt = json.loads((records / "result.json").read_text())
-                    self.assertTrue(receipt["build_attempted"])
+                    self.assertTrue(receipt["build_attempted"], result.stderr[-1024:])
                     self.assertEqual(receipt["cleanup"], "unverified")
                     self.assertEqual(receipt["retention"], "unverified")
                     self.assertFalse(receipt["installed_cohort_verified"])
