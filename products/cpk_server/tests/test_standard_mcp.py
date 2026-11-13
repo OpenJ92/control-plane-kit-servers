@@ -170,6 +170,7 @@ class StandardMcpTests(unittest.IsolatedAsyncioTestCase):
         for version in ("2025-11-25", "2026-07-28"):
             for frame in (
                 {"jsonrpc": canary, "id": 1, "method": "tools/list"},
+                {"jsonrpc": "2.0", "id": 1, "method": {"private": canary}},
                 {"jsonrpc": "2.0", "id": {"private": canary}, "method": "tools/list"},
                 {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "get_workspace", "arguments": canary}},
                 {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "get_workspace",
@@ -177,10 +178,20 @@ class StandardMcpTests(unittest.IsolatedAsyncioTestCase):
             ):
                 response = await self.http.post("/mcp", json=frame, headers={
                     "MCP-Protocol-Version": version, "Accept": "application/json, text/event-stream",
-                    "Mcp-Method": frame["method"], "Mcp-Name": "get_workspace"})
+                    "Mcp-Method": frame["method"] if isinstance(frame["method"], str) else "tools/call",
+                    "Mcp-Name": "get_workspace"})
                 self.assertNotIn(canary, response.text)
                 self.assertLess(len(response.content), 8192)
-                self.assertIn(response.status_code, (200, 400))
+                # The official union can classify an invalid-id frame as a
+                # notification. Its accepted response must remain empty and
+                # produce no application dispatch; we do not redefine framing.
+                if isinstance(frame.get("id"), dict):
+                    self.assertEqual(response.status_code, 202)
+                    self.assertEqual(response.content, b"")
+                elif frame["jsonrpc"] != "2.0" or not isinstance(frame["method"], str):
+                    self.assertEqual(response.status_code, 400)
+                else:
+                    self.assertIn(response.status_code, (200, 400))
         self.assertNotIn(canary, stream.getvalue())
         self.assertEqual(sum(len(service.requests) for service in self.host.services.values()), before)
 
@@ -189,7 +200,7 @@ class StandardMcpTests(unittest.IsolatedAsyncioTestCase):
         from control_plane_kit_operations.desired_topology_drafts import DesiredTopologyDraftRevisionRecord
         from control_plane_kit_operations.read_pages import ReadPage
         canary = "synthetic-private-graph-value"
-        instant = "2026-11-12T00:00:00.000000Z"
+        instant = "2026-11-12T00:00:00Z"
         graph = {"name": "saved", "runtimes": {}, "nodes": {}, "edges": {}, "public_ingresses": []}
         saved = GraphVersionRecord("graph-saved", "workspace-a", 7, graph, "fixture", instant)
         # Immutable store-return fixtures only; actual owner projections perform
