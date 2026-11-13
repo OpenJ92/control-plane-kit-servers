@@ -41,6 +41,7 @@ def main() -> int:
             "test_standard_mcp.py", "test_http_mcp_boundaries.py", "test_http_host.py",
             "test_confidential_transport.py", "test_awaited_execution_host.py",
             "test_current_cpk_server_composition.py", "test_revision_history_composition.py",
+            "test_standard_mcp_planning.py",
         ):
             run([sys.executable, "-m", "unittest", "discover", "-s",
                  "products/cpk_server/tests", "-p", name, "-v"])

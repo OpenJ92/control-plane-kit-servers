@@ -23,7 +23,7 @@ import test_http_host as host_fixture
 from test_http_mcp_boundaries import _principal
 
 
-class StandardMcpTests(unittest.IsolatedAsyncioTestCase):
+class StandardMcpFixture:
     async def asyncSetUp(self):
         self.host = host_fixture.CpkHttpHostTests("test_every_operator_contract_reaches_unchanged_auth_boundary")
         self.host.setUp()
@@ -47,6 +47,8 @@ class StandardMcpTests(unittest.IsolatedAsyncioTestCase):
     def client(self, mode="auto", http=None):
         return Client(streamable_http_client("http://127.0.0.1:8080/mcp", http_client=http or self.http), mode=mode)
 
+
+class StandardMcpTests(StandardMcpFixture, unittest.IsolatedAsyncioTestCase):
     async def test_released_client_discovers_and_reads_in_both_protocol_eras(self):
         for mode, protocol in (("auto", "2026-07-28"), ("legacy", "2025-11-25")):
             with self.subTest(mode=mode):
