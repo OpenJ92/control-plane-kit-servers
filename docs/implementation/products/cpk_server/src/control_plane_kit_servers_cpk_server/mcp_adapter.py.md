@@ -22,6 +22,13 @@ each handler; no session caches identity. The SDK owns protocol versions,
 discovery, envelopes, Host/Origin admission and transport lifecycle. Host startup
 enters its manager explicitly. Stateless JSON mode supports both selected eras.
 
+Raw validation/auth failures are converted to fixed rejection data inside their
+catch, but response sending happens only after leaving the catch. ASGI send may
+raise on disconnect; that original send failure propagates without inheriting
+raw validation or credential exception context. The focused failing-send canary
+regression covers validation, authentication and ingress-limit rejection, no
+service dispatch, original error identity and a safe formatted traceback.
+
 The handler validates wire argument shape, route budgets and existing closed
 reobservation framing, then awaits the existing dispatcher. Owner errors retain
 their bounded safe status/message in isError results; no exception text is added.

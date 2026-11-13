@@ -160,16 +160,21 @@ class StandardMcpAdapter:
     async def __call__(self, scope, receive, send):
         request = Request(scope, receive)
         body = None
+        rejection = None
         if request.method == "POST":
             try:
                 body = await collect_request_body(request.stream(), MCP_ENVELOPE_MAX_BYTES)
             except RequestBodyTooLarge:
-                await self._reject(scope, receive, send, 413, "request body too large")
+                rejection = (413, "request body too large")
+            if rejection is not None:
+                await self._reject(scope, receive, send, *rejection)
                 return
         try:
             principal = self.application.authenticate(request.headers)
         except CredentialAuthenticationError:
-            await self._reject(scope, receive, send, 401, "invalid credential")
+            rejection = (401, "invalid credential")
+        if rejection is not None:
+            await self._reject(scope, receive, send, *rejection)
             return
         if body is not None:
             try:
@@ -179,7 +184,10 @@ class StandardMcpAdapter:
                 # reject privately here; the SDK still owns protocol semantics.
                 _MESSAGE.validate_python(decoded, by_name=False)
             except (UnicodeDecodeError, ValueError, ValidationError, RecursionError):
-                await self._reject(scope, receive, send, 400, "invalid JSON request body")
+                rejection = (400, "invalid JSON request body")
+            if rejection is not None:
+                # A send failure must not inherit confidential error context.
+                await self._reject(scope, receive, send, *rejection)
                 return
         scope = {**scope, "state": {**scope.get("state", {}), "cpk_mcp_principal": principal}}
         pending = body

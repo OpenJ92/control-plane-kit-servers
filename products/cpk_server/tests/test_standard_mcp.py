@@ -7,6 +7,7 @@ import logging
 import os
 from pathlib import Path
 import subprocess
+import traceback
 import unittest
 from unittest.mock import MagicMock, Mock
 
@@ -277,3 +278,32 @@ class StandardMcpTests(StandardMcpFixture, unittest.IsolatedAsyncioTestCase):
                 env={**os.environ, "CPK_LEGACY_MCP_PATH": "/unknown"}, capture_output=True, text=True)
             self.assertEqual(result.returncode, 2)
             self.assertEqual(result.stderr.strip(), "unsupported legacy MCP endpoint")
+
+    async def test_rejection_send_failure_preserves_identity_without_private_exception_context(self):
+        canary = "synthetic-private-input-not-for-tracebacks"
+        for body, credential, status in (
+            (json.dumps({"jsonrpc": canary, "id": 1, "method": "tools/list"}).encode(), b"valid-token", 400),
+            (b"{}", canary.encode(), 401),
+            (canary.encode() + b"x" * 1_048_577, b"valid-token", 413),
+        ):
+            with self.subTest(status=status):
+                sent = []
+                failure = OSError("synthetic client disconnect")
+                async def receive():
+                    return {"type": "http.request", "body": body, "more_body": False}
+                async def send(message):
+                    sent.append(message)
+                    raise failure
+                scope = {"type": "http", "http_version": "1.1", "scheme": "http", "method": "POST",
+                    "path": "/mcp", "raw_path": b"/mcp", "query_string": b"",
+                    "server": ("127.0.0.1", 8080), "client": ("127.0.0.1", 12345),
+                    "headers": [(b"host", b"127.0.0.1:8080"), (b"authorization", b"Bearer " + credential),
+                                (b"content-type", b"application/json")], "state": {}}
+                with self.assertRaises(OSError) as caught:
+                    await self.app(scope, receive, send)
+                self.assertIs(caught.exception, failure)
+                self.assertIsNone(caught.exception.__context__)
+                self.assertIsNone(caught.exception.__cause__)
+                self.assertNotIn(canary, "".join(traceback.format_exception(caught.exception)))
+                self.assertEqual(sent[0]["status"], status)
+        self.host.assert_no_service_work()
