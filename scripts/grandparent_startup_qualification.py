@@ -41,7 +41,12 @@ class GrandparentStartupCompositionTests(unittest.TestCase):
         def forbidden(*_args, **_kwargs):
             raise AssertionError("startup composition must not access external state")
 
-        provider = server._SecretProviderComposition(authorized_resolver=SimpleNamespace(resolve=forbidden))
+        custodian = Mock(spec_set=("store", "revoke"))
+        custodian.store.side_effect = forbidden
+        custodian.revoke.side_effect = forbidden
+        provider = server._SecretProviderComposition(
+            authorized_resolver=SimpleNamespace(resolve=forbidden),
+            secret_custodian=custodian)
         with patch.object(server.CpkServerBootstrapConfiguration, "from_environment", return_value=config), \
                 patch.object(server, "read_cpk_control_configuration", return_value=receiving_fixture().config), \
                 patch.object(server, "read_cpk_http_sample_binding", return_value=None), \
@@ -56,6 +61,7 @@ class GrandparentStartupCompositionTests(unittest.TestCase):
                 patch.object(application, "RuntimeInterpreterDispatcher", side_effect=delegate("RuntimeInterpreterDispatcher")), \
                 patch.object(server.uvicorn, "run") as listen:
             self.assertEqual(server.main(), 0)
+        self.assertEqual(custodian.mock_calls, [])
         listen.assert_called_once()
         self.assertIsNotNone(listen.call_args.args[0].state.http_boundary)
         self.assertIsNotNone(listen.call_args.args[0].state.mcp_boundary)
