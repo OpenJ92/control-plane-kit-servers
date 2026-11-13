@@ -27,6 +27,7 @@ from test_http_mcp_boundaries import _principal
 class StandardMcpFixture:
     async def asyncSetUp(self):
         self.host = host_fixture.CpkHttpHostTests("test_every_operator_contract_reaches_unchanged_auth_boundary")
+        self.host.mcp_profile = getattr(self, "mcp_profile", "standard")
         self.host.setUp()
         self.addCleanup(self.host.tearDown)
         self.app = self.host.app
@@ -52,6 +53,7 @@ class StandardMcpFixture:
 class StandardMcpLifespanTests(unittest.IsolatedAsyncioTestCase):
     async def test_same_host_restarts_with_authenticated_sdk_reads_in_both_eras(self):
         host = host_fixture.CpkHttpHostTests("test_every_operator_contract_reaches_unchanged_auth_boundary")
+        host.mcp_profile = getattr(self, "mcp_profile", "standard")
         host.setUp()
         self.addCleanup(host.tearDown)
         app = host.app
