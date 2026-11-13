@@ -11,6 +11,14 @@ on:
         description: OCI tag to publish
         required: true
         default: extract-f
+      inspect_cpk_accounts:
+        description: Separately approved account inspection after CPK publication, in this same job
+        type: boolean
+        default: false
+      inspect_retained_cpk:
+        description: Inspect only the fixed retained CPK image; skip all publication
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -18,13 +26,130 @@ permissions:
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    if: ${{ !inputs.inspect_retained_cpk }}
+    runs-on: ${{ inputs.inspect_cpk_accounts && 'ubuntu-24.04' || 'ubuntu-latest' }}
+    timeout-minutes: ${{ inputs.inspect_cpk_accounts && 30 || 360 }}
+    env:
+      CPK_SERVERS_POLICY_IMAGE: ${{ inputs.inspect_cpk_accounts && 'docker.io/library/python@sha256:cd89c30eda26ee911a4611b18680086e0ea42e6f5f8cbe653d07fa7958c9cec8' || 'python:3.14-slim' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: ${{ !inputs.inspect_cpk_accounts }}
+      - name: Admit optional account inspection selection
+        env:
+          PRODUCT_ID: ${{ inputs.product_id }}
+          INSPECT_CPK_ACCOUNTS: ${{ inputs.inspect_cpk_accounts }}
+        run: |
+          if [ "$INSPECT_CPK_ACCOUNTS" = true ] && [ "$PRODUCT_ID" != cpk-server ]; then
+            echo 'Account inspection requires the separately approved CPK producer' >&2
+            exit 1
+          fi
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Publish product image
-        run: sh scripts/publish_product_image.sh "${{ inputs.product_id }}" "${{ inputs.tag }}"
+        id: publish
+        if: inputs.product_id != 'cloudflared-connector-managed'
+        env:
+          PRODUCT_ID: ${{ inputs.product_id }}
+          IMAGE_TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: sh scripts/publish_product_image.sh "$PRODUCT_ID" "$IMAGE_TAG"
+      - name: Inspect published CPK accounts using borrowed controller
+        id: accounts
+        if: inputs.inspect_cpk_accounts && steps.publish.outcome == 'success'
+        env:
+          # This job retains packages:write for publication; no downscoping claim.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUBLISHED_REFERENCE: ${{ steps.publish.outputs.root_reference }}
+          PRODUCER_SOURCE: ${{ steps.publish.outputs.root_source }}
+        run: |
+          bash scripts/acquire_root_accounts.sh "$PUBLISHED_REFERENCE" "$PRODUCER_SOURCE" \
+            "$RUNNER_TEMP/cpk-account-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+      - name: Retain bounded publication and inspection outcome
+        if: always() && inputs.inspect_cpk_accounts && steps.publish.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpk-account-outcome-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/cpk-account-${{ github.run_id }}-${{ github.run_attempt }}/public/status.json
+            ${{ runner.temp }}/cpk-account-${{ github.run_id }}-${{ github.run_attempt }}/public/provenance.json
+          retention-days: 30
+          if-no-files-found: warn
+      - name: Retain account candidate only after inspection and owned cleanup
+        if: inputs.inspect_cpk_accounts && steps.accounts.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpk-account-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cpk-account-${{ github.run_id }}-${{ github.run_attempt }}/public/account-seal.json
+          retention-days: 30
+          if-no-files-found: error
+      - name: Prepare managed release evidence
+        id: managed-evidence
+        if: inputs.product_id == 'cloudflared-connector-managed'
+        env:
+          IMAGE_TAG: ${{ inputs.tag }}
+        run: python3 products/cloudflared_connector/release_evidence.py prepare
+      - name: Publish selected managed product
+        if: inputs.product_id == 'cloudflared-connector-managed'
+        env:
+          ATTEMPT: ${{ steps.managed-evidence.outputs.attempt }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 products/cloudflared_connector/release_evidence.py run --attempt "$ATTEMPT"
+      - name: Project managed release evidence
+        if: always() && inputs.product_id == 'cloudflared-connector-managed' && steps.managed-evidence.outcome == 'success'
+        env:
+          ATTEMPT: ${{ steps.managed-evidence.outputs.attempt }}
+        run: python3 products/cloudflared_connector/release_evidence.py export --attempt "$ATTEMPT"
+      - name: Retain closed managed release evidence
+        if: always() && inputs.product_id == 'cloudflared-connector-managed' && steps.managed-evidence.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: managed-release-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.managed-evidence.outputs.attempt }}/public/managed-release-evidence.json
+          retention-days: 30
+          if-no-files-found: error
+  inspect-retained-cpk:
+    if: ${{ inputs.inspect_retained_cpk }}
+    permissions:
+      contents: read
+      packages: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Inspect the separately approved retained CPK publication
+        id: accounts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CPK_INSPECT_RETAINED_CPK: ${{ inputs.inspect_retained_cpk }}
+          CPK_INSPECT_CPK_ACCOUNTS: ${{ inputs.inspect_cpk_accounts }}
+          # Prior publication: run41001898450/job123887981624, not this job.
+          PUBLISHED_REFERENCE: ghcr.io/openj92/control-plane-kit-servers/cpk-server@sha256:371b562697a3d1f3ad60c29dd09026133865c0bf19f719c9929b0ca757d93b71
+          PRODUCER_SOURCE: 3079b70da4207a6a4a2079138e218a9debfc6fd0
+        run: |
+          bash scripts/acquire_root_accounts.sh --retained "$GITHUB_SHA" \
+            "$PUBLISHED_REFERENCE" "$PRODUCER_SOURCE" \
+            "$RUNNER_TEMP/cpk-account-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+      - name: Retain bounded prior-publication and inspection outcome
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpk-account-diagnostic-outcome-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/cpk-account-${{ github.run_id }}-${{ github.run_attempt }}/public/status.json
+            ${{ runner.temp }}/cpk-account-${{ github.run_id }}-${{ github.run_attempt }}/public/provenance.json
+          retention-days: 30
+          if-no-files-found: warn
+      - name: Retain candidate only after inspection and observed owned cleanup
+        if: steps.accounts.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpk-account-diagnostic-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cpk-account-${{ github.run_id }}-${{ github.run_attempt }}/public/account-seal.json
+          retention-days: 30
+          if-no-files-found: error

@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 from typing import Mapping
 
+from control_plane_kit_core.configuration import ConfigurationArtifact
 from control_plane_kit_core.identity import WorkspaceGrant
 from control_plane_kit_core.policies import PolicyScope
 from control_plane_kit_core.products import ProductDescriptorCodec
@@ -26,6 +27,7 @@ from control_plane_kit_core.verification import HttpCheck
 
 from .installation import (
     ControlAuthCodec,
+    DynamicWorkspaceAuthority, WORKSPACE_AUTHORITY_PATH, WORKSPACE_AUTHORITY_SCHEMA,
     DockerCpkInstallation, ExternalInstallationIngress, compose_docker_cpk_installation,
 )
 
@@ -67,6 +69,7 @@ class BootstrapReason(Enum):
     PLAN_REFUSED = "plan-refused"
     DRIVER_REFUSED = "driver-refused"
     MATERIAL_REFUSED = "material-refused"
+    DYNAMIC_BOOTSTRAP_INCOMPLETE = "dynamic-bootstrap-incomplete"
     PRIOR_ACQUISITION = "prior-acquisition"
     STATE_REFUSED = "state-refused"
     DAEMON_CONTEXT_MISMATCH = "daemon-context-mismatch"
@@ -74,6 +77,7 @@ class BootstrapReason(Enum):
     DRIVER_USER_UNSUPPORTED = "driver-user-unsupported"
     RESOURCE_CONFLICT = "resource-conflict"
     PRODUCT_IMAGE_UNVERIFIED = "product-image-unverified"
+    CONFIGURATION_USER_UNSUPPORTED = "configuration-user-unsupported"
     PROVIDER_IDENTITY_MISMATCH = "provider-identity-mismatch"
 
 
@@ -83,6 +87,7 @@ _FIXED_REASONS = {
     "bootstrap driver image identity is invalid": BootstrapReason.DRIVER_REFUSED,
     "bootstrap driver image does not match the plan": BootstrapReason.DRIVER_REFUSED,
     "bootstrap material could not be verified": BootstrapReason.MATERIAL_REFUSED,
+    "dynamic bootstrap initialization and setup are unavailable": BootstrapReason.DYNAMIC_BOOTSTRAP_INCOMPLETE,
     "bootstrap receipt exists; inspect without redispatch": BootstrapReason.PRIOR_ACQUISITION,
     "bootstrap prior acquisition requires investigation": BootstrapReason.PRIOR_ACQUISITION,
     "bootstrap acquisition is already locked": BootstrapReason.PRIOR_ACQUISITION,
@@ -92,6 +97,7 @@ _FIXED_REASONS = {
     "bootstrap driver requires its explicit root helper image": BootstrapReason.DRIVER_USER_UNSUPPORTED,
     "bootstrap resource already exists; adoption is not supported": BootstrapReason.RESOURCE_CONFLICT,
     "bootstrap canonical image could not be verified": BootstrapReason.PRODUCT_IMAGE_UNVERIFIED,
+    "bootstrap configuration mode is unreadable by recipient": BootstrapReason.CONFIGURATION_USER_UNSUPPORTED,
     "bootstrap provider identity differs from selected image configuration": BootstrapReason.PROVIDER_IDENTITY_MISMATCH,
 }
 
@@ -205,7 +211,15 @@ def _installation(document):
         raise RootBootstrapError("bootstrap input schema is invalid")
     item = document["installation"]
     _closed(item, {"installation_id", "workspace_id", "runtime_authority", "runtime_access",
-        "products", "references", "workspace_grants", "provider_endpoint_ref", "external_endpoint"}, {"control_auth"})
+        "products", "references", "workspace_grants", "provider_endpoint_ref", "external_endpoint"},
+        {"control_auth", "managed_health_configuration", "website", "workspace_authority"})
+    workspace_authority = None
+    if "workspace_authority" in item:
+        authority = item["workspace_authority"]
+        _closed(authority, {"mode", "private_intent_sha256"})
+        if authority["mode"] != "dynamic-v1" or item["workspace_grants"] != []:
+            raise RootBootstrapError("bootstrap dynamic workspace input is invalid")
+        workspace_authority = DynamicWorkspaceAuthority(authority["private_intent_sha256"])
     _closed(item["products"], {"cpk", "postgres", "secrets"})
     _closed(item["references"], {"control_credential", "postgres_password", "custody_root_key",
         "provider_credentials_document", "provider_client_credential", "provider_bootstrap_credential_ref"})
@@ -215,17 +229,73 @@ def _installation(document):
         grants.append(WorkspaceGrant(grant["workspace_id"], tuple(PolicyScope(s) for s in grant["scopes"])))
     products = {name: ProductDescriptorCodec().decode_document(value)
                 for name, value in item["products"].items()}
-    return DockerCpkInstallation(
+    website = {}
+    if "website" in item:
+        from control_plane_kit_core.products import OciImageReferenceCodec
+        from .installation import DockerCpkWebsite
+        selected = item["website"]
+        _closed(selected, {"image", "external_endpoint", "host_binding"})
+        website["website"] = DockerCpkWebsite(image=OciImageReferenceCodec().decode(selected["image"]),
+            ingress=ExternalInstallationIngress(selected["external_endpoint"]))
+    installation = DockerCpkInstallation(
         installation_id=item["installation_id"], workspace_id=item["workspace_id"],
         runtime_authority=RuntimeAuthorityReference(item["runtime_authority"]),
         runtime_access=RuntimeAuthorityAccessDeliveryCodec().decode(item["runtime_access"]),
         cpk_product=products["cpk"], postgres_product=products["postgres"], secrets_product=products["secrets"],
         workspace_grants=tuple(grants),
+        workspace_authority=workspace_authority,
         control_auth=ControlAuthCodec().decode(item.get("control_auth", {"kind": "single-operator"})),
+        managed_health_configuration=(ConfigurationArtifact.from_descriptor(item["managed_health_configuration"])
+            if "managed_health_configuration" in item else None),
         provider_endpoint_ref=SecretProviderEndpointReference(item["provider_endpoint_ref"]),
         ingress=ExternalInstallationIngress(item["external_endpoint"]), connector_product=None,
         **{name: SecretReference(value) for name, value in item["references"].items()},
+        **website,
     )
+    if website:
+        _complete_control_configuration(installation, products)
+    return installation
+
+
+def _complete_control_configuration(installation, products):
+    """Bind actual public receiving contracts to distinct installation roles."""
+    from control_plane_kit_core.configuration import ConfigurationFileMode, ConfigurationMediaType
+    from control_plane_kit_core.receiver_configuration import select_receiver_node_control_configuration_artifact
+    from control_plane_kit_secrets.control import decode_secrets_control_configuration
+    from .control_configuration import decode_cpk_control_configuration
+
+    receivers = []
+    for role, node_id, socket, decode in (
+            ("cpk", installation.cpk_node_id, "http-api", decode_cpk_control_configuration),
+            ("secrets", installation.secrets_node_id, "control", decode_secrets_control_configuration)):
+        contract = products[role].product.runtime_contract
+        identity, path = role + "-control", "/etc/cpk/" + role + "-server/control.json"
+        candidates = [artifact for artifact in contract.configuration_artifacts
+            if artifact.artifact_id == identity or artifact.target_path == path]
+        if len(candidates) != 1:
+            raise RootBootstrapError("bootstrap receiving configuration is invalid")
+        artifact = select_receiver_node_control_configuration_artifact(
+            artifacts=contract.configuration_artifacts, environment=contract.public_environment,
+            control_surfaces=contract.control_surfaces)
+        if (artifact.artifact_id != identity or artifact.target_path != path
+                or artifact.media_type is not ConfigurationMediaType.JSON
+                or artifact.file_mode is not ConfigurationFileMode.READ_ONLY
+                or len(artifact.content.encode("utf-8")) > 65_536):
+            raise RootBootstrapError("bootstrap receiving configuration is invalid")
+        configuration = decode(artifact.content.encode("utf-8"))
+        target = configuration.target
+        if (contract.control_surfaces != (configuration.declaration.surface,)
+                or target.workspace_id.value != installation.workspace_id
+                or target.runtime_id.value != installation.installation_id + "-docker"
+                or target.node_id.value != node_id or target.provider_socket_name.value != socket):
+            raise RootBootstrapError("bootstrap receiving configuration is invalid")
+        receivers.append(target.receiver_id)
+    from .installation import _managed_postgres_configuration
+    postgres = _managed_postgres_configuration(products["postgres"].product.runtime_contract)
+    if postgres is not None:
+        receivers.append(postgres.target.receiver_id)
+    if len(set(receivers)) != len(receivers):
+        raise RootBootstrapError("bootstrap receiving configuration is invalid")
 
 
 def plan_root_bootstrap(document: Mapping[str, object], *, driver_image_id: str) -> dict:
@@ -238,8 +308,23 @@ def plan_root_bootstrap(document: Mapping[str, object], *, driver_image_id: str)
         _closed(binding, {"address", "port"})
         if binding["address"] != "127.0.0.1" or type(binding["port"]) is not int or not 1024 <= binding["port"] <= 65535:
             raise RootBootstrapError("bootstrap host binding must be explicit loopback")
+        if installation.website is not None:
+            website_binding = document["installation"]["website"]["host_binding"]
+            _closed(website_binding, {"address", "port"})
+            if (website_binding["address"] != "127.0.0.1" or type(website_binding["port"]) is not int
+                    or not 1024 <= website_binding["port"] <= 65535 or website_binding["port"] == binding["port"]):
+                raise RootBootstrapError("bootstrap website binding must be distinct explicit loopback")
         setup = document["setup"]
-        _closed(setup, {"workspace_name", "provider", "secret_references", "image_pull_authorities", "ingress_authorities"})
+        dynamic = installation.workspace_authority is not None
+        _closed(setup, {"workspace_name", "provider", "secret_references", "image_pull_authorities", "ingress_authorities"}
+                | ({"administration"} if dynamic else set()))
+        if dynamic:
+            summary = setup["administration"]
+            _closed(summary, {"permission_grant_count", "management_grant"})
+            if (type(summary["permission_grant_count"]) is not int
+                    or not 1 <= summary["permission_grant_count"] <= 32
+                    or type(summary["management_grant"]) is not bool):
+                raise RootBootstrapError("bootstrap administration summary is invalid")
         _text(setup["workspace_name"])
         provider = setup["provider"]
         _closed(provider, {"provider_id", "allowed_reference_prefixes", "allowed_intents"})
@@ -303,12 +388,20 @@ def plan_root_bootstrap(document: Mapping[str, object], *, driver_image_id: str)
             nodes.append({"node_id": node_id, "name": name, "aliases": [node_id],
                 "image": product.image.execution_reference,
                 "environment": node.non_secret_environment(), "secret_files": files,
+                "configuration_files": [{"name": f"{name}-configuration-{hashlib.sha256(artifact.target_path.encode()).hexdigest()[:16]}",
+                    "target": artifact.target_path, "artifact": artifact.descriptor(),
+                    "sha256": hashlib.sha256(artifact.content.encode()).hexdigest()}
+                    for artifact in node.configuration_artifacts],
                 "http_checks": [{"check": check.descriptor(), "url": f"http://{node_id}:{next(port.container_port for port in product.runtime_contract.provider_ports if port.provider_socket == check.provider_socket)}{check.path}"}
                                 for check in product.runtime_contract.verification.checks if isinstance(check, HttpCheck)],
                 "local_docker_access": ({"socket": "/var/run/docker.sock", "supplementary_group": "inspected-socket-gid"}
                                         if node.runtime_authority_deliveries else None),
                 "data_volumes": [{"name": f"{name}-{mount.resource_id}", "target": mount.target_path}
                                  for mount in product.runtime_contract.retained_data_mounts]})
+            if dynamic and node_id == installation.cpk_node_id:
+                nodes[-1]["installer_files"] = [{"role": "workspace-authority",
+                    "schema": WORKSPACE_AUTHORITY_SCHEMA, "target": WORKSPACE_AUTHORITY_PATH,
+                    "name": f"{name}-workspace-authority", "lifetime": "installation"}]
         plan = {"schema": "cpk.root-bootstrap.plan.v1", "input": document,
             "driver_image_id": driver_image_id, "graph": GraphDescriptorCodec().encode(graph),
             "resources": {"network": {"name": topology.root.network_name}, "labels": labels, "nodes": nodes},
@@ -319,9 +412,22 @@ def plan_root_bootstrap(document: Mapping[str, object], *, driver_image_id: str)
             "setup_routes": ["command.workspace.create", "command.secret-provider.register",
                 *(["command.secret-reference.register"] * len(setup["secret_references"])),
                 "command.runtime-authority.register", "command.runtime-authority-delivery.register",
-                *(["command.product.import"] * len(document["installation"]["products"])),
+                *(["command.product.import"] * (len(document["installation"]["products"]) + (installation.website is not None))),
                 *(["command.image-pull-authority.register"] * len(setup["image_pull_authorities"])),
                 *(["command.ingress-authority.register"] * len(setup["ingress_authorities"]))]}
+        if installation.website is not None:
+            plan["website_node_id"] = installation.website_node_id
+            plan["host_bindings"] = [
+                {"node_id": installation.cpk_node_id, "provider_socket": "http-api", "container_port": 8080, **binding},
+                {"node_id": installation.website_node_id, "provider_socket": "http", "container_port": 8080, **website_binding}]
+            website_document = ProductDescriptorCodec().encode_document(products[installation.website_node_id])
+            plan["setup_products"] = [*document["installation"]["products"].values(), json.loads(website_document.content)]
+        if dynamic:
+            plan["setup_routes"][:1] = ["command.workspace-administration.create",
+                *(["command.workspace-permission.grant"] * summary["permission_grant_count"])]
+            if summary["management_grant"]:
+                position = plan["setup_routes"].index("command.runtime-authority.register") + 1
+                plan["setup_routes"].insert(position, "command.managed-runtime-access.grant")
         plan["digest"] = hashlib.sha256(canonical(plan)).hexdigest()
         return plan
     except RootBootstrapError:
@@ -355,3 +461,11 @@ def apply_root_bootstrap(plan, *, expected_digest: str, driver_image_id: str,
 def inspect_root_bootstrap(*, state_directory: Path) -> dict:
     from .bootstrap_runtime import inspect_root
     return inspect_root(Path(state_directory))
+
+
+def inspect_root_initialization(plan, *, expected_digest: str, driver_image_id: str,
+                                index_path: Path, state_directory: Path) -> dict:
+    with bootstrap_stage(BootstrapStage.VERIFY_PLAN):
+        plan = verified_plan(plan, expected_digest, driver_image_id)
+    from .bootstrap_initialization_runtime import inspect_initialization
+    return inspect_initialization(plan, Path(index_path), Path(state_directory))

@@ -1,11 +1,16 @@
-FROM python:3.12-slim
+FROM python:3.12-slim AS default-base
 
 ENV PIP_DEFAULT_TIMEOUT=120 \
     PIP_RETRIES=5
 
 WORKDIR /app
 
-COPY pyproject.toml README.md AGENTS.md GIT-FLOW.md test.sh Dockerfile.test ./
+# The owning workflow-shell targets use its real jq manifest admission.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends jq \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml README.md AGENTS.md GIT-FLOW.md test.sh bootstrap.sh Dockerfile.test ./
 COPY .github ./.github
 COPY coordination ./coordination
 COPY coordinates ./coordinates
@@ -19,3 +24,20 @@ COPY tests ./tests
 RUN python -m pip install .
 
 CMD ["python", "scripts/run_all_tests.py"]
+
+# Default installation supplies only the public third-party closure to this
+# explicit test cohort. No inherited CPK distribution may satisfy its imports.
+FROM default-base AS grandparent
+COPY cohort /opt/cpk-test-cohort
+RUN python scripts/test_cohort.py seal \
+    && python -m pip uninstall -y control-plane-kit-servers control-plane-kit-secrets \
+       control-plane-kit-core control-plane-kit-operations control-plane-kit-interpreters control-plane-kit-server-sdk \
+    && python -m pip install "setuptools==80.9.0" "wheel==0.45.1" \
+    && python -m pip install --no-deps --no-build-isolation \
+       /opt/cpk-test-cohort/core /opt/cpk-test-cohort/operations \
+       /opt/cpk-test-cohort/interpreters /opt/cpk-test-cohort/sdk
+ENV PYTHONPATH=/app/src:/app/products/cpk_server/src:/app/products/cpk_local_gateway/src:/app/products/hello_server/src \
+    CPK_TEST_COHORT=grandparent
+RUN python scripts/test_cohort.py verify
+
+FROM default-base AS default

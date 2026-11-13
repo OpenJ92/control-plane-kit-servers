@@ -8,7 +8,13 @@ from time import monotonic
 from control_plane_kit_core.operations.lifecycle import ActivityEventKind, ActivityRunStatus
 
 from .catalogue import _bounded_json, _overview, domain, integer, obj, text
-from .journal import JOURNAL_SCHEMA, SAVED_JOURNAL_SCHEMA, JournalError, canonical_operation_ref
+from .journal import (
+    JOURNAL_SCHEMA,
+    PREPARATION_JOURNAL_SCHEMA,
+    SAVED_JOURNAL_SCHEMA,
+    JournalError,
+    canonical_operation_ref,
+)
 from .transport import ClientAuthorizationError, ClientTransportError
 from .workflow import ClientInputError
 
@@ -122,6 +128,8 @@ def _requested(journal):
         result.update(source="saved", draft_id=request["draft_id"], revision=request["revision"],
                       expected_current=request["expected_current"], expected_desired=request["expected_desired"],
                       desired_generation=request["expected_desired_graph_revision"])
+    elif schema == PREPARATION_JOURNAL_SCHEMA:
+        result.update(source="authored")
     elif schema != JOURNAL_SCHEMA:
         intent = journal["intent"]
         result.update(source="catalogue", kind=intent["kind"], draft_id=intent.get("draft_id"),

@@ -80,6 +80,7 @@ class ServerRepositoryPolicyTests(unittest.TestCase):
                 "cloudflared-connector",
                 "postgres-server",
                 "secrets-server",
+                "managed-website",
             ],
         )
         self.assertEqual(
@@ -95,6 +96,7 @@ class ServerRepositoryPolicyTests(unittest.TestCase):
                 "descriptor-published",
                 "descriptor-published",
                 "descriptor-published",
+                "source-implementation",
             ],
         )
         self.assertEqual(

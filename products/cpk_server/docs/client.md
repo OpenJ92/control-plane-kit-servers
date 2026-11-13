@@ -58,6 +58,139 @@ cpk --profile PROFILE plan --resume OPERATION_REFERENCE
 This can only replay the exact persisted request key and the request rebuilt
 from the same verified desired-file bytes. It never issues a fresh prepare key.
 
+## Author complete receiver graphs
+
+Receiver authoring is an explicit graph-file mode. The input remains an ordinary
+typed deployment graph: callers name receiver scopes and artifact slots rather
+than writing receiver IDs, verifier-key JSON, or gateway route JSON by hand.
+For example, graph B adds fresh Hello Y, retains the accepted G and X receivers,
+and replaces G's complete health-route group:
+
+```bash
+cpk --profile PROFILE plan graph-b.json \
+  --introduce-receiver hello-y internal hello-control /etc/cpk/hello/control.json \
+  --replace-gateway-health-routes gateway control \
+  --gateway-health-target gateway control hello-x hello-x internal http://hello-x:8000 \
+  --gateway-health-target gateway control hello-y hello-y internal http://hello-y:8000
+```
+
+An omitted gateway group preserves the graph file's artifact bytes. A declared
+group is a complete replacement. To remove the last target in graph C, declare
+the group with no target entries:
+
+```bash
+cpk --profile PROFILE plan graph-c.json \
+  --replace-gateway-health-routes gateway control
+```
+
+The client reads the authenticated, pinned receiver-authoring context for the
+current workspace. Every receiver-capable graph scope must resolve exactly as
+accepted current, explicitly continued pending, or explicitly fresh. An exact
+pending introduction is selected with all three parts:
+
+```bash
+cpk --profile PROFILE plan graph-b.json \
+  --pending-authoring-draft DRAFT_ID \
+  --pending-authoring-head 3 \
+  --continue-pending-receiver hello-y internal
+```
+
+Fresh non-gateway receivers receive a new 32-hex identity and only the public
+verifier families required by their declared control surface: surface-read for
+every receiver, control for variables, and health-read for declared health
+reads. V1 variable-only and V2 health-bearing declarations retain their exact
+profile. Fresh gateway
+receivers refuse because the existing gateway transit trust also embeds the
+receiver target and this command has no trust-authoring input. Retained and
+pending scopes use the owner-returned exact wrapper artifact by default. Explicit gateway
+route intent is interpreted only through the gateway product's typed
+constructors; the client defines no competing route format.
+
+To refresh the public verifier families of one current receiver, select its
+scope explicitly:
+
+```bash
+cpk --profile PROFILE plan desired-graph.json \
+  --refresh-receiver-verifiers hello-x internal
+```
+
+The Python equivalent is `AuthoredDesiredGraph(path,
+verifier_refreshes=(ReceiverScope("hello-x", "internal"),))`. The client reads
+the registered public verifier families required by that receiver's declaration.
+It preserves the receiver identity, declaration, artifact slot and unrelated
+graph values. Equal families preserve the exact original artifact bytes and
+source digest, even when their JSON formatting differs from canonical output.
+Changed families replace only the wrapper content and clear its old source
+digest. Ordinary authoring does not refresh keys implicitly.
+
+Only qualified current scopes are eligible. Duplicate selections and overlap
+with introductions or pending continuations refuse locally. The repeatable flag
+and tuple describe authoring intent; they do not promise simultaneous runtime
+acceptance of multiple refreshes or mixed changes. The supported runtime witness
+refreshes one retained workload receiver. Core and Operations still decide plan
+eligibility and current authority; the resulting plan needs the usual explicit
+approval and apply. This command does not generate, activate, retire or revoke
+keys. Preparation replay uses the same immutable journaled graph described below,
+without selecting keys again.
+
+To author a health declaration change for a current workload, put the registered
+successor reference and desired control surface in the graph and select the
+scope explicitly. Supply the complete gateway route group, including self and
+every retained peer, with their existing aliases and origins:
+
+```bash
+cpk --profile PROFILE plan desired-graph.json \
+  --update-receiver-declaration hello-x internal \
+  --replace-gateway-health-routes gateway control \
+  --gateway-health-target gateway control gateway-self gateway control http://gateway:8000 \
+  --gateway-health-target gateway control hello-x hello-x internal http://hello-x:8000
+```
+
+This example assumes the group contains only self and hello-x. Add every peer
+when the current group has more targets. Python callers use
+`declaration_updates=(ReceiverScope("hello-x", "internal"),)` with explicit
+`gateway_health_replacements` on `AuthoredDesiredGraph`.
+
+The client validates the original installed binding before rewriting the desired
+declaration. Both declarations must be health-only V2 and retain readiness.
+Identity, verifier families and configuration slot stay fixed; unchanged
+declarations preserve exact bytes and source digest. An actual change resets
+source provenance to the newly authored content digest and requires a route group
+containing the affected workload
+and gateway self. Gateway-own updates, pending/fresh scopes and same-scope
+verifier refresh refuse. The client does not register a product or refresh keys.
+Core and Operations enforce the supported same-image successor pair, complete
+route preservation and current authority through normal plan/approval/apply.
+This client feature alone does not prove an installed image supports both
+declarations; the qualified Hello declaration-family artifact and coupled public
+Docker witness provide that evidence when accepted.
+
+Before the first prepare request, the client writes the complete canonical graph
+as an immutable `0600` `<operation>.graph.json` file, fsyncs it, then creates the
+`topology-client-preparation.v1` journal and records the pending request. A lost
+response or process restart first verifies that the original graph-file
+path/size/SHA has not changed, then reconstructs the request exclusively from
+that immutable artifact. It does not decode the original source, generate a new
+identity, reread authoring context or verifier keys, or rebuild routes. Missing,
+changed, non-private, non-regular, symlinked, noncanonical, or digest-mismatched
+prepared material refuses without redispatch.
+
+The returned authoring context must repeat all five requested workspace fence
+fields exactly before verifier keys are read or a fresh identity is generated.
+Workspace, node, and socket coordinates use Core's graph-reference grammar;
+pending draft IDs retain the client's opaque public-coordinate grammar. The
+stricter lowercase grammar remains local to gateway route target IDs.
+
+An interrupted write before journal publication may leave one bounded orphan
+graph artifact. It is inspectable local residue, not evidence of server
+acceptance or runtime effects; removing local preparation files never removes
+runtime resources. The operation lock prevents concurrent mutation of one
+operation reference, while server-side desired-CAS and receiver admission remain
+authoritative. Authoring contains public keys and public origins only—never
+private signing keys, bearer credentials, provider secrets, or installed-state
+claims. A prepared graph expresses desired intent; it does not prove routing,
+readiness, approval, execution, cleanup, or current convergence.
+
 ## Apply
 
 Every apply names the local operation and repeats the exact reviewed plan:
@@ -128,7 +261,7 @@ cpk --profile PROFILE overview
 ```
 
 Use the dependency coordinates in that checkout's `pyproject.toml`: Core and
-Operations are pinned to `e3d773d022fd36e727ee1d94f4c4396b25c722c6`.
+Operations are pinned to `250d65e19dc748ebe840f705be77eb732dab3cb3`.
 The distribution installs the existing `cpk` entrypoint and its normal server
 and interpreter dependencies; no second client package is needed. Configuration
 and private credential-file roles are the same as above. These installation

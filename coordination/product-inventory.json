@@ -98,6 +98,16 @@
       "descriptor_issue": "OpenJ92/control-plane-kit#1201",
       "status": "descriptor-published",
       "role": "encrypted durable secret provider with retained custody and explicit non-recursive root bootstrap"
+    },
+    {
+      "product_id": "managed-website",
+      "target_directory": "products/website_server",
+      "dockerfile": "products/website_server/Dockerfile",
+      "implementation_issue": "OpenJ92/control-plane-kit-servers#190",
+      "image_issue": "OpenJ92/control-plane-kit-servers#190",
+      "descriptor_issue": "OpenJ92/control-plane-kit-servers#378",
+      "status": "source-implementation",
+      "role": "one OCI with visitor HTTP and protected SDK local-index readiness; published-image and deployment qualification pending"
     }
   ],
   "bootstrap_reserved_products": [

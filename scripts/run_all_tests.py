@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import subprocess
 import sys
+import os
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,8 +35,44 @@ def product_test_roots() -> tuple[Path, ...]:
 
 
 def main() -> int:
+    if os.environ.get("CPK_TEST_COHORT") == "grandparent":
+        run([sys.executable, "scripts/test_cohort.py", "verify"])
     run([sys.executable, "scripts/apply_coordinates.py", "--check"])
     run([sys.executable, "-m", "compileall", "-q", "src", "products", "scripts", "tests"])
+    if sys.argv[1:] == ["--mcp-source-tests"]:
+        run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_cohort_manifest.py", "-v"])
+        for name in (
+            "test_standard_mcp.py", "test_http_mcp_boundaries.py", "test_http_host.py",
+            "test_confidential_transport.py", "test_awaited_execution_host.py",
+            "test_current_cpk_server_composition.py", "test_revision_history_composition.py",
+            "test_standard_mcp_planning.py",
+            "test_grandparent_mcp.py",
+            "test_managed_configuration_selection.py",
+            "test_control_receiver.py", "test_managed_health_configuration.py",
+            "test_process_composition.py",
+            "test_secret_provider_bootstrap.py", "test_operations_application_factory.py",
+            "test_managed_health_bridge.py", "test_managed_native_connection.py", "test_dynamic_effect_composition.py",
+        ):
+            run([sys.executable, "-m", "unittest", "discover", "-s",
+                 "products/cpk_server/tests", "-p", name, "-v"])
+        run([sys.executable, "-m", "unittest", "discover", "-s", "products/cpk_local_gateway/tests",
+             "-p", "test_wrapper_artifact_provenance.py", "-v"])
+        if os.environ.get("CPK_TEST_COHORT") == "grandparent":
+            os.environ["PYTHONPATH"] = os.environ.get("PYTHONPATH", "") + ":/app/products/cpk_server/tests:/opt/cpk-test-cohort/operations:/app/scripts"
+            run([sys.executable, "-m", "unittest", "scripts.grandparent_http_planning_qualification", "-v"])
+            for name in ("test_actual_nominal_route_and_check_preserve_selected_values",
+                         "test_real_native_registration_supplies_same_objects_to_service_options",
+                         "test_structural_prepared_value_and_crossed_registered_gateway_refuse"):
+                run([sys.executable, "-m", "unittest",
+                     "scripts.managed_verification_composition_qualification.ManagedCompositionTests." + name, "-v"])
+            run([sys.executable, "-m", "unittest", "scripts.grandparent_startup_qualification", "-v"])
+            for name in ("test_optional_samples_bind_original_metadata_and_preserve_ordinary_contract",
+                         "test_actual_main_reads_optional_public_companion_before_operations"):
+                run([sys.executable, "-m", "unittest",
+                     "scripts.grandparent_sample_admission_qualification.GrandparentSampleAdmissionTests." + name, "-v"])
+        return 0
+    if sys.argv[1:]:
+        raise ValueError("unsupported test selection")
     for test_root in (ROOT / "tests", *product_test_roots()):
         run(
             [
