@@ -16,6 +16,13 @@ if [ "${1:-}" = --cohort ]; then
 fi
 
 case "${1:-}" in
+  --grandparent-artifact-source-tests)
+    [ "$#" = 1 ] || exit 2
+    exec sh scripts/grandparent_artifact_source_tests.sh
+    ;;
+  --grandparent-image-plan|--grandparent-image-build)
+    exec sh scripts/grandparent_image_build.sh "$@"
+    ;;
   --postgres-release-tests|--postgres-published-image|--postgres-source-image)
     exec sh scripts/postgres_artifact_shell.sh "$@"
     ;;

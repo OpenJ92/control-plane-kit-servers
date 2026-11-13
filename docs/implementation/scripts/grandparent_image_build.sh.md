@@ -1,0 +1,3 @@
+# grandparent_image_build.sh
+
+The existing23bcab grandparent build owner is adapted to accepted product0610, frozen four-package exports, the explicitly retained Interpreters archive, locked public wheels and fresh proposal identities. The plan mode reads only public package metadata from the immutable cached base; the build mode requires that reviewed clean-source/lock/base observation and independently refuses version deltas before install. OCI/ownership/uncertain-child retention remain their historical owners. Neither mode establishes normal startup, replacement or installed-client acceptance. See docs/grandparent-mcp-artifact-packet.md.

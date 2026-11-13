@@ -1,0 +1,33 @@
+FROM cpk-grandparent-base
+
+USER 0
+COPY cohort /opt/cpk-grandparent-build
+COPY products/cpk_server/grandparent-cohort.json /usr/share/cpk-grandparent/cohort.json
+COPY products/cpk_server/tests/grandparent_image_check.py /usr/share/cpk-grandparent/check.py
+COPY products/cpk_server/mcp-grandparent-public-lock.json /usr/share/cpk-grandparent/public-lock.json
+COPY products/cpk_server/mcp-grandparent-public-requirements.txt /usr/share/cpk-grandparent/public-requirements.txt
+COPY products/cpk_server/mcp-grandparent-build-requirements.txt /usr/share/cpk-grandparent/build-requirements.txt
+# Remove the inherited product code before copying the exact tested source.
+RUN rm -rf /app/products/cpk_server/src /app/products/cpk_local_gateway/src
+COPY products/cpk_server/src /app/products/cpk_server/src
+COPY products/cpk_local_gateway/src /app/products/cpk_local_gateway/src
+RUN python /usr/share/cpk-grandparent/check.py require-base /usr/share/cpk-grandparent/public-lock.json \
+    && python /usr/share/cpk-grandparent/check.py seal \
+    && PIP_CONFIG_FILE=/dev/null python -m pip install --no-cache-dir --no-index --no-deps \
+       --only-binary=:all: --require-hashes --force-reinstall \
+       -r /usr/share/cpk-grandparent/build-requirements.txt \
+    && PIP_CONFIG_FILE=/dev/null python -m pip install --no-cache-dir --no-index --no-deps \
+       --only-binary=:all: --require-hashes --force-reinstall \
+       -r /usr/share/cpk-grandparent/public-requirements.txt \
+    && python -m pip install --no-cache-dir --no-index --no-deps \
+       --no-build-isolation --force-reinstall \
+       /opt/cpk-grandparent-build/core /opt/cpk-grandparent-build/operations \
+       /opt/cpk-grandparent-build/interpreters /opt/cpk-grandparent-build/sdk \
+    && python /usr/share/cpk-grandparent/check.py verify \
+    && rm -rf /opt/cpk-grandparent-build
+
+USER 10001
+ENV CPK_MCP_PROFILE=grandparent-read-only-v1
+WORKDIR /app
+EXPOSE 8080
+CMD ["python", "-m", "control_plane_kit_servers_cpk_server.server"]
