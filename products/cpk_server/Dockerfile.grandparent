@@ -1,5 +1,6 @@
 FROM cpk-grandparent-base
 
+ENV CPK_MCP_PROFILE=grandparent-read-only-v1
 USER 0
 COPY cohort /opt/cpk-grandparent-build
 COPY products/cpk_server/grandparent-cohort.json /usr/share/cpk-grandparent/cohort.json
@@ -27,7 +28,6 @@ RUN python /usr/share/cpk-grandparent/check.py require-base /usr/share/cpk-grand
     && rm -rf /opt/cpk-grandparent-build
 
 USER 10001
-ENV CPK_MCP_PROFILE=grandparent-read-only-v1
 WORKDIR /app
 EXPOSE 8080
 CMD ["python", "-m", "control_plane_kit_servers_cpk_server.server"]
