@@ -49,6 +49,34 @@ class StandardMcpFixture:
         return Client(streamable_http_client("http://127.0.0.1:8080/mcp", http_client=http or self.http), mode=mode)
 
 
+class StandardMcpLifespanTests(unittest.IsolatedAsyncioTestCase):
+    async def test_same_host_restarts_with_authenticated_sdk_reads_in_both_eras(self):
+        host = host_fixture.CpkHttpHostTests("test_every_operator_contract_reaches_unchanged_auth_boundary")
+        host.setUp()
+        self.addCleanup(host.tearDown)
+        app = host.app
+        for cycle in range(2):
+            with self.subTest(cycle=cycle):
+                async with app.router.lifespan_context(app):
+                    async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app),
+                            base_url="http://127.0.0.1:8080",
+                            headers={"Authorization": "Bearer valid-token"}) as http:
+                        denied = await http.post("/mcp", content=b"{}",
+                            headers={"Authorization": "Bearer rejected"})
+                        self.assertEqual(denied.status_code, 401)
+                        expected = await http.get("/workspaces/workspace-a")
+                        self.assertEqual(expected.status_code, 200)
+                        for mode in ("auto", "legacy"):
+                            async with Client(streamable_http_client(
+                                    "http://127.0.0.1:8080/mcp", http_client=http), mode=mode) as client:
+                                tools = {tool.name for tool in (await client.list_tools()).tools}
+                                self.assertIn("get_workspace", tools)
+                                result = await client.call_tool("get_workspace", {"workspace_id": "workspace-a"})
+                                self.assertFalse(result.is_error)
+                                self.assertEqual(result.structured_content["route_id"], expected.json()["route_id"])
+                                self.assertEqual(result.structured_content["principal"], expected.json()["principal"])
+
+
 class StandardMcpTests(StandardMcpFixture, unittest.IsolatedAsyncioTestCase):
     async def test_released_client_discovers_and_reads_in_both_protocol_eras(self):
         for mode, protocol in (("auto", "2026-07-28"), ("legacy", "2025-11-25")):
