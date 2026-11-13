@@ -1,10 +1,14 @@
 """Catalogue composition laws; scripted public replies, no Operations engine."""
 import copy
+from contextlib import redirect_stderr, redirect_stdout
+from hashlib import sha256
+from io import StringIO
 import json
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 from uuid import UUID
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -47,7 +51,8 @@ class CatalogueTransport:
             from control_plane_kit_servers_cpk_server.client import ClientTransportError
             raise ClientTransportError()
         if route_id == "read.workspace":
-            result = {"workspace": {"workspace_id": "workspace-a", "desired_graph_id": "graph-old",
+            result = {"workspace": {"workspace_id": "workspace-a", "current_graph_id": "current",
+                                   "current_realized_projection_id": "cp", "desired_graph_id": "graph-old",
                                    "desired_realized_projection_id": "dp", "desired_graph_revision": 4}}
         elif route_id == "command.operation-session.start":
             result = {"session_id": "session-a", "action_id": "start-a", "action_type": "start-operation-session",
@@ -107,6 +112,133 @@ class CatalogueClientTests(unittest.TestCase):
 
     def journal(self, result, state="state"):
         return json.loads((self.root / state / "invocations" / (result.operation_ref + ".json")).read_text())
+
+    def receiver_expectation(self):
+        return {"current_graph_id": "current", "current_realized_projection_id": "cp",
+                "desired_graph_id": "graph-old", "desired_realized_projection_id": "dp",
+                "desired_graph_revision": 4}
+
+    def test_reviewed_receiver_expectation_is_copied_persisted_and_forwarded(self):
+        for kind in ("save", "revise", "select"):
+            with self.subTest(kind=kind):
+                state = "receiver-" + kind
+                transport = CatalogueTransport()
+                supplied = self.receiver_expectation()
+                if kind == "save":
+                    supplied.update(desired_graph_id=None, desired_realized_projection_id=None, desired_graph_revision=0)
+                reviewed = dict(supplied)
+                def before(call):
+                    retained = json.loads(next((self.root / state / "invocations").glob("*.json")).read_text())
+                    self.assertEqual(retained["schema"], "cpk.client-catalogue-invocation.v2")
+                    self.assertEqual(retained["intent"]["receiver_lifecycle"], reviewed)
+                    supplied["current_graph_id"] = "caller-changed"
+                transport.before_mutation = before
+                client = self.client(transport, state)
+                if kind == "save":
+                    result = client.draft_save(self.path, receiver_lifecycle=supplied)
+                elif kind == "revise":
+                    result = client.draft_revise("draft-a", self.path, 1, receiver_lifecycle=supplied)
+                else:
+                    result = client.draft_select("draft-a", 1, receiver_lifecycle=supplied)
+                self.assertEqual(result.status, "recorded")
+                call = transport.calls[-1]
+                self.assertEqual(call["payload"]["receiver_lifecycle"], reviewed)
+                if kind != "select":
+                    self.assertEqual(call["payload"]["graph"], self.graph)
+                retained = self.journal(result, state)
+                self.assertEqual(retained["intent"]["receiver_lifecycle"], reviewed)
+                body_hash = sha256(json.dumps(call["payload"], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+                self.assertEqual(retained["draft_request"]["body_sha256"], body_hash)
+                self.assertNotIn("receiver_lifecycle", result.descriptor())
+
+    def test_receiver_replay_preserves_original_pins_and_completed_receipt_is_historical(self):
+        cases = (("save", "command.operation-session.start"),
+                 ("save", "command.desired-topology-draft.create"),
+                 ("select", "command.desired-topology-draft.select"))
+        for index, (kind, lost) in enumerate(cases):
+            with self.subTest(kind=kind, lost=lost):
+                state = "receiver-loss-" + str(index)
+                transport = CatalogueTransport(lose=lost)
+                supplied = self.receiver_expectation()
+                client = self.client(transport, state)
+                result = (client.draft_save(self.path, receiver_lifecycle=supplied) if kind == "save"
+                          else client.draft_select("draft-a", 1, receiver_lifecycle=supplied))
+                self.assertEqual(result.status, "attention-required")
+                supplied["current_graph_id"] = "new-unreviewed-observation"
+                if kind == "select":
+                    transport.session_status = "closed"
+                resumed = self.client(transport, state).draft_resume(result.operation_ref)
+                self.assertEqual(resumed.status, "recorded")
+                repeated = [call for call in transport.calls if call["route_id"] == lost]
+                self.assertEqual(len(repeated), 2)
+                self.assertEqual(repeated[0], repeated[1])
+                self.assertEqual(self.journal(resumed, state)["intent"]["receiver_lifecycle"], self.receiver_expectation())
+                before = len(transport.calls)
+                self.assertEqual(self.client(transport, state).draft_resume(result.operation_ref).status, "recorded")
+                self.assertEqual(len(transport.calls), before)
+
+    def test_invalid_and_stale_receiver_expectations_stop_before_mutation(self):
+        from control_plane_kit_servers_cpk_server.client import ClientInputError
+        changes = ({"extra": "unreviewed"}, {"current_realized_projection_id": None},
+                   {"desired_realized_projection_id": None}, {"desired_graph_revision": True},
+                   {"desired_graph_id": None, "desired_realized_projection_id": None},
+                   {"desired_graph_revision": 0}, {"current_graph_id": "bad/reference"})
+        for index, changed in enumerate(changes):
+            with self.subTest(changed=changed):
+                transport = CatalogueTransport()
+                with self.assertRaises(ClientInputError):
+                    self.client(transport, "invalid-receiver-" + str(index)).draft_save(
+                        self.path, receiver_lifecycle={**self.receiver_expectation(), **changed})
+                self.assertEqual(transport.calls, [])
+        transport = CatalogueTransport()
+        with self.assertRaises(ClientInputError):
+            self.client(transport, "stale-receiver").draft_select("draft-a", 1,
+                receiver_lifecycle={**self.receiver_expectation(), "current_realized_projection_id": "stale"})
+        self.assertEqual([call["route_id"] for call in transport.calls], ["read.workspace"])
+        self.assertFalse((self.root / "stale-receiver").exists())
+
+    def test_receiver_body_tampering_refuses_replay_and_v1_is_never_upgraded(self):
+        from control_plane_kit_servers_cpk_server.client import JournalError
+        old = CatalogueTransport(lose="command.desired-topology-draft.create")
+        legacy = self.client(old, "legacy").draft_save(self.path)
+        self.assertEqual(self.client(old, "legacy").draft_resume(legacy.operation_ref).status, "recorded")
+        legacy_record = self.journal(legacy, "legacy")
+        self.assertEqual(legacy_record["schema"], "cpk.client-catalogue-invocation.v1")
+        self.assertNotIn("receiver_lifecycle", legacy_record["intent"])
+        self.assertTrue(all("receiver_lifecycle" not in call["payload"] for call in old.calls))
+        legacy_record["intent"]["receiver_lifecycle"] = self.receiver_expectation()
+        legacy_path = self.root / "legacy" / "invocations" / (legacy.operation_ref + ".json")
+        legacy_path.write_text(json.dumps(legacy_record))
+        before = len(old.calls)
+        with self.assertRaises(JournalError):
+            self.client(old, "legacy").draft_resume(legacy.operation_ref)
+        self.assertEqual(len(old.calls), before)
+        transport = CatalogueTransport(lose="command.desired-topology-draft.create")
+        result = self.client(transport, "bound-receiver").draft_save(self.path, receiver_lifecycle=self.receiver_expectation())
+        retained = self.journal(result, "bound-receiver")
+        retained["intent"]["receiver_lifecycle"]["current_graph_id"] = "changed-reviewed-body"
+        path = self.root / "bound-receiver" / "invocations" / (result.operation_ref + ".json")
+        path.write_text(json.dumps(retained))
+        before = len(transport.calls)
+        self.assertEqual(self.client(transport, "bound-receiver").draft_resume(result.operation_ref).status, "attention-required")
+        self.assertEqual(len(transport.calls), before)
+
+    def test_cli_receiver_input_is_explicit_and_cannot_override_resume(self):
+        from control_plane_kit_servers_cpk_server.client import cli
+        supplied = self.root / "reviewed-receiver.json"
+        supplied.write_text(json.dumps(self.receiver_expectation()))
+        transport = CatalogueTransport()
+        client = self.client(transport, "cli-receiver")
+        output = StringIO()
+        with patch.object(cli, "load_profile", return_value=client.profile), patch.object(cli, "TopologyClient", return_value=client), redirect_stdout(output):
+            code = cli.main(["--profile", "test", "draft", "save", str(self.path),
+                             "--receiver-lifecycle", str(supplied), "--json"])
+        self.assertEqual(code, 0)
+        self.assertEqual(transport.calls[-1]["payload"]["receiver_lifecycle"], self.receiver_expectation())
+        self.assertNotIn("receiver_lifecycle", output.getvalue())
+        with redirect_stderr(StringIO()), self.assertRaises(SystemExit):
+            cli._parser().parse_args(["--profile", "test", "draft", "resume",
+                                     str(UUID(int=99, version=4)), "--receiver-lifecycle", str(supplied)])
 
     def test_reads_are_bounded_public_observations_without_graph_title_or_mutation(self):
         from control_plane_kit_servers_cpk_server.client.cli import _parser

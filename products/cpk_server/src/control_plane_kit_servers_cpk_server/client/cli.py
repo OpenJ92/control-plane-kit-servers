@@ -11,7 +11,8 @@ from typing import Sequence
 from .journal import JournalError
 from .profile import ClientConfigurationError, load_profile
 from .transport import ClientAuthorizationError, ClientTransportError
-from .workflow import ClientInputError, ClientResult, SavedDesiredRevision, TopologyClient, _unique_object
+from .workflow import ClientInputError, ClientResult, SavedDesiredRevision, TopologyClient, _unique_object, _read_desired
+from .catalogue import _receiver_lifecycle
 from .authoring import (
     AuthoredDesiredGraph,
     GatewayHealthRoutes,
@@ -48,11 +49,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             elif arguments.draft_command == "show":
                 result = client.draft_show(arguments.draft_id, arguments.revision)
             elif arguments.draft_command == "save":
-                result = client.draft_save(arguments.graph, title=arguments.title)
+                result = client.draft_save(arguments.graph, title=arguments.title,
+                    receiver_lifecycle=_catalogue_receiver_lifecycle(arguments.receiver_lifecycle))
             elif arguments.draft_command == "revise":
-                result = client.draft_revise(arguments.draft_id, arguments.graph, arguments.expected_head)
+                result = client.draft_revise(arguments.draft_id, arguments.graph, arguments.expected_head,
+                    receiver_lifecycle=_catalogue_receiver_lifecycle(arguments.receiver_lifecycle))
             elif arguments.draft_command == "select":
-                result = client.draft_select(arguments.draft_id, arguments.revision)
+                result = client.draft_select(arguments.draft_id, arguments.revision,
+                    receiver_lifecycle=_catalogue_receiver_lifecycle(arguments.receiver_lifecycle))
             else:
                 result = client.draft_resume(arguments.operation_ref)
         elif arguments.command == "plan":
@@ -182,6 +186,8 @@ def _parser() -> argparse.ArgumentParser:
             command.add_argument("--revision", required=True, type=_catalogue_integer)
         if name in {"save", "revise"}:
             command.add_argument("graph", type=Path)
+        if name in {"save", "revise", "select"}:
+            command.add_argument("--receiver-lifecycle", type=Path, metavar="PATH")
         if name == "save":
             command.add_argument("--title")
         if name == "revise":
@@ -192,6 +198,16 @@ def _parser() -> argparse.ArgumentParser:
             command.add_argument("--limit", default=50, type=_catalogue_integer)
             command.add_argument("--cursor", type=_catalogue_cursor)
     return parser
+
+
+def _catalogue_receiver_lifecycle(path):
+    if path is None:
+        return None
+    try:
+        _source, value = _read_desired(path)
+        return _receiver_lifecycle(value)
+    except ClientInputError:
+        raise ClientInputError("receiver lifecycle input is invalid") from None
 
 
 def _catalogue_integer(value):

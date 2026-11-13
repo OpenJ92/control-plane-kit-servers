@@ -2,15 +2,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Mapping
 from hashlib import sha256
 import json
 from pathlib import Path
+
+from control_plane_kit_core.node_control import NodeControlGraphReference, NodeControlGraphReferenceRole
 
 from .journal import JournalError, canonical_operation_ref
 from .transport import ClientAuthorizationError, ClientTransportError
 from .workflow import ClientInputError, MAXIMUM_CURSOR_BYTES, _read_desired
 
 SCHEMA = "cpk.client-catalogue-invocation.v1"
+RECEIVER_SCHEMA = "cpk.client-catalogue-invocation.v2"
+RECEIVER_FIELDS = frozenset({"current_graph_id", "current_realized_projection_id", "desired_graph_id",
+                            "desired_realized_projection_id", "desired_graph_revision"})
 MAXIMUM_INTEGER = 2**63 - 1
 SESSION_STATES = {"open", "closed", "cancelled"}
 RUN_STATES = {"claimed", "running", "paused", "succeeded", "failed", "compensating",
@@ -129,11 +135,36 @@ def _source(value):
     hash_text(value["sha256"])
 
 
-def _intent(value):
+def _receiver_lifecycle(value):
+    """Copy the public owner input; expectations never grant admission."""
+    try:
+        if not isinstance(value, Mapping):
+            fail()
+        value = obj(dict(value), RECEIVER_FIELDS)
+        for name in RECEIVER_FIELDS - {"desired_graph_revision"}:
+            reference = value[name]
+            if reference is None and name.startswith("desired_"):
+                continue
+            if type(reference) is not str:
+                fail()
+            NodeControlGraphReference(NodeControlGraphReferenceRole.GRAPH_REVISION, reference)
+        integer(value["desired_graph_revision"], 0)
+        if ((value["desired_graph_id"] is None) != (value["desired_realized_projection_id"] is None)
+                or (value["desired_graph_id"] is None) != (value["desired_graph_revision"] == 0)):
+            fail()
+        return value
+    except (ClientInputError, TypeError, ValueError, KeyError, RecursionError):
+        raise ClientInputError("receiver lifecycle expectation is invalid") from None
+
+
+def _intent(value, *, receiver=False):
     value = obj(value)
     kind = domain(value.get("kind"), ROUTES)
     canonical_operation_ref(value.get("idempotency_key"))
     expected = {"kind", "idempotency_key"}
+    if receiver:
+        expected.add("receiver_lifecycle")
+        _receiver_lifecycle(value.get("receiver_lifecycle"))
     if kind in {"create", "revise"}:
         expected.add("source")
         _source(value.get("source"))
@@ -151,6 +182,10 @@ def _intent(value):
         integer(value.get("revision"))
         integer(value.get("expected_desired_graph_revision"), 0, MAXIMUM_INTEGER - 1)
         _pair(value.get("expected_desired_graph_id"), value.get("expected_desired_realized_projection_id"))
+        if receiver:
+            for name in ("desired_graph_id", "desired_realized_projection_id", "desired_graph_revision"):
+                if value["expected_" + name] != value["receiver_lifecycle"][name]:
+                    fail()
     obj(value, expected)
 
 
@@ -165,6 +200,8 @@ def _pair(graph, projection):
 def _request_body(record, graph=None):
     intent = record["intent"]
     result = {"session_id": record["start_response"]["session_id"], "idempotency_key": intent["idempotency_key"]}
+    if record["schema"] == RECEIVER_SCHEMA:
+        result["receiver_lifecycle"] = dict(intent["receiver_lifecycle"])
     if intent["kind"] in {"create", "revise"}:
         result["graph"] = graph
         if intent["kind"] == "create":
@@ -208,13 +245,13 @@ def validate_journal(value, operation_ref):
     """Validate only the concrete catalogue record; deployment v1 stays separate."""
     try:
         obj(value, {"schema", "operation_ref", "target", "intent", "start_request", "start_response", "draft_request", "draft_response", "last_result"})
-        if value["schema"] != SCHEMA or value["operation_ref"] != operation_ref:
+        if value["schema"] not in {SCHEMA, RECEIVER_SCHEMA} or value["operation_ref"] != operation_ref:
             fail()
         canonical_operation_ref(operation_ref)
         target = obj(value["target"], {"endpoint_sha256", "workspace_id"})
         hash_text(target["endpoint_sha256"])
         text(target["workspace_id"])
-        _intent(value["intent"])
+        _intent(value["intent"], receiver=value["schema"] == RECEIVER_SCHEMA)
         start = obj(value["start_request"], {"idempotency_key", "title"})
         canonical_operation_ref(start["idempotency_key"])
         if start["title"] != "Catalogue " + value["intent"]["kind"] or start["idempotency_key"] == value["intent"]["idempotency_key"]:
@@ -307,8 +344,12 @@ def _resume(client, record):
     return result
 
 
-def mutate(client, kind, *, path=None, title=None, draft_id=None, expected_head_revision=None, revision_number=None):
+def mutate(client, kind, *, path=None, title=None, draft_id=None, expected_head_revision=None, revision_number=None,
+           receiver_lifecycle=None):
+    expectation = None if receiver_lifecycle is None else _receiver_lifecycle(receiver_lifecycle)
     intent = {"kind": kind, "idempotency_key": client._new_key()}
+    if expectation is not None:
+        intent["receiver_lifecycle"] = expectation
     if kind in {"create", "revise"}:
         source, graph = _read_desired(path)
         intent["source"] = source
@@ -322,13 +363,17 @@ def mutate(client, kind, *, path=None, title=None, draft_id=None, expected_head_
         workspace = obj(obj(_call(client, "read.workspace")).get("workspace"))
         if workspace.get("workspace_id") != client.profile.workspace_id:
             fail()
+        if expectation is not None:
+            observed = _receiver_lifecycle({name: workspace.get(name) for name in RECEIVER_FIELDS})
+            if observed != expectation:
+                fail()
         intent.update(draft_id=draft_id, revision=revision_number,
             expected_desired_graph_id=workspace.get("desired_graph_id"),
             expected_desired_realized_projection_id=workspace.get("desired_realized_projection_id"),
             expected_desired_graph_revision=workspace.get("desired_graph_revision"))
-    _intent(intent)
+    _intent(intent, receiver=expectation is not None)
     operation_ref = canonical_operation_ref(client._identity_factory())
-    record = {"schema": SCHEMA, "operation_ref": operation_ref,
+    record = {"schema": SCHEMA if expectation is None else RECEIVER_SCHEMA, "operation_ref": operation_ref,
         "target": {"endpoint_sha256": client.profile.target_digest, "workspace_id": client.profile.workspace_id},
         "intent": intent, "start_request": {"idempotency_key": client._new_key(), "title": "Catalogue " + kind},
         "start_response": None, "draft_request": None, "draft_response": None, "last_result": None}
@@ -341,7 +386,7 @@ def resume(client, operation_ref):
     operation_ref = canonical_operation_ref(operation_ref)
     with client.journal.mutation_lock(operation_ref):
         record = client.journal.read(operation_ref)
-        if record.get("schema") != SCHEMA or record["target"] != {"endpoint_sha256": client.profile.target_digest, "workspace_id": client.profile.workspace_id}:
+        if record.get("schema") not in {SCHEMA, RECEIVER_SCHEMA} or record["target"] != {"endpoint_sha256": client.profile.target_digest, "workspace_id": client.profile.workspace_id}:
             raise ClientInputError("catalogue operation target is invalid")
         return _resume(client, record)
 

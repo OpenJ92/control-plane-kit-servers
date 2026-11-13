@@ -165,16 +165,21 @@ class ReportTests(unittest.TestCase):
         from test_topology_client_catalogue import CatalogueTransport
         self.client.transport = CatalogueTransport()
         catalogue_operation = self.client.draft_save(path, title="SECRET-TITLE")
+        receiver_operation = self.client.draft_save(path, title="SECRET-TITLE", receiver_lifecycle={
+            "current_graph_id": "current", "current_realized_projection_id": "cp",
+            "desired_graph_id": "graph-old", "desired_realized_projection_id": "dp", "desired_graph_revision": 4})
         self.client.transport = self.transport
         self.transport.calls.clear()
-        value = self.client.report([file_operation.operation_ref, catalogue_operation.operation_ref]).descriptor()
-        file_row, catalogue_row = value["operations"]
+        value = self.client.report([file_operation.operation_ref, catalogue_operation.operation_ref,
+                                    receiver_operation.operation_ref]).descriptor()
+        file_row, *catalogue_rows = value["operations"]
         self.assertEqual(file_row["requested"]["data"]["source"], "file")
         self.assertIsNone(file_row["requested"]["data"]["revision"])
-        requested = catalogue_row["requested"]["data"]
-        self.assertEqual(requested["source"], "catalogue")
-        self.assertIsNone(requested["revision"])
-        self.assertEqual(requested["receipt_revision"], {"draft_id": "draft-a", "revision": 1, "graph_id": "graph-new"})
+        for catalogue_row in catalogue_rows:
+            requested = catalogue_row["requested"]["data"]
+            self.assertEqual(requested["source"], "catalogue")
+            self.assertIsNone(requested["revision"])
+            self.assertEqual(requested["receipt_revision"], {"draft_id": "draft-a", "revision": 1, "graph_id": "graph-new"})
         self.assertNotIn(str(path), json.dumps(value))
         self.assertNotIn("SECRET", json.dumps(value))
         self.assertTrue(all(call["route_id"].startswith("read.") for call in self.transport.calls))
