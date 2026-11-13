@@ -198,3 +198,12 @@ packaged PostgreSQL smoke: explicit fixture selection once, one ordinary SDK
 preparation, injected response loss, reconnect and owner queries. Its known
 single-fixture association is not a general concurrency/recovery guarantee.
 That packaged witness and the final combined owning gate are not yet run.
+
+The first ordinary gate at `e778fbc` passed all 1,369 unit tests and reached the
+new packaged witness, then stopped: the deliberate response-loss exception also
+escaped the SDK client context teardown. Reconnect assertions were not reached,
+so no durable-outcome qualification follows from that attempt. The narrow
+test-only successor catches only its dedicated injection subtype across the
+whole context; unmatched errors propagate. A focused SDK lifecycle regression
+and renewed packaged/owning execution still require terminal evidence. No
+product behavior, source pins or response-loss assertions are weakened.

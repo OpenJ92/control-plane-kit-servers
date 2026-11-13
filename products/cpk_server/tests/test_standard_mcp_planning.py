@@ -1,7 +1,9 @@
 """MCP command composition; actual durable proof stays in packaged owner gate."""
 from dataclasses import replace
+import json
 import unittest
 from unittest.mock import MagicMock, Mock
+import httpx2
 
 from control_plane_kit_core.identity import WorkspaceGrant
 from control_plane_kit_core.operations import ControlPlaneServiceRole
@@ -106,3 +108,37 @@ class StandardMcpPlanningTests(fixture.StandardMcpFixture, unittest.IsolatedAsyn
             self.assertEqual(http.status_code, 200)
             self.assertEqual(result.structured_content, http.json())
             self.assertEqual(result.structured_content["items"], [])
+
+    async def test_response_loss_is_handled_across_sdk_teardown_without_hiding_other_errors(self):
+        class FixtureResponseLost(httpx2.ReadError):
+            """Fixture-only marker, distinct from other transport failures."""
+
+        async def exercise(error):
+            count, dropped, handled = 0, False, False
+            async def lose_response(response):
+                nonlocal count, dropped
+                frame = json.loads(response.request.content) if response.request.method == "POST" else {}
+                if frame.get("method") == "tools/call" and frame.get("params", {}).get("name") == "prepare_deployment":
+                    count += 1
+                    await response.aread()
+                    dropped = True
+                    raise error
+            try:
+                async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=self.app),
+                        headers={"Authorization": "Bearer valid-token"}, event_hooks={"response": [lose_response]}) as http:
+                    async with self.client(http=http) as client:
+                        await client.list_tools()
+                        await client.call_tool("prepare_deployment", self.arguments())
+                        self.fail("response loss was not reported")
+            except* FixtureResponseLost:
+                self.assertTrue(dropped)
+                handled = True
+            self.assertEqual(count, 1)
+            return handled
+
+        self.assertTrue(await exercise(FixtureResponseLost("synthetic fixture response loss")))
+        self.assertEqual(self.program.prepare.call_count, 1)
+        self.program.prepare.reset_mock()
+        with self.assertRaises(BaseExceptionGroup):
+            await exercise(httpx2.ReadError("unrelated transport failure"))
+        self.assertEqual(self.program.prepare.call_count, 1)

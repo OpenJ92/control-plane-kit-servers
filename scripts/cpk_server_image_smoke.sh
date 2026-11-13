@@ -622,6 +622,9 @@ if sys.argv[2] == "/mcp/legacy":
     async def standard_mcp():
         count, dropped = 0, False
 
+        class FixtureResponseLost(httpx2.ReadError):
+            """Only this deliberate injection is accepted during SDK teardown."""
+
         async def lose_response(response):
             nonlocal count, dropped
             frame = json.loads(response.request.content) if response.request.method == "POST" else {}
@@ -630,20 +633,21 @@ if sys.argv[2] == "/mcp/legacy":
                 assert response.status_code == 200
                 await response.aread()
                 dropped = True
-                raise httpx2.ReadError("synthetic fixture response loss")
+                raise FixtureResponseLost("synthetic fixture response loss")
 
         headers = {"Authorization": "Bearer valid-token"}
-        async with httpx2.AsyncClient(headers=headers, event_hooks={"response": [lose_response]}) as http:
-            async with Client(streamable_http_client(base + "/mcp", http_client=http)) as client:
-                assert client.protocol_version == "2026-07-28"
-                tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-                assert not tools["prepare_deployment"].annotations.read_only_hint
-                try:
+        try:
+            async with httpx2.AsyncClient(headers=headers, event_hooks={"response": [lose_response]}) as http:
+                async with Client(streamable_http_client(base + "/mcp", http_client=http)) as client:
+                    assert client.protocol_version == "2026-07-28"
+                    tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+                    assert not tools["prepare_deployment"].annotations.read_only_hint
                     await client.call_tool("prepare_deployment", arguments)
-                except Exception:
-                    assert dropped, "preparation failed before the response-loss injection"
-                else:
                     raise AssertionError("response loss was not reported")
+        except* FixtureResponseLost:
+            # SDK task groups can surface the injected leaf on context exit.
+            # Every unmatched exception propagates; there is no broad catch.
+            assert dropped, "preparation failed before the response-loss injection"
         assert count == 1, "ambiguous preparation was redispatched"
 
         # This is one controlled fixture with no concurrent preparation. It is
