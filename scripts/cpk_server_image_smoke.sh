@@ -588,6 +588,91 @@ assert detail["history"] == {"scope": "source-or-target-sessions-and-exact-targe
 status, message = mcp("read.desired-topology-draft-revision", identity)
 assert status == 200 and message["result"] == detail, (status, message)
 print("packaged empty revision history HTTP/MCP composition passed")
+
+if sys.argv[2] == "/mcp/legacy":
+    # Current source only. The historical baseline has neither this adapter nor
+    # the released SDK. Reuse this smoke's real isolated PostgreSQL application.
+    import asyncio
+    import httpx2
+    from mcp import Client
+    from mcp.client.streamable_http import streamable_http_client
+
+    status, workspace = request("/workspaces/workspace-a")
+    assert status == 200
+    before = workspace["workspace"]
+    # Explicit fixture setup, outside the MCP preparation under test. The tool
+    # never selects or resaves a revision itself.
+    status, selection = request(path + "/select", {
+        "session_id": sys.argv[1], "revision": identity["revision"], "idempotency_key": "mcp-fixture-select",
+        "expected_desired_graph_id": before["desired_graph_id"],
+        "expected_desired_realized_projection_id": before["desired_realized_projection_id"],
+        "expected_desired_graph_revision": before["desired_graph_revision"]})
+    assert status == 200, (status, selection)
+    status, selected = request("/workspaces/workspace-a")
+    assert status == 200
+    observed = selected["workspace"]
+    arguments = {**identity,
+        "expected_current": {"authored_graph_id": observed["current_graph_id"],
+                             "realized_projection_id": observed["current_realized_projection_id"]},
+        "expected_desired": {"authored_graph_id": observed["desired_graph_id"],
+                             "realized_projection_id": observed["desired_realized_projection_id"]},
+        "expected_desired_graph_revision": observed["desired_graph_revision"],
+        "title": "MCP saved revision fixture", "idempotency_key": "mcp-fixture-prepare"}
+
+    async def standard_mcp():
+        count, dropped = 0, False
+
+        async def lose_response(response):
+            nonlocal count, dropped
+            frame = json.loads(response.request.content) if response.request.method == "POST" else {}
+            if frame.get("method") == "tools/call" and frame.get("params", {}).get("name") == "prepare_deployment":
+                count += 1
+                assert response.status_code == 200
+                await response.aread()
+                dropped = True
+                raise httpx2.ReadError("synthetic fixture response loss")
+
+        headers = {"Authorization": "Bearer valid-token"}
+        async with httpx2.AsyncClient(headers=headers, event_hooks={"response": [lose_response]}) as http:
+            async with Client(streamable_http_client(base + "/mcp", http_client=http)) as client:
+                assert client.protocol_version == "2026-07-28"
+                tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+                assert not tools["prepare_deployment"].annotations.read_only_hint
+                try:
+                    await client.call_tool("prepare_deployment", arguments)
+                except Exception:
+                    assert dropped, "preparation failed before the response-loss injection"
+                else:
+                    raise AssertionError("response loss was not reported")
+        assert count == 1, "ambiguous preparation was redispatched"
+
+        # This is one controlled fixture with no concurrent preparation. It is
+        # not a general lookup by idempotency key or a latest-record heuristic.
+        async with httpx2.AsyncClient(headers=headers) as http:
+            async with Client(streamable_http_client(base + "/mcp", http_client=http)) as client:
+                prepared = await client.call_tool("list_desired_topology_draft_revision_preparations", identity)
+                assert not prepared.is_error
+                rows = prepared.structured_content["items"]
+                assert len(rows) == 1 and rows[0]["source"]["state"] == "saved"
+                assert rows[0]["source"]["draft_id"] == identity["draft_id"]
+                assert rows[0]["source"]["revision"] == identity["revision"]
+                session = {"workspace_id": "workspace-a", "session_id": rows[0]["session_id"]}
+                plans = await client.call_tool("list_session_plans", session)
+                assert not plans.is_error and len(plans.structured_content["items"]) == 1
+                plan_id = plans.structured_content["items"][0]["plan_id"]
+                plan = await client.call_tool("get_plan_detail", {"workspace_id": "workspace-a", "plan_id": plan_id})
+                assert not plan.is_error
+                status, http_plan = request("/workspaces/workspace-a/plans/" + quote(plan_id, safe=""))
+                assert status == 200 and plan.structured_content == http_plan
+                assert http_plan["plan"]["desired_graph_id"] == detail["graph_id"]
+                assert http_plan["plan"]["desired_realized_projection_id"] == observed["desired_realized_projection_id"]
+                current = await client.call_tool("get_workspace", {"workspace_id": "workspace-a"})
+                assert not current.is_error and current.structured_content["workspace"] == observed
+                attempts = await client.call_tool("list_desired_topology_draft_revision_attempts", identity)
+                assert not attempts.is_error and attempts.structured_content["items"] == []
+        print("packaged standard MCP saved-revision preparation and response-loss query passed")
+
+    asyncio.run(standard_mcp())
 PY
 
 if [ "$PROFILE" = wrapped-source ]; then

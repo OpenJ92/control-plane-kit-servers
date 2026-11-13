@@ -6,6 +6,15 @@ Core parity supplies stable tool names and route identity. A curated read-only
 catalogue supplies explicit coordinate/query schemas and accurate annotations.
 Operations retains semantic validation, authorization and durable read ownership.
 
+#398 adds only existing `prepare_deployment` for an exact already-selected saved
+revision, plus existing session-plans/approval/delivery reads. Its closed schema
+requires observed lineage/generation and a caller-owned idempotency key. There
+is no caller-supplied session: the existing program owns its creation. Inline
+graphs, implicit selection, approval/execution and unsupported readiness input
+are not part of this tool. This limitation is specific to the pinned Operations
+885513 source; separately deployed cohorts may have different supported inputs.
+Delivery inspection retains its own permission, not merely workspace-read.
+
 The raw wrapper uses the existing bounded collector and strict decoder. It
 authenticates before sensitive decode and places the verified identity in the
 current ASGI request state. The SDK's request context carries that request to

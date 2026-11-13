@@ -149,3 +149,52 @@ disconnects the client after reload; it does not revoke server-side credentials
 or change permissions. Any credential installation, grant or live connection
 verification remains the separately approved #399 boundary. SDK source tests
 alone cannot complete that issue.
+
+## #398 saved-revision planning
+
+The sole command tool is `prepare_deployment`. It reuses
+`CpkServerPlanningService::_prepare_deployment` and the selected Operations
+`DeploymentProgramInterpreter`; the adapter does not orchestrate sessions.
+Inputs are workspace, exact draft/revision, observed current and Desired
+authored/projection pairs, Desired generation, title and the caller's durable
+idempotency key. All are required; no inline graph, session override, selection,
+approval, execution or managed-readiness input is accepted. Owner results retain
+their status, plan ID and any approval-request ID.
+
+This source pins Operations `885513e3`. Its saved preparation requires that exact
+revision to be already selected, and has no managed-verification input. This is
+not a statement about the separate #163 running Operations `70154b66` cohort,
+which supports a different managed-verification path. No pin change or #163
+readiness acceptance follows from this adapter.
+
+The supported operator sequence is:
+
+1. Inspect workspace/current/Desired and the exact saved revision. Compare the
+   immutable identities and generation; public graph descriptors are redacted.
+2. Check required authority: workspace edit and `plan:request`. Delivery
+   admission is a separate owner prerequisite for graphs that require it.
+   `list_runtime_authority_deliveries` exposes existing redacted metadata only
+   with its own `runtime-authority-delivery:read` scope. A denied diagnostic says
+   nothing about whether a delivery exists.
+3. Retain the exact intended fields and domain idempotency key before requesting
+   preparation. A JSON-RPC request ID correlates only one exchange. Neither a
+   tool annotation nor a client prompt grants CPK authority.
+4. Inspect `get_plan_detail` and, when present, `get_approval_detail`. Preparation
+   does not approve or execute. Domain errors preserve existing bounded status
+   and messages; a generic owner conflict is not relabeled with an invented cause.
+5. After reconnect, use known durable references. Existing revision preparations
+   expose associated session IDs, `list_session_plans` exposes their plans, and
+   plan detail/runs/events expose retained outcomes. These are observations,
+   not retry permissions.
+
+There is no new public lookup by preparation idempotency key. If an entire
+response is lost and several preparations could match, association can remain
+ambiguous; do not choose the newest/sole-looking record in general or blindly
+resend. An unavailable result or cancellation is not proof of rollback.
+
+The source tests use actual command construction and permission checks with a
+recording program port. The proposed final durable witness extends the existing
+packaged PostgreSQL smoke: explicit fixture selection once, one ordinary SDK
+preparation, injected response loss, reconnect and owner queries. Its known
+single-fixture association is not a general concurrency/recovery guarantee.
+That packaged witness and the final combined owning gate are not yet run.

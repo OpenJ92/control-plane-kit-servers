@@ -80,7 +80,8 @@ class StandardMcpTests(StandardMcpFixture, unittest.IsolatedAsyncioTestCase):
                         combined = {**expected["path_parameters"], **expected["payload"]}
                         self.assertEqual({key: str(value) for key, value in actual["payload"].items()},
                                          {key: str(value) for key, value in combined.items()})
-                    self.assertTrue(all(tool.annotations.read_only_hint for tool in tools.values()))
+                    self.assertTrue(all(tool.annotations.read_only_hint for name, tool in tools.items() if name != "prepare_deployment"))
+                    self.assertEqual({name for name, tool in tools.items() if not tool.annotations.read_only_hint}, {"prepare_deployment"})
                     self.assertNotIn("provision_secret_material", tools)
                     self.assertIn("redacted", tools["get_desired_graph"].description.lower())
 

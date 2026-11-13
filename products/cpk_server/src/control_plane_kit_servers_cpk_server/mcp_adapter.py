@@ -36,16 +36,19 @@ _READS = {
     "read.desired-topology-draft-revision-attempts": "Read deployment attempt history for an exact saved revision.",
     "read.sessions": "List open sessions; session identity is separate from a transport request ID.",
     "read.session-detail": "Inspect one durable session.",
+    "read.session-plans": "List plans in a known durable session; do not infer an ambiguous operation from latest ordering.",
     "read.plan-detail": "Inspect an existing plan; reading it does not approve or execute it.",
+    "read.approval-detail": "Inspect an existing approval request; reading never approves or executes the plan.",
     "read.plan-runs": "Read runs associated with a plan.",
     "read.run-events": "Read durable events for one run.",
     "read.workspace-permission": "Inspect an explicit principal's workspace permissions; this grants no authority.",
     "read.managed-runtime-assignment": "Inspect an explicit runtime management assignment; this grants no authority.",
+    "read.runtime-authority-deliveries": "Inspect admitted runtime delivery metadata. Requires runtime-authority-delivery:read; denied access does not mean no delivery exists.",
 }
 _PAGED = {
     "read.desired-topology-drafts", "read.desired-topology-draft-revisions",
     "read.desired-topology-draft-revision-preparations", "read.desired-topology-draft-revision-attempts",
-    "read.sessions", "read.plan-runs", "read.run-events",
+    "read.sessions", "read.session-plans", "read.plan-runs", "read.run-events", "read.runtime-authority-deliveries",
 }
 _EXTRA_FIELDS = {
     "read.workspace-permission": {"target": {"type": "object", "description": "Explicit principal identity: issuer, subject_id and kind."}},
@@ -54,6 +57,18 @@ _EXTRA_FIELDS = {
 
 
 def _input_schema(route):
+    if route.route_id == "command.deployment.prepare":
+        lineage = {"type": "object", "properties": {
+            "authored_graph_id": {"type": "string"}, "realized_projection_id": {"type": "string"}},
+            "required": ["authored_graph_id", "realized_projection_id"], "additionalProperties": False}
+        properties = {
+            "workspace_id": {"type": "string"}, "draft_id": {"type": "string"},
+            "revision": {"type": "integer", "minimum": 1},
+            "expected_current": lineage, "expected_desired": lineage,
+            "expected_desired_graph_revision": {"type": "integer", "minimum": 1},
+            "title": {"type": "string"}, "idempotency_key": {"type": "string",
+                "description": "Caller-owned durable key for this exact intent; not the JSON-RPC request ID."}}
+        return {"type": "object", "properties": properties, "required": list(properties), "additionalProperties": False}
     coordinates = re.findall(r"\{([A-Za-z_][A-Za-z0-9_]*)\}", route.path_template)
     properties = {name: {"type": "integer" if name == "revision" else "string"}
                   for name in coordinates}
@@ -92,6 +107,17 @@ class StandardMcpAdapter:
                 output_schema={"type": "object", "description": "Bounded public " + route.response_schema.name + "; owner fields are preserved."},
                 annotations=ToolAnnotations(read_only_hint=True, destructive_hint=False,
                                             idempotent_hint=True, open_world_hint=False))
+        binding = next(item for item in composition.handoff.command_parity.commands
+                       if item.http_route_id == "command.deployment.prepare")
+        route = composition.http_api.route(binding.http_route_id)
+        self.routes[binding.mcp_tool_name] = route
+        self.tools[binding.mcp_tool_name] = Tool(name=binding.mcp_tool_name,
+            description="Request a plan for an already selected saved draft/revision. Requires instance:workspace:edit and plan:request; "
+                "runtime delivery admission may also be required. Supply observed lineage/generation and retain the domain idempotency key. "
+                "CPK owns its session. This does not select/resave a graph, approve or execute. This endpoint does not support "
+                "a managed-verification/readiness-intent input here. After interruption query existing references; ambiguous association stays uncertain.",
+            input_schema=_input_schema(route), output_schema={"type": "object", "description": "Bounded owner preparation result or safe error; preserves plan/approval references."},
+            annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False))
         self.sdk = Server("cpk-server", version="0.1.0", on_list_tools=self.list_tools,
             on_call_tool=self.call_tool, get_tool_input_schema=lambda name: self.tools[name].input_schema if name in self.tools else None,
             instructions="Inspect workspace and exact saved revision first. Graph views are redacted observations, not source exports. "
