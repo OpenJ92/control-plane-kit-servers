@@ -197,14 +197,14 @@ def base_public_inventory(path, *, require_match=False):
     try:
         metadata.distribution("control-plane-kit-secrets")
     except metadata.PackageNotFoundError:
-        pass
+        secrets_absence = "not-installed"
     else:
         raise ValueError("unexpected Secrets distribution")
     result = {"schema": "cpk399.base-public-inventory.v1",
         "status": "review-required" if mismatches else "ready-no-version-changes",
         "public_lock_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
         "platform": "linux/amd64", "python": "CPython3.12", "packages": rows,
-        "mismatches": mismatches, "secrets_distribution": "not-installed",
+        "mismatches": mismatches, "secrets_distribution": secrets_absence,
         "server_started": False, "credential_or_configuration_read": False}
     print(json.dumps(result, sort_keys=True))
     if require_match and mismatches:

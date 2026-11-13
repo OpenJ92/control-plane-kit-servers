@@ -45,6 +45,7 @@ elif a[0]=="archive":
     with tarfile.open(fileobj=sys.stdout.buffer,mode="w|") as out:
         item=tarfile.TarInfo("products/cpk_server")
         item.type=tarfile.DIRTYPE
+        item.mode=0o755
         out.addfile(item)
 elif a[0]=="get-tar-commit-id": print("e438f6e522ad0a23a7acef460be08690f48b2e17")
 elif a[0] in ("hash-object","write-tree"): print("e"*40)
