@@ -128,6 +128,16 @@ there is no guessed end-of-support date.
 
 ## Prepared Codex configuration (#399; not installed)
 
+The #401 grandparent compatibility source introduces an explicit server exposure
+selection, `CPK_MCP_PROFILE=grandparent-read-only-v1`. It registers only workspace,
+Desired, exact saved revision and revision-attempt reads; it does not register
+`prepare_deployment`, and direct command calls cannot bypass this catalogue.
+Unknown profile values refuse configuration. The default `standard` profile
+retains the #400 catalogue and preparation contract. This source selection is
+not a dependency-version guess or an authorization grant. Grandparent managed
+HTTP composition, artifact qualification and installed-client evidence remain
+separate acceptance claims until their owning checks complete.
+
 After source qualification and approval of the actual endpoint, credential
 reference and scopes, a local Codex host can use its normal configuration:
 

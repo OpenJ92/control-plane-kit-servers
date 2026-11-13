@@ -213,9 +213,21 @@ class CpkServerBootstrapConfiguration:
         default=None, repr=False, compare=False)
     workspace_authority: WorkspaceAuthorityConfiguration | None = None
     provider_policy_authority: ProviderPolicyAuthorityConfiguration | None = field(default=None, repr=False)
+    mcp_profile: str = "standard"
 
     @classmethod
     def from_environment(
+        cls,
+        environ: Mapping[str, str] | None = None,
+    ) -> "CpkServerBootstrapConfiguration":
+        values = dict(os.environ if environ is None else environ)
+        profile = values.get("CPK_MCP_PROFILE", "standard")
+        if profile not in ("standard", "grandparent-read-only-v1"):
+            raise BootstrapConfigurationError("MCP exposure profile is invalid")
+        return replace(cls._from_environment_configuration(values), mcp_profile=profile)
+
+    @classmethod
+    def _from_environment_configuration(
         cls,
         environ: Mapping[str, str] | None = None,
     ) -> "CpkServerBootstrapConfiguration":
@@ -651,7 +663,7 @@ def create_app(
         credential_verifier)
     http_boundary = CpkServerHttpProcessBoundary(composition, application)
     mcp_boundary = CpkServerMcpProcessBoundary(composition, application)
-    standard_mcp = StandardMcpAdapter(composition, application)
+    standard_mcp = StandardMcpAdapter(composition, application, profile=config.mcp_profile)
     # A literal ASGI route lets the SDK own HTTP methods and the protocol. The
     # existing fallthrough retains strict unknown/slash handling outside it.
     app.router.routes.insert(0, Route("/mcp", endpoint=standard_mcp))

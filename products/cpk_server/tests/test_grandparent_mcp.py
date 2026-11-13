@@ -11,6 +11,11 @@ READS = {"get_workspace", "get_desired_graph", "get_desired_topology_draft_revis
 class GrandparentMcpTests(transport_fixture.StandardMcpFixture, unittest.IsolatedAsyncioTestCase):
     mcp_profile = "grandparent-read-only-v1"
 
+    async def test_profile_is_explicit_and_unknown_selection_refuses(self):
+        self.assertEqual(self.host.config.mcp_profile, self.mcp_profile)
+        with self.assertRaises(self.host.server.BootstrapConfigurationError):
+            self.host.server.CpkServerBootstrapConfiguration.from_environment({"CPK_MCP_PROFILE": "readonly-typo"})
+
     async def test_four_reads_discover_and_agree_with_http_in_both_eras(self):
         for mode in ("auto", "legacy"):
             async with self.client(mode) as client:

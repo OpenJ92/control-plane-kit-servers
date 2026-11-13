@@ -55,6 +55,8 @@ _EXTRA_FIELDS = {
     "read.workspace-permission": {"target": {"type": "object", "description": "Explicit principal identity: issuer, subject_id and kind."}},
     "read.managed-runtime-assignment": {"runtime_id": {"type": "string"}, "authority_ref": {"type": "string"}},
 }
+_GRANDPARENT_READS = frozenset(("read.workspace", "read.desired-graph",
+    "read.desired-topology-draft-revision", "read.desired-topology-draft-revision-attempts"))
 
 
 def _input_schema(route):
@@ -94,12 +96,16 @@ def _failure(status, message):
 class StandardMcpAdapter:
     """One SDK server; every HTTP request brings its own verified principal."""
 
-    def __init__(self, composition, application):
+    def __init__(self, composition, application, *, profile="standard"):
+        if profile not in ("standard", "grandparent-read-only-v1"):
+            raise ValueError("unsupported MCP exposure profile")
         self.composition, self.application = composition, application
         self.routes, self.tools = {}, {}
         for binding in composition.handoff.projection_parity.projections:
             route = composition.http_api.route(binding.http_route_id)
             if route.route_id not in _READS or route.route_id in HTTP_ONLY_COMMAND_ROUTE_IDS:
+                continue
+            if profile == "grandparent-read-only-v1" and route.route_id not in _GRANDPARENT_READS:
                 continue
             name = binding.mcp_tool_name
             self.routes[name] = route
@@ -108,17 +114,18 @@ class StandardMcpAdapter:
                 output_schema={"type": "object", "description": "Bounded public " + route.response_schema.name + "; owner fields are preserved."},
                 annotations=ToolAnnotations(read_only_hint=True, destructive_hint=False,
                                             idempotent_hint=True, open_world_hint=False))
-        binding = next(item for item in composition.handoff.command_parity.commands
-                       if item.http_route_id == "command.deployment.prepare")
-        route = composition.http_api.route(binding.http_route_id)
-        self.routes[binding.mcp_tool_name] = route
-        self.tools[binding.mcp_tool_name] = Tool(name=binding.mcp_tool_name,
-            description="Request a plan for an already selected saved draft/revision. Requires instance:workspace:edit and plan:request; "
-                "runtime delivery admission may also be required. Supply observed lineage/generation and retain the domain idempotency key. "
-                "CPK owns its session. This does not select/resave a graph, approve or execute. This endpoint does not support "
-                "a managed-verification/readiness-intent input here. After interruption query existing references; ambiguous association stays uncertain.",
-            input_schema=_input_schema(route), output_schema={"type": "object", "description": "Bounded owner preparation result or safe error; preserves plan/approval references."},
-            annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False))
+        if profile == "standard":
+            binding = next(item for item in composition.handoff.command_parity.commands
+                           if item.http_route_id == "command.deployment.prepare")
+            route = composition.http_api.route(binding.http_route_id)
+            self.routes[binding.mcp_tool_name] = route
+            self.tools[binding.mcp_tool_name] = Tool(name=binding.mcp_tool_name,
+                description="Request a plan for an already selected saved draft/revision. Requires instance:workspace:edit and plan:request; "
+                    "runtime delivery admission may also be required. Supply observed lineage/generation and retain the domain idempotency key. "
+                    "CPK owns its session. This does not select/resave a graph, approve or execute. This endpoint does not support "
+                    "a managed-verification/readiness-intent input here. After interruption query existing references; ambiguous association stays uncertain.",
+                input_schema=_input_schema(route), output_schema={"type": "object", "description": "Bounded owner preparation result or safe error; preserves plan/approval references."},
+                annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False))
         self.sdk = Server("cpk-server", version="0.1.0", on_list_tools=self.list_tools,
             on_call_tool=self.call_tool, get_tool_input_schema=lambda name: self.tools[name].input_schema if name in self.tools else None,
             instructions="Inspect workspace and exact saved revision first. Graph views are redacted observations, not source exports. "
