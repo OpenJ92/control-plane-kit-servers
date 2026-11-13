@@ -129,9 +129,10 @@ if [ "$COHORT" = grandparent ]; then
     git -C "$repository" ls-tree -r "$revision" "$source_prefix" > "$COHORT_CONTEXT/cohort/$role.git-tree"
     rm "$COHORT_CONTEXT/$role.tar"
   done
-  for role in server gateway; do
+  for role in server gateway hello; do
     case "$role" in server) source_prefix=products/cpk_server/src/control_plane_kit_servers_cpk_server ;;
-      gateway) source_prefix=products/cpk_local_gateway/src/control_plane_kit_servers_cpk_local_gateway ;; esac
+      gateway) source_prefix=products/cpk_local_gateway/src/control_plane_kit_servers_cpk_local_gateway ;;
+      hello) source_prefix=products/hello_server/src/control_plane_kit_servers_hello_server ;; esac
     git ls-tree -r "$CANDIDATE_SOURCE" "$source_prefix" > "$COHORT_CONTEXT/cohort/$role.git-tree"
   done
   docker build -f "$COHORT_CONTEXT/Dockerfile.test" --target grandparent -t "$IMAGE" "$COHORT_CONTEXT"

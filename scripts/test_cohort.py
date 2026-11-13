@@ -31,6 +31,7 @@ PACKAGES = {
 PRODUCTS = {
     "server": ("control_plane_kit_servers_cpk_server", "products/cpk_server/src/"),
     "gateway": ("control_plane_kit_servers_cpk_local_gateway", "products/cpk_local_gateway/src/"),
+    "hello": ("control_plane_kit_servers_hello_server", "products/hello_server/src/"),
 }
 
 

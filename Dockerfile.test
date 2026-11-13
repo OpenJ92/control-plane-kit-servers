@@ -36,7 +36,7 @@ RUN python scripts/test_cohort.py seal \
     && python -m pip install --no-deps --no-build-isolation \
        /opt/cpk-test-cohort/core /opt/cpk-test-cohort/operations \
        /opt/cpk-test-cohort/interpreters /opt/cpk-test-cohort/sdk
-ENV PYTHONPATH=/app/src:/app/products/cpk_server/src:/app/products/cpk_local_gateway/src \
+ENV PYTHONPATH=/app/src:/app/products/cpk_server/src:/app/products/cpk_local_gateway/src:/app/products/hello_server/src \
     CPK_TEST_COHORT=grandparent
 RUN python scripts/test_cohort.py verify
 

@@ -22,6 +22,10 @@ reconstruct the module tree in owned temporary metadata. The original package
 metadata is unchanged and the normal Docker source/installation checks still
 apply. There is no repository-to-archive fallback or substituted revision.
 
+The unchanged legacy-caller proof imports Hello's renderer. CPK, gateway and
+Hello therefore resolve to their admitted current-HEAD product roots and have
+the same source/origin checks. No inherited product distribution is restored.
+
 The new public regression uses the same real host and released client fixture.
 Its read-only profile requires exactly four reads and refuses direct command
 calls without dispatch; existing two-lifespan behavior is reused. Target-red
