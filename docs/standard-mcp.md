@@ -1,6 +1,6 @@
 # Standard MCP operator connection
 
-Source checkpoint for Servers #396/#397; green validation is pending.
+Source checkpoint for Servers #396/#397; focused source validation passed.
 Accepted base: `2093f5182748a4aca638f362eece0bc4f063a1db`,
 `roadmap/1813-runtime-control`, accepted in PR #395 comment 6840942585.
 The isolated branch is `codex/396-standard-mcp`.
@@ -85,7 +85,22 @@ Apparatus failure stops; no replacement runner or unreviewed repair.
 Meridian is the independent reviewer; North owns coordination and acceptance.
 No Core/Operations semantic changes, new persistence, client journal framework,
 live credential installation, service replacement, publication, #163 mutation
-or #391 restart is included. No executable validation has run at this checkpoint.
+or #391 restart is included. Final combined package validation and installed
+Codex qualification remain outstanding.
+
+## #397 focused evidence
+
+`./test.sh --mcp-source-tests` completed exit 0 at
+`bcbf02692f7fa9a29c49ea76db2ba8b56676ec5a`: 26 support and 78 selected product
+tests. The actual released SDK client negotiated auto `2026-07-28` and legacy
+`2025-11-25`, discovered the read tools and performed authenticated reads. Actual
+CPK read owners produced workspace/Desired/saved-revision/history results matching
+HTTP over immutable record-return fixtures, including redaction and stable saved
+identity. Concurrent identities, changed credentials, strict raw framing,
+sanitized SDK diagnostics, route budgets, confidential exclusions, Host/Origin,
+lifespan and explicit caller migration passed. Prior failing runs remain in the
+issue history. This is source composition, not PostgreSQL persistence or an
+installed Codex connection. [Terminal evidence](https://github.com/OpenJ92/control-plane-kit-servers/issues/397#issuecomment-6843099429).
 
 Official references: [SDK ASGI integration](https://py.sdk.modelcontextprotocol.io/run/asgi/),
 [SDK protocol versions](https://py.sdk.modelcontextprotocol.io/protocol-versions/),
