@@ -16,6 +16,7 @@ dependencies = [
   "control-plane-kit-interpreters[cloudflare,docker,gateway,public-dns] @ https://github.com/OpenJ92/control-plane-kit-interpreters/archive/685c86279ae50ac16128d9417429f97db9af982a.zip",
   "uvicorn>=0.30",
   "httpx>=0.27,<1",
+  "mcp==2.3.0",
 ]
 
 [project.scripts]

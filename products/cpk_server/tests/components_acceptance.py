@@ -38,7 +38,7 @@ def components_acceptance(client, app, administrator_credential, operator_creden
             if digest is not None:
                 payload['descriptor_sha256'] = digest
             method = 'resources/read' if read else 'tools/call'
-            response = client.post('/mcp', headers={**headers, 'Accept': 'application/json',
+            response = client.post('/mcp/legacy', headers={**headers, 'Accept': 'application/json',
                 'MCP-Protocol-Version': '2025-06-18', 'Mcp-Method': method}, json={
                     'jsonrpc': '2.0', 'id': 'components', 'method': method,
                     'params': {'name': name, 'arguments': payload}})

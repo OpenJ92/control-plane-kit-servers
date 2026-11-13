@@ -1,6 +1,17 @@
 Source: [server.py](../../../../../../products/cpk_server/src/control_plane_kit_servers_cpk_server/server.py).
 Maintain with the process composition and operational ownership boundary.
 
+## #397 standard MCP composition
+
+`create_app` installs the official MCP SDK adapter at literal `/mcp` and enters
+its session manager from the host lifespan. The existing SDK control wrapper
+composes around that lifespan. The custom process boundary and its existing
+raw-body/auth ordering are retained separately at `/mcp/legacy`. Both use the
+same already configured application; only standard discovery/envelopes and
+curated read schemas belong to the new adapter. No setup route, permission seed,
+provider effect or durable owner is added. `docs/standard-mcp.md` describes the
+explicit legacy caller migration and separate installed-client qualification.
+
 ## #341 typed startup readiness
 
 Bootstrap configuration can carry the trusted WorkspaceAuthorityConfiguration

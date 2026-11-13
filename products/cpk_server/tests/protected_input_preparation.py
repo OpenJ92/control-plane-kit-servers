@@ -152,7 +152,7 @@ def exercise(host, provider, documents):
     for credential in (REGISTER_ONLY, GENERATE_ONLY):
         host.call("command.delegation-key.generate", generation, credential=credential, status=403)
     # HTTP-only provision remains uncallable by MCP even with valid operator authority.
-    response = host.client.post("/mcp", headers={"Authorization": "Bearer " + OPERATOR,
+    response = host.client.post("/mcp/legacy", headers={"Authorization": "Bearer " + OPERATOR,
         "Accept": "application/json", "MCP-Protocol-Version": "2025-06-18", "Mcp-Method": "tools/call"},
         json={"jsonrpc": "2.0", "id": "protected-refusal", "method": "tools/call",
               "params": {"name": INTAKE, "arguments": {"workspace_id": WORKSPACE, **provision}}})

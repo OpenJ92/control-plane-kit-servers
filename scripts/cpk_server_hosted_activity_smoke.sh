@@ -1,5 +1,8 @@
 #!/bin/sh
 set -eu
+case "${CPK_LEGACY_MCP_PATH:-/mcp}" in
+  /mcp|/mcp/legacy) ;; *) echo 'unsupported legacy MCP endpoint' >&2; exit 2 ;;
+esac
 
 default_image() {
   python3 - <<'PY'
@@ -323,6 +326,7 @@ if ! docker run --rm \
   --network "$NETWORK" \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -e CPK_HOSTED_ACTIVITY_BASE_URL=http://cpk-server:8080 \
+  -e CPK_LEGACY_MCP_PATH="${CPK_LEGACY_MCP_PATH:-/mcp}" \
   -e CPK_HOSTED_ACTIVITY_SERVER_CONTAINER="$SERVER_CONTAINER" \
   -e CPK_HOSTED_ACTIVITY_SERVERS_REPO=/app \
   -e CPK_HOSTED_ACTIVITY_SCENARIO="$SCENARIO" \

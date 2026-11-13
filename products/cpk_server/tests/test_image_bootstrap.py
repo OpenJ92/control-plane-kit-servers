@@ -1468,7 +1468,7 @@ class CpkServerImageBootstrapTests(unittest.TestCase):
     def test_ready_route_reports_capability_not_authority_material(self) -> None:
         source = SERVER_SOURCE.read_text(encoding="utf-8")
         ready_start = source.index("@app.get(\"/health/ready\")")
-        ready_end = source.index("@app.post(\"/mcp\")")
+        ready_end = source.index("@app.post(\"/mcp/legacy\")")
         ready_source = source[ready_start:ready_end].lower()
 
         self.assertIn("runtime_interpreters", ready_source)

@@ -2,11 +2,26 @@
 import json
 from pathlib import Path
 import unittest
+import httpx
 
-from live_wrapper_artifacts import _require_hello_provenance
+from live_wrapper_artifacts import _require_hello_provenance, _transport_error_category
 
 
 class WrapperArtifactProvenanceTests(unittest.TestCase):
+    def test_transport_diagnostics_use_fixed_categories_without_request_or_error_values(self):
+        canary = "synthetic-private-diagnostic-canary"
+        request = httpx.Request("GET", "http://fixture.invalid/" + canary,
+                                headers={"Authorization": "Bearer " + canary})
+        for error, expected in (
+            (httpx.ConnectTimeout(canary, request=request), "connect-timeout"),
+            (httpx.ConnectError(canary, request=request), "connect-error"),
+            (httpx.TransportError(canary, request=request), "transport-error"),
+        ):
+            category = _transport_error_category(error)
+            self.assertEqual(category, expected)
+            self.assertNotIn(canary, category)
+            self.assertLess(len(category), 32)
+
     def setUp(self):
         upstreams = json.loads((Path(__file__).resolve().parents[3] /
             "coordinates/server-products.json").read_text())["upstreams"]

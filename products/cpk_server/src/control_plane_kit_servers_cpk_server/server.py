@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 import json
 import os
@@ -14,6 +15,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from starlette.routing import Route
 
 import psycopg
 import uvicorn
@@ -83,6 +85,7 @@ from .control_configuration import (
     cpk_control_configuration_artifact, read_cpk_control_configuration,
 )
 from .http_host import install_operator_http_routes
+from .mcp_adapter import StandardMcpAdapter
 from .request_body import MCP_ENVELOPE_MAX_BYTES, RequestBodyTooLarge, collect_request_body
 from control_plane_kit_operations.health_receiver_trust import HealthReceiverDecoders
 from .operations_application import (
@@ -579,11 +582,18 @@ def create_app(
     _validate_managed_health_process(config)
     cpk_control_configuration_artifact(control)
     composition = create_cpk_server_composition(config.process_configuration())
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        async with standard_mcp.lifespan():
+            yield
+
     app = FastAPI(
         title="cpk-server",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
+        lifespan=lifespan,
     )
 
     @app.get("/health/live")
@@ -608,7 +618,7 @@ def create_app(
             },
         )
 
-    @app.post("/mcp")
+    @app.post("/mcp/legacy")
     async def mcp(request: Request) -> JSONResponse:
         try:
             body = await collect_request_body(request.stream(), MCP_ENVELOPE_MAX_BYTES)
@@ -641,8 +651,13 @@ def create_app(
         credential_verifier)
     http_boundary = CpkServerHttpProcessBoundary(composition, application)
     mcp_boundary = CpkServerMcpProcessBoundary(composition, application)
+    standard_mcp = StandardMcpAdapter(composition, application)
+    # A literal ASGI route lets the SDK own HTTP methods and the protocol. The
+    # existing fallthrough retains strict unknown/slash handling outside it.
+    app.router.routes.insert(0, Route("/mcp", endpoint=standard_mcp))
     app.state.http_boundary = http_boundary
     app.state.mcp_boundary = mcp_boundary
+    app.state.standard_mcp = standard_mcp
     return app
 
 

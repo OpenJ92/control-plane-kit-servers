@@ -153,7 +153,7 @@ def workspace_authority_acceptance(database_url):
                 method = "resources/read" if read else "tools/call"
                 if "{workspace_id}" in route.path_template:
                     payload = {"workspace_id": workspace, **payload}
-                response = client.post("/mcp", headers={**headers, "Accept": "application/json",
+                response = client.post("/mcp/legacy", headers={**headers, "Accept": "application/json",
                     "MCP-Protocol-Version": "2025-06-18", "Mcp-Method": method}, json={
                     "jsonrpc": "2.0", "id": "enrollment", "method": method,
                     "params": {"name": name, "arguments": payload}})

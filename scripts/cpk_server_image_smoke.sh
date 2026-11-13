@@ -4,6 +4,10 @@ set -eu
 IMAGE="${CPK_SERVER_IMAGE:-localhost/control-plane-kit-servers/cpk-server:local}"
 BUILD_IMAGE="${CPK_SERVER_BUILD_IMAGE:-1}"
 PROFILE="${CPK_SERVER_SMOKE_PROFILE:-wrapped-source}"
+MCP_PATH=/mcp/legacy
+if [ "$PROFILE" = published-baseline ]; then MCP_PATH=/mcp; fi
+MCP_PATH="${CPK_LEGACY_MCP_PATH:-$MCP_PATH}"
+case "$MCP_PATH" in /mcp|/mcp/legacy) ;; *) echo 'unsupported legacy MCP endpoint' >&2; exit 2 ;; esac
 PRODUCT_PULL_POLICY=missing
 CONTROL_RECORDS=""
 MISSING_CONTROL_CONTAINER=""
@@ -420,7 +424,7 @@ mcp_unauthorized_status="$(curl -sS -o "$MCP_UNAUTHORIZED_BODY" -w '%{http_code}
   -H 'Mcp-Method: tools/call' \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":"call-unauthorized","method":"tools/call","params":{"name":"command.deployment.plan","arguments":{"workspace_id":"workspace-a"}}}' \
-"$BASE/mcp")"
+"$BASE$MCP_PATH")"
 [ "$mcp_unauthorized_status" = "401" ]
 
 phase "authorize bounded missing-workspace read"
@@ -491,7 +495,7 @@ mcp_response="$(curl -sS \
   -H 'Mcp-Method: tools/call' \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":"call-1","method":"tools/call","params":{"name":"command.deployment.plan","arguments":{"workspace_id":"workspace-a"}}}' \
-  "$BASE/mcp")"
+  "$BASE$MCP_PATH")"
 printf '%s' "$mcp_response" | grep -q '"error"'
 if printf '%s' "$mcp_response" | grep -q '"service"'; then
   echo "MCP command returned demo service echo" >&2
@@ -506,7 +510,7 @@ mcp_read_response="$(curl -sS \
   -H 'Mcp-Method: resources/read' \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":"read-1","method":"resources/read","params":{"name":"read.workspace","arguments":{"workspace_id":"workspace-a"}}}' \
-  "$BASE/mcp")"
+  "$BASE$MCP_PATH")"
 printf '%s' "$mcp_read_response" | grep -q '"workspace_id":"workspace-a"'
 printf '%s' "$mcp_read_response" | grep -q '"desired_graph"'
 if printf '%s' "$mcp_read_response" | grep -q '"service"'; then
@@ -517,7 +521,7 @@ fi
 phase "verify packaged revision history HTTP and MCP composition"
 # This is a public empty-history composition proof, not a second owner history
 # fixture. All data enters through the already running authenticated server.
-docker exec -i "$CONTAINER" python -I - "$SESSION_ID" <<'PY'
+docker exec -i "$CONTAINER" python -I - "$SESSION_ID" "$MCP_PATH" <<'PY'
 import json
 import sys
 from urllib.error import HTTPError
@@ -544,7 +548,7 @@ def request(path, payload=None, *, mcp=False, authenticated=True):
         return response.status, json.loads(data)
 
 def mcp(name, arguments, **options):
-    return request("/mcp", {"jsonrpc": "2.0", "id": "revision-history", "method": "resources/read",
+    return request(sys.argv[2], {"jsonrpc": "2.0", "id": "revision-history", "method": "resources/read",
         "params": {"name": name, "arguments": arguments}}, mcp=True, **options)
 
 status, draft = request("/workspaces/workspace-a/desired-topology-drafts", {
@@ -584,6 +588,95 @@ assert detail["history"] == {"scope": "source-or-target-sessions-and-exact-targe
 status, message = mcp("read.desired-topology-draft-revision", identity)
 assert status == 200 and message["result"] == detail, (status, message)
 print("packaged empty revision history HTTP/MCP composition passed")
+
+if sys.argv[2] == "/mcp/legacy":
+    # Current source only. The historical baseline has neither this adapter nor
+    # the released SDK. Reuse this smoke's real isolated PostgreSQL application.
+    import asyncio
+    import httpx2
+    from mcp import Client
+    from mcp.client.streamable_http import streamable_http_client
+
+    status, workspace = request("/workspaces/workspace-a")
+    assert status == 200
+    before = workspace["workspace"]
+    # Explicit fixture setup, outside the MCP preparation under test. The tool
+    # never selects or resaves a revision itself.
+    status, selection = request(path + "/select", {
+        "session_id": sys.argv[1], "revision": identity["revision"], "idempotency_key": "mcp-fixture-select",
+        "expected_desired_graph_id": before["desired_graph_id"],
+        "expected_desired_realized_projection_id": before["desired_realized_projection_id"],
+        "expected_desired_graph_revision": before["desired_graph_revision"]})
+    assert status == 200, (status, selection)
+    status, selected = request("/workspaces/workspace-a")
+    assert status == 200
+    observed = selected["workspace"]
+    arguments = {**identity,
+        "expected_current": {"authored_graph_id": observed["current_graph_id"],
+                             "realized_projection_id": observed["current_realized_projection_id"]},
+        "expected_desired": {"authored_graph_id": observed["desired_graph_id"],
+                             "realized_projection_id": observed["desired_realized_projection_id"]},
+        "expected_desired_graph_revision": observed["desired_graph_revision"],
+        "title": "MCP saved revision fixture", "idempotency_key": "mcp-fixture-prepare"}
+
+    async def standard_mcp():
+        count, dropped = 0, False
+
+        class FixtureResponseLost(httpx2.ReadError):
+            """Only this deliberate injection is accepted during SDK teardown."""
+
+        async def lose_response(response):
+            nonlocal count, dropped
+            frame = json.loads(response.request.content) if response.request.method == "POST" else {}
+            if frame.get("method") == "tools/call" and frame.get("params", {}).get("name") == "prepare_deployment":
+                count += 1
+                assert response.status_code == 200
+                await response.aread()
+                dropped = True
+                raise FixtureResponseLost("synthetic fixture response loss")
+
+        headers = {"Authorization": "Bearer valid-token"}
+        try:
+            async with httpx2.AsyncClient(headers=headers, event_hooks={"response": [lose_response]}) as http:
+                async with Client(streamable_http_client(base + "/mcp", http_client=http)) as client:
+                    assert client.protocol_version == "2026-07-28"
+                    tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+                    assert not tools["prepare_deployment"].annotations.read_only_hint
+                    await client.call_tool("prepare_deployment", arguments)
+                    raise AssertionError("response loss was not reported")
+        except* FixtureResponseLost:
+            # SDK task groups can surface the injected leaf on context exit.
+            # Every unmatched exception propagates; there is no broad catch.
+            assert dropped, "preparation failed before the response-loss injection"
+        assert count == 1, "ambiguous preparation was redispatched"
+
+        # This is one controlled fixture with no concurrent preparation. It is
+        # not a general lookup by idempotency key or a latest-record heuristic.
+        async with httpx2.AsyncClient(headers=headers) as http:
+            async with Client(streamable_http_client(base + "/mcp", http_client=http)) as client:
+                prepared = await client.call_tool("list_desired_topology_draft_revision_preparations", identity)
+                assert not prepared.is_error
+                rows = prepared.structured_content["items"]
+                assert len(rows) == 1 and rows[0]["source"]["state"] == "saved"
+                assert rows[0]["source"]["draft_id"] == identity["draft_id"]
+                assert rows[0]["source"]["revision"] == identity["revision"]
+                session = {"workspace_id": "workspace-a", "session_id": rows[0]["session_id"]}
+                plans = await client.call_tool("list_session_plans", session)
+                assert not plans.is_error and len(plans.structured_content["items"]) == 1
+                plan_id = plans.structured_content["items"][0]["plan_id"]
+                plan = await client.call_tool("get_plan_detail", {"workspace_id": "workspace-a", "plan_id": plan_id})
+                assert not plan.is_error
+                status, http_plan = request("/workspaces/workspace-a/plans/" + quote(plan_id, safe=""))
+                assert status == 200 and plan.structured_content == http_plan
+                assert http_plan["plan"]["desired_graph_id"] == detail["graph_id"]
+                assert http_plan["plan"]["desired_realized_projection_id"] == observed["desired_realized_projection_id"]
+                current = await client.call_tool("get_workspace", {"workspace_id": "workspace-a"})
+                assert not current.is_error and current.structured_content["workspace"] == observed
+                attempts = await client.call_tool("list_desired_topology_draft_revision_attempts", identity)
+                assert not attempts.is_error and attempts.structured_content["items"] == []
+        print("packaged standard MCP saved-revision preparation and response-loss query passed")
+
+    asyncio.run(standard_mcp())
 PY
 
 if [ "$PROFILE" = wrapped-source ]; then

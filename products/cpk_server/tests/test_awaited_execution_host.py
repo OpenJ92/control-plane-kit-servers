@@ -133,7 +133,7 @@ class AwaitedExecutionHostTests(unittest.IsolatedAsyncioTestCase):
                     payload, headers)
         binding = next(item for item in composition.handoff.command_parity.commands if item.http_route_id == route_id)
         headers.update({"Accept": "application/json", "MCP-Protocol-Version": "2025-06-18", "Mcp-Method": "tools/call"})
-        return "/mcp", {"jsonrpc": "2.0", "id": "transport", "method": "tools/call",
+        return "/mcp/legacy", {"jsonrpc": "2.0", "id": "transport", "method": "tools/call",
             "params": {"name": binding.mcp_tool_name,
                        "arguments": {"workspace_id": workspace, "run_id": "run-a", **payload}}}, headers
 
@@ -237,7 +237,7 @@ class AwaitedExecutionHostTests(unittest.IsolatedAsyncioTestCase):
             rejected = await self.client.post(path, content=raw, headers={"Authorization": "Bearer invalid"})
             self.assertEqual(rejected.status_code, 401)
         _, _, mcp_headers = self.wire("mcp")
-        self.assertEqual((await self.client.post("/mcp", json=[], headers=mcp_headers)).status_code, 400)
+        self.assertEqual((await self.client.post("/mcp/legacy", json=[], headers=mcp_headers)).status_code, 400)
         self.assertEqual(self.coordinator.calls, [])
 
     async def test_unexpected_coordinator_error_remains_bounded_internal_failure(self):
