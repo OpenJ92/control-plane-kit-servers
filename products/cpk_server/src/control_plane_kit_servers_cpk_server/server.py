@@ -585,7 +585,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app):
-        async with standard_mcp.sdk.session_manager.run():
+        async with standard_mcp.lifespan():
             yield
 
     app = FastAPI(

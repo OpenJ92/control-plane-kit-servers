@@ -1,6 +1,7 @@
 """Official MCP transport composed over the existing authenticated application."""
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 import json
 import re
 
@@ -123,8 +124,20 @@ class StandardMcpAdapter:
             instructions="Inspect workspace and exact saved revision first. Graph views are redacted observations, not source exports. "
                 "CPK owns authorization, planning, approval and durable history. Transport IDs are not idempotency keys. "
                 "After an interrupted command, query its existing durable references; never blindly replay a mutation.")
-        self.sdk_app = self.sdk.streamable_http_app(json_response=True, stateless_http=True,
+        self.sdk_app = None
+
+    @asynccontextmanager
+    async def lifespan(self):
+        # SDK managers are single-use. Each host lifespan owns a matching fresh
+        # transport/manager pair; CPK services and request authentication persist.
+        sdk_app = self.sdk.streamable_http_app(json_response=True, stateless_http=True,
             max_request_body_size=MCP_ENVELOPE_MAX_BYTES)
+        async with sdk_app.router.lifespan_context(sdk_app):
+            self.sdk_app = sdk_app
+            try:
+                yield
+            finally:
+                self.sdk_app = None
 
     async def list_tools(self, ctx, params):
         return ListToolsResult(tools=list(self.tools.values()))
@@ -199,7 +212,11 @@ class StandardMcpAdapter:
                 return {"type": "http.request", "body": data, "more_body": False}
             return await receive()
 
-        await self.sdk_app(scope, replay, send)
+        sdk_app = self.sdk_app
+        if sdk_app is None:
+            await self._reject(scope, receive, send, 503, "MCP transport unavailable")
+            return
+        await sdk_app(scope, replay, send)
 
     @staticmethod
     async def _reject(scope, receive, send, status, message):

@@ -41,7 +41,10 @@ strict decoding, then passes the admitted request to the SDK. The SDK receives
 the replayed bounded bytes, not a second network read. Request-local ASGI state
 holds the verified principal; no identity is retained in an MCP session.
 Use the SDK's Host/Origin protection, exact `/mcp` routing, JSON responses and
-stateless HTTP; enter the SDK manager from the host lifespan.
+stateless HTTP; each host lifespan creates a fresh SDK transport/manager pair
+and enters the returned SDK application's own lifespan. SDK managers are
+single-use; the CPK application, services and request authentication persist
+across sequential host lifespans.
 
 Initial discovery is a curated operator catalogue: workspace/current/Desired,
 saved drafts/revisions and their preparation/attempt history, plan/run/history
@@ -222,3 +225,22 @@ failed while raw validation/auth errors were active. The successor defers fixed
 rejection sends until after the catch and adds an actual ASGI failing-send canary
 regression. This is a source finding, not evidence of a deployed leak. Focused
 successor qualification and the next owning-gate disposition remain pending.
+
+The `2600a3e` focused run passed 113 checks with independently recovered exit 0.
+Its ordinary full run passed all 1,372 unit checks, both wrapper families,
+Secrets initial/restart checks and the packaged MCP PostgreSQL preparation /
+response-loss reconnect query. It then exited 1 during receiver acceptance:
+the existing authority witness enters the same restarted host twice, while
+the cached SDK manager rejects a second lifespan. The former listener failure
+did not reproduce; its cause remains unresolved and its evidence is retained.
+Later full-suite phases and the final audit were not reached.
+
+The test-only `461bda7` regression reproduced the exact second-lifespan error
+through the focused Docker selector (exit 1; nine other MCP tests and 26 support
+tests passed). It retains one real host and checks credential denial without
+service dispatch plus released-client discovery/read in both protocol eras on
+each lifespan. The bounded successor creates a fresh paired transport/manager
+through the SDK public factory and enters its own lifespan; it does not reset
+SDK internals, rebuild CPK management state or weaken the receiver witness.
+Focused green and independent source review are pending; no full retry is
+released by this correction.
