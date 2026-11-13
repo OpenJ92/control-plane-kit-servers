@@ -11,7 +11,7 @@ COHORT=default
 if [ "${1:-}" = --cohort ]; then
   [ "$#" = 7 ] && [ "$2" = grandparent ] && [ "$3" = --mcp-source-tests ] || exit 2
   COHORT=grandparent
-  COHORT_CORE=$4 COHORT_OPERATIONS=$5 COHORT_INTERPRETERS=$6 COHORT_SDK=$7
+  COHORT_CORE=$4 COHORT_OPERATIONS=$5 COHORT_INTERPRETERS_ARCHIVE=$6 COHORT_SDK=$7
   set -- --mcp-source-tests
 fi
 
@@ -65,6 +65,12 @@ if [ "$COHORT" = grandparent ]; then
   set -- $revisions
   [ "$#" = 4 ] || exit 2
   CORE_REVISION=$1 OPERATIONS_REVISION=$2 INTERPRETERS_REVISION=$3 SDK_REVISION=$4
+  # This exact retained Git export is the approved source kind, not a fallback
+  # to another revision when the original local-only object is unavailable.
+  archive_digest=$(shasum -a 256 "$COHORT_INTERPRETERS_ARCHIVE")
+  archive_digest=${archive_digest%% *}
+  [ "$archive_digest" = af15d9261cde91e387b2659b489712abbc5579f09ba67ca51350c802552c22e0 ] || exit 2
+  [ "$(git get-tar-commit-id < "$COHORT_INTERPRETERS_ARCHIVE")" = "$INTERPRETERS_REVISION" ] || exit 2
   COHORT_CONTEXT=$(mktemp -d /private/tmp/cpk401-test-context.XXXXXX)
   finish_cohort_context() {
     status=$?
@@ -85,10 +91,30 @@ if [ "$COHORT" = grandparent ]; then
   mkdir "$COHORT_CONTEXT/cohort"
   printf '%s\n' "$CANDIDATE_SOURCE" > "$COHORT_CONTEXT/cohort/candidate.txt"
   for role in core operations interpreters sdk; do
+    if [ "$role" = interpreters ]; then
+      mkdir "$COHORT_CONTEXT/cohort/interpreters"
+      tar -x -f "$COHORT_INTERPRETERS_ARCHIVE" -C "$COHORT_CONTEXT/cohort/interpreters"
+      (
+        cd "$COHORT_CONTEXT/cohort/interpreters"
+        git -c init.templateDir= init -q
+        find src/control_plane_kit_interpreters -type f -print | while IFS= read -r source_file; do
+          source_blob=$(git hash-object --no-filters -w -- "$source_file")
+          source_mode=100644
+          [ ! -x "$source_file" ] || source_mode=100755
+          printf '%s %s\t%s\n' "$source_mode" "$source_blob" "$source_file"
+        done > "$COHORT_CONTEXT/interpreters.index"
+        git -c core.hooksPath=/dev/null -c core.fsmonitor=false update-index --index-info < "$COHORT_CONTEXT/interpreters.index"
+        reconstructed_root=$(git write-tree)
+        [ "$(git rev-parse "${reconstructed_root}:src/control_plane_kit_interpreters")" = 97507ed009a5e5c8aa81d280288a2f81ce807835 ]
+        git ls-tree -r "$reconstructed_root" src/control_plane_kit_interpreters > "$COHORT_CONTEXT/cohort/interpreters.git-tree"
+        rm -rf .git
+      )
+      rm "$COHORT_CONTEXT/interpreters.index"
+      continue
+    fi
     case "$role" in
       core) repository=$COHORT_CORE; revision=$CORE_REVISION; prefix=control-plane-kit-core; module=control_plane_kit_core ;;
       operations) repository=$COHORT_OPERATIONS; revision=$OPERATIONS_REVISION; prefix=control-plane-kit-operations; module=control_plane_kit_operations ;;
-      interpreters) repository=$COHORT_INTERPRETERS; revision=$INTERPRETERS_REVISION; prefix=.; module=control_plane_kit_interpreters ;;
       sdk) repository=$COHORT_SDK; revision=$SDK_REVISION; prefix=.; module=control_plane_kit_server_sdk ;;
     esac
     mkdir "$COHORT_CONTEXT/cohort/$role"

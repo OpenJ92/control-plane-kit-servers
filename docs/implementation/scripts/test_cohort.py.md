@@ -14,6 +14,14 @@ Secrets distribution and pip consistency are checked before behavior. Product
 imports must point to the admitted candidate tree. This is candidate source-test
 evidence, not a qualified deployable artifact or installed-client acceptance.
 
+The selected Interpreters commit is local-only and its original repository is
+unavailable. Its qualified retained full Git export is therefore an explicit
+manifest source kind, fixed by archive SHA256, PAX commit and module Git tree.
+Bytes and header are checked before extraction; Git hashes without filters
+reconstruct the module tree in owned temporary metadata. The original package
+metadata is unchanged and the normal Docker source/installation checks still
+apply. There is no repository-to-archive fallback or substituted revision.
+
 The new public regression uses the same real host and released client fixture.
 Its read-only profile requires exactly four reads and refuses direct command
 calls without dispatch; existing two-lifespan behavior is reused. Target-red

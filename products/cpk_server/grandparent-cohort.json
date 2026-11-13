@@ -5,6 +5,11 @@
   "core": "f56bb5c4cfde76764d39c5377d4270c5b23c3ba1",
   "operations": "70154b6698e101159326b08646f2dba90dda87cd",
   "interpreters": "e438f6e522ad0a23a7acef460be08690f48b2e17",
+  "interpreters_source": {
+    "kind": "retained-git-export",
+    "sha256": "af15d9261cde91e387b2659b489712abbc5579f09ba67ca51350c802552c22e0",
+    "module_tree": "97507ed009a5e5c8aa81d280288a2f81ce807835"
+  },
   "sdk": "d61b374cb2a23d773c31748f47f88169499298b7",
   "mcp": "2.3.0",
   "mcp_profile": "grandparent-read-only-v1",
