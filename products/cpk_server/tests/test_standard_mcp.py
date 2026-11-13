@@ -186,8 +186,12 @@ class StandardMcpTests(unittest.IsolatedAsyncioTestCase):
                 # notification. Its accepted response must remain empty and
                 # produce no application dispatch; we do not redefine framing.
                 if isinstance(frame.get("id"), dict):
-                    self.assertEqual(response.status_code, 202)
-                    self.assertEqual(response.content, b"")
+                    # SDK legacy uses its union; modern uses id-presence and
+                    # JSONRPCRequest.model_validate (modern transport:419-427).
+                    expected = 202 if version == "2025-11-25" else 400
+                    self.assertEqual(response.status_code, expected, version)
+                    if expected == 202:
+                        self.assertEqual(response.content, b"")
                 elif frame["jsonrpc"] != "2.0" or not isinstance(frame["method"], str):
                     self.assertEqual(response.status_code, 400)
                 else:
