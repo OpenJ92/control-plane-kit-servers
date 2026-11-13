@@ -520,15 +520,18 @@ def _clock() -> str:
 
 
 class McpTransport:
-    def __init__(self, client: httpx.Client) -> None:
+    def __init__(self, client: httpx.Client, *, endpoint: str = "/mcp/legacy") -> None:
+        if endpoint not in {"/mcp/legacy", "/mcp"}:
+            raise PublicConvergenceError("unsupported legacy MCP endpoint")
         self.client = client
+        self.endpoint = endpoint
 
     def invoke(self, route: str, arguments: dict[str, Any], *, authorization: str) -> dict[str, Any]:
         method = "resources/read" if route.startswith("read.") else "tools/call"
         payload = {"jsonrpc": "2.0", "id": uuid4().hex, "method": method,
                    "params": {"name": route, "arguments": arguments}}
         try:
-            with self.client.stream("POST", "/mcp", json=payload, headers={
+            with self.client.stream("POST", self.endpoint, json=payload, headers={
                 "Authorization": authorization, "MCP-Protocol-Version": "2025-06-18", "Mcp-Method": method,
             }) as response:
                 if response.status_code != 200:
@@ -677,7 +680,8 @@ def main() -> int:
                 time.sleep(1)
         _require(ready)
         report = run_public_graph_convergence(
-            McpTransport(client).invoke, servers_repo=Path("/source"), workspace_id=workspace,
+            McpTransport(client, endpoint=os.environ.get("CPK_LEGACY_MCP_PATH", "/mcp/legacy")).invoke,
+            servers_repo=Path("/source"), workspace_id=workspace,
             router_id="application-router" if retained else f"router-{uuid4().hex[:12]}", hello_nodes=nodes,
             initial_node_id=nodes[args.active_node - 1 if retained else 0]["node_id"], rewire_node_id=nodes[-1]["node_id"],
             retained_node_ids=tuple(node["node_id"] for node in nodes[1::2]) if args.nodes % 2 == 0

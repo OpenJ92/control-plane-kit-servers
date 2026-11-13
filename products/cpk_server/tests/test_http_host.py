@@ -77,7 +77,7 @@ class CpkHttpHostTests(unittest.TestCase):
                                    if item.http_route_id == route_id)
                     arguments = {'workspace_id': 'workspace-a', **({'limit': 1, 'after': cursor}
                         if route_id == 'read.products' else {'descriptor_sha256': digest})}
-                    mcp = client.post('/mcp', headers={'Authorization': 'Bearer valid-token',
+                    mcp = client.post('/mcp/legacy', headers={'Authorization': 'Bearer valid-token',
                         'Accept': 'application/json', 'MCP-Protocol-Version': '2025-06-18',
                         'Mcp-Method': 'resources/read'}, json={'jsonrpc': '2.0', 'id': 'components',
                         'method': 'resources/read', 'params': {'name': binding.mcp_tool_name, 'arguments': arguments}})
@@ -137,10 +137,10 @@ class CpkHttpHostTests(unittest.TestCase):
                         response = client.request(method, path)
                         self.assertEqual((response.status_code, response.json()), (404, UNKNOWN))
                         self.assertNotIn("location", response.headers)
-            for method, path in (("POST","/health/live"), ("POST","/health/ready"), ("GET","/mcp")):
+            for method, path in (("POST","/health/live"), ("POST","/health/ready"), ("GET","/mcp/legacy")):
                 response = client.request(method, path)
                 self.assertEqual((response.status_code,response.json()), (404,UNKNOWN))
-            for path, allowed in (("/unknown",{"GET","POST"}), ("/workspaces",{"GET","POST"}), ("/health/live",{"GET"}), ("/mcp",{"POST"})):
+            for path, allowed in (("/unknown",{"GET","POST"}), ("/workspaces",{"GET","POST"}), ("/health/live",{"GET"}), ("/mcp/legacy",{"POST"})):
                 for method in ("PUT", "HEAD", "OPTIONS"):
                     response = client.request(method, path)
                     self.assertEqual(response.status_code, 405)
@@ -160,20 +160,20 @@ class CpkHttpHostTests(unittest.TestCase):
             headers = {"Accept":"application/json", "MCP-Protocol-Version":"2025-06-18", "Mcp-Method":"resources/read", "Authorization":"Bearer rejected"}
             with patch("control_plane_kit_servers_cpk_server.boundary.json.loads",
                     side_effect=AssertionError("unauthenticated MCP body was decoded")):
-                response = client.post("/mcp", content=b"invalid JSON", headers=headers)
+                response = client.post("/mcp/legacy", content=b"invalid JSON", headers=headers)
             self.assertEqual((response.status_code,response.json()),
                 (401,{"error":{"status":401,"message":"invalid credential"}}))
             self.assert_no_service_work()
             headers["Authorization"] = "Bearer valid-token"
-            response = client.post("/mcp", content=b"invalid JSON", headers=headers)
+            response = client.post("/mcp/legacy", content=b"invalid JSON", headers=headers)
             self.assertEqual((response.status_code,response.json()), (400,{"error":{"status":400,"message":"invalid JSON request body"}}))
             headers["Authorization"] = "Bearer rejected"
             message = {"jsonrpc":"2.0", "id":"fixture", "method":"resources/read", "params":{"name":"read.run-events", "arguments":{"workspace_id":"workspace-a", "run_id":"run-a"}}}
-            self.assertEqual(client.post("/mcp", json=message, headers=headers).status_code, 401)
+            self.assertEqual(client.post("/mcp/legacy", json=message, headers=headers).status_code, 401)
             self.assert_no_service_work()
             headers["Authorization"] = "Bearer valid-token"
             expected = self.app.state.mcp_boundary.handle(headers=headers, message=message)
-            response = client.post("/mcp", json=message, headers=headers)
+            response = client.post("/mcp/legacy", json=message, headers=headers)
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json(), json.loads(json.dumps(expected.body)))
         self.assertEqual(self.verifier.credentials,
@@ -188,7 +188,7 @@ class CpkHttpHostTests(unittest.TestCase):
                 body = (b'{"jsonrpc":"2.0","id":"a","method":"tools/call","params":'
                     b'{"name":"create_workspace_as_administrator","arguments":' + arguments + b'}}')
                 with self.subTest(arguments=arguments):
-                    response = client.post("/mcp", content=body, headers=headers)
+                    response = client.post("/mcp/legacy", content=body, headers=headers)
                     self.assertEqual(response.status_code, 400)
                     self.assertLess(len(response.content), 1024)
             self.assert_no_service_work()
@@ -208,7 +208,7 @@ class CpkHttpHostTests(unittest.TestCase):
         headers = {"Authorization":"Bearer valid-token"}
         with TestClient(app) as client:
             http = client.get("/workspaces/workspace-a/runs/run-a/events", headers=headers)
-            mcp = client.post("/mcp", headers={**headers, "Accept":"application/json",
+            mcp = client.post("/mcp/legacy", headers={**headers, "Accept":"application/json",
                 "MCP-Protocol-Version":"2025-06-18", "Mcp-Method":"resources/read"},
                 json={"jsonrpc":"2.0", "id":"lookup", "method":"resources/read", "params":{
                     "name":"read.run-events", "arguments":{"workspace_id":"workspace-a", "run_id":"run-a"}}})

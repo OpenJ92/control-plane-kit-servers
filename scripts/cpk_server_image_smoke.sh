@@ -4,6 +4,7 @@ set -eu
 IMAGE="${CPK_SERVER_IMAGE:-localhost/control-plane-kit-servers/cpk-server:local}"
 BUILD_IMAGE="${CPK_SERVER_BUILD_IMAGE:-1}"
 PROFILE="${CPK_SERVER_SMOKE_PROFILE:-wrapped-source}"
+MCP_PATH=/mcp/legacy
 PRODUCT_PULL_POLICY=missing
 CONTROL_RECORDS=""
 MISSING_CONTROL_CONTAINER=""
@@ -21,7 +22,7 @@ case "$PROFILE" in
     CPK_SERVERS_TEST_IMAGE="$ROOT_ARTIFACT_CONTROLLER"
     PRODUCT_PULL_POLICY=never
     ;;
-  published-baseline) ;;
+  published-baseline) MCP_PATH=/mcp ;;
   *) echo "cpk-server image smoke: invalid profile" >&2; exit 1 ;;
 esac
 CONTAINER=""
@@ -420,7 +421,7 @@ mcp_unauthorized_status="$(curl -sS -o "$MCP_UNAUTHORIZED_BODY" -w '%{http_code}
   -H 'Mcp-Method: tools/call' \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":"call-unauthorized","method":"tools/call","params":{"name":"command.deployment.plan","arguments":{"workspace_id":"workspace-a"}}}' \
-"$BASE/mcp")"
+"$BASE$MCP_PATH")"
 [ "$mcp_unauthorized_status" = "401" ]
 
 phase "authorize bounded missing-workspace read"
@@ -491,7 +492,7 @@ mcp_response="$(curl -sS \
   -H 'Mcp-Method: tools/call' \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":"call-1","method":"tools/call","params":{"name":"command.deployment.plan","arguments":{"workspace_id":"workspace-a"}}}' \
-  "$BASE/mcp")"
+  "$BASE$MCP_PATH")"
 printf '%s' "$mcp_response" | grep -q '"error"'
 if printf '%s' "$mcp_response" | grep -q '"service"'; then
   echo "MCP command returned demo service echo" >&2
@@ -506,7 +507,7 @@ mcp_read_response="$(curl -sS \
   -H 'Mcp-Method: resources/read' \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":"read-1","method":"resources/read","params":{"name":"read.workspace","arguments":{"workspace_id":"workspace-a"}}}' \
-  "$BASE/mcp")"
+  "$BASE$MCP_PATH")"
 printf '%s' "$mcp_read_response" | grep -q '"workspace_id":"workspace-a"'
 printf '%s' "$mcp_read_response" | grep -q '"desired_graph"'
 if printf '%s' "$mcp_read_response" | grep -q '"service"'; then
@@ -517,7 +518,7 @@ fi
 phase "verify packaged revision history HTTP and MCP composition"
 # This is a public empty-history composition proof, not a second owner history
 # fixture. All data enters through the already running authenticated server.
-docker exec -i "$CONTAINER" python -I - "$SESSION_ID" <<'PY'
+docker exec -i "$CONTAINER" python -I - "$SESSION_ID" "$MCP_PATH" <<'PY'
 import json
 import sys
 from urllib.error import HTTPError
@@ -544,7 +545,7 @@ def request(path, payload=None, *, mcp=False, authenticated=True):
         return response.status, json.loads(data)
 
 def mcp(name, arguments, **options):
-    return request("/mcp", {"jsonrpc": "2.0", "id": "revision-history", "method": "resources/read",
+    return request(sys.argv[2], {"jsonrpc": "2.0", "id": "revision-history", "method": "resources/read",
         "params": {"name": name, "arguments": arguments}}, mcp=True, **options)
 
 status, draft = request("/workspaces/workspace-a/desired-topology-drafts", {

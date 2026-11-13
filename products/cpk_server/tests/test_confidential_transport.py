@@ -143,7 +143,7 @@ class ConfidentialTransportTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(Request, "body", side_effect=AssertionError("unbounded body collector invoked")):
             status, _, _ = await self.invoke("/workspaces", [b"{}"])
             self.assertEqual(status, 200)
-            status, _, _ = await self.invoke("/mcp", [json.dumps(read_message()).encode()],
+            status, _, _ = await self.invoke("/mcp/legacy", [json.dumps(read_message()).encode()],
                 headers=mcp_headers(method="resources/read"))
             self.assertEqual(status, 200)
 
@@ -155,11 +155,11 @@ class ConfidentialTransportTests(unittest.IsolatedAsyncioTestCase):
                     headers["Content-Length"] = declared
                 body = padded_json(read_message(), MCP_LIMIT)
                 self.clear_records()
-                status, _, reads = await self.invoke("/mcp", [body[:31], body[31:]], headers=headers)
+                status, _, reads = await self.invoke("/mcp/legacy", [body[:31], body[31:]], headers=headers)
                 self.assertEqual((status, reads), (200, 2))
                 self.assertEqual(self.host.verifier.credentials, [b"valid-token"])
                 self.clear_records()
-                status, result, reads = await self.invoke("/mcp", [body, b" ", b"trailing"], headers=headers)
+                status, result, reads = await self.invoke("/mcp/legacy", [body, b" ", b"trailing"], headers=headers)
                 self.assertEqual((status, result), (413, {"error": {"status": 413, "message": "request body too large"}}))
                 self.assertEqual(reads, 2)
                 self.assertEqual(self.host.verifier.credentials, [])
@@ -177,7 +177,7 @@ class ConfidentialTransportTests(unittest.IsolatedAsyncioTestCase):
         for chunks, headers, code, message, credentials in cases:
             with self.subTest(code=code, message=message):
                 self.clear_records()
-                status, result, reads = await self.invoke("/mcp", chunks, headers=headers)
+                status, result, reads = await self.invoke("/mcp/legacy", chunks, headers=headers)
                 self.assertEqual((status, result), (code, {"error": {"status": code, "message": message}}))
                 self.assertEqual(reads, 1)
                 self.assertEqual(self.host.verifier.credentials, credentials)
@@ -198,7 +198,7 @@ class ConfidentialTransportTests(unittest.IsolatedAsyncioTestCase):
                     self.clear_records()
                     body = json.dumps(message, ensure_ascii=escaped).encode("utf-8")
                     self.assertLess(len(body), MCP_LIMIT)
-                    status, _, _ = await self.invoke("/mcp", [body[:29], body[29:]], headers=mcp_headers())
+                    status, _, _ = await self.invoke("/mcp/legacy", [body[:29], body[29:]], headers=mcp_headers())
                     self.assertEqual(status, 200)
                     requests = self.host.services[ControlPlaneServiceRole.EXECUTION].requests
                     self.assertEqual(len(requests), 1)

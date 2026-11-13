@@ -1,7 +1,7 @@
 # Standard MCP operator connection
 
-Design checkpoint for Servers #396; implementation and executable evidence are
-pending. Accepted base: `2093f5182748a4aca638f362eece0bc4f063a1db`,
+Source checkpoint for Servers #396/#397; green validation is pending.
+Accepted base: `2093f5182748a4aca638f362eece0bc4f063a1db`,
 `roadmap/1813-runtime-control`, accepted in PR #395 comment 6840942585.
 The isolated branch is `codex/396-standard-mcp`.
 
@@ -21,7 +21,7 @@ Interpreters `685c8627`, server SDK `220f6316`, Secrets `09442303`, as recorded
 in `coordinates/server-products.json`. These source selections are not claims
 about the deployed grandparent's cohort or an installed Codex connection.
 
-## Proposed composition
+## Selected composition
 
 Use official `mcp==2.3.0` (release source
 `2118f14f8a19bc158d8a1cf90af58d85d187f849`) without CLI extras. Its low-level
@@ -90,3 +90,43 @@ or #391 restart is included. No executable validation has run at this checkpoint
 Official references: [SDK ASGI integration](https://py.sdk.modelcontextprotocol.io/run/asgi/),
 [SDK protocol versions](https://py.sdk.modelcontextprotocol.io/protocol-versions/),
 [Codex MCP setup](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
+
+## Known caller migration
+
+The framework-neutral legacy boundary API is unchanged. Source host tests and
+current composition acceptance callers use `/mcp/legacy`. The maintained image
+smoke selects that path for wrapped source/current artifacts, retaining `/mcp`
+for its explicit historical `published-baseline` profile.
+The hosted-activity and graph-convergence scripts default to `/mcp/legacy`;
+when intentionally targeting a pre-#397 image, set
+`CPK_LEGACY_MCP_PATH=/mcp`. Only these two literal paths are admitted; no automatic
+fallback or mutation redispatch occurs. They remain legacy callers, not the
+ordinary-client interoperability witness. Retirement requires a later decision;
+there is no guessed end-of-support date.
+
+## Prepared Codex configuration (#399; not installed)
+
+After source qualification and approval of the actual endpoint, credential
+reference and scopes, a local Codex host can use its normal configuration:
+
+```toml
+[mcp_servers.cpk]
+url = "http://127.0.0.1:18163/mcp"
+bearer_token_env_var = "CPK_MCP_BEARER"
+enabled_tools = ["get_workspace", "get_desired_graph", "get_desired_topology_draft_revision", "list_desired_topology_draft_revision_attempts"]
+default_tools_approval_mode = "prompt"
+```
+
+This is a preparation example, not a live access claim. The endpoint must serve
+the reviewed adapter; older deployed images still speak only the legacy format.
+Supply the approved scoped bearer privately through the named environment
+variable; never put its value in the configuration, repository or chat. Use an
+approved workspace ID and exact saved revision for the first authenticated read.
+Confirm discovered schemas and results after the client's normal reload/new
+connection. Reading a public graph does not return original source bytes.
+
+Removing this configuration table and its privately supplied environment binding
+disconnects the client after reload; it does not revoke server-side credentials
+or change permissions. Any credential installation, grant or live connection
+verification remains the separately approved #399 boundary. SDK source tests
+alone cannot complete that issue.
