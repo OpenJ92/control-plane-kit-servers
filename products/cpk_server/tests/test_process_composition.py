@@ -198,6 +198,8 @@ class CpkServerProcessCompositionTests(unittest.TestCase):
         config.managed_health = None
         config.managed_health_process = None
         config.workspace_authority = None
+        config.http_sample_support = None
+        config.managed_verification_support = None
         with patch.object(server, "_docker_runtime_interpreter") as execute, \
                 patch.object(server, "_runtime_observer") as observe, \
                 patch.object(server, "_ingress_interpreters") as ingress:

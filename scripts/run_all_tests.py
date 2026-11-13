@@ -49,6 +49,7 @@ def main() -> int:
             "test_grandparent_mcp.py",
             "test_managed_configuration_selection.py",
             "test_control_receiver.py", "test_managed_health_configuration.py",
+            "test_process_composition.py",
             "test_secret_provider_bootstrap.py", "test_operations_application_factory.py",
             "test_managed_health_bridge.py", "test_managed_native_connection.py", "test_dynamic_effect_composition.py",
         ):
