@@ -91,11 +91,12 @@ class WitnessHttpTests(unittest.TestCase):
         self.assertEqual(preparation["managed_verification"], "authenticated-local-postgres-and-http")
         self.assertEqual(preparation["expected_desired"]["authored_graph_id"], "desired")
 
-    def run_failed_seed(self, app):
+    def run_failed_seed(self, app, *, seed=None, step="readiness"):
         output = io.StringIO()
         with tempfile.TemporaryDirectory() as name, self.client(app), \
                 patch.object(sys, "argv", ["witness", "seed", name]), \
                 patch.object(fixture.asyncio, "sleep", new=AsyncMock()), \
+                (patch.object(fixture.Witness, "seed", seed) if seed else contextlib.nullcontext()), \
                 contextlib.redirect_stderr(output):
             self.actor_directory(Path(name))
             status = fixture.main()
@@ -104,19 +105,28 @@ class WitnessHttpTests(unittest.TestCase):
         report = json.loads(output.getvalue())
         self.assertEqual(set(report), {"schema", "mode", "step", "category", "http_status"})
         self.assertEqual(report["mode"], "seed")
-        self.assertEqual(report["step"], "readiness")
+        self.assertEqual(report["step"], step)
         return report
 
     def test_http_denial_retains_only_fixed_step_category_and_safe_status(self):
-        frames = PublicFrames([("GET", "/health/ready", 403, dict(private=MARKER))])
-        report = self.run_failed_seed(frames)
+        async def denied(witness):
+            witness.step = "session-start"
+            await witness.request("/" + MARKER)
+        frames = PublicFrames([("GET", "/" + MARKER, 403, dict(private=MARKER))])
+        report = self.run_failed_seed(frames, seed=denied, step="session-start")
         self.assertEqual(report["category"], "http-status")
         self.assertEqual(report["http_status"], 403)
 
-    def test_ready_requires_the_selected_public_readiness_shape(self):
+    def test_credential_echo_is_not_returned_as_diagnostic_data(self):
         frames = PublicFrames([("GET", "/health/ready", 200, dict(status="live", private=MARKER))])
         report = self.run_failed_seed(frames)
         self.assertEqual(report["category"], "redaction")
+        self.assertIsNone(report["http_status"])
+
+    def test_ready_requires_the_selected_public_readiness_shape(self):
+        frames = PublicFrames([("GET", "/health/ready", 200, dict(status="live"))])
+        report = self.run_failed_seed(frames)
+        self.assertEqual(report["category"], "shape")
         self.assertIsNone(report["http_status"])
 
     def test_arbitrary_exception_text_is_not_a_diagnostic(self):
