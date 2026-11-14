@@ -99,6 +99,10 @@ have no literal route-specific reference in the reused searches; inventory laws
 alone cannot prove their successful owner behavior. Before implementation,
 inspect that row's named tests, extract preserved negative/positive laws and add
 only meaningful missing behavior tests. No tests were run for this prose draft.
+For M1 acceptance, every test cell must identify the inspected behavioral law,
+not merely a literal route occurrence. The run-events cell below now names its
+pagination/parity and snapshot-consistency laws explicitly; other bare references
+remain candidate source references for that acceptance review.
 
 ## Read operations
 
@@ -124,7 +128,7 @@ only meaningful missing behavior tests. No tests were run for this prose draft.
 | `read.session-approvals` (H:390) | `GET /workspaces/{workspace_id}/sessions/{session_id}/approvals`<br>EmptyRequest → SessionApprovalsReadResponse | R/_closed_read_arguments + _read_model<br>T.call (route transport) | INSTANCE_WORKSPACE_READ; read | `list_session_approvals` **not exposed**; G restricted | O/test_cpk_server_adapters.py:1272; O/test_cpk_server_adapters.py:1364 | MA; #410 |
 | `read.plan-detail` (H:395) | `GET /workspaces/{workspace_id}/plans/{plan_id}`<br>EmptyRequest → PlanDetailReadResponse | R/_closed_read_arguments + _read_model<br>T.call (route transport) | INSTANCE_WORKSPACE_READ; read | `get_plan_detail` std read schema; G restricted | O/test_cpk_server_adapters.py:1380; O/test_cpk_server_adapters.py:2528 | EX (standard source); #404 |
 | `read.plan-runs` (H:400) | `GET /workspaces/{workspace_id}/plans/{plan_id}/runs`<br>EmptyRequest → PlanRunsReadResponse | R/_closed_read_arguments + _read_model<br>T.call (route transport) | INSTANCE_WORKSPACE_READ; read | `list_plan_runs` std read schema; G restricted | O/test_cpk_server_adapters.py:1277; O/test_cpk_server_adapters.py:1370 | EX (standard source); #404 |
-| `read.run-events` (H:405) | `GET /workspaces/{workspace_id}/runs/{run_id}/events`<br>EmptyRequest → RunEventsReadResponse | R/_closed_read_arguments + _read_model<br>T.call (route transport) | INSTANCE_WORKSPACE_READ; read | `list_run_events` std read schema; G restricted | O/test_cpk_server_adapters.py:410; O/test_cpk_server_adapters.py:415 | EX (standard source); #404 |
+| `read.run-events` (H:405) | `GET /workspaces/{workspace_id}/runs/{run_id}/events`<br>EmptyRequest → RunEventsReadResponse | R/_read_page_request_for_route → run_events_snapshot().run_events(page_request).descriptor() (O:759; early return, not _read_model)<br>T.call (route transport) | INSTANCE_WORKSPACE_READ; read | `list_run_events` std read schema; G restricted | O/test_cpk_server_adapters.py:1237 test_http_and_mcp_run_event_pages_are_identical (page/envelope parity); O/test_postgres_ingress_invocations.py:267 test_run_event_snapshot_never_mixes_later_unit_and_fold_commits (snapshot consistency); O/test_cpk_server_adapters.py:410 malformed page refuses before UoW | EX (standard source); #404 |
 | `read.approval-detail` (H:410) | `GET /workspaces/{workspace_id}/approvals/{approval_id}`<br>EmptyRequest → ApprovalDetailReadResponse | R/_closed_read_arguments + _read_model<br>T.call (route transport) | INSTANCE_WORKSPACE_READ; read | `get_approval_detail` std read schema; G restricted | O/test_cpk_server_adapters.py:1385; O/test_cpk_server_adapters.py:2289 | EX (standard source); #410 |
 | `read.delegation-keys` (H:415) | `GET /workspaces/{workspace_id}/delegation-keys`<br>EmptyRequest → DelegationSigningKeyCollectionReadResponse | R/_closed_read_arguments + _read_model<br>T.call (route transport) | DELEGATION_KEY_READ; read | `list_delegation_keys` **not exposed**; G restricted | O/test_cpk_server_adapters.py:3615; O/test_cpk_server_adapters.py:3629 | MA; #407 |
 | `read.delegation-key-generation` (H:420) | `GET /workspaces/{workspace_id}/delegation-key-generations/{request_id}`<br>EmptyRequest → GeneratedDelegationKeyReceipt | R/_closed_read_arguments + _read_model<br>T.call (route transport) | INSTANCE_WORKSPACE_READ + DELEGATION_KEY_READ; read | `get_delegation_key_generation` **not exposed**; G restricted | O/test_delegation_key_generation_commands.py:468; O/test_delegation_key_generation_commands.py:495 | MA; #407 |
@@ -207,7 +211,7 @@ Do not infer atomic external effects or safe retry from a schema or SDK hint.
 | `command.deployment.plan` (H:907) | `POST /workspaces/{workspace_id}/plans`<br>PlanDeploymentRequest → PlanDeploymentResponse | P/_arguments<br>T.call (route transport) | PLAN_REQUEST; command; S | `plan_deployment` **not exposed**; G restricted | O/test_cpk_server_adapters.py:660; O/test_cpk_server_adapters.py:2181 | MA; #409 |
 | `command.deployment.prepare` (H:916) | `POST /workspaces/{workspace_id}/deployments/prepare`<br>PrepareDeploymentProgramRequest → DeploymentPreparationResponse | P/_arguments<br>TopologyClient.plan | INSTANCE_WORKSPACE_EDIT + PLAN_REQUEST; command; S | `prepare_deployment` std prepare schema; G restricted | O/test_cpk_server_adapters.py:660; O/test_cpk_server_adapters.py:1923 | EX (standard source); #409 |
 | `command.approval.request` (H:925) | `POST /workspaces/{workspace_id}/plans/{plan_id}/approval`<br>ApprovalRequestRequest → ApprovalRequestResponse | A/_arguments<br>T.call (route transport) | PLAN_REQUEST; command; S | `request_approval` **not exposed**; G restricted | O/test_cpk_server_adapters.py:942; O/test_cpk_server_adapters.py:1050 | MA; #410 |
-| `command.approval.decide` (H:934) | `POST /workspaces/{workspace_id}/approvals/{approval_id}/decision`<br>ApprovalDecisionRequest → ApprovalDecisionResponse | A/_arguments<br>TopologyClient.apply (reference only; G1) | PLAN_APPROVE OR PLAN_APPROVE_DESTRUCTIVE; command; D | `decide_approval` **not exposed**; G restricted | O/test_cpk_server_adapters.py:2305; O/test_cpk_server_adapters.py:2587 | MA; #410 |
+| `command.approval.decide` (H:934) | `POST /workspaces/{workspace_id}/approvals/{approval_id}/decision`<br>ApprovalDecisionRequest → ApprovalDecisionResponse | A/_arguments; authorized human website HTTP owner retained<br>TopologyClient.apply decision path is not an ordinary-agent capability | PLAN_APPROVE OR PLAN_APPROVE_DESTRUCTIVE; human decision; D | `decide_approval` parity declaration only, **not exposed to ordinary agent**; G restricted | O/test_cpk_server_adapters.py:2305; O/test_cpk_server_adapters.py:2587 (candidate owner references; human-workflow proof still required) | **DR: human website decision**; #410 owns agent request/status/handoff, not an ordinary-agent decide adapter |
 | `command.deployment.admit` (H:943) | `POST /workspaces/{workspace_id}/plans/{plan_id}/admission`<br>AdmitDeploymentRequest → AdmittedRunResponse | D/_arguments<br>TopologyClient.apply | PLAN_EXECUTE; command; C | `admit_deployment` **not exposed**; G restricted | O/test_cpk_server_adapters.py:1110; O/test_cpk_server_adapters.py:2619 | MA; #411 |
 | `command.run.claim` (H:952) | `POST /workspaces/{workspace_id}/runs/{run_id}/claim`<br>ClaimRunRequest → ClaimRunResponse | L/_arguments<br>TopologyClient.apply | WORKER/SERVICE: EXECUTION_OPERATE; command; C | `claim_run` **not exposed**; G restricted | O/test_cpk_server_adapters.py:590; O/test_cpk_server_adapters.py:620 | MA; #411 |
 | `command.run.start` (H:961) | `POST /workspaces/{workspace_id}/runs/{run_id}/start`<br>StartRunRequest → ActivityRunTransitionResult | E/_arguments<br>TopologyClient.apply | WORKER/SERVICE: EXECUTION_OPERATE; command; C | `start_run` **not exposed**; G restricted | O/test_cpk_server_adapters.py:319; O/test_cpk_server_adapters.py:359 | MA; #411 |
@@ -274,6 +278,15 @@ Additional governing transport/cohort proofs (S):
 Core's [test_http_api_contract.py](https://github.com/OpenJ92/control-plane-kit/blob/f56bb5c4cfde76764d39c5377d4270c5b23c3ba1/control-plane-kit-core/tests/test_http_api_contract.py)
 and adapter/command parity contract tests own canonical inventory, not the
 Servers adapter. Reuse those owners; this draft creates no duplicate registry.
+
+Run-events consistency reference:
+[O/test_postgres_ingress_invocations.py:267](https://github.com/OpenJ92/control-plane-kit/blob/70154b6698e101159326b08646f2dba90dda87cd/control-plane-kit-operations/tests/test_postgres_ingress_invocations.py#L267)
+retains one run-events snapshot while later ingress unit/fold commits happen,
+then verifies that snapshot's descriptor is unchanged. Together with the actual
+HTTP/MCP page parity test, preserve the bounded page/envelope/cursor and the
+single snapshot read across constituent event/outcome data. The early-return
+owner must not be replaced by independently timed event and effect queries.
+This law does not promise one frozen snapshot across separate page requests.
 
 ## Preserved laws and MCP differences
 
