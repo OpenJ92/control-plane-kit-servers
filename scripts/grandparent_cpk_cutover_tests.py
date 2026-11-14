@@ -4,6 +4,7 @@ No actual Docker client, listener, credential, Operations store or schema runs.
 """
 from copy import deepcopy
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -321,3 +322,23 @@ class CutoverTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse(marker.exists())
                 self.assertNotIn(PRIVATE, result.stdout.decode() + result.stderr.decode())
+
+    def test_child_that_cannot_be_reaped_is_explicitly_unknown(self):
+        class Unsettled:
+            def __init__(self, pid):
+                self.pid = pid
+                self.stdin, self.stdout, self.stderr = io.BytesIO(), io.BytesIO(), io.BytesIO()
+                self.cpk_pidfd = os.open("/dev/null", os.O_RDONLY)
+            def poll(self):
+                return None
+            def communicate(self, **_options):
+                raise subprocess.TimeoutExpired("synthetic-owner", 3)
+        child, terminator = Unsettled(12345), Unsettled(12346)
+        try:
+            with patch.object(action, "spawn_as_owner", return_value=terminator):
+                outcomes = action.settle_owned_child(child, "synthetic-writer")
+            self.assertTrue(all(not x["reaped"] for x in outcomes))
+            self.assertEqual({x["role"] for x in outcomes}, {"synthetic-writer", "termination-helper"})
+            self.assertTrue(all(x["outcome"] == "unknown-after-timeout" for x in outcomes))
+        finally:
+            action.close_child_handles(child)

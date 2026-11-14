@@ -5,9 +5,12 @@ import json
 import os
 from pathlib import Path
 import shutil
+import socket
 import stat
+import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 from urllib.parse import urlsplit
@@ -81,9 +84,9 @@ class InstallerProcessContract(unittest.TestCase):
     def reader(self, *, mutate=False):
         # Only the external wire is intercepted in the child. Production owner
         # process/pipe/client/credential and administrator verifier paths run.
-        def spawn(_production_argv):
+        def spawn(_production_argv, pass_fds=()):
             return action.spawn_as_owner([sys.executable, __file__, "--wire-child", str(self.path),
-                                          "mutate" if mutate else "stable"])
+                                          "mutate" if mutate else "stable", str(pass_fds[0])], pass_fds=pass_fds)
         reader = action.OwnerUidReads("a" * 64, spawn=spawn)
         reader.bind_identity(self.document)
         return reader
@@ -149,6 +152,60 @@ class InstallerProcessContract(unittest.TestCase):
         result = action.run_as_owner([sys.executable, __file__, "--assert-client-protection", str(self.path)], b"")
         self.assertEqual(result.returncode, 0, result.stderr.decode()[-1000:])
 
+    def test_direct_production_entry_missing_or_stdout_channel_never_loads_or_reports_bearer(self):
+        created = action.run_as_owner([sys.executable, __file__, "--make-entry-target"], b"")
+        self.assertEqual(created.returncode, 0)
+        self.addCleanup(action.run_as_owner, [sys.executable, __file__, "--remove-entry-target"], b"")
+        for mode, extra in (("missing", []), ("stdout", ["--admin-fd", "1"])):
+            with self.subTest(mode=mode):
+                direct = action.run_as_owner([sys.executable, action.__file__, "--read-saved", "a" * 64, *extra], b"")
+                self.assertEqual(direct.returncode, 1)
+                self.assertEqual(json.loads(direct.stdout)["reason"], "reader-channel-refused")
+                self.assertNotIn(HUMAN.encode(), direct.stdout + direct.stderr)
+                self.assertNotIn(SETUP.encode(), direct.stdout + direct.stderr)
+                observed = action.run_as_owner([sys.executable, __file__, "--probe-entry", mode], b"")
+                self.assertEqual(observed.returncode, 0, observed.stderr.decode()[-1000:])
+                self.assertNotIn(HUMAN.encode(), observed.stdout + observed.stderr)
+
+    def test_timed_out_owner_writer_is_terminated_and_reaped_without_late_write(self):
+        late = self.root / "late-write"
+        with self.assertRaises(action.ChildOutcomeError) as caught:
+            action.run_as_owner([sys.executable, __file__, "--late-writer", str(late)], b"", timeout=0.1)
+        outcome = next(x for x in caught.exception.outcomes if x["role"] == "evidence-or-owner-worker")
+        self.assertTrue(outcome["reaped"])
+        self.assertEqual(outcome["signal"], "sent")
+        self.assertFalse(late.exists())
+        with self.assertRaises(ChildProcessError):
+            os.waitpid(outcome["pid"], os.WNOHANG)
+
+    def test_inherited_duplicate_of_stdout_socket_is_not_an_admin_channel(self):
+        created = action.run_as_owner([sys.executable, __file__, "--make-entry-target"], b"")
+        self.assertEqual(created.returncode, 0)
+        self.addCleanup(action.run_as_owner, [sys.executable, __file__, "--remove-entry-target"], b"")
+        parent, routed_stdout = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+        parent.settimeout(5)
+        descriptor = routed_stdout.fileno()
+        process = subprocess.Popen([sys.executable, action.__file__, "--read-saved", "a" * 64,
+            "--admin-fd", str(descriptor)], stdin=subprocess.DEVNULL, stdout=routed_stdout,
+            stderr=subprocess.PIPE, user=501, group=20, extra_groups=[], pass_fds=(descriptor,))
+        process.cpk_pidfd = os.pidfd_open(process.pid)
+        routed_stdout.close()
+        try:
+            _out, error = process.communicate(timeout=5)
+            data = bytearray()
+            while True:
+                part = parent.recv(8192 - len(data))
+                if not part:
+                    break
+                data.extend(part)
+                self.assertLess(len(data), 8192)
+            self.assertEqual(process.returncode, 1)
+            self.assertEqual(json.loads(data)["reason"], "reader-channel-refused")
+            self.assertNotIn(HUMAN.encode(), bytes(data) + error)
+        finally:
+            parent.close()
+            action.close_child_handles(process)
+
 
 def fixture_command():
     action.require((os.getuid(), os.getgid()) == (501, 20), "synthetic-owner")
@@ -170,7 +227,27 @@ def fixture_command():
         from control_plane_kit_servers_cpk_server.client import transport
         path = Path(sys.argv[2])
         with patch.object(transport, "build_opener", return_value=Wire(path, mutate=sys.argv[3] == "mutate")):
-            action.owner_read_batch(path)
+            with action.administrator_channel(int(sys.argv[4])) as channel:
+                action.owner_read_batch(path, channel)
+    elif mode == "--make-entry-target":
+        path = Path("/credentials/human.bearer")
+        with path.open("x") as stream:
+            stream.write(HUMAN)
+        path.chmod(0o400)
+    elif mode == "--remove-entry-target":
+        Path("/credentials/human.bearer").unlink()
+    elif mode == "--probe-entry":
+        from control_plane_kit_servers_cpk_server.client import profile, transport
+        extra = [] if sys.argv[2] == "missing" else ["--admin-fd", "1"]
+        sys.argv = [action.__file__, "--read-saved", "a" * 64, *extra]
+        with patch.object(profile.ClientProfile, "credential") as load, \
+                patch.object(transport.PublicHttpTransport, "call") as request:
+            status = action.entry_point()
+            if status != 1 or load.called or request.called:
+                raise AssertionError("invalid channel crossed the private/request boundary")
+    elif mode == "--late-writer":
+        time.sleep(5)
+        Path(sys.argv[2]).write_text("late")
     elif mode == "--assert-client-protection":
         from control_plane_kit_servers_cpk_server.client.profile import ClientProfile, ClientConfigurationError
         try:

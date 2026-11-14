@@ -42,7 +42,9 @@ docker run --pull never --rm --network none --read-only --tmpfs /tmp:exec,size=1
 INSTALLER=sha256:0d5f36d8d2fa28ebcd01e895cd2db0e5b97df7bb5a15858bfd30442a21c09c80
 [ "$(docker image inspect "$INSTALLER" --format '{{.Id}}')" = "$INSTALLER" ] || exit 2
 docker run --pull never --rm --network none --read-only --tmpfs /tmp:exec,mode=1777,size=128m \
+  --tmpfs /credentials:rw,mode=1777,size=1m \
   --user 0 --cap-drop ALL --cap-add DAC_READ_SEARCH --cap-add SETUID --cap-add SETGID --security-opt no-new-privileges \
+  --cpus 1 --memory 512m --pids-limit 128 \
   --mount "type=bind,source=$ROOT,target=/source,readonly" --workdir /source/scripts \
   -e PYTHONDONTWRITEBYTECODE=1 --entrypoint python "$INSTALLER" \
   -m unittest grandparent_cutover_installer_tests.InstallerProcessContract -v

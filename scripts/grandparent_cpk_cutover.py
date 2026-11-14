@@ -12,9 +12,10 @@ import logging
 import os
 from pathlib import Path
 import re
-import selectors
 import signal
+import socket
 import stat
+import struct
 import subprocess
 import sys
 import time
@@ -50,6 +51,12 @@ PUBLIC_PLAN_SHA = "c451d7cffad919297c3a669db6ca920271d3038526b2a8248cd8201ce7a41
 
 class Hold(Exception):
     """Closed failure without provider/private payload."""
+
+
+class ChildOutcomeError(Hold):
+    def __init__(self, outcomes):
+        super().__init__("owned-child-outcome-unverified")
+        self.outcomes = outcomes
 
 
 def require(value, code):
@@ -146,6 +153,7 @@ class Journal:
     def __init__(self, root, approval, owner=None):
         self.root = root
         self.owner = owner
+        self.child_outcomes = []
         self.write("init", {})
         self.approval = approval
         self.new_id = None
@@ -160,7 +168,11 @@ class Journal:
             write_evidence(self.root, operation, value)
         else:
             require(self.owner == (501, 20), "evidence-owner")
-            result = run_as_owner([sys.executable, __file__, "--write-evidence", operation, str(self.root)], canonical(value))
+            try:
+                result = run_as_owner([sys.executable, __file__, "--write-evidence", operation, str(self.root)], canonical(value))
+            except ChildOutcomeError as error:
+                self.child_outcomes.extend(error.outcomes)
+                raise
             require(result.returncode == 0 and result.stdout == b"recorded\n", "evidence-write")
 
     def event(self, kind, **updates):
@@ -201,12 +213,12 @@ class Journal:
             original_stopped_retained=(self.original_retained if self.original_state == "stopped-observed"
                                        else None if self.original_state == "stop-outcome-unknown" else False),
             saved_revision_compared=success, client_connected=False,
+            child_outcomes=list(self.child_outcomes),
             historical_inspector=("original-id-stopped-by-maintenance" if self.original_state == "stopped-observed"
                 else "original-stop-unverified" if self.original_state == "stop-outcome-unknown" else "not-superseded"))
 
     def finish(self, success, code):
         result = self.outcome(success, code)
-        result["evidence_persisted"] = True
         self.write("finish", result)
         return result
 
@@ -333,66 +345,153 @@ class OwnerUidReads:
         self.document = configured_document
 
     def saved(self):
-        process = self.spawn([sys.executable, __file__, "--read-saved", self.digest])
-        authorized = False
+        admin, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+        admin.settimeout(10)
+        process = None
+        failure, output, outcomes = None, None, []
         try:
-            credential = credential_from_owner_pipe(process.stdout)
+            process = self.spawn([sys.executable, __file__, "--read-saved", self.digest,
+                                  "--admin-fd", str(child.fileno())], pass_fds=(child.fileno(),))
+            child.close()
+            credential = credential_from_owner_channel(admin)
             require(credential_identity(self.document, credential) == {
                 "issuer": "urn:control-plane-kit:static-development",
                 "subject_id": "cpk163-gparent-20261109-human", "kind": "operator"}, "verification-identity")
-            authorized = True
-            output, _error = process.communicate(b"human-verified\n", timeout=35)
+            admin.sendall(b"human-verified\n")
+            output, _error = process.communicate(timeout=35)
             require(process.returncode == 0 and len(output) <= 8_388_608, "owner-client-read")
-            return canonical(json.loads(output))
+        except Hold as error:
+            failure = error
+        except (TimeoutError, subprocess.TimeoutExpired):
+            failure = Hold("owner-client-timeout")
+        except BaseException:
+            failure = Hold("owner-client-unverified")
         finally:
-            if not authorized and process.poll() is None:
-                # Child is waiting for this closed acknowledgement, not a policy
-                # document. No setup/worker credential ever enters the reader.
+            admin.close()
+            child.close()
+            if process is not None and process.poll() is None:
                 try:
-                    process.communicate(b"denied\n", timeout=5)
-                except (OSError, subprocess.TimeoutExpired):
-                    process.stdin.close()
+                    process.communicate(timeout=3)
+                except subprocess.TimeoutExpired:
+                    outcomes = settle_owned_child(process, "reader")
+            if process is not None:
+                close_child_handles(process)
+        if outcomes:
+            raise ChildOutcomeError(outcomes)
+        if failure is not None:
+            raise failure
+        return canonical(json.loads(output))
 
     def ready(self):
         SavedReads.ready(self)
 
 
-def run_as_owner(argv, private_input):
+def run_as_owner(argv, private_input, timeout=35):
     process = spawn_as_owner(argv)
-    output, error = process.communicate(private_input, timeout=35)
-    return subprocess.CompletedProcess(argv, process.returncode, output, error)
+    try:
+        output, error = process.communicate(private_input, timeout=timeout)
+        return subprocess.CompletedProcess(argv, process.returncode, output, error)
+    except subprocess.TimeoutExpired:
+        raise ChildOutcomeError(settle_owned_child(process, "evidence-or-owner-worker")) from None
+    finally:
+        close_child_handles(process)
 
 
-def spawn_as_owner(argv):
-    return subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            user=501, group=20, extra_groups=[])
+def spawn_as_owner(argv, pass_fds=()):
+    process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               user=501, group=20, extra_groups=[], pass_fds=pass_fds)
+    try:
+        process.cpk_pidfd = os.pidfd_open(process.pid)
+    except BaseException:
+        raise ChildOutcomeError([dict(role="owner-process-admission", pid=process.pid,
+            reaped=process.poll() is not None, outcome="pidfd-unavailable")]) from None
+    return process
 
 
-def credential_from_owner_pipe(stream):
+def close_child_handles(process):
+    for stream in (process.stdin, process.stdout, process.stderr):
+        if stream is not None and not stream.closed:
+            stream.close()
+    if process.cpk_pidfd is not None:
+        os.close(process.cpk_pidfd)
+        process.cpk_pidfd = None
+
+
+def settle_owned_child(process, role):
+    outcomes = []
+    signal_state = "not-needed"
+    if process.poll() is None:
+        # Signal from the child's own UID, with a pidfd so a delayed helper can
+        # never signal a reused PID. No CAP_KILL or SIGKILL escalation is added.
+        terminator = None
+        try:
+            terminator = spawn_as_owner([sys.executable, __file__, "--signal-owned-child", str(process.cpk_pidfd)],
+                                        pass_fds=(process.cpk_pidfd,))
+            signal_output, _error = terminator.communicate(timeout=3)
+            signal_state = ("sent" if signal_output == b"signalled\n" else "already-exited"
+                            if signal_output == b"already-exited\n" else "unverified") if terminator.returncode == 0 else "unverified"
+        except subprocess.TimeoutExpired:
+            outcomes.append(dict(role="termination-helper", pid=terminator.pid,
+                                 reaped=False, outcome="unknown-after-timeout"))
+            signal_state = "unverified"
+        except ChildOutcomeError as error:
+            outcomes.extend(error.outcomes)
+            signal_state = "unverified"
+        except BaseException:
+            signal_state = "unverified"
+        finally:
+            if terminator is not None:
+                close_child_handles(terminator)
+        try:
+            process.communicate(timeout=3)
+        except subprocess.TimeoutExpired:
+            outcomes.append(dict(role=role, pid=process.pid, reaped=False,
+                                 outcome="unknown-after-timeout", signal=signal_state))
+    if process.poll() is not None:
+        outcomes.append(dict(role=role, pid=process.pid, reaped=True,
+                             outcome="unknown-after-timeout", signal=signal_state))
+    return outcomes
+
+
+def administrator_channel(descriptor):
+    information = os.fstat(descriptor)
+    require(descriptor >= 3 and stat.S_ISSOCK(information.st_mode), "administrator-channel")
+    require(all((information.st_dev, information.st_ino) != (os.fstat(fd).st_dev, os.fstat(fd).st_ino)
+                for fd in (0, 1, 2)), "administrator-channel")
+    channel = socket.socket(fileno=descriptor)
+    require(channel.family == socket.AF_UNIX and channel.type == socket.SOCK_STREAM, "administrator-channel")
+    pid, uid, _gid = struct.unpack("3i", channel.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+    require(pid == os.getppid() and uid == 0, "administrator-channel")
+    channel.getpeername()  # A listening/unconnected socket is not a channel.
+    channel.settimeout(10)
+    return channel
+
+
+def channel_line(channel, maximum):
     value = bytearray()
-    deadline = time.monotonic() + 10
-    with selectors.DefaultSelector() as selector:
-        selector.register(stream, selectors.EVENT_READ)
-        while b"\n" not in value:
-            require(selector.select(max(0, deadline - time.monotonic())), "owner-pipe-timeout")
-            chunk = os.read(stream.fileno(), 66 - len(value))
-            require(chunk and len(value) + len(chunk) <= 65, "owner-pipe-framing")
-            value.extend(chunk)
-    require(len(value) == 65 and value[-1] == 10, "owner-pipe-framing")
+    while b"\n" not in value:
+        chunk = channel.recv(maximum + 1 - len(value))
+        require(chunk and len(value) + len(chunk) <= maximum, "owner-channel-framing")
+        value.extend(chunk)
+    return bytes(value)
+
+
+def credential_from_owner_channel(channel):
+    value = channel_line(channel, 65)
+    require(len(value) == 65 and value[-1] == 10, "owner-channel-framing")
     return bytes(value[:-1])
 
 
-def owner_read_batch(path):
+def owner_read_batch(path, channel):
     require(os.getuid() == 501 and os.getgid() == 20, "reader-owner")
-    reader = SavedReads(path)
-    credential = reader.owner_credential()
-    # This stdout is exclusively a private parent pipe, never Docker logs or
-    # reports. Admin verifies these exact owner-read bytes before any HTTP.
-    sys.stdout.buffer.write(credential + b"\n")
-    sys.stdout.buffer.flush()
-    require(sys.stdin.buffer.readline(32) == b"human-verified\n", "verification-denied")
-    reader.accept_verified(credential)
-    print(reader.saved().decode())
+    # The inherited private socket is validated before loading any credential.
+    with administrator_channel(os.dup(channel.fileno())) as private:
+        reader = SavedReads(path)
+        credential = reader.owner_credential()
+        private.sendall(credential + b"\n")
+        require(channel_line(private, 32) == b"human-verified\n", "verification-denied")
+        reader.accept_verified(credential)
+        print(reader.saved().decode())
 
 
 def inspect(api, identity):
@@ -565,9 +664,10 @@ def cutover(api, reads, journal, public_plan, socket_gid, sleep=time.sleep):
     journal.event("named-saved-records-verified")
 
 
-def main():
+def main(reader_channel=None):
     # No environmental credential variables or generic command switches accepted.
-    require(len(sys.argv) == 3 and sys.argv[1] in ("--execute-reviewed-cutover", "--read-saved"), "invocation")
+    require((len(sys.argv) == 3 and sys.argv[1] == "--execute-reviewed-cutover") or
+            (len(sys.argv) == 5 and sys.argv[1] == "--read-saved" and reader_channel is not None), "invocation")
     plan_raw = Path("/proposal/action.json").read_bytes()
     require(re.fullmatch(r"[0-9a-f]{64}", sys.argv[2]) and
             hashlib.sha256(plan_raw).hexdigest() == sys.argv[2], "unfrozen-action-plan")
@@ -583,9 +683,11 @@ def main():
     require(PUBLIC_PLAN_SHA and hashlib.sha256(raw).hexdigest() == PUBLIC_PLAN_SHA, "bootstrap-input")
     logging.disable(logging.CRITICAL)
     if sys.argv[1] == "--read-saved":
-        owner_read_batch(Path("/credentials/human.bearer"))
+        owner_read_batch(Path("/credentials/human.bearer"), reader_channel)
         return 0
     require(os.getuid() == 0, "maintenance-owner")
+    probe = os.pidfd_open(os.getpid())
+    os.close(probe)
     import docker
     api = docker.APIClient(base_url="unix:///var/run/docker.sock", version="auto", timeout=30)
     journal = Journal(Path("/evidence") / "maintenance", plan["approval_reference"], owner=(501, 20))
@@ -594,12 +696,18 @@ def main():
         cutover(api, OwnerUidReads(sys.argv[2]), journal, json.loads(raw),
                 os.stat("/var/run/docker.sock").st_gid)
         success, code = True, "complete"
+    except ChildOutcomeError as error:
+        for outcome in error.outcomes:
+            if outcome not in journal.child_outcomes:
+                journal.child_outcomes.append(outcome)
+        code = str(error)
     except Hold as error:
         code = str(error)
     except BaseException:
         code = "provider-or-transport-failure"
     try:
         result = journal.finish(success, code)
+        result["evidence_persisted"] = not any(not child["reaped"] for child in journal.child_outcomes)
     except BaseException:
         result = journal.outcome(False, "evidence-write-unverified")
         result["evidence_persisted"] = False
@@ -609,8 +717,16 @@ def main():
     return 0 if success else 1
 
 
-if __name__ == "__main__":
-    # Refusals before the private/provider boundary also have no traceback.
+def entry_point():
+    reader_channel = None
+    if len(sys.argv) >= 2 and sys.argv[1] == "--read-saved":
+        try:
+            require(len(sys.argv) == 5 and sys.argv[3] == "--admin-fd", "administrator-channel")
+            reader_channel = administrator_channel(int(sys.argv[4]))
+        except BaseException:
+            print('{"schema":"cpk399.maintenance.v1","status":"HOLD","reason":"reader-channel-refused","retry":false}')
+            return 1
+    # Internal roles are owner-matched and carry no general provider authority.
     try:
         if len(sys.argv) == 4 and sys.argv[1] == "--write-evidence":
             require((os.getuid(), os.getgid()) == (501, 20), "evidence-owner")
@@ -619,9 +735,33 @@ if __name__ == "__main__":
             write_evidence(Path(sys.argv[3]), sys.argv[2], json.loads(raw_evidence))
             print("recorded")
             status = 0
+        elif len(sys.argv) == 3 and sys.argv[1] == "--signal-owned-child":
+            require((os.getuid(), os.getgid()) == (501, 20), "signal-owner")
+            descriptor = int(sys.argv[2])
+            require(descriptor >= 3 and os.readlink("/proc/self/fd/" + str(descriptor)) == "anon_inode:[pidfd]",
+                    "owned-child-handle")
+            try:
+                signal.pidfd_send_signal(descriptor, signal.SIGTERM)
+            except ProcessLookupError:
+                print("already-exited")
+                status = 0  # The exact referenced process has already exited.
+            else:
+                print("signalled")
+                status = 0
         else:
-            status = main()
+            status = main(reader_channel)
+    except ChildOutcomeError as error:
+        print(canonical(dict(schema="cpk399.maintenance.v1", status="HOLD", retry=False,
+                             reason="owned-child-admission-unverified", child_outcomes=error.outcomes)).decode())
+        status = 1
     except BaseException:
         print('{"schema":"cpk399.maintenance.v1","status":"HOLD","reason":"invocation-or-outcome-unverified","retry":false}')
         status = 1
-    sys.exit(status)
+    finally:
+        if reader_channel is not None:
+            reader_channel.close()
+    return status
+
+
+if __name__ == "__main__":
+    sys.exit(entry_point())

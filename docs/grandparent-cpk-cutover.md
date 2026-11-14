@@ -93,12 +93,15 @@ children to501:20,1CPU/512MiB/128PIDs, readonly
 root/tmp32MiB, no published port or logging). Host networking must already be
 available; no Docker setting is changed. The real client preserves loopback-only
 plaintext and file-owner protections. Its501 read child loads the approved file
-once through ClientProfile.credential and sends only that credential through an
-anonymous private pipe to the administrator verifier. The full principal document
+once through ClientProfile.credential and sends only that credential through a
+dedicated inherited Unix socket to the administrator verifier. Before file load,
+the child requires a connected stream socket whose peer is its root parent and
+whose inode differs from stdin/stdout/stderr; absent or misrouted channels refuse.
+The full principal document
 and other credentials stay on the administrator side. Only a closed human-verified
 acknowledgement returns to the reader, which pins its same loaded bytes for all
-four requests. A valid setup bearer refuses before any request/stop. The pipe is
-neither Docker stdout nor a report, argument or file. Read evidence proves that
+four requests. A valid setup bearer refuses before any request/stop. No credential
+traffic uses ordinary stdout/stderr, a report, argument or file. Read evidence proves that
 identity and those named reads,
 not every effective scope. Private Docker networking is not a security boundary;
 the API/host administration and private delivery require explicit approval.
@@ -107,15 +110,25 @@ terminal state is confirmed. Lost/ambiguous helper outcome is preserved and hold
 no automatic force-kill is dispatched while the action may still be running.
 Old/new service compute and all borrowed storage/images/network remain retained.
 
+Owned reader/writer timeouts use a same-UID SIGTERM helper holding a pidfd for
+the exact child, then reap it. No CAP_KILL, SIGKILL escalation, PID-reuse guess or
+retry is introduced. A timeout retains unknown operation outcome even after
+reaping; an unconfirmed reader/writer/termination helper is explicitly recorded
+and evidence is not declared definitive. The helper's Linux pidfd support is a
+precondition; it is exercised offline under the same capability set.
+
 ## Evidence boundary
 
 Owning source validation is `./test.sh --grandparent-artifact-source-tests`:
 finite Docker/read frames plus the actual frozen0d5 client/import/file-reader
 contract with a synthetic501-owned file and intercepted transport. The production
 administrator/reader handshake runs without delivering the principal document;
-source mutation and setup refusal use that normal path. Production journal
+source mutation and setup refusal use that normal path. Direct production entry
+with absent, stdout or inherited duplicate-of-stdout channels demonstrates neither
+credential load/request nor sentinel on either stream. Production journal
 creation/events/final receipt run under exact reduced capabilities and a synthetic
-501-owned0700 parent; root write is shown to be denied. No installed product source
+501-owned0700 parent; root write is shown to be denied. Timeout tests exercise
+actual same-UID termination/reaping and the explicit unknown branch. No installed product source
 is overlaid. There is no daemon socket/network/real credential/live input. It
 proves ordering, safe stops and bounded receipts, not actual DNS/port/DB/private
 wiring or service adoption. The source gate must pass and receive independent
