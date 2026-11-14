@@ -57,6 +57,35 @@ class Hold(Exception):
     """Closed failure without provider/private payload."""
 
 
+READ_ROUTES = {"workspace": "read.workspace", "desired": "read.desired-graph",
+               "revision": "read.desired-topology-draft-revision",
+               "attempts": "read.desired-topology-draft-revision-attempts"}
+READ_REASONS = frozenset({"authorization-refused", "http-failed", "transport-failed", "response-too-large",
+                         "response-invalid", "projection-mismatch", "baseline-mismatch"})
+
+
+class ReadFailure(Hold):
+    """Only a fixed read route/category crosses the owner process boundary."""
+
+    def __init__(self, route, reason, http_status=None):
+        if route not in READ_ROUTES.values() or reason not in READ_REASONS or not (
+                http_status is None or type(http_status) is int and 400 <= http_status <= 599):
+            raise Hold("reader-error-unverified")
+        super().__init__("saved-read-failed")
+        self.route, self.reason, self.http_status = route, reason, http_status
+
+    def record(self):
+        return dict(schema="cpk399.saved-read-error.v1", status="HOLD", route=self.route,
+                    reason=self.reason, http_status=self.http_status, retry=False)
+
+    @classmethod
+    def from_record(cls, value):
+        require(type(value) is dict and set(value) == {"schema", "status", "route", "reason", "http_status", "retry"}
+                and value["schema"] == "cpk399.saved-read-error.v1" and value["status"] == "HOLD"
+                and value["retry"] is False, "reader-error-unverified")
+        return cls(value["route"], value["reason"], value["http_status"])
+
+
 class ChildOutcomeError(Hold):
     def __init__(self, outcomes):
         super().__init__("owned-child-outcome-unverified")
@@ -166,6 +195,7 @@ class Journal:
         self.started = False
         self.original_state = "not-observed"
         self.original_retained = False
+        self.read_failure = None
 
     def write(self, operation, value):
         if self.owner is None:
@@ -217,7 +247,7 @@ class Journal:
             original_stopped_retained=(self.original_retained if self.original_state == "stopped-observed"
                                        else None if self.original_state == "stop-outcome-unknown" else False),
             saved_revision_compared=success, client_connected=False,
-            child_outcomes=list(self.child_outcomes),
+            child_outcomes=list(self.child_outcomes), read_failure=self.read_failure,
             historical_inspector=("original-id-stopped-by-maintenance" if self.original_state == "stopped-observed"
                 else "original-stop-unverified" if self.original_state == "stop-outcome-unknown" else "not-superseded"))
 
@@ -278,6 +308,7 @@ class SavedReads:
                 and metadata.st_uid == 501 and stat.S_IMODE(metadata.st_mode) == 0o400
                 and metadata.st_size == 64, "credential-metadata")
         self.path = credential_path
+        self.completed_routes = []
 
     def owner_credential(self):
         from control_plane_kit_servers_cpk_server.client.profile import ClientProfile
@@ -291,29 +322,60 @@ class SavedReads:
 
     def read(self, suffix):
         # Existing public transport owns redirects, bounded decoding and safe errors.
-        from control_plane_kit_servers_cpk_server.client.transport import PublicHttpTransport
+        from control_plane_kit_servers_cpk_server.client.transport import (
+            PublicHttpTransport, ClientAuthorizationError, ClientTransportError)
         transport = PublicHttpTransport(self.profile, timeout_seconds=5)
-        route = {"workspace": "read.workspace", "desired": "read.desired-graph",
-                 "revision": "read.desired-topology-draft-revision",
-                 "attempts": "read.desired-topology-draft-revision-attempts"}[suffix]
+        route = READ_ROUTES[suffix]
         coordinates = dict(workspace_id=WORKSPACE)
         if suffix in ("revision", "attempts"):
             coordinates.update(draft_id=DRAFT, revision="1")
-        return transport.call(route, path_parameters=coordinates,
-            payload={"limit": 50} if suffix == "attempts" else {}, credential_role="operator")
+        try:
+            value = transport.call(route, path_parameters=coordinates,
+                payload={"limit": 10} if suffix == "attempts" else {}, credential_role="operator")
+            canonical(value)
+            self.completed_routes.append(route)
+            return value
+        except ClientAuthorizationError:
+            raise ReadFailure(route, "authorization-refused") from None
+        except ClientTransportError as error:
+            reason = {"cpk-server response exceeds the client bound": "response-too-large",
+                      "cpk-server response is invalid": "response-invalid"}.get(str(error), "transport-failed")
+            status = error.http_status if type(error.http_status) is int and 400 <= error.http_status <= 599 else None
+            if status is not None:
+                reason = "http-failed"
+            raise ReadFailure(route, reason, status) from None
+        except (TypeError, ValueError, RecursionError, UnicodeError):
+            raise ReadFailure(route, "response-invalid") from None
 
     def saved(self):
         workspace, desired, revision, attempts = (self.read(k) for k in ("workspace", "desired", "revision", "attempts"))
-        require(workspace["workspace"]["workspace_id"] == WORKSPACE and
+        self.check("workspace", lambda: workspace["workspace"]["workspace_id"] == WORKSPACE and
                 workspace["workspace"]["current_graph_id"] == CURRENT and
                 workspace["workspace"]["desired_graph_id"] == DESIRED and
-                workspace["workspace"]["desired_graph_revision"] == 1, "saved-workspace-mismatch")
-        require(revision["workspace_id"] == WORKSPACE and revision["draft_id"] == DRAFT and
+                type(workspace["workspace"]["desired_graph_revision"]) is int and workspace["workspace"]["desired_graph_revision"] == 1)
+        self.check("revision", lambda: revision["workspace_id"] == WORKSPACE and revision["draft_id"] == DRAFT and
+                type(revision["revision"]) is int and
                 revision["revision"] == 1 and revision["graph_id"] == DESIRED and
-                isinstance(revision["graph_descriptor"], str), "saved-revision-mismatch")
-        require(desired["assigned"] is True and desired["graph_id"] == DESIRED and
-                type(attempts["items"]) is list and len(attempts["items"]) <= 50, "saved-read-shape")
+                type(revision["graph_descriptor"]) is dict)
+        self.check("desired", lambda: desired["assigned"] is True and desired["graph_id"] == DESIRED
+                   and type(desired["graph_descriptor"]) is dict)
+        self.check("revision", lambda: canonical(revision["graph_descriptor"]) == canonical(desired["graph_descriptor"]))
+        self.check("attempts", lambda: attempts["workspace_id"] == WORKSPACE
+                   and attempts["kind"] == "desired-topology-draft-revision-attempts"
+                   and type(attempts["limit"]) is int and attempts["limit"] == 10
+                   and type(attempts["items"]) is list and len(attempts["items"]) <= 10
+                   and all(type(item) is dict for item in attempts["items"])
+                   and (attempts["next_cursor"] is None or type(attempts["next_cursor"]) is dict))
         return canonical([workspace, desired, revision, attempts])
+
+    @staticmethod
+    def check(suffix, predicate):
+        try:
+            valid = predicate()
+        except (KeyError, TypeError, IndexError, ValueError, RecursionError):
+            valid = False
+        if not valid:
+            raise ReadFailure(READ_ROUTES[suffix], "projection-mismatch")
 
     def ready(self, sleep=time.sleep):
         from urllib.error import HTTPError, URLError
@@ -363,7 +425,15 @@ class OwnerUidReads:
                 "subject_id": "cpk163-gparent-20261109-human", "kind": "operator"}, "verification-identity")
             admin.sendall(b"human-verified\n")
             output, _error = process.communicate(timeout=35)
-            require(process.returncode == 0 and len(output) <= 8_388_608, "owner-client-read")
+            require(len(output) <= 8_388_608, "owner-client-output-bound")
+            if process.returncode != 0:
+                if len(output) <= 2048:
+                    try:
+                        error = ReadFailure.from_record(json.loads(output))
+                    except (Hold, ValueError, TypeError):
+                        error = Hold("owner-client-read")
+                    raise error
+                raise Hold("owner-client-read")
         except Hold as error:
             failure = error
         except (TimeoutError, subprocess.TimeoutExpired):
@@ -705,6 +775,9 @@ def main(reader_channel=None):
             if outcome not in journal.child_outcomes:
                 journal.child_outcomes.append(outcome)
         code = str(error)
+    except ReadFailure as error:
+        journal.read_failure = error.record()
+        code = "saved-read-failed"
     except Hold as error:
         code = str(error)
     except BaseException:
@@ -754,6 +827,9 @@ def entry_point():
                 status = 0
         else:
             status = main(reader_channel)
+    except ReadFailure as error:
+        print(canonical(error.record()).decode())
+        status = 1
     except ChildOutcomeError as error:
         print(canonical(dict(schema="cpk399.maintenance.v1", status="HOLD", retry=False,
                              reason="owned-child-admission-unverified", child_outcomes=error.outcomes)).decode())

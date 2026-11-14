@@ -25,6 +25,14 @@ The fresh proposal uses run `cpk399-gparent-mcp-switch-20261114-02`, evidence
 source/launcher hashes and new action digest need independent review and a new
 explicit approval; neither offline test success nor the prior approvals release it.
 
+Attempt02 is also closed: its saved-record reader failed before any stop/create/start.
+The reader correction requests the owning first page of10, checks the redacted
+graph object and complete attempts page scope, and preserves fixed route/safe
+error categories through the child/parent boundary. Both entire graph objects
+and page items/cursor remain in canonical comparison. This does not resume the
+consumed attempt02 maintenance run. The separately reviewed verification-only
+batch is described in `grandparent-saved-read.md`; it cannot switch the service.
+
 ## Reused procedure and single cutover
 
 The earlier cpk384 -> corrected web65 replacement used exact daemon/ID/image,
@@ -36,7 +44,7 @@ mechanics. It refuses occupied bootstrap resources and is not an updater.
 The issue-specific scripts apply those mechanics only to the one fixed CPK:
 
 1. Frozen input/authority/cache/identity/wiring checks and bounded workspace,
-   Desired, exact saved revision and first50 attempts reads occur before the outage. Changed/missing/denied
+   Desired, exact saved revision and first-page10 attempts reads occur before the outage. Changed/missing/denied
    revision or changed Current/Desired/generation stops before any mutation.
 2. Gracefully signal the exact old CPK, wait30s without SIGKILL, require exit0,
    retain under its explicit backup name. Inspect the borrowed network's active

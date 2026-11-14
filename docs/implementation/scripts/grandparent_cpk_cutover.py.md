@@ -15,6 +15,15 @@ inconsistent configured/effective views hold before the next effect. The correct
 proposal has distinct attempt02 run, retained-original name and evidence paths;
 consumed attempt01 evidence remains untouched.
 
+The read helper now consumes the actual owner projection: a redacted graph
+object and one attempts page of10 with workspace/kind/limit/items/cursor. The
+entire four-response snapshot is canonicalized, including both graphs and the
+opaque cursor, without pagination or data repair. Graph comparison preserves
+nested JSON types. A closed read route/reason/status record survives nonzero
+child exit and is retained in maintenance failure reporting; arbitrary error
+text, stderr, response bodies and credentials never become reports. Both live
+maintenance attempts remain consumed; this correction releases no further switch.
+
 Private environment values move only in the maintenance process's Docker API
 memory, never command arguments or records. The four public saved-state reads
 are checked before outage and compared after unauthenticated readiness. Public revision shape is

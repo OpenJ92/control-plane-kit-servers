@@ -16,12 +16,14 @@ import time
 import unittest
 from unittest.mock import patch
 from urllib.parse import urlsplit
+from urllib.error import HTTPError
 
 import grandparent_cpk_cutover as action
 from grandparent_cpk_cutover_tests import DockerFrames, NEW, PUBLIC
 
 HUMAN = "h" * 64
 SETUP = "s" * 64
+SYNTHETIC_GRAPH = dict(name=action.WORKSPACE, nodes={"node-" + str(i): {"count": i} for i in range(8)})
 
 
 class Response(io.BytesIO):
@@ -40,6 +42,8 @@ class Wire:
         route = parts.path
         if not request.full_url.startswith("http://127.0.0.1:18163/"):
             raise AssertionError("unexpected destination")
+        if request.get_method() != "GET" or request.data is not None:
+            raise AssertionError("verification crossed read-only HTTP boundary")
         if request.get_header("Authorization") != "Bearer " + HUMAN:
             raise AssertionError("unverified credential used")
         if self.mutate:
@@ -55,34 +59,42 @@ class Wire:
         if self.diagnosis == "oversize":
             from control_plane_kit_servers_cpk_server.client.transport import MAXIMUM_RESPONSE_BYTES
             return Response(b"x" * (MAXIMUM_RESPONSE_BYTES + 1))
+        if self.diagnosis == "authorization":
+            raise HTTPError(request.full_url, 403, "synthetic", {}, io.BytesIO(b"private-response-never-report"))
+        from control_plane_kit_operations.read_services.workspace_graph import _redact_graph_descriptor
+        from control_plane_kit_operations.read_services.workspace_graph import GraphPointerReadModel
+        from grandparent_saved_read import CURRENT_PROJECTION, DESIRED_PROJECTION
+        graph = _redact_graph_descriptor(SYNTHETIC_GRAPH)
+        pointer = GraphPointerReadModel("desired", True, graph_id=action.DESIRED, authored_graph_id=action.DESIRED,
+            realized_projection_id=DESIRED_PROJECTION, version=1, graph_name=action.WORKSPACE, graph_descriptor=graph).descriptor()
+        current = GraphPointerReadModel("current", True, graph_id=action.CURRENT, authored_graph_id=action.CURRENT,
+            realized_projection_id=CURRENT_PROJECTION).descriptor()
         root = "/workspaces/" + action.WORKSPACE
         if route == root:
             value = dict(workspace=dict(workspace_id=action.WORKSPACE, current_graph_id=action.CURRENT,
-                desired_graph_id=action.DESIRED, desired_graph_revision=1))
+                desired_graph_id=action.DESIRED, desired_graph_revision=1, desired_realized_projection_id=DESIRED_PROJECTION,
+                current_realized_projection_id=CURRENT_PROJECTION), desired_graph=pointer, current_graph=current)
         elif route == root + "/graphs/desired":
-            value = dict(assigned=True, graph_id=action.DESIRED, graph_descriptor="{}")
+            value = pointer
         elif route.endswith("/attempts"):
-            if self.diagnosis:
-                # Use the installed server query decoder and owner request value,
-                # not a second implementation of their collection-limit rules.
-                from control_plane_kit_core.operations import operator_read_http_routes
-                from control_plane_kit_operations.read_pages import ReadCollection, ReadPageRequest, RevisionReadScope
-                from control_plane_kit_servers_cpk_server.boundary import _decode_http_read_query
-                contract = next(r for r in operator_read_http_routes()
-                    if r.route_id == "read.desired-topology-draft-revision-attempts")
-                query = _decode_http_read_query(contract, parts.query.encode("ascii"))
-                ReadPageRequest(ReadCollection.DESIRED_TOPOLOGY_DRAFT_REVISION_ATTEMPTS,
-                    RevisionReadScope(action.WORKSPACE, action.DRAFT, 1), query["limit"])
-            value = dict(items=[], next_cursor=None)
+            # Actual installed query decoding and owner page projection in every
+            # successful fixture; no query-stripping or string-graph shortcut.
+            from control_plane_kit_core.operations import operator_read_http_routes
+            from control_plane_kit_operations.read_pages import ReadCollection, ReadPage, ReadPageRequest, RevisionReadScope
+            from control_plane_kit_servers_cpk_server.boundary import _decode_http_read_query
+            contract = next(r for r in operator_read_http_routes()
+                if r.route_id == "read.desired-topology-draft-revision-attempts")
+            query = _decode_http_read_query(contract, parts.query.encode("ascii"))
+            request = ReadPageRequest(ReadCollection.DESIRED_TOPOLOGY_DRAFT_REVISION_ATTEMPTS,
+                RevisionReadScope(action.WORKSPACE, action.DRAFT, 1), query["limit"])
+            value = ReadPage.from_candidates(request, ()).descriptor()
         elif route == root + "/desired-topology-drafts/" + action.DRAFT + "/revisions/1":
             value = dict(workspace_id=action.WORKSPACE, draft_id=action.DRAFT, revision=1,
-                         graph_id=action.DESIRED, graph_descriptor="{}")
-            if self.diagnosis:
-                from control_plane_kit_operations.read_services.models import FocusedDetailReadModel
-                from control_plane_kit_operations.read_services.workspace_graph import _redact_graph_descriptor
-                value["graph_descriptor"] = _redact_graph_descriptor({"name": "synthetic-diagnosis"})
-                value = FocusedDetailReadModel(action.WORKSPACE,
-                    "desired-topology-draft-revision", value).descriptor()
+                         graph_id=action.DESIRED, graph_descriptor=graph)
+            from control_plane_kit_operations.read_services.models import FocusedDetailReadModel
+            value = FocusedDetailReadModel(action.WORKSPACE, "desired-topology-draft-revision", value).descriptor()
+            if self.diagnosis == "invalid-shape":
+                value["graph_descriptor"] = "{}"
         else:
             raise AssertionError("unexpected route")
         return Response(json.dumps(value).encode())
@@ -243,31 +255,79 @@ class InstallerProcessContract(unittest.TestCase):
         reader.bind_identity(self.document)
         return reader
 
-    def test_f03_fourth_request_limit_is_rejected_by_installed_owner_contract(self):
-        with self.assertRaisesRegex(action.Hold, "^owner-client-read$"):
-            self.diagnostic_reader("owner-contract").saved()
+    def test_repaired_production_reader_uses_owner_valid_page_and_object_projection(self):
+        snapshot = self.diagnostic_reader("owner-contract").saved()
+        self.assertIs(type(json.loads(snapshot)[2]["graph_descriptor"]), dict)
         queries = [json.loads(line) for line in (self.root / "queries.jsonl").read_text().splitlines()]
         root = "/workspaces/" + action.WORKSPACE
         revision = root + "/desired-topology-drafts/" + action.DRAFT + "/revisions/1"
         self.assertEqual(queries, [dict(path=p, query=q) for p, q in (
-            (root, ""), (root + "/graphs/desired", ""), (revision, ""), (revision + "/attempts", "limit=50"))])
+            (root, ""), (root + "/graphs/desired", ""), (revision, ""), (revision + "/attempts", "limit=10"))])
         observed = json.loads((self.root / "diagnosis.json").read_text())
-        self.assertEqual(observed, dict(error_class="ReadPageError", reason="not-emitted", exit_status=1))
+        self.assertEqual(observed, dict(error_class="none", reason="not-emitted", exit_status=0))
 
-    def test_correcting_only_limit_exposes_f03_revision_object_shape_mismatch(self):
-        with self.assertRaisesRegex(action.Hold, "^owner-client-read$"):
-            self.diagnostic_reader("limit10").saved()
+    def test_invalid_revision_shape_keeps_fixed_route_and_reason_across_reader_parent(self):
+        with self.assertRaises(action.ReadFailure) as caught:
+            self.diagnostic_reader("invalid-shape").saved()
+        self.assertEqual((caught.exception.route, caught.exception.reason),
+                         (action.READ_ROUTES["revision"], "projection-mismatch"))
         queries = [json.loads(line) for line in (self.root / "queries.jsonl").read_text().splitlines()]
         self.assertEqual(len(queries), 4)
         self.assertEqual(queries[-1]["query"], "limit=10")
         observed = json.loads((self.root / "diagnosis.json").read_text())
-        self.assertEqual(observed, dict(error_class="Hold", reason="saved-revision-mismatch", exit_status=1))
+        self.assertEqual(observed, dict(error_class="ReadFailure", reason="projection-mismatch", exit_status=1))
 
-    def test_installed_transport_response_bound_exits_nonzero_but_parent_discards_reason(self):
-        with self.assertRaisesRegex(action.Hold, "^owner-client-read$"):
+    def test_response_bound_keeps_safe_reason_and_nonzero_status(self):
+        with self.assertRaises(action.ReadFailure) as caught:
             self.diagnostic_reader("oversize").saved()
+        self.assertEqual((caught.exception.route, caught.exception.reason),
+                         (action.READ_ROUTES["workspace"], "response-too-large"))
         observed = json.loads((self.root / "diagnosis.json").read_text())
-        self.assertEqual(observed, dict(error_class="ClientTransportError", reason="response-client-bound", exit_status=1))
+        self.assertEqual(observed, dict(error_class="ReadFailure", reason="response-too-large", exit_status=1))
+
+    def test_authorization_error_is_closed_and_does_not_reveal_response_body(self):
+        with self.assertRaises(action.ReadFailure) as caught:
+            self.diagnostic_reader("authorization").saved()
+        record = caught.exception.record()
+        self.assertEqual((record["route"], record["reason"]), (action.READ_ROUTES["workspace"], "authorization-refused"))
+        self.assertNotIn("private-response", json.dumps(record))
+        self.assertNotIn(HUMAN, json.dumps(record))
+
+    def test_public_baseline_verification_and_first_page_coverage(self):
+        import grandparent_saved_read as verification
+        snapshot = self.reader().saved()
+        report = verification.summarize(snapshot, SYNTHETIC_GRAPH)
+        self.assertEqual(report["public_graph"]["node_count"], 8)
+        self.assertEqual(report["desired_realized_projection_id"], verification.DESIRED_PROJECTION)
+        self.assertEqual(report["attempts"], dict(limit=10, returned=0, next_cursor_present=False,
+                                                coverage="first-page-only", page_exhausted_observed=True))
+        values = json.loads(snapshot)
+        values[3].update(items=[{"run_id": "synthetic"}], next_cursor={"opaque": "first-page"})
+        page = verification.summarize(action.canonical(values), SYNTHETIC_GRAPH)["attempts"]
+        self.assertEqual((page["returned"], page["next_cursor_present"], page["page_exhausted_observed"]), (1, True, False))
+        self.assertNotEqual(snapshot, action.canonical(values))
+        values[2]["graph_descriptor"]["nodes"]["node-1"]["count"] = True
+        with self.assertRaises(action.ReadFailure) as caught:
+            verification.summarize(action.canonical(values), SYNTHETIC_GRAPH)
+        self.assertEqual(caught.exception.reason, "baseline-mismatch")
+        values = json.loads(snapshot)
+        values[0]["desired_graph"]["realized_projection_id"] = "wrong-projection"
+        with self.assertRaises(action.ReadFailure) as caught:
+            verification.summarize(action.canonical(values), SYNTHETIC_GRAPH)
+        self.assertEqual((caught.exception.route, caught.exception.reason), (action.READ_ROUTES["workspace"], "projection-mismatch"))
+
+    def test_verification_only_entry_completes_exactly_four_gets_without_graph_or_bearer_output(self):
+        created = action.run_as_owner([sys.executable, __file__, "--make-entry-target"], b"")
+        self.assertEqual(created.returncode, 0)
+        self.addCleanup(action.run_as_owner, [sys.executable, __file__, "--remove-entry-target"], b"")
+        result = action.run_as_owner([sys.executable, __file__, "--verification-entry", str(self.path)], b"")
+        self.assertEqual(result.returncode, 0, result.stderr.decode()[-1000:])
+        report = json.loads(result.stdout)
+        self.assertEqual((report["status"], report["completed_reads"], report["switch_attempted"]), ("verified", 4, False))
+        self.assertEqual(report["public_graph"]["node_count"], 8)
+        self.assertNotIn(b"graph_descriptor", result.stdout)
+        self.assertNotIn(HUMAN.encode(), result.stdout + result.stderr)
+        self.assertEqual(len((self.root / "wire.jsonl").read_text().splitlines()), 4)
 
     def test_installed_client_error_exit_codes_and_owner_projection_metadata(self):
         from control_plane_kit_operations import read_pages
@@ -337,7 +397,9 @@ def fixture_command():
                 return original_saved(reader)
             except BaseException as error:
                 name = type(error).__name__
-                result["error_class"] = name if name in {"ReadPageError", "Hold", "ClientTransportError"} else "other"
+                result["error_class"] = name if name in {"ReadPageError", "Hold", "ClientTransportError", "ReadFailure"} else "other"
+                if isinstance(error, action.ReadFailure):
+                    result["reason"] = error.reason
                 if isinstance(error, action.Hold) and str(error) == "saved-revision-mismatch":
                     result["reason"] = "saved-revision-mismatch"
                 if isinstance(error, transport.ClientTransportError) and str(error) == "cpk-server response exceeds the client bound":
@@ -356,6 +418,28 @@ def fixture_command():
             result["exit_status"] = action.entry_point()
         (path.parent / "diagnosis.json").write_text(json.dumps(result))
         raise SystemExit(result["exit_status"])
+    elif mode == "--verification-entry":
+        import grandparent_saved_read as verification
+        from control_plane_kit_servers_cpk_server.client import transport
+        path = Path(sys.argv[2])
+        raw_baseline = action.canonical(SYNTHETIC_GRAPH)
+        raw_shared = Path(action.__file__).read_bytes()
+        plan = dict(schema="cpk399.read-only-approval.v1", run=verification.RUN, read_once_approved=True,
+            reader_sha256=hashlib.sha256(Path(verification.__file__).read_bytes()).hexdigest(),
+            shared_reader_sha256=hashlib.sha256(raw_shared).hexdigest(), endpoint="http://127.0.0.1:18163",
+            routes=list(action.READ_ROUTES.values()))
+        raw_plan = action.canonical(plan)
+        original_read = Path.read_bytes
+        def public_read(target):
+            inputs = {"/proposal/verification.json": raw_plan, "/public/desired.json": raw_baseline,
+                      "/grandparent_cpk_cutover.py": raw_shared}
+            return inputs[str(target)] if str(target) in inputs else original_read(target)
+        with patch.object(Path, "read_bytes", public_read), \
+                patch.object(verification, "BASELINE_SHA", hashlib.sha256(raw_baseline).hexdigest()), \
+                patch.object(sys, "argv", [verification.__file__, "--verify-saved-read-only", hashlib.sha256(raw_plan).hexdigest()]), \
+                patch.object(transport, "build_opener", return_value=Wire(path, diagnosis="verification")):
+            status = verification.main()
+        raise SystemExit(status)
     elif mode == "--make-entry-target":
         path = Path("/credentials/human.bearer")
         with path.open("x") as stream:

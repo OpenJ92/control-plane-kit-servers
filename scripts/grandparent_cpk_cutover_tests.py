@@ -270,15 +270,51 @@ class CutoverTests(unittest.TestCase):
         reader = object.__new__(action.SavedReads)
         frames = {"workspace": {"workspace": dict(workspace_id=action.WORKSPACE,
             current_graph_id=action.CURRENT, desired_graph_id=action.DESIRED, desired_graph_revision=1)},
-            "desired": dict(assigned=True, graph_id=action.DESIRED),
-            "attempts": dict(items=[], next_cursor=None),
+            "desired": dict(assigned=True, graph_id=action.DESIRED, graph_descriptor={"name": "public-graph"}),
+            "attempts": dict(workspace_id=action.WORKSPACE, kind="desired-topology-draft-revision-attempts",
+                             limit=10, items=[], next_cursor=None),
             "revision": dict(workspace_id=action.WORKSPACE, draft_id=action.DRAFT, revision=1,
-                             graph_id=action.DESIRED, graph_descriptor="redacted-public-graph")}
+                             graph_id=action.DESIRED, graph_descriptor={"name": "public-graph"})}
         reader.read = lambda kind: deepcopy(frames[kind])
         self.assertEqual(json.loads(reader.saved()), [frames[k] for k in ("workspace", "desired", "revision", "attempts")])
         frames["revision"]["graph_id"] = "different-revision-graph"
         with self.assertRaises(action.Hold):
             reader.saved()
+
+    def test_attempt_page_scope_and_nested_graph_types_are_not_normalized_away(self):
+        frames = {"workspace": {"workspace": dict(workspace_id=action.WORKSPACE, current_graph_id=action.CURRENT,
+            desired_graph_id=action.DESIRED, desired_graph_revision=1)},
+            "desired": dict(assigned=True, graph_id=action.DESIRED, graph_descriptor={"nested": {"count": 1}}),
+            "revision": dict(workspace_id=action.WORKSPACE, draft_id=action.DRAFT, revision=1,
+                graph_id=action.DESIRED, graph_descriptor={"nested": {"count": 1}}),
+            "attempts": dict(workspace_id=action.WORKSPACE, kind="desired-topology-draft-revision-attempts",
+                limit=10, items=[], next_cursor=None)}
+        reader = object.__new__(action.SavedReads)
+        reader.read = lambda kind: deepcopy(frames[kind])
+        before = reader.saved()
+        frames["attempts"]["items"] = [{"run_id": "synthetic"}]
+        self.assertNotEqual(before, reader.saved())
+        page = reader.saved()
+        frames["attempts"]["next_cursor"] = {"opaque": "cursor"}
+        self.assertNotEqual(page, reader.saved())
+        for field, value in (("workspace_id", "foreign"), ("kind", "different-collection"), ("limit", 50)):
+            original = frames["attempts"][field]
+            with self.subTest(field=field):
+                frames["attempts"][field] = value
+                with self.assertRaises(action.ReadFailure) as caught:
+                    reader.saved()
+                self.assertEqual(caught.exception.route, action.READ_ROUTES["attempts"])
+            frames["attempts"][field] = original
+        frames["revision"]["graph_descriptor"]["nested"]["count"] = True
+        with self.assertRaises(action.ReadFailure) as caught:
+            reader.saved()
+        self.assertEqual(caught.exception.route, action.READ_ROUTES["revision"])
+
+    def test_reader_error_record_rejects_unreviewed_route_or_arbitrary_fields(self):
+        value = action.ReadFailure(action.READ_ROUTES["workspace"], "response-invalid").record()
+        for changed in (dict(value, route="unreviewed"), dict(value, reason="arbitrary-message"), dict(value, body=PRIVATE)):
+            with self.assertRaises(action.Hold):
+                action.ReadFailure.from_record(changed)
 
     def test_existing_attempt_is_not_resumed(self):
         with tempfile.TemporaryDirectory() as name:
