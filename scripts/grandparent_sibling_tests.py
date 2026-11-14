@@ -30,20 +30,7 @@ class SiblingPublicPreparation(unittest.TestCase):
         self.assertEqual(json.loads(Path("/source/docs/sibling399/material-template.json").read_bytes()), self.template)
 
     def bind(self):
-        coordinates = []
-        def trace(frame, event, arg):
-            if event == "exception" and "control_plane_kit" in frame.f_code.co_filename:
-                coordinates.append((Path(frame.f_code.co_filename).name, frame.f_code.co_name,
-                    frame.f_lineno, arg[0].__name__))
-            return trace
-        sys.settrace(trace)
-        try:
-            return sibling.bind_material(self.template, self.plan, self.raw, self.completion)
-        except Exception:
-            print("synthetic owner rejection coordinates " + json.dumps(coordinates[-16:]))
-            raise
-        finally:
-            sys.settrace(None)
+        return sibling.bind_material(self.template, self.plan, self.raw, self.completion)
 
     def test_normal_frozen_material_owner_compiles_fresh_three_node_read_scope(self):
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey

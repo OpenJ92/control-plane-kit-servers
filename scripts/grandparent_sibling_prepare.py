@@ -94,7 +94,8 @@ def bind_material(template, commission_plan, public_raw, completion):
         if role == "cpk":
             contract = replace(contract, public_environment=(*contract.public_environment,
                 PublicStaticEnvironmentBinding("CPK_MCP_PROFILE", "grandparent-read-only-v1")))
-        product = ContainerServerProduct(ProductIdentity("control-plane-kit", IDENTITY + "-" + role, 1),
+        product = ContainerServerProduct(ProductIdentity("control-plane-kit",
+            "cpk-server-docker-cloudflare" if role == "cpk" else "secrets-server", 1),
             OciImageReference("localhost", "control-plane-kit-servers/" + ("cpk-grandparent" if role == "cpk" else "secrets-server"), digest),
             contract)
         products[role] = json.loads(ProductDescriptorCodec().encode_document(product).content)
