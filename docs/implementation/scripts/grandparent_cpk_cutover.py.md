@@ -24,6 +24,12 @@ child exit and is retained in maintenance failure reporting; arbitrary error
 text, stderr, response bodies and credentials never become reports. Both live
 maintenance attempts remain consumed; this correction releases no further switch.
 
+Closed read errors include a fixed prepare/call/response/validate/compare phase
+bound to the exact route. Transport preparation failures are captured before
+request construction can fall through to a generic error. Child and parent both
+validate the finite phase/route/category record. A call phase does not assert
+dispatch; the same public client retains request construction and HTTP effects.
+
 Private environment values move only in the maintenance process's Docker API
 memory, never command arguments or records. The four public saved-state reads
 are checked before outage and compared after unauthenticated readiness. Public revision shape is

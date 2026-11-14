@@ -312,7 +312,8 @@ class CutoverTests(unittest.TestCase):
 
     def test_reader_error_record_rejects_unreviewed_route_or_arbitrary_fields(self):
         value = action.ReadFailure(action.READ_ROUTES["workspace"], "response-invalid").record()
-        for changed in (dict(value, route="unreviewed"), dict(value, reason="arbitrary-message"), dict(value, body=PRIVATE)):
+        for changed in (dict(value, route="unreviewed"), dict(value, reason="arbitrary-message"), dict(value, body=PRIVATE),
+                        dict(value, stage="unreviewed:read.workspace"), dict(value, stage="call:read.desired-graph")):
             with self.assertRaises(action.Hold):
                 action.ReadFailure.from_record(changed)
 

@@ -12,3 +12,12 @@ file protections; authentication belongs to the public API. A fixed error record
 retains route/category and safe status without raw response/exception material.
 Owning offline tests exercise its real main entry with synthetic public proposal
 bytes and intercepted wire before independent review and a separate live release.
+
+Startup reports distinguish proposal, source, baseline, credential and proxy
+checks. The shared reader reports preparation before transport construction and
+named call/response/validation phases. Generic failures preserve fixed stage and
+safe class category without exception text or private input. Offline failure
+injection covers each file read, proxy refusal, real installed credential-format
+rejection and first-request preparation; physical target-path testing remains
+separate from those deliberate injections. No prior receipt or live permission
+is superseded by this source-only change.

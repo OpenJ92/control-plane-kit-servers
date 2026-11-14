@@ -285,6 +285,14 @@ class InstallerProcessContract(unittest.TestCase):
         observed = json.loads((self.root / "diagnosis.json").read_text())
         self.assertEqual(observed, dict(error_class="ReadFailure", reason="response-too-large", exit_status=1))
 
+    def test_first_read_preparation_failure_keeps_stage_across_production_child_parent(self):
+        with self.assertRaises(action.ReadFailure) as caught:
+            self.diagnostic_reader("prepare").saved()
+        self.assertEqual((caught.exception.stage, caught.exception.reason),
+                         ("prepare:read.workspace", "preparation-failed"))
+        self.assertFalse((self.root / "wire.jsonl").exists())
+        self.assertNotIn("synthetic-private-detail", json.dumps(caught.exception.record()))
+
     def test_authorization_error_is_closed_and_does_not_reveal_response_body(self):
         with self.assertRaises(action.ReadFailure) as caught:
             self.diagnostic_reader("authorization").saved()
@@ -324,10 +332,37 @@ class InstallerProcessContract(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr.decode()[-1000:])
         report = json.loads(result.stdout)
         self.assertEqual((report["status"], report["completed_reads"], report["switch_attempted"]), ("verified", 4, False))
+        self.assertEqual(report["stage"], "verified")
         self.assertEqual(report["public_graph"]["node_count"], 8)
         self.assertNotIn(b"graph_descriptor", result.stdout)
         self.assertNotIn(HUMAN.encode(), result.stdout + result.stderr)
         self.assertEqual(len((self.root / "wire.jsonl").read_text().splitlines()), 4)
+
+    def test_verification_only_failure_stages_are_bounded_before_any_request(self):
+        created = action.run_as_owner([sys.executable, __file__, "--make-entry-target"], b"")
+        self.assertEqual(created.returncode, 0)
+        self.addCleanup(action.run_as_owner, [sys.executable, __file__, "--remove-entry-target"], b"")
+        cases = (("plan", "plan-read", "permission-denied"),
+                 ("reader-source", "reader-source-read", "permission-denied"),
+                 ("shared-source", "shared-source-read", "permission-denied"),
+                 ("baseline", "baseline-read", "permission-denied"),
+                 ("proxy", "proxy-environment", "check-refused"),
+                 ("prepare", "prepare:read.workspace", None),
+                 ("credential-invalid", "credential-load", "credential-configuration"))
+        for case, stage, category in cases:
+            with self.subTest(case=case):
+                process = action.run_as_owner([sys.executable, __file__, "--verification-entry", str(self.path), case], b"")
+                self.assertEqual(process.returncode, 1)
+                report = json.loads(process.stdout)
+                self.assertEqual((report["stage"], report["completed_reads"], report["status"]), (stage, 0, "HOLD"))
+                if category is None:
+                    self.assertEqual(report["read_failure"]["reason"], "preparation-failed")
+                    self.assertEqual(report["read_failure"]["stage"], stage)
+                else:
+                    self.assertEqual(report["failure_category"], category)
+                self.assertFalse((self.root / "wire.jsonl").exists())
+                for private in (HUMAN.encode(), b"synthetic-private-detail", b"graph_descriptor"):
+                    self.assertNotIn(private, process.stdout + process.stderr)
 
     def test_installed_client_error_exit_codes_and_owner_projection_metadata(self):
         from control_plane_kit_operations import read_pages
@@ -414,7 +449,8 @@ def fixture_command():
                 patch.object(sys, "argv", [action.__file__, "--read-saved", hashlib.sha256(raw_plan).hexdigest(), "--admin-fd", descriptor]), \
                 patch.object(action.SavedReads, "saved", observe_saved), \
                 patch.object(transport.PublicHttpTransport, "call", request), \
-                patch.object(transport, "build_opener", return_value=Wire(path, diagnosis=diagnosis)):
+                patch.object(transport, "build_opener", return_value=Wire(path, diagnosis=diagnosis),
+                    side_effect=RuntimeError("synthetic-private-detail") if diagnosis == "prepare" else None):
             result["exit_status"] = action.entry_point()
         (path.parent / "diagnosis.json").write_text(json.dumps(result))
         raise SystemExit(result["exit_status"])
@@ -422,6 +458,13 @@ def fixture_command():
         import grandparent_saved_read as verification
         from control_plane_kit_servers_cpk_server.client import transport
         path = Path(sys.argv[2])
+        case = sys.argv[3] if len(sys.argv) == 4 else "success"
+        assert case in {"success", "plan", "reader-source", "shared-source", "baseline", "proxy", "prepare", "credential-invalid"}
+        if case == "credential-invalid":
+            credential = Path("/credentials/human.bearer")
+            credential.chmod(0o600)
+            credential.write_text("h" * 63 + "\n")
+            credential.chmod(0o400)
         raw_baseline = action.canonical(SYNTHETIC_GRAPH)
         raw_shared = Path(action.__file__).read_bytes()
         plan = dict(schema="cpk399.read-only-approval.v1", run=verification.RUN, read_once_approved=True,
@@ -433,11 +476,17 @@ def fixture_command():
         def public_read(target):
             inputs = {"/proposal/verification.json": raw_plan, "/public/desired.json": raw_baseline,
                       "/grandparent_cpk_cutover.py": raw_shared}
+            denied = {"plan": "/proposal/verification.json", "reader-source": verification.__file__,
+                      "shared-source": "/grandparent_cpk_cutover.py", "baseline": "/public/desired.json"}
+            if str(target) == denied.get(case):
+                raise PermissionError("synthetic-private-detail")
             return inputs[str(target)] if str(target) in inputs else original_read(target)
         with patch.object(Path, "read_bytes", public_read), \
                 patch.object(verification, "BASELINE_SHA", hashlib.sha256(raw_baseline).hexdigest()), \
+                patch.dict(os.environ, {"HTTP_PROXY": "synthetic-private-detail"} if case == "proxy" else {}), \
                 patch.object(sys, "argv", [verification.__file__, "--verify-saved-read-only", hashlib.sha256(raw_plan).hexdigest()]), \
-                patch.object(transport, "build_opener", return_value=Wire(path, diagnosis="verification")):
+                patch.object(transport, "build_opener", return_value=Wire(path, diagnosis="verification"),
+                    side_effect=RuntimeError("synthetic-private-detail") if case == "prepare" else None):
             status = verification.main()
         raise SystemExit(status)
     elif mode == "--make-entry-target":

@@ -61,29 +61,34 @@ READ_ROUTES = {"workspace": "read.workspace", "desired": "read.desired-graph",
                "revision": "read.desired-topology-draft-revision",
                "attempts": "read.desired-topology-draft-revision-attempts"}
 READ_REASONS = frozenset({"authorization-refused", "http-failed", "transport-failed", "response-too-large",
-                         "response-invalid", "projection-mismatch", "baseline-mismatch"})
+                         "response-invalid", "projection-mismatch", "baseline-mismatch", "preparation-failed"})
+READ_PHASES = frozenset({"prepare", "call", "response", "validate", "compare"})
 
 
 class ReadFailure(Hold):
     """Only a fixed read route/category crosses the owner process boundary."""
 
-    def __init__(self, route, reason, http_status=None):
-        if route not in READ_ROUTES.values() or reason not in READ_REASONS or not (
+    def __init__(self, route, reason, http_status=None, *, phase="call"):
+        if route not in READ_ROUTES.values() or reason not in READ_REASONS or phase not in READ_PHASES or not (
                 http_status is None or type(http_status) is int and 400 <= http_status <= 599):
             raise Hold("reader-error-unverified")
         super().__init__("saved-read-failed")
         self.route, self.reason, self.http_status = route, reason, http_status
+        self.stage = phase + ":" + route
 
     def record(self):
         return dict(schema="cpk399.saved-read-error.v1", status="HOLD", route=self.route,
-                    reason=self.reason, http_status=self.http_status, retry=False)
+                    reason=self.reason, http_status=self.http_status, stage=self.stage, retry=False)
 
     @classmethod
     def from_record(cls, value):
-        require(type(value) is dict and set(value) == {"schema", "status", "route", "reason", "http_status", "retry"}
+        require(type(value) is dict and set(value) == {"schema", "status", "route", "reason", "http_status", "stage", "retry"}
                 and value["schema"] == "cpk399.saved-read-error.v1" and value["status"] == "HOLD"
                 and value["retry"] is False, "reader-error-unverified")
-        return cls(value["route"], value["reason"], value["http_status"])
+        require(type(value["stage"]) is str and value["stage"].count(":") == 1, "reader-error-unverified")
+        phase, route = value["stage"].split(":")
+        require(route == value["route"], "reader-error-unverified")
+        return cls(route, value["reason"], value["http_status"], phase=phase)
 
 
 class ChildOutcomeError(Hold):
@@ -309,6 +314,7 @@ class SavedReads:
                 and metadata.st_size == 64, "credential-metadata")
         self.path = credential_path
         self.completed_routes = []
+        self.stage = "credential-metadata"
 
     def owner_credential(self):
         from control_plane_kit_servers_cpk_server.client.profile import ClientProfile
@@ -322,16 +328,22 @@ class SavedReads:
 
     def read(self, suffix):
         # Existing public transport owns redirects, bounded decoding and safe errors.
-        from control_plane_kit_servers_cpk_server.client.transport import (
-            PublicHttpTransport, ClientAuthorizationError, ClientTransportError)
-        transport = PublicHttpTransport(self.profile, timeout_seconds=5)
         route = READ_ROUTES[suffix]
-        coordinates = dict(workspace_id=WORKSPACE)
-        if suffix in ("revision", "attempts"):
-            coordinates.update(draft_id=DRAFT, revision="1")
+        self.stage = "prepare:" + route
+        try:
+            from control_plane_kit_servers_cpk_server.client.transport import (
+                PublicHttpTransport, ClientAuthorizationError, ClientTransportError)
+            transport = PublicHttpTransport(self.profile, timeout_seconds=5)
+            coordinates = dict(workspace_id=WORKSPACE)
+            if suffix in ("revision", "attempts"):
+                coordinates.update(draft_id=DRAFT, revision="1")
+        except BaseException:
+            raise ReadFailure(route, "preparation-failed", phase="prepare") from None
+        self.stage = "call:" + route
         try:
             value = transport.call(route, path_parameters=coordinates,
                 payload={"limit": 10} if suffix == "attempts" else {}, credential_role="operator")
+            self.stage = "response:" + route
             canonical(value)
             self.completed_routes.append(route)
             return value
@@ -345,28 +357,34 @@ class SavedReads:
                 reason = "http-failed"
             raise ReadFailure(route, reason, status) from None
         except (TypeError, ValueError, RecursionError, UnicodeError):
-            raise ReadFailure(route, "response-invalid") from None
+            raise ReadFailure(route, "response-invalid", phase=self.stage.split(":")[0]) from None
+        except BaseException:
+            raise ReadFailure(route, "transport-failed", phase="call") from None
 
     def saved(self):
         workspace, desired, revision, attempts = (self.read(k) for k in ("workspace", "desired", "revision", "attempts"))
-        self.check("workspace", lambda: workspace["workspace"]["workspace_id"] == WORKSPACE and
+        self.validate("workspace", lambda: workspace["workspace"]["workspace_id"] == WORKSPACE and
                 workspace["workspace"]["current_graph_id"] == CURRENT and
                 workspace["workspace"]["desired_graph_id"] == DESIRED and
                 type(workspace["workspace"]["desired_graph_revision"]) is int and workspace["workspace"]["desired_graph_revision"] == 1)
-        self.check("revision", lambda: revision["workspace_id"] == WORKSPACE and revision["draft_id"] == DRAFT and
+        self.validate("revision", lambda: revision["workspace_id"] == WORKSPACE and revision["draft_id"] == DRAFT and
                 type(revision["revision"]) is int and
                 revision["revision"] == 1 and revision["graph_id"] == DESIRED and
                 type(revision["graph_descriptor"]) is dict)
-        self.check("desired", lambda: desired["assigned"] is True and desired["graph_id"] == DESIRED
+        self.validate("desired", lambda: desired["assigned"] is True and desired["graph_id"] == DESIRED
                    and type(desired["graph_descriptor"]) is dict)
-        self.check("revision", lambda: canonical(revision["graph_descriptor"]) == canonical(desired["graph_descriptor"]))
-        self.check("attempts", lambda: attempts["workspace_id"] == WORKSPACE
+        self.validate("revision", lambda: canonical(revision["graph_descriptor"]) == canonical(desired["graph_descriptor"]))
+        self.validate("attempts", lambda: attempts["workspace_id"] == WORKSPACE
                    and attempts["kind"] == "desired-topology-draft-revision-attempts"
                    and type(attempts["limit"]) is int and attempts["limit"] == 10
                    and type(attempts["items"]) is list and len(attempts["items"]) <= 10
                    and all(type(item) is dict for item in attempts["items"])
                    and (attempts["next_cursor"] is None or type(attempts["next_cursor"]) is dict))
         return canonical([workspace, desired, revision, attempts])
+
+    def validate(self, suffix, predicate):
+        self.stage = "validate:" + READ_ROUTES[suffix]
+        self.check(suffix, predicate)
 
     @staticmethod
     def check(suffix, predicate):
@@ -375,7 +393,7 @@ class SavedReads:
         except (KeyError, TypeError, IndexError, ValueError, RecursionError):
             valid = False
         if not valid:
-            raise ReadFailure(READ_ROUTES[suffix], "projection-mismatch")
+            raise ReadFailure(READ_ROUTES[suffix], "projection-mismatch", phase="validate")
 
     def ready(self, sleep=time.sleep):
         from urllib.error import HTTPError, URLError

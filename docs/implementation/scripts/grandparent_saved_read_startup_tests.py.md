@@ -12,3 +12,9 @@ no graph, credential, exception text or unknown environment value. The baseline
 hash is explicitly synthetic. A diagnosed HOLD is startup evidence, not acceptance
 or a repair. Extra read-only source/fixture mounts supply test support only; the
 five production input targets, identity and permissions remain exercised.
+
+The physical probe also reports the production verifier's own bounded stage and
+category. In the first retained synthetic run all four intercepted reads completed
+and no failing stage was observed; that result does not attribute the original
+generic live hold. The owning unit cases deliberately inject failures separately
+to verify confidentiality and phase reporting, including preparation before HTTP.

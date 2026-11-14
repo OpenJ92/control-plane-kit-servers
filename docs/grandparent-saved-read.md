@@ -15,6 +15,17 @@ draft revision1 and that revision's first attempts page at limit10, once each,
 without retry, pagination, command routes or client attachment. A failure stops
 the batch and returns a nonzero status with only a fixed route/safe category.
 
+The actual verifier also reports a fixed startup stage: proposal read/decode/hash,
+reader/shared-source read/hash, proxy check, baseline read/decode/hash, credential
+metadata/load, profile pin, snapshot comparison, or a named read's prepare/call/
+response/validate/compare phase. A call phase means entry into the installed
+transport; it does not prove an HTTP request was sent. The preparation phase
+includes transport construction before the first request. Unknown exceptions
+retain a bounded stage/category without filenames, messages, bodies or locals.
+Closed route/phase records are validated when crossing the owner child boundary.
+The consumed verification01 receipt remains historical and is not rewritten by
+this offline instrumentation change. Another live batch remains unreleased.
+
 The reader verifies the fixed workspace/Current/Desired/draft/revision and both
 retained realized projection coordinates. The authored graph IDs are UUIDs;
 the projection IDs are the retained `projection-` plus digest coordinates.

@@ -102,6 +102,7 @@ def probe():
     print("physical-startup-diagnostic " + json.dumps(dict(schema="cpk399.offline-startup.v1",
         uid=os.getuid(), gid=os.getgid(), main_exit=status, program_status=result["status"],
         completed_reads=result["completed_reads"], observation=observed,
+        program_stage=result.get("stage"), program_failure_category=result.get("failure_category"),
         untraced_failure=status != 0 and observed["first_failure"] is None, input_metadata=metadata,
         environment=dict(proxy_nonempty=any(v for k, v in os.environ.items() if k.lower() in {
             "http_proxy", "https_proxy", "all_proxy"}), pythonpath_present=bool(os.environ.get("PYTHONPATH")),
