@@ -72,8 +72,8 @@ class OwnerClientTests(unittest.TestCase):
         self.path.write_text(HUMAN)
         self.path.chmod(0o400)
         self.document = json.dumps([
-            dict(credential=HUMAN, subject_id="cpk163-gparent-20261109-human", kind="operator", workspace_grants=[]),
-            dict(credential=SETUP, subject_id="cpk163-gparent-20261109-setup", kind="operator", workspace_grants=[])])
+            dict(credential=HUMAN, subject_id="cpk163-gparent-20261109-human", kind="operator", workspace_grants={}),
+            dict(credential=SETUP, subject_id="cpk163-gparent-20261109-setup", kind="operator", workspace_grants={})])
 
     def replace_file(self):
         self.path.chmod(0o600)
