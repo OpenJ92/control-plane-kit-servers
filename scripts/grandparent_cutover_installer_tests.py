@@ -1,9 +1,11 @@
-"""Actual frozen installer client/reader, synthetic file, intercepted wire only."""
+"""Frozen installer, exact helper capabilities, synthetic inputs/intercepted wire."""
 from copy import deepcopy
 import io
 import json
 import os
 from pathlib import Path
+import shutil
+import stat
 import sys
 import tempfile
 import unittest
@@ -11,7 +13,7 @@ from unittest.mock import patch
 from urllib.parse import urlsplit
 
 import grandparent_cpk_cutover as action
-from grandparent_cpk_cutover_tests import DockerFrames, PUBLIC
+from grandparent_cpk_cutover_tests import DockerFrames, NEW, PUBLIC
 
 HUMAN = "h" * 64
 SETUP = "s" * 64
@@ -25,123 +27,161 @@ class Response(io.BytesIO):
 
 
 class Wire:
-    def __init__(self, calls, *, change=None):
-        self.calls, self.change = calls, change
+    def __init__(self, path, *, mutate=False):
+        self.path, self.mutate = path, mutate
 
     def open(self, request, *, timeout):
-        path = urlsplit(request.full_url).path
-        if request.full_url.startswith("http://127.0.0.1:18163/") is False:
+        route = urlsplit(request.full_url).path
+        if not request.full_url.startswith("http://127.0.0.1:18163/"):
             raise AssertionError("unexpected destination")
-        self.calls.append(("wire", path))
-        if path == "/health/ready":
-            if request.has_header("Authorization"):
-                raise AssertionError("readiness was authenticated")
-            value = dict(status="ready", application="configured", stores="configured")
+        if request.get_header("Authorization") != "Bearer " + HUMAN:
+            raise AssertionError("unverified credential used")
+        if self.mutate:
+            self.path.chmod(0o600)
+            self.path.write_text(SETUP)
+            self.path.chmod(0o400)
+            self.mutate = False
+        with (self.path.parent / "wire.jsonl").open("a") as stream:
+            stream.write(json.dumps(route) + "\n")
+        root = "/workspaces/" + action.WORKSPACE
+        if route == root:
+            value = dict(workspace=dict(workspace_id=action.WORKSPACE, current_graph_id=action.CURRENT,
+                desired_graph_id=action.DESIRED, desired_graph_revision=1))
+        elif route == root + "/graphs/desired":
+            value = dict(assigned=True, graph_id=action.DESIRED, graph_descriptor="{}")
+        elif route.endswith("/attempts"):
+            value = dict(items=[], next_cursor=None)
+        elif route == root + "/desired-topology-drafts/" + action.DRAFT + "/revisions/1":
+            value = dict(workspace_id=action.WORKSPACE, draft_id=action.DRAFT, revision=1,
+                         graph_id=action.DESIRED, graph_descriptor="{}")
         else:
-            if request.get_header("Authorization") != "Bearer " + HUMAN:
-                raise AssertionError("unverified credential used")
-            if self.change:
-                self.change()
-                self.change = None
-            root = "/workspaces/" + action.WORKSPACE
-            if path == root:
-                value = dict(workspace=dict(workspace_id=action.WORKSPACE, current_graph_id=action.CURRENT,
-                    desired_graph_id=action.DESIRED, desired_graph_revision=1))
-            elif path == root + "/graphs/desired":
-                value = dict(assigned=True, graph_id=action.DESIRED, graph_descriptor="{}")
-            elif path.endswith("/attempts"):
-                value = dict(items=[], next_cursor=None)
-            elif path == root + "/desired-topology-drafts/" + action.DRAFT + "/revisions/1":
-                value = dict(workspace_id=action.WORKSPACE, draft_id=action.DRAFT, revision=1,
-                             graph_id=action.DESIRED, graph_descriptor="{}")
-            else:
-                raise AssertionError("unexpected route")
+            raise AssertionError("unexpected route")
         return Response(json.dumps(value).encode())
 
 
-class OwnerClientTests(unittest.TestCase):
+class InstallerProcessContract(unittest.TestCase):
     def setUp(self):
-        self.assertEqual((os.getuid(), os.getgid()), (501, 20))
+        self.assertEqual(os.getuid(), 0)
         from control_plane_kit_servers_cpk_server.client import profile, transport
-        self.profile, self.transport = profile, transport
         self.assertFalse(profile.__file__.startswith("/source/"))
         self.assertFalse(transport.__file__.startswith("/source/"))
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.path = Path(self.tmp.name) / "human.bearer"
-        self.path.write_text(HUMAN)
-        self.path.chmod(0o400)
+        created = action.run_as_owner([sys.executable, __file__, "--make-fixture"], b"")
+        self.assertEqual(created.returncode, 0, created.stderr.decode()[-1000:])
+        self.root = Path(created.stdout.decode().strip())
+        self.path = self.root / "human.bearer"
         self.document = json.dumps([
             dict(credential=HUMAN, subject_id="cpk163-gparent-20261109-human", kind="operator", workspace_grants={}),
             dict(credential=SETUP, subject_id="cpk163-gparent-20261109-setup", kind="operator", workspace_grants={})])
+        self.addCleanup(self.remove_fixture)
 
-    def replace_file(self):
-        self.path.chmod(0o600)
-        self.path.write_text(SETUP)
-        self.path.chmod(0o400)
+    def remove_fixture(self):
+        result = action.run_as_owner([sys.executable, __file__, "--remove-fixture", str(self.root)], b"")
+        self.assertEqual(result.returncode, 0, result.stderr.decode()[-1000:])
 
-    def test_normal_consumer_uses_actual_frozen_client_before_and_after_cutover(self):
-        calls = []
+    def reader(self, *, mutate=False):
+        # Only the external wire is intercepted in the child. Production owner
+        # process/pipe/client/credential and administrator verifier paths run.
+        def spawn(_production_argv):
+            return action.spawn_as_owner([sys.executable, __file__, "--wire-child", str(self.path),
+                                          "mutate" if mutate else "stable"])
+        reader = action.OwnerUidReads("a" * 64, spawn=spawn)
+        reader.bind_identity(self.document)
+        return reader
+
+    def api(self, calls):
         api = DockerFrames(calls)
         api.objects[action.OLD]["Config"]["Env"] = [
-            "CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON=" + self.document if value.startswith(
-                "CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON=") else value
-            for value in api.objects[action.OLD]["Config"]["Env"]]
+            "CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON=" + self.document if v.startswith(
+                "CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON=") else v
+            for v in api.objects[action.OLD]["Config"]["Env"]]
         api.initial = deepcopy(api.objects[action.OLD])
-        reader = action.SavedReads(self.path)
-        journal = action.Journal(Path(self.tmp.name) / "receipt", "synthetic-owner-contract")
-        wire = Wire(calls)
-        try:
-            with patch.object(self.transport, "build_opener", return_value=wire), \
-                    patch("urllib.request.build_opener", return_value=wire):
-                action.cutover(api, reader, journal, {"resources": {"nodes": [{
-                    "node_id": action.NODE, "environment": PUBLIC}]}}, 0)
-        finally:
-            journal.stream.close()
-        routes = {call[1] for call in calls if call[0] == "wire" and call[1] != "/health/ready"}
+        return api
+
+    def test_normal_consumer_admin_verifier_and_real_owner_client_without_document_delivery(self):
+        calls, reader = [], self.reader()
+        # Readiness is a separate unauthenticated boundary, not this HTTP fixture.
+        reader.ready = lambda: calls.append(("unauthenticated-readiness-frame",))
+        journal = action.Journal(self.root / "maintenance", "synthetic-contract", owner=(501, 20))
+        action.cutover(self.api(calls), reader, journal, {"resources": {"nodes": [{
+            "node_id": action.NODE, "environment": PUBLIC}]}}, 0)
+        receipt = journal.finish(True, "complete")
+        self.assertTrue(receipt["saved_revision_compared"])
         root = "/workspaces/" + action.WORKSPACE
         revision = root + "/desired-topology-drafts/" + action.DRAFT + "/revisions/1"
+        routes = {json.loads(line) for line in (self.root / "wire.jsonl").read_text().splitlines()}
         self.assertEqual(routes, {root, root + "/graphs/desired", revision, revision + "/attempts"})
-        self.assertLess(next(i for i, c in enumerate(calls) if c[0] == "wire"),
-                        calls.index(("stop", action.OLD, "SIGTERM")))
 
-    def test_valid_setup_bearer_refuses_before_request_or_stop(self):
-        self.replace_file()
-        calls, reader = [], action.SavedReads(self.path)
-        api = DockerFrames(calls)
-        api.objects[action.OLD]["Config"]["Env"] = [
-            "CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON=" + self.document if value.startswith(
-                "CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON=") else value
-            for value in api.objects[action.OLD]["Config"]["Env"]]
-        api.initial = deepcopy(api.objects[action.OLD])
-        journal = action.Journal(Path(self.tmp.name) / "receipt", "synthetic-owner-contract")
-        try:
-            with patch.object(self.transport, "build_opener", return_value=Wire(calls)):
-                with self.assertRaises(action.Hold) as caught:
-                    action.cutover(api, reader, journal, {"resources": {"nodes": [{
-                        "node_id": action.NODE, "environment": PUBLIC}]}}, 0)
-                self.assertEqual(str(caught.exception), "verification-identity")
-        finally:
-            journal.stream.close()
-        self.assertFalse(any(c[0] in {"wire", "stop", "create", "start"} for c in calls))
-
-    def test_each_request_uses_the_verified_bytes_even_if_source_changes(self):
+    def test_valid_setup_bearer_refuses_before_first_request_or_stop(self):
+        changed = action.run_as_owner([sys.executable, __file__, "--replace-source", str(self.path)], b"")
+        self.assertEqual(changed.returncode, 0)
         calls = []
-        reader = action.SavedReads(self.path)
-        reader.bind_identity(self.document)
-        with patch.object(self.transport, "build_opener", return_value=Wire(calls, change=self.replace_file)):
-            reader.saved()
+        journal = action.Journal(self.root / "maintenance", "synthetic-contract", owner=(501, 20))
+        with self.assertRaises(action.Hold) as caught:
+            action.cutover(self.api(calls), self.reader(), journal, {"resources": {"nodes": [{
+                "node_id": action.NODE, "environment": PUBLIC}]}}, 0)
+        self.assertEqual(str(caught.exception), "verification-identity")
+        journal.finish(False, "verification-identity")
+        self.assertFalse((self.root / "wire.jsonl").exists())
+        self.assertFalse(any(c[0] in {"stop", "create", "start"} for c in calls))
+
+    def test_each_request_uses_the_verified_bytes_if_the_source_changes(self):
+        self.reader(mutate=True).saved()
         self.assertEqual(self.path.read_text(), SETUP)
 
+    def test_production_receipt_writer_works_without_root_directory_write_permission(self):
+        self.assertEqual(stat.S_IMODE(self.root.stat().st_mode), 0o700)
+        self.assertEqual(self.root.stat().st_uid, 501)
+        with self.assertRaises(PermissionError):
+            (self.root / "root-must-not-write").touch(exist_ok=False)
+        journal = action.Journal(self.root / "maintenance", "synthetic-contract", owner=(501, 20))
+        journal.event("preflight-verified")
+        journal.create(lambda: {"Id": NEW})
+        result = journal.finish(False, "source-only")
+        for path, mode in ((journal.root, 0o700), (journal.root / "events.jsonl", 0o600),
+                           (journal.root / "receipt.json", 0o600)):
+            metadata = path.stat()
+            self.assertEqual((metadata.st_uid, metadata.st_gid, stat.S_IMODE(metadata.st_mode)), (501, 20, mode))
+        self.assertEqual(json.loads((journal.root / "receipt.json").read_text()), result)
+        created = json.loads((journal.root / "events.jsonl").read_text().splitlines()[-1])
+        self.assertEqual((created["successor_id"], created["pending"]), (NEW, None))
+
     def test_client_plaintext_endpoint_protection_is_unchanged(self):
-        with self.assertRaises(self.profile.ClientConfigurationError):
-            self.profile.ClientProfile("http://private-peer:8080", action.WORKSPACE,
-                {role: self.path for role in ("operator", "worker", "approver")}, Path("/not-used"))
+        result = action.run_as_owner([sys.executable, __file__, "--assert-client-protection", str(self.path)], b"")
+        self.assertEqual(result.returncode, 0, result.stderr.decode()[-1000:])
 
 
-class InstallerProcessContract(unittest.TestCase):
-    def test_actual_owner_child_and_frozen_client_without_socket_or_network(self):
-        self.assertEqual(os.getuid(), 0)
-        result = action.run_as_owner([sys.executable, "-m", "unittest",
-            "grandparent_cutover_installer_tests.OwnerClientTests", "-v"], b"")
-        self.assertEqual(result.returncode, 0, result.stderr.decode()[-8192:])
+def fixture_command():
+    action.require((os.getuid(), os.getgid()) == (501, 20), "synthetic-owner")
+    mode = sys.argv[1]
+    if mode == "--make-fixture":
+        root = Path(tempfile.mkdtemp())
+        path = root / "human.bearer"
+        path.write_text(HUMAN)
+        path.chmod(0o400)
+        print(root)
+    elif mode == "--remove-fixture":
+        shutil.rmtree(sys.argv[2])
+    elif mode == "--replace-source":
+        path = Path(sys.argv[2])
+        path.chmod(0o600)
+        path.write_text(SETUP)
+        path.chmod(0o400)
+    elif mode == "--wire-child":
+        from control_plane_kit_servers_cpk_server.client import transport
+        path = Path(sys.argv[2])
+        with patch.object(transport, "build_opener", return_value=Wire(path, mutate=sys.argv[3] == "mutate")):
+            action.owner_read_batch(path)
+    elif mode == "--assert-client-protection":
+        from control_plane_kit_servers_cpk_server.client.profile import ClientProfile, ClientConfigurationError
+        try:
+            ClientProfile("http://private-peer:8080", action.WORKSPACE,
+                {role: Path(sys.argv[2]) for role in ("operator", "worker", "approver")}, Path("/not-used"))
+        except ClientConfigurationError:
+            return
+        raise AssertionError("plaintext protection lost")
+    else:
+        raise AssertionError("unknown synthetic fixture command")
+
+
+if __name__ == "__main__":
+    fixture_command()

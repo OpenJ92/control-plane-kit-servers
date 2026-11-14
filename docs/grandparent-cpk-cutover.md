@@ -58,8 +58,11 @@ labels normalize to an empty map; conflicting ownership labels refuse before sto
 Create completion and its validated ID are one fsynced event; a persistence failure
 retains the prior pending intent. Attempted stop remains unknown until observed,
 including timeout/unavailable outcomes. No record asserts running or retained
-merely because a stop request failed. The approved helper may chown only its new
-receipt directory/files to501:20 for the operator, never borrowed custody.
+merely because a stop request failed. A UID501:20 child performs each bounded
+receipt operation inside the caller-owned0700 hierarchy and fsyncs it before
+acknowledgement. Root neither changes ownership nor needs DAC_OVERRIDE. No
+borrowed custody is changed. Failed final persistence reports known IDs and
+pending outcome with evidence explicitly unverified.
 
 The maintenance receipt under the fresh run's `maintenance/receipt.json` identifies
 current successor ID/status; North owns its handoff. Original acquisition receipts
@@ -85,16 +88,18 @@ The actual credential custody/reference and final file metadata need North's
 confirmation; no credential is requested in chat or read during source work.
 
 The launcher uses only cached installer0d5 and one owned host-network helper
-(root for Docker administration, DAC_READ_SEARCH, SETUID/SETGID to drop its read
-child to501:20, CHOWN only for newly owned receipts,1CPU/512MiB/128PIDs, readonly
+(root for Docker administration, DAC_READ_SEARCH, SETUID/SETGID to drop its
+children to501:20,1CPU/512MiB/128PIDs, readonly
 root/tmp32MiB, no published port or logging). Host networking must already be
 available; no Docker setting is changed. The real client preserves loopback-only
-plaintext and file-owner protections. Its501 child reads the approved file once
-through ClientProfile.credential, verifies the human identity with the selected
-product verifier, and pins those verified bytes in memory for all four requests.
-A valid setup bearer refuses before any request/stop. The private principal
-document travels only through an anonymous parent/child pipe; no file copy or
-credential argument. Read evidence proves that identity and those named reads,
+plaintext and file-owner protections. Its501 read child loads the approved file
+once through ClientProfile.credential and sends only that credential through an
+anonymous private pipe to the administrator verifier. The full principal document
+and other credentials stay on the administrator side. Only a closed human-verified
+acknowledgement returns to the reader, which pins its same loaded bytes for all
+four requests. A valid setup bearer refuses before any request/stop. The pipe is
+neither Docker stdout nor a report, argument or file. Read evidence proves that
+identity and those named reads,
 not every effective scope. Private Docker networking is not a security boundary;
 the API/host administration and private delivery require explicit approval.
 The existing resource owner removes only the exact labelled helper after its
@@ -106,8 +111,11 @@ Old/new service compute and all borrowed storage/images/network remain retained.
 
 Owning source validation is `./test.sh --grandparent-artifact-source-tests`:
 finite Docker/read frames plus the actual frozen0d5 client/import/file-reader
-contract with a synthetic501-owned file and intercepted transport. The same
-production UID-drop function runs those tests as501; no installed product source
+contract with a synthetic501-owned file and intercepted transport. The production
+administrator/reader handshake runs without delivering the principal document;
+source mutation and setup refusal use that normal path. Production journal
+creation/events/final receipt run under exact reduced capabilities and a synthetic
+501-owned0700 parent; root write is shown to be denied. No installed product source
 is overlaid. There is no daemon socket/network/real credential/live input. It
 proves ordering, safe stops and bounded receipts, not actual DNS/port/DB/private
 wiring or service adoption. The source gate must pass and receive independent

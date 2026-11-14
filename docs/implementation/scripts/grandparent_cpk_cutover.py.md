@@ -21,10 +21,13 @@ the original bootstrap inspector sees the retained original stopped by design.
 The actual frozen installer client is exercised as501 with a synthetic0400 file
 and intercepted transport. The production UID-drop function runs the contract
 tests. The real profile loads one credential under its normal file protections;
-the product verifier binds its human identity and a small profile adapter supplies
-only those same verified bytes to the existing transport. Source-file mutation
+the administrator product verifier binds its human identity over a private
+handshake. The reader receives only acknowledgement, never the full principal
+document. A small profile adapter supplies the same bytes to transport. Source-file mutation
 cannot switch the bearer between that batch's requests. Setup identity refuses
-before HTTP. Private principal input passes only through an anonymous child pipe.
+before HTTP. A separate501 writer creates/fsyncs public receipts inside the
+operator's0700 parent under exact reduced helper capabilities; root never relies
+on directory-write permission or changes protected-file ownership.
 
 Finite Docker/read frames cover ordering, pre-outage read failure, pre-start
 wiring/mount refusal, unknown stop, ambiguous create and ID persistence loss,

@@ -12,6 +12,7 @@ import logging
 import os
 from pathlib import Path
 import re
+import selectors
 import signal
 import stat
 import subprocess
@@ -144,12 +145,8 @@ class Journal:
 
     def __init__(self, root, approval, owner=None):
         self.root = root
-        root.mkdir(mode=0o700, exist_ok=False)
         self.owner = owner
-        self.set_owner(root)
-        self.stream = (root / "events.jsonl").open("x")
-        os.chmod(root / "events.jsonl", 0o600)
-        self.set_owner(root / "events.jsonl")
+        self.write("init", {})
         self.approval = approval
         self.new_id = None
         self.pending = None
@@ -158,17 +155,19 @@ class Journal:
         self.original_state = "not-observed"
         self.original_retained = False
 
-    def set_owner(self, path):
-        if self.owner is not None:
-            os.chown(path, *self.owner)
+    def write(self, operation, value):
+        if self.owner is None:
+            write_evidence(self.root, operation, value)
+        else:
+            require(self.owner == (501, 20), "evidence-owner")
+            result = run_as_owner([sys.executable, __file__, "--write-evidence", operation, str(self.root)], canonical(value))
+            require(result.returncode == 0 and result.stdout == b"recorded\n", "evidence-write")
 
     def event(self, kind, **updates):
         value = dict(event=kind, stage=self.stage, successor_id=self.new_id,
                      pending=self.pending, original_state=self.original_state)
         value.update(updates)
-        self.stream.write(canonical(value).decode() + "\n")
-        self.stream.flush()
-        os.fsync(self.stream.fileno())
+        self.write("event", value)
 
     def effect(self, stage, call):
         self.stage = self.pending = stage
@@ -191,9 +190,9 @@ class Journal:
         self.pending = None
         return self.new_id
 
-    def finish(self, success, code):
+    def outcome(self, success, code):
         # Failure remains bounded even if the provider exception contains secrets.
-        result = dict(schema="cpk399.maintenance.v1", run=RUN, owner="North",
+        return dict(schema="cpk399.maintenance.v1", run=RUN, owner="North",
             approval_reference=self.approval, original_id=OLD, successor_id=self.new_id,
             stage=self.stage, status="verified" if success else "HOLD", reason=code,
             pending=self.pending, retry=False, rollback=False,
@@ -204,14 +203,42 @@ class Journal:
             saved_revision_compared=success, client_connected=False,
             historical_inspector=("original-id-stopped-by-maintenance" if self.original_state == "stopped-observed"
                 else "original-stop-unverified" if self.original_state == "stop-outcome-unknown" else "not-superseded"))
-        with (self.root / "receipt.json").open("x") as stream:
-            os.chmod(self.root / "receipt.json", 0o600)
-            self.set_owner(self.root / "receipt.json")
-            stream.write(canonical(result).decode() + "\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        self.stream.close()
+
+    def finish(self, success, code):
+        result = self.outcome(success, code)
+        result["evidence_persisted"] = True
+        self.write("finish", result)
         return result
+
+
+def write_evidence(root, operation, value):
+    require(operation in ("init", "event", "finish") and root.is_absolute(), "evidence-operation")
+    if operation == "init":
+        root.mkdir(mode=0o700, exist_ok=False)
+    metadata = root.lstat()
+    require(stat.S_ISDIR(metadata.st_mode) and not root.is_symlink() and metadata.st_uid == os.getuid()
+            and stat.S_IMODE(metadata.st_mode) == 0o700, "evidence-directory")
+    name = "receipt.json" if operation == "finish" else "events.jsonl"
+    flags = os.O_WRONLY | os.O_NOFOLLOW | (os.O_CREAT | os.O_EXCL if operation in ("init", "finish") else os.O_APPEND)
+    descriptor = os.open(root / name, flags, 0o600)
+    try:
+        info = os.fstat(descriptor)
+        require(stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid()
+                and stat.S_IMODE(info.st_mode) == 0o600, "evidence-file")
+        data = b"" if operation == "init" else canonical(value) + b"\n"
+        require(len(data) <= 8192, "evidence-bound")
+        while data:
+            count = os.write(descriptor, data)
+            require(count > 0, "evidence-write")
+            data = data[count:]
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 
 
 class VerifiedProfile:
@@ -236,16 +263,15 @@ class SavedReads:
                 and metadata.st_size == 64, "credential-metadata")
         self.path = credential_path
 
-    def bind_identity(self, configured_document):
+    def owner_credential(self):
         from control_plane_kit_servers_cpk_server.client.profile import ClientProfile
-        profile = ClientProfile("http://127.0.0.1:18163", WORKSPACE,
+        self.owner_profile = ClientProfile("http://127.0.0.1:18163", WORKSPACE,
             {"operator": self.path, "approver": Path("/not-provided"), "worker": Path("/not-provided")},
             Path("/not-used"))
-        credential = profile.credential("operator")  # Existing owner/symlink/mode protections.
-        require(credential_identity(configured_document, credential) == {
-            "issuer": "urn:control-plane-kit:static-development",
-            "subject_id": "cpk163-gparent-20261109-human", "kind": "operator"}, "verification-identity")
-        self.profile = VerifiedProfile(profile, credential)
+        return self.owner_profile.credential("operator")
+
+    def accept_verified(self, credential):
+        self.profile = VerifiedProfile(self.owner_profile, credential)
 
     def read(self, suffix):
         # Existing public transport owns redirects, bounded decoding and safe errors.
@@ -299,25 +325,74 @@ class SavedReads:
 class OwnerUidReads:
     """UID501 child in the same approved helper; no credential in args/files."""
 
-    def __init__(self, approved_digest):
+    def __init__(self, approved_digest, spawn=None):
         self.digest = approved_digest
+        self.spawn = spawn or spawn_as_owner
 
     def bind_identity(self, configured_document):
         self.document = configured_document
 
     def saved(self):
-        result = run_as_owner([sys.executable, __file__, "--read-saved", self.digest], self.document.encode("ascii"))
-        require(result.returncode == 0 and len(result.stdout) <= 8_388_608, "owner-client-read")
-        # Only bounded public read bodies cross this private anonymous pipe.
-        return canonical(json.loads(result.stdout))
+        process = self.spawn([sys.executable, __file__, "--read-saved", self.digest])
+        authorized = False
+        try:
+            credential = credential_from_owner_pipe(process.stdout)
+            require(credential_identity(self.document, credential) == {
+                "issuer": "urn:control-plane-kit:static-development",
+                "subject_id": "cpk163-gparent-20261109-human", "kind": "operator"}, "verification-identity")
+            authorized = True
+            output, _error = process.communicate(b"human-verified\n", timeout=35)
+            require(process.returncode == 0 and len(output) <= 8_388_608, "owner-client-read")
+            return canonical(json.loads(output))
+        finally:
+            if not authorized and process.poll() is None:
+                # Child is waiting for this closed acknowledgement, not a policy
+                # document. No setup/worker credential ever enters the reader.
+                try:
+                    process.communicate(b"denied\n", timeout=5)
+                except (OSError, subprocess.TimeoutExpired):
+                    process.stdin.close()
 
     def ready(self):
         SavedReads.ready(self)
 
 
 def run_as_owner(argv, private_input):
-    return subprocess.run(argv, input=private_input, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                          user=501, group=20, extra_groups=[], timeout=35, check=False)
+    process = spawn_as_owner(argv)
+    output, error = process.communicate(private_input, timeout=35)
+    return subprocess.CompletedProcess(argv, process.returncode, output, error)
+
+
+def spawn_as_owner(argv):
+    return subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            user=501, group=20, extra_groups=[])
+
+
+def credential_from_owner_pipe(stream):
+    value = bytearray()
+    deadline = time.monotonic() + 10
+    with selectors.DefaultSelector() as selector:
+        selector.register(stream, selectors.EVENT_READ)
+        while b"\n" not in value:
+            require(selector.select(max(0, deadline - time.monotonic())), "owner-pipe-timeout")
+            chunk = os.read(stream.fileno(), 66 - len(value))
+            require(chunk and len(value) + len(chunk) <= 65, "owner-pipe-framing")
+            value.extend(chunk)
+    require(len(value) == 65 and value[-1] == 10, "owner-pipe-framing")
+    return bytes(value[:-1])
+
+
+def owner_read_batch(path):
+    require(os.getuid() == 501 and os.getgid() == 20, "reader-owner")
+    reader = SavedReads(path)
+    credential = reader.owner_credential()
+    # This stdout is exclusively a private parent pipe, never Docker logs or
+    # reports. Admin verifies these exact owner-read bytes before any HTTP.
+    sys.stdout.buffer.write(credential + b"\n")
+    sys.stdout.buffer.flush()
+    require(sys.stdin.buffer.readline(32) == b"human-verified\n", "verification-denied")
+    reader.accept_verified(credential)
+    print(reader.saved().decode())
 
 
 def inspect(api, identity):
@@ -508,12 +583,7 @@ def main():
     require(PUBLIC_PLAN_SHA and hashlib.sha256(raw).hexdigest() == PUBLIC_PLAN_SHA, "bootstrap-input")
     logging.disable(logging.CRITICAL)
     if sys.argv[1] == "--read-saved":
-        require(os.getuid() == 501 and os.getgid() == 20, "reader-owner")
-        document = sys.stdin.buffer.read(131_073)
-        require(len(document) <= 131_072, "identity-document")
-        reader = SavedReads(Path("/credentials/human.bearer"))
-        reader.bind_identity(document.decode("ascii"))
-        print(reader.saved().decode())
+        owner_read_batch(Path("/credentials/human.bearer"))
         return 0
     require(os.getuid() == 0, "maintenance-owner")
     import docker
@@ -528,7 +598,12 @@ def main():
         code = str(error)
     except BaseException:
         code = "provider-or-transport-failure"
-    result = journal.finish(success, code)
+    try:
+        result = journal.finish(success, code)
+    except BaseException:
+        result = journal.outcome(False, "evidence-write-unverified")
+        result["evidence_persisted"] = False
+        success = False
     api.close()
     print(canonical(result).decode())
     return 0 if success else 1
@@ -537,8 +612,16 @@ def main():
 if __name__ == "__main__":
     # Refusals before the private/provider boundary also have no traceback.
     try:
-        status = main()
+        if len(sys.argv) == 4 and sys.argv[1] == "--write-evidence":
+            require((os.getuid(), os.getgid()) == (501, 20), "evidence-owner")
+            raw_evidence = sys.stdin.buffer.read(8193)
+            require(len(raw_evidence) <= 8192, "evidence-bound")
+            write_evidence(Path(sys.argv[3]), sys.argv[2], json.loads(raw_evidence))
+            print("recorded")
+            status = 0
+        else:
+            status = main()
     except BaseException:
-        print('{"schema":"cpk399.maintenance.v1","status":"HOLD","reason":"preflight-refused","retry":false}')
+        print('{"schema":"cpk399.maintenance.v1","status":"HOLD","reason":"invocation-or-outcome-unverified","retry":false}')
         status = 1
     sys.exit(status)

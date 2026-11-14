@@ -75,7 +75,7 @@ GW_RESERVED=1
 stage=maintenance-helper
 helper_status=0
 output=$(gw_run maintenance --network host \
-  --read-only --user 0 --cap-drop ALL --cap-add DAC_READ_SEARCH --cap-add SETUID --cap-add SETGID --cap-add CHOWN \
+  --read-only --user 0 --cap-drop ALL --cap-add DAC_READ_SEARCH --cap-add SETUID --cap-add SETGID \
   --security-opt no-new-privileges \
   --cpus 1 --memory 512m --pids-limit 128 --tmpfs /tmp:rw,nosuid,nodev,size=32m \
   --log-driver none --env PYTHONDONTWRITEBYTECODE=1 --env HTTP_PROXY= --env HTTPS_PROXY= \
