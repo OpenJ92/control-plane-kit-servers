@@ -179,7 +179,7 @@ collect() {
 }
 stage=collection
 set +e
-( trap 'rc=$?; if [ "$rc" != 0 ]; then
+( trap 'rc=$?; set +e; if [ "$rc" != 0 ]; then
     for pid in "$query_pid" "$timer_pid" "$error_pid"; do
       if [ -n "$pid" ]; then kill -TERM "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; fi
     done
