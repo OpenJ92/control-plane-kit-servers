@@ -1,0 +1,11 @@
+{
+  "schema": "cpk.root-commissioning.intent.v1",
+  "installation_id": "cpk399-sibling-20261114-01",
+  "workspace_id": "cpk399-sibling-20261114-01",
+  "profile": "operator-offline-read-trust",
+  "custody": {
+    "host_directory": "/Users/jacobvartuli/Software/self/control-plane-kit-servers/env/cpk399-sibling-20261114-01-commissioned",
+    "uid": 501,
+    "gid": 20
+  }
+}

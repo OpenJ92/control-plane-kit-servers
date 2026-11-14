@@ -1,0 +1,221 @@
+{
+  "schema": "cpk.root-material.intent.v1",
+  "bootstrap_input": {
+    "schema": "cpk.root-bootstrap.input.v1",
+    "installation": {
+      "installation_id": "cpk399-sibling-20261114-01",
+      "workspace_id": "cpk399-sibling-20261114-01",
+      "runtime_authority": "cpk399-sibling-20261114-01-docker-access",
+      "runtime_access": {
+        "authority_ref": {
+          "reference_id": "cpk399-sibling-20261114-01-docker-access"
+        },
+        "delivery_kind": "local-docker-socket-mount",
+        "secret_references": []
+      },
+      "products": {
+        "cpk": null,
+        "postgres": {
+          "schema": "control-plane-kit.product",
+          "product": {
+            "kind": "container-server",
+            "identity": {
+              "namespace": "control-plane-kit",
+              "name": "postgres-server",
+              "contract_revision": 1
+            },
+            "image": {
+              "registry": "docker.io",
+              "repository": "library/postgres",
+              "digest": "sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777",
+              "tag": "16-alpine",
+              "platforms": [],
+              "provenance": {
+                "publish": "docker-hub",
+                "source": "official-postgres-image"
+              }
+            },
+            "runtime_contract": {
+              "sockets": {
+                "requirements": {},
+                "providers": {
+                  "postgres": {
+                    "protocol": {
+                      "transport": "tcp",
+                      "application": "postgres"
+                    }
+                  }
+                }
+              },
+              "provider_ports": [
+                {
+                  "provider_socket": "postgres",
+                  "container_port": 5432
+                }
+              ],
+              "public_environment": [
+                {
+                  "kind": "public-static",
+                  "name": "POSTGRES_DB",
+                  "value": "cpk"
+                },
+                {
+                  "kind": "public-static",
+                  "name": "POSTGRES_USER",
+                  "value": "cpk"
+                }
+              ],
+              "configuration_artifacts": [],
+              "secret_deliveries": [
+                {
+                  "kind": "environment",
+                  "environment_name": "POSTGRES_PASSWORD",
+                  "reference_id": "secret://control-plane-kit/postgres/password",
+                  "intent": "postgres.password"
+                }
+              ],
+              "retained_data_mounts": [
+                {
+                  "resource_id": "postgres-data",
+                  "target_path": "/var/lib/postgresql/data"
+                }
+              ],
+              "capabilities": [
+                "health-checkable"
+              ],
+              "verification": {
+                "checks": [
+                  {
+                    "kind": "postgres-query",
+                    "check_id": "select-one",
+                    "provider_socket": "postgres",
+                    "policy": {
+                      "timeout_seconds": 10,
+                      "interval_seconds": 1,
+                      "maximum_attempts": 10,
+                      "maximum_evidence_bytes": 16384
+                    },
+                    "operation": "select-one",
+                    "authentication": {
+                      "kind": "password",
+                      "database": "cpk",
+                      "username": "cpk",
+                      "password_reference_id": "secret://control-plane-kit/postgres/password"
+                    }
+                  }
+                ]
+              },
+              "lifecycle": {
+                "ownership": "owned",
+                "compute": "ephemeral",
+                "data": [
+                  {
+                    "resource_id": "postgres-data",
+                    "persistence": "retained"
+                  }
+                ]
+              }
+            },
+            "display_name": "postgres-server",
+            "description": "Postgres data product descriptor around the official postgres OCI image. It provides a private Postgres socket, secret password delivery, and retained data classification. It does not include CPK schemas or migrations.",
+            "product_family": "data-service"
+          }
+        },
+        "secrets": null
+      },
+      "references": {
+        "control_credential": "secret://bootstrap/cpk399-sibling-20261114-01/control",
+        "postgres_password": "secret://bootstrap/cpk399-sibling-20261114-01/postgres",
+        "custody_root_key": "secret://bootstrap/cpk399-sibling-20261114-01/custody",
+        "provider_credentials_document": "secret://bootstrap/cpk399-sibling-20261114-01/grants",
+        "provider_client_credential": "secret://bootstrap/cpk399-sibling-20261114-01/client",
+        "provider_bootstrap_credential_ref": "secret://control-plane-kit/cpk399-sibling-20261114-01/bootstrap-client"
+      },
+      "workspace_grants": [],
+      "control_auth": {
+        "kind": "multi-principal",
+        "principals_document": "secret://bootstrap/cpk399-sibling-20261114-01/principals"
+      },
+      "provider_endpoint_ref": "cpk399-sibling-20261114-01-secrets",
+      "external_endpoint": "https://cpk399-sibling-api.invalid"
+    },
+    "host_binding": {
+      "address": "127.0.0.1",
+      "port": 18263
+    },
+    "setup": {
+      "workspace_name": "Local sibling cpk399-sibling-20261114-01",
+      "provider": {
+        "provider_id": "control-plane-kit",
+        "allowed_reference_prefixes": [
+          "secret://control-plane-kit/cpk399-sibling-20261114-01"
+        ],
+        "allowed_intents": [
+          "postgres.password",
+          "application.control-token"
+        ]
+      },
+      "secret_references": [],
+      "image_pull_authorities": [],
+      "ingress_authorities": []
+    }
+  },
+  "principals": {
+    "human": {
+      "issuer": "urn:control-plane-kit:static-development",
+      "subject_id": "cpk399-sibling-20261114-01-human",
+      "kind": "operator"
+    },
+    "setup": {
+      "issuer": "urn:control-plane-kit:static-development",
+      "subject_id": "cpk399-sibling-20261114-01-setup",
+      "kind": "operator"
+    },
+    "worker": {
+      "issuer": "urn:control-plane-kit:static-development",
+      "subject_id": "cpk399-sibling-20261114-01-worker",
+      "kind": "worker"
+    }
+  },
+  "permissions": {
+    "human": [
+      "instance:workspace:read",
+      "runtime-authority:read",
+      "runtime-authority-delivery:read",
+      "ingress-authority:read",
+      "secret-provider:read",
+      "delegation-key:read",
+      "node-control:read"
+    ],
+    "setup": [
+      "instance:workspace:read",
+      "instance:workspace:edit",
+      "secret-provider:register",
+      "secret-provider:read",
+      "runtime-authority:register",
+      "runtime-authority:read",
+      "runtime-authority-delivery:register",
+      "runtime-authority-delivery:read"
+    ],
+    "worker": [
+      "instance:workspace:read"
+    ]
+  },
+  "capabilities": [],
+  "management": null,
+  "provider_grants": [
+    {
+      "action": "secret.resolve",
+      "workspace_id": "cpk399-sibling-20261114-01",
+      "intents": [
+        "postgres.password",
+        "application.control-token"
+      ]
+    }
+  ],
+  "custody": {
+    "host_directory": "/Users/jacobvartuli/Software/self/control-plane-kit-servers/env/cpk399-sibling-20261114-01-prepared/material",
+    "uid": 501,
+    "gid": 20
+  }
+}

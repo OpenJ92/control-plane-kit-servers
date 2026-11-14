@@ -28,6 +28,7 @@ docker run --pull never --rm --network none --read-only --tmpfs /tmp:exec,size=1
     python -m py_compile scripts/grandparent_artifact_fixture.py
     python -m py_compile scripts/grandparent_cpk_cutover.py
     python -m py_compile scripts/grandparent_saved_read.py
+    python -m py_compile scripts/grandparent_sibling_prepare.py scripts/grandparent_sibling_mcp.py scripts/grandparent_sibling_tests.py
   '
 docker run --pull never --rm --network none --read-only --tmpfs /tmp:exec,size=128m \
   --cap-drop ALL --security-opt no-new-privileges \
@@ -64,7 +65,7 @@ docker run --pull never --rm --network none --read-only --tmpfs /tmp:exec,mode=1
   --cpus 1 --memory 512m --pids-limit 128 \
   --mount "type=bind,source=$ROOT,target=/source,readonly" --workdir /source/scripts \
   -e PYTHONDONTWRITEBYTECODE=1 --entrypoint python "$INSTALLER" \
-  -m unittest grandparent_cutover_installer_tests.InstallerProcessContract -v
+  -m unittest grandparent_cutover_installer_tests.InstallerProcessContract grandparent_sibling_tests -v
 # Startup diagnosis: same physical file targets/UID/capability/proxy profile as
 # the consumed read-only launch, synthetic files only, no network or socket.
 STARTUP_CONTEXT=$(mktemp -d /private/tmp/cpk399-offline-startup.XXXXXX)
