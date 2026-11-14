@@ -6,3 +6,7 @@ The owning source-only entrance admits the exact retained accepted controller, t
 existing test/image-smoke entrances and the new witness script in the same
 cached no-network/no-socket controller. It does not import or execute the
 qualification fixture or imply runtime/artifact validation.
+
+The focused qualification-driver module uses the actual shell plus finite
+external CLI facts for the mount/admission regression and explicit producer/
+driver distinction. Its deliberate first-helper stop never executes a fixture.
