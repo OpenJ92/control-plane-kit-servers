@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import signal
 import stat
+import subprocess
 import sys
 import time
 
@@ -141,21 +142,31 @@ def process_contract(config):
 class Journal:
     """One attempt's closed receipt; no retry/resume or product-state ownership."""
 
-    def __init__(self, root, approval):
+    def __init__(self, root, approval, owner=None):
         self.root = root
         root.mkdir(mode=0o700, exist_ok=False)
+        self.owner = owner
+        self.set_owner(root)
         self.stream = (root / "events.jsonl").open("x")
         os.chmod(root / "events.jsonl", 0o600)
+        self.set_owner(root / "events.jsonl")
         self.approval = approval
         self.new_id = None
         self.pending = None
         self.stage = "preflight"
         self.started = False
-        self.original_stopped = False
+        self.original_state = "not-observed"
+        self.original_retained = False
 
-    def event(self, kind):
-        self.stream.write(canonical(dict(event=kind, stage=self.stage, successor_id=self.new_id,
-                                         pending=self.pending)).decode() + "\n")
+    def set_owner(self, path):
+        if self.owner is not None:
+            os.chown(path, *self.owner)
+
+    def event(self, kind, **updates):
+        value = dict(event=kind, stage=self.stage, successor_id=self.new_id,
+                     pending=self.pending, original_state=self.original_state)
+        value.update(updates)
+        self.stream.write(canonical(value).decode() + "\n")
         self.stream.flush()
         os.fsync(self.stream.fileno())
 
@@ -167,6 +178,19 @@ class Journal:
         self.event("returned")
         return value
 
+    def create(self, call):
+        self.stage = self.pending = "create-successor"
+        self.event("dispatch-intent")
+        created = call()
+        require(type(created) is dict and re.fullmatch(r"[0-9a-f]{64}", created.get("Id", "")),
+                "create-outcome-unknown")
+        self.new_id = created["Id"]
+        # ID and completed dispatch are one durable event. If persistence fails,
+        # the prior durable pending intent remains authoritative; never replay.
+        self.event("created-id-confirmed", pending=None)
+        self.pending = None
+        return self.new_id
+
     def finish(self, success, code):
         # Failure remains bounded even if the provider exception contains secrets.
         result = dict(schema="cpk399.maintenance.v1", run=RUN, owner="North",
@@ -174,11 +198,15 @@ class Journal:
             stage=self.stage, status="verified" if success else "HOLD", reason=code,
             pending=self.pending, retry=False, rollback=False,
             startup_attempted=self.started, schema_change_possible=self.started,
-            original_stopped_retained=self.original_stopped,
+            original_state=self.original_state,
+            original_stopped_retained=(self.original_retained if self.original_state == "stopped-observed"
+                                       else None if self.original_state == "stop-outcome-unknown" else False),
             saved_revision_compared=success, client_connected=False,
-            historical_inspector="original-id-stopped-by-maintenance" if self.original_stopped else "not-superseded")
+            historical_inspector=("original-id-stopped-by-maintenance" if self.original_state == "stopped-observed"
+                else "original-stop-unverified" if self.original_state == "stop-outcome-unknown" else "not-superseded"))
         with (self.root / "receipt.json").open("x") as stream:
             os.chmod(self.root / "receipt.json", 0o600)
+            self.set_owner(self.root / "receipt.json")
             stream.write(canonical(result).decode() + "\n")
             stream.flush()
             os.fsync(stream.fileno())
@@ -186,8 +214,20 @@ class Journal:
         return result
 
 
+class VerifiedProfile:
+    """Only the already owner-read, verified bytes for this bounded read batch."""
+
+    def __init__(self, profile, credential):
+        self.endpoint = profile.endpoint
+        self.__credential = credential
+
+    def credential(self, role):
+        require(role == "operator", "verification-role")
+        return self.__credential
+
+
 class SavedReads:
-    """Two existing public reads, bounded transport; no command surface."""
+    """Actual selected public client under its credential owner's UID."""
 
     def __init__(self, credential_path):
         metadata = credential_path.lstat()
@@ -196,22 +236,32 @@ class SavedReads:
                 and metadata.st_size == 64, "credential-metadata")
         self.path = credential_path
 
-    def read(self, suffix):
-        # Existing public transport owns redirects, bounded decoding and safe errors.
+    def bind_identity(self, configured_document):
         from control_plane_kit_servers_cpk_server.client.profile import ClientProfile
-        from control_plane_kit_servers_cpk_server.client.transport import PublicHttpTransport
-        profile = ClientProfile("http://" + NODE + ":8080", WORKSPACE,
+        profile = ClientProfile("http://127.0.0.1:18163", WORKSPACE,
             {"operator": self.path, "approver": Path("/not-provided"), "worker": Path("/not-provided")},
             Path("/not-used"))
-        transport = PublicHttpTransport(profile, timeout_seconds=5)
-        route = "read.workspace" if suffix == "workspace" else "read.desired-topology-draft-revision"
+        credential = profile.credential("operator")  # Existing owner/symlink/mode protections.
+        require(credential_identity(configured_document, credential) == {
+            "issuer": "urn:control-plane-kit:static-development",
+            "subject_id": "cpk163-gparent-20261109-human", "kind": "operator"}, "verification-identity")
+        self.profile = VerifiedProfile(profile, credential)
+
+    def read(self, suffix):
+        # Existing public transport owns redirects, bounded decoding and safe errors.
+        from control_plane_kit_servers_cpk_server.client.transport import PublicHttpTransport
+        transport = PublicHttpTransport(self.profile, timeout_seconds=5)
+        route = {"workspace": "read.workspace", "desired": "read.desired-graph",
+                 "revision": "read.desired-topology-draft-revision",
+                 "attempts": "read.desired-topology-draft-revision-attempts"}[suffix]
         coordinates = dict(workspace_id=WORKSPACE)
-        if suffix != "workspace":
+        if suffix in ("revision", "attempts"):
             coordinates.update(draft_id=DRAFT, revision="1")
-        return transport.call(route, path_parameters=coordinates, payload={}, credential_role="operator")
+        return transport.call(route, path_parameters=coordinates,
+            payload={"limit": 50} if suffix == "attempts" else {}, credential_role="operator")
 
     def saved(self):
-        workspace, revision = self.read("workspace"), self.read("revision")
+        workspace, desired, revision, attempts = (self.read(k) for k in ("workspace", "desired", "revision", "attempts"))
         require(workspace["workspace"]["workspace_id"] == WORKSPACE and
                 workspace["workspace"]["current_graph_id"] == CURRENT and
                 workspace["workspace"]["desired_graph_id"] == DESIRED and
@@ -219,7 +269,9 @@ class SavedReads:
         require(revision["workspace_id"] == WORKSPACE and revision["draft_id"] == DRAFT and
                 revision["revision"] == 1 and revision["graph_id"] == DESIRED and
                 isinstance(revision["graph_descriptor"], str), "saved-revision-mismatch")
-        return canonical([workspace, revision])
+        require(desired["assigned"] is True and desired["graph_id"] == DESIRED and
+                type(attempts["items"]) is list and len(attempts["items"]) <= 50, "saved-read-shape")
+        return canonical([workspace, desired, revision, attempts])
 
     def ready(self, sleep=time.sleep):
         from urllib.error import HTTPError, URLError
@@ -229,7 +281,7 @@ class SavedReads:
         deadline = time.monotonic() + 20
         while True:
             try:
-                with opener.open(Request("http://" + NODE + ":8080/health/ready"), timeout=3) as response:
+                with opener.open(Request("http://127.0.0.1:18163/health/ready"), timeout=3) as response:
                     raw = response.read(1025)
                     require(response.status == 200 and len(raw) <= 1024, "readiness")
                     value = json.loads(raw)
@@ -244,8 +296,43 @@ class SavedReads:
                 sleep(0.2)
 
 
+class OwnerUidReads:
+    """UID501 child in the same approved helper; no credential in args/files."""
+
+    def __init__(self, approved_digest):
+        self.digest = approved_digest
+
+    def bind_identity(self, configured_document):
+        self.document = configured_document
+
+    def saved(self):
+        result = run_as_owner([sys.executable, __file__, "--read-saved", self.digest], self.document.encode("ascii"))
+        require(result.returncode == 0 and len(result.stdout) <= 8_388_608, "owner-client-read")
+        # Only bounded public read bodies cross this private anonymous pipe.
+        return canonical(json.loads(result.stdout))
+
+    def ready(self):
+        SavedReads.ready(self)
+
+
+def run_as_owner(argv, private_input):
+    return subprocess.run(argv, input=private_input, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          user=501, group=20, extra_groups=[], timeout=35, check=False)
+
+
 def inspect(api, identity):
     return api.inspect_container(identity)
+
+
+def credential_identity(configured_document, credential):
+    # Reuse the selected product's pure decoder/verifier; do not decode or invent
+    # authentication policy or construct an application in maintenance code.
+    from control_plane_kit_servers_cpk_server.server import _static_principals
+    from control_plane_kit_servers_cpk_server.authentication import StaticDevelopmentMultiCredentialVerifier
+    principal = StaticDevelopmentMultiCredentialVerifier(
+        _static_principals(configured_document, allow_empty_grants=True)).authenticate(credential)
+    return dict(issuer=principal.identity.issuer, subject_id=principal.identity.subject_id,
+                kind=principal.identity.kind.value)
 
 
 def network_contract(api, expected_owner):
@@ -264,6 +351,26 @@ def network_contract(api, expected_owner):
     require(owners == ([] if expected_owner is None else [expected_owner]), "semantic-alias-owner")
 
 
+def labels(value):
+    value = {} if value is None else value
+    require(type(value) is dict and all(type(k) is str and type(v) is str for k, v in value.items()), "labels")
+    return value
+
+
+def successor_config(old, image, env):
+    image_labels = labels(image["Config"].get("Labels"))
+    require(all(k not in image_labels or image_labels[k] == v for k, v in LABELS.items()), "label-conflict")
+    require(not {"org.openj92.cpk.maintenance", "org.openj92.cpk.replaces"} & image_labels.keys(), "label-conflict")
+    config = {k: deepcopy(old["Config"][k]) for k in (
+        "User", "WorkingDir", "Cmd", "Entrypoint", "ExposedPorts", "StopSignal") if k in old["Config"]}
+    config.update(Image=IMAGE, Env=[k + "=" + v for k, v in (env | {"CPK_MCP_PROFILE": PROFILE}).items()],
+        Labels=image_labels | LABELS | {"org.openj92.cpk.maintenance": RUN, "org.openj92.cpk.replaces": OLD},
+        HostConfig={k: deepcopy(old["HostConfig"][k]) for k in HOST_FIELDS if k in old["HostConfig"]},
+        NetworkingConfig={"EndpointsConfig": {NETWORK: {"Aliases": [NODE]}}})
+    canonical(config)  # Prove serializability in memory before any outage.
+    return config
+
+
 def cutover(api, reads, journal, public_plan, socket_gid, sleep=time.sleep):
     require(api.info()["ID"] == ENGINE, "engine")
     old = inspect(api, OLD)
@@ -271,6 +378,7 @@ def cutover(api, reads, journal, public_plan, socket_gid, sleep=time.sleep):
             "historical-identity")
     require(old["State"]["Running"] is True and not old["State"]["Paused"]
             and not old["State"]["Restarting"], "historical-state")
+    journal.original_state = "running-observed"
     require(all(old["Config"]["Labels"].get(k) == v for k, v in LABELS.items()), "ownership")
     process_contract(old["Config"])
     host_contract(old["HostConfig"], socket_gid)
@@ -286,7 +394,7 @@ def cutover(api, reads, journal, public_plan, socket_gid, sleep=time.sleep):
     require(old_image["Id"] == OLD_IMAGE and image["Id"] == IMAGE and image["Os"] == "linux"
             and image["Architecture"] == "amd64", "image")
     process_contract(image["Config"])
-    require(old["Config"]["Labels"] == (old_image["Config"].get("Labels", {}) | LABELS), "ownership")
+    require(labels(old["Config"].get("Labels")) == (labels(old_image["Config"].get("Labels")) | LABELS), "ownership")
     env = environment(old["Config"])
     node = next(n for n in public_plan["resources"]["nodes"] if n["node_id"] == NODE)
     declared = node["environment"]
@@ -301,11 +409,17 @@ def cutover(api, reads, journal, public_plan, socket_gid, sleep=time.sleep):
         observed = api.inspect_volume(volume)
         require(observed["Name"] == volume and all(observed["Labels"].get(k) == v for k, v in LABELS.items()),
                 "volume-ownership")
+    config = successor_config(old, image, env)
+    journal.stage = "bind-verification-identity"
+    reads.bind_identity(env["CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON"])
     journal.stage = "saved-revision-before-stop"
     before = reads.saved()  # Exactly once; any failure/mismatch precedes outage.
     journal.event("preflight-verified")
     # Graceful SIGTERM only, no Docker stop escalation to SIGKILL.
-    journal.effect("stop-original", lambda: api.kill(OLD, signal="SIGTERM"))
+    journal.stage = journal.pending = "stop-original"
+    journal.original_state = "stop-outcome-unknown"
+    journal.event("dispatch-intent")
+    api.kill(OLD, signal="SIGTERM")
     deadline = time.monotonic() + 30
     while True:
         stopped = inspect(api, OLD)
@@ -313,29 +427,20 @@ def cutover(api, reads, journal, public_plan, socket_gid, sleep=time.sleep):
             break
         require(time.monotonic() < deadline, "stop-timeout")
         sleep(0.2)
+    journal.original_state = "stopped-observed"
+    journal.event("stop-observed", pending=None)
+    journal.pending = None
     require(stopped["State"]["ExitCode"] == 0, "graceful-exit")
-    journal.original_stopped = True
     journal.effect("retain-original-name", lambda: api.rename(OLD, BACKUP))
     require(inspect(api, OLD)["Name"] == "/" + BACKUP, "retention")
+    journal.original_retained = True
     # Docker documents ordinary network disconnect for running containers only.
     # Do not force-disconnect retained stopped compute. Require authoritative
     # absence of its active endpoint and semantic alias before creating another.
     network_contract(api, None)
     require(OLD not in api.inspect_network(NETWORK).get("Containers", {}), "old-endpoint")
     require(not api.containers(filters={"publish": "18163"}), "port-not-released")
-    config = {k: deepcopy(old["Config"][k]) for k in (
-        "User", "WorkingDir", "Cmd", "Entrypoint", "ExposedPorts", "StopSignal") if k in old["Config"]}
-    config.update(Image=IMAGE, Env=[k + "=" + v for k, v in (env | {"CPK_MCP_PROFILE": PROFILE}).items()],
-        Labels=dict(old["Config"]["Labels"], **image["Config"].get("Labels", {}),
-                    **{"org.openj92.cpk.maintenance": RUN, "org.openj92.cpk.replaces": OLD}),
-        HostConfig={k: deepcopy(old["HostConfig"][k]) for k in HOST_FIELDS if k in old["HostConfig"]},
-        NetworkingConfig={"EndpointsConfig": {NETWORK: {"Aliases": [NODE]}}})
-    created = journal.effect("create-successor", lambda: api.create_container_from_config(config, name=NAME))
-    if not (type(created) is dict and re.fullmatch(r"[0-9a-f]{64}", created.get("Id", ""))):
-        journal.pending = "create-successor"
-        raise Hold("create-outcome-unknown")
-    journal.new_id = created["Id"]
-    journal.event("successor-id-recorded")
+    journal.create(lambda: api.create_container_from_config(config, name=NAME))
     journal.stage = "verify-stopped-successor"
     new = inspect(api, journal.new_id)
     require(new["Id"] == journal.new_id and new["Image"] == IMAGE and new["Name"] == "/" + NAME
@@ -347,9 +452,16 @@ def cutover(api, reads, journal, public_plan, socket_gid, sleep=time.sleep):
             "successor-private-or-public-config")
     require(all(new["HostConfig"].get(k) == config["HostConfig"].get(k) for k in HOST_FIELDS), "successor-host-config")
     require(len(new["NetworkSettings"]["Networks"]) == 1 and any(
-        n["NetworkID"] == NETWORK and NODE in n["Aliases"] for n in new["NetworkSettings"]["Networks"].values()),
+        n.get("NetworkID") in ("", NETWORK) and NODE in (n.get("Aliases") or [])
+        for n in new["NetworkSettings"]["Networks"].values()),
         "successor-network-config")
     journal.event("stopped-successor-verified")
+    original = inspect(api, OLD)
+    journal.original_state = ("running-observed" if original["State"]["Running"] else
+                              "stop-outcome-unknown" if original["State"]["Restarting"] else "stopped-observed")
+    require(not original["State"]["Running"] and not original["State"]["Restarting"]
+            and original["Name"] == "/" + BACKUP, "single-writer-before-start")
+    network_contract(api, None)
     journal.started = True  # Even a failed/unavailable start may have run schema work.
     journal.effect("start-successor", lambda: api.start(journal.new_id))
     journal.stage = "verify-effective-successor"
@@ -357,7 +469,9 @@ def cutover(api, reads, journal, public_plan, socket_gid, sleep=time.sleep):
     require(new["State"]["Running"] and not new["State"]["Paused"] and not new["State"]["Restarting"]
             and new["NetworkSettings"]["Ports"] == PORTS and new["Path"] == "python"
             and new["Args"] == COMMAND[1:], "effective-process")
-    require(not inspect(api, OLD)["State"]["Running"], "single-writer")
+    original = inspect(api, OLD)
+    journal.original_state = "running-observed" if original["State"]["Running"] else "stopped-observed"
+    require(not original["State"]["Running"], "single-writer")
     network_contract(api, journal.new_id)
     actual_mounts(new)
     require(environment(new["Config"]) == env | {"CPK_MCP_PROFILE": PROFILE}, "effective-profile")
@@ -378,7 +492,7 @@ def cutover(api, reads, journal, public_plan, socket_gid, sleep=time.sleep):
 
 def main():
     # No environmental credential variables or generic command switches accepted.
-    require(len(sys.argv) == 3 and sys.argv[1] == "--execute-reviewed-cutover", "invocation")
+    require(len(sys.argv) == 3 and sys.argv[1] in ("--execute-reviewed-cutover", "--read-saved"), "invocation")
     plan_raw = Path("/proposal/action.json").read_bytes()
     require(re.fullmatch(r"[0-9a-f]{64}", sys.argv[2]) and
             hashlib.sha256(plan_raw).hexdigest() == sys.argv[2], "unfrozen-action-plan")
@@ -392,13 +506,22 @@ def main():
                     {"http_proxy", "https_proxy", "all_proxy"}), "proxy-environment")
     raw = Path("/proposal/bootstrap.json").read_bytes()
     require(PUBLIC_PLAN_SHA and hashlib.sha256(raw).hexdigest() == PUBLIC_PLAN_SHA, "bootstrap-input")
-    import docker
     logging.disable(logging.CRITICAL)
+    if sys.argv[1] == "--read-saved":
+        require(os.getuid() == 501 and os.getgid() == 20, "reader-owner")
+        document = sys.stdin.buffer.read(131_073)
+        require(len(document) <= 131_072, "identity-document")
+        reader = SavedReads(Path("/credentials/human.bearer"))
+        reader.bind_identity(document.decode("ascii"))
+        print(reader.saved().decode())
+        return 0
+    require(os.getuid() == 0, "maintenance-owner")
+    import docker
     api = docker.APIClient(base_url="unix:///var/run/docker.sock", version="auto", timeout=30)
-    journal = Journal(Path("/evidence") / "maintenance", plan["approval_reference"])
+    journal = Journal(Path("/evidence") / "maintenance", plan["approval_reference"], owner=(501, 20))
     success, code = False, "unexpected"
     try:
-        cutover(api, SavedReads(Path("/credentials/human.bearer")), journal, json.loads(raw),
+        cutover(api, OwnerUidReads(sys.argv[2]), journal, json.loads(raw),
                 os.stat("/var/run/docker.sock").st_gid)
         success, code = True, "complete"
     except Hold as error:
