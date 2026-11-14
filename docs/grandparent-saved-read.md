@@ -44,7 +44,9 @@ page items/cursor remain in the in-memory canonical snapshot. The batch does not
 perform a restart or before/after service comparison and cannot earn cutover or
 capstone acceptance.
 
-The fresh run is cpk399-gparent-saved-read-20261114-01, with its own host evidence
+Verification01 remains closed with zero completed reads and unknown cause; its
+approval, result and log remain historical. The new preparation-only proposal
+uses cpk399-gparent-saved-read-20261114-02, with its own host evidence
 directory. Existing evidence refuses invocation. Only a confirmed terminal owned
 helper is cleaned using exact ownership/cid/labels and residue checks. No service,
 network, volume or graph resource is changed or cleaned. Unknown helper outcome
@@ -54,6 +56,7 @@ Owning offline validation is ./test.sh --grandparent-artifact-source-tests,
 using synthetic owner-matched inputs and the actual installed transport, server
 query decoder, Operations page/projection values and production reader entry.
 No real credential, network, daemon socket, store or live graph enters that suite.
-North must relay Meridian PASS before the already conditionally approved one
-live batch is released. Final plan/digest are durable issue coordinates; source
-and test success alone do not dispatch it.
+North must relay Meridian PASS on the final packet and obtain Jacob's new
+decision before verification02 can be released. The prior conditional approval
+was consumed by verification01. Final plan/digest are durable issue coordinates;
+source and test success alone do not dispatch it.

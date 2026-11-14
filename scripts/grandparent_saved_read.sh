@@ -40,7 +40,7 @@ jq -e --arg source "$source_commit" --arg reader "$reader_hash" --arg shared "$s
  '.schema=="cpk399.read-only-approval.v1" and .source_commit==$source and
  .reader_sha256==$reader and .shared_reader_sha256==$shared and .launcher_sha256==$launcher and
  .owner_sha256==$owner and .daemon_admission_sha256==$daemon and .read_once_approved==true and
- .run=="cpk399-gparent-saved-read-20261114-01" and .endpoint=="http://127.0.0.1:18163" and
+ .run=="cpk399-gparent-saved-read-20261114-02" and .endpoint=="http://127.0.0.1:18163" and
  .credential_source==$human and .baseline_source==$baseline and
  .routes==["read.workspace","read.desired-graph","read.desired-topology-draft-revision","read.desired-topology-draft-revision-attempts"] and
  (.review_reference|type=="string" and length>0)' "$ACTION" >/dev/null
@@ -66,7 +66,7 @@ original=$(docker inspect 3584eabe7b2c1c278ea9053f9ac73a16acc85d086c641058f54305
 [ "$original" = '3584eabe7b2c1c278ea9053f9ac73a16acc85d086c641058f5430549fd887e0f|/cpk-cpk163-gparent-20261109-cpk163-gparent-20261109-cpk163-gparent-20261109-cpk|sha256:62e4ee7fe4e8326b762c36306c3a810a15d684cb9d2c22515ac2f092296d2e50|true|false|false|{"8080/tcp":[{"HostIp":"127.0.0.1","HostPort":"18163"}]}' ] || exit 2
 DRIVER=sha256:0d5f36d8d2fa28ebcd01e895cd2db0e5b97df7bb5a15858bfd30442a21c09c80
 [ "$(docker image inspect "$DRIVER" --format '{{.Id}}')" = "$DRIVER" ] || exit 2
-GW_RUN=cpk399-gparent-saved-read-20261114-01
+GW_RUN=cpk399-gparent-saved-read-20261114-02
 GW_RECORDS=/private/tmp/$GW_RUN
 [ ! -e "$GW_RECORDS" ] && [ ! -L "$GW_RECORDS" ] || exit 2
 . ./scripts/gateway_packaged_owner.sh
