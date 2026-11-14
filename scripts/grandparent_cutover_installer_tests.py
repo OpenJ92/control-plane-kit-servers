@@ -384,6 +384,40 @@ class InstallerProcessContract(unittest.TestCase):
             module_sha256={m.__name__: hashlib.sha256(Path(m.__file__).read_bytes()).hexdigest()
                 for m in (read_pages, models, workspace_graph, profile, transport, cli)}), sort_keys=True))
 
+    def test_frozen_material_owner_and_qualified_mcp_bootstrap_plan_compatibility(self):
+        import importlib.util
+        from control_plane_kit_servers_cpk_server import bootstrap, root_material_preparation
+        self.assertFalse(root_material_preparation.__file__.startswith("/source/"))
+        self.assertTrue(callable(root_material_preparation.plan_root_material_preparation))
+        self.assertTrue(callable(root_material_preparation.prepare_root_material))
+        # Only public fixture values are borrowed; the selected frozen owner
+        # performs compilation/verification. No material, Docker or DB effects.
+        path = Path("/source/products/cpk_server/tests/test_root_bootstrap.py")
+        spec = importlib.util.spec_from_file_location("root_input_values", path)
+        fixture = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fixture)
+        document = fixture.installation_input()
+        product = document["installation"]["products"]["cpk"]["product"]
+        digest = "sha256:49ae1044c73f5fb94cce229f736be5fa1ee3d1a0fcbe4e423d54b2831d2986a7"
+        product["image"].update(registry="localhost", repository="control-plane-kit-servers/cpk-grandparent",
+            digest=digest, tag=None, provenance={}, platforms=[dict(os="linux", architecture="amd64", variant=None)])
+        environment = product["runtime_contract"]["public_environment"]
+        environment[:] = [x for x in environment if x["name"] != "CPK_MCP_PROFILE"]
+        environment.append(dict(kind="public-static", name="CPK_MCP_PROFILE", value="grandparent-read-only-v1"))
+        driver = "sha256:0d5f36d8d2fa28ebcd01e895cd2db0e5b97df7bb5a15858bfd30442a21c09c80"
+        plan = bootstrap.plan_root_bootstrap(document, driver_image_id=driver)
+        self.assertEqual(bootstrap.verified_plan(plan, expected_digest=plan["digest"], driver_image_id=driver), plan)
+        cpk = next(n for n in plan["resources"]["nodes"] if n["node_id"] == plan["cpk_node_id"])
+        self.assertEqual(cpk["image"], "localhost/control-plane-kit-servers/cpk-grandparent@" + digest)
+        self.assertEqual(cpk["environment"]["CPK_MCP_PROFILE"], "grandparent-read-only-v1")
+        self.assertTrue(bootstrap.matches_image_reference(cpk["image"], (cpk["image"],)))
+        print("reset-bootstrap-compatibility " + json.dumps(dict(schema="cpk399.reset-compatibility.v1",
+            installed_material_owner=True, material_module_sha256=hashlib.sha256(
+                Path(root_material_preparation.__file__).read_bytes()).hexdigest(),
+            pure_bootstrap_plan_verified=True, qualified_cpk_image=digest,
+            mcp_profile="grandparent-read-only-v1", material_generated=False,
+            runtime_started=False, fresh_private_policy_tested=False), sort_keys=True))
+
 
 def fixture_command():
     action.require((os.getuid(), os.getgid()) == (501, 20), "synthetic-owner")
