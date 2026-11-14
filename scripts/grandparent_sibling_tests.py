@@ -54,7 +54,7 @@ class SiblingPublicPreparation(unittest.TestCase):
         self.assertEqual(value["permissions"]["worker"], ["instance:workspace:read"])
         self.assertEqual(value["capabilities"], [])
         self.assertIsNone(value["management"])
-        self.assertLessEqual(len(plan["resources"]["volumes"]), 10)
+        self.assertLessEqual(len(sibling.root_volume_names(plan)), 10)
         print("sibling public composition: frozen installer, synthetic trust, three nodes; no generation/runtime")
 
     def test_foreign_commissioning_or_changed_grants_refuse(self):

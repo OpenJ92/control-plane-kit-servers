@@ -37,6 +37,12 @@ def require(condition):
         raise ValueError("sibling public preparation refused")
 
 
+def root_volume_names(plan):
+    return [entry["name"] for node in plan["resources"]["nodes"]
+        for field in ("data_volumes", "secret_files", "configuration_files", "installer_files")
+        for entry in node.get(field, [])]
+
+
 def commissioning_intent():
     return dict(schema="cpk.root-commissioning.intent.v1", installation_id=IDENTITY,
         workspace_id=IDENTITY, profile="operator-offline-read-trust",
@@ -102,6 +108,8 @@ def bind_material(template, commission_plan, public_raw, completion):
     value["commissioning"] = dict(plan=commission_plan, intent_digest=commission_plan["digest"],
         public_utf8=public_raw.decode(), public_sha256=sha256(public_raw).hexdigest(), completion=completion)
     plan = plan_root_material_preparation(value, driver_image_id=DRIVER)
+    volumes = root_volume_names(plan["bootstrap_plan"])
+    require(len(volumes) <= 10 and len(set(volumes)) == len(volumes))
     # Keep the CLI input public and unprojected; the existing launcher attaches
     # its separately pinned commissioning snapshot again during material-plan.
     del value["commissioning"]
