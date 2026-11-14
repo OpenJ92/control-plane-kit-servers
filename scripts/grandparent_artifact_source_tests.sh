@@ -12,7 +12,9 @@ docker run --pull never --rm --network none --read-only --tmpfs /tmp:exec,size=1
   -e PYTHONPYCACHEPREFIX=/tmp/pycache --entrypoint sh "$CONTROLLER" -ec '
     sh -n test.sh
     sh -n scripts/cpk_server_image_smoke.sh
+    sh -n scripts/grandparent_cpk_cutover.sh
     python -m py_compile scripts/grandparent_artifact_fixture.py
+    python -m py_compile scripts/grandparent_cpk_cutover.py
   '
 docker run --pull never --rm --network none --read-only --tmpfs /tmp:exec,size=128m \
   --cap-drop ALL --security-opt no-new-privileges \
@@ -34,4 +36,4 @@ docker run --pull never --rm --network none --read-only --tmpfs /tmp:exec,size=1
   --cap-drop ALL --security-opt no-new-privileges \
   --mount "type=bind,source=$ROOT,target=/source,readonly" --workdir /source/scripts \
   -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONPATH=/source/scripts \
-  --entrypoint python "$CONTROLLER" -m unittest grandparent_build_tests grandparent_oci_tests grandparent_inventory_tests grandparent_qualification_driver_tests grandparent_witness_http_tests -v
+  --entrypoint python "$CONTROLLER" -m unittest grandparent_build_tests grandparent_oci_tests grandparent_inventory_tests grandparent_qualification_driver_tests grandparent_witness_http_tests grandparent_cpk_cutover_tests -v
