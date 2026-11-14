@@ -4,7 +4,8 @@
 use strict;
 use warnings;
 use POSIX qw(SIG_BLOCK SIG_SETMASK SIGCHLD SIGALRM SIGTERM SIGINT SIGHUP
-             sigprocmask sigsuspend setpgid);
+             sigprocmask sigsuspend setpgid sigaction SA_NOCLDSTOP);
+use Fcntl qw(F_SETFD);
 
 my $mode = shift @ARGV // '';
 if ($mode eq 'capture') {
@@ -32,6 +33,10 @@ exit 125 unless ($mode eq 'process' || $mode eq 'group') &&
     $seconds =~ /^\d+$/ && $seconds >= 1 && $seconds <= 300 &&
     (shift @ARGV // '') eq '--' && @ARGV;
 my @signals = (SIGCHLD, SIGALRM, SIGTERM, SIGINT, SIGHUP);
+my $admission;
+if ($mode eq 'group' && open($admission, '<&=9')) {
+    exit 125 unless defined fcntl($admission, F_SETFD, 0);
+}
 my $blocked = POSIX::SigSet->new(@signals);
 my $previous = POSIX::SigSet->new();
 exit 125 unless defined sigprocmask(SIG_BLOCK, $blocked, $previous);
@@ -39,7 +44,10 @@ my $waiting = POSIX::SigSet->new();
 exit 125 unless defined sigprocmask(SIG_BLOCK, POSIX::SigSet->new(), $waiting);
 $waiting->delset($_) for @signals;
 my ($child_done, $tick, $interrupted) = (0, 0, 0);
-$SIG{CHLD} = sub { $child_done = 1; }; # Deliberately no wait/reap here.
+my $terminal = POSIX::SigAction->new(sub { $child_done = 1; },
+    POSIX::SigSet->new(), SA_NOCLDSTOP);
+$terminal->safe(1);
+exit 125 unless defined sigaction(SIGCHLD, $terminal); # No stop notifications, no reap.
 $SIG{ALRM} = sub { $tick = 1; };
 $SIG{TERM} = $SIG{INT} = $SIG{HUP} = sub { $interrupted = 1; };
 my $child = fork();

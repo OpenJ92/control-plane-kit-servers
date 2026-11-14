@@ -1,11 +1,20 @@
 #!/bin/sh
 # Owning source gate only: finite Docker/Git doubles; no daemon socket/provider.
 set -eu
-[ "$#" = 0 ] || exit 2
+[ "$#" = 0 ] || { [ "$#" = 1 ] && [ "$1" = --inventory-regressions ]; } || exit 2
+FOCUSED=${1:-}
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 CONTROLLER=sha256:4eb536f196cb67260426f8902fca63959d414673c43bcd6e0008ff4712fd8c22
 [ "$(docker image inspect "$CONTROLLER" --format '{{.Id}}')" = "$CONTROLLER" ] || exit 2
+set -- grandparent_build_tests grandparent_oci_tests grandparent_inventory_tests grandparent_qualification_driver_tests grandparent_witness_http_tests grandparent_cpk_cutover_tests grandparent_reset_inventory_tests
+if [ "$FOCUSED" = --inventory-regressions ]; then
+  set -- grandparent_reset_inventory_tests.ResetInventoryTests.test_observation_keeps_backing_access_and_external_routing_unresolved \
+    grandparent_reset_inventory_tests.ResetInventoryTests.test_closing_engine_requires_one_scalar_and_its_normal_lf \
+    grandparent_reset_inventory_tests.ResetInventoryTests.test_direct_worker_without_parent_channel_refuses_before_daemon \
+    grandparent_reset_inventory_tests.ResetInventoryTests.test_duplicate_worker_cannot_reuse_one_parent_admission \
+    grandparent_reset_inventory_tests.ResetInventoryTests.test_stopped_query_keeps_deadline_and_is_reaped
+fi
 docker run --pull never --rm --network none --read-only --tmpfs /tmp:exec,size=128m \
   --cap-drop ALL --security-opt no-new-privileges \
   --mount "type=bind,source=$ROOT,target=/source,readonly" --workdir /source \
@@ -40,7 +49,11 @@ docker run --pull never --rm --network none --read-only --tmpfs /tmp:exec,size=1
   --cap-drop ALL --security-opt no-new-privileges \
   --mount "type=bind,source=$ROOT,target=/source,readonly" --workdir /source/scripts \
   -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONPATH=/source/scripts \
-  --entrypoint python "$CONTROLLER" -m unittest grandparent_build_tests grandparent_oci_tests grandparent_inventory_tests grandparent_qualification_driver_tests grandparent_witness_http_tests grandparent_cpk_cutover_tests grandparent_reset_inventory_tests -v
+  --entrypoint python "$CONTROLLER" -m unittest "$@" -v
+if [ "$FOCUSED" = --inventory-regressions ]; then
+  echo 'Focused inventory regressions only; full source-suite acceptance remains separate.'
+  exit 0
+fi
 # Actual frozen installer imports/client/file-owner boundary, intercepted wire.
 # Only public source and synthetic UID501 files exist; no socket or real input.
 INSTALLER=sha256:0d5f36d8d2fa28ebcd01e895cd2db0e5b97df7bb5a15858bfd30442a21c09c80

@@ -17,7 +17,8 @@ finish() {
   # Only the reservation owner cleans files, after its supervisor has quiesced
   # the complete worker process group. No raw numeric PID signals in Bash.
   if [ "$owns_output" = 1 ]; then
-    rm -f -- "$output/query.out" "$output/query.err" "$output/records" "$output/stderr-present" "$output/phase-expired"
+    rm -f -- "$output/query.out" "$output/query.err" "$output/records" "$output/stderr-present" "$output/worker.expected"
+    rmdir -- "$output/worker.claimed" 2>/dev/null || :
   fi
   if [ "$code" != 0 ] && [ "$final_reported" = 0 ]; then
     printf '{"schema":"cpk399.reset-inventory-launch.v1","status":"HOLD","stage":"%s","retry":false,"service_mutation":false,"credential_use":false}\n' "$stage"
@@ -68,9 +69,15 @@ if [ "$worker" = 0 ]; then
   mkdir -m 700 "$output"
   owns_output=1
   mkfifo -m 600 "$output/query.out" "$output/query.err" "$output/records"
+  nonce=$(od -An -N32 -tx1 /dev/urandom | tr -d '[:space:]')
+  [[ "$nonce" =~ ^[0-9a-f]{64}$ ]] || exit 2
+  printf '%s' "$nonce" | shasum -a 256 | cut -d ' ' -f 1 > "$output/worker.expected"
+  exec 9<<< "$nonce"
+  unset nonce
   stage=collection
   code=0
   perl scripts/grandparent_metadata_supervisor.pl group 300 -- bash "$0" --worker "$ACTION" "$EXPECTED" >/dev/null || code=$?
+  exec 9<&-
   if [ "$code" = 124 ]; then stage=phase-deadline; fi
   if [ ! -s "$output/report.json" ] || [ "$(wc -c < "$output/report.json")" -gt 262144 ] ||
      ! jq -e '.schema=="cpk399.reset-inventory-observation.v1" and (.status=="observed" or .status=="HOLD")' "$output/report.json" >/dev/null ||
@@ -84,6 +91,18 @@ if [ "$worker" = 0 ]; then
   exit 0
 fi
 [ -d "$output" ] && [ ! -L "$output" ] && [ -p "$output/records" ] || exit 2
+# Only the reserving parent provides this anonymous, single-use capability.
+# It is not an application credential and is never returned in the report.
+IFS= read -r nonce <&9 || exit 2
+exec 9<&-
+[[ "$nonce" =~ ^[0-9a-f]{64}$ ]] || exit 2
+[ -f "$output/worker.expected" ] && [ ! -L "$output/worker.expected" ] || exit 2
+nonce_hash=$(printf '%s' "$nonce" | shasum -a 256); nonce_hash=${nonce_hash%% *}
+unset nonce
+[ "$nonce_hash" = "$(cat "$output/worker.expected")" ] || exit 2
+mkdir -m 700 "$output/worker.claimed"
+rm -- "$output/worker.expected"
+unset nonce_hash
 started=$(date +%s)
 docker_reads=0 host_reads=0
 
@@ -185,7 +204,7 @@ collect() {
   stage=closing-sets
   closing=$(set -e; enumerate); emit "$closing"
   read_query docker 4096 docker info --format '{{.ID}}'
-  [ "$value" = "$image_witness_daemon" ]
+  printf '%s' "$value" | jq -Rse --arg expected "$image_witness_daemon" '.==($expected+"\n")' >/dev/null
   [ "$(( $(date +%s) - started ))" -le 300 ]
   jq -cn --arg finished "$(date +%s)" '{kind:"complete",engine_matches:true,finished:$finished}'
 }

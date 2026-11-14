@@ -17,8 +17,9 @@ fi
 
 case "${1:-}" in
   --grandparent-artifact-source-tests)
-    [ "$#" = 1 ] || exit 2
-    exec sh scripts/grandparent_artifact_source_tests.sh
+    [ "$#" = 1 ] || { [ "$#" = 2 ] && [ "$2" = --inventory-regressions ]; } || exit 2
+    shift
+    exec sh scripts/grandparent_artifact_source_tests.sh "$@"
     ;;
   --grandparent-artifact-qualification)
     [ "$#" = 5 ] || exit 2

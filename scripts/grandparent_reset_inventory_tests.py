@@ -25,7 +25,11 @@ data=json.loads((root/"facts.json").read_text())
 with (root/"calls.jsonl").open("a") as out: out.write(json.dumps(a)+"\\n")
 if a[:2]==["context","show"]: print("desktop-linux")
 elif a[:2]==["context","inspect"]: print("unix:///synthetic.sock")
-elif a[0]=="info": print(data["engine"])
+elif a[0]=="info":
+    counter=root/"info-count"
+    n=int(counter.read_text())+1 if counter.exists() else 1
+    counter.write_text(str(n))
+    sys.stdout.write(data["engine"]+"\\n"+(data.get("closing_suffix","") if n>1 else ""))
 elif a[:2]==["container","ls"]:
     counter=root/"lists"
     n=int(counter.read_text())+1 if counter.exists() else 1
@@ -59,7 +63,9 @@ if "ps_empty" in d: sys.exit(d["ps_empty"])
 print(d.get("processes"," 123 1 /synthetic/com.docker.backend\\n 124 1 /synthetic/cloudflared"))
 '''
 SHASUM = '''import hashlib,pathlib,sys
-p=pathlib.Path(sys.argv[-1]);print(hashlib.sha256(p.read_bytes()).hexdigest()+"  "+str(p))
+a=sys.argv[1:];p=pathlib.Path(a[-1]) if len(a)==3 else None
+data=p.read_bytes() if p else sys.stdin.buffer.read()
+print(hashlib.sha256(data).hexdigest()+"  "+(str(p) if p else "-"))
 '''
 MKDIR = '''import os,pathlib,sys
 p=pathlib.Path(sys.argv[-1]);p.mkdir(mode=0o700)
@@ -119,7 +125,7 @@ def fixture():
 
 
 class ResetInventoryTests(unittest.TestCase):
-    def run_inventory(self, change=None, approved=True):
+    def run_inventory(self, change=None, approved=True, worker_entry=None):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             work = root/"work"
@@ -151,11 +157,23 @@ class ResetInventoryTests(unittest.TestCase):
                 action[name+"_sha256"]=sha(root/(name+".json"))
             proposal=root/"action.json"
             proposal.write_text(json.dumps(action))
+            command=["bash","scripts/grandparent_reset_inventory.sh",str(proposal),sha(proposal)]
+            if worker_entry:
+                destination.mkdir(mode=0o700)
+                for name in ("query.out","query.err","records"):
+                    os.mkfifo(destination/name,0o600)
+                nonce="ab"*32
+                (destination/"worker.expected").write_text(hashlib.sha256(nonce.encode()).hexdigest()+"\n")
+                if worker_entry=="direct":
+                    command=["bash","scripts/grandparent_reset_inventory.sh","--worker",str(proposal),sha(proposal)]
+                else:
+                    command=["bash","-c",'exec 9<<< "$1"; bash scripts/grandparent_reset_inventory.sh --worker "$2" "$3"; first=$?; wc -l < "$4/calls.jsonl" > "$4/first-count"; bash scripts/grandparent_reset_inventory.sh --worker "$2" "$3"; second=$?; [ "$first" = 0 ] && [ "$second" != 0 ]',
+                             "fixture-parent",nonce,str(proposal),sha(proposal),str(root)]
             env={**os.environ,"PATH":str(root)+os.pathsep+os.environ["PATH"],"DOCKER_CONTEXT":"desktop-linux","INVENTORY_FIXTURE":str(root)}
             for name in ("DOCKER_HOST","DOCKER_TLS","DOCKER_TLS_VERIFY","DOCKER_CERT_PATH"):
                 env.pop(name,None)
             try:
-                result=subprocess.run(["bash","scripts/grandparent_reset_inventory.sh",str(proposal),sha(proposal)],
+                result=subprocess.run(command,
                     cwd=work,env=env,capture_output=True,timeout=90,check=False)
                 calls=[json.loads(line) for line in (root/"calls.jsonl").read_text().splitlines()] if (root/"calls.jsonl").exists() else []
                 report=json.loads((destination/"report.json").read_text()) if (destination/"report.json").exists() and (destination/"report.json").stat().st_size else None
@@ -166,7 +184,12 @@ class ResetInventoryTests(unittest.TestCase):
                 self.assertTrue(all(a[0] in ("context","info","container","volume","network","inspect","image") for a in calls))
                 self.assertFalse(any(any(v in a for v in ("run","exec","stop","start","rm","prune","pull","build","connect","disconnect")) for a in calls))
                 self.assertLessEqual(len(calls),160)
-                if facts.get("reservation_collision"):
+                if worker_entry:
+                    for name in ("query.out","query.err","records"):
+                        self.assertIn(name,files)
+                    if worker_entry=="duplicate":
+                        self.assertEqual(len(calls),int((root/"first-count").read_text()))
+                elif facts.get("reservation_collision"):
                     for name in ("query.out","query.err","records","phase-expired"):
                         self.assertIn(name,files)
                 else:
@@ -342,3 +365,28 @@ class ResetInventoryTests(unittest.TestCase):
             self.assertIsNone(outside.poll())
         finally:
             outside.terminate();outside.wait(timeout=5)
+
+    def test_closing_engine_requires_one_scalar_and_its_normal_lf(self):
+        for suffix in ("\n","extra"):
+            with self.subTest(suffix=suffix):
+                result,report,_=self.run_inventory(lambda m,p,q,f:f.update(closing_suffix=suffix))
+                self.assertNotEqual(result.returncode,0)
+                self.assertEqual(report["stage"],"closing-sets")
+
+    def test_direct_worker_without_parent_channel_refuses_before_daemon(self):
+        result,report,calls=self.run_inventory(worker_entry="direct")
+        self.assertNotEqual(result.returncode,0)
+        self.assertEqual(calls,[])
+
+    def test_duplicate_worker_cannot_reuse_one_parent_admission(self):
+        result,report,_=self.run_inventory(worker_entry="duplicate")
+        self.assertEqual(result.returncode,0,result.stdout[-2048:])
+        self.assertEqual(report["status"],"observed")
+
+    def test_stopped_query_keeps_deadline_and_is_reaped(self):
+        result=subprocess.run(["perl",str(ROOT/"scripts/grandparent_metadata_supervisor.pl"),"process","2","--",
+            "bash","-c",'printf "%s" "$$"; kill -STOP "$$"; printf should-not-resume'],
+            capture_output=True,timeout=6,check=False)
+        self.assertEqual(result.returncode,124,result.stderr)
+        identity=int(result.stdout)
+        with self.assertRaises(ProcessLookupError): os.kill(identity,0)
