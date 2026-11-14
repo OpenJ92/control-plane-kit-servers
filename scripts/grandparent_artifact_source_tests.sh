@@ -50,3 +50,35 @@ docker run --pull never --rm --network none --read-only --tmpfs /tmp:exec,mode=1
   --mount "type=bind,source=$ROOT,target=/source,readonly" --workdir /source/scripts \
   -e PYTHONDONTWRITEBYTECODE=1 --entrypoint python "$INSTALLER" \
   -m unittest grandparent_cutover_installer_tests.InstallerProcessContract -v
+# Startup diagnosis: same physical file targets/UID/capability/proxy profile as
+# the consumed read-only launch, synthetic files only, no network or socket.
+STARTUP_CONTEXT=$(mktemp -d /private/tmp/cpk399-offline-startup.XXXXXX)
+# Public/synthetic fixture context only; file modes are independently pinned.
+chmod 777 "$STARTUP_CONTEXT"
+finish_startup_context() {
+  status=$?
+  trap - 0
+  rm -rf "$STARTUP_CONTEXT"
+  [ ! -e "$STARTUP_CONTEXT" ] && [ ! -L "$STARTUP_CONTEXT" ] || status=1
+  exit "$status"
+}
+trap finish_startup_context 0
+docker run --pull never --rm --network none --read-only --user 501:20 --cap-drop ALL \
+  --security-opt no-new-privileges --tmpfs /tmp:rw,nosuid,nodev,size=32m \
+  --mount "type=bind,source=$ROOT,target=/source,readonly" \
+  --mount "type=bind,source=$STARTUP_CONTEXT,target=/fixture" \
+  -e PYTHONDONTWRITEBYTECODE=1 --entrypoint python "$INSTALLER" \
+  /source/scripts/grandparent_saved_read_startup_tests.py --make-fixture /fixture
+docker run --pull never --rm --network none --read-only --user 501:20 --cap-drop ALL \
+  --security-opt no-new-privileges --cpus 1 --memory 512m --pids-limit 64 \
+  --tmpfs /tmp:rw,nosuid,nodev,size=32m --log-driver none \
+  --env PYTHONDONTWRITEBYTECODE=1 --env HTTP_PROXY= --env HTTPS_PROXY= --env ALL_PROXY= \
+  --env http_proxy= --env https_proxy= --env all_proxy= \
+  --mount "type=bind,source=$ROOT/scripts/grandparent_saved_read.py,target=/grandparent_saved_read.py,readonly" \
+  --mount "type=bind,source=$ROOT/scripts/grandparent_cpk_cutover.py,target=/grandparent_cpk_cutover.py,readonly" \
+  --mount "type=bind,source=$STARTUP_CONTEXT/action.json,target=/proposal/verification.json,readonly" \
+  --mount "type=bind,source=$STARTUP_CONTEXT/desired.json,target=/public/desired.json,readonly" \
+  --mount "type=bind,source=$STARTUP_CONTEXT/human.bearer,target=/credentials/human.bearer,readonly" \
+  --mount "type=bind,source=$ROOT,target=/source,readonly" \
+  --mount "type=bind,source=$STARTUP_CONTEXT,target=/fixture,readonly" \
+  --entrypoint python "$INSTALLER" /source/scripts/grandparent_saved_read_startup_tests.py --probe
