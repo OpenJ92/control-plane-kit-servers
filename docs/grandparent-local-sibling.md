@@ -121,5 +121,10 @@ start is used. The sibling tests compile the actual owner plan, render through
 the website/Core factory and bind native args to synthetic new receipt IDs.
 They are source/composition evidence, not fresh runtime or SDK connectivity.
 
+The same owning gate accepts `--sibling-preparation` for the three sibling
+composition cases, retaining syntax/coordinates/support/integrity and the
+actual frozen installer. Reuse the unchanged broader cases' evidence; a focused
+run does not turn an earlier failed full run into a passing full run.
+
 Stop on apparatus failure. Publish the checkpoint candidly as unvalidated before
 this gate, and record terminal evidence and Meridian input review on #399.

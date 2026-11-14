@@ -1,7 +1,7 @@
 #!/bin/sh
 # Owning source gate only: finite Docker/Git doubles; no daemon socket/provider.
 set -eu
-[ "$#" = 0 ] || { [ "$#" = 1 ] && [ "$1" = --inventory-regressions ]; } || exit 2
+[ "$#" = 0 ] || { [ "$#" = 1 ] && { [ "$1" = --inventory-regressions ] || [ "$1" = --sibling-preparation ]; }; } || exit 2
 FOCUSED=${1:-}
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -46,6 +46,17 @@ docker run --pull never --rm --network none --read-only --tmpfs /tmp:exec,size=1
   -e PYTHONDONTWRITEBYTECODE=1 --entrypoint python "$CONTROLLER" \
   /source/test_support/package_integrity.py --package-root /source \
   --source-root src --source-root products --test-root tests --test-root products --gate-file test.sh
+if [ "$FOCUSED" = --sibling-preparation ]; then
+  INSTALLER=sha256:0d5f36d8d2fa28ebcd01e895cd2db0e5b97df7bb5a15858bfd30442a21c09c80
+  [ "$(docker image inspect "$INSTALLER" --format '{{.Id}}')" = "$INSTALLER" ] || exit 2
+  docker run --pull never --rm --network none --read-only --tmpfs /tmp:rw,nosuid,nodev,size=128m \
+    --cap-drop ALL --security-opt no-new-privileges \
+    --mount "type=bind,source=$ROOT,target=/source,readonly" --workdir /source/scripts \
+    -e PYTHONDONTWRITEBYTECODE=1 --entrypoint python "$INSTALLER" \
+    -m unittest grandparent_sibling_tests -v
+  echo 'Focused sibling composition; no private generation or runtime acceptance.'
+  exit 0
+fi
 docker run --pull never --rm --network none --read-only --tmpfs /tmp:exec,size=128m \
   --cap-drop ALL --security-opt no-new-privileges \
   --mount "type=bind,source=$ROOT,target=/source,readonly" --workdir /source/scripts \
