@@ -6,4 +6,6 @@ nested plan examples follow the selected Ops701 HTTP mapping owners; they do not
 recreate database, authorization, planning or history state. Witness.seed must
 consume flat status/plan_id and preserve observed fences/key. Failure cases test
 a closed readiness substep/category/status report with no raw body, credential,
-path or arbitrary exception text. No listening process or actual fixture runs.
+path or arbitrary exception text. Readiness transport polling has a closed
+timeout result. No listening process, credential generation, database, provider
+or private runtime state is accessed; only client-driver code runs over frames.

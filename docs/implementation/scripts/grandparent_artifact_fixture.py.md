@@ -27,3 +27,18 @@ accepted `grandparent_http_planning_qualification.py` mapping test. Frozen Coref
 owns HTTP routes; Operations701 owns authority, draft/planning/history and
 idempotency; Servers0610 owns real file readers and process composition. This
 witness invokes those owners; it does not implement their state machines.
+
+Ops701's HTTP preparation mapping returns flat status/workspace_id/plan_id,
+distinct from the internal projection descriptor. The witness now checks that
+public status/workspace and uses the top-level plan ID for unchanged profile/
+lineage/history assertions. This corrects a provable consumer mismatch; the
+first failing call in consumed run02 remains unknown and is not inferred.
+
+Failure output is one closed JSON diagnostic with only schema, allowlisted mode,
+allowlisted existing substep, allowlisted category and validated numeric HTTP
+status or null. No path, request/response/body/headers, credential, arbitrary
+exception text or local file contents are rendered. Request accumulation remains
+bounded and credential echoes refuse. Readiness checks the selected configured/
+ready response and polls only transport failure on its existing read-only URL;
+nontransient HTTP, shape, bound or redaction failure stops at that fixed substep.
+This changes test-driver reporting only; the normal product/API is unchanged.

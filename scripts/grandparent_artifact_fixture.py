@@ -21,6 +21,32 @@ WORKSPACE = "workspace-a"
 INSTALLATION = "cpk399-isolated-mcp"
 ISSUER = "urn:control-plane-kit:static-development"
 BOUND = 1_048_576
+STEPS = frozenset(("fixture", "generate", "initialize", "readiness", "workspace-create",
+    "grant-setup", "grant-reader", "session-start", "draft-create", "workspace-before-select",
+    "draft-select", "workspace-selected", "managed-prepare", "workspace-preserved",
+    "preparation-history", "plan-detail", "managed-replay", "history-preserved", "save-revision",
+    "saved-fixture", "attempt-history", "http-denial", "mcp-denial", "mcp-discovery",
+    "mcp-protocol", "mcp-command-denial", "get_workspace", "get_desired_graph",
+    "get_desired_topology_draft_revision", "list_desired_topology_draft_revision_attempts"))
+CATEGORIES = frozenset(("transport", "http-status", "body-bound", "redaction", "json",
+    "shape", "assertion", "readiness-timeout", "local-fixture", "unexpected"))
+
+
+class WitnessFailure(Exception):
+    def __init__(self, category, http_status=None):
+        super().__init__("isolated witness failed")
+        self.category, self.http_status = category, http_status
+
+
+def failure_record(mode, step, category, http_status=None):
+    """Only closed labels and a validated number may cross the log boundary."""
+    return dict(schema="cpk399.witness-diagnostic.v1",
+        mode=mode if mode in {"generate", "initialize", "seed", "verify"} else "invalid",
+        step=step if step in STEPS else "fixture",
+        category=category if category in CATEGORIES else "unexpected",
+        http_status=http_status if type(http_status) is int and 100 <= http_status <= 599 else None)
+
+
 if not __debug__:
     raise SystemExit("isolated witness requires enabled checks")
 
@@ -117,6 +143,7 @@ def initialize():
 
 class Witness:
     def __init__(self, directory):
+        self.step = "fixture"
         self.directory = directory
         self.actors = json.loads((directory / "actors.json").read_text())
         # The helper shares only the candidate's network namespace. The product
@@ -124,51 +151,75 @@ class Witness:
         # as its ordinary installed-client contract.
         self.base = "http://127.0.0.1:8080"
 
-    async def request(self, path, payload=None, *, actor="setup", expected=200):
+    async def request(self, path, payload=None, *, actor="setup", expected=200, step=None):
         import httpx2
+        if step is not None:
+            self.step = step if step in STEPS else "fixture"
         headers = {} if actor is None else {"Authorization": "Bearer " + self.actors.get(actor, "incorrect")}
-        async with httpx2.AsyncClient(timeout=10, trust_env=False, headers=headers) as client:
-            async with client.stream("GET" if payload is None else "POST", self.base + path, json=payload) as response:
-                assert response.status_code == expected, "unexpected HTTP status on " + path
-                body = bytearray()
-                async for chunk in response.aiter_bytes():
-                    assert len(body) + len(chunk) <= BOUND, "HTTP response exceeded bound"
-                    body.extend(chunk)
-                assert all(value.encode() not in body for value in self.actors.values()), "credential in response"
-                return json.loads(body)
+        failure, value = None, None
+        try:
+            async with httpx2.AsyncClient(timeout=10, trust_env=False, headers=headers) as client:
+                async with client.stream("GET" if payload is None else "POST", self.base + path, json=payload) as response:
+                    if response.status_code != expected:
+                        failure = WitnessFailure("http-status", response.status_code)
+                    else:
+                        body = bytearray()
+                        async for chunk in response.aiter_bytes():
+                            if len(body) + len(chunk) > BOUND:
+                                failure = WitnessFailure("body-bound")
+                                break
+                            body.extend(chunk)
+                        if failure is None and any(token.encode() in body for token in self.actors.values()):
+                            failure = WitnessFailure("redaction")
+                        if failure is None:
+                            try:
+                                value = json.loads(body)
+                            except (UnicodeDecodeError, ValueError):
+                                failure = WitnessFailure("json")
+                            if failure is None and type(value) is not dict:
+                                failure = WitnessFailure("shape")
+        except httpx2.TransportError:
+            failure = WitnessFailure("transport")
+        if failure is not None:
+            raise failure
+        return value
 
     async def ready(self):
-        import httpx2
         for _ in range(30):
             try:
-                await self.request("/health/ready", actor=None)
+                value = await self.request("/health/ready", actor=None, step="readiness")
+                if any(value.get(key) != expected for key, expected in (
+                        ("status", "ready"), ("application", "configured"), ("stores", "configured"))):
+                    raise WitnessFailure("shape")
                 return
-            except (httpx2.TransportError, AssertionError):
+            except WitnessFailure as failure:
+                if failure.category != "transport":
+                    raise
                 await asyncio.sleep(1)
-        raise ValueError("normal process did not become ready")
+        raise WitnessFailure("readiness-timeout")
 
     async def seed(self):
         await self.ready()
         await self.request("/administration/workspaces", dict(workspace_id=WORKSPACE,
-            name="Isolated MCP witness", idempotency_key="create-workspace"))
+            name="Isolated MCP witness", idempotency_key="create-workspace"), step="workspace-create")
         for actor, scopes in (("setup", ["instance:workspace:read", "instance:workspace:edit", "plan:request"]),
                 ("reader", ["instance:workspace:read"])):
             await self.request("/workspaces/" + WORKSPACE + "/permissions/grant", dict(
                 target=dict(issuer=ISSUER, subject_id=actor, kind="operator"), scopes=scopes,
-                expected_revision=0, idempotency_key="grant-" + actor))
+                expected_revision=0, idempotency_key="grant-" + actor), step="grant-" + actor)
         session = await self.request("/workspaces/" + WORKSPACE + "/sessions", dict(
-            title="Isolated saved revision", idempotency_key="session"))
+            title="Isolated saved revision", idempotency_key="session"), step="session-start")
         root = "/workspaces/" + WORKSPACE
         draft = await self.request(root + "/desired-topology-drafts", dict(session_id=session["session_id"],
             title="Read-only witness", idempotency_key="draft", graph=dict(name="isolated-empty",
-                runtimes={}, nodes={}, edges={}, public_ingresses=[])))
+                runtimes={}, nodes={}, edges={}, public_ingresses=[])), step="draft-create")
         path = root + "/desired-topology-drafts/" + quote(draft["draft_id"], safe="")
-        before = (await self.request(root))["workspace"]
+        before = (await self.request(root, step="workspace-before-select"))["workspace"]
         await self.request(path + "/select", dict(session_id=session["session_id"], revision=draft["revision"],
             idempotency_key="select", expected_desired_graph_id=before["desired_graph_id"],
             expected_desired_realized_projection_id=before["desired_realized_projection_id"],
-            expected_desired_graph_revision=before["desired_graph_revision"]))
-        workspace = (await self.request(root))["workspace"]
+            expected_desired_graph_revision=before["desired_graph_revision"]), step="draft-select")
+        workspace = (await self.request(root, step="workspace-selected"))["workspace"]
         payload = dict(draft_id=draft["draft_id"], revision=draft["revision"],
             expected_current=dict(authored_graph_id=workspace["current_graph_id"],
                 realized_projection_id=workspace["current_realized_projection_id"]),
@@ -176,16 +227,18 @@ class Witness:
                 realized_projection_id=workspace["desired_realized_projection_id"]),
             expected_desired_graph_revision=workspace["desired_graph_revision"], title="Managed intent witness",
             idempotency_key="managed-http", managed_verification="authenticated-local-postgres-and-http")
-        preparation = await self.request(root + "/deployments/prepare", payload)
+        preparation = await self.request(root + "/deployments/prepare", payload, step="managed-prepare")
         # The empty graph deliberately cannot satisfy managed SQL/HTTP bootstrap.
         # The real planner must preserve that blocked result, never execute it.
-        assert preparation["projection"] == "review-blocked"
-        assert (await self.request(root))["workspace"] == workspace
+        assert preparation["status"] == "review-blocked" and preparation["workspace_id"] == WORKSPACE
+        plan_id = preparation["plan_id"]
+        assert type(plan_id) is str and plan_id
+        assert (await self.request(root, step="workspace-preserved"))["workspace"] == workspace
         revision_path = path + "/revisions/" + str(draft["revision"])
-        history = await self.request(revision_path + "/preparations")
+        history = await self.request(revision_path + "/preparations", step="preparation-history")
         assert history["items"], "real preparation history was not recorded"
-        plan_path = root + "/plans/" + quote(preparation["reference"]["plan_id"], safe="")
-        plan = (await self.request(plan_path))["plan"]
+        plan_path = root + "/plans/" + quote(plan_id, safe="")
+        plan = (await self.request(plan_path, step="plan-detail"))["plan"]
         assert plan["derivation_profile"] == "managed-sql-http-bootstrap-v1"
         assert (plan["base_graph_id"], plan["base_realized_projection_id"], plan["desired_graph_id"],
             plan["desired_realized_projection_id"], plan["desired_graph_revision"]) == (
@@ -193,8 +246,9 @@ class Witness:
             workspace["desired_realized_projection_id"], workspace["desired_graph_revision"])
         # Known completed response, explicit fixture idempotency proof. Never
         # use this as recovery of an interrupted or ambiguous external effect.
-        assert await self.request(root + "/deployments/prepare", payload) == preparation
-        assert await self.request(revision_path + "/preparations") == history
+        assert await self.request(root + "/deployments/prepare", payload, step="managed-replay") == preparation
+        assert await self.request(revision_path + "/preparations", step="history-preserved") == history
+        self.step = "save-revision"
         write(self.directory, "saved.json", dict(identity=dict(workspace_id=WORKSPACE,
             draft_id=draft["draft_id"], revision=draft["revision"]), workspace=workspace,
             preparation=preparation, history=history, revision_path=revision_path, prepare_payload=payload,
@@ -205,14 +259,16 @@ class Witness:
         from mcp import Client
         from mcp.client.streamable_http import streamable_http_client
         await self.ready()
+        self.step = "saved-fixture"
         saved = json.loads((self.directory / "saved.json").read_text())
         root = "/workspaces/" + WORKSPACE
-        assert (await self.request(root))["workspace"] == saved["workspace"]
-        assert await self.request(saved["revision_path"] + "/preparations") == saved["history"]
-        assert (await self.request(saved["plan_path"]))["plan"] == saved["plan"]
-        assert (await self.request(saved["revision_path"] + "/attempts"))["items"] == []
-        await self.request(root, actor=None, expected=401)
-        await self.request(root, actor="incorrect", expected=401)
+        assert (await self.request(root, step="workspace-preserved"))["workspace"] == saved["workspace"]
+        assert await self.request(saved["revision_path"] + "/preparations", step="history-preserved") == saved["history"]
+        assert (await self.request(saved["plan_path"], step="plan-detail"))["plan"] == saved["plan"]
+        assert (await self.request(saved["revision_path"] + "/attempts", step="attempt-history"))["items"] == []
+        await self.request(root, actor=None, expected=401, step="http-denial")
+        await self.request(root, actor="incorrect", expected=401, step="http-denial")
+        self.step = "mcp-denial"
         async with httpx2.AsyncClient(timeout=10, trust_env=False) as unauthenticated:
             for headers in ({}, {"Authorization": "Bearer incorrect"}):
                 response = await unauthenticated.post(self.base + "/mcp", headers=headers, content=b"{}")
@@ -226,25 +282,30 @@ class Witness:
             for actor in ("reader", "setup"):
                 async with httpx2.AsyncClient(timeout=10, trust_env=False,
                         headers={"Authorization": "Bearer " + self.actors[actor]}) as http:
+                    self.step = "mcp-protocol"
                     async with Client(streamable_http_client(self.base + "/mcp", http_client=http), mode=mode) as client:
                         assert client.protocol_version == protocol
+                        self.step = "mcp-discovery"
                         tools = {tool.name: tool for tool in (await client.list_tools()).tools}
                         assert set(tools) == set(reads)
                         assert all(tool.annotations.read_only_hint for tool in tools.values())
                         for name, (arguments, path) in reads.items():
+                            self.step = name
                             result = await client.call_tool(name, arguments)
                             assert not result.is_error
                             assert result.structured_content == await self.request(path, actor=actor)
                             assert all(value not in json.dumps(result.structured_content) for value in self.actors.values())
+                        self.step = "mcp-command-denial"
                         refused = await client.call_tool("prepare_deployment", {"workspace_id": WORKSPACE, **saved["prepare_payload"]})
                         assert refused.is_error and refused.structured_content["error"]["status"] == 404
-        assert await self.request(saved["revision_path"] + "/preparations") == saved["history"]
-        assert (await self.request(root))["workspace"] == saved["workspace"]
+        assert await self.request(saved["revision_path"] + "/preparations", step="history-preserved") == saved["history"]
+        assert (await self.request(root, step="workspace-preserved"))["workspace"] == saved["workspace"]
         print("isolated MCP: four reads/HTTP parity, both protocol eras, auth and command refusal, saved state/history preserved", flush=True)
 
 
 def main():
     logging.disable(logging.CRITICAL)
+    mode, witness, failure = "invalid", None, None
     try:
         assert len(sys.argv) == 3
         mode, directory = sys.argv[1], Path(sys.argv[2])
@@ -253,11 +314,20 @@ def main():
         elif mode == "initialize":
             initialize()
         elif mode in ("seed", "verify"):
-            asyncio.run(getattr(Witness(directory), mode)())
+            witness = Witness(directory)
+            asyncio.run(getattr(witness, mode)())
         else:
             raise ValueError
-    except Exception:
-        print("isolated grandparent MCP witness failed", file=sys.stderr)
+    except Exception as error:
+        category = (error.category if type(error) is WitnessFailure else
+            "assertion" if isinstance(error, AssertionError) else
+            "shape" if isinstance(error, (KeyError, TypeError)) else
+            "local-fixture" if isinstance(error, (OSError, json.JSONDecodeError)) else "unexpected")
+        failure = failure_record(mode, witness.step if witness is not None else mode,
+            category, error.http_status if type(error) is WitnessFailure else None)
+    if failure is not None:
+        # Outside the exception handler: no request/body exception is rendered.
+        print(json.dumps(failure, sort_keys=True), file=sys.stderr)
         return 1
     return 0
 

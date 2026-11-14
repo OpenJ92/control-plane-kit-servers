@@ -10,3 +10,8 @@ qualification fixture or imply runtime/artifact validation.
 The focused qualification-driver module uses the actual shell plus finite
 external CLI facts for the mount/admission regression and explicit producer/
 driver distinction. Its deliberate first-helper stop never executes a fixture.
+
+The witness HTTP module separately imports the driver client and exercises its
+streaming/seed and failure reporting over finite in-process ASGI public frames.
+It does not generate credentials, bind sockets, start product processes or use
+Operations/database/provider state. Syntax compilation remains a separate phase.

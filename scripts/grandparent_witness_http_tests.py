@@ -102,6 +102,7 @@ class WitnessHttpTests(unittest.TestCase):
             status = fixture.main()
         self.assertEqual(status, 1)
         self.assertNotIn(MARKER, output.getvalue())
+        self.assertLessEqual(len(output.getvalue().encode()), 512)
         report = json.loads(output.getvalue())
         self.assertEqual(set(report), {"schema", "mode", "step", "category", "http_status"})
         self.assertEqual(report["mode"], "seed")
@@ -134,4 +135,11 @@ class WitnessHttpTests(unittest.TestCase):
             raise ValueError(MARKER)
         report = self.run_failed_seed(broken)
         self.assertEqual(report["category"], "unexpected")
+        self.assertIsNone(report["http_status"])
+
+    def test_transport_only_readiness_polling_has_a_closed_timeout_result(self):
+        async def unavailable(scope, receive, send):
+            raise httpx2.ConnectError(MARKER)
+        report = self.run_failed_seed(unavailable)
+        self.assertEqual(report["category"], "readiness-timeout")
         self.assertIsNone(report["http_status"])
