@@ -15,6 +15,7 @@ docker run --pull never --rm --network none --read-only --tmpfs /tmp:exec,size=1
     sh -n scripts/grandparent_cpk_cutover.sh
     sh -n scripts/grandparent_saved_read.sh
     bash -n scripts/grandparent_reset_inventory.sh
+    perl -c scripts/grandparent_metadata_supervisor.pl
     python -m py_compile scripts/grandparent_artifact_fixture.py
     python -m py_compile scripts/grandparent_cpk_cutover.py
     python -m py_compile scripts/grandparent_saved_read.py

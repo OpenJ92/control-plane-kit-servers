@@ -38,7 +38,10 @@ elif a[:3]==["inspect","--type","container"]:
     identity=a[3]
     if data.get("query_error")==identity:
         print(data["sentinel"],file=sys.stderr); sys.exit(1)
-    print(json.dumps(data["containers"][identity]))
+    value=json.dumps(data["containers"][identity])
+    if data.get("oversized")==identity: sys.stdout.write(" "*(65536-len(value))+value+"\\n")
+    elif data.get("nul")==identity: sys.stdout.write(value+"\\0")
+    else: print(value)
 elif a[:2]==["volume","inspect"]: print(json.dumps(data["volumes"][a[2]]))
 elif a[:2]==["network","inspect"]: print(json.dumps(data["network"]))
 elif a[:2]==["image","inspect"]: print(json.dumps(data["images"][a[2]]))
@@ -47,14 +50,22 @@ else: sys.exit(99)
 LSOF = '''import json,os,pathlib,sys
 d=json.loads((pathlib.Path(os.environ["INVENTORY_FIXTURE"])/"facts.json").read_text())
 port=next(a.split(":")[-1] for a in sys.argv if a.startswith("-iTCP:"))
-print("p123\\nccom.docker.backend\\nf10u\\nn"+d.get("listener_ip","127.0.0.1")+":"+port)
+if "lsof_empty" in d: sys.exit(d["lsof_empty"])
+print("p123\\nc"+d.get("lsof_command","com.docker.backend")+"\\nf10u\\nn"+d.get("listener_ip","127.0.0.1")+":"+port)
 '''
-PS = 'print(" 123 1 /synthetic/com.docker.backend\\n 124 1 /synthetic/cloudflared")\n'
+PS = '''import json,os,pathlib,sys
+d=json.loads((pathlib.Path(os.environ["INVENTORY_FIXTURE"])/"facts.json").read_text())
+if "ps_empty" in d: sys.exit(d["ps_empty"])
+print(d.get("processes"," 123 1 /synthetic/com.docker.backend\\n 124 1 /synthetic/cloudflared"))
+'''
 SHASUM = '''import hashlib,pathlib,sys
 p=pathlib.Path(sys.argv[-1]);print(hashlib.sha256(p.read_bytes()).hexdigest()+"  "+str(p))
 '''
-SLEEP = '''import sys,time
-d=int(sys.argv[1]);time.sleep(0.01 if d>60 else d)
+MKDIR = '''import os,pathlib,sys
+p=pathlib.Path(sys.argv[-1]);p.mkdir(mode=0o700)
+os.mkfifo(p/"query.out",0o600);os.mkfifo(p/"query.err",0o600);os.mkfifo(p/"records",0o600)
+(p/"phase-expired").write_text("1")
+sys.exit(1)
 '''
 
 
@@ -113,7 +124,7 @@ class ResetInventoryTests(unittest.TestCase):
             root = Path(directory)
             work = root/"work"
             (work/"scripts").mkdir(parents=True)
-            for name in ("grandparent_reset_inventory.sh", "grandparent_reset_inventory.jq", "docker_witness_daemon.sh"):
+            for name in ("grandparent_reset_inventory.sh", "grandparent_reset_inventory.jq", "grandparent_metadata_supervisor.pl", "docker_witness_daemon.sh"):
                 shutil.copy2(ROOT/"scripts"/name, work/"scripts"/name)
             manifest, plan, queries, facts = fixture()
             if change:
@@ -124,15 +135,16 @@ class ResetInventoryTests(unittest.TestCase):
                 binary = root/name
                 binary.write_text("#!"+sys.executable+"\n"+code)
                 binary.chmod(0o700)
-            if facts.get("phase_timeout"):
-                binary=root/"sleep"
-                binary.write_text("#!"+sys.executable+"\n"+SLEEP)
+            if facts.get("reservation_collision"):
+                binary=root/"mkdir"
+                binary.write_text("#!"+sys.executable+"\n"+MKDIR)
                 binary.chmod(0o700)
             destination = Path("/tmp")/("cpk399-reset-inventory-test-"+root.name)
             action = dict(schema="cpk399.reset-inventory-approval.v1", approved=approved, optional_path_comparison=False,
                 review_reference="synthetic-only",source_commit="b"*40,output_directory=str(destination),
                 runner_sha256=sha(work/"scripts/grandparent_reset_inventory.sh"),
                 reducer_sha256=sha(work/"scripts/grandparent_reset_inventory.jq"),
+                supervisor_sha256=sha(work/"scripts/grandparent_metadata_supervisor.pl"),
                 daemon_sha256=sha(work/"scripts/docker_witness_daemon.sh"))
             for name in ("manifest","plan","queries"):
                 action[name]=str(root/(name+".json"))
@@ -154,8 +166,12 @@ class ResetInventoryTests(unittest.TestCase):
                 self.assertTrue(all(a[0] in ("context","info","container","volume","network","inspect","image") for a in calls))
                 self.assertFalse(any(any(v in a for v in ("run","exec","stop","start","rm","prune","pull","build","connect","disconnect")) for a in calls))
                 self.assertLessEqual(len(calls),160)
-                self.assertNotIn("query.out",files)
-                self.assertNotIn("query.err",files)
+                if facts.get("reservation_collision"):
+                    for name in ("query.out","query.err","records","phase-expired"):
+                        self.assertIn(name,files)
+                else:
+                    for name in ("query.out","query.err","records"):
+                        self.assertNotIn(name,files)
                 return result,report,calls
             finally:
                 if destination.exists(): shutil.rmtree(destination)
@@ -263,8 +279,66 @@ class ResetInventoryTests(unittest.TestCase):
         self.assertIsNone(report)
         self.assertEqual(calls,[])
 
-    def test_whole_phase_watchdog_refuses_without_report_success(self):
-        result,report,_=self.run_inventory(lambda m,p,q,f:f.update(phase_timeout=True))
+    def test_losing_directory_reservation_preserves_winner_files(self):
+        result,report,calls=self.run_inventory(lambda m,p,q,f:f.update(reservation_collision=True))
         self.assertNotEqual(result.returncode,0)
-        self.assertIn(b'"stage":"phase-deadline"',result.stdout)
-        self.assertNotIn(b'"status":"observed"',result.stdout)
+        self.assertIsNone(report)
+        self.assertEqual(calls,[])
+
+    def test_failed_or_empty_process_sweep_is_not_observed(self):
+        for code in (0,1):
+            with self.subTest(code=code):
+                result,report,_=self.run_inventory(lambda m,p,q,f:f.update(ps_empty=code))
+                self.assertNotEqual(result.returncode,0)
+                self.assertEqual(report["stage"],"visible-forwarders")
+
+    def test_original_stream_byte_limit_and_nul_refuse_before_normalization(self):
+        for mode in ("oversized","nul"):
+            with self.subTest(mode=mode):
+                result,report,_=self.run_inventory(lambda m,p,q,f:f.update({mode:"1"*64}))
+                self.assertNotEqual(result.returncode,0)
+                self.assertEqual(report["stage"],"containers")
+
+    def test_listener_owner_is_explained_by_fixed_process_category(self):
+        for mode in ("missing","other"):
+            with self.subTest(mode=mode):
+                def change(m,p,q,f):
+                    f["processes"]="124 1 /synthetic/cloudflared" if mode=="missing" else "123 1 /synthetic/"+SENTINEL
+                result,report,_=self.run_inventory(change)
+                self.assertNotEqual(result.returncode,0)
+                self.assertTrue(any(v["ps_category"] in ("other","unknown") for v in report["listener_owner_checks"]))
+
+    def test_no_match_lsof_is_distinct_from_empty_success(self):
+        for code in (0,1):
+            with self.subTest(code=code):
+                result,report,_=self.run_inventory(lambda m,p,q,f:f.update(lsof_empty=code))
+                self.assertEqual(result.returncode==0,code==1)
+                if code==1: self.assertTrue(all(v["status"]=="no-visible-listener" for v in report["listeners"]))
+
+    def test_unrelated_foreign_references_are_not_published_on_hold(self):
+        def change(m,p,q,f):
+            other=self.foreign(f)
+            peer=dict(other,id="e"*64,name="/unrelated-peer",volumes_from=["f"*64])
+            f["containers"][peer["id"]]=peer
+            other["network_mode"]="container:"+peer["id"]
+            f["containers"]["1"*64]["ownership"]["org.openj92.cpk.acquisition"]="wrong"
+        result,report,_=self.run_inventory(change)
+        self.assertNotEqual(result.returncode,0)
+        self.assertEqual(report["relevant_foreign_containers"],[])
+
+    def test_unresolved_foreign_reference_returns_aggregate_only(self):
+        result,report,_=self.run_inventory(lambda m,p,q,f:self.foreign(f).update(network_mode="container:missing"))
+        self.assertNotEqual(result.returncode,0)
+        self.assertTrue(report["unresolved_reference"])
+        self.assertEqual(report["relevant_foreign_containers"],[])
+
+    def test_supervisor_retains_group_identity_when_collector_finishes_first(self):
+        outside=subprocess.Popen(["sleep","30"])
+        try:
+            result=subprocess.run(["perl",str(ROOT/"scripts/grandparent_metadata_supervisor.pl"),"group","2","--",
+                "bash","-c","( exit 0 ) & wait; printf collector-complete; sleep 30"],capture_output=True,timeout=6,check=False)
+            self.assertEqual(result.returncode,124,result.stderr)
+            self.assertEqual(result.stdout,b"collector-complete")
+            self.assertIsNone(outside.poll())
+        finally:
+            outside.terminate();outside.wait(timeout=5)

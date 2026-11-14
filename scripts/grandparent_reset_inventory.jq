@@ -43,6 +43,28 @@ def target_network($c):
   $manifest[0].network_candidate as $n |
   ($c.network_mode==$n.id or $c.network_mode==$n.name or
    any($c.networks[]; .id==$n.id or .name==$n.name));
+def category:
+  split("/")|last|
+  if IN("Docker","com.docker.backend") then "docker-runtime"
+  elif IN("cloudflared","nginx","caddy","traefik","haproxy","ssh","sshd","socat","frpc","frps","tailscaled") then "forwarder"
+  else "other" end;
+def owner_checks($records):
+  [$records[]|select(.kind=="processes")|.owners[]] as $processes |
+  [$records[]|select(.kind=="listener")|. as $listener|.owners[] as $owner|
+    [$processes[]|select(.pid==$owner.pid)] as $found |
+    {port:$listener.port,pid:$owner.pid,lsof_category:$owner.category,
+     ps_category:(if ($found|length)==1 then $found[0].category else "unknown" end),
+     ps_status:(if ($found|length)==0 then "missing" elif ($found|length)==1 then "unique" else "ambiguous" end)}];
+def target_relations($containers;$c):
+  (try closure($containers;$c.id;[]) catch null) as $storage |
+  (try network_closure($containers;$c.id;[]) catch null) as $network |
+  {id:$c.id,
+   declared_target_volumes:[volume_names[] as $volume|
+     select(($c.named_volumes|index($volume)!=null) or
+       any($containers[];(.id as $id|($storage//[])|index($id)!=null) and (.named_volumes|index($volume)!=null)))|$volume],
+   target_network:(target_network($c) or any($containers[];(.id as $id|($network//[])|index($id)!=null) and target_network(.))),
+   target_ports:[$c.effective_ports[],$c.configured_ports[]|select(.host_port=="18163" or .host_port=="18164")]|unique,
+   unresolved_reference:($storage==null or $network==null)};
 
 if $mode=="ids" then
   insist(type=="array" and length<=128 and length==(unique|length) and all(.[];hexid))
@@ -97,23 +119,30 @@ elif $mode=="image" then
 elif $mode=="listener" then
   insist(.port=="18163" or .port=="18164") |
   .port as $port | [.lines[]|select(length>0)] as $lines |
+  insist(if ($lines|length)==0 then .no_match==true else .no_match==false end) |
   insist(($lines|length)<=512 and all($lines[];length<=256 and
     test("^(p[0-9]+|c[^[:cntrl:]]+|f[0-9]+[a-zA-Z]*|n[^[:cntrl:]]+)$"))) |
-  {kind:"listener",port:$port,visibility:"current-user-only",
-   pids:[$lines[]|select(startswith("p"))|ltrimstr("p")|select(test("^[0-9]+$"))]|unique,
-    address_classes:[$lines[]|select(startswith("n"))|
+  (reduce $lines[] as $line ({owners:[],current:null};
+    if $line|startswith("p") then .current=($line|ltrimstr("p"))|
+      .owners+=[{pid:.current,category:"unknown"}]
+    elif $line|startswith("c") then insist(.current!=null)|
+      .owners[-1].category=($line|ltrimstr("c")|category)
+    else . end)) as $parsed |
+  {kind:"listener",port:$port,visibility:"current-user-only",owners:$parsed.owners,
+   status:(if ($lines|length)==0 then "no-visible-listener" else "visible-listener" end),
+   address_classes:[$lines[]|select(startswith("n"))|
      if .==("n127.0.0.1:"+$port) or .==("n[::1]:"+$port) then "loopback"
      elif .==("n*:"+$port) or .==("n[::]:"+$port) or .==("n0.0.0.0:"+$port) then "all-interfaces"
      else "unknown" end]|unique} |
   insist(all(.address_classes[];.=="loopback") and
-    (if ($lines|length)>0 then (.pids|length)>0 and (.address_classes|length)>0 else true end))
+    (if ($lines|length)>0 then (.owners|length)>0 and (.address_classes|length)>0 else true end))
 elif $mode=="processes" then
   [.lines[]|select(test("[^[:space:]]"))] as $lines |
-  insist(($lines|length)<=8192 and all($lines[];length<=4096 and test("^[[:space:]]*[0-9]+[[:space:]]+[0-9]+[[:space:]]+.+$"))) |
-  {kind:"processes",visible_count:($lines|length),candidates:[$lines[]|
-    capture("^[[:space:]]*(?<pid>[0-9]+)[[:space:]]+(?<ppid>[0-9]+)[[:space:]]+(?<comm>.+)$") |
-    .comm=(.comm|split("/")|last) |
-    select(.comm|IN("cloudflared","nginx","caddy","traefik","haproxy","ssh","sshd","socat","frpc","frps","tailscaled","Docker","com.docker.backend"))]} |
+  insist(($lines|length)>0 and ($lines|length)<=8192 and all($lines[];length<=4096 and test("^[[:space:]]*[0-9]+[[:space:]]+[0-9]+[[:space:]]+.+$"))) |
+  [$lines[]|capture("^[[:space:]]*(?<pid>[0-9]+)[[:space:]]+(?<ppid>[0-9]+)[[:space:]]+(?<comm>.+)$")|
+    {pid,category:(.comm|category)}] as $owners |
+  insist(($owners|map(.pid)|unique|length)==($owners|length)) |
+  {kind:"processes",visible_count:($lines|length),owners:$owners,candidates:[$owners[]|select(.category!="other")]} |
   insist((.candidates|length)<=64)
 elif $mode=="report" then
   . as $partial | try (
@@ -128,7 +157,11 @@ elif $mode=="report" then
     ($volumes|map(.name)|sort)==(volume_names|sort) and
     $sets[0].volumes==(volume_names|sort) and
     ($networks|length)==1 and $sets[0].networks==[$manifest[0].network_candidate.id] and
-    ($images|length)==5 and ($images|map(.reference)|unique|length)==5) |
+    ($images|length)==5 and ($images|map(.reference)|unique|length)==5 and
+    ([$records[]|select(.kind=="listener")|.port]|sort)==["18163","18164"] and
+    ([$records[]|select(.kind=="processes")]|length)==1) |
+  owner_checks($records) as $owner_checks |
+  insist(all($owner_checks[];.ps_status=="unique" and .ps_category=="docker-runtime" and .lsof_category=="docker-runtime")) |
   [$manifest[0].container_candidates[] as $expected |
     [$containers[]|select(.id==$expected.id)] as $found |
     if ($found|length)==0 then
@@ -160,24 +193,24 @@ elif $mode=="report" then
    enumeration_counts:{containers:($containers|length),target_volumes:($volumes|length),target_networks:1},
    target_containers:$targets,declared_named_volume_consumers:$consumers,network_consumers:$network_consumers,
    volume_checks:$volumes,network_checks:$networks,image_cache:$images,
-   listeners:[$records[]|select(.kind=="listener")],visible_processes:[$records[]|select(.kind=="processes")],
+   listeners:[$records[]|select(.kind=="listener")],listener_owner_checks:$owner_checks,
+   visible_processes:[$records[]|select(.kind=="processes")|del(.owners)],
    backing_path_bind_access:"unresolved",retirement_volume_exclusivity:"unproven",
    can_satisfy_retirement_exclusivity:false,external_routing:"unresolved",
    hidden_or_custom_forwarders:"unresolved",retry:false,service_mutation:false,credential_use:false,provider_read:false}
-  ) catch {
+  ) catch (
+    [$partial[]|select(.kind=="container")] as $partial_containers |
+    [$partial_containers[]|target_relations($partial_containers;.)] as $relations |
+    {
     schema:"cpk399.reset-inventory-observation.v1",status:"HOLD",approval_sha256:$approval_sha256,source_commit:$source,
     manifest_sha256:$action[0].manifest_sha256,plan_sha256:$action[0].plan_sha256,queries_sha256:$action[0].queries_sha256,
     stage:([$partial[]|select(.kind=="failure")|.stage]|last//"comparison"),failure_category:"metadata-refused",
     observed_counts:{containers:([$partial[]|select(.kind=="container")]|length),volumes:([$partial[]|select(.kind=="volume")]|length),
       networks:([$partial[]|select(.kind=="network")]|length),images:([$partial[]|select(.kind=="image")]|length)},
-    relevant_foreign_containers:[$partial[]|select(.kind=="container")|. as $c|
-      select((candidate_ids|index($c.id))==null)|
-      select(any(.named_volumes[];wanted_volume) or target_network(.) or
-        (.network_mode|startswith("container:")) or (.volumes_from|length)>0 or
-        any(.effective_ports[],.configured_ports[];.host_port=="18163" or .host_port=="18164"))|
-      {id,declared_target_volumes:[.named_volumes[]|select(wanted_volume)],
-       namespace_reference_present:(.network_mode|startswith("container:"))}],
+    relevant_foreign_containers:[$relations[]|. as $r|select((candidate_ids|index($r.id))==null)|
+      select((.declared_target_volumes|length)>0 or .target_network or (.target_ports|length)>0)|del(.unresolved_reference)],
+    unresolved_reference:any($relations[];.unresolved_reference),listener_owner_checks:owner_checks($partial),
     complete:false,non_atomic:true,backing_path_bind_access:"unresolved",external_routing:"unresolved",
     retirement_volume_exclusivity:"unproven",can_satisfy_retirement_exclusivity:false,
-    retry:false,service_mutation:false,credential_use:false,provider_read:false}
+    retry:false,service_mutation:false,credential_use:false,provider_read:false})
 else error("mode-refused") end
