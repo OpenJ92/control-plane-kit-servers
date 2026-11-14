@@ -137,7 +137,8 @@ def website_action(plan, result, artifact):
     from control_plane_kit_servers_cpk_server.bootstrap import verified_plan
     import control_plane_kit_core as core
     verified_plan(plan, expected_digest=plan["digest"], driver_image_id=DRIVER)
-    require(plan["input"]["installation"]["installation_id"] == IDENTITY and plan["website_node_id"] is None)
+    require(plan["input"]["installation"]["installation_id"] == IDENTITY
+        and "website" not in plan["input"]["installation"])
     target = core.ReceiverNodeControlConfigurationCodec().decode_bytes(artifact.content.encode()).target.descriptor()
     require(target["workspace_id"] == IDENTITY and target["runtime_id"] == IDENTITY + "-docker"
         and target["node_id"] == IDENTITY + "-website" and target["provider_socket_name"] == "control")

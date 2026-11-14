@@ -47,7 +47,7 @@ class SiblingPublicPreparation(unittest.TestCase):
         cpk = next(n for n in plan["resources"]["nodes"] if n["node_id"] == sibling.IDENTITY + "-cpk")
         self.assertEqual(cpk["environment"]["CPK_MCP_PROFILE"], "grandparent-read-only-v1")
         self.assertTrue(cpk["image"].endswith("@" + sibling.CPK))
-        self.assertIsNone(plan["website_node_id"])
+        self.assertNotIn("website", plan["input"]["installation"])
         self.assertNotIn("commissioning", value)
         self.assertNotIn("website", value["bootstrap_input"]["installation"])
         self.assertNotIn("provider_policy", value)
