@@ -14,6 +14,7 @@ docker run --pull never --rm --network none --read-only --tmpfs /tmp:exec,size=1
     sh -n scripts/cpk_server_image_smoke.sh
     sh -n scripts/grandparent_cpk_cutover.sh
     sh -n scripts/grandparent_saved_read.sh
+    bash -n scripts/grandparent_reset_inventory.sh
     python -m py_compile scripts/grandparent_artifact_fixture.py
     python -m py_compile scripts/grandparent_cpk_cutover.py
     python -m py_compile scripts/grandparent_saved_read.py
@@ -38,7 +39,7 @@ docker run --pull never --rm --network none --read-only --tmpfs /tmp:exec,size=1
   --cap-drop ALL --security-opt no-new-privileges \
   --mount "type=bind,source=$ROOT,target=/source,readonly" --workdir /source/scripts \
   -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONPATH=/source/scripts \
-  --entrypoint python "$CONTROLLER" -m unittest grandparent_build_tests grandparent_oci_tests grandparent_inventory_tests grandparent_qualification_driver_tests grandparent_witness_http_tests grandparent_cpk_cutover_tests -v
+  --entrypoint python "$CONTROLLER" -m unittest grandparent_build_tests grandparent_oci_tests grandparent_inventory_tests grandparent_qualification_driver_tests grandparent_witness_http_tests grandparent_cpk_cutover_tests grandparent_reset_inventory_tests -v
 # Actual frozen installer imports/client/file-owner boundary, intercepted wire.
 # Only public source and synthetic UID501 files exist; no socket or real input.
 INSTALLER=sha256:0d5f36d8d2fa28ebcd01e895cd2db0e5b97df7bb5a15858bfd30442a21c09c80
