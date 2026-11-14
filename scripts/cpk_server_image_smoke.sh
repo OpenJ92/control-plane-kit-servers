@@ -19,13 +19,15 @@ grandparent_artifact_smoke() (
   [ "${#GW_RUN}" -le 80 ] || exit 2
   [ -z "$(git status --porcelain)" ] || exit 2
   GP_SOURCE=$(git rev-parse HEAD)
+  # The qualification driver may change independently of this accepted image.
+  GP_BUILT_SOURCE=2cf6cba37b2e951c4c51b2bb211c4bf10a7dd033
   . ./scripts/docker_witness_daemon.sh
   docker_witness_daemon
   GW_DAEMON=$image_witness_daemon
   [ "$GW_DAEMON" = d23d00aa-b281-448d-bc95-c8e47efeeea2 ] || exit 2
   [ "$(docker image inspect "$GP_IMAGE" --format '{{.Id}}')" = "$GP_IMAGE" ] || exit 2
   [ "$(docker image inspect "$GP_POSTGRES" --format '{{.Id}}')" = "$GP_POSTGRES" ] || exit 2
-  jq -e --arg source "$GP_SOURCE" '.mode=="build" and .source==$source and
+  jq -e --arg source "$GP_BUILT_SOURCE" '.mode=="build" and .source==$source and
     .product_source=="0610e9454dd9a75a6e6bf5e89fe281c8631cccaa" and .exit_code==0 and
     .installed_cohort_verified==true and .derived_base_layers_verified==true and
     .cleanup=="verified" and .retention=="verified" and .base_retained=="verified" and
@@ -54,6 +56,7 @@ grandparent_artifact_smoke() (
   GW_OWNER=$(od -An -N32 -tx1 /dev/urandom | tr -d '[:space:]')
   [ "${#GW_OWNER}" = 64 ] || exit 1
   GP_FIXTURE=$GW_RECORDS/private
+  GP_WITNESS=$GW_RECORDS/witness
   mkdir -m 700 "$GP_FIXTURE"
   GW_RESERVED=1 GP_VERIFIED=false GP_PHASE=fixture
   gp_finish() {
@@ -64,13 +67,15 @@ grandparent_artifact_smoke() (
     # This directory was exclusively reserved above and contains only generated
     # synthetic authority. Failure output never prints it or container logs.
     if [ "$gp_cleanup" = verified ]; then
-      rm -rf "$GP_FIXTURE" || { gp_status=1; gp_cleanup=unverified; }
-      [ ! -e "$GP_FIXTURE" ] || { gp_status=1; gp_cleanup=unverified; }
+      rm -rf "$GP_FIXTURE" "$GP_WITNESS" || { gp_status=1; gp_cleanup=unverified; }
+      [ ! -e "$GP_FIXTURE" ] && [ ! -e "$GP_WITNESS" ] || { gp_status=1; gp_cleanup=unverified; }
     fi
     jq -n --arg source "$GP_SOURCE" --arg image "$GP_IMAGE" --arg postgres "$GP_POSTGRES" \
+      --arg built_source "$GP_BUILT_SOURCE" \
       --arg run "$GW_RUN" --arg owner "$GW_OWNER" --arg cleanup "$gp_cleanup" --arg phase "$GP_PHASE" \
       --argjson status "$gp_status" --argjson verified "$GP_VERIFIED" \
-      '{schema:"cpk399.isolated-mcp-qualification.v1",source:$source,image:$image,postgres:$postgres,
+      '{schema:"cpk399.isolated-mcp-qualification.v1",source:$source,driver_source:$source,
+        built_source:$built_source,image:$image,postgres:$postgres,
         run:$run,owner:$owner,phase:$phase,exit_code:$status,isolated_process_verified:$verified,
         cleanup:$cleanup,existing_installation_verified:false,client_connected:false,acceptance:false}' \
       > "$GW_RECORDS/result.json" || gp_status=1
@@ -85,14 +90,17 @@ grandparent_artifact_smoke() (
     gw_run "$gp_role" --rm --network "$gp_network" --read-only --tmpfs /tmp:size=64m \
       --cpus 1 --memory 512m --pids-limit 128 --cap-drop ALL --security-opt no-new-privileges \
       --user "$(id -u):$(id -g)" --workdir /witness -e PYTHONDONTWRITEBYTECODE=1 \
-      --mount "type=bind,source=$PWD/scripts,target=/witness,readonly" \
-      --mount "type=bind,source=$PWD/products/cpk_server/tests/cpk_http_host_fixtures.py,target=/witness/cpk_http_host_fixtures.py,readonly" \
-      --mount "type=bind,source=$PWD/products/cpk_server/tests/receiver_acceptance_material.py,target=/witness/receiver_acceptance_material.py,readonly" \
-      --mount "type=bind,source=$PWD/products/cpk_server/tests/managed_native_material.py,target=/witness/managed_native_material.py,readonly" \
-      --mount "type=bind,source=$PWD/products/postgres_server/product.cpk.json,target=/witness/postgres.json,readonly" \
+      --mount "type=bind,source=$GP_WITNESS,target=/witness,readonly" \
       --mount "type=bind,source=$GP_FIXTURE,target=/fixture" "$@" --entrypoint python \
       "$GP_IMAGE" /witness/grandparent_artifact_fixture.py "$gp_mode" /fixture
   }
+  # One public fixture context avoids missing nested targets in a read-only bind.
+  mkdir -m 700 "$GP_WITNESS"
+  cp scripts/grandparent_artifact_fixture.py "$GP_WITNESS/"
+  cp products/cpk_server/tests/cpk_http_host_fixtures.py \
+    products/cpk_server/tests/receiver_acceptance_material.py \
+    products/cpk_server/tests/managed_native_material.py "$GP_WITNESS/"
+  cp products/postgres_server/product.cpk.json "$GP_WITNESS/postgres.json"
   gp_helper generate none generate
   cp "$GP_FIXTURE/public-inputs.json" "$GW_RECORDS/public-inputs.json"
   (umask 077; : > "$GW_RECORDS/network.attempt")
@@ -125,7 +133,7 @@ grandparent_artifact_smoke() (
   gw_run provenance --rm --network none --read-only --tmpfs /tmp:size=32m \
     --cap-drop ALL --security-opt no-new-privileges --entrypoint python "$GP_IMAGE" \
     /usr/share/cpk-grandparent/check.py verify > "$GW_RECORDS/installed-cohort.json"
-  jq -e --arg source "$GP_SOURCE" '.effective_uid==10001 and .cohort.packaging_source==$source' "$GW_RECORDS/installed-cohort.json" >/dev/null
+  jq -e --arg source "$GP_BUILT_SOURCE" '.effective_uid==10001 and .cohort.packaging_source==$source' "$GW_RECORDS/installed-cohort.json" >/dev/null
   gp_helper seed "container:$GP_CONTAINER" seed
   GP_PHASE=verify-before-restart
   gp_helper verify-before "container:$GP_CONTAINER" verify

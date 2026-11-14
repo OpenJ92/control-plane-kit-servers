@@ -3,8 +3,8 @@ Maintain with the owning smoke profiles and local synthetic effect plan.
 
 #399 adds only an explicit closed `grandparent-artifact` profile through
 `./test.sh --grandparent-artifact-qualification IMAGE_ID BUILD_RECEIPT POSTGRES_ID RUN`.
-Its source is prepared but unexecuted. It admits the exact clean-head successful
-build receipt and cached image IDs with no pull/build. Existing resource-owner
+The corrected driver remains unqualified. It admits the explicit accepted
+producer's successful build receipt and cached image IDs with no pull/build. Existing resource-owner
 functions capture named/labelled actors before allocation and verify exact
 cleanup, including the isolated PostgreSQL volume and internal network.
 Normal UID10001/PID1 startup uses actual public file readers, installed sealed
@@ -14,6 +14,23 @@ daemon socket, public port, provider effect or existing installation is involved
 The fixture's assertions and residuals are described in its implementation
 companion and `docs/grandparent-mcp-artifact-packet.md`. Default profiles retain
 their existing entrance and acceptance scope.
+
+The first isolated attempt failed before helper startup because nested file
+targets were absent beneath the read-only witness bind. The corrected driver
+stages exactly the witness script, three public fixture modules and descriptor
+into one new run-owned witness directory and binds it read-only once. It removes
+that exact public context with generated private fixtures only after verified
+owned cleanup; uncertainty preserves both. Fixture import paths, normal product
+mounts, image contents and behavioral assertions are unchanged.
+
+Qualification driver HEAD is distinct from accepted image packaging source.
+GP_BUILT_SOURCE remains explicitly frozen at2cf6cba; build-receipt source and
+installed cohort must still match that producer, preserving all candidate,
+product0610, dependency, identity and retention checks. Results retain source as
+driver and report driver_source/built_source explicitly. A witness-only driver
+change neither rewrites the accepted build receipt nor requires a new image.
+Source-wrapper tests use finite CLI facts and never qualify actual mounting or
+normal startup; any runtime attempt needs fresh identity and separate release.
 
 #225 admits Linux and Docker Desktop context-selected local Unix endpoints via
 `docker_witness_daemon.sh`. Endpoint/TLS environment overrides are refused;
