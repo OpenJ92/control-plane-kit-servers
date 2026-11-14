@@ -23,7 +23,7 @@ PUBLIC = {"CPK_PORT": "8080", "CPK_GRAPH_TOPOLOGY_DATABASE_URL": "postgresql://p
 def external_container():
     mounts = [dict(Type="volume", Source=name, Target=target, ReadOnly=True,
                    VolumeOptions={"Subpath": "content"}) for name, target in action.MOUNTS.items()]
-    mounts.append(dict(Type="bind", Source="/var/run/docker.sock", Target="/var/run/docker.sock", ReadOnly=False))
+    mounts.append(dict(Type="bind", Source="/run/host-services/docker.proxy.sock", Target="/var/run/docker.sock", ReadOnly=False))
     config = dict(User="10001", Cmd=list(action.COMMAND), Entrypoint=None, WorkingDir="/app",
         StopSignal="SIGTERM", Labels=dict(action.LABELS),
         Env=["PATH=/usr/bin"] + [k + "=" + v for k, v in PUBLIC.items()] + [
@@ -36,7 +36,7 @@ def external_container():
         AutoRemove=False, Privileged=False, PublishAllPorts=False)
     actual = [dict(Type="volume", Name=name, Destination=target, RW=False)
               for name, target in action.MOUNTS.items()]
-    actual.append(dict(Type="bind", Source="/var/run/docker.sock", Destination="/var/run/docker.sock", RW=True))
+    actual.append(dict(Type="bind", Source="/run/host-services/docker.proxy.sock", Destination="/var/run/docker.sock", RW=True))
     return dict(Id=action.OLD, Name="/" + action.NAME, Image=action.OLD_IMAGE,
         Config=config, HostConfig=host, Mounts=actual,
         State=dict(Running=True, Paused=False, Restarting=False, ExitCode=0),
@@ -148,11 +148,13 @@ class ReadFrames:
 
 
 class CutoverTests(unittest.TestCase):
-    def invoke(self, *, tamper=None, ambiguous_create=False, ambiguous_stop=False,
+    def invoke(self, *, tamper=None, original_tamper=None, ambiguous_create=False, ambiguous_stop=False,
                restart_before_start=False, stuck_stop=False, journal_type=action.Journal, **read_options):
         calls = []
         api = DockerFrames(calls, tamper=tamper, ambiguous_create=ambiguous_create,
                            ambiguous_stop=ambiguous_stop, restart_before_start=restart_before_start, stuck_stop=stuck_stop)
+        if original_tamper:
+            original_tamper(api.objects[action.OLD])
         reader = ReadFrames(calls, **read_options)
         plan = {"resources": {"nodes": [{"node_id": action.NODE, "environment": PUBLIC}]}}
         with tempfile.TemporaryDirectory() as name:
@@ -186,6 +188,45 @@ class CutoverTests(unittest.TestCase):
         self.assertIn("PGPASSWORD=" + PRIVATE, api.create_config["Env"])
         self.assertEqual(result["historical_inspector"], "original-id-stopped-by-maintenance")
         self.assertTrue(result["saved_revision_compared"])
+
+    def test_observed_socket_and_all_mount_options_are_preserved_into_successor(self):
+        result, api, _calls = self.invoke()
+        self.assertEqual(result["status"], "verified")
+        self.assertEqual(api.create_config["HostConfig"]["Mounts"], api.initial["HostConfig"]["Mounts"])
+        self.assertEqual(api.objects[NEW]["HostConfig"]["Mounts"], api.initial["HostConfig"]["Mounts"])
+        self.assertEqual(api.objects[NEW]["HostConfig"]["Mounts"][-1], dict(Type="bind",
+            Source="/run/host-services/docker.proxy.sock", Target="/var/run/docker.sock", ReadOnly=False))
+        self.assertEqual(api.objects[NEW]["Mounts"][-1], dict(Type="bind",
+            Source="/run/host-services/docker.proxy.sock", Destination="/var/run/docker.sock", RW=True))
+
+    def test_unreviewed_or_inconsistent_original_socket_sources_stop_before_reads_or_outage(self):
+        observed = "/run/host-services/docker.proxy.sock"
+        cases = (("/unreviewed/docker.sock", observed, "mounts"),
+                 (observed, "/unreviewed/docker.sock", "actual-mounts"),
+                 ("/var/run/docker.sock", "/var/run/docker.sock", "mounts"))
+        for configured, effective, reason in cases:
+            with self.subTest(configured=configured, effective=effective):
+                def change(value):
+                    value["HostConfig"]["Mounts"][-1]["Source"] = configured
+                    value["Mounts"][-1]["Source"] = effective
+                result, _api, calls = self.invoke(original_tamper=change)
+                self.assertEqual(result["status"], "HOLD")
+                self.assertEqual(result["reason"], reason)
+                self.assertFalse(any(call[0] in {"saved-read", "stop", "retain", "create", "start"} for call in calls))
+                self.assertFalse(result["startup_attempted"])
+
+    def test_inconsistent_successor_socket_source_never_starts(self):
+        for field, reason in (("HostConfig", "mounts"), ("Mounts", "actual-mounts")):
+            with self.subTest(field=field):
+                def change(value):
+                    mounts = value[field]["Mounts"] if field == "HostConfig" else value[field]
+                    mounts[-1]["Source"] = "/unreviewed/docker.sock"
+                result, api, calls = self.invoke(tamper=change)
+                self.assertEqual(result["reason"], reason)
+                self.assertEqual(result["status"], "HOLD")
+                self.assertFalse(api.objects[NEW]["State"]["Running"])
+                self.assertNotIn(("start", NEW), calls)
+                self.assertFalse(result["startup_attempted"])
 
     def test_pre_stop_failed_saved_revision_read_has_no_outage(self):
         result, _api, calls = self.invoke(before_error=True)

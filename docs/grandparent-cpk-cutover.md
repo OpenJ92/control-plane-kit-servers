@@ -10,6 +10,21 @@ verified historical CPK3584/image62e4, ownership, running state and18163 binding
 That read did not attest health, saved state or private wiring. No repeat
 qualification/build is needed; installed qualification remains open.
 
+Attempt01 is closed with a preflight mount HOLD and no service stop/create/start.
+Its source, approval, log and evidence directory remain historical. Two separately
+approved read-only checks subsequently identified the exact original's configured
+and effective Docker socket source as `/run/host-services/docker.proxy.sock`,
+with destination `/var/run/docker.sock`, bind read-write. This proposal pins that
+one observed host source; it accepts no equivalent-path guesses or alternative
+sources. The validated original mount objects are copied unchanged into the
+successor and checked again while stopped and after start.
+
+The fresh proposal uses run `cpk399-gparent-mcp-switch-20261114-02`, evidence
+`/private/tmp/cpk399-gparent-mcp-switch-20261114-02`, and original backup suffix
+`-before-mcp399-20261114-02`. It does not resume or overwrite attempt01. Its
+source/launcher hashes and new action digest need independent review and a new
+explicit approval; neither offline test success nor the prior approvals release it.
+
 ## Reused procedure and single cutover
 
 The earlier cpk384 -> corrected web65 replacement used exact daemon/ID/image,

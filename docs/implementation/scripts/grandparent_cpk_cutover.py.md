@@ -6,6 +6,15 @@ mechanics. No general updater, bootstrap replay, CPK graph or durable store owne
 is added. The sole old/candidate image, engine, instance, port and mount identities
 are closed. This source is not authority to execute it.
 
+The exact original's configured and effective host Docker socket source was
+separately observed as `/run/host-services/docker.proxy.sock`; the container
+destination remains `/var/run/docker.sock`. Both guards require that exact
+source, bind type and read-write access. HostConfig mounts are preserved unchanged
+into the successor, rather than reconstructed or normalized. Unknown sources or
+inconsistent configured/effective views hold before the next effect. The corrected
+proposal has distinct attempt02 run, retained-original name and evidence paths;
+consumed attempt01 evidence remains untouched.
+
 Private environment values move only in the maintenance process's Docker API
 memory, never command arguments or records. The four public saved-state reads
 are checked before outage and compared after unauthenticated readiness. Public revision shape is

@@ -60,7 +60,7 @@ GW_DAEMON=$image_witness_daemon
 [ "$GW_DAEMON" = d23d00aa-b281-448d-bc95-c8e47efeeea2 ] || exit 2
 DRIVER=sha256:0d5f36d8d2fa28ebcd01e895cd2db0e5b97df7bb5a15858bfd30442a21c09c80
 [ "$(docker image inspect "$DRIVER" --format '{{.Id}}')" = "$DRIVER" ] || exit 2
-GW_RUN=cpk399-gparent-mcp-switch-20261114-01
+GW_RUN=cpk399-gparent-mcp-switch-20261114-02
 GW_RECORDS=/private/tmp/$GW_RUN
 [ ! -e "$GW_RECORDS" ] && [ ! -L "$GW_RECORDS" ] || exit 2
 . ./scripts/gateway_packaged_owner.sh

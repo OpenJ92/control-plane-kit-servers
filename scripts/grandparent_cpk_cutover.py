@@ -27,8 +27,12 @@ IMAGE = "sha256:49ae1044c73f5fb94cce229f736be5fa1ee3d1a0fcbe4e423d54b2831d2986a7
 NETWORK = "6af12defe4940ef19218de1f01ff94f4777c5d00832d8eac8c7e93aac4362f7f"
 NODE = "cpk163-gparent-20261109-cpk"
 NAME = "cpk-cpk163-gparent-20261109-cpk163-gparent-20261109-" + NODE
-BACKUP = NAME + "-before-mcp399-20261114-01"
-RUN = "cpk399-gparent-mcp-switch-20261114-01"
+BACKUP = NAME + "-before-mcp399-20261114-02"
+RUN = "cpk399-gparent-mcp-switch-20261114-02"
+# Exact configured/effective host source observed for this Docker Desktop engine.
+# The container destination remains the ordinary Docker API socket path.
+SOCKET_SOURCE = "/run/host-services/docker.proxy.sock"
+SOCKET_TARGET = "/var/run/docker.sock"
 PROFILE = "grandparent-read-only-v1"
 COMMAND = ["python", "-m", "control_plane_kit_servers_cpk_server.server"]
 LABELS = {"org.openj92.cpk.installation": "cpk163-gparent-20261109",
@@ -88,11 +92,11 @@ def configured_mounts(host):
                     "mounts")
             require(mount.get("VolumeOptions") == {"Subpath": "content"}, "mounts")
         else:
-            require(mount["Type"] == "bind" and mount["Source"] == mount["Target"] == "/var/run/docker.sock"
+            require(mount["Type"] == "bind" and mount["Source"] == SOCKET_SOURCE and mount["Target"] == SOCKET_TARGET
                     and mount.get("ReadOnly", False) is False, "mounts")
         require(mount["Target"] not in seen, "mounts")
         seen[mount["Target"]] = mount
-    require(set(seen) == set(MOUNTS.values()) | {"/var/run/docker.sock"}, "mounts")
+    require(set(seen) == set(MOUNTS.values()) | {SOCKET_TARGET}, "mounts")
 
 
 def actual_mounts(value):
@@ -105,8 +109,8 @@ def actual_mounts(value):
             require(MOUNTS.get(mount["Name"]) == mount["Destination"] and mount["RW"] is False,
                     "actual-mounts")
         else:
-            require(mount["Type"] == "bind" and mount["Source"] == mount["Destination"] ==
-                    "/var/run/docker.sock" and mount["RW"] is True, "actual-mounts")
+            require(mount["Type"] == "bind" and mount["Source"] == SOCKET_SOURCE and
+                    mount["Destination"] == SOCKET_TARGET and mount["RW"] is True, "actual-mounts")
 
 
 HOST_FIELDS = ("NetworkMode", "PortBindings", "Mounts", "GroupAdd", "LogConfig", "RestartPolicy",
