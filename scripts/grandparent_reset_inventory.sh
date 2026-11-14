@@ -84,7 +84,7 @@ read_query() {
   "$@" > "$output/query.out" 2> "$output/query.err" & query_pid=$!
   ( sleeper=''
     trap '[ -z "$sleeper" ] || kill -TERM "$sleeper" 2>/dev/null; exit 0' TERM INT HUP
-    sleep "$duration" & sleeper=$!; wait "$sleeper"
+    sleep "$((duration-1))" & sleeper=$!; wait "$sleeper"
     kill -TERM "$query_pid" 2>/dev/null || :
     sleep 1 & sleeper=$!; wait "$sleeper"
     kill -KILL "$query_pid" 2>/dev/null || : ) & timer_pid=$!

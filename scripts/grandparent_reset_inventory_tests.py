@@ -181,6 +181,21 @@ class ResetInventoryTests(unittest.TestCase):
                 result,report,_=self.run_inventory(change)
                 self.assertNotEqual(result.returncode,0)
                 self.assertEqual(report["status"],"HOLD")
+                self.assertIn("f"*64,[v["id"] for v in report["relevant_foreign_containers"]])
+
+    def test_dense_foreign_reference_graph_is_bounded_without_path_enumeration(self):
+        def change(m,p,q,f):
+            base=self.foreign(f)
+            del f["containers"][base["id"]]
+            prior=[]
+            for index in range(26):
+                identity=f"{512+index:064x}"
+                value=dict(base,id=identity,name="/foreign-"+str(index),volumes_from=prior.copy())
+                f["containers"][identity]=value
+                prior.append(identity)
+        result,report,_=self.run_inventory(change)
+        self.assertEqual(result.returncode,0,result.stdout[-2048:])
+        self.assertEqual(report["status"],"observed")
 
     def test_unnamed_backing_bind_is_not_misreported_as_exclusive(self):
         def change(m,p,q,f):

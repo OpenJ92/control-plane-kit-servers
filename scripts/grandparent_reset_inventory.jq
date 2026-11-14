@@ -23,11 +23,14 @@ def resolve($containers;$ref):
   [$containers[]|select(.id==$ref or .name==("/"+$ref) or .name==$ref)|.id] |
   if length==1 then .[0] else error("metadata-refused") end;
 def closure($containers;$ref;$seen):
-  resolve($containers;$ref) as $id |
-  if $seen|index($id)!=null then error("metadata-refused") else
-    ($containers[]|select(.id==$id)) as $c |
-    [$id]+[$c.volumes_from[]|closure($containers;.;$seen+[$id])[]]
-  end;
+  resolve($containers;$ref) as $first |
+  reduce range(0;128) as $_ ({seen:[],todo:[$first]};
+    if (.todo|length)==0 then . else
+      .todo[0] as $id | .todo=.todo[1:] | .seen+=[$id] | .seen as $known |
+      .todo=((.todo+[$containers[]|select(.id==$id)|.volumes_from[]|resolve($containers;.)]) |
+        unique | map(select(. as $next|$known|index($next)==null)))
+    end) |
+  insist((.todo|length)==0) | .seen;
 def network_closure($containers;$id;$seen):
   if $seen|index($id)!=null then error("metadata-refused") else
     ($containers[]|select(.id==$id)) as $c |
@@ -94,7 +97,8 @@ elif $mode=="image" then
 elif $mode=="listener" then
   insist(.port=="18163" or .port=="18164") |
   .port as $port | [.lines[]|select(length>0)] as $lines |
-  insist(($lines|length)<=512 and all($lines[];length<=256 and test("^[pcfn]"))) |
+  insist(($lines|length)<=512 and all($lines[];length<=256 and
+    test("^(p[0-9]+|c[^[:cntrl:]]+|f[0-9]+[a-zA-Z]*|n[^[:cntrl:]]+)$"))) |
   {kind:"listener",port:$port,visibility:"current-user-only",
    pids:[$lines[]|select(startswith("p"))|ltrimstr("p")|select(test("^[0-9]+$"))]|unique,
     address_classes:[$lines[]|select(startswith("n"))|
@@ -165,6 +169,13 @@ elif $mode=="report" then
     stage:([$partial[]|select(.kind=="failure")|.stage]|last//"comparison"),failure_category:"metadata-refused",
     observed_counts:{containers:([$partial[]|select(.kind=="container")]|length),volumes:([$partial[]|select(.kind=="volume")]|length),
       networks:([$partial[]|select(.kind=="network")]|length),images:([$partial[]|select(.kind=="image")]|length)},
+    relevant_foreign_containers:[$partial[]|select(.kind=="container")|. as $c|
+      select((candidate_ids|index($c.id))==null)|
+      select(any(.named_volumes[];wanted_volume) or target_network(.) or
+        (.network_mode|startswith("container:")) or (.volumes_from|length)>0 or
+        any(.effective_ports[],.configured_ports[];.host_port=="18163" or .host_port=="18164"))|
+      {id,declared_target_volumes:[.named_volumes[]|select(wanted_volume)],
+       namespace_reference_present:(.network_mode|startswith("container:"))}],
     complete:false,non_atomic:true,backing_path_bind_access:"unresolved",external_routing:"unresolved",
     retirement_volume_exclusivity:"unproven",can_satisfy_retirement_exclusivity:false,
     retry:false,service_mutation:false,credential_use:false,provider_read:false}
