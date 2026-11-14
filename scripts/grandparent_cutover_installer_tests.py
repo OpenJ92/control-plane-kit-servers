@@ -1,5 +1,7 @@
 """Frozen installer, exact helper capabilities, synthetic inputs/intercepted wire."""
 from copy import deepcopy
+from contextlib import redirect_stderr
+import hashlib
 import io
 import json
 import os
@@ -30,11 +32,12 @@ class Response(io.BytesIO):
 
 
 class Wire:
-    def __init__(self, path, *, mutate=False):
-        self.path, self.mutate = path, mutate
+    def __init__(self, path, *, mutate=False, diagnosis=None):
+        self.path, self.mutate, self.diagnosis = path, mutate, diagnosis
 
     def open(self, request, *, timeout):
-        route = urlsplit(request.full_url).path
+        parts = urlsplit(request.full_url)
+        route = parts.path
         if not request.full_url.startswith("http://127.0.0.1:18163/"):
             raise AssertionError("unexpected destination")
         if request.get_header("Authorization") != "Bearer " + HUMAN:
@@ -46,6 +49,12 @@ class Wire:
             self.mutate = False
         with (self.path.parent / "wire.jsonl").open("a") as stream:
             stream.write(json.dumps(route) + "\n")
+        if self.diagnosis:
+            with (self.path.parent / "queries.jsonl").open("a") as stream:
+                stream.write(json.dumps(dict(path=route, query=parts.query)) + "\n")
+        if self.diagnosis == "oversize":
+            from control_plane_kit_servers_cpk_server.client.transport import MAXIMUM_RESPONSE_BYTES
+            return Response(b"x" * (MAXIMUM_RESPONSE_BYTES + 1))
         root = "/workspaces/" + action.WORKSPACE
         if route == root:
             value = dict(workspace=dict(workspace_id=action.WORKSPACE, current_graph_id=action.CURRENT,
@@ -53,10 +62,27 @@ class Wire:
         elif route == root + "/graphs/desired":
             value = dict(assigned=True, graph_id=action.DESIRED, graph_descriptor="{}")
         elif route.endswith("/attempts"):
+            if self.diagnosis:
+                # Use the installed server query decoder and owner request value,
+                # not a second implementation of their collection-limit rules.
+                from control_plane_kit_core.operations import operator_read_http_routes
+                from control_plane_kit_operations.read_pages import ReadCollection, ReadPageRequest, RevisionReadScope
+                from control_plane_kit_servers_cpk_server.boundary import _decode_http_read_query
+                contract = next(r for r in operator_read_http_routes()
+                    if r.route_id == "read.desired-topology-draft-revision-attempts")
+                query = _decode_http_read_query(contract, parts.query.encode("ascii"))
+                ReadPageRequest(ReadCollection.DESIRED_TOPOLOGY_DRAFT_REVISION_ATTEMPTS,
+                    RevisionReadScope(action.WORKSPACE, action.DRAFT, 1), query["limit"])
             value = dict(items=[], next_cursor=None)
         elif route == root + "/desired-topology-drafts/" + action.DRAFT + "/revisions/1":
             value = dict(workspace_id=action.WORKSPACE, draft_id=action.DRAFT, revision=1,
                          graph_id=action.DESIRED, graph_descriptor="{}")
+            if self.diagnosis:
+                from control_plane_kit_operations.read_services.models import FocusedDetailReadModel
+                from control_plane_kit_operations.read_services.workspace_graph import _redact_graph_descriptor
+                value["graph_descriptor"] = _redact_graph_descriptor({"name": "synthetic-diagnosis"})
+                value = FocusedDetailReadModel(action.WORKSPACE,
+                    "desired-topology-draft-revision", value).descriptor()
         else:
             raise AssertionError("unexpected route")
         return Response(json.dumps(value).encode())
@@ -206,6 +232,63 @@ class InstallerProcessContract(unittest.TestCase):
             parent.close()
             action.close_child_handles(process)
 
+    def diagnostic_reader(self, mode):
+        created = action.run_as_owner([sys.executable, __file__, "--make-entry-target"], b"")
+        self.assertEqual(created.returncode, 0)
+        self.addCleanup(action.run_as_owner, [sys.executable, __file__, "--remove-entry-target"], b"")
+        def spawn(_production_argv, pass_fds=()):
+            return action.spawn_as_owner([sys.executable, __file__, "--diagnostic-entry", str(self.path),
+                mode, str(pass_fds[0])], pass_fds=pass_fds)
+        reader = action.OwnerUidReads("a" * 64, spawn=spawn)
+        reader.bind_identity(self.document)
+        return reader
+
+    def test_f03_fourth_request_limit_is_rejected_by_installed_owner_contract(self):
+        with self.assertRaisesRegex(action.Hold, "^owner-client-read$"):
+            self.diagnostic_reader("owner-contract").saved()
+        queries = [json.loads(line) for line in (self.root / "queries.jsonl").read_text().splitlines()]
+        root = "/workspaces/" + action.WORKSPACE
+        revision = root + "/desired-topology-drafts/" + action.DRAFT + "/revisions/1"
+        self.assertEqual(queries, [dict(path=p, query=q) for p, q in (
+            (root, ""), (root + "/graphs/desired", ""), (revision, ""), (revision + "/attempts", "limit=50"))])
+        observed = json.loads((self.root / "diagnosis.json").read_text())
+        self.assertEqual(observed, dict(error_class="ReadPageError", reason="not-emitted", exit_status=1))
+
+    def test_correcting_only_limit_exposes_f03_revision_object_shape_mismatch(self):
+        with self.assertRaisesRegex(action.Hold, "^owner-client-read$"):
+            self.diagnostic_reader("limit10").saved()
+        queries = [json.loads(line) for line in (self.root / "queries.jsonl").read_text().splitlines()]
+        self.assertEqual(len(queries), 4)
+        self.assertEqual(queries[-1]["query"], "limit=10")
+        observed = json.loads((self.root / "diagnosis.json").read_text())
+        self.assertEqual(observed, dict(error_class="Hold", reason="saved-revision-mismatch", exit_status=1))
+
+    def test_installed_transport_response_bound_exits_nonzero_but_parent_discards_reason(self):
+        with self.assertRaisesRegex(action.Hold, "^owner-client-read$"):
+            self.diagnostic_reader("oversize").saved()
+        observed = json.loads((self.root / "diagnosis.json").read_text())
+        self.assertEqual(observed, dict(error_class="ClientTransportError", reason="response-client-bound", exit_status=1))
+
+    def test_installed_client_error_exit_codes_and_owner_projection_metadata(self):
+        from control_plane_kit_operations import read_pages
+        from control_plane_kit_operations.read_services import models, workspace_graph
+        from control_plane_kit_servers_cpk_server.client import cli, profile, transport
+        for error, code in ((transport.ClientAuthorizationError(), 3), (transport.ClientTransportError(), 5)):
+            with self.subTest(error=type(error).__name__), patch.object(cli, "load_profile"), \
+                    patch.object(cli, "TopologyClient") as client, redirect_stderr(io.StringIO()) as errors:
+                client.return_value.overview.side_effect = error
+                self.assertEqual(cli.main(["--profile", "synthetic", "overview"]), code)
+                self.assertNotIn(HUMAN, errors.getvalue())
+        spec = read_pages.read_collection_spec(read_pages.ReadCollection.DESIRED_TOPOLOGY_DRAFT_REVISION_ATTEMPTS)
+        self.assertEqual((spec.max_page_size, spec.default_page_size), (10, 10))
+        projection = models.FocusedDetailReadModel(action.WORKSPACE, "desired-topology-draft-revision",
+            dict(graph_descriptor=workspace_graph._redact_graph_descriptor({"name": "synthetic-diagnosis"}))).descriptor()
+        self.assertIs(type(json.loads(json.dumps(projection))["graph_descriptor"]), dict)
+        print("installed-saved-read-contract " + json.dumps(dict(maximum_response_bytes=transport.MAXIMUM_RESPONSE_BYTES,
+            attempts_maximum=spec.max_page_size, revision_graph_json_type="object",
+            module_sha256={m.__name__: hashlib.sha256(Path(m.__file__).read_bytes()).hexdigest()
+                for m in (read_pages, models, workspace_graph, profile, transport, cli)}), sort_keys=True))
+
 
 def fixture_command():
     action.require((os.getuid(), os.getgid()) == (501, 20), "synthetic-owner")
@@ -229,6 +312,50 @@ def fixture_command():
         with patch.object(transport, "build_opener", return_value=Wire(path, mutate=sys.argv[3] == "mutate")):
             with action.administrator_channel(int(sys.argv[4])) as channel:
                 action.owner_read_batch(path, channel)
+    elif mode == "--diagnostic-entry":
+        # Real production reader entry, owner UID/channel and installed client.
+        # Only public proposal bytes and the external wire are synthetic. A
+        # single request-limit perturbation isolates the later shape defect.
+        from control_plane_kit_servers_cpk_server.client import transport
+        path, diagnosis, descriptor = Path(sys.argv[2]), sys.argv[3], sys.argv[4]
+        raw_bootstrap = b"{}"
+        plan = dict(approval_reference="synthetic-offline-diagnosis", quiescence_confirmed=True,
+            exposure_reviewed=True, private_wiring_reuse_approved=True, verification_bearer_use_approved=True,
+            script_sha256=hashlib.sha256(Path(action.__file__).read_bytes()).hexdigest())
+        raw_plan = action.canonical(plan)
+        original_read = Path.read_bytes
+        def public_proposal_bytes(target):
+            if str(target) == "/proposal/action.json":
+                return raw_plan
+            if str(target) == "/proposal/bootstrap.json":
+                return raw_bootstrap
+            return original_read(target)
+        original_saved, original_call = action.SavedReads.saved, transport.PublicHttpTransport.call
+        result = dict(error_class="none", reason="not-emitted")
+        def observe_saved(reader):
+            try:
+                return original_saved(reader)
+            except BaseException as error:
+                name = type(error).__name__
+                result["error_class"] = name if name in {"ReadPageError", "Hold", "ClientTransportError"} else "other"
+                if isinstance(error, action.Hold) and str(error) == "saved-revision-mismatch":
+                    result["reason"] = "saved-revision-mismatch"
+                if isinstance(error, transport.ClientTransportError) and str(error) == "cpk-server response exceeds the client bound":
+                    result["reason"] = "response-client-bound"
+                raise
+        def request(client, route, **kwargs):
+            if diagnosis == "limit10" and route == "read.desired-topology-draft-revision-attempts":
+                kwargs["payload"] = {"limit": 10}
+            return original_call(client, route, **kwargs)
+        with patch.object(Path, "read_bytes", public_proposal_bytes), \
+                patch.object(action, "PUBLIC_PLAN_SHA", hashlib.sha256(raw_bootstrap).hexdigest()), \
+                patch.object(sys, "argv", [action.__file__, "--read-saved", hashlib.sha256(raw_plan).hexdigest(), "--admin-fd", descriptor]), \
+                patch.object(action.SavedReads, "saved", observe_saved), \
+                patch.object(transport.PublicHttpTransport, "call", request), \
+                patch.object(transport, "build_opener", return_value=Wire(path, diagnosis=diagnosis)):
+            result["exit_status"] = action.entry_point()
+        (path.parent / "diagnosis.json").write_text(json.dumps(result))
+        raise SystemExit(result["exit_status"])
     elif mode == "--make-entry-target":
         path = Path("/credentials/human.bearer")
         with path.open("x") as stream:
