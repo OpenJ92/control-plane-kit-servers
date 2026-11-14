@@ -9,15 +9,16 @@ stage=arguments
 output=''
 final_reported=0
 query_pid='' timer_pid='' error_pid=''
+collector_pid='' report_pid='' phase_timer_pid=''
 finish() {
   code=$?
   if [ "${BASH_SUBSHELL:-0}" != 0 ]; then exit "$code"; fi
   trap - EXIT HUP INT TERM
-  for pid in "$query_pid" "$timer_pid" "$error_pid"; do
+  for pid in "$collector_pid" "$report_pid" "$phase_timer_pid" "$query_pid" "$timer_pid" "$error_pid"; do
     if [ -n "$pid" ]; then kill -TERM "$pid" 2>/dev/null || :; wait "$pid" 2>/dev/null || :; fi
   done
   if [ -n "$output" ]; then
-    rm -f -- "$output/query.out" "$output/query.err" "$output/stderr-present"
+    rm -f -- "$output/query.out" "$output/query.err" "$output/records" "$output/stderr-present" "$output/phase-expired"
   fi
   if [ "$code" != 0 ] && [ "$final_reported" = 0 ]; then
     printf '{"schema":"cpk399.reset-inventory-launch.v1","status":"HOLD","stage":"%s","retry":false,"service_mutation":false,"credential_use":false}\n' "$stage"
@@ -64,7 +65,7 @@ case "$output" in *'/../'*|*'/./'*|*','*|*$'\n'*|*' '*|*'/' ) output=''; exit 2 
 [ ! -e "$output" ] && [ ! -L "$output" ] || { output=''; exit 2; }
 umask 077
 mkdir -m 700 "$output"
-mkfifo -m 600 "$output/query.out" "$output/query.err"
+mkfifo -m 600 "$output/query.out" "$output/query.err" "$output/records"
 started=$(date +%s)
 docker_reads=0 host_reads=0
 
@@ -73,6 +74,7 @@ docker_reads=0 host_reads=0
 read_query() {
   local kind=$1 limit=$2 remaining duration rc errors bytes
   shift 2
+  [ ! -e "$output/phase-expired" ] && [ -p "$output/query.out" ] && [ -p "$output/query.err" ] || return 1
   remaining=$((300 - $(date +%s) + started))
   [ "$remaining" -gt 0 ] || return 1
   duration=30; [ "$remaining" -ge 30 ] || duration=$remaining
@@ -177,18 +179,38 @@ collect() {
 }
 stage=collection
 set +e
-( trap 'rc=$?; if [ "$rc" != 0 ]; then printf "{\"kind\":\"failure\",\"stage\":\"%s\"}\n" "$stage"; fi' EXIT
-  set -e; collect ) | jq -cse --slurpfile manifest "$MANIFEST" --slurpfile plan "$PLAN" --slurpfile action "$ACTION" \
+( trap 'rc=$?; if [ "$rc" != 0 ]; then
+    for pid in "$query_pid" "$timer_pid" "$error_pid"; do
+      if [ -n "$pid" ]; then kill -TERM "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; fi
+    done
+    printf "{\"kind\":\"failure\",\"stage\":\"%s\"}\n" "$stage"
+  fi' EXIT
+  set -e; collect ) > "$output/records" & collector_pid=$!
+jq -cse --slurpfile manifest "$MANIFEST" --slurpfile plan "$PLAN" --slurpfile action "$ACTION" \
   --arg mode report --arg approval_sha256 "$EXPECTED" --arg source "$(git rev-parse HEAD)" \
   --arg started "$started" --arg finished "$(date +%s)" -f scripts/grandparent_reset_inventory.jq \
-  | head -c 262145 > "$output/report.json"
-rc=$?
+  < "$output/records" > "$output/report.json" & report_pid=$!
+remaining=$((300 - $(date +%s) + started))
+[ "$remaining" -gt 0 ] || remaining=1
+( sleeper=''
+  trap '[ -z "$sleeper" ] || kill -TERM "$sleeper" 2>/dev/null; exit 0' TERM INT HUP
+  sleep "$((remaining-1))" & sleeper=$!; wait "$sleeper"
+  printf 1 > "$output/phase-expired"
+  kill -TERM "$collector_pid" "$report_pid" 2>/dev/null || :
+  sleep 1 & sleeper=$!; wait "$sleeper"
+  kill -KILL "$collector_pid" "$report_pid" 2>/dev/null || : ) & phase_timer_pid=$!
+wait "$report_pid"; rc=$?
+wait "$collector_pid"; collector_rc=$?
+kill -TERM "$phase_timer_pid" 2>/dev/null; wait "$phase_timer_pid" 2>/dev/null
+collector_pid='' report_pid='' phase_timer_pid=''
 set -e
+if [ -e "$output/phase-expired" ]; then stage=phase-deadline; exit 1; fi
 [ "$(wc -c < "$output/report.json")" -le 262144 ] || exit 1
 jq -e '.schema=="cpk399.reset-inventory-observation.v1" and (.status=="observed" or .status=="HOLD")' "$output/report.json" >/dev/null
 cat "$output/report.json"
 final_reported=1
 [ "$rc" = 0 ] || exit 1
+[ "$collector_rc" = 0 ] || exit 1
 jq -e '.schema=="cpk399.reset-inventory-observation.v1" and .status=="observed" and
  .backing_path_bind_access=="unresolved" and .external_routing=="unresolved" and
  .can_satisfy_retirement_exclusivity==false' "$output/report.json" >/dev/null

@@ -53,6 +53,9 @@ PS = 'print(" 123 1 /synthetic/com.docker.backend\\n 124 1 /synthetic/cloudflare
 SHASUM = '''import hashlib,pathlib,sys
 p=pathlib.Path(sys.argv[-1]);print(hashlib.sha256(p.read_bytes()).hexdigest()+"  "+str(p))
 '''
+SLEEP = '''import sys,time
+d=int(sys.argv[1]);time.sleep(0.01 if d>60 else d)
+'''
 
 
 def sha(path):
@@ -120,6 +123,10 @@ class ResetInventoryTests(unittest.TestCase):
             for name, code in (("docker", DOCKER),("git",GIT),("lsof",LSOF),("ps",PS),("shasum",SHASUM)):
                 binary = root/name
                 binary.write_text("#!"+sys.executable+"\n"+code)
+                binary.chmod(0o700)
+            if facts.get("phase_timeout"):
+                binary=root/"sleep"
+                binary.write_text("#!"+sys.executable+"\n"+SLEEP)
                 binary.chmod(0o700)
             destination = Path("/tmp")/("cpk399-reset-inventory-test-"+root.name)
             action = dict(schema="cpk399.reset-inventory-approval.v1", approved=approved, optional_path_comparison=False,
@@ -255,3 +262,9 @@ class ResetInventoryTests(unittest.TestCase):
         self.assertNotEqual(result.returncode,0)
         self.assertIsNone(report)
         self.assertEqual(calls,[])
+
+    def test_whole_phase_watchdog_refuses_without_report_success(self):
+        result,report,_=self.run_inventory(lambda m,p,q,f:f.update(phase_timeout=True))
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn(b'"stage":"phase-deadline"',result.stdout)
+        self.assertNotIn(b'"status":"observed"',result.stdout)

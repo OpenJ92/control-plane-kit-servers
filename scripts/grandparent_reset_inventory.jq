@@ -144,10 +144,11 @@ elif $mode=="report" then
     .id as $id | candidate_ids|index($id)!=null else true end)) |
   insist(all($containers[]; . as $c | if (candidate_ids|index($c.id))==null then
     all(.effective_ports[],.configured_ports[];.host_port!="18163" and .host_port!="18164") else true end)) |
+  [$containers[]|.id as $id|{id:$id,inherited:closure($containers;$id;[])}] as $storage |
   [volume_names[] as $volume |
-    {volume:$volume,consumers:[$containers[] as $c |
-      ([$c.id]+[$c.volumes_from[]|closure($containers;.;[])[]]|unique) as $inherited |
-      select(any($containers[]; (.id as $id|$inherited|index($id)!=null) and (.named_volumes|index($volume)!=null))) | $c.id]}] as $consumers |
+    {volume:$volume,consumers:[$storage[] as $consumer |
+      select(any($containers[]; (.id as $id|$consumer.inherited|index($id)!=null) and
+        (.named_volumes|index($volume)!=null))) | $consumer.id]}] as $consumers |
   [$containers[] as $c | network_closure($containers;$c.id;[]) as $inherited |
     select(any($containers[]; (.id as $id|$inherited|index($id)!=null) and target_network(.))) | $c.id] as $network_consumers |
   insist(all($consumers[].consumers[],$network_consumers[],$networks[0].members[]; . as $id|candidate_ids|index($id)!=null)) |
