@@ -34,4 +34,4 @@ docker run --pull never --rm --network none --read-only --tmpfs /tmp:exec,size=1
   --cap-drop ALL --security-opt no-new-privileges \
   --mount "type=bind,source=$ROOT,target=/source,readonly" --workdir /source/scripts \
   -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONPATH=/source/scripts \
-  --entrypoint python "$CONTROLLER" -m unittest grandparent_build_tests grandparent_oci_tests grandparent_inventory_tests grandparent_qualification_driver_tests -v
+  --entrypoint python "$CONTROLLER" -m unittest grandparent_build_tests grandparent_oci_tests grandparent_inventory_tests grandparent_qualification_driver_tests grandparent_witness_http_tests -v
