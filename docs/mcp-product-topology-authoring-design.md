@@ -159,8 +159,10 @@ advertisement; older cohorts retain their tools and G4 stays four reads. The
 single-submission caller flow uses conservative non-idempotent tool hints;
 Operations' actual replay/idempotency laws remain unchanged.
 
-The original eight targets remain, with two additional per-era negative cases
-for malformed input, stale commitment and revoked edit authority. No save,
+The original eight targets remain, with one additional refusal case per era
+(ten database cases total) for malformed input, stale commitment, foreign
+workspace/pins and revoked edit authority, compared with HTTP. The optional
+receiver expectation uses the existing owner's closed five-field shape. No save,
 fresh exact readback or actual SDK loss behavior has passed yet. Green and
 independent source review are the next evidence; this document does not claim
 installed acceptance or release authority.

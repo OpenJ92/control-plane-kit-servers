@@ -4,12 +4,14 @@ This product-local PostgreSQL test root uses normal test_*.py discovery in
 test.sh's database phase. The imported Operations fixture owns schema/UoW setup only.
 Every walkthrough operation uses the actual public host and released SDK.
 """
+from copy import deepcopy
 import json
 from pathlib import Path
 import unittest
 from uuid import uuid4
 
 import httpx2
+from jsonschema import Draft202012Validator
 from psycopg import sql
 from control_plane_kit_core.operations import ControlPlaneServiceRole
 from control_plane_kit_core.policies import PolicyScope
@@ -115,6 +117,14 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
                     imported_by="operator-a", imported_at=NOW)
                 uow.commit()
             self.references[role] = record.reference.descriptor()
+        foreign = json.loads((ROOT / "products/hello_server/product.cpk.json").read_bytes())
+        foreign["product"]["identity"]["name"] = "foreign-workspace-hello"
+        document = ProductDescriptorCodec().decode_document(json.dumps(foreign).encode())
+        with self.unit_of_work() as uow:
+            record = uow.stores.registered_products.register(workspace_id="workspace-b",
+                descriptor_document=document, source=InlineDescriptorSource(), imported_by="operator-a", imported_at=NOW)
+            uow.commit()
+        self.foreign_reference = record.reference.descriptor()
 
     def truth(self):
         # A new connection/UoW establishes committed truth, independently of
@@ -187,6 +197,13 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
                 for tool in ("start_operation_session", "create_desired_topology_draft"):
                     self.assertFalse(discovered[tool].annotations.read_only_hint)
                     self.assertFalse(discovered[tool].annotations.idempotent_hint)
+                save_schema = discovered["create_desired_topology_draft"].input_schema
+                receiver = save_schema["properties"]["receiver_lifecycle"]
+                self.assertNotIn("receiver_lifecycle", save_schema["required"])
+                expectation = {"current_graph_id": "current", "current_realized_projection_id": "projection",
+                    "desired_graph_id": None, "desired_realized_projection_id": None, "desired_graph_revision": 0}
+                self.assertTrue(Draft202012Validator(receiver).is_valid(expectation))
+                self.assertFalse(Draft202012Validator(receiver).is_valid({**expectation, "extra": True}))
                 page = await self.call(client, "list_registered_products", {"limit": 100})
                 refs = {role: next(item["reference"] for item in page["items"]
                     if item["reference"] == reference) for role, reference in self.references.items()}
@@ -302,14 +319,22 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
             session = await self.call(client, "start_operation_session", self.start_input())
             payload = {"workspace_id": "workspace-a", **self.save_input(preview, session)}
             before = self.truth()
+            foreign_recipe = deepcopy(preview["recipe"])
+            foreign_recipe["nodes"][0]["product"] = self.foreign_reference
             for changed, status in (
                 ({"graph": {}}, 400),
                 ({"expected_proposal_commitment": {"profile": "registered-product-topology-public.v1", "sha256": "0" * 64}}, 409),
                 ({"product_recipe": {**preview["recipe"], "unrecognized": True}}, 400),
+                ({"workspace_id": "workspace-b"}, 403),
+                ({"product_recipe": foreign_recipe}, 400),
             ):
                 result = await client.call_tool("create_desired_topology_draft", {**payload, **changed})
                 self.assertTrue(result.is_error)
                 self.assertEqual(result.structured_content["error"]["status"], status)
+                http_payload = {**payload, **changed}
+                workspace_id = http_payload.pop("workspace_id")
+                response = await self.http.post(f"/workspaces/{workspace_id}/desired-topology-drafts", json=http_payload)
+                self.assertEqual(response.status_code, status)
                 self.assertEqual(self.truth(), before)
             # This SDK client was initialized with an editor; every actual HTTP
             # request must still resolve the newly read-only principal.
@@ -317,6 +342,9 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
             refused = await client.call_tool("create_desired_topology_draft", payload)
             self.assertTrue(refused.is_error)
             self.assertEqual(refused.structured_content["error"]["status"], 403)
+            response = await self.http.post("/workspaces/workspace-a/desired-topology-drafts",
+                json={key: value for key, value in payload.items() if key != "workspace_id"})
+            self.assertEqual(response.status_code, 403)
             self.assertEqual(self.truth(), before)
 
     async def test_lost_save_reply_is_unknown_without_resend(self):

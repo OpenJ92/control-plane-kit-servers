@@ -108,7 +108,14 @@ def _input_schema(route):
             properties.update(session_id=text, product_recipe=_product_recipe_schema(),
                 expected_proposal_commitment=_closed_schema({"profile": {"const": "registered-product-topology-public.v1"},
                     "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$", "minLength": 64, "maxLength": 64}}))
-        return _closed_schema(properties)
+        schema = _closed_schema(properties)
+        if route.route_id == "command.desired-topology-draft.create":
+            schema["properties"]["receiver_lifecycle"] = _closed_schema({
+                "current_graph_id": text, "current_realized_projection_id": text,
+                "desired_graph_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 512},
+                "desired_realized_projection_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 512},
+                "desired_graph_revision": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807}})
+        return schema
     if route.route_id == "command.deployment.prepare":
         lineage = {"type": "object", "properties": {
             "authored_graph_id": {"type": "string"}, "realized_projection_id": {"type": "string"}},
@@ -186,6 +193,8 @@ class StandardMcpAdapter:
             route.route_id == "read.product-topology-preview" for route in self.routes.values())
         if authoring:
             for route_id, description in _AUTHORING_COMMANDS.items():
+                if route_id in HTTP_ONLY_COMMAND_ROUTE_IDS:
+                    continue
                 binding = next(item for item in composition.handoff.command_parity.commands if item.http_route_id == route_id)
                 route = composition.http_api.route(route_id)
                 self.routes[binding.mcp_tool_name] = route

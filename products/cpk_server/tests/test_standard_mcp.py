@@ -256,8 +256,12 @@ class StandardMcpTests(StandardMcpFixture, unittest.IsolatedAsyncioTestCase):
                         combined = {**expected["path_parameters"], **expected["payload"]}
                         self.assertEqual({key: str(value) for key, value in actual["payload"].items()},
                                          {key: str(value) for key, value in combined.items()})
-                    self.assertTrue(all(tool.annotations.read_only_hint for name, tool in tools.items() if name != "prepare_deployment"))
-                    self.assertEqual({name for name, tool in tools.items() if not tool.annotations.read_only_hint}, {"prepare_deployment"})
+                    expected_writes = {"prepare_deployment"}
+                    owner_reads = self.app.state.http_boundary.composition.handoff.projection_parity.projections
+                    if any(binding.http_route_id == "read.product-topology-preview" for binding in owner_reads):
+                        expected_writes.update(("start_operation_session", "create_desired_topology_draft"))
+                    self.assertTrue(all(tool.annotations.read_only_hint for name, tool in tools.items() if name not in expected_writes))
+                    self.assertEqual({name for name, tool in tools.items() if not tool.annotations.read_only_hint}, expected_writes)
                     self.assertNotIn("provision_secret_material", tools)
                     self.assertIn("redacted", tools["get_desired_graph"].description.lower())
 
