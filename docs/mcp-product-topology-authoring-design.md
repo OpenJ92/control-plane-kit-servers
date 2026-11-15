@@ -1,15 +1,35 @@
 # Product topology authoring through MCP
 
-Isolated source qualification for Servers #417/#408 and CPK #2093. The named
-cohort, database harness and thin standard MCP bindings passed the owning gate
-at `5adb6f117ba92de87b831af6b9dc8b4626743521`. Production dependency
-selection is unchanged. Discovery remains at
+Servers #417/#408 qualified the accepted CPK #2094 merge in its isolated
+topology-authoring cohort. Discovery remains at
 `8407d3e49841d55eab28d4cf1d44cd0b11f754cb` and was published separately as
 [draft PR #418](https://github.com/OpenJ92/control-plane-kit-servers/pull/418)
 after Jacob approved its exact payload. This authoring branch has no published
 PR and does not expand that approval.
 
-## Qualified result
+## Accepted revision
+
+The named cohort selects Core and Operations from
+`068862c07585b7b0d1bdadeb96716a3ef2f90ece`, tree
+`16a11ea7cb51baef9f4038bf3b7a459fb942636e`. Relative to the earlier candidate,
+the upstream changes concern PostgreSQL schema contracts, historical upgrades,
+their tests and documentation. The Servers change updates four revision literals
+in the named manifest and its admission rule.
+
+The owning Docker gate exited 0 at Servers
+`a39577092ab5ce7d2e216fc9cc63e03afe14ab4e`. All 224 tests passed in 29 batches.
+The ten PostgreSQL cases covered both SDK modes, exact two-product revision
+readback from a fresh client, refused writes, and reply loss after start, save
+and readback. The gate verified removal of all ten schemas, both owned
+containers, the private network and the temporary source export. This receipt
+covers isolated source qualification. Production adoption is a separate step.
+
+| Evidence | SHA-256 |
+| --- | --- |
+| Owning gate log | `aa9ca6b552c82f4807a734b6379df43a7bc1dc4879bc4785db688470fdb9d4b5` |
+| Local image used by both phases | `cba5b841d26cb41951c4eea7fc094f47f93581b667b1b37f684d517b3d8add26` |
+
+## Earlier candidate result at Servers `5adb6f1`
 
 The owning Docker gate terminated **exit 0**, with **224 reported tests in 29
 batches**: 214 support/source/preservation checks and all ten PostgreSQL-backed
