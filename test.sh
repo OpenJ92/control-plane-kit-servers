@@ -262,8 +262,8 @@ run_mcp_authoring_postgres() (
     -e CPK_OPERATIONS_TEST_DATABASE_URL=postgresql://cpk:cpk@authoring-postgres:5432/cpk \
     -e PYTHONDONTWRITEBYTECODE=1 \
     -e PYTHONPATH=/app/src:/app/products/cpk_server/src:/app/products/cpk_local_gateway/src:/app/products/hello_server/src:/app/products/cpk_server/tests:/opt/cpk-test-cohort/operations/tests \
-    "$COHORT_IMAGE_ID" python -m unittest discover -s products/cpk_server/tests \
-      -p mcp_product_topology_authoring_qualification.py -v >/dev/null
+    "$COHORT_IMAGE_ID" python -m unittest discover -s products/cpk_server/postgres_tests \
+      -p 'test_*.py' -v >/dev/null
   DB_TEST_ID=$(cat "$DB_RECORDS/test.id")
   invocation_status=0
   docker start -a "$DB_TEST_ID" || invocation_status=$?

@@ -1,7 +1,7 @@
 """Explicit PostgreSQL phase of the owning topology-authoring cohort gate.
 
-Not a default network-none test: collect this module explicitly in test.sh's
-database phase. The imported Operations fixture owns schema/UoW setup only.
+This product-local PostgreSQL test root uses normal test_*.py discovery in
+test.sh's database phase. The imported Operations fixture owns schema/UoW setup only.
 Every walkthrough operation uses the actual public host and released SDK.
 """
 import json

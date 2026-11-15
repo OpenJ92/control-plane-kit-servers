@@ -15,7 +15,11 @@ service installation, release witness, or host database. The proposed
 `topology-authoring` cohort retains all current grandparent source verification
 and preservation tests, using the independently reviewed X pins. After the
 ordinary socket-free source tests pass, run one additional database-backed MCP
-test module in that same source-sealed test image.
+test root in that same source-sealed test image. The product-local
+`products/cpk_server/postgres_tests` root uses normal `test_*.py` discovery;
+it is explicitly collected by this database phase, with no skipped tests or
+changes to the integrity checker. The ordinary network-none root remains
+`products/cpk_server/tests`.
 
 Use the established PostgreSQL 16 disposable fixture pattern from Operations
 `test.sh` and `tests/draft_catalogue_fixture.py`: internal Docker network,
