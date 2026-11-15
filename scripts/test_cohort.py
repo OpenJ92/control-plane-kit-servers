@@ -25,8 +25,8 @@ EXPECTED = dict(schema="cpk163.grandparent-cohort.v2", name="grandparent", serve
     mcp_profile="grandparent-read-only-v1", secrets_distribution="absent")
 AUTHORING_EXPECTED = {**EXPECTED,
     "schema": "cpk417.topology-authoring-cohort.v1", "name": "topology-authoring",
-    "core": "e4bc1275aa3378ecc4e8c32c7872d3f0a4a2ef0c",
-    "operations": "e4bc1275aa3378ecc4e8c32c7872d3f0a4a2ef0c", "mcp_profile": "standard"}
+    "core": "068862c07585b7b0d1bdadeb96716a3ef2f90ece",
+    "operations": "068862c07585b7b0d1bdadeb96716a3ef2f90ece", "mcp_profile": "standard"}
 COHORTS = {"grandparent": (MANIFEST, EXPECTED),
     "topology-authoring": (ROOT / "products/cpk_server/topology-authoring-cohort.json", AUTHORING_EXPECTED)}
 PACKAGES = {
