@@ -8,7 +8,8 @@ The isolated branch is `codex/396-standard-mcp`.
 ## Selecting a saved revision as Desired
 
 In the standard authoring profile, use `get_desired_topology_draft_revision` to inspect the exact
-target. An older revision is eligible even after a newer revision is saved. Read `get_workspace`
+target. You can choose an older revision if its products are still active and its secret and
+receiver references still pass the workspace’s admission checks. Read `get_workspace`
 for the **existing** Desired graph ID, realized projection ID and generation. Supply those three
 values as the expected state to `select_desired_topology_draft`, alongside the workspace, draft,
 revision, open session ID and a fresh key for this intent. For the first selection, explicitly
