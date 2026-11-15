@@ -166,3 +166,13 @@ receiver expectation uses the existing owner's closed five-field shape. No save,
 fresh exact readback or actual SDK loss behavior has passed yet. Green and
 independent source review are the next evidence; this document does not claim
 installed acceptance or release authority.
+
+The first green attempt at `4ba4be83faa5b86735eaae4c9f92054d1de96716`
+passed all 214 prior checks, then failed all ten DB cases in the newly added
+foreign-product setup: ordinary JSON was sent to Core's strict canonical
+document decoder. No MCP authoring call occurred. All ten schemas and owned
+containers/network/context were cleaned up. Log SHA256:
+`375ff41aaab5a6438f94299a2afb86335747ef183f17a44acc392bcdff5213bd`.
+The fixture correction decodes the actual canonical source document, replaces
+its product identity as a typed value, and calls Core's canonical encoder.
+The decoder, assertions, production code and admitted cohort are unchanged.

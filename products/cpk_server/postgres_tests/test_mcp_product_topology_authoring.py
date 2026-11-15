@@ -5,6 +5,7 @@ test.sh's database phase. The imported Operations fixture owns schema/UoW setup 
 Every walkthrough operation uses the actual public host and released SDK.
 """
 from copy import deepcopy
+from dataclasses import replace
 import json
 from pathlib import Path
 import unittest
@@ -117,9 +118,10 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
                     imported_by="operator-a", imported_at=NOW)
                 uow.commit()
             self.references[role] = record.reference.descriptor()
-        foreign = json.loads((ROOT / "products/hello_server/product.cpk.json").read_bytes())
-        foreign["product"]["identity"]["name"] = "foreign-workspace-hello"
-        document = ProductDescriptorCodec().decode_document(json.dumps(foreign).encode())
+        codec = ProductDescriptorCodec()
+        foreign = codec.decode_document((ROOT / "products/hello_server/product.cpk.json").read_bytes()).product
+        document = codec.encode_document(replace(foreign,
+            identity=replace(foreign.identity, name="foreign-workspace-hello")))
         with self.unit_of_work() as uow:
             record = uow.stores.registered_products.register(workspace_id="workspace-b",
                 descriptor_document=document, source=InlineDescriptorSource(), imported_by="operator-a", imported_at=NOW)
