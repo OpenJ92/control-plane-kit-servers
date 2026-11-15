@@ -76,6 +76,11 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
     def setUp(self):
         DraftCatalogueFixture.setUp(self)
 
+    def drop_schema(self):
+        DraftCatalogueFixture.drop_schema(self)
+        self.assertIsNone(self.connection.execute("SELECT to_regnamespace(%s)", (self.schema,)).fetchone()[0])
+        print("authoring fixture schema absence verified")
+
     async def asyncSetUp(self):
         await StandardMcpFixture.asyncSetUp(self)
         self.dispatches = []
@@ -145,6 +150,30 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
         self.assertFalse(result.is_error, result.structured_content)
         return result.structured_content
 
+    async def assert_transport_loss(self, client, tool, arguments):
+        # Call the SDK directly: a helper assertion or returned tool error must
+        # never be mistaken for the injected transport failure.
+        caught = None
+        try:
+            result = await client.call_tool(tool, {"workspace_id": "workspace-a", **arguments})
+        except Exception as error:
+            caught = error
+        else:
+            self.fail(f"expected transport failure, received tool result is_error={result.is_error}")
+        pending, seen, causes = [caught], set(), []
+        while pending:
+            error = pending.pop()
+            if id(error) in seen:
+                continue
+            seen.add(id(error))
+            causes.append(error)
+            pending.extend(getattr(error, "exceptions", ()))
+            pending.extend(value for value in (error.__cause__, error.__context__) if value is not None)
+        self.assertFalse(any(isinstance(error, AssertionError) for error in causes))
+        self.assertTrue(any(isinstance(error, httpx2.ReadError)
+            and str(error) == "synthetic completed response loss" for error in causes),
+            "SDK failure did not retain the injected transport cause")
+
     async def preview(self):
         before = self.truth()
         async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=self.app),
@@ -202,8 +231,17 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
         self.assertEqual(repeated, detail)
         self.assertEqual({key: detail[key] for key in receipt}, receipt)
         graph = detail["graph_descriptor"]
+        self.assertEqual(set(graph["nodes"]), {"hello", "mux"})
+        self.assertEqual(set(graph["edges"]), {"hello-to-mux"})
+        for private in ("/health/live", "/health/ready", "SDK public greeting"):
+            self.assertNotIn(private, json.dumps(detail))
         for role, reference in self.references.items():
             node = graph["nodes"][role]
+            checks = node["block_spec"]["verification"]["checks"]
+            self.assertTrue(checks)
+            self.assertTrue(all(set(check) == {"kind", "check_id", "provider_socket"} for check in checks))
+            self.assertTrue(all(binding.get("value", "<redacted>") == "<redacted>"
+                for binding in node["environment_bindings"]))
             identity = reference["identity"]
             self.assertEqual(node["metadata"]["product_identity"],
                 f'{identity["namespace"]}/{identity["name"]}/{identity["contract_revision"]}')
@@ -215,6 +253,7 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
         self.assertEqual(edge["consumer"], {"role": "mux", "requirement": "primary"})
         self.assertEqual(edge["protocol"], {"transport": "tcp", "application": "http"})
         self.assertEqual(edge["binding"], "environment")
+        self.assertEqual(edge["env_assignments"], "<redacted>")
         with self.unit_of_work() as uow:
             stored = DEFAULT_GRAPH_CODEC.decode(uow.stores.graphs.get(receipt["graph_id"]).graph_descriptor)
         self.assertEqual(stored.node("mux").socket_environment[0].edge_id, "hello-to-mux")
@@ -234,8 +273,7 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
         async with httpx2.AsyncClient(transport=transport, base_url="http://127.0.0.1:8080",
                 headers={"Authorization": "Bearer valid-token"}) as http:
             async with self.client(self.mode, http=http) as client:
-                with self.assertRaises(Exception):
-                    await self.call(client, "start_operation_session", self.start_input())
+                await self.assert_transport_loss(client, "start_operation_session", self.start_input())
         self.assertTrue(transport.dropped)
         self.assertEqual(transport.sends, 1)
         self.assertEqual(self.dispatches.count(START), 1)
@@ -255,8 +293,7 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
         async with httpx2.AsyncClient(transport=transport, base_url="http://127.0.0.1:8080",
                 headers={"Authorization": "Bearer valid-token"}) as http:
             async with self.client(self.mode, http=http) as client:
-                with self.assertRaises(Exception):
-                    await self.call(client, "create_desired_topology_draft", self.save_input(preview, session))
+                await self.assert_transport_loss(client, "create_desired_topology_draft", self.save_input(preview, session))
         self.assertTrue(transport.dropped)
         self.assertEqual(transport.sends, 1)
         self.assertEqual(self.dispatches.count(SAVE), 1)
@@ -272,11 +309,16 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
         async with httpx2.AsyncClient(transport=transport, base_url="http://127.0.0.1:8080",
                 headers={"Authorization": "Bearer valid-token"}) as http:
             async with self.client(self.mode, http=http) as client:
-                with self.assertRaises(Exception):
-                    await self.call(client, "get_desired_topology_draft_revision",
-                        {"draft_id": receipt["draft_id"], "revision": receipt["revision"]})
+                await self.assert_transport_loss(client, "get_desired_topology_draft_revision",
+                    {"draft_id": receipt["draft_id"], "revision": receipt["revision"]})
         self.assertTrue(transport.dropped)
         self.assertEqual(transport.sends, 1)
+        self.assertEqual(self.truth(), before)
+        self.assertEqual(self.dispatches.count(SAVE), 1)
+        async with self.client(self.mode) as client:
+            detail = await self.call(client, "get_desired_topology_draft_revision",
+                {"draft_id": receipt["draft_id"], "revision": receipt["revision"]})
+        self.assertEqual({key: detail[key] for key in receipt}, receipt)
         self.assertEqual(self.truth(), before)
         self.assertEqual(self.dispatches.count(SAVE), 1)
         # Receipt remains known: saved, with readback unavailable; not unsaved.

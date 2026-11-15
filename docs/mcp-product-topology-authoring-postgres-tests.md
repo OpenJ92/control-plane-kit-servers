@@ -1,8 +1,11 @@
 # Isolated persistence test design
 
 Review proposal for Servers #417/#408, depending on CPK #2093. This document
-does not authorize a run or claim persistence evidence. The combined reviewed
-Core/Operations revision X is not yet selected. Existing discovery publication
+does not itself authorize a run or claim persistence evidence. North released
+combined candidate `e4bc1275aa3378ecc4e8c32c7872d3f0a4a2ef0c` for isolated
+cross-repository qualification after Meridian verified source preservation,
+full Core and focused Operations tests. Hosted qualification is separate.
+Existing discovery publication
 and installed-run boundaries remain in force.
 
 ## Smallest harness change

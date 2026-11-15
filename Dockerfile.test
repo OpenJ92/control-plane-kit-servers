@@ -28,6 +28,8 @@ CMD ["python", "scripts/run_all_tests.py"]
 # Default installation supplies only the public third-party closure to this
 # explicit test cohort. No inherited CPK distribution may satisfy its imports.
 FROM default-base AS grandparent
+ARG CPK_TEST_COHORT=grandparent
+ENV CPK_TEST_COHORT=$CPK_TEST_COHORT
 COPY cohort /opt/cpk-test-cohort
 RUN python scripts/test_cohort.py seal \
     && python -m pip uninstall -y control-plane-kit-servers control-plane-kit-secrets \
@@ -36,8 +38,7 @@ RUN python scripts/test_cohort.py seal \
     && python -m pip install --no-deps --no-build-isolation \
        /opt/cpk-test-cohort/core /opt/cpk-test-cohort/operations \
        /opt/cpk-test-cohort/interpreters /opt/cpk-test-cohort/sdk
-ENV PYTHONPATH=/app/src:/app/products/cpk_server/src:/app/products/cpk_local_gateway/src:/app/products/hello_server/src \
-    CPK_TEST_COHORT=grandparent
+ENV PYTHONPATH=/app/src:/app/products/cpk_server/src:/app/products/cpk_local_gateway/src:/app/products/hello_server/src
 RUN python scripts/test_cohort.py verify
 
 FROM default-base AS default

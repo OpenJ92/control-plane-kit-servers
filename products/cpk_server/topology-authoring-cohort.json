@@ -1,0 +1,17 @@
+{
+  "schema": "cpk417.topology-authoring-cohort.v1",
+  "name": "topology-authoring",
+  "servers": "current-head",
+  "core": "e4bc1275aa3378ecc4e8c32c7872d3f0a4a2ef0c",
+  "operations": "e4bc1275aa3378ecc4e8c32c7872d3f0a4a2ef0c",
+  "interpreters": "e438f6e522ad0a23a7acef460be08690f48b2e17",
+  "interpreters_source": {
+    "kind": "retained-git-export",
+    "sha256": "af15d9261cde91e387b2659b489712abbc5579f09ba67ca51350c802552c22e0",
+    "module_tree": "97507ed009a5e5c8aa81d280288a2f81ce807835"
+  },
+  "sdk": "d61b374cb2a23d773c31748f47f88169499298b7",
+  "mcp": "2.3.0",
+  "mcp_profile": "standard",
+  "secrets_distribution": "absent"
+}

@@ -35,7 +35,7 @@ def product_test_roots() -> tuple[Path, ...]:
 
 
 def main() -> int:
-    if os.environ.get("CPK_TEST_COHORT") == "grandparent":
+    if os.environ.get("CPK_TEST_COHORT") in {"grandparent", "topology-authoring"}:
         run([sys.executable, "scripts/test_cohort.py", "verify"])
     run([sys.executable, "scripts/apply_coordinates.py", "--check"])
     run([sys.executable, "-m", "compileall", "-q", "src", "products", "scripts", "tests"])
@@ -57,7 +57,7 @@ def main() -> int:
                  "products/cpk_server/tests", "-p", name, "-v"])
         run([sys.executable, "-m", "unittest", "discover", "-s", "products/cpk_local_gateway/tests",
              "-p", "test_wrapper_artifact_provenance.py", "-v"])
-        if os.environ.get("CPK_TEST_COHORT") == "grandparent":
+        if os.environ.get("CPK_TEST_COHORT") in {"grandparent", "topology-authoring"}:
             os.environ["PYTHONPATH"] = os.environ.get("PYTHONPATH", "") + ":/app/products/cpk_server/tests:/opt/cpk-test-cohort/operations:/app/scripts"
             run([sys.executable, "-m", "unittest", "scripts.grandparent_http_planning_qualification", "-v"])
             for name in ("test_actual_nominal_route_and_check_preserve_selected_values",

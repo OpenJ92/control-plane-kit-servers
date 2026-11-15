@@ -14,7 +14,10 @@ The grandparent selection in `products/cpk_server/grandparent-cohort.json` and
 latter. CPK #2092 merge `d964fc5d2b5dc31ddb6d9b2fd0de60e8a2ac3675`
 diverges from this selected lineage; it cannot replace both pins without
 preserving the selected readiness, managed verification, and sampling behavior.
-CPK #2093 owns the combined revision, called X here until review supplies it.
+CPK #2093 owns the combined revision. After Meridian's source-preservation,
+full Core and focused Operations review, North released candidate
+`e4bc1275aa3378ecc4e8c32c7872d3f0a4a2ef0c` as X for isolated Servers
+qualification. Hosted and installed qualification remain separate.
 
 The default `pyproject.toml` independently selects Core
 `7afef43f3d3b981094e37dcb3062b6e3a4f3d674` and Operations
