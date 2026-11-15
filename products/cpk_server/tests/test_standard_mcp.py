@@ -82,6 +82,142 @@ class StandardMcpLifespanTests(unittest.IsolatedAsyncioTestCase):
 
 
 class StandardMcpTests(StandardMcpFixture, unittest.IsolatedAsyncioTestCase):
+    def product_reads(self):
+        """Immutable store-return fixtures; real owner projection, no store engine."""
+        from control_plane_kit_core.algebra import BlockSockets, ProviderSocket, RequirementSocket
+        from control_plane_kit_core.configuration import ConfigurationArtifact, ConfigurationMediaType
+        from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
+        from control_plane_kit_core.products import (
+            ContainerServerProduct, OciImageReference, ProductDescriptorCodec,
+            ProductIdentity, ProductRuntimeContract,
+        )
+        from control_plane_kit_core.secrets import SecretReference, SecretReferenceEnvironmentDelivery
+        from control_plane_kit_core.types import Protocol
+        from control_plane_kit_operations.products import InlineDescriptorSource, RegisteredProduct, RegisteredProductStatus
+        from control_plane_kit_operations.read_pages import (
+            IdentityReadCursor, ReadCollection, ReadPage, ReadPageCandidate, ReadPageRequest, WorkspaceReadScope,
+        )
+        from control_plane_kit_operations.records import WorkspaceRecord
+        canary = "synthetic-product-private-content"
+        records = []
+        for name in ("alpha", "beta", "revoked"):
+            product = ContainerServerProduct(ProductIdentity("mcp-fixture", name, 1),
+                OciImageReference("example.invalid", name, "sha256:" + "a" * 64),
+                ProductRuntimeContract(
+                    sockets=BlockSockets(providers=(ProviderSocket("http", Protocol.HTTP),),
+                        requirements=(RequirementSocket("database", Protocol.POSTGRES, ("DATABASE_URL",)),)),
+                    public_environment=(PublicStaticEnvironmentBinding("LABEL", canary),),
+                    configuration_artifacts=(ConfigurationArtifact("settings", "/etc/settings.txt",
+                        ConfigurationMediaType.TEXT, canary),),
+                    secret_deliveries=(SecretReferenceEnvironmentDelivery("TOKEN_REF",
+                        SecretReference("secret://fixture/" + canary)),)), display_name=name)
+            records.append(RegisteredProduct.from_document(workspace_id="workspace-a",
+                descriptor_document=ProductDescriptorCodec().encode_document(product),
+                source=InlineDescriptorSource(), imported_by="fixture", imported_at="2026-11-14T00:00:00Z"))
+        records[-1] = replace(records[-1], status=RegisteredProductStatus.REVOKED)
+        active = sorted(records[:2], key=lambda record: record.reference.descriptor_sha256.value)
+        scope, collection = WorkspaceReadScope("workspace-a"), ReadCollection.REGISTERED_PRODUCTS
+        candidates = tuple(ReadPageCandidate({
+            "registration_id": record.registration_id, "reference": record.reference.descriptor(),
+            "status": record.status.value, "display_name": record.descriptor_document.product.display_name,
+            "description": None, "product_family": record.descriptor_document.product.product_family.value,
+        }, IdentityReadCursor(collection, scope, record.reference.descriptor_sha256.value)) for record in active)
+        first = ReadPage.from_candidates(ReadPageRequest(collection, scope, 1), candidates)
+        second = ReadPage.from_candidates(ReadPageRequest(collection, scope, 1, first.next_cursor), candidates[1:])
+        stores = Mock()
+        stores.workspaces.get.return_value = WorkspaceRecord("workspace-a", "Fixture")
+        stores.registered_products.directory_page.side_effect = lambda request: {
+            None:first, first.next_cursor:second}[request.cursor]
+        by_digest = {record.reference.descriptor_sha256.value:record for record in records}
+        stores.registered_products.directory_detail.side_effect = lambda workspace, digest: by_digest[digest]
+        unit = MagicMock()
+        unit.__enter__.return_value = unit
+        unit.stores = stores
+        self.host.services[ControlPlaneServiceRole.READS].handle = CpkServerReadService(lambda: unit).handle
+        allowed = replace(_principal(), workspace_grants=(WorkspaceGrant(
+            "workspace-a", (PolicyScope.INSTANCE_WORKSPACE_READ,)),))
+        self.host.verifier.authenticate = lambda credential: allowed
+        return records, first.next_cursor.descriptor(), unit, stores, canary, allowed
+
+    async def test_product_discovery_reads_match_http_pages_detail_and_revoked_status(self):
+        records, cursor, unit, stores, canary, _ = self.product_reads()
+        for mode in ("auto", "legacy"):
+            async with self.client(mode) as client:
+                tools = {tool.name:tool for tool in (await client.list_tools()).tools}
+                self.assertIn("list_registered_products", tools)
+                self.assertIn("get_registered_product", tools)
+                for name in ("list_registered_products", "get_registered_product"):
+                    self.assertTrue(tools[name].annotations.read_only_hint)
+                    self.assertFalse(tools[name].annotations.destructive_hint)
+                limit = tools["list_registered_products"].input_schema["properties"]["limit"]
+                self.assertEqual((limit["minimum"], limit["maximum"]), (1, 100))
+                returned = []
+                for query in ({"limit":1}, {"limit":1, "after":cursor}):
+                    result = await client.call_tool("list_registered_products", {"workspace_id":"workspace-a", **query})
+                    http = await self.http.get("/workspaces/workspace-a/products", params={
+                        key:json.dumps(value) if isinstance(value, dict) else value for key, value in query.items()})
+                    self.assertEqual(http.status_code, 200)
+                    self.assertFalse(result.is_error, result.structured_content)
+                    self.assertEqual(result.structured_content, http.json())
+                    returned.extend(item["reference"] for item in result.structured_content["items"])
+                self.assertEqual({value["descriptor_sha256"] for value in returned},
+                    {record.reference.descriptor_sha256.value for record in records[:2]})
+                for record in records:
+                    digest = record.reference.descriptor_sha256.value
+                    result = await client.call_tool("get_registered_product",
+                        {"workspace_id":"workspace-a", "descriptor_sha256":digest})
+                    http = await self.http.get("/workspaces/workspace-a/products/" + digest)
+                    self.assertEqual(http.status_code, 200)
+                    self.assertFalse(result.is_error, result.structured_content)
+                    self.assertEqual(result.structured_content, http.json())
+                    product = result.structured_content["product"]
+                    self.assertEqual(product["reference"], record.reference.descriptor())
+                    self.assertEqual(product["status"], record.status.value)
+                    self.assertEqual(product["projection_kind"], "noncanonical-product-display")
+                    self.assertEqual(product["contract"]["providers"][0]["name"], "http")
+                    self.assertEqual(product["contract"]["requirements"][0]["env_names"], ["DATABASE_URL"])
+                    self.assertNotIn(canary, json.dumps(result.structured_content))
+                    self.assertNotIn("descriptor_document", product)
+                    self.assertNotIn("descriptor_content", product)
+
+    async def test_product_discovery_denies_foreign_scope_and_bad_input_before_store(self):
+        records, cursor, unit, stores, canary, allowed = self.product_reads()
+        digest = records[0].reference.descriptor_sha256.value
+        foreign_cursor = {**cursor, "scope":{"workspace_id":"workspace-b"}}
+        async with self.client() as client:
+            for name, arguments, status in (
+                ("list_registered_products", {"workspace_id":"workspace-b", "limit":1}, 403),
+                ("get_registered_product", {"workspace_id":"workspace-b", "descriptor_sha256":digest}, 403),
+                ("list_registered_products", {"workspace_id":"workspace-a", "limit":0}, 400),
+                ("list_registered_products", {"workspace_id":"workspace-a", "limit":101}, 400),
+                ("list_registered_products", {"workspace_id":"workspace-a", "after":foreign_cursor}, 400),
+                ("get_registered_product", {"workspace_id":"workspace-a", "descriptor_sha256":"bad"}, 400),
+            ):
+                with self.subTest(name=name, status=status):
+                    unit.__enter__.reset_mock()
+                    result = await client.call_tool(name, arguments)
+                    self.assertTrue(result.is_error)
+                    self.assertEqual(result.structured_content["error"]["status"], status)
+                    unit.__enter__.assert_not_called()
+                    self.assertNotIn(canary, json.dumps(result.structured_content))
+            denied = replace(allowed, workspace_grants=())
+            self.host.verifier.authenticate = lambda credential: denied
+            result = await client.call_tool("list_registered_products", {"workspace_id":"workspace-a"})
+            self.assertTrue(result.is_error)
+            self.assertEqual(result.structured_content["error"]["status"], 403)
+            unit.__enter__.assert_not_called()
+
+    async def test_product_discovery_guidance_is_delivered_by_sdk_initialize(self):
+        response = await self.http.post("/mcp", headers={"Accept":"application/json, text/event-stream"}, json={
+            "jsonrpc":"2.0", "id":"guidance", "method":"initialize", "params":{
+                "protocolVersion":"2025-11-25", "capabilities":{},
+                "clientInfo":{"name":"discovery-law", "version":"1"}}})
+        self.assertEqual(response.status_code, 200)
+        guidance = response.json()["result"]["instructions"]
+        for expected in ("list_registered_products", "get_registered_product", "noncanonical", "revoked", "untrusted"):
+            self.assertIn(expected, guidance)
+        self.assertNotIn("synthetic-product-private-content", guidance)
+
     async def test_released_client_discovers_and_reads_in_both_protocol_eras(self):
         for mode, protocol in (("auto", "2026-07-28"), ("legacy", "2025-11-25")):
             with self.subTest(mode=mode):

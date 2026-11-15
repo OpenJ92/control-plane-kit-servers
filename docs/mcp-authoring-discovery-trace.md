@@ -59,7 +59,7 @@ There is no internal HTTP round trip required for a future MCP adapter.
 | Operation | Existing HTTP path | Actual G701 owner / law |
 | --- | --- | --- |
 | Directory | GET /workspaces/{workspace_id}/products | CpkServerReadService.handle, _read_page_request_for_route → _read_model → InstanceReadService.products → _ProductDirectoryReadProjection.page; INSTANCE_WORKSPACE_READ before store acquisition. Bounded scoped pagination. |
-| Exact product | GET /workspaces/{workspace_id}/products/{descriptor_sha256} | Same read service; validate ProductDescriptorDigest → InstanceReadService.product_detail → directory_detail on the registered-product store. Active/workspace-specific record; safe noncanonical display. |
+| Exact product | GET /workspaces/{workspace_id}/products/{descriptor_sha256} | Same read service; validate ProductDescriptorDigest → InstanceReadService.product_detail → directory_detail on the registered-product store. Workspace-specific active or revoked record; safe noncanonical display. New authoring must refuse revoked references. |
 | Session start | POST /workspaces/{workspace_id}/sessions | CpkServerLifecycleService.handle:1561 builds StartOperationSession from current actor, title, key and metadata → OperationCommandService.start_in_unit_of_work. Workspace edit; no graph or runtime action. |
 | Save | POST /workspaces/{workspace_id}/desired-topology-drafts | CpkServerPlanningService.handle:875 decodes graph with DEFAULT_GRAPH_CODEC and builds CreateDesiredTopologyDraft(context, session_id, graph, title, idempotency_key, receiver_lifecycle) → DesiredTopologyDraftCommandService.execute. |
 | Revise | POST /workspaces/{workspace_id}/desired-topology-drafts/{draft_id}/revisions | Same owner, with exact draft_id and expected_head_revision. Does not silently rebase or mutate a prior revision. |
@@ -94,6 +94,9 @@ ProductDirectoryBoundaryTests and ProductDirectoryStoreTests in
 test_product_directory.py cover denial before hostile cursor/UoW, scoped
 pagination,201 records across maximum pages, redaction, slot shapes, current
 revocation, cross-workspace refusal and authorized-empty versus missing admission.
+The directory lists active entries, but exact detail deliberately reports a
+revoked registration with status=revoked. Displaying that historical status is
+not admission of the reference for a new topology.
 
 This is useful discovery data. It does not specify all semantic choices inside
 an arbitrary product's JSON configuration, or make the display round-trip to a
