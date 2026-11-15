@@ -3,9 +3,11 @@
 Isolated source qualification for Servers #417/#408 and CPK #2093. The named
 cohort, database harness and thin standard MCP bindings passed the owning gate
 at `5adb6f117ba92de87b831af6b9dc8b4626743521`. Production dependency
-selection is unchanged. Discovery
-remains at `8407d3e49841d55eab28d4cf1d44cd0b11f754cb`; its separate draft PR
-publication boundary remains in effect.
+selection is unchanged. Discovery remains at
+`8407d3e49841d55eab28d4cf1d44cd0b11f754cb` and was published separately as
+[draft PR #418](https://github.com/OpenJ92/control-plane-kit-servers/pull/418)
+after Jacob approved its exact payload. This authoring branch has no published
+PR and does not expand that approval.
 
 ## Qualified result
 
@@ -37,8 +39,10 @@ grandparent selections were not separately rerun at this implementation head;
 their pins are unchanged, and the named gate includes all existing preservation
 checks and the restricted four-read profile. Hosted/full-package and installed
 adoption remain separate. No image publication, installation credential,
-selection, approval or deployment is included. Independent terminal review is
-pending; source failure history below is retained.
+selection, approval or deployment is included. Meridian independently verified
+the complete log hash, immutable image, reviewed fixture source, all 29 passing
+batches and cleanup markers, and returned final **PASS** for this isolated
+source cohort. Source failure history below is retained.
 
 ## Selected source and qualification
 
@@ -60,15 +64,15 @@ The default `pyproject.toml` independently selects Core
 contains the authoring contract. A checkout argument to the grandparent gate
 selects a repository, not a revision override.
 
-Proposed qualification selection: add a finite named `topology-authoring`
-cohort to the owning `./test.sh`, using X for both Core and Operations, while
+The qualification selects a finite named `topology-authoring` cohort in the
+owning `./test.sh`, using X for both Core and Operations, while
 retaining the historical grandparent mode and manifest unchanged. Keep SDK
 `d61b374cb2a23d773c31748f47f88169499298b7`, MCP 2.3.0, Secrets absent,
 and Interpreters `e438f6e522ad0a23a7acef460be08690f48b2e17` from retained
 export SHA256 `af15d9261cde91e387b2659b489712abbc5579f09ba67ca51350c802552c22e0`
 and module tree `97507ed009a5e5c8aa81d280288a2f81ce807835`.
 
-This proposal must preserve exact manifest admission, duplicate/unknown field
+The harness preserves exact manifest admission, duplicate/unknown field
 refusal, Git export checks, imported module/source and distribution verification,
 SDK RECORD checks, dependency closure checks, source-context cleanup evidence,
 and every existing grandparent preservation test. No arbitrary pin environment
