@@ -8,9 +8,10 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 cd "$ROOT"
 
 COHORT=default
+COHORT_IMAGE_ID=
 if [ "${1:-}" = --cohort ]; then
-  [ "$#" = 7 ] && [ "$2" = grandparent ] && [ "$3" = --mcp-source-tests ] || exit 2
-  COHORT=grandparent
+  [ "$#" = 7 ] && [ "$3" = --mcp-source-tests ] || exit 2
+  case "$2" in grandparent|topology-authoring) COHORT=$2 ;; *) exit 2 ;; esac
   COHORT_CORE=$4 COHORT_OPERATIONS=$5 COHORT_INTERPRETERS_ARCHIVE=$6 COHORT_SDK=$7
   set -- --mcp-source-tests
 fi
@@ -57,11 +58,11 @@ docker run --rm \
     --test-root products \
     --gate-file test.sh
 
-if [ "$COHORT" = grandparent ]; then
+if [ "$COHORT" != default ]; then
   [ -z "$(git status --porcelain)" ] || { echo 'cohort requires a committed source checkpoint' >&2; exit 2; }
   CANDIDATE_SOURCE=$(git rev-parse HEAD)
   revisions=$(docker run --rm --network none --mount "type=bind,source=$ROOT,target=/source,readonly" \
-    --workdir /source "$POLICY_IMAGE" python scripts/test_cohort.py admit)
+    --workdir /source "$POLICY_IMAGE" python scripts/test_cohort.py admit "$COHORT")
   set -- $revisions
   [ "$#" = 4 ] || exit 2
   CORE_REVISION=$1 OPERATIONS_REVISION=$2 INTERPRETERS_REVISION=$3 SDK_REVISION=$4
@@ -135,14 +136,147 @@ if [ "$COHORT" = grandparent ]; then
       hello) source_prefix=products/hello_server/src/control_plane_kit_servers_hello_server ;; esac
     git ls-tree -r "$CANDIDATE_SOURCE" "$source_prefix" > "$COHORT_CONTEXT/cohort/$role.git-tree"
   done
-  docker build -f "$COHORT_CONTEXT/Dockerfile.test" --target grandparent -t "$IMAGE" "$COHORT_CONTEXT"
+  docker build -f "$COHORT_CONTEXT/Dockerfile.test" --target grandparent \
+    --build-arg "CPK_TEST_COHORT=$COHORT" --iidfile "$COHORT_CONTEXT/test-image.id" \
+    -t "$IMAGE" "$COHORT_CONTEXT"
+  COHORT_IMAGE_ID=$(cat "$COHORT_CONTEXT/test-image.id")
+  [ "${#COHORT_IMAGE_ID}" = 71 ]
+  case "$COHORT_IMAGE_ID" in sha256:*) ;; *) exit 1 ;; esac
+  [ "$(docker image inspect --format '{{.Id}}' "$COHORT_IMAGE_ID")" = "$COHORT_IMAGE_ID" ]
+  echo "cohort source=$CANDIDATE_SOURCE immutable test image=$COHORT_IMAGE_ID"
   set -- --mcp-source-tests
 else
   docker build -f Dockerfile.test -t "$IMAGE" .
 fi
+run_mcp_authoring_postgres() (
+  # This phase is selected only by the reviewed topology-authoring cohort.
+  # Its trap is local; the outer source-export cleanup remains in force.
+  DB_RECORDS=$(mktemp -d /private/tmp/cpk417-postgres-test.XXXXXX)
+  DB_RUN="cpk417-$(basename "$DB_RECORDS")"
+  DB_NETWORK_ATTEMPTED=0 DB_POSTGRES_ATTEMPTED=0 DB_TEST_ATTEMPTED=0
+  cleanup_authoring_container() {
+    record=$1
+    [ -s "$record" ] || return 1
+    identity=$(cat "$record") || return 1
+    [ "${#identity}" = 64 ] || return 1
+    case "$identity" in *[!0-9a-f]*) return 1 ;; esac
+    observed=$(docker container ls -aq --no-trunc --filter "id=$identity") || return 1
+    if [ -n "$observed" ]; then
+      [ "$observed" = "$identity" ] || return 1
+      owner=$(docker inspect --format '{{index .Config.Labels "org.openj92.cpk.test-run"}}' "$identity") || return 1
+      [ "$owner" = "$DB_RUN" ] || return 1
+      docker container rm -f "$identity" >/dev/null || return 1
+    fi
+    observed=$(docker container ls -aq --no-trunc --filter "id=$identity") || return 1
+    [ -z "$observed" ]
+  }
+  cleanup_authoring_network() {
+    [ -s "$DB_RECORDS/network.id" ] || return 1
+    identity=$(cat "$DB_RECORDS/network.id") || return 1
+    [ "${#identity}" = 64 ] || return 1
+    case "$identity" in *[!0-9a-f]*) return 1 ;; esac
+    observed=$(docker network ls -q --no-trunc --filter "id=$identity") || return 1
+    if [ -n "$observed" ]; then
+      [ "$observed" = "$identity" ] || return 1
+      properties=$(docker network inspect --format '{{.Internal}}|{{index .Labels "org.openj92.cpk.test-run"}}|{{len .Containers}}' "$identity") || return 1
+      [ "$properties" = "true|$DB_RUN|0" ] || return 1
+      docker network rm "$identity" >/dev/null || return 1
+    fi
+    observed=$(docker network ls -q --no-trunc --filter "id=$identity") || return 1
+    [ -z "$observed" ]
+  }
+  cleanup_authoring_database() {
+    cleanup_failed=0
+    if [ "$DB_TEST_ATTEMPTED" = 1 ]; then
+      if cleanup_authoring_container "$DB_RECORDS/test.id"; then
+        echo 'authoring test container absence verified'
+      else
+        echo 'authoring test container cleanup unknown' >&2
+        cleanup_failed=1
+      fi
+    fi
+    if [ "$DB_POSTGRES_ATTEMPTED" = 1 ]; then
+      if cleanup_authoring_container "$DB_RECORDS/postgres.id"; then
+        echo 'authoring postgres container absence verified'
+      else
+        echo 'authoring postgres container cleanup unknown' >&2
+        cleanup_failed=1
+      fi
+    fi
+    if [ "$DB_NETWORK_ATTEMPTED" = 1 ]; then
+      if cleanup_authoring_network; then
+        echo 'authoring network absence verified'
+      else
+        echo 'authoring network cleanup unknown' >&2
+        cleanup_failed=1
+      fi
+    fi
+    return "$cleanup_failed"
+  }
+  finish_authoring_database() {
+    result=$?
+    trap - 0 INT TERM
+    echo "authoring fixture/test exit=$result"
+    if ! cleanup_authoring_database; then
+      echo "authoring cleanup unknown; retained records=$DB_RECORDS" >&2
+      result=1
+    fi
+    echo "authoring terminal exit=$result; records=$DB_RECORDS"
+    exit "$result"
+  }
+  trap finish_authoring_database 0
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  # Missing fixture images are a prerequisite failure, never an implicit pull.
+  docker image inspect postgres:16-alpine >/dev/null
+  DB_NETWORK_ATTEMPTED=1
+  docker network create --internal --label "org.openj92.cpk.test-run=$DB_RUN" \
+    "$DB_RUN" > "$DB_RECORDS/network.id"
+  DB_NETWORK_ID=$(cat "$DB_RECORDS/network.id")
+  DB_POSTGRES_ATTEMPTED=1
+  docker create --pull=never --cidfile "$DB_RECORDS/postgres.id" \
+    --name "$DB_RUN-postgres" --label "org.openj92.cpk.test-run=$DB_RUN" \
+    --network "$DB_NETWORK_ID" --network-alias authoring-postgres \
+    --tmpfs /var/lib/postgresql/data:rw,noexec,nosuid,size=512m \
+    -e POSTGRES_DB=cpk -e POSTGRES_USER=cpk -e POSTGRES_PASSWORD=cpk \
+    --health-cmd 'pg_isready -U cpk -d cpk' --health-interval 1s \
+    --health-timeout 5s --health-retries 30 postgres:16-alpine >/dev/null
+  DB_POSTGRES_ID=$(cat "$DB_RECORDS/postgres.id")
+  docker start "$DB_POSTGRES_ID" >/dev/null
+  health_attempt=0
+  while [ "$health_attempt" -lt 30 ]; do
+    health=$(docker inspect --format '{{.State.Health.Status}}' "$DB_POSTGRES_ID")
+    [ "$health" != healthy ] || break
+    [ "$health" != unhealthy ] || exit 1
+    health_attempt=$((health_attempt + 1))
+    sleep 1
+  done
+  [ "$health" = healthy ] || { echo 'authoring postgres health admission failed' >&2; exit 1; }
+  # Verify fixture isolation before passing its URL to the source test image.
+  [ "$(docker network inspect --format '{{.Internal}}' "$DB_NETWORK_ID")" = true ]
+  [ "$(docker inspect --format '{{len .HostConfig.PortBindings}}' "$DB_POSTGRES_ID")" = 0 ]
+  DB_TEST_ATTEMPTED=1
+  docker create --pull=never --cidfile "$DB_RECORDS/test.id" \
+    --name "$DB_RUN-tests" --label "org.openj92.cpk.test-run=$DB_RUN" \
+    --network "$DB_NETWORK_ID" \
+    -e CPK_OPERATIONS_TEST_DATABASE_URL=postgresql://cpk:cpk@authoring-postgres:5432/cpk \
+    -e PYTHONDONTWRITEBYTECODE=1 \
+    -e PYTHONPATH=/app/src:/app/products/cpk_server/src:/app/products/cpk_local_gateway/src:/app/products/hello_server/src:/app/products/cpk_server/tests:/opt/cpk-test-cohort/operations/tests \
+    "$COHORT_IMAGE_ID" python -m unittest discover -s products/cpk_server/postgres_tests \
+      -p 'test_*.py' -v >/dev/null
+  DB_TEST_ID=$(cat "$DB_RECORDS/test.id")
+  invocation_status=0
+  docker start -a "$DB_TEST_ID" || invocation_status=$?
+  state=$(docker inspect --format '{{.State.Status}}|{{.State.ExitCode}}' "$DB_TEST_ID")
+  [ "$invocation_status" = 0 ] && [ "$state" = 'exited|0' ]
+)
+
 if [ "${1:-}" = --mcp-source-tests ]; then
   [ "$#" = 1 ] || exit 2
-  docker run --rm --network none "$IMAGE" python scripts/run_all_tests.py --mcp-source-tests
+  docker run --rm --network none "${COHORT_IMAGE_ID:-$IMAGE}" python scripts/run_all_tests.py --mcp-source-tests
+  if [ "$COHORT" = topology-authoring ]; then
+    run_mcp_authoring_postgres
+  fi
   exit 0
 fi
 docker run --rm "$IMAGE"

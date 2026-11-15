@@ -6,6 +6,7 @@ import hashlib
 import importlib
 import importlib.metadata as metadata
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -22,6 +23,12 @@ EXPECTED = dict(schema="cpk163.grandparent-cohort.v2", name="grandparent", serve
         module_tree="97507ed009a5e5c8aa81d280288a2f81ce807835"),
     sdk="d61b374cb2a23d773c31748f47f88169499298b7", mcp="2.3.0",
     mcp_profile="grandparent-read-only-v1", secrets_distribution="absent")
+AUTHORING_EXPECTED = {**EXPECTED,
+    "schema": "cpk417.topology-authoring-cohort.v1", "name": "topology-authoring",
+    "core": "068862c07585b7b0d1bdadeb96716a3ef2f90ece",
+    "operations": "068862c07585b7b0d1bdadeb96716a3ef2f90ece", "mcp_profile": "standard"}
+COHORTS = {"grandparent": (MANIFEST, EXPECTED),
+    "topology-authoring": (ROOT / "products/cpk_server/topology-authoring-cohort.json", AUTHORING_EXPECTED)}
 PACKAGES = {
     "core": ("control-plane-kit-core", "control_plane_kit_core", "control-plane-kit-core/src/"),
     "operations": ("control-plane-kit-operations", "control_plane_kit_operations", "control-plane-kit-operations/src/"),
@@ -44,12 +51,16 @@ def unique(pairs):
     return result
 
 
-def admit(path=MANIFEST):
+def admit(path=None, *, cohort="grandparent"):
+    if cohort not in COHORTS:
+        raise ValueError("unsupported test cohort")
+    manifest, expected = COHORTS[cohort]
+    path = manifest if path is None else path
     raw = path.read_bytes()
     if len(raw) > 16384:
         raise ValueError("cohort manifest too large")
     value = json.loads(raw, object_pairs_hook=unique)
-    if value != EXPECTED:
+    if value != expected:
         raise ValueError("cohort manifest differs from approved selection")
     return value
 
@@ -61,7 +72,7 @@ def files(root):
 
 
 def seal():
-    admit()
+    admit(cohort=os.environ.get("CPK_TEST_COHORT", "grandparent"))
     result = {}
     for role, (_, module, prefix) in PACKAGES.items():
         result[role] = source_files(role, BUILD / role / "src" / module, prefix + module + "/")
@@ -95,10 +106,11 @@ def distribution(name):
 
 
 def verify():
-    cohort = admit()
+    selection = os.environ.get("CPK_TEST_COHORT", "grandparent")
+    cohort = admit(cohort=selection)
     expected = json.loads((BUILD / "source-files.json").read_text())
     evidence = {"cohort": cohort, "candidate_source": (BUILD / "candidate.txt").read_text().strip(),
-        "manifest_sha256": hashlib.sha256(MANIFEST.read_bytes()).hexdigest(), "packages": {}, "products": {}}
+        "manifest_sha256": hashlib.sha256(COHORTS[selection][0].read_bytes()).hexdigest(), "packages": {}, "products": {}}
     for role, (name, module_name, _) in PACKAGES.items():
         dist = distribution(name)
         module = importlib.import_module(module_name)
@@ -132,8 +144,8 @@ def verify():
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] == ["admit"]:
-        value = admit()
+    if sys.argv[1:2] == ["admit"] and len(sys.argv) in (2, 3):
+        value = admit(cohort=sys.argv[2] if len(sys.argv) == 3 else "grandparent")
         print(" ".join(value[role] for role in PACKAGES))
     elif sys.argv[1:] == ["seal"]:
         seal()

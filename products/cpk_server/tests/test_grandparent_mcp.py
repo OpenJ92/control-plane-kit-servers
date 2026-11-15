@@ -41,7 +41,8 @@ class GrandparentMcpTests(transport_fixture.StandardMcpFixture, unittest.Isolate
         before = sum(len(service.requests) for service in self.host.services.values())
         async with self.client() as client:
             for name in ("prepare_deployment", "register_secret_provider", "provision_secret_material",
-                         "list_registered_products", "get_registered_product"):
+                         "list_registered_products", "get_registered_product", "preview_product_topology",
+                         "start_operation_session", "create_desired_topology_draft"):
                 result = await client.call_tool(name, {})
                 self.assertTrue(result.is_error)
                 self.assertEqual(result.structured_content["error"]["status"], 404)
