@@ -176,3 +176,17 @@ containers/network/context were cleaned up. Log SHA256:
 The fixture correction decodes the actual canonical source document, replaces
 its product identity as a typed value, and calls Core's canonical encoder.
 The decoder, assertions, production code and admitted cohort are unchanged.
+
+At corrected `0b428b9210eb810471b7df27a6ca0ebde6553e75`, both SDK eras
+passed actual two-node save and fresh receipt-backed readback, including HTTP
+comparison, exact graph/pins/runtime/edge/redaction, independent durable truth,
+and unchanged pointers. Both refusal cases also passed. The overall gate still
+exited 1: six injected-loss errors surfaced at SDK context teardown outside the
+fixture's call-only catch. All ten schema/container/network/context cleanups
+were verified. Log SHA256:
+`06372d1e11214c9e470c8d5cc7f467462f8fff40a748456195135e9a2d80ad98`.
+The next fixture-only correction follows existing
+`test_standard_mcp_planning.py` across the entire SDK context using a dedicated
+injected exception marker. Unrelated errors propagate; received tool results
+cannot masquerade as transport loss. The original durable/send-count assertions
+and fresh read from a known receipt remain required. Full green is still pending.

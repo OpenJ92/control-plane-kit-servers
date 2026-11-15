@@ -45,11 +45,16 @@ class CountedService:
         return self.owner.handle(request)
 
 
+class FixtureReplyLost(httpx2.ReadError):
+    """Only this fixture's injected loss may be handled as the expected error."""
+
+
 class DropCompletedReply(httpx2.AsyncBaseTransport):
     """Lose one response after the actual ASGI host completed that request."""
     def __init__(self, app, tool):
         self.inner = httpx2.ASGITransport(app=app)
         self.tool, self.sends, self.dropped = tool, 0, False
+        self.loss = None
 
     async def handle_async_request(self, request):
         body = await request.aread()
@@ -66,7 +71,8 @@ class DropCompletedReply(httpx2.AsyncBaseTransport):
             await response.aread()
             await response.aclose()
             self.dropped = True
-            raise httpx2.ReadError("synthetic completed response loss", request=request)
+            self.loss = FixtureReplyLost("synthetic completed response loss", request=request)
+            raise self.loss
         return response
 
     async def aclose(self):
@@ -162,29 +168,25 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
         self.assertFalse(result.is_error, result.structured_content)
         return result.structured_content
 
-    async def assert_transport_loss(self, client, tool, arguments):
-        # Call the SDK directly: a helper assertion or returned tool error must
-        # never be mistaken for the injected transport failure.
+    async def assert_transport_loss(self, tool, arguments):
+        # The SDK propagates transport task errors when its Client context
+        # exits. Follow the existing planning test across that whole boundary;
+        # unrelated errors and helper assertions are never swallowed.
+        transport = DropCompletedReply(self.app, tool)
         caught = None
+        received = False
         try:
-            result = await client.call_tool(tool, {"workspace_id": "workspace-a", **arguments})
-        except Exception as error:
-            caught = error
-        else:
-            self.fail(f"expected transport failure, received tool result is_error={result.is_error}")
-        pending, seen, causes = [caught], set(), []
-        while pending:
-            error = pending.pop()
-            if id(error) in seen:
-                continue
-            seen.add(id(error))
-            causes.append(error)
-            pending.extend(getattr(error, "exceptions", ()))
-            pending.extend(value for value in (error.__cause__, error.__context__) if value is not None)
-        self.assertFalse(any(isinstance(error, AssertionError) for error in causes))
-        self.assertTrue(any(isinstance(error, httpx2.ReadError)
-            and str(error) == "synthetic completed response loss" for error in causes),
-            "SDK failure did not retain the injected transport cause")
+            async with httpx2.AsyncClient(transport=transport, base_url="http://127.0.0.1:8080",
+                    headers={"Authorization": "Bearer valid-token"}) as http:
+                async with self.client(self.mode, http=http) as client:
+                    await client.call_tool(tool, {"workspace_id": "workspace-a", **arguments})
+                    received = True
+        except* FixtureReplyLost as errors:
+            caught = errors
+        self.assertFalse(received, "SDK returned a tool result despite injected response loss")
+        self.assertIsNotNone(caught, "SDK did not report the injected transport loss")
+        self.assertIsNotNone(caught.subgroup(lambda error: error is transport.loss))
+        return transport
 
     async def preview(self):
         before = self.truth()
@@ -300,11 +302,7 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
     async def test_lost_start_reply_stops_before_save_without_resend(self):
         await self.preview()
         before = self.truth()
-        transport = DropCompletedReply(self.app, "start_operation_session")
-        async with httpx2.AsyncClient(transport=transport, base_url="http://127.0.0.1:8080",
-                headers={"Authorization": "Bearer valid-token"}) as http:
-            async with self.client(self.mode, http=http) as client:
-                await self.assert_transport_loss(client, "start_operation_session", self.start_input())
+        transport = await self.assert_transport_loss("start_operation_session", self.start_input())
         self.assertTrue(transport.dropped)
         self.assertEqual(transport.sends, 1)
         self.assertEqual(self.dispatches.count(START), 1)
@@ -354,11 +352,7 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
         async with self.client(self.mode) as client:
             session = await self.call(client, "start_operation_session", self.start_input())
         before = self.truth()
-        transport = DropCompletedReply(self.app, "create_desired_topology_draft")
-        async with httpx2.AsyncClient(transport=transport, base_url="http://127.0.0.1:8080",
-                headers={"Authorization": "Bearer valid-token"}) as http:
-            async with self.client(self.mode, http=http) as client:
-                await self.assert_transport_loss(client, "create_desired_topology_draft", self.save_input(preview, session))
+        transport = await self.assert_transport_loss("create_desired_topology_draft", self.save_input(preview, session))
         self.assertTrue(transport.dropped)
         self.assertEqual(transport.sends, 1)
         self.assertEqual(self.dispatches.count(SAVE), 1)
@@ -370,12 +364,8 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
     async def test_received_save_receipt_survives_lost_readback(self):
         receipt = await self.save_once(await self.preview())
         before = self.truth()
-        transport = DropCompletedReply(self.app, "get_desired_topology_draft_revision")
-        async with httpx2.AsyncClient(transport=transport, base_url="http://127.0.0.1:8080",
-                headers={"Authorization": "Bearer valid-token"}) as http:
-            async with self.client(self.mode, http=http) as client:
-                await self.assert_transport_loss(client, "get_desired_topology_draft_revision",
-                    {"draft_id": receipt["draft_id"], "revision": receipt["revision"]})
+        transport = await self.assert_transport_loss("get_desired_topology_draft_revision",
+            {"draft_id": receipt["draft_id"], "revision": receipt["revision"]})
         self.assertTrue(transport.dropped)
         self.assertEqual(transport.sends, 1)
         self.assertEqual(self.truth(), before)
