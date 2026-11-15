@@ -8,6 +8,7 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 cd "$ROOT"
 
 COHORT=default
+COHORT_IMAGE_ID=
 if [ "${1:-}" = --cohort ]; then
   [ "$#" = 7 ] && [ "$3" = --mcp-source-tests ] || exit 2
   case "$2" in grandparent|topology-authoring) COHORT=$2 ;; *) exit 2 ;; esac

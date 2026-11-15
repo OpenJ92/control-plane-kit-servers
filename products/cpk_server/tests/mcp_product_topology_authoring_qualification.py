@@ -246,6 +246,9 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
                 self.assertEqual(node["environment_bindings"], [
                     {"kind": "public-static", "name": name, "value": "<redacted>"}
                     for name in ("HELLO_COLOR", "HELLO_DEPENDENCIES_JSON", "HELLO_MESSAGE")])
+            else:
+                self.assertEqual(node["environment_bindings"], [{"kind": "socket-derived",
+                    "name": "MULTIPLEXER_PRIMARY_URL", "value": "<redacted>", "edge_id": "hello-to-mux"}])
             identity = reference["identity"]
             self.assertEqual(node["metadata"]["product_identity"],
                 f'{identity["namespace"]}/{identity["name"]}/{identity["contract_revision"]}')
