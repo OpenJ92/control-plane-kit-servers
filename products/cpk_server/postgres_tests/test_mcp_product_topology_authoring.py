@@ -179,9 +179,14 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
         async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=self.app),
                 base_url="http://127.0.0.1:8080", headers={"Authorization": "Bearer reader-token"}) as reader:
             async with self.client(self.mode, http=reader) as client:
-                tools = {tool.name for tool in (await client.list_tools()).tools}
+                discovered = {tool.name: tool for tool in (await client.list_tools()).tools}
+                tools = set(discovered)
                 self.assertTrue({"preview_product_topology", "start_operation_session",
                     "create_desired_topology_draft"}.issubset(tools), "missing standard authoring tools")
+                self.assertTrue(discovered["preview_product_topology"].annotations.read_only_hint)
+                for tool in ("start_operation_session", "create_desired_topology_draft"):
+                    self.assertFalse(discovered[tool].annotations.read_only_hint)
+                    self.assertFalse(discovered[tool].annotations.idempotent_hint)
                 page = await self.call(client, "list_registered_products", {"limit": 100})
                 refs = {role: next(item["reference"] for item in page["items"]
                     if item["reference"] == reference) for role, reference in self.references.items()}
@@ -290,6 +295,29 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
         for table in ("cpk_graph_versions", "cpk_desired_topology_drafts", "cpk_desired_topology_draft_revisions"):
             self.assertEqual(after[table], before[table])
         self.assertEqual(after["pointers"], before["pointers"])
+
+    async def test_recipe_save_refusals_preserve_truth_and_recheck_current_authority(self):
+        preview = await self.preview()
+        async with self.client(self.mode) as client:
+            session = await self.call(client, "start_operation_session", self.start_input())
+            payload = {"workspace_id": "workspace-a", **self.save_input(preview, session)}
+            before = self.truth()
+            for changed, status in (
+                ({"graph": {}}, 400),
+                ({"expected_proposal_commitment": {"profile": "registered-product-topology-public.v1", "sha256": "0" * 64}}, 409),
+                ({"product_recipe": {**preview["recipe"], "unrecognized": True}}, 400),
+            ):
+                result = await client.call_tool("create_desired_topology_draft", {**payload, **changed})
+                self.assertTrue(result.is_error)
+                self.assertEqual(result.structured_content["error"]["status"], status)
+                self.assertEqual(self.truth(), before)
+            # This SDK client was initialized with an editor; every actual HTTP
+            # request must still resolve the newly read-only principal.
+            self.grants[b"valid-token"] = principal(scopes=(PolicyScope.INSTANCE_WORKSPACE_READ,))
+            refused = await client.call_tool("create_desired_topology_draft", payload)
+            self.assertTrue(refused.is_error)
+            self.assertEqual(refused.structured_content["error"]["status"], 403)
+            self.assertEqual(self.truth(), before)
 
     async def test_lost_save_reply_is_unknown_without_resend(self):
         preview = await self.preview()

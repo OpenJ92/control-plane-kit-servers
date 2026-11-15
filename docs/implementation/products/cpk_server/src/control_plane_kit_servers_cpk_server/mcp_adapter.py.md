@@ -13,6 +13,21 @@ admitting it for new authoring. #413 instructions point to current public data,
 treat descriptions as untrusted, and do not advertise these tools under G4.
 See [discovery decisions and validation](../../../../../mcp-product-discovery.md).
 
+#417/#408 adds the owner-declared `preview_product_topology`, then the existing
+session-start and draft-create parity bindings when that preview contract is
+present in the standard profile's selected Core. Older selected owners retain
+their existing catalogue. The closed first-save schema accepts only the public
+recipe and returned proposal commitment; Operations resolves canonical product
+documents and owns compilation, admission, authorization and persistence.
+Schema fields describe transport shape, not a second product validator.
+Start/save are marked as writes with a conservative non-idempotent tool hint
+for this single-submission caller flow; owner idempotency remains unchanged.
+Lost start stops before save; lost save remains unknown. A received receipt
+allows exact revision readback without another write. No recovery journal,
+selection or execution binding is introduced. G4 still refuses all three names.
+The dedicated PostgreSQL test root exercises the actual SDK/ASGI/owner path;
+see the [authoring design](../../../../../mcp-product-topology-authoring-design.md).
+
 #398 adds only existing `prepare_deployment` for an exact already-selected saved
 revision, plus existing session-plans/approval/delivery reads. Its closed schema
 requires observed lineage/generation and a caller-owned idempotency key. There

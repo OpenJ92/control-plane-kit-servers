@@ -1,8 +1,9 @@
 # Product topology authoring through MCP
 
 Design and unvalidated test preparation for Servers #417/#408 and CPK #2093.
-The separate test cohort and harness are prepared; production dependency and
-MCP exposure changes have not been implemented or qualified. Discovery
+The separate test cohort and harness are prepared; the thin standard MCP
+bindings are implemented but not yet qualified green. Production dependency
+selection is unchanged. Discovery
 remains at `8407d3e49841d55eab28d4cf1d44cd0b11f754cb`; its separate draft PR
 publication boundary remains in effect.
 
@@ -126,7 +127,40 @@ durable state. Save retains the existing action record and append-only revision;
 there is no compensation or automatic retry after ambiguity. Exact revision
 readback verifies the known result without selecting it. North released combined
 candidate X for isolated testing; hosted and installed qualification are
-separate. The first owning gate awaits review of the concrete apparatus fixes:
-accumulated owned cleanup after partial creation, one build-recorded immutable
-image ID across both phases, and exact saved verification/environment shapes.
-Target-red/green and actual SDK transport-loss evidence remain unestablished.
+separate. Reviewed apparatus fixes accumulate owned cleanup after partial
+creation, use one build-recorded immutable image ID across both phases, and
+check exact saved verification/environment shapes.
+
+## Source decision and first runs
+
+The owning run at `4c35c6d28226dc0764a0cc79560c503eb04e9dee` stopped after
+26 support tests at the unchanged integrity checker: the DB TestCases used a
+non-test-prefixed filename. No candidate build, export or DB resources were
+created. This is apparatus failure, not behavioral target-red. Log SHA256:
+`2d5bf011de811cf9967e03cc87362278c672cc9ddfa123075f2e29921b15628f`.
+
+After Meridian reviewed normal `test_*.py` discovery in the product-local
+`postgres_tests` root, the owning run at
+`a3958bc43b0cc5d1ae4670401f818cd4a0805302` reached intended target-red:
+214 support/source/preservation checks passed, followed by eight real PG/SDK
+cases reporting missing standard authoring tools. Actual SDK TaskGroup errors
+wrap those same assertions, not fixture/import errors. The eight schema drops,
+test/PG containers, private network and outer source context all have verified
+cleanup. Log SHA256:
+`58c2061d3979a45f15076317e4a653b5433817f9d90770afb60c439b14234688`.
+The build-recorded immutable image was
+`sha256:2da19ae5914ca47b4bc74cb4be1c26d974fdaa26f6b7c4a364e21b00906438bd`.
+
+Chosen implementation adds only the owner-declared preview read and existing
+session-start/draft-create parity bindings. Closed nested schemas expose the
+supported public recipe branch, not raw compiled graphs, confidential delivery
+or arbitrary route forwarding. Owner presence in Core metadata controls
+advertisement; older cohorts retain their tools and G4 stays four reads. The
+single-submission caller flow uses conservative non-idempotent tool hints;
+Operations' actual replay/idempotency laws remain unchanged.
+
+The original eight targets remain, with two additional per-era negative cases
+for malformed input, stale commitment and revoked edit authority. No save,
+fresh exact readback or actual SDK loss behavior has passed yet. Green and
+independent source review are the next evidence; this document does not claim
+installed acceptance or release authority.
