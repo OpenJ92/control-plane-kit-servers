@@ -63,6 +63,12 @@ _GRANDPARENT_READS = frozenset(("read.workspace", "read.desired-graph",
     "read.desired-topology-draft-revision", "read.desired-topology-draft-revision-attempts"))
 
 _AUTHORING_COMMANDS = {
+    "command.desired-topology-draft.select": (
+        "Set Desired to an exact saved draft revision. Requires instance:workspace:edit and an open session. "
+        "Read get_workspace for the expected Desired graph, projection and generation, and inspect the exact "
+        "saved revision before submitting once with a caller-owned key. Read back the workspace and Desired. "
+        "After a lost reply, a matching pointer cannot identify which request set it. Do not automatically resend. "
+        "Selection does not change Current, prepare a plan, approve or deploy."),
     "command.operation-session.start": "Start one durable operation session for an approved topology save. Requires workspace edit. Submit once with its own caller-owned key. If the reply is lost, stop before saving; the outcome is unknown. This does not save, select or deploy a graph.",
     "command.desired-topology-draft.create": "Save one unselected draft from the preview's normalized public recipe and returned proposal commitment, using the actual session ID and a separate caller-owned key. Requires current workspace edit and owner admission. Submit once; a lost reply is unknown, never an automatic resend. Retain the workspace/draft/revision/graph receipt for exact readback. This does not select Desired, plan or deploy.",
 }
@@ -102,18 +108,27 @@ def _input_schema(route):
         return _closed_schema({"workspace_id": {"type": "string"}, "recipe": _product_recipe_schema()})
     if route.route_id in _AUTHORING_COMMANDS:
         text = {"type": "string", "minLength": 1, "maxLength": 512}
-        properties = {"workspace_id": text, "title": text, "idempotency_key": {**text,
+        nullable_text = {**text, "type": ["string", "null"]}
+        properties = {"workspace_id": text, "idempotency_key": {**text,
             "description": "Caller-owned durable key for this exact intent; distinct from the other write and transport IDs."}}
+        if route.route_id == "command.desired-topology-draft.select":
+            properties["idempotency_key"]["maxLength"] = 200
+            properties.update(session_id=text, draft_id=text,
+                revision={"type": "integer", "minimum": 1, "maximum": 9223372036854775807},
+                expected_desired_graph_id=nullable_text, expected_desired_realized_projection_id=nullable_text,
+                expected_desired_graph_revision={"type": "integer", "minimum": 0, "maximum": 9223372036854775806})
+        else:
+            properties["title"] = text
         if route.route_id == "command.desired-topology-draft.create":
             properties.update(session_id=text, product_recipe=_product_recipe_schema(),
                 expected_proposal_commitment=_closed_schema({"profile": {"const": "registered-product-topology-public.v1"},
                     "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$", "minLength": 64, "maxLength": 64}}))
         schema = _closed_schema(properties)
-        if route.route_id == "command.desired-topology-draft.create":
+        if route.route_id in ("command.desired-topology-draft.create", "command.desired-topology-draft.select"):
             schema["properties"]["receiver_lifecycle"] = _closed_schema({
                 "current_graph_id": text, "current_realized_projection_id": text,
-                "desired_graph_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 512},
-                "desired_realized_projection_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 512},
+                "desired_graph_id": nullable_text,
+                "desired_realized_projection_id": nullable_text,
                 "desired_graph_revision": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807}})
         return schema
     if route.route_id == "command.deployment.prepare":

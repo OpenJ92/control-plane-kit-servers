@@ -5,6 +5,22 @@ Accepted base: `2093f5182748a4aca638f362eece0bc4f063a1db`,
 `roadmap/1813-runtime-control`, accepted in PR #395 comment 6840942585.
 The isolated branch is `codex/396-standard-mcp`.
 
+## Selecting a saved revision as Desired
+
+In the standard authoring profile, use `get_desired_topology_draft_revision` to inspect the exact
+target. An older revision is eligible even after a newer revision is saved. Read `get_workspace`
+for the **existing** Desired graph ID, realized projection ID and generation. Supply those three
+values as the expected state to `select_desired_topology_draft`, alongside the workspace, draft,
+revision, open session ID and a fresh key for this intent. For the first selection, explicitly
+supply null for both IDs and zero for the generation. Workspace edit access is required.
+
+Keep the receipt. Confirm the selected graph and realized projection with `get_desired_graph`
+and the new generation with `get_workspace`. A competing selection makes the old expectation
+stale, even if the graph later returns to the same value. Selection leaves Current in place.
+Planning and deployment are separate actions. If the reply is lost, read back the pointers.
+Even a match cannot establish which request set them. Leave the request outcome unknown and
+do not automatically submit it again.
+
 ## Selected behavior and smallest missing connection
 
 At this base, `server.py:create_app` installs POST `/mcp` and the HTTP routes over

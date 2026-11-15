@@ -17,14 +17,15 @@ from psycopg import sql
 from control_plane_kit_core.operations import ControlPlaneServiceRole
 from control_plane_kit_core.policies import PolicyScope
 from control_plane_kit_core.products import ProductDescriptorCodec
-from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC
+from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC, DeploymentGraph
 from control_plane_kit_operations.cpk_server import (
     CpkServerLifecycleService, CpkServerPlanningService, CpkServerReadService,
     CpkServerUnsupportedService,
 )
 from control_plane_kit_operations.product_topology_authoring import ProductTopologyAuthoringService
 from control_plane_kit_operations.products import InlineDescriptorSource
-from control_plane_kit_operations.workflows import OperationCommandService
+from control_plane_kit_operations.workflows import IdempotencyKey, OperationCommandService
+from control_plane_kit_operations.workspaces import CreateWorkspace, WorkspaceCommandService
 
 from draft_catalogue_fixture import DraftCatalogueFixture, NOW, principal
 from test_standard_mcp import StandardMcpFixture
@@ -250,7 +251,7 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
     async def selection_input(self, draft, workspace=None):
         if workspace is None:
             workspace = (await self.http.get("/workspaces/workspace-a")).json()["workspace"]
-        return {"session_id": self.sessions["workspace-a"], "draft_id": draft.draft_id,
+        return {"session_id": self.sessions[draft.workspace_id], "draft_id": draft.draft_id,
             "revision": draft.revision, "idempotency_key": uuid4().hex,
             **{"expected_" + field: workspace[field] for field in (
                 "desired_graph_id", "desired_realized_projection_id", "desired_graph_revision")}}
@@ -297,7 +298,30 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
         conflict = await self.http.post(path, json=dict(body, revision=newer.revision))
         self.assertEqual(conflict.status_code, 409)
         actions = [r[0] for r in self.rows("cpk_operation_actions") if r[0]["action_type"] == "select-desired-topology-draft"]
-        self.assertEqual([r["payload"] for r in actions], [selected])
+        self.assertEqual([r["payload"] for r in actions], [dict(selected, receiver_lifecycle=args["receiver_lifecycle"])])
+
+    async def test_first_selection_from_unassigned_desired(self):
+        workspace_id = "workspace-new"
+        WorkspaceCommandService(self.unit_of_work, clock=lambda: NOW, id_factory=lambda: uuid4().hex).create(
+            CreateWorkspace(workspace_id, "Fresh workspace", "operator-a", IdempotencyKey(uuid4().hex)))
+        self.sessions[workspace_id] = self.start_session(workspace_id)
+        first = self.create(workspace=workspace_id, graph=DeploymentGraph("first desired"))
+        self.grants[b"valid-token"] = principal(workspace_id)
+        scope = {"workspace_id": workspace_id}
+        async with self.client(self.mode) as client:
+            before = (await self.call(client, "get_workspace", scope))["workspace"]
+            self.assertIsNone(before["desired_graph_id"])
+            self.assertIsNone(before["desired_realized_projection_id"])
+            self.assertEqual(before["desired_graph_revision"], 0)
+            arguments = await self.selection_input(first, before)
+            receipt = await self.call(client, SELECT_TOOL, {**scope, **arguments})
+        async with self.client(self.mode) as reader:
+            after = (await self.call(reader, "get_workspace", scope))["workspace"]
+            desired = await self.call(reader, "get_desired_graph", scope)
+        self.assertEqual(after["desired_graph_revision"], 1)
+        self.assertEqual(after["desired_graph_id"], first.graph_id)
+        self.assertEqual(desired["realized_projection_id"], receipt["desired_realized_projection_id"])
+        self.assertEqual(after["current_graph_id"], before["current_graph_id"])
 
     async def test_selection_rechecks_permission_and_fences_stale_inputs(self):
         draft = self.create()

@@ -259,7 +259,8 @@ class StandardMcpTests(StandardMcpFixture, unittest.IsolatedAsyncioTestCase):
                     expected_writes = {"prepare_deployment"}
                     owner_reads = self.app.state.http_boundary.composition.handoff.projection_parity.projections
                     if any(binding.http_route_id == "read.product-topology-preview" for binding in owner_reads):
-                        expected_writes.update(("start_operation_session", "create_desired_topology_draft"))
+                        expected_writes.update(("start_operation_session", "create_desired_topology_draft",
+                                                "select_desired_topology_draft"))
                     self.assertTrue(all(tool.annotations.read_only_hint for name, tool in tools.items() if name not in expected_writes))
                     self.assertEqual({name for name, tool in tools.items() if not tool.annotations.read_only_hint}, expected_writes)
                     self.assertNotIn("provision_secret_material", tools)
