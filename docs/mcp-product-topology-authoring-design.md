@@ -1,11 +1,44 @@
 # Product topology authoring through MCP
 
-Design and unvalidated test preparation for Servers #417/#408 and CPK #2093.
-The separate test cohort and harness are prepared; the thin standard MCP
-bindings are implemented but not yet qualified green. Production dependency
+Isolated source qualification for Servers #417/#408 and CPK #2093. The named
+cohort, database harness and thin standard MCP bindings passed the owning gate
+at `5adb6f117ba92de87b831af6b9dc8b4626743521`. Production dependency
 selection is unchanged. Discovery
 remains at `8407d3e49841d55eab28d4cf1d44cd0b11f754cb`; its separate draft PR
 publication boundary remains in effect.
+
+## Qualified result
+
+The owning Docker gate terminated **exit 0**, with **224 reported tests in 29
+batches**: 214 support/source/preservation checks and all ten PostgreSQL-backed
+SDK cases. Both SDK eras saved exactly two source products and one edge, then
+read the actual receipt's exact revision through a fresh client and HTTP. Both
+product pins, runtime membership, environment binding, graph/action truth and
+redaction matched; both workspace pointers remained unchanged.
+
+All six post-completion response-loss cases passed the exact-marker, one-send,
+one-owner-dispatch and durable-row assertions. Lost start stopped before save;
+lost save remained unknown; known receipt plus lost readback allowed a fresh
+exact read without another write. Both refusal cases matched HTTP for malformed
+input, stale commitment, foreign workspace/pin and current revoked edit access.
+All ten schemas and the owned test container, PostgreSQL container, private
+network and outer source context have verified cleanup.
+
+Evidence log SHA256:
+`1b2ad6e7c47a0259d26d39761f2d4b9f82040f51912ed3392f229e35cf186ced`.
+Build-recorded immutable image used by both test phases:
+`sha256:787319593a3fccbaaff0919044d3c446b1bbc5e328d871240c7ea6efab7a9404`.
+Core/Operations candidate is
+`e4bc1275aa3378ecc4e8c32c7872d3f0a4a2ef0c`; the remaining complete cohort
+is recorded below and in `products/cpk_server/topology-authoring-cohort.json`.
+
+This proves the named candidate/source boundary. Historical default and frozen
+grandparent selections were not separately rerun at this implementation head;
+their pins are unchanged, and the named gate includes all existing preservation
+checks and the restricted four-read profile. Hosted/full-package and installed
+adoption remain separate. No image publication, installation credential,
+selection, approval or deployment is included. Independent terminal review is
+pending; source failure history below is retained.
 
 ## Selected source and qualification
 
