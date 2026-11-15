@@ -11,13 +11,13 @@ owner-side reference/instance input and lost-reply contracts.
   and read.product-detail/get_registered_product bindings to the curated
   StandardMcpAdapter. Existing application dispatch, CpkServerReadService and
   product-directory projection remain the owners. The standard catalogue now
-  has20 reads and its existing prepare command; the grandparent profile remains
+  has 20 reads and its existing prepare command; the grandparent profile remains
   exactly four reads and refuses both new tools, including direct calls.
-- Important shape: list arguments are workspace_id, optional limit1–100 and
+- Important shape: list arguments are workspace_id, optional limit from 1–100 and
   the owner's unmodified scoped after cursor; detail takes workspace_id and
-  an exact64-character lowercase descriptor digest. Output is the unchanged,
+  an exact 64-character lowercase descriptor digest. Output is the unchanged,
   bounded owner result. No product values or versions are embedded in guidance.
-  The digest schema also caps length at64: regex end anchors alone may admit a
+  The digest schema also caps length at 64: regex end anchors alone may admit a
   trailing LF in schema validation, although the Core owner correctly refuses
   it. The discovered schema is tested with both a valid digest and digest+LF.
 - Why: an agent needs current authorized workspace data to discover products.
@@ -54,7 +54,7 @@ Existing owner tests remain the persistence and directory-query evidence.
 
 At test checkpoint bc2fb843666b5864b4a2ac2b73a5668b03852291, the owning
 grandparent source gate reached the intended red:26 support and2 cohort checks
-passed;13 standard MCP tests ran in2.272s. Ten original tests passed; the three
+passed; 13 standard MCP tests ran in 2.272 seconds. Ten original tests passed; the three
 new discovery/guidance tests failed for missing tool exposure/status and missing
 initialize guidance. Seven assertion failures and two SDK task-group-wrapped
 AssertionErrors had those same intended causes, not broken fixture imports.
@@ -62,10 +62,20 @@ The gate stopped before later modules; no G4 green is inferred. Cohort source
 context absence was verified. Log SHA256
 8a11fce3c90625b3dea07d948e7422231adb00c96463c2851762f5dd4080bf7f.
 
-Implementation is prepared; green and default/grandparent cohort validation
-remain pending. Tests/assertions are unchanged after intended red. The owning
-entrances are the maintained ./test.sh --mcp-source-tests and its existing
---cohort grandparent variant; no alternate runner or ad hoc container is used.
+Reviewed implementation a932a4fb087212f6705dbc5a5d1a372c4aca0941 passed both
+maintained owning source gates: ./test.sh --mcp-source-tests passed 206 checks
+(26 support + 180 source); its --cohort grandparent variant passed 213
+(26 support + 187 source), including the fixed cohort/import evidence and owned
+source-context absence. Standard product discovery/readback/guidance and G4
+restriction tests passed in both. The grandparent runner additionally executes
+seven existing frozen-cohort HTTP/native/startup/sample-admission checks.
+
+Original discovery assertions were retained. Review added validation of the
+actual discovered schema against valid 64-character hex versus digest+LF; the HTTP cursor
+comparison uses the maintained client's percent-encoding convention. Meridian
+passed the corrected code. Detailed execution receipts remain with the owning
+review handoff. No alternate runner, ad hoc container, new persistence law,
+published image or installed-client qualification is claimed by these results.
 
 ## Security and operational history
 
@@ -80,5 +90,11 @@ introduced. There is no automatic retry, private value intake, publication,
 credential change, graph write or installed compatibility claim.
 
 The original [authoring trace](mcp-authoring-discovery-trace.md) is pinned to
-accepted0610e945, not retrospectively rewritten as an installed capability.
+accepted 0610e945, not retrospectively rewritten as an installed capability.
 This source slice adds only the reviewed discovery boundary above.
+The later preview/save owner work is tracked by
+[CPK #2091](https://github.com/OpenJ92/control-plane-kit/issues/2091). Its first
+walkthrough sends start/save once: a lost start stops before save and a lost
+save remains unknown; only exact reads with a known receipt may repeat. That
+selected restriction needs no new recovery endpoint. Servers write adapters
+wait for the accepted owner version and reviewed handoff.

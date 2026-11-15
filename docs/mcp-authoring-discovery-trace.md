@@ -1,9 +1,18 @@
 # MCP authoring and discovery source trace — #417
 
-Source/design draft, November 14, 2026. Governing issues: Servers #417 under
-#396, with #404 inspection, #408 authoring and #413 guidance. No implementation,
+Historical source/design trace prepared November 14, 2026. Governing issues: Servers #417 under
+#396, with #404 inspection, #408 authoring and #413 guidance. At preparation, no implementation,
 application tests, installation access, credentials, provider calls or topology
 write occurred. This is independent of #399's actual installed-read acceptance.
+
+Subsequent reviewed product-discovery implementation and source evidence are
+recorded in [the discovery decision log](mcp-product-discovery.md). The baseline
+trace below remains pinned to 0610e945. For the later authoring boundary,
+[CPK #2091](https://github.com/OpenJ92/control-plane-kit/issues/2091) now selects
+an owner-side public-only recipe/preview commitment and existing draft-save
+extension. Its first walkthrough deliberately stops on lost start/save replies,
+without a new recovery endpoint or automatic replay. That owner version is
+still a dependency, not an API implemented by this discovery slice.
 
 The trace uses accepted Servers #402 merge
 `0610e9454dd9a75a6e6bf5e89fe281c8631cccaa`, G Core
@@ -92,7 +101,7 @@ values, configuration content and actual material/reference handles. Its source
 field is evidence of registration origin, not authority to fetch arbitrary URLs.
 ProductDirectoryBoundaryTests and ProductDirectoryStoreTests in
 test_product_directory.py cover denial before hostile cursor/UoW, scoped
-pagination,201 records across maximum pages, redaction, slot shapes, current
+pagination, 201 records across maximum pages, redaction, slot shapes, current
 revocation, cross-workspace refusal and authorized-empty versus missing admission.
 The directory lists active entries, but exact detail deliberately reports a
 revoked registration with status=revoked. Displaying that historical status is
