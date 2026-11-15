@@ -17,6 +17,9 @@ owner-side reference/instance input and lost-reply contracts.
   the owner's unmodified scoped after cursor; detail takes workspace_id and
   an exact64-character lowercase descriptor digest. Output is the unchanged,
   bounded owner result. No product values or versions are embedded in guidance.
+  The digest schema also caps length at64: regex end anchors alone may admit a
+  trailing LF in schema validation, although the Core owner correctly refuses
+  it. The discovered schema is tested with both a valid digest and digest+LF.
 - Why: an agent needs current authorized workspace data to discover products.
   Stable SDK instructions explain which tools to call, provider/requirement and
   configuration shapes, noncanonical readback, revoked status and authority.

@@ -10,9 +10,11 @@ import subprocess
 import traceback
 import unittest
 from unittest.mock import MagicMock, Mock
+from urllib.parse import quote, urlencode
 
 import httpx2
 import httpx
+from jsonschema import Draft202012Validator
 from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 from control_plane_kit_core.operations import ControlPlaneServiceRole
@@ -151,11 +153,16 @@ class StandardMcpTests(StandardMcpFixture, unittest.IsolatedAsyncioTestCase):
                     self.assertFalse(tools[name].annotations.destructive_hint)
                 limit = tools["list_registered_products"].input_schema["properties"]["limit"]
                 self.assertEqual((limit["minimum"], limit["maximum"]), (1, 100))
+                detail_schema = Draft202012Validator(tools["get_registered_product"].input_schema)
+                valid = {"workspace_id":"workspace-a", "descriptor_sha256":records[0].reference.descriptor_sha256.value}
+                self.assertTrue(detail_schema.is_valid(valid))
+                self.assertFalse(detail_schema.is_valid({**valid, "descriptor_sha256":valid["descriptor_sha256"] + "\n"}))
                 returned = []
                 for query in ({"limit":1}, {"limit":1, "after":cursor}):
                     result = await client.call_tool("list_registered_products", {"workspace_id":"workspace-a", **query})
-                    http = await self.http.get("/workspaces/workspace-a/products", params={
-                        key:json.dumps(value) if isinstance(value, dict) else value for key, value in query.items()})
+                    encoded = urlencode({key:json.dumps(value) if isinstance(value, dict) else value
+                        for key, value in query.items()}, quote_via=quote)
+                    http = await self.http.get("/workspaces/workspace-a/products?" + encoded)
                     self.assertEqual(http.status_code, 200)
                     self.assertFalse(result.is_error, result.structured_content)
                     self.assertEqual(result.structured_content, http.json())

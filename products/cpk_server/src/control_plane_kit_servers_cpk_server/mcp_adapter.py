@@ -88,6 +88,7 @@ def _input_schema(route):
         properties["limit"]["maximum"] = 100
     if route.route_id == "read.product-detail":
         properties["descriptor_sha256"]["pattern"] = "^[0-9a-f]{64}$"
+        properties["descriptor_sha256"]["maxLength"] = 64
     return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
 
 
