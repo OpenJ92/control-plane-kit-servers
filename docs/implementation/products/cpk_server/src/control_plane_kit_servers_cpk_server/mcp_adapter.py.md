@@ -23,8 +23,10 @@ Schema fields describe transport shape, not a second product validator.
 Start/save are marked as writes with a conservative non-idempotent tool hint
 for this single-submission caller flow; owner idempotency remains unchanged.
 Lost start stops before save; lost save remains unknown. A received receipt
-allows exact revision readback without another write. No recovery journal,
-selection or execution binding is introduced. G4 still refuses all three names.
+allows exact revision readback without another write. The same profile exposes the existing exact-revision selection command. Its closed
+schema requires the previous Desired graph, projection and generation, and accepts
+the existing optional receiver lifecycle expectation. Operations owns edit authorization,
+the atomic pointer update, action history and exact-key replay. G4 omits all authoring tools.
 The dedicated PostgreSQL test root exercises the actual SDK/ASGI/owner path;
 see the [authoring design](../../../../../mcp-product-topology-authoring-design.md).
 
