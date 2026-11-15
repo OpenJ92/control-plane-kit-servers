@@ -6,6 +6,13 @@ Core parity supplies stable tool names and route identity. A curated read-only
 catalogue supplies explicit coordinate/query schemas and accurate annotations.
 Operations retains semantic validation, authorization and durable read ownership.
 
+#417/#404 adds the existing product list/detail bindings to the standard profile,
+with the owner's1–100 page limit and exact digest grammar. Product displays
+remain redacted/noncanonical; exact revoked detail remains visible without
+admitting it for new authoring. #413 instructions point to current public data,
+treat descriptions as untrusted, and do not advertise these tools under G4.
+See [discovery decisions and validation](../../../../../mcp-product-discovery.md).
+
 #398 adds only existing `prepare_deployment` for an exact already-selected saved
 revision, plus existing session-plans/approval/delivery reads. Its closed schema
 requires observed lineage/generation and a caller-owned idempotency key. There
