@@ -1,7 +1,8 @@
 # Product topology authoring through MCP
 
-Source design only, for Servers #417/#408 and CPK #2093. No dependency or
-exposure changes are implemented or qualified by this document. Discovery
+Design and unvalidated test preparation for Servers #417/#408 and CPK #2093.
+The separate test cohort and harness are prepared; production dependency and
+MCP exposure changes have not been implemented or qualified. Discovery
 remains at `8407d3e49841d55eab28d4cf1d44cd0b11f754cb`; its separate draft PR
 publication boundary remains in effect.
 
@@ -123,5 +124,9 @@ provider, or runtime change is authorized by this design.
 Data/history: only the existing session and draft transactions may mutate
 durable state. Save retains the existing action record and append-only revision;
 there is no compensation or automatic retry after ambiguity. Exact revision
-readback verifies the known result without selecting it. Remaining blockers are
-reviewed combined revision X and the database-backed owning gate extension.
+readback verifies the known result without selecting it. North released combined
+candidate X for isolated testing; hosted and installed qualification are
+separate. The first owning gate awaits review of the concrete apparatus fixes:
+accumulated owned cleanup after partial creation, one build-recorded immutable
+image ID across both phases, and exact saved verification/environment shapes.
+Target-red/green and actual SDK transport-loss evidence remain unestablished.

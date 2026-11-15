@@ -237,11 +237,15 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
             self.assertNotIn(private, json.dumps(detail))
         for role, reference in self.references.items():
             node = graph["nodes"][role]
-            checks = node["block_spec"]["verification"]["checks"]
-            self.assertTrue(checks)
-            self.assertTrue(all(set(check) == {"kind", "check_id", "provider_socket"} for check in checks))
-            self.assertTrue(all(binding.get("value", "<redacted>") == "<redacted>"
-                for binding in node["environment_bindings"]))
+            expected_verification = {"checks": [{"kind": "http", "check_id": check,
+                "provider_socket": "internal"} for check in (("live", "ready") if role == "hello" else ("live",))]}
+            self.assertEqual(node["block_spec"]["verification"], expected_verification)
+            if "verification" in node:
+                self.assertEqual(node["verification"], expected_verification)
+            if role == "hello":
+                self.assertEqual(node["environment_bindings"], [
+                    {"kind": "public-static", "name": name, "value": "<redacted>"}
+                    for name in ("HELLO_COLOR", "HELLO_DEPENDENCIES_JSON", "HELLO_MESSAGE")])
             identity = reference["identity"]
             self.assertEqual(node["metadata"]["product_identity"],
                 f'{identity["namespace"]}/{identity["name"]}/{identity["contract_revision"]}')
