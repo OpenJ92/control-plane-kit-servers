@@ -33,6 +33,7 @@ from test_standard_mcp import StandardMcpFixture
 ROOT = Path(__file__).resolve().parents[3]
 START = "command.operation-session.start"
 SAVE = "command.desired-topology-draft.create"
+SELECT_TOOL = "select_desired_topology_draft"
 
 
 class CountedService:
@@ -245,6 +246,94 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
         self.assertEqual(set(receipt), {"workspace_id", "draft_id", "revision", "graph_id"})
         self.saved_session_id = session["session_id"]
         return receipt
+
+    async def selection_input(self, draft, workspace=None):
+        if workspace is None:
+            workspace = (await self.http.get("/workspaces/workspace-a")).json()["workspace"]
+        return {"session_id": self.sessions["workspace-a"], "draft_id": draft.draft_id,
+            "revision": draft.revision, "idempotency_key": uuid4().hex,
+            **{"expected_" + field: workspace[field] for field in (
+                "desired_graph_id", "desired_realized_projection_id", "desired_graph_revision")}}
+
+    async def test_select_exact_older_revision_readback_and_http_replay(self):
+        first = self.create()
+        newer = self.catalogue().execute(self.revise_command(first))
+        before = (await self.http.get("/workspaces/workspace-a")).json()["workspace"]
+        args = await self.selection_input(first, before)
+        async with self.client(self.mode) as client:
+            tools = {t.name: t for t in (await client.list_tools()).tools}
+            self.assertIn(SELECT_TOOL, tools)
+            self.assertFalse(tools[SELECT_TOOL].annotations.read_only_hint)
+            schema = Draft202012Validator(tools[SELECT_TOOL].input_schema)
+            unassigned = dict(args, workspace_id="workspace-a", expected_desired_graph_id=None,
+                expected_desired_realized_projection_id=None, expected_desired_graph_revision=0)
+            self.assertTrue(schema.is_valid(unassigned))
+            for field in ("expected_desired_graph_id", "expected_desired_realized_projection_id",
+                    "expected_desired_graph_revision", "revision", "session_id", "idempotency_key", "draft_id"):
+                self.assertFalse(schema.is_valid({k: v for k, v in unassigned.items() if k != field}))
+            args["receiver_lifecycle"] = {field: before[field] for field in (
+                "current_graph_id", "current_realized_projection_id", "desired_graph_id",
+                "desired_realized_projection_id", "desired_graph_revision")}
+            selected = await self.call(client, SELECT_TOOL, args)
+        self.assertEqual({k: selected[k] for k in first.descriptor()}, first.descriptor())
+        self.assertNotEqual(selected["graph_id"], newer.graph_id)
+        self.assertEqual(selected["desired_graph_revision"], before["desired_graph_revision"] + 1)
+        async with self.client(self.mode) as reader:
+            after = (await self.call(reader, "get_workspace", {}))["workspace"]
+            desired = await self.call(reader, "get_desired_graph", {})
+            revision = await self.call(reader, "get_desired_topology_draft_revision",
+                {"draft_id": first.draft_id, "revision": first.revision})
+        self.assertEqual(desired["authored_graph_id"], revision["graph_id"])
+        self.assertEqual(desired["graph_id"], first.graph_id)
+        self.assertEqual(desired["realized_projection_id"], selected["desired_realized_projection_id"])
+        self.assertEqual(after["desired_graph_revision"], selected["desired_graph_revision"])
+        for key in ("current_graph_id", "current_realized_projection_id"):
+            self.assertEqual(after[key], before[key])
+        # A deliberate cross-surface replay tests owner parity. No automatic replay in the client.
+        path = f"/workspaces/workspace-a/desired-topology-drafts/{first.draft_id}/select"
+        body = {k: v for k, v in args.items() if k != "draft_id"}
+        replay = await self.http.post(path, json=body)
+        self.assertEqual((replay.status_code, replay.json()), (200, selected))
+        conflict = await self.http.post(path, json=dict(body, revision=newer.revision))
+        self.assertEqual(conflict.status_code, 409)
+        actions = [r[0] for r in self.rows("cpk_operation_actions") if r[0]["action_type"] == "select-desired-topology-draft"]
+        self.assertEqual([r["payload"] for r in actions], [selected])
+
+    async def test_selection_rechecks_permission_and_fences_stale_inputs(self):
+        draft = self.create()
+        args = await self.selection_input(draft)
+        base = self.truth()
+        async with self.client(self.mode) as client:
+            self.grants[b"valid-token"] = principal(scopes=(PolicyScope.INSTANCE_WORKSPACE_READ,))
+            denied = await client.call_tool(SELECT_TOOL, dict(args, workspace_id="workspace-a"))
+            self.assertEqual(denied.structured_content["error"]["status"], 403)
+            self.grants[b"valid-token"] = principal()
+            for changes, status in (({"actor_id": "forged"}, 400), ({"revision": 0}, 400),
+                    ({"expected_desired_graph_revision": True}, 400),
+                    ({"expected_desired_graph_revision": args["expected_desired_graph_revision"] + 1}, 409),
+                    ({"expected_desired_realized_projection_id": "stale-projection"}, 409)):
+                with self.subTest(changes=changes):
+                    denied = await client.call_tool(SELECT_TOOL, {"workspace_id": "workspace-a", **args, **changes})
+                    self.assertTrue(denied.is_error)
+                    self.assertEqual(denied.structured_content["error"]["status"], status)
+            self.assertEqual(self.truth(), base)
+            selected = await self.call(client, SELECT_TOOL, args)
+            stale = await client.call_tool(SELECT_TOOL, dict(args, workspace_id="workspace-a", idempotency_key=uuid4().hex))
+            self.assertEqual(stale.structured_content["error"]["status"], 409)
+            same_target = await self.call(client, SELECT_TOOL, await self.selection_input(draft))
+            self.assertEqual(same_target["desired_graph_revision"], selected["desired_graph_revision"] + 1)
+
+    async def test_lost_selection_reply_observes_pointer_without_resending(self):
+        draft = self.create()
+        args = await self.selection_input(draft)
+        transport = await self.assert_transport_loss(SELECT_TOOL, args)
+        self.assertEqual(transport.sends, 1)
+        async with self.client(self.mode) as reader:
+            desired = await self.call(reader, "get_desired_graph", {})
+            workspace = (await self.call(reader, "get_workspace", {}))["workspace"]
+        self.assertEqual(desired["graph_id"], draft.graph_id)
+        self.assertEqual(workspace["desired_graph_revision"], args["expected_desired_graph_revision"] + 1)
+        self.assertEqual(self.dispatches.count("command.desired-topology-draft.select"), 1)
 
     async def test_two_products_save_and_fresh_client_exact_readback(self):
         preview = await self.preview()
