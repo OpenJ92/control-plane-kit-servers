@@ -40,11 +40,22 @@ class GrandparentMcpTests(transport_fixture.StandardMcpFixture, unittest.Isolate
     async def test_direct_command_refuses_before_owner_even_without_client_allowlist(self):
         before = sum(len(service.requests) for service in self.host.services.values())
         async with self.client() as client:
-            for name in ("prepare_deployment", "register_secret_provider", "provision_secret_material"):
+            for name in ("prepare_deployment", "register_secret_provider", "provision_secret_material",
+                         "list_registered_products", "get_registered_product"):
                 result = await client.call_tool(name, {})
                 self.assertTrue(result.is_error)
                 self.assertEqual(result.structured_content["error"]["status"], 404)
         self.assertEqual(sum(len(service.requests) for service in self.host.services.values()), before)
+
+    async def test_read_only_initialize_does_not_offer_product_or_save_tools(self):
+        response = await self.http.post("/mcp", headers={"Accept":"application/json, text/event-stream"}, json={
+            "jsonrpc":"2.0", "id":"guidance", "method":"initialize", "params":{
+                "protocolVersion":"2025-11-25", "capabilities":{},
+                "clientInfo":{"name":"read-only-law", "version":"1"}}})
+        self.assertEqual(response.status_code, 200)
+        guidance = response.json()["result"]["instructions"]
+        for unavailable in ("list_registered_products", "get_registered_product", "create_desired_topology_draft"):
+            self.assertNotIn(unavailable, guidance)
 
 
 class GrandparentMcpLifespanTests(transport_fixture.StandardMcpLifespanTests):
