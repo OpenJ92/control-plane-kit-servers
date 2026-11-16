@@ -40,6 +40,10 @@ def main() -> int:
     run([sys.executable, "scripts/apply_coordinates.py", "--check"])
     run([sys.executable, "-m", "compileall", "-q", "src", "products", "scripts", "tests"])
     if sys.argv[1:] == ["--mcp-source-tests"]:
+        if os.environ.get("CPK_TEST_COHORT") not in {"grandparent", "topology-authoring"}:
+            # The default product package contains the full child commissioning dependencies.
+            run([sys.executable, "-m", "unittest", "discover", "-s", "products/cpk_server/tests",
+                 "-p", "test_child_graph_wire_size.py", "-v"])
         run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_cohort_manifest.py", "-v"])
         for name in (
             "test_standard_mcp.py", "test_http_mcp_boundaries.py", "test_http_host.py",
