@@ -206,6 +206,7 @@ class CpkServerProductDescriptorTests(unittest.TestCase):
             sorted(declarations),
             [
                 "cloudflared-connector",
+                "cloudflared-connector-managed",
                 "cpk-local-gateway",
                 "cpk-server",
                 "cpk-server-docker",
