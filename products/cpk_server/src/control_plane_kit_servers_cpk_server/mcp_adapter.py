@@ -66,9 +66,9 @@ _AUTHORING_COMMANDS = {
     "command.product.import": (
         "Register one public inline container product descriptor. Requires instance:workspace:edit. "
         "Use the released image digest and a public declaration. Keep credentials and configured artifact "
-        "contents outside the document. The caller supplies imported_at and a command key. The catalog "
-        "deduplicates by workspace and canonical descriptor digest, preserving the first admission. "
-        "An active identity with different content conflicts. After a lost reply read get_registered_product "
+        "contents outside the document. The caller supplies imported_at and a command key. On sequential imports, "
+        "a matching workspace and canonical descriptor digest preserves the first admission, and different "
+        "content for the same active identity conflicts. After a lost reply read get_registered_product "
         "by the canonical descriptor SHA-256 and compare identity and status before another request."),
     "command.desired-topology-draft.select": (
         "Set Desired to an exact saved draft revision. Requires instance:workspace:edit and an open session. "
