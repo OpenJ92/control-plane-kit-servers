@@ -192,6 +192,45 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
         self.assertIsNotNone(caught.subgroup(lambda error: error is transport.loss))
         return transport
 
+    async def test_register_portable_managed_connector_alongside_active_seed(self):
+        lane = ROOT / "products" / "cloudflared_connector"
+        codec = ProductDescriptorCodec()
+        seed = codec.decode_document((lane / "product.cpk.json").read_bytes())
+        managed = codec.decode_document((lane / "product.managed.cpk.json").read_bytes())
+        documents = (seed, managed)
+        receipts = []
+        async with self.client(self.mode) as writer:
+            for document in documents:
+                receipt = await self.call(writer, "import_product_descriptor", {
+                    "descriptor_document": json.loads(document.content), "imported_at": NOW,
+                    "idempotency_key": "admit-" + document.product.identity.name})
+                self.assertEqual(receipt["status"], "active")
+                self.assertEqual(receipt["reference"], {
+                    "identity": document.product.identity.descriptor(),
+                    "descriptor_sha256": document.content_digest})
+                receipts.append(receipt)
+        self.assertNotEqual(receipts[0]["registration_id"], receipts[1]["registration_id"])
+
+        async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=self.app),
+                base_url="http://127.0.0.1:8080", headers={"Authorization": "Bearer reader-token"}) as http:
+            async with self.client(self.mode, http=http) as fresh:
+                page = await self.call(fresh, "list_registered_products", {"limit": 100})
+                self.assertIsNone(page["next_cursor"])
+                listed = [item["reference"] for item in page["items"]]
+                for document, receipt in zip(documents, receipts, strict=True):
+                    self.assertEqual(listed.count(receipt["reference"]), 1)
+                    detail = (await self.call(fresh, "get_registered_product",
+                        {"descriptor_sha256": document.content_digest}))["product"]
+                    self.assertEqual(detail["reference"], receipt["reference"])
+                    self.assertEqual(detail["registration_id"], receipt["registration_id"])
+                    self.assertEqual(detail["status"], "active")
+                    self.assertEqual(detail["image"]["digest"], document.product.image.digest)
+                    if document == managed:
+                        self.assertEqual(detail["image"]["platforms"], [
+                            {"os": "linux", "architecture": "amd64", "variant": None}])
+                        self.assertEqual(detail["contract"]["provider_ports"], [
+                            {"provider_socket": "control", "container_port": 8000}])
+
     async def test_import_wrapped_connector_then_recover_exact_registration(self):
         from control_plane_kit_servers_cloudflared_connector import managed
         from products.cloudflared_connector.retained_qualification import REFERENCE
