@@ -43,7 +43,7 @@ class GrandparentMcpTests(transport_fixture.StandardMcpFixture, unittest.Isolate
             for name in ("get_ingress_authority_detail", "register_ingress_authority",
                          "prepare_deployment", "import_product_descriptor", "register_secret_provider", "provision_secret_material",
                          "list_registered_products", "get_registered_product", "preview_product_topology",
-                         "start_operation_session", "create_desired_topology_draft"):
+                         "start_operation_session", "create_desired_topology_draft", "revise_desired_topology_draft"):
                 result = await client.call_tool(name, {})
                 self.assertTrue(result.is_error)
                 self.assertEqual(result.structured_content["error"]["status"], 404)

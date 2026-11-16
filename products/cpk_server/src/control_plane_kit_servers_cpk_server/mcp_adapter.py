@@ -88,7 +88,14 @@ _AUTHORING_COMMANDS = {
         "After a lost reply, a matching pointer cannot identify which request set it. Do not automatically resend. "
         "Selection does not change Current, prepare a plan, approve or deploy."),
     "command.operation-session.start": "Start one durable operation session for an approved topology save. Requires workspace edit. Submit once with its own caller-owned key. If the reply is lost, stop before saving; the outcome is unknown. This does not save, select or deploy a graph.",
-    "command.desired-topology-draft.create": "Save one unselected draft from the preview's normalized public recipe and returned proposal commitment, using the actual session ID and a separate caller-owned key. Requires current workspace edit and owner admission. Submit once; a lost reply is unknown, never an automatic resend. Retain the workspace/draft/revision/graph receipt for exact readback. This does not select Desired, plan or deploy.",
+    "command.desired-topology-draft.create": (
+        "Save a complete authored graph as an unselected draft. Supply an open workspace session, title and "
+        "caller-owned key. Workspace edit and owner admission apply. Submit once. After a lost reply the "
+        "outcome is unknown. Use the returned workspace, draft, revision and graph ID for exact readback."),
+    "command.desired-topology-draft.revise": (
+        "Append a complete authored graph to an existing draft using the observed head revision, an open session "
+        "and a caller-owned key. Requires workspace edit. Submit once. After a lost reply, read the exact "
+        "expected revision with a fresh client. Its number alone cannot identify the writer. Do not automatically retry."),
 }
 
 
@@ -121,7 +128,16 @@ def _product_recipe_schema():
         "connections": {"type": "array", "maxItems": 64, "items": connection}})
 
 
-def _input_schema(route):
+def _graph_schema():
+    # Core owns the nested node, edge, runtime and authority variants.
+    entries = {"type": "object", "additionalProperties": {"type": "object"}}
+    graph = _closed_schema({"name": {"type": "string"}, "nodes": entries, "edges": entries, "runtimes": entries})
+    for field in ("public_ingresses", "delegation_authorities"):
+        graph["properties"][field] = {"type": "array", "items": {"type": "object"}}
+    return graph
+
+
+def _input_schema(route, *, supports_recipe=True):
     if route.route_id in ("command.ingress-authority.register", "read.ingress-authority-detail"):
         identifier = {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[A-Za-z0-9._-]+$"}
         coordinates = {"workspace_id": identifier, "authority_ref": {
@@ -175,14 +191,29 @@ def _input_schema(route):
                 revision={"type": "integer", "minimum": 1, "maximum": 9223372036854775807},
                 expected_desired_graph_id=nullable_text, expected_desired_realized_projection_id=nullable_text,
                 expected_desired_graph_revision={"type": "integer", "minimum": 0, "maximum": 9223372036854775806})
+        elif route.route_id == "command.desired-topology-draft.revise":
+            properties.update(session_id=text, draft_id=text, graph=_graph_schema(),
+                expected_head_revision={"type": "integer", "minimum": 1, "maximum": 9223372036854775806})
         else:
             properties["title"] = text
-        if route.route_id == "command.desired-topology-draft.create":
-            properties.update(session_id=text, product_recipe=_product_recipe_schema(),
-                expected_proposal_commitment=_closed_schema({"profile": {"const": "registered-product-topology-public.v1"},
-                    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$", "minLength": 64, "maxLength": 64}}))
+        create = route.route_id == "command.desired-topology-draft.create"
+        if create:
+            properties.update(session_id=text)
         schema = _closed_schema(properties)
-        if route.route_id in ("command.desired-topology-draft.create", "command.desired-topology-draft.select"):
+        if create:
+            properties["graph"] = _graph_schema()
+            if supports_recipe:
+                properties.update(product_recipe=_product_recipe_schema(),
+                    expected_proposal_commitment=_closed_schema({"profile": {"const": "registered-product-topology-public.v1"},
+                        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$", "minLength": 64, "maxLength": 64}}))
+                schema["oneOf"] = [
+                    {"required": ["graph"], "not": {"anyOf": [{"required": ["product_recipe"]},
+                                                               {"required": ["expected_proposal_commitment"]}]}},
+                    {"required": ["product_recipe", "expected_proposal_commitment"], "not": {"required": ["graph"]}},
+                ]
+            else:
+                schema["required"].append("graph")
+        if create or route.route_id in ("command.desired-topology-draft.revise", "command.desired-topology-draft.select"):
             schema["properties"]["receiver_lifecycle"] = _closed_schema({
                 "current_graph_id": text, "current_realized_projection_id": text,
                 "desired_graph_id": nullable_text,
@@ -262,18 +293,25 @@ class StandardMcpAdapter:
                 annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False))
         if profile == "standard":
             reads = {route.route_id for route in self.routes.values()}
+            bindings = {item.http_route_id: item for item in composition.handoff.command_parity.commands}
+            supports_recipe = "read.product-topology-preview" in reads
             for route_id, description in _AUTHORING_COMMANDS.items():
                 prerequisite = {
+                    "command.desired-topology-draft.create": "read.desired-topology-draft-revision",
+                    "command.desired-topology-draft.revise": "read.desired-topology-draft-revision",
+                    "command.operation-session.start": "read.desired-topology-draft-revision",
                     "command.product.import": "read.product-detail",
                     "command.ingress-authority.register": "read.ingress-authority-detail",
                 }.get(route_id, "read.product-topology-preview")
-                if prerequisite not in reads or route_id in HTTP_ONLY_COMMAND_ROUTE_IDS:
+                if prerequisite not in reads or route_id not in bindings or route_id in HTTP_ONLY_COMMAND_ROUTE_IDS:
                     continue
-                binding = next(item for item in composition.handoff.command_parity.commands if item.http_route_id == route_id)
+                binding = bindings[route_id]
+                if supports_recipe and route_id == "command.desired-topology-draft.create":
+                    description += " For a previewed public recipe, supply its normalized recipe and returned proposal commitment."
                 route = composition.http_api.route(route_id)
                 self.routes[binding.mcp_tool_name] = route
                 self.tools[binding.mcp_tool_name] = Tool(name=binding.mcp_tool_name, description=description,
-                    input_schema=_input_schema(route), output_schema={"type": "object",
+                    input_schema=_input_schema(route, supports_recipe=supports_recipe), output_schema={"type": "object",
                         "description": "Bounded owner receipt; preserve returned coordinates without guessing or selecting latest."},
                     annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False,
                         idempotent_hint=False, open_world_hint=False))
@@ -341,7 +379,10 @@ class StandardMcpAdapter:
         response = await _dispatch_application_async(self.application, CpkServerServiceRequest(
             surface="mcp", route_id=route.route_id, service_role=route.service_role,
             path_parameters={}, payload=dict(arguments), principal=principal))
+        graph_save = route.route_id in ("command.desired-topology-draft.create", "command.desired-topology-draft.revise") and "graph" in arguments
         if isinstance(response, CpkServerBoundaryResponse):
+            if graph_save:
+                return _failure(response.status, "graph draft request failed")
             if route.route_id == "command.ingress-authority.register":
                 return _failure(response.status, "ingress registration request failed")
             if _json_frame_error(response.body, 8192) is not None:
@@ -350,6 +391,15 @@ class StandardMcpAdapter:
         if _json_frame_error(response, route.response_schema.max_bytes) is not None:
             # The owner might already have committed; no rollback/retry claim.
             return _failure(503, "application response unavailable")
+        if graph_save:
+            revision = arguments.get("expected_head_revision", 0) + 1
+            if (not isinstance(response, dict) or response.get("workspace_id") != arguments["workspace_id"]
+                    or type(response.get("revision")) is not int or response["revision"] != revision
+                    or any(not isinstance(response.get(key), str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,512}", response[key])
+                           for key in ("graph_id", "draft_id"))
+                    or ("draft_id" in arguments and response["draft_id"] != arguments["draft_id"])):
+                return _failure(503, "graph draft outcome unavailable")
+            return _result({key: response[key] for key in ("workspace_id", "draft_id", "revision", "graph_id")})
         if route.route_id == "command.ingress-authority.register":
             # The HTTP owner's full record contains protected reference coordinates.
             expected = {"workspace_id": arguments["workspace_id"], "authority_ref": arguments["authority_ref"],

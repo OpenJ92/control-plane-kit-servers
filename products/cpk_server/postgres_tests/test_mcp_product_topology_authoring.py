@@ -494,7 +494,7 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
         create = {**base, "graph": graph, "title": "Full graph", "idempotency_key": "full-create"}
         async with self.client(self.mode) as client:
             tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-            self.assertIn("revise_desired_topology_draft", tools)
+            self.assertIn("revise_desired_topology_draft", sorted(tools))
             first = await self.call(client, "create_desired_topology_draft", create)
             self.assertEqual(first["revision"], 1)
             revise = {**base, "draft_id": first["draft_id"], "expected_head_revision": 1,
@@ -519,6 +519,20 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
                 self.assertEqual(detail, http.json())
                 with self.unit_of_work() as uow:
                     self.assertEqual(uow.stores.graphs.get(receipt["graph_id"]).graph_descriptor, authored)
+
+    async def test_lost_full_graph_revision_reply_submits_once(self):
+        draft = self.create()
+        graph = DEFAULT_GRAPH_CODEC.encode(self.graph("after interrupted reply"))
+        args = {"session_id": self.sessions["workspace-a"], "draft_id": draft.draft_id,
+                "expected_head_revision": draft.revision, "idempotency_key": "revise-lost", "graph": graph}
+        transport = await self.assert_transport_loss("revise_desired_topology_draft", args)
+        self.assertEqual(transport.sends, 1)
+        async with self.client(self.mode) as reader:
+            observed = await self.call(reader, "get_desired_topology_draft_revision",
+                {"draft_id": draft.draft_id, "revision": draft.revision + 1})
+        with self.unit_of_work() as uow:
+            self.assertEqual(uow.stores.graphs.get(observed["graph_id"]).graph_descriptor, graph)
+        self.assertEqual(self.dispatches.count("command.desired-topology-draft.revise"), 1)
 
     async def test_two_products_save_and_fresh_client_exact_readback(self):
         preview = await self.preview()
