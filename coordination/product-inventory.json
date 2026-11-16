@@ -108,6 +108,16 @@
       "descriptor_issue": "OpenJ92/control-plane-kit-servers#378",
       "status": "source-implementation",
       "role": "one OCI with visitor HTTP and protected SDK local-index readiness; published-image and deployment qualification pending"
+    },
+    {
+      "product_id": "cloudflared-connector-managed",
+      "target_directory": "products/cloudflared_connector",
+      "dockerfile": "products/cloudflared_connector/Dockerfile.managed",
+      "implementation_issue": "OpenJ92/control-plane-kit-servers#188",
+      "image_issue": "OpenJ92/control-plane-kit-servers#356",
+      "descriptor_issue": "OpenJ92/control-plane-kit-servers#424",
+      "status": "descriptor-published",
+      "role": "SDK-wrapped Cloudflare tunnel connector with managed control and health reads"
     }
   ],
   "bootstrap_reserved_products": [

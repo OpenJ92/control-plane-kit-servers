@@ -76,6 +76,21 @@ product_ids = {item.product_id for item in load_catalogue()}
 assert {"cpk-server", "hello-server", "postgres-server"} <= product_ids
 ```
 
+The Cloudflared connector has two independently selectable revision 1 products.
+The existing `control-plane-kit/cloudflared-connector/1` selects the ordinary
+connector. `control-plane-kit/cloudflared-connector-managed/1` selects the
+SDK-wrapped connector with the required control configuration and the HTTP
+control socket on port 8000. Both can be active in the same workspace.
+
+The managed catalog entry points to
+[`product.managed.cpk.json`](products/cloudflared_connector/product.managed.cpk.json).
+Its canonical descriptor SHA-256 is
+`79791e9167597b7cfbf616451d37f2914ed28ebc5c6393c676dbdd959b69db85`.
+The declared `linux/amd64` image has OCI digest
+`sha256:812262a6cc6b2e6971492a37f9135655d4c7b82aedd5435a483476f77b642091`.
+Use the descriptor digest for exact catalog readback and the OCI digest for the
+container image. [Retained image qualification](https://github.com/OpenJ92/control-plane-kit-servers/issues/356)
+
 The catalogue contains completed-product publication records only. Loading it
 does not import product process code.
 

@@ -128,6 +128,7 @@ class PackageMetadataTests(unittest.TestCase):
                 [item.product_id for item in catalogue],
                 [
                     "cloudflared-connector",
+                    "cloudflared-connector-managed",
                     "cpk-local-gateway",
                     "cpk-server",
                     "cpk-server-docker",
@@ -177,6 +178,7 @@ class PackageMetadataTests(unittest.TestCase):
                 [item.product_id for item in catalogue],
                 [
                     "cloudflared-connector",
+                    "cloudflared-connector-managed",
                     "cpk-local-gateway",
                     "cpk-server",
                     "cpk-server-docker",
