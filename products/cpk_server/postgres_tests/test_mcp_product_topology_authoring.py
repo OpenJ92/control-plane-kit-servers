@@ -203,7 +203,7 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
         repository, digest = REFERENCE.split("@")
         registry, path = repository.split("/", 1)
         document = codec.encode_document(replace(seed.product,
-            image=OciImageReference(registry, path, digest),
+            display_name=None, description=None, image=OciImageReference(registry, path, digest),
             runtime_contract=managed.declared_runtime_contract()))
         reference = {"identity": document.product.identity.descriptor(), "descriptor_sha256": document.content_digest}
         args = {"descriptor_document": json.loads(document.content), "imported_at": NOW,
@@ -249,6 +249,7 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
             # A separately requested duplicate preserves the original admission.
             duplicate = await self.call(fresh, tool, {**args, "idempotency_key": "separate-import"})
             self.assertEqual((detail["product"]["image"]["digest"], detail["product"]["status"]), (digest, "active"))
+            self.assertEqual(duplicate["product"], {"display_name": None, "description": None})
             self.assertEqual(duplicate["workspace_id"], "workspace-a")
             self.assertEqual(duplicate["reference"], reference)
             self.assertEqual(duplicate["registration_id"], detail["product"]["registration_id"])

@@ -123,7 +123,8 @@ def _input_schema(route):
             "identity": _closed_schema({"namespace": text, "name": text,
                 "contract_revision": {"type": "integer", "minimum": 1}}),
             "image": {"type": "object"}, "runtime_contract": contract,
-            "product_family": text, "display_name": {"type": "string"}, "description": {"type": "string"},
+            "product_family": text, "display_name": {"type": ["string", "null"]},
+            "description": {"type": ["string", "null"]},
         })
         document = _closed_schema({"schema": {"enum": ["control-plane-kit.product",
             "control-plane-kit.product/v2"]}, "product": product})
@@ -256,7 +257,7 @@ class StandardMcpAdapter:
             if profile == "standard" else
             "This profile exposes only four saved-state reads. Product discovery and topology writes are unavailable here. "
         )
-        if authoring:
+        if "preview_product_topology" in self.tools:
             discovery_guidance += (
                 "Use preview_product_topology with exact registered pins and explicit public settings. "
                 "Retain its normalized recipe and public proposal commitment; do not rebuild canonical graph bytes. "
