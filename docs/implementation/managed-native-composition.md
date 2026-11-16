@@ -1,5 +1,9 @@
 # Managed native connection composition
 
+## Same-run connector installation (#411)
+
+For a newly added management connector on a retained runtime, the adapter takes the worker's installation proof and checks its registration, ingress, source events and selected token against the requested read. It reconstructs the grant-free connector start from that run and forwards its receipt and allocation activity to the Docker reader. The complete health selection includes the native read and the four signed reads on the Hello graph. Selection alone performs no reads on the daemon.
+
 ## #225 native ingress custody evidence selection
 
 Servers selects accepted Operations merge

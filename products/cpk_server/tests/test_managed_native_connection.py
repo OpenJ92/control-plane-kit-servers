@@ -110,6 +110,71 @@ class ManagedNativeConnectionTests(unittest.TestCase):
                 self.assertEqual(self.select(world, native), (world.request.activity_id,))
         self.assert_pure()
 
+    def test_new_connector_forwards_only_the_matching_run_installation(self):
+        from control_plane_kit_core.planning import AllocatePublicIngress, StartNode
+        from control_plane_kit_core.public_ingress import IngressAuthorityReference, PublicIngressTarget
+        from control_plane_kit_core.secret_installation import secret_installation_correlation_for_request
+        from control_plane_kit_operations.connector_installation import RunConnectorInstallation
+        from control_plane_kit_servers_cpk_server.managed_health import ManagedHealthUnavailable
+
+        world = NativeMaterial(retained=True)
+        graph = world.desired
+        runtime = graph.runtimes["docker"]
+        ingress, = graph.public_ingresses
+        connector = replace(graph.nodes["connector"], secret_deliveries=(), secret_selections=())
+        sibling = replace(connector, node_id="application-connector",
+            block_spec=replace(connector.block_spec, role_id="application-connector"))
+        application = replace(ingress, ingress_id="application", connector_node_id=sibling.node_id,
+            hostname="application.example.invalid", authority_ref=IngressAuthorityReference("application"),
+            target=PublicIngressTarget("api", graph.nodes["api"].sockets.providers[0].name))
+        world.current = replace(graph, nodes={"api": graph.nodes["api"]}, public_ingresses=(),
+            runtimes={"docker": replace(runtime, children=("api",), management=None)})
+        world.desired = replace(graph, nodes={**graph.nodes, "connector": connector, sibling.node_id: sibling},
+            public_ingresses=(ingress, application),
+            runtimes={"docker": replace(runtime, children=(*runtime.children, sibling.node_id))})
+        pair = tuple(validate_graph(DEFAULT_GRAPH_CODEC.decode(DEFAULT_GRAPH_CODEC.encode(g)))
+            for g in (world.current, world.desired))
+        plan = core.compile_existing_runtime_bootstrap_activity_plan(*pair)
+        self.assertTrue(plan.ready_for_execution)
+        start, = (step for step in plan.activities if type(step.operation) is StartNode
+            and step.operation.target.node_id == connector.node_id)
+        allocate, = (step for step in plan.activities if type(step.operation) is AllocatePublicIngress
+            and step.operation.target.ingress_id == ingress.ingress_id)
+        native, = (step for step in plan.activities if getattr(step.operation, "stage", None)
+            is core.ManagementBootstrapStage.CONNECTOR_CONNECTED)
+        request = replace(world.request, activity_id=native.activity_id, operation=native.operation)
+        former = world.realization.connector_installation
+        origin = replace(former.original_request, activity_id=start.activity_id, operation=start.operation,
+            source=replace(request.source, intent_event_id=former.original_request.effect_id))
+        receipt = replace(former.receipt,
+            request_fingerprint=secret_installation_correlation_for_request(origin).request_fingerprint)
+        proof = RunConnectorInstallation(origin.source, origin.authority_ref, world.authority.registration_id,
+            ingress.ingress_id, allocate.activity_id.value, "allocation-start", "allocation-success",
+            start.activity_id.value, origin.effect_id, origin.configuration_instances.instances[0],
+            origin.products[0].secret_selections[0], receipt)
+        world.realization.plan = world.plan = plan
+        world.realization.base_graph.graph_descriptor = DEFAULT_GRAPH_CODEC.encode(world.current)
+        world.realization.desired_graph.graph_descriptor = DEFAULT_GRAPH_CODEC.encode(world.desired)
+        world.realization.connector_installation = None
+        world.realization.run_connector_installation = proof
+        bridge = replace(self.native, product_document=world.document)
+        self.assertEqual(self.select(world, bridge), (native.activity_id,))
+        with patch.object(DockerConnectorConnectionObserver, "observe",
+                return_value=ConnectorConnectionObservation(ConnectorConnectionOutcome.REFUSED)) as observe:
+            asyncio.run(bridge.observe_connection(world.realization, request, world.authority))
+            self.assertEqual(observe.call_args.kwargs["installation_request"], origin)
+            self.assertEqual(observe.call_args.kwargs["installation_receipt"], receipt)
+            self.assertEqual(observe.call_args.kwargs["allocation_activity_id"], allocate.activity_id)
+            observe.reset_mock()
+            for foreign in (None, replace(proof, runtime_registration_id="other"),
+                    replace(proof, ingress_id=application.ingress_id), replace(proof, token=replace(proof.token,
+                        version_id="other-version")), replace(proof, allocation_success_event_id=origin.effect_id)):
+                world.realization.run_connector_installation = foreign
+                with self.assertRaises(ManagedHealthUnavailable):
+                    asyncio.run(bridge.observe_connection(world.realization, request, world.authority))
+            observe.assert_not_called()
+        self.assert_pure()
+
     def test_current_authority_and_unique_actual_sdk_binding_are_required(self):
         for authorities in ((), (self.world.authority, self.world.authority),
                 (replace(self.world.authority, workspace_id="workspace-b"),)):
