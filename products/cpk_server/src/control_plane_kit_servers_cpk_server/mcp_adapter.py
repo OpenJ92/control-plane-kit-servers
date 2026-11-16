@@ -27,6 +27,10 @@ _MESSAGE = TypeAdapter(JSONRPCMessage)
 # Deliberately curated: route semantics and authorization remain with Operations.
 # Names come from the existing Core parity contract, not another command vocabulary.
 _READS = {
+    "read.ingress-authority-detail": (
+        "Inspect a named ingress authority using ingress-authority:read in the workspace. "
+        "Compare the registration ID, active status and public hostname policy. Protected references are redacted. "
+        "A denied or absent read cannot verify a registration."),
     "read.product-topology-preview": "Preview a public recipe over exact active registered product references. Requires workspace read; does not save a session or graph. Retain the normalized recipe and opaque public proposal commitment for a separately authorized save.",
     "read.products": "List active registered products in this workspace, using bounded pages and their exact immutable references. This is discovery, not authorization to instantiate or deploy.",
     "read.product-detail": "Inspect an exact registered product's status and redacted noncanonical contract display. Detail can show a revoked registration; never use it for new authoring. Canonical descriptor bytes and material values are not returned.",
@@ -63,6 +67,13 @@ _GRANDPARENT_READS = frozenset(("read.workspace", "read.desired-graph",
     "read.desired-topology-draft-revision", "read.desired-topology-draft-revision-attempts"))
 
 _AUTHORING_COMMANDS = {
+    "command.ingress-authority.register": (
+        "Register one exact hostname using ingress-authority:register in the workspace. "
+        "Supply the approved reference coordinates and a caller-owned key. This only records configuration. "
+        "After a lost reply use get_ingress_authority_detail with separate read permission. Compare active status "
+        "and the independently expected registration ID. A match establishes the current binding, but cannot "
+        "identify which request first registered it. Without that ID public hostname details alone are insufficient. "
+        "Do not automatically resubmit."),
     "command.product.import": (
         "Register one public inline container product descriptor. Requires instance:workspace:edit. "
         "Use the released image digest and a public declaration. Keep credentials and configured artifact "
@@ -111,6 +122,23 @@ def _product_recipe_schema():
 
 
 def _input_schema(route):
+    if route.route_id in ("command.ingress-authority.register", "read.ingress-authority-detail"):
+        identifier = {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[A-Za-z0-9._-]+$"}
+        coordinates = {"workspace_id": identifier, "authority_ref": {
+            "type": "string", "maxLength": 128, "pattern": "^[a-z][a-z0-9._-]*$"}}
+        if route.route_id == "read.ingress-authority-detail":
+            return _closed_schema(coordinates)
+        hostname = {"type": "string", "maxLength": 253, "pattern": "^[a-z0-9.-]+$"}
+        reference = {"type": "string", "pattern": "^secret://[a-z][a-z0-9-]*/[A-Za-z0-9._/-]+$",
+            "maxLength": 2048, "description": "Approved secret reference."}
+        authority = _closed_schema({"provider_kind": {"const": "cloudflare"}, "account_id": identifier,
+            "zone_id": identifier, "zone_name": hostname, "allowed_hostname_pattern": hostname,
+            "api_token_ref": reference, "generated_secret_provider_registration_id": identifier,
+            "generated_secret_reference_prefix": reference})
+        return _closed_schema({**coordinates, "authority": authority,
+            "admitted_at": {"type": "string", "maxLength": 27,
+                "pattern": r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:[.][0-9]{6})?Z$"},
+            "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 512}})
     if route.route_id == "command.product.import":
         # Only inline public declarations. Core decodes the complete document and
         # Operations computes its canonical digest and admits it to the workspace.
@@ -235,9 +263,10 @@ class StandardMcpAdapter:
         if profile == "standard":
             reads = {route.route_id for route in self.routes.values()}
             for route_id, description in _AUTHORING_COMMANDS.items():
-                # Catalog imports need exact readback. Recipe commands need the
-                # preview contract. Older cohorts expose only supported groups.
-                prerequisite = "read.product-detail" if route_id == "command.product.import" else "read.product-topology-preview"
+                prerequisite = {
+                    "command.product.import": "read.product-detail",
+                    "command.ingress-authority.register": "read.ingress-authority-detail",
+                }.get(route_id, "read.product-topology-preview")
                 if prerequisite not in reads or route_id in HTTP_ONLY_COMMAND_ROUTE_IDS:
                     continue
                 binding = next(item for item in composition.handoff.command_parity.commands if item.http_route_id == route_id)
@@ -313,12 +342,23 @@ class StandardMcpAdapter:
             surface="mcp", route_id=route.route_id, service_role=route.service_role,
             path_parameters={}, payload=dict(arguments), principal=principal))
         if isinstance(response, CpkServerBoundaryResponse):
+            if route.route_id == "command.ingress-authority.register":
+                return _failure(response.status, "ingress registration request failed")
             if _json_frame_error(response.body, 8192) is not None:
                 return _failure(503, "application response unavailable")
             return _result(response.body, error=True)
         if _json_frame_error(response, route.response_schema.max_bytes) is not None:
             # The owner might already have committed; no rollback/retry claim.
             return _failure(503, "application response unavailable")
+        if route.route_id == "command.ingress-authority.register":
+            # The HTTP owner's full record contains protected reference coordinates.
+            expected = {"workspace_id": arguments["workspace_id"], "authority_ref": arguments["authority_ref"],
+                "provider_kind": "cloudflare", "status": "active"}
+            registration_id = response.get("registration_id")
+            if (not isinstance(registration_id, str) or not re.fullmatch(r"iauth_[0-9a-f]{64}", registration_id)
+                    or any(response.get(key) != value for key, value in expected.items())):
+                return _failure(503, "ingress registration outcome unavailable")
+            return _result({**expected, "registration_id": registration_id})
         return _result(response)
 
     async def __call__(self, scope, receive, send):
