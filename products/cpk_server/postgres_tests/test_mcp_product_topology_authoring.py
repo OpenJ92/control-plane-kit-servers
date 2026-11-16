@@ -211,7 +211,7 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
 
         async with self.client(self.mode) as writer:
             tools = {item.name: item for item in (await writer.list_tools()).tools}
-            self.assertIn(tool, tools)
+            self.assertIn(tool, set(tools))
             self.assertFalse(tools[tool].annotations.read_only_hint)
             before = await self.call(writer, "list_registered_products", {"limit": 100})
             for extra in ({"actor_id": "forged"}, {"source": {"path": "/tmp/descriptor"}},
@@ -219,6 +219,15 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
                 result = await writer.call_tool(tool, {"workspace_id": "workspace-a", **args, **extra})
                 self.assertTrue(result.is_error)
                 self.assertEqual(result.structured_content["error"]["status"], 400)
+            for field in ("configuration_artifacts", "secret_deliveries"):
+                material = deepcopy(args)
+                material["descriptor_document"]["product"]["runtime_contract"][field] = [{"content": "fixture-private"}]
+                rejected = await writer.call_tool(tool, {"workspace_id": "workspace-a", **material})
+                self.assertEqual(rejected.structured_content["error"]["status"], 400)
+                self.assertNotIn("fixture-private", str(rejected.structured_content))
+            oversized = {**args, "idempotency_key": "x" * 65536}
+            rejected = await writer.call_tool(tool, {"workspace_id": "workspace-a", **oversized})
+            self.assertEqual(rejected.structured_content["error"]["status"], 413)
             wrong = await writer.call_tool(tool, {"workspace_id": "workspace-b", **args})
             self.assertTrue(wrong.is_error)
             self.assertIn(wrong.structured_content["error"]["status"], (403, 404))
@@ -239,6 +248,8 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
             self.assertEqual(detail["product"]["reference"], reference)
             # A separately requested duplicate preserves the original admission.
             duplicate = await self.call(fresh, tool, {**args, "idempotency_key": "separate-import"})
+            self.assertEqual((detail["product"]["image"]["digest"], detail["product"]["status"]), (digest, "active"))
+            self.assertEqual(duplicate["workspace_id"], "workspace-a")
             self.assertEqual(duplicate["reference"], reference)
             self.assertEqual(duplicate["registration_id"], detail["product"]["registration_id"])
             http = await self.http.post("/workspaces/workspace-a/products/import", json=args)
@@ -246,6 +257,10 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
             conflict = {**args, "descriptor_document": json.loads(seed.content)}
             refused = await fresh.call_tool(tool, {"workspace_id": "workspace-a", **conflict})
             self.assertTrue(refused.is_error)
+            print("Wrapped connector catalog fixture:", reference, "conflict status:", refused.structured_content["error"]["status"])
+            missing = await fresh.call_tool("get_registered_product", {
+                "workspace_id": "workspace-a", "descriptor_sha256": seed.content_digest})
+            self.assertEqual(missing.structured_content["error"]["status"], 404)
             self.assertEqual(await self.call(fresh, "list_registered_products", {"limit": 100}), listed)
             self.assertEqual(await self.call(fresh, "get_registered_product",
                 {"descriptor_sha256": document.content_digest}), detail)

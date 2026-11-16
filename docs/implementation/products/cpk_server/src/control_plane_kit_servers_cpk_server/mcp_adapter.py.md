@@ -65,3 +65,12 @@ machine, resource framework, persistence, grant or credential installation.
 The historical custom wire boundary remains separately at `/mcp/legacy`.
 Source/client tests are not evidence of deployed compatibility or installed Codex
 access. Full child acceptance and dependency resolution evidence remain in #397.
+
+For #422, standard MCP exposes the Core product-import binding alongside exact
+product detail. The input is an inline public declaration and a canonical UTC
+timestamp. Operations resolves the authenticated actor, enforces workspace edit,
+and owns first admission, conflict detection and the public receipt. Duplicate
+content preserves the original registration. After a lost response, read the
+canonical descriptor digest in the same workspace and compare identity and status.
+The image digest identifies the OCI artifact. The descriptor digest also covers
+the declared runtime contract. Product import performs no registry or provider I/O.

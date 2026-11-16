@@ -63,6 +63,13 @@ _GRANDPARENT_READS = frozenset(("read.workspace", "read.desired-graph",
     "read.desired-topology-draft-revision", "read.desired-topology-draft-revision-attempts"))
 
 _AUTHORING_COMMANDS = {
+    "command.product.import": (
+        "Register one public inline container product descriptor. Requires instance:workspace:edit. "
+        "Use the released image digest and a public declaration. Keep credentials and configured artifact "
+        "contents outside the document. The caller supplies imported_at and a command key. The catalog "
+        "deduplicates by workspace and canonical descriptor digest, preserving the first admission. "
+        "An active identity with different content conflicts. After a lost reply read get_registered_product "
+        "by the canonical descriptor SHA-256 and compare identity and status before another request."),
     "command.desired-topology-draft.select": (
         "Set Desired to an exact saved draft revision. Requires instance:workspace:edit and an open session. "
         "Read get_workspace for the expected Desired graph, projection and generation, and inspect the exact "
@@ -104,6 +111,25 @@ def _product_recipe_schema():
 
 
 def _input_schema(route):
+    if route.route_id == "command.product.import":
+        # Only inline public declarations. Core decodes the complete document and
+        # Operations computes its canonical digest and admits it to the workspace.
+        text = {"type": "string", "minLength": 1}
+        empty = {"type": "array", "maxItems": 0}
+        contract = {"type": "object", "properties": {
+            "configuration_artifacts": empty, "secret_deliveries": empty}}
+        product = _closed_schema({
+            "kind": {"const": "container-server"},
+            "identity": _closed_schema({"namespace": text, "name": text,
+                "contract_revision": {"type": "integer", "minimum": 1}}),
+            "image": {"type": "object"}, "runtime_contract": contract,
+            "product_family": text, "display_name": {"type": "string"}, "description": {"type": "string"},
+        })
+        document = _closed_schema({"schema": {"enum": ["control-plane-kit.product",
+            "control-plane-kit.product/v2"]}, "product": product})
+        return _closed_schema({"workspace_id": text, "descriptor_document": document,
+            "imported_at": {**text, "description": "Canonical UTC import timestamp."},
+            "idempotency_key": {**text, "description": "Required caller key; catalog identity uses the descriptor digest."}})
     if route.route_id == "read.product-topology-preview":
         return _closed_schema({"workspace_id": {"type": "string"}, "recipe": _product_recipe_schema()})
     if route.route_id in _AUTHORING_COMMANDS:
@@ -202,13 +228,13 @@ class StandardMcpAdapter:
                     "a managed-verification/readiness-intent input here. After interruption query existing references; ambiguous association stays uncertain.",
                 input_schema=_input_schema(route), output_schema={"type": "object", "description": "Bounded owner preparation result or safe error; preserves plan/approval references."},
                 annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False))
-        # Advertise the recipe writes only when the selected owner contract
-        # declares preview. Older selected cohorts keep their existing tools.
-        authoring = profile == "standard" and any(
-            route.route_id == "read.product-topology-preview" for route in self.routes.values())
-        if authoring:
+        if profile == "standard":
+            reads = {route.route_id for route in self.routes.values()}
             for route_id, description in _AUTHORING_COMMANDS.items():
-                if route_id in HTTP_ONLY_COMMAND_ROUTE_IDS:
+                # Catalog imports need exact readback. Recipe commands need the
+                # preview contract. Older cohorts expose only supported groups.
+                prerequisite = "read.product-detail" if route_id == "command.product.import" else "read.product-topology-preview"
+                if prerequisite not in reads or route_id in HTTP_ONLY_COMMAND_ROUTE_IDS:
                     continue
                 binding = next(item for item in composition.handoff.command_parity.commands if item.http_route_id == route_id)
                 route = composition.http_api.route(route_id)
