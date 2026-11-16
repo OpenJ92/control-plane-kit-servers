@@ -326,6 +326,34 @@ class StandardMcpTests(StandardMcpFixture, unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result.structured_content["error"]["status"], 403)
             self.assertEqual(touched, [])
 
+    async def test_full_graph_receipt_uses_the_owner_coordinate_contract(self):
+        planning = self.host.services[ControlPlaneServiceRole.PLANNING]
+        args = {"workspace_id": "workspace-a", "session_id": "s", "draft_id": "draft:å",
+                "expected_head_revision": 1, "graph": {"name": "fixture", "nodes": {}, "edges": {}, "runtimes": {}},
+                "idempotency_key": "owner-coordinate-law"}
+        receipt = {"workspace_id": args["workspace_id"], "draft_id": args["draft_id"],
+                   "revision": 2, "graph_id": "graph:β"}
+        for mode in ("auto", "legacy"):
+            async with self.client(mode) as client:
+                for change in ({}, {"workspace_id": "other"}, {"draft_id": "other"}, {"revision": 3},
+                               {"revision": True}, {"graph_id": " "}, {"graph_id": "abc\n"},
+                               {"graph_id": "x" * 513}):
+                    with self.subTest(mode=mode, change=tuple(change)):
+                        calls = []
+                        def response(request):
+                            calls.append(request.route_id)
+                            return {**receipt, **change, "unexpected": "private-fixture-field"}
+                        planning.handle = response
+                        result = await client.call_tool("revise_desired_topology_draft", args)
+                        self.assertEqual(calls, ["command.desired-topology-draft.revise"])
+                        self.assertNotIn("private-fixture-field", str(result.content))
+                        if change:
+                            self.assertTrue(result.is_error)
+                            self.assertEqual(result.structured_content["error"]["status"], 503)
+                        else:
+                            self.assertFalse(result.is_error)
+                            self.assertEqual(result.structured_content, receipt)
+
     async def test_principals_are_request_local_and_changed_credentials_are_rechecked(self):
         principals = {name: replace(_principal(), identity=replace(_principal().identity, subject_id=name))
                       for name in ("first", "second")}
