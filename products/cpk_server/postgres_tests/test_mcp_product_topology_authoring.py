@@ -16,14 +16,15 @@ from jsonschema import Draft202012Validator
 from psycopg import sql
 from control_plane_kit_core.operations import ControlPlaneServiceRole
 from control_plane_kit_core.policies import PolicyScope
-from control_plane_kit_core.products import ProductDescriptorCodec
+from control_plane_kit_core.products import OciImageReference, ProductDescriptorCodec
 from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC, DeploymentGraph
+from control_plane_kit_core.types import Protocol
 from control_plane_kit_operations.cpk_server import (
     CpkServerLifecycleService, CpkServerPlanningService, CpkServerReadService,
     CpkServerUnsupportedService,
 )
 from control_plane_kit_operations.product_topology_authoring import ProductTopologyAuthoringService
-from control_plane_kit_operations.products import InlineDescriptorSource
+from control_plane_kit_operations.products import InlineDescriptorSource, ProductRegistrationService
 from control_plane_kit_operations.workflows import IdempotencyKey, OperationCommandService
 from control_plane_kit_operations.workspaces import CreateWorkspace, WorkspaceCommandService
 
@@ -104,6 +105,7 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
                 operations=OperationCommandService(self.unit_of_work, clock=lambda: NOW,
                     id_factory=lambda: uuid4().hex)),
             ControlPlaneServiceRole.PLANNING: CpkServerPlanningService(None,
+                products=ProductRegistrationService(self.unit_of_work),
                 desired_topology_drafts=self.catalogue(),
                 product_topologies=ProductTopologyAuthoringService(self.unit_of_work)),
         })
@@ -189,6 +191,92 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
         self.assertIsNotNone(caught, "SDK did not report the injected transport loss")
         self.assertIsNotNone(caught.subgroup(lambda error: error is transport.loss))
         return transport
+
+    async def test_import_wrapped_connector_then_recover_exact_registration(self):
+        from control_plane_kit_servers_cloudflared_connector import managed
+        from products.cloudflared_connector.retained_qualification import REFERENCE
+
+        tool = "import_product_descriptor"
+        codec = ProductDescriptorCodec()
+        seed = codec.decode_document((ROOT / "products/cloudflared_connector/product.cpk.json").read_bytes())
+        # Compose a disposable declaration from the wrapped product owner and the
+        # retained release. The seed file itself describes a different image.
+        repository, digest = REFERENCE.split("@")
+        registry, path = repository.split("/", 1)
+        document = codec.encode_document(replace(seed.product,
+            display_name=None, description=None, image=OciImageReference(registry, path, digest),
+            runtime_contract=managed.declared_runtime_contract()))
+        reference = {"identity": document.product.identity.descriptor(), "descriptor_sha256": document.content_digest}
+        args = {"descriptor_document": json.loads(document.content), "imported_at": NOW,
+                "idempotency_key": "import-connector"}
+
+        async with self.client(self.mode) as writer:
+            tools = {item.name: item for item in (await writer.list_tools()).tools}
+            self.assertIn(tool, set(tools))
+            self.assertFalse(tools[tool].annotations.read_only_hint)
+            before = await self.call(writer, "list_registered_products", {"limit": 100})
+            for extra in ({"actor_id": "forged"}, {"source": {"path": "/tmp/descriptor"}},
+                          {"registry_credentials": "fixture-private"}, {"expected_revision": 0}):
+                result = await writer.call_tool(tool, {"workspace_id": "workspace-a", **args, **extra})
+                self.assertTrue(result.is_error)
+                self.assertEqual(result.structured_content["error"]["status"], 400)
+            for field in ("configuration_artifacts", "secret_deliveries"):
+                material = deepcopy(args)
+                material["descriptor_document"]["product"]["runtime_contract"][field] = [{"content": "fixture-private"}]
+                rejected = await writer.call_tool(tool, {"workspace_id": "workspace-a", **material})
+                self.assertEqual(rejected.structured_content["error"]["status"], 400)
+                self.assertNotIn("fixture-private", str(rejected.structured_content))
+            bound = deepcopy(args)
+            sockets = bound["descriptor_document"]["product"]["runtime_contract"]["sockets"]
+            sockets["requirements"]["database"] = {
+                "protocol": Protocol.POSTGRES.descriptor(), "env_bindings": [], "required": False,
+                "binding": "runtime-control", "secret_deliveries": [{"kind": "environment",
+                    "environment_name": "DATABASE_PASSWORD", "reference_id": "secret://fixture/password",
+                    "intent": "postgres.password"}]}
+            codec.decode_document(bound["descriptor_document"])  # Valid owner contract, outside this public input.
+            rejected = await writer.call_tool(tool, {"workspace_id": "workspace-a", **bound})
+            self.assertEqual(rejected.structured_content["error"]["status"], 400)
+            self.assertNotIn("secret://fixture/password", str(rejected.structured_content))
+            oversized = {**args, "idempotency_key": "x" * 65536}
+            rejected = await writer.call_tool(tool, {"workspace_id": "workspace-a", **oversized})
+            self.assertEqual(rejected.structured_content["error"]["status"], 413)
+            wrong = await writer.call_tool(tool, {"workspace_id": "workspace-b", **args})
+            self.assertTrue(wrong.is_error)
+            self.assertIn(wrong.structured_content["error"]["status"], (403, 404))
+            async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=self.app),
+                    base_url="http://127.0.0.1:8080", headers={"Authorization": "Bearer reader-token"}) as http:
+                async with self.client(self.mode, http=http) as reader:
+                    denied = await reader.call_tool(tool, {"workspace_id": "workspace-a", **args})
+                    self.assertTrue(denied.is_error)
+                    self.assertEqual(denied.structured_content["error"]["status"], 403)
+            self.assertEqual(await self.call(writer, "list_registered_products", {"limit": 100}), before)
+
+        lost = await self.assert_transport_loss(tool, args)
+        self.assertEqual(lost.sends, 1)
+        async with self.client(self.mode) as fresh:
+            listed = await self.call(fresh, "list_registered_products", {"limit": 100})
+            self.assertEqual([i["reference"] for i in listed["items"] if i["reference"] == reference], [reference])
+            detail = await self.call(fresh, "get_registered_product", {"descriptor_sha256": document.content_digest})
+            self.assertEqual(detail["product"]["reference"], reference)
+            # A separately requested duplicate preserves the original admission.
+            duplicate = await self.call(fresh, tool, {**args, "idempotency_key": "separate-import"})
+            self.assertEqual((detail["product"]["image"]["digest"], detail["product"]["status"]), (digest, "active"))
+            self.assertEqual(duplicate["product"], {"display_name": None, "description": None})
+            self.assertEqual(duplicate["workspace_id"], "workspace-a")
+            self.assertEqual(duplicate["reference"], reference)
+            self.assertEqual(duplicate["registration_id"], detail["product"]["registration_id"])
+            http = await self.http.post("/workspaces/workspace-a/products/import", json=args)
+            self.assertEqual(http.json(), duplicate)
+            conflict = {**args, "descriptor_document": json.loads(seed.content)}
+            refused = await fresh.call_tool(tool, {"workspace_id": "workspace-a", **conflict})
+            self.assertTrue(refused.is_error)
+            print("Wrapped connector catalog fixture:", reference, "conflict status:", refused.structured_content["error"]["status"])
+            missing = await fresh.call_tool("get_registered_product", {
+                "workspace_id": "workspace-a", "descriptor_sha256": seed.content_digest})
+            self.assertEqual(missing.structured_content["error"]["status"], 404)
+            self.assertEqual(await self.call(fresh, "list_registered_products", {"limit": 100}), listed)
+            self.assertEqual(await self.call(fresh, "get_registered_product",
+                {"descriptor_sha256": document.content_digest}), detail)
 
     async def preview(self):
         before = self.truth()

@@ -40,7 +40,7 @@ class GrandparentMcpTests(transport_fixture.StandardMcpFixture, unittest.Isolate
     async def test_direct_command_refuses_before_owner_even_without_client_allowlist(self):
         before = sum(len(service.requests) for service in self.host.services.values())
         async with self.client() as client:
-            for name in ("prepare_deployment", "register_secret_provider", "provision_secret_material",
+            for name in ("prepare_deployment", "import_product_descriptor", "register_secret_provider", "provision_secret_material",
                          "list_registered_products", "get_registered_product", "preview_product_topology",
                          "start_operation_session", "create_desired_topology_draft"):
                 result = await client.call_tool(name, {})

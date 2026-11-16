@@ -258,6 +258,8 @@ class StandardMcpTests(StandardMcpFixture, unittest.IsolatedAsyncioTestCase):
                                          {key: str(value) for key, value in combined.items()})
                     expected_writes = {"prepare_deployment"}
                     owner_reads = self.app.state.http_boundary.composition.handoff.projection_parity.projections
+                    if any(binding.http_route_id == "read.product-detail" for binding in owner_reads):
+                        expected_writes.add("import_product_descriptor")
                     if any(binding.http_route_id == "read.product-topology-preview" for binding in owner_reads):
                         expected_writes.update(("start_operation_session", "create_desired_topology_draft",
                                                 "select_desired_topology_draft"))
