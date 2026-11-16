@@ -555,7 +555,20 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
             for receipt, expected in ((first, graph), (second, amended)):
                 detail = await self.call(fresh, "get_desired_topology_draft_revision",
                     {**scope, "draft_id": receipt["draft_id"], "revision": receipt["revision"]})
-                self.assertEqual(detail["graph_id"], receipt["graph_id"])
+                self.assertEqual({name: detail[name] for name in receipt}, receipt)
+                public = detail["graph_descriptor"]
+                self.assertEqual(set(public["nodes"]), set(expected["nodes"]))
+                checked_artifacts = 0
+                for role, node in expected["nodes"].items():
+                    files = node["configuration_artifacts"]
+                    summaries = public["nodes"][role]["configuration_artifacts"]
+                    self.assertEqual(len(files), len(summaries))
+                    for original, summary in zip(files, summaries, strict=True):
+                        self.assertTrue(summary == {k: v for k, v in original.items() if k != "content"},
+                            "public configuration metadata differs from its expected shape")
+                        checked_artifacts += 1
+                self.assertGreater(checked_artifacts, 0)
+                self.assertFalse("BEGIN PUBLIC KEY" in json.dumps(detail), "ordinary reader saw embedded verifier material")
                 with self.unit_of_work() as uow:
                     self.assertTrue(uow.stores.graphs.get(receipt["graph_id"]).graph_descriptor == expected,
                         "persisted child graph differs from the complete authored input")
