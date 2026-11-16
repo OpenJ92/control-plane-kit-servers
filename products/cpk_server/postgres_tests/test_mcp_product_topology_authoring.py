@@ -486,6 +486,40 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
         self.assertEqual(workspace["desired_graph_revision"], args["expected_desired_graph_revision"] + 1)
         self.assertEqual(self.dispatches.count("command.desired-topology-draft.select"), 1)
 
+    async def test_complete_graph_create_revise_and_fresh_sdk_readback(self):
+        workspace = "workspace-a"
+        graph = DEFAULT_GRAPH_CODEC.encode(self.graph("first full graph"))
+        revised = DEFAULT_GRAPH_CODEC.encode(self.graph("second full graph"))
+        base = {"workspace_id": workspace, "session_id": self.sessions[workspace]}
+        create = {**base, "graph": graph, "title": "Full graph", "idempotency_key": "full-create"}
+        async with self.client(self.mode) as client:
+            tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+            self.assertIn("revise_desired_topology_draft", tools)
+            first = await self.call(client, "create_desired_topology_draft", create)
+            self.assertEqual(first["revision"], 1)
+            revise = {**base, "draft_id": first["draft_id"], "expected_head_revision": 1,
+                      "idempotency_key": "full-revise", "graph": revised}
+            second = await self.call(client, "revise_desired_topology_draft", revise)
+            self.assertEqual((second["workspace_id"], second["draft_id"], second["revision"]),
+                             (workspace, first["draft_id"], 2))
+            self.assertNotEqual(second["graph_id"], first["graph_id"])
+            self.assertEqual(await self.call(client, "revise_desired_topology_draft", revise), second)
+            refused = await client.call_tool("revise_desired_topology_draft", {**revise, "idempotency_key": "stale"})
+            self.assertEqual(refused.structured_content["error"]["status"], 409)
+            for change in ({"actor_id": "synthetic-private-canary"}, {"product_recipe": {}},
+                           {"graph": {"extra": "synthetic-private-canary"}}):
+                refused = await client.call_tool("create_desired_topology_draft", {**create, **change})
+                self.assertTrue(refused.is_error)
+                self.assertNotIn("synthetic-private-canary", str(refused.content))
+        async with self.client(self.mode) as fresh:
+            for receipt, authored in ((first, graph), (second, revised)):
+                args = {"draft_id": receipt["draft_id"], "revision": receipt["revision"]}
+                detail = await self.call(fresh, "get_desired_topology_draft_revision", args)
+                http = await self.http.get(f"/workspaces/{workspace}/desired-topology-drafts/{receipt['draft_id']}/revisions/{receipt['revision']}")
+                self.assertEqual(detail, http.json())
+                with self.unit_of_work() as uow:
+                    self.assertEqual(uow.stores.graphs.get(receipt["graph_id"]).graph_descriptor, authored)
+
     async def test_two_products_save_and_fresh_client_exact_readback(self):
         preview = await self.preview()
         receipt = await self.save_once(preview)
