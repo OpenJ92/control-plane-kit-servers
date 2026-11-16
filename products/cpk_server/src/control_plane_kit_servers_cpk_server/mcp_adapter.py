@@ -174,8 +174,10 @@ def _input_schema(route):
         text = {"type": "string", "minLength": 1}
         schema = _closed_schema({field: text for field in
             ("workspace_id", "session_id", "plan_id", "approval_request_id", "idempotency_key")})
+        schema["properties"]["idempotency_key"] = {**text, "maxLength": 200}
         schema["properties"]["readiness"] = {"type": "array", "items": _closed_schema({
-            "activity_id": text, "evidence_ref": text})}
+            "activity_id": text, "evidence_ref": {**text, "maxLength": 256,
+                "description": "Namespaced readiness evidence reference for this activity."}})}
         return schema
     if route.route_id in _STANDARD_COMMANDS:
         text = {"type": "string", "minLength": 1, "maxLength": 512}

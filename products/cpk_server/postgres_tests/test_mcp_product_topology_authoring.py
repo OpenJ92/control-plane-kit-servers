@@ -474,7 +474,7 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
             same_target = await self.call(client, SELECT_TOOL, await self.selection_input(draft))
             self.assertEqual(same_target["desired_graph_revision"], selected["desired_graph_revision"] + 1)
 
-    async def test_admission_reply_lost_after_commit_before_worker_claim(self):
+    async def approved_admission(self):
         from control_plane_kit_operations.health_receiver_trust import HealthReceiverDecoders
         from control_plane_kit_servers_cpk_server.operations_application import (
             OperationsApplicationFactory, OperationsEffectPorts, OperationsIdFactories)
@@ -503,8 +503,10 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
                 **{"expected_" + side: {"authored_graph_id": workspace[side + "_graph_id"],
                     "realized_projection_id": workspace[side + "_realized_projection_id"]}
                     for side in ("current", "desired")}})
-        self.assertEqual(prepared["status"], "approval-required")
-        args = {key: prepared[key] for key in ("session_id", "plan_id", "approval_request_id")}
+            self.assertEqual(prepared["status"], "approval-required")
+            plan = await self.call(operator, "get_plan_detail", {"plan_id": prepared["plan_id"]})
+        args = {"session_id": plan["plan"]["session_id"],
+                "plan_id": prepared["plan_id"], "approval_request_id": prepared["approval_request_id"]}
         args["idempotency_key"] = uuid4().hex
         approver = principal(scopes=(PolicyScope.PLAN_APPROVE,))
         self.grants[b"reviewer"] = replace(approver, identity=replace(approver.identity, subject_id="reviewer-a"))
@@ -513,6 +515,24 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
                 "decision": "approved", "idempotency_key": uuid4().hex})
         self.assertEqual(decision.status_code, 200)
         self.assertEqual(self.rows("cpk_execution_requests"), [])
+        return args
+
+    async def test_operator_receives_exact_queued_request_before_worker_claim(self):
+        args = await self.approved_admission()
+        async with self.client(self.mode) as operator:
+            receipt = await self.call(operator, "admit_deployment", args)
+        (row,), = self.rows("cpk_execution_requests")
+        self.assertEqual(receipt["execution_request_id"], row["request_id"])
+        self.assertEqual((receipt["workspace_id"], receipt["session_id"], receipt["plan_id"]),
+            ("workspace-a", args["session_id"], args["plan_id"]))
+        self.assertEqual((row["requested_by"], row["idempotency_key"], row["approval_request_id"]),
+            ("operator-a", args["idempotency_key"], args["approval_request_id"]))
+        self.assertEqual((receipt["status"], receipt["replayed"]), ("queued", False))
+        self.assertEqual(self.rows("cpk_activity_runs"), [])
+        self.assertEqual(self.rows("cpk_effect_attempts"), [])
+
+    async def test_admission_reply_lost_after_commit_before_worker_claim(self):
+        args = await self.approved_admission()
         lost = await self.assert_transport_loss("admit_deployment", args)
         self.assertEqual((lost.sends, lost.dropped), (1, True))
 
