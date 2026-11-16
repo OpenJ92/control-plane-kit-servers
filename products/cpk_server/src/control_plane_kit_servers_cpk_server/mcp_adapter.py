@@ -116,8 +116,11 @@ def _input_schema(route):
         # Operations computes its canonical digest and admits it to the workspace.
         text = {"type": "string", "minLength": 1}
         empty = {"type": "array", "maxItems": 0}
+        requirement = {"type": "object", "properties": {"secret_deliveries": empty}}
+        sockets = {"type": "object", "properties": {"requirements": {
+            "type": "object", "additionalProperties": requirement}}}
         contract = {"type": "object", "properties": {
-            "configuration_artifacts": empty, "secret_deliveries": empty}}
+            "sockets": sockets, "configuration_artifacts": empty, "secret_deliveries": empty}}
         product = _closed_schema({
             "kind": {"const": "container-server"},
             "identity": _closed_schema({"namespace": text, "name": text,

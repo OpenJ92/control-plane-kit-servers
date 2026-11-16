@@ -18,6 +18,7 @@ from control_plane_kit_core.operations import ControlPlaneServiceRole
 from control_plane_kit_core.policies import PolicyScope
 from control_plane_kit_core.products import OciImageReference, ProductDescriptorCodec
 from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC, DeploymentGraph
+from control_plane_kit_core.types import Protocol
 from control_plane_kit_operations.cpk_server import (
     CpkServerLifecycleService, CpkServerPlanningService, CpkServerReadService,
     CpkServerUnsupportedService,
@@ -225,6 +226,17 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
                 rejected = await writer.call_tool(tool, {"workspace_id": "workspace-a", **material})
                 self.assertEqual(rejected.structured_content["error"]["status"], 400)
                 self.assertNotIn("fixture-private", str(rejected.structured_content))
+            bound = deepcopy(args)
+            sockets = bound["descriptor_document"]["product"]["runtime_contract"]["sockets"]
+            sockets["requirements"]["database"] = {
+                "protocol": Protocol.POSTGRES.descriptor(), "env_bindings": [], "required": False,
+                "binding": "runtime-control", "secret_deliveries": [{"kind": "environment",
+                    "environment_name": "DATABASE_PASSWORD", "reference_id": "secret://fixture/password",
+                    "intent": "postgres.password"}]}
+            codec.decode_document(bound["descriptor_document"])  # Valid owner contract, outside this public input.
+            rejected = await writer.call_tool(tool, {"workspace_id": "workspace-a", **bound})
+            self.assertEqual(rejected.structured_content["error"]["status"], 400)
+            self.assertNotIn("secret://fixture/password", str(rejected.structured_content))
             oversized = {**args, "idempotency_key": "x" * 65536}
             rejected = await writer.call_tool(tool, {"workspace_id": "workspace-a", **oversized})
             self.assertEqual(rejected.structured_content["error"]["status"], 413)
