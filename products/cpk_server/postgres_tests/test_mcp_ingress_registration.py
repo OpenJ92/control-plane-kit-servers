@@ -1,4 +1,7 @@
 """Exact-host authority registration through the released SDK and the production service factory."""
+from datetime import datetime
+import io
+import logging
 import unittest
 
 import httpx2
@@ -35,6 +38,12 @@ ARGS = {**COORDS, "authority": AUTHORITY, "admitted_at": NOW, "idempotency_key":
 class IngressRegistrationCases(DraftCatalogueFixture, StandardMcpFixture):
     async def asyncSetUp(self):
         await StandardMcpFixture.asyncSetUp(self)
+        self.log = io.StringIO()
+        handler = logging.StreamHandler(self.log)
+        logger = logging.getLogger()
+        logger.addHandler(handler)
+        self.addCleanup(logger.removeHandler, handler)
+
         def unexpected_effect(*args, **kwargs):
             raise AssertionError("authority registration must not acquire an effect port")
         ports = OperationsEffectPorts(None, None, None, HealthReceiverDecoders(()),
@@ -51,6 +60,7 @@ class IngressRegistrationCases(DraftCatalogueFixture, StandardMcpFixture):
         for sentinel in (*PROTECTED.values(), "inline-private-canary"):
             self.assertNotIn(sentinel, str(result.structured_content))
             self.assertNotIn(sentinel, str(result.content))
+            self.assertNotIn(sentinel, self.log.getvalue())
         if status is None:
             self.assertFalse(result.is_error, result.structured_content)
         else:
@@ -65,6 +75,9 @@ class IngressRegistrationCases(DraftCatalogueFixture, StandardMcpFixture):
     async def test_register_and_inspect_with_separate_grants(self):
         authority = CloudflareZoneIngressAuthorityCodec().decode(AUTHORITY)
         expected_id = ingress_authority_registration_id_for(WORKSPACE, IngressAuthorityReference(REF), authority)
+        unauthorized = await self.http.post("/mcp", headers={"Authorization": "", "Accept": "application/json, text/event-stream"},
+            json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": REGISTER, "arguments": ARGS}})
+        self.assertEqual(unauthorized.status_code, 401)
         async with self.client(self.mode) as client:
             tools = {t.name: t for t in (await client.list_tools()).tools}
             self.assertTrue({REGISTER, READ}.issubset(tools), "missing ingress registration or detail tool")
@@ -74,6 +87,7 @@ class IngressRegistrationCases(DraftCatalogueFixture, StandardMcpFixture):
                 self.who = principal(scopes=(scope,))
                 await self.result(client, REGISTER, ARGS, 403)
             await self.result(client, READ, COORDS, 404)
+            await self.result(client, READ, {**COORDS, "workspace_id": "workspace-b"}, 403)
             self.who = principal(scopes=(PolicyScope.INGRESS_AUTHORITY_REGISTER,))
             await self.result(client, REGISTER, {**ARGS, "workspace_id":"workspace-b"}, 403)
             for change in ({"api_token": "inline-private-canary"}, {"api_token_ref":"inline-private-canary"},
@@ -90,6 +104,7 @@ class IngressRegistrationCases(DraftCatalogueFixture, StandardMcpFixture):
             first = self.registrations()
             self.assertEqual(len(first), 1)
             self.assertEqual(first[0][:3], (WORKSPACE, expected_id, "operator-a"))
+            self.assertEqual(first[0][3], datetime.fromisoformat(NOW))
             await self.result(client, READ, COORDS, 403)
             later = {**ARGS, "admitted_at":"2026-12-01T00:00:00Z", "idempotency_key":"independent-duplicate"}
             duplicate = await self.http.post(PATH, json={k:v for k,v in later.items() if k!="workspace_id"})

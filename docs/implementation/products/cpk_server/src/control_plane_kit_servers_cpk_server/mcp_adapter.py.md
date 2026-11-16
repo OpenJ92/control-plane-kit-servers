@@ -75,3 +75,14 @@ imports require separate PostgreSQL qualification under OpenJ92/control-plane-ki
 canonical descriptor digest in the same workspace and compare identity and status.
 The image digest identifies the OCI artifact. The descriptor digest also covers
 the declared runtime contract. Product import performs no registry or provider I/O.
+
+The standard profile exposes `register_ingress_authority` for one exact hostname
+and `get_ingress_authority_detail` for its named workspace binding. Operations
+checks the current register or read grant on each call. A successful MCP write
+returns the workspace, authority reference, registration ID, provider kind and
+active status. The HTTP write's nested authority contains protected setup
+references and stays inside the dispatcher. Detail uses the owner's redaction.
+The command records the binding without contacting Cloudflare. After a lost
+reply, use a fresh authorized read and compare the independently expected
+registration ID, public policy and active status. A matching ID establishes
+the current definition. Which request first registered it can remain unknown.
