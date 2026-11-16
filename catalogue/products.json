@@ -100,6 +100,16 @@
       "image_ref": "ghcr.io/openj92/control-plane-kit-servers/secrets-server:bootstrap-158-4468cd0",
       "image_digest": "sha256:41aba38eb255779c8a0230724d9cc4fffd1dc5d5dfbfafdc133f1629139edfe7",
       "status": "completed"
+    },
+    {
+      "product_id": "cloudflared-connector-managed",
+      "owner_directory": "products/cloudflared_connector",
+      "descriptor_path": "products/cloudflared_connector/product.managed.cpk.json",
+      "descriptor_sha256": "79791e9167597b7cfbf616451d37f2914ed28ebc5c6393c676dbdd959b69db85",
+      "source_commit": "cc1b8d87b7f895cb56153f3daf2e9683fb59bea2",
+      "image_ref": "ghcr.io/openj92/control-plane-kit-servers/cloudflared-connector:managed-cc1b8d87b7f895cb56153f3daf2e9683fb59bea2",
+      "image_digest": "sha256:812262a6cc6b2e6971492a37f9135655d4c7b82aedd5435a483476f77b642091",
+      "status": "completed"
     }
   ]
 }

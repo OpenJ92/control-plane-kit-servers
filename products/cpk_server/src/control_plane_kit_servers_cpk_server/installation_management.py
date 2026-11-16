@@ -33,8 +33,17 @@ def _declared_product(document, name, contract):
 
 
 def selected_managed_connector(document):
-    """Admit the unchanged managed declaration, without instance token material."""
+    """Select the released managed variant or an existing caller-composed managed document."""
     from control_plane_kit_servers_cloudflared_connector.managed import declared_runtime_contract
+    if (isinstance(document, ProductDescriptorDocument)
+            and document.product.identity == ProductIdentity("control-plane-kit", "cloudflared-connector-managed", 1)):
+        product = _declared_product(document, "cloudflared-connector-managed", declared_runtime_contract())
+        if (product.image.execution_reference != (
+                "ghcr.io/openj92/control-plane-kit-servers/cloudflared-connector@"
+                "sha256:812262a6cc6b2e6971492a37f9135655d4c7b82aedd5435a483476f77b642091")
+                or tuple(platform.label for platform in product.image.platforms) != ("linux/amd64",)):
+            raise ValueError(_INVALID)
+        return product
     return _declared_product(document, "cloudflared-connector", declared_runtime_contract())
 
 

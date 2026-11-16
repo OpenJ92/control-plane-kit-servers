@@ -31,6 +31,7 @@ class DescriptorCatalogueTests(unittest.TestCase):
             [item.product_id for item in catalogue],
             [
                 "cloudflared-connector",
+                "cloudflared-connector-managed",
                 "cpk-local-gateway",
                 "cpk-server",
                 "cpk-server-docker",
@@ -66,6 +67,7 @@ class DescriptorCatalogueTests(unittest.TestCase):
             self.assertEqual(document.content_digest, published[name].descriptor_sha256)
             self.assertEqual(document.product.identity.descriptor(), {
                 "namespace": "control-plane-kit", "name": name, "contract_revision": 1})
+        self.assertEqual(wrapped.content_digest, "79791e9167597b7cfbf616451d37f2914ed28ebc5c6393c676dbdd959b69db85")
         self.assertEqual(published[managed_name].source_commit, SOURCE)
         self.assertEqual(wrapped.product.image.execution_reference, REFERENCE)
         self.assertEqual([p.label for p in wrapped.product.image.platforms], ["linux/amd64"])
@@ -78,6 +80,9 @@ class DescriptorCatalogueTests(unittest.TestCase):
             _selected_frontend_connector(wrapped)
         with self.assertRaises(ValueError):
             selected_managed_connector(codec.encode_document(replace(wrapped.product, image=seed.product.image)))
+        without_platform = replace(wrapped.product.image, platforms=())
+        with self.assertRaises(ValueError):
+            selected_managed_connector(codec.encode_document(replace(wrapped.product, image=without_platform)))
 
     def test_catalogue_rejects_duplicate_product_ids(self) -> None:
         from control_plane_kit_servers.catalogue import CatalogueError, load_catalogue
