@@ -520,6 +520,48 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
                 with self.unit_of_work() as uow:
                     self.assertEqual(uow.stores.graphs.get(receipt["graph_id"]).graph_descriptor, authored)
 
+    async def test_pre_registered_complete_child_graph_through_standard_sdk(self):
+        bundle = json.loads(Path("/tmp/cpk-synthetic-child.json").read_text(encoding="utf-8"))
+        workspace, graph = bundle["workspace"], bundle["graph"]
+        scope = {"workspace_id": workspace}
+        self.assertEqual(len(graph["nodes"]), 8)
+        self.assertEqual(len(graph["public_ingresses"]), 3)
+        WorkspaceCommandService(self.unit_of_work, clock=lambda: NOW, id_factory=lambda: uuid4().hex).create(
+            CreateWorkspace(workspace, "Synthetic child workspace", "operator-a", IdempotencyKey(uuid4().hex)))
+        # Authoring requires an already admitted catalogue. This fixture does not
+        # qualify the import of configured products through the public MCP tool.
+        with self.unit_of_work() as uow:
+            for data in bundle["products"]:
+                doc = ProductDescriptorCodec().decode_document(data)
+                uow.stores.registered_products.register(workspace_id=workspace, descriptor_document=doc,
+                    source=InlineDescriptorSource(), imported_by="operator-a", imported_at=NOW)
+            uow.commit()
+        self.grants[b"valid-token"] = principal(workspace)
+        self.grants[b"reader-token"] = principal(workspace, scopes=(PolicyScope.INSTANCE_WORKSPACE_READ,))
+        async with self.client(self.mode) as writer:
+            state = (await self.call(writer, "get_workspace", scope))["workspace"]
+            pins = {key: state[key] for key in ("current_graph_id", "current_realized_projection_id",
+                "desired_graph_id", "desired_realized_projection_id", "desired_graph_revision")}
+            started = await self.call(writer, "start_operation_session",
+                {**scope, "title": "Synthetic child draft", "idempotency_key": "child-start"})
+            args = {**scope, "session_id": started["session_id"], "receiver_lifecycle": pins}
+            first = await self.call(writer, "create_desired_topology_draft",
+                {**args, "graph": graph, "title": "Synthetic child", "idempotency_key": "child-create"})
+            amended = {**graph, "name": graph["name"] + " amended"}
+            second = await self.call(writer, "revise_desired_topology_draft", {**args, "graph": amended,
+                "draft_id": first["draft_id"], "expected_head_revision": 1, "idempotency_key": "child-revise"})
+        self.http.headers["Authorization"] = "Bearer reader-token"
+        async with self.client(self.mode) as fresh:
+            for receipt, expected in ((first, graph), (second, amended)):
+                detail = await self.call(fresh, "get_desired_topology_draft_revision",
+                    {**scope, "draft_id": receipt["draft_id"], "revision": receipt["revision"]})
+                self.assertEqual(detail["graph_id"], receipt["graph_id"])
+                with self.unit_of_work() as uow:
+                    self.assertTrue(uow.stores.graphs.get(receipt["graph_id"]).graph_descriptor == expected,
+                        "persisted child graph differs from the complete authored input")
+            after = (await self.call(fresh, "get_workspace", scope))["workspace"]
+            self.assertEqual({key: after[key] for key in pins}, pins)
+
     async def test_lost_full_graph_revision_reply_submits_once(self):
         draft = self.create()
         graph = DEFAULT_GRAPH_CODEC.encode(self.graph("after interrupted reply"))

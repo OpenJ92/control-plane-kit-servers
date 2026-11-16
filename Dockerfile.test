@@ -31,6 +31,8 @@ FROM default-base AS grandparent
 ARG CPK_TEST_COHORT=grandparent
 ENV CPK_TEST_COHORT=$CPK_TEST_COHORT
 COPY cohort /opt/cpk-test-cohort
+# Compose synthetic input data before the selected cohort removes the composer dependencies.
+RUN if [ "$CPK_TEST_COHORT" = topology-authoring ]; then python products/cpk_server/tests/child_graph_fixture.py; fi
 RUN python scripts/test_cohort.py seal \
     && python -m pip uninstall -y control-plane-kit-servers control-plane-kit-secrets \
        control-plane-kit-core control-plane-kit-operations control-plane-kit-interpreters control-plane-kit-server-sdk \
