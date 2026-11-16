@@ -474,6 +474,75 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
             same_target = await self.call(client, SELECT_TOOL, await self.selection_input(draft))
             self.assertEqual(same_target["desired_graph_revision"], selected["desired_graph_revision"] + 1)
 
+    async def test_admission_reply_lost_after_commit_before_worker_claim(self):
+        from control_plane_kit_operations.health_receiver_trust import HealthReceiverDecoders
+        from control_plane_kit_servers_cpk_server.operations_application import (
+            OperationsApplicationFactory, OperationsEffectPorts, OperationsIdFactories)
+
+        def unexpected_effect(*args, **kwargs):
+            self.fail("Operator admission attempted an external effect")
+
+        draft = await self.save_once(await self.preview())
+        ports = OperationsEffectPorts(None, None, None, HealthReceiverDecoders(()),
+            unexpected_effect, disabled_runtime_adapter=unexpected_effect)
+        factory = OperationsApplicationFactory(self.unit_of_work, ports,
+            OperationsIdFactories(*(lambda: uuid4().hex for _ in range(5))), clock=lambda: NOW)
+        self.host.services.update({role: CountedService(owner, self.dispatches)
+            for role, owner in factory().services.items()})
+        async with self.client(self.mode) as operator:
+            workspace = (await self.call(operator, "get_workspace", {}))["workspace"]
+            await self.call(operator, SELECT_TOOL, {
+                "session_id": self.saved_session_id, "draft_id": draft["draft_id"], "revision": draft["revision"],
+                "idempotency_key": uuid4().hex, **{"expected_" + key: workspace[key] for key in
+                    ("desired_graph_id", "desired_realized_projection_id", "desired_graph_revision")}})
+            workspace = (await self.call(operator, "get_workspace", {}))["workspace"]
+            prepared = await self.call(operator, "prepare_deployment", {
+                "draft_id": draft["draft_id"], "revision": draft["revision"],
+                "title": "Admission reconnect test", "idempotency_key": uuid4().hex,
+                "expected_desired_graph_revision": workspace["desired_graph_revision"],
+                **{"expected_" + side: {"authored_graph_id": workspace[side + "_graph_id"],
+                    "realized_projection_id": workspace[side + "_realized_projection_id"]}
+                    for side in ("current", "desired")}})
+        self.assertEqual(prepared["status"], "approval-required")
+        args = {key: prepared[key] for key in ("session_id", "plan_id", "approval_request_id")}
+        args["idempotency_key"] = uuid4().hex
+        approver = principal(scopes=(PolicyScope.PLAN_APPROVE,))
+        self.grants[b"reviewer"] = replace(approver, identity=replace(approver.identity, subject_id="reviewer-a"))
+        decision = await self.http.post(f"/workspaces/workspace-a/approvals/{args['approval_request_id']}/decision",
+            headers={"Authorization": "Bearer reviewer"}, json={"session_id": args["session_id"],
+                "decision": "approved", "idempotency_key": uuid4().hex})
+        self.assertEqual(decision.status_code, 200)
+        self.assertEqual(self.rows("cpk_execution_requests"), [])
+        lost = await self.assert_transport_loss("admit_deployment", args)
+        self.assertEqual((lost.sends, lost.dropped), (1, True))
+
+        # This independent connection is test-owner evidence only. The fresh client
+        # below has no access to the queued row or to the lost request ID.
+        (request,), = self.rows("cpk_execution_requests")
+        self.assertEqual((request["workspace_id"], request["plan_id"], request["status"]),
+                         ("workspace-a", args["plan_id"], "queued"))
+        self.assertEqual(request["idempotency_key"], args["idempotency_key"])
+        self.assertEqual(self.rows("cpk_activity_runs"), [])
+        self.assertEqual(self.rows("cpk_effect_attempts"), [])
+        committed = self.truth(), self.runtime_truth()
+        marker = len(self.dispatches)
+        async with self.client(self.mode) as reader:
+            views = [
+                await self.call(reader, "get_session_detail", {"session_id": args["session_id"]}),
+                await self.call(reader, "get_plan_detail", {"plan_id": args["plan_id"]}),
+                await self.call(reader, "get_approval_detail", {"approval_id": args["approval_request_id"]}),
+            ]
+            runs = await self.call(reader, "list_plan_runs", {"plan_id": args["plan_id"]})
+            self.assertEqual(runs["items"], [])
+            self.assertNotIn(args["idempotency_key"], json.dumps([views, runs]))
+            guidance = next(tool.description for tool in (await reader.list_tools()).tools
+                            if tool.name == "admit_deployment")
+            self.assertIn("submission unknown", guidance)
+            self.assertIn("do not resend", guidance)
+        self.assertEqual(self.dispatches[marker:], ["read.session-detail", "read.plan-detail",
+            "read.approval-detail", "read.plan-runs"])
+        self.assertEqual((self.truth(), self.runtime_truth()), committed)
+
     async def test_lost_selection_reply_observes_pointer_without_resending(self):
         draft = self.create()
         args = await self.selection_input(draft)

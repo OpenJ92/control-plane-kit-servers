@@ -66,7 +66,13 @@ _EXTRA_FIELDS = {
 _GRANDPARENT_READS = frozenset(("read.workspace", "read.desired-graph",
     "read.desired-topology-draft-revision", "read.desired-topology-draft-revision-attempts"))
 
-_AUTHORING_COMMANDS = {
+_STANDARD_COMMANDS = {
+    "command.deployment.admit": (
+        "Submit one approved plan to the workspace admission service using plan:execute and a caller-owned key. "
+        "Keep its queued execution request ID and match it to request_id in list_plan_runs. "
+        "The worker claims the request separately. After a lost reply, read the exact plan, approval, session "
+        "and plan runs. An empty run page can precede claim. Without a receipt attributable to the original "
+        "key, report submission unknown and do not resend."),
     "command.ingress-authority.register": (
         "Register one exact hostname using ingress-authority:register in the workspace. "
         "Supply the approved reference coordinates and a caller-owned key. This only records configuration. "
@@ -164,7 +170,14 @@ def _input_schema(route):
             "idempotency_key": {**text, "description": "Required caller key; catalog identity uses the descriptor digest."}})
     if route.route_id == "read.product-topology-preview":
         return _closed_schema({"workspace_id": {"type": "string"}, "recipe": _product_recipe_schema()})
-    if route.route_id in _AUTHORING_COMMANDS:
+    if route.route_id == "command.deployment.admit":
+        text = {"type": "string", "minLength": 1}
+        schema = _closed_schema({field: text for field in
+            ("workspace_id", "session_id", "plan_id", "approval_request_id", "idempotency_key")})
+        schema["properties"]["readiness"] = {"type": "array", "items": _closed_schema({
+            "activity_id": text, "evidence_ref": text})}
+        return schema
+    if route.route_id in _STANDARD_COMMANDS:
         text = {"type": "string", "minLength": 1, "maxLength": 512}
         nullable_text = {**text, "type": ["string", "null"]}
         properties = {"workspace_id": text, "idempotency_key": {**text,
@@ -262,8 +275,9 @@ class StandardMcpAdapter:
                 annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False))
         if profile == "standard":
             reads = {route.route_id for route in self.routes.values()}
-            for route_id, description in _AUTHORING_COMMANDS.items():
+            for route_id, description in _STANDARD_COMMANDS.items():
                 prerequisite = {
+                    "command.deployment.admit": "read.approval-detail",
                     "command.product.import": "read.product-detail",
                     "command.ingress-authority.register": "read.ingress-authority-detail",
                 }.get(route_id, "read.product-topology-preview")
@@ -275,8 +289,8 @@ class StandardMcpAdapter:
                 self.tools[binding.mcp_tool_name] = Tool(name=binding.mcp_tool_name, description=description,
                     input_schema=_input_schema(route), output_schema={"type": "object",
                         "description": "Bounded owner receipt; preserve returned coordinates without guessing or selecting latest."},
-                    annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False,
-                        idempotent_hint=False, open_world_hint=False))
+                    annotations=ToolAnnotations(read_only_hint=False, destructive_hint=route_id == "command.deployment.admit",
+                        idempotent_hint=False, open_world_hint=route_id == "command.deployment.admit"))
         discovery_guidance = (
             "Use list_registered_products for the workspace's active products, following its scoped cursor; "
             "use get_registered_product with the exact returned descriptor digest for socket and configuration shapes. "
