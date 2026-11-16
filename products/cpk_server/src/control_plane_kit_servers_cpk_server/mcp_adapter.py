@@ -6,6 +6,7 @@ import json
 import re
 
 from control_plane_kit_core.operations import HTTP_ONLY_COMMAND_ROUTE_IDS
+from control_plane_kit_operations.desired_topology_drafts import DesiredTopologyDraftError, DesiredTopologyDraftResult
 from jsonschema import Draft202012Validator
 from mcp.server import Server
 from mcp.types import CallToolResult, JSONRPCMessage, ListToolsResult, TextContent, Tool, ToolAnnotations
@@ -393,13 +394,15 @@ class StandardMcpAdapter:
             return _failure(503, "application response unavailable")
         if graph_save:
             revision = arguments.get("expected_head_revision", 0) + 1
-            if (not isinstance(response, dict) or response.get("workspace_id") != arguments["workspace_id"]
-                    or type(response.get("revision")) is not int or response["revision"] != revision
-                    or any(not isinstance(response.get(key), str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,512}", response[key])
-                           for key in ("graph_id", "draft_id"))
-                    or ("draft_id" in arguments and response["draft_id"] != arguments["draft_id"])):
+            try:
+                receipt = DesiredTopologyDraftResult(**{key: response[key] for key in
+                    ("workspace_id", "draft_id", "revision", "graph_id")})
+            except (DesiredTopologyDraftError, KeyError, TypeError):
                 return _failure(503, "graph draft outcome unavailable")
-            return _result({key: response[key] for key in ("workspace_id", "draft_id", "revision", "graph_id")})
+            if (receipt.workspace_id != arguments["workspace_id"] or receipt.revision != revision
+                    or ("draft_id" in arguments and receipt.draft_id != arguments["draft_id"])):
+                return _failure(503, "graph draft outcome unavailable")
+            return _result(receipt.descriptor())
         if route.route_id == "command.ingress-authority.register":
             # The HTTP owner's full record contains protected reference coordinates.
             expected = {"workspace_id": arguments["workspace_id"], "authority_ref": arguments["authority_ref"],
