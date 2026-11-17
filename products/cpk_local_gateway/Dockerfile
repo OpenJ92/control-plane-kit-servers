@@ -11,7 +11,7 @@ WORKDIR /app
 
 RUN python -m pip install --no-cache-dir \
     "control-plane-kit-core @ https://github.com/OpenJ92/control-plane-kit/archive/68f187710abe8fa89701f403ac76e904b3fec35d.zip#subdirectory=control-plane-kit-core" \
-    "control-plane-kit-server-sdk[fastapi] @ https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/e7f517ab79060c52f5942ae82bd2cb8fdc9ee4b1.zip" \
+    "control-plane-kit-server-sdk[fastapi] @ https://github.com/OpenJ92/control-plane-kit-server-sdk/archive/b988030bd5931a7f6a3aef6d1a66a43ba817f7e8.zip" \
     "fastapi>=0.115" \
     "PyJWT[crypto]>=2.10" \
     "uvicorn>=0.30" \

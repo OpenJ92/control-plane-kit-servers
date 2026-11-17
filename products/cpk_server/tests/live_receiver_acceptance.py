@@ -29,9 +29,9 @@ def verify_provenance():
     pins = {
         "control-plane-kit-core": "68f187710abe8fa89701f403ac76e904b3fec35d",
         "control-plane-kit-operations": "68f187710abe8fa89701f403ac76e904b3fec35d",
-        "control-plane-kit-server-sdk": "e7f517ab79060c52f5942ae82bd2cb8fdc9ee4b1",
-        "control-plane-kit-secrets": "1963663d94428114da7fcd15c45c20b9e753db83",
-        "control-plane-kit-interpreters": "3e8104fa2aba1275b60ce98db5c46927fbf7b335",
+        "control-plane-kit-server-sdk": "b988030bd5931a7f6a3aef6d1a66a43ba817f7e8",
+        "control-plane-kit-secrets": "fd6da8a3de83708968ebebf11c026a5362c23482",
+        "control-plane-kit-interpreters": "45866b2d9d0b0c08b554aaf2b7692042267e2e93",
     }
     for name, commit in pins.items():
         direct = json.loads(importlib.metadata.distribution(name).read_text("direct_url.json"))

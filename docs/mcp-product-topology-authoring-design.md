@@ -92,10 +92,12 @@ and Interpreters `e438f6e522ad0a23a7acef460be08690f48b2e17` from retained
 export SHA256 `af15d9261cde91e387b2659b489712abbc5579f09ba67ca51350c802552c22e0`
 and module tree `97507ed009a5e5c8aa81d280288a2f81ce807835`.
 
-For #429, the authoring cohort selects Core and Operations `68f18771`,
-Interpreters `3e8104fa` and SDK `e7f517ab` to cover a new connector on a
-retained runtime. From the Interpreters repository, reproduce its archive with
-`git -c tar.umask=0002 archive --format=tar --output=interpreters.tar 3e8104fa2aba1275b60ce98db5c46927fbf7b335`.
+For #429, the authoring cohort qualified Core and Operations `68f18771`,
+Interpreters `3e8104fa` and SDK `e7f517ab` on a new connector on a
+retained runtime. For #431, Interpreters `45866b2d` and SDK `b988030b`
+declare the same Core archive as the product. Their runtime sources match the
+#429 revisions. From the Interpreters repository, reproduce the #431 archive with
+`git -c tar.umask=0002 archive --format=tar --output=interpreters.tar 45866b2d9d0b0c08b554aaf2b7692042267e2e93`.
 The gate compares the archive SHA-256, embedded commit and reconstructed
 `src/control_plane_kit_interpreters` tree with the selected cohort's coordinates.
 The full pins and digests are in

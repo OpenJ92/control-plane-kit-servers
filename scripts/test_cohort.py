@@ -27,11 +27,11 @@ AUTHORING_EXPECTED = {**EXPECTED,
     "schema": "cpk417.topology-authoring-cohort.v1", "name": "topology-authoring",
     "core": "68f187710abe8fa89701f403ac76e904b3fec35d",
     "operations": "68f187710abe8fa89701f403ac76e904b3fec35d",
-    "interpreters": "3e8104fa2aba1275b60ce98db5c46927fbf7b335",
+    "interpreters": "45866b2d9d0b0c08b554aaf2b7692042267e2e93",
     "interpreters_source": dict(kind="retained-git-export",
-        sha256="0640be22ce615a11cc923c10d79203e89dbd14d4b083aceb9918231482b8f599",
+        sha256="4f897a19221c479f3b8ccf2157223089d2497b0d39fc4d4df032df64e727e3c2",
         module_tree="c6dbfe0998aca8f829b68e4c2177ca430d6bf182"),
-    "sdk": "e7f517ab79060c52f5942ae82bd2cb8fdc9ee4b1", "mcp_profile": "standard"}
+    "sdk": "b988030bd5931a7f6a3aef6d1a66a43ba817f7e8", "mcp_profile": "standard"}
 COHORTS = {"grandparent": (MANIFEST, EXPECTED),
     "topology-authoring": (ROOT / "products/cpk_server/topology-authoring-cohort.json", AUTHORING_EXPECTED)}
 PACKAGES = {
