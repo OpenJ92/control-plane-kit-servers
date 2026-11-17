@@ -86,11 +86,20 @@ selects a repository, not a revision override.
 
 The qualification selects a finite named `topology-authoring` cohort in the
 owning `./test.sh`, using X for both Core and Operations, while
-retaining the historical grandparent mode and manifest unchanged. Keep SDK
+retaining the historical grandparent mode and manifest unchanged. The initial authoring gate used SDK
 `d61b374cb2a23d773c31748f47f88169499298b7`, MCP 2.3.0, Secrets absent,
 and Interpreters `e438f6e522ad0a23a7acef460be08690f48b2e17` from retained
 export SHA256 `af15d9261cde91e387b2659b489712abbc5579f09ba67ca51350c802552c22e0`
 and module tree `97507ed009a5e5c8aa81d280288a2f81ce807835`.
+
+For #429, the authoring cohort selects Core and Operations `68f18771`,
+Interpreters `3e8104fa` and SDK `e7f517ab` to cover a new connector on a
+retained runtime. From the Interpreters repository, reproduce its archive with
+`git -c tar.umask=0002 archive --format=tar --output=interpreters.tar 3e8104fa2aba1275b60ce98db5c46927fbf7b335`.
+The gate compares the archive SHA-256, embedded commit and reconstructed
+`src/control_plane_kit_interpreters` tree with the selected cohort's coordinates.
+The full pins and digests are in
+[`topology-authoring-cohort.json`](../products/cpk_server/topology-authoring-cohort.json).
 
 The harness preserves exact manifest admission, duplicate/unknown field
 refusal, Git export checks, imported module/source and distribution verification,
