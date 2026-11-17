@@ -256,7 +256,7 @@ class StandardMcpTests(StandardMcpFixture, unittest.IsolatedAsyncioTestCase):
                         combined = {**expected["path_parameters"], **expected["payload"]}
                         self.assertEqual({key: str(value) for key, value in actual["payload"].items()},
                                          {key: str(value) for key, value in combined.items()})
-                    expected_writes = {"prepare_deployment"}
+                    expected_writes = {"prepare_deployment", "admit_deployment"}
                     owner_reads = self.app.state.http_boundary.composition.handoff.projection_parity.projections
                     if any(binding.http_route_id == "read.ingress-authority-detail" for binding in owner_reads):
                         expected_writes.add("register_ingress_authority")

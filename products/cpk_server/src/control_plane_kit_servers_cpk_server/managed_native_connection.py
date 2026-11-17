@@ -1,12 +1,13 @@
 """Process-owned capability selection, not admission or installation history."""
 import asyncio
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 
-from control_plane_kit_core.planning import WaitForHealthy, resolve_management_observation
+from control_plane_kit_core.configuration_instances import ConfigurationInstanceSelection
+from control_plane_kit_core.planning import ActivityId, AllocatePublicIngress, StartNode, WaitForHealthy, resolve_management_observation
 from control_plane_kit_core.products import ProductDescriptorCodec, ProductDescriptorDocument, ProductReference
-from control_plane_kit_core.runtime_effects import RuntimeEffectRequest
+from control_plane_kit_core.runtime_effects import RuntimeEffectKind, RuntimeEffectRequest
 from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC
 from control_plane_kit_core.types import RuntimeKind
 from control_plane_kit_interpreters.docker.connector_connection import (
@@ -21,6 +22,34 @@ from control_plane_kit_operations.runtime_management_targets import is_native_co
 
 from .managed_health import ManagedHealthUnavailable, _authority, _graph_pair, _product
 from .managed_health_placement import DockerRuntimeClientSelector, DockerRuntimePolicyBinding
+
+
+def _run_installation_inputs(realization, request, authority, pair):
+    from control_plane_kit_operations.connector_installation import RunConnectorInstallation
+
+    proof = realization.run_connector_installation
+    material, = request.products
+    resolved = resolve_management_observation(request.operation, *pair, expected_operation=request.operation)
+    if (type(proof) is not RunConnectorInstallation or realization.connector_installation is not None
+            or proof.authority_ref != request.authority_ref or proof.runtime_registration_id != authority.registration_id
+            or proof.ingress_id != resolved.ingress.ingress_id or material.secret_selections != (proof.token,)
+            or replace(request.source, intent_event_id=proof.start_effect_id) != proof.source
+            or (proof.wrapper.workspace_id, proof.wrapper.runtime_id, proof.wrapper.node_id) !=
+                (request.source.workspace_id, material.runtime_id, resolved.connector_node.node_id)):
+        raise ValueError
+    events = (proof.allocation_start_event_id, proof.allocation_success_event_id, proof.start_effect_id, request.effect_id)
+    if not all(type(value) is str and value.strip() for value in events) or len(set(events)) != len(events):
+        raise ValueError
+    allocation = realization.plan.activity(ActivityId(proof.allocation_activity_id))
+    start = realization.plan.activity(ActivityId(proof.start_activity_id))
+    if (type(allocation.operation) is not AllocatePublicIngress or allocation.operation.target.ingress_id != proof.ingress_id
+            or type(start.operation) is not StartNode or start.operation.target.node_id != resolved.connector_node.node_id):
+        raise ValueError
+    original = replace(request, kind=RuntimeEffectKind.CONFIGURATION_ACTIVITY_V1, source=proof.source,
+        effect_id=proof.start_effect_id, activity_id=start.activity_id, operation=start.operation,
+        configuration_instances=ConfigurationInstanceSelection((proof.wrapper,)), secret_resolution_grants=())
+    return dict(installation_request=original, installation_receipt=proof.receipt,
+        allocation_activity_id=allocation.activity_id)
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -135,15 +164,19 @@ class DockerManagedNativeConnection:
                 else self.provider_clients.select(**arguments))
             if binding is None:
                 raise ValueError
-            original, receipt = None, None
+            evidence = dict(installation_request=None, installation_receipt=None)
             if mode in (ConnectorConnectionQualification.RETAINED_CONTENT_UPDATE,
                         ConnectorConnectionQualification.RETAINED_IMAGE_INGRESS_UPDATE):
                 installation = realization.connector_installation
                 if installation is not None:
-                    original, receipt = installation.original_request, installation.receipt
+                    evidence.update(installation_request=installation.original_request, installation_receipt=installation.receipt)
+            elif mode is not ConnectorConnectionQualification.FRESH:
+                if mode.value != "new_connector_on_retained_runtime":
+                    raise ValueError
+                evidence = _run_installation_inputs(realization, request, current_authority, pair)
             observed = await asyncio.to_thread(self._observe, binding, request,
                 plan=realization.plan, current=pair[0], desired=pair[1],
-                installation_request=original, installation_receipt=receipt)
+                **evidence)
             if (type(observed) is not ConnectorConnectionObservation
                     or type(observed.outcome) is not ConnectorConnectionOutcome):
                 raise ValueError

@@ -144,3 +144,44 @@ class StandardMcpPlanningTests(fixture.StandardMcpFixture, unittest.IsolatedAsyn
             await exercise(foreign)
         self.assertIsNotNone(caught.exception.subgroup(lambda error: error is foreign))
         self.assertEqual(self.program.prepare.call_count, 1)
+
+
+class StandardMcpAdmissionTests(fixture.StandardMcpFixture, unittest.IsolatedAsyncioTestCase):
+    async def test_operator_submission_preserves_http_owner_command_and_receipt(self):
+        from control_plane_kit_operations.cpk_server import CpkServerAdmissionService
+        from control_plane_kit_core.operations import ControlPlaneServiceRole
+
+        args = {"workspace_id": "workspace-a", "session_id": "session-a", "plan_id": "plan-a",
+                "approval_request_id": "approval-a", "idempotency_key": "admit-a",
+                "readiness": [{"activity_id": "act_" + "a" * 24, "evidence_ref": "operator/db-ready"}]}
+        receipt = {"workspace_id": "workspace-a", "session_id": "session-a", "plan_id": "plan-a",
+                   "execution_request_id": "request-a", "action_id": "action-a", "action_ordinal": 2,
+                   "replayed": False, "status": "queued"}
+        owner = Mock()
+        owner.execute.return_value.descriptor.return_value = receipt
+        self.host.services[ControlPlaneServiceRole.ADMISSION].handle = CpkServerAdmissionService(owner).handle
+        scopes = (PolicyScope.PLAN_EXECUTE,)
+        self.host.verifier.authenticate = lambda credential: replace(_principal(), workspace_grants=(
+            WorkspaceGrant("workspace-a", scopes),))
+        async with self.client() as client:
+            tools = {t.name: t for t in (await client.list_tools()).tools}
+            self.assertIn("admit_deployment", tools)
+            self.assertFalse(tools["admit_deployment"].annotations.read_only_hint)
+            self.assertTrue(tools["admit_deployment"].annotations.destructive_hint)
+            self.assertTrue({"decide_approval", "claim_run", "start_run", "execute_deployment"}.isdisjoint(tools))
+            result = await client.call_tool("admit_deployment", args)
+            self.assertEqual(result.structured_content, receipt)
+            mcp_command = owner.execute.call_args.args[0]
+            self.assertEqual(mcp_command.actor_id, "operator-jacob")
+            self.assertEqual(mcp_command.actor_scopes, scopes)
+            http = await self.http.post("/workspaces/workspace-a/plans/plan-a/admission",
+                json={k: v for k, v in args.items() if k not in ("workspace_id", "plan_id")})
+            self.assertEqual((http.status_code, http.json()), (200, receipt))
+            self.assertEqual(owner.execute.call_args.args[0], mcp_command)
+            self.assertEqual(mcp_command.readiness[0].evidence_ref, "operator/db-ready")
+            for fields in ({"actor_scopes": ["plan:execute"]}, {"actor_id": "other"}, {"approval": True},
+                           {"readiness": [{"activity_id": "a", "value": "private"}]}):
+                self.assertEqual((await client.call_tool("admit_deployment", {**args, **fields})).structured_content["error"]["status"], 400)
+            scopes = (PolicyScope.INSTANCE_WORKSPACE_READ,)
+            self.assertEqual((await client.call_tool("admit_deployment", args)).structured_content["error"]["status"], 403)
+            self.assertEqual(owner.execute.call_count, 2)

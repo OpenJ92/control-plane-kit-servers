@@ -94,3 +94,11 @@ The command records the binding without contacting Cloudflare. After a lost
 reply, use a fresh authorized read and compare the independently expected
 registration ID, public policy and active status. A matching ID establishes
 the current definition. Which request first registered it can remain unknown.
+
+The standard profile exposes `admit_deployment` to submit a plan with its
+recorded approval. The authenticated admission owner checks workspace grants
+and returns the execution request's queued receipt. A separate worker claims
+that request. With a receipt, match its request ID to the exact plan's run
+history. If the reply was lost before claim, an empty run page is consistent
+with a committed request. Without evidence linking the original caller key to
+a receipt, report submission unknown and stop.
