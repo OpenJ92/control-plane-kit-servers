@@ -41,6 +41,9 @@ _READS = {
     "read.desired-topology-drafts": "List saved topology drafts.",
     "read.desired-topology-draft-revisions": "List revisions of one saved topology draft.",
     "read.desired-topology-draft-revision": "Read an exact saved revision identity and its redacted public graph projection.",
+    "read.desired-topology-draft-revision-metadata": (
+        "Verify a saved revision with its exact workspace, draft and revision. Returns its graph ID and "
+        "configured file metadata and digests grouped by node. Requires workspace read access."),
     "read.desired-topology-draft-revision-preparations": "Find recorded preparations for an exact saved revision, including after interruption.",
     "read.desired-topology-draft-revision-attempts": "Read deployment attempt history for an exact saved revision.",
     "read.sessions": "List open sessions; session identity is separate from a transport request ID.",
@@ -337,6 +340,10 @@ class StandardMcpAdapter:
                 "With an actual save receipt, read its exact workspace/draft/revision and compare the graph ID, pins, runtime and edge. "
                 "A received receipt followed by failed readback means saved/readback unavailable. "
                 "Saving does not select Desired, prepare, approve or deploy. ")
+        if "get_desired_topology_draft_revision_metadata" in self.tools:
+            discovery_guidance += (
+                "After saving a configured graph, use get_desired_topology_draft_revision_metadata "
+                "with the returned coordinates to compare the graph ID and file digests. ")
         self.sdk = Server("cpk-server", version="0.1.0", on_list_tools=self.list_tools,
             on_call_tool=self.call_tool, get_tool_input_schema=lambda name: self.tools[name].input_schema if name in self.tools else None,
             instructions="Inspect workspace and exact saved revision first. Graph views are redacted observations, not source exports. "

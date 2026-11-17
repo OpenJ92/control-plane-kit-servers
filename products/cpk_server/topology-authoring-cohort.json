@@ -2,8 +2,8 @@
   "schema": "cpk417.topology-authoring-cohort.v1",
   "name": "topology-authoring",
   "servers": "current-head",
-  "core": "068862c07585b7b0d1bdadeb96716a3ef2f90ece",
-  "operations": "068862c07585b7b0d1bdadeb96716a3ef2f90ece",
+  "core": "999a5792b1fa58713442db1d3cdf85e45222cea9",
+  "operations": "999a5792b1fa58713442db1d3cdf85e45222cea9",
   "interpreters": "e438f6e522ad0a23a7acef460be08690f48b2e17",
   "interpreters_source": {
     "kind": "retained-git-export",
