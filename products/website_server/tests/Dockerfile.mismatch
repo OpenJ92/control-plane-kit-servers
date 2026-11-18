@@ -1,0 +1,5 @@
+ARG MANAGED_IMAGE
+FROM ${MANAGED_IMAGE}
+USER root
+RUN /opt/cpk-website/bin/python -c 'import json; p="/app/website-index.json"; v=json.load(open(p)); v["sha256"]="0"*64; open(p,"w").write(json.dumps(v))'
+USER node

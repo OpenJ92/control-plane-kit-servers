@@ -1,0 +1,243 @@
+"""Command-boundary laws for the existing product-local owning shell."""
+import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+import unittest
+
+ROOT = Path(__file__).resolve().parents[3]
+IMAGE = 'sha256:' + 'a' * 64
+NETWORK = 'b' * 64
+CONTAINER = 'c' * 64
+
+# This seam observes shell effects; ordinary CI proves real network attachment.
+DOCKER = r'''#!/usr/bin/env python3
+import json, os, pathlib, sys
+a=sys.argv[1:]; root=pathlib.Path(os.environ['FAKE_STATE'])
+p=root/'state.json'; s=json.loads(p.read_text()) if p.exists() else {}
+with (root/'calls.jsonl').open('a') as f: f.write(json.dumps(a)+'\n')
+failure=os.environ.get('FAKE_FAILURE','')
+image='sha256:'+'a'*64; net='b'*64; cid='c'*64
+def save(): p.write_text(json.dumps(s))
+def opt(key): return a[a.index(key)+1]
+def labels(): return dict(a[i+1].split('=',1) for i,x in enumerate(a) if x=='--label')
+if a[:2]==['image','inspect']: print(image)
+elif a[:2]==['network','ls']:
+    if failure=='collision': print('foreign')
+    elif opt('--filter').startswith('id=') and 'network' in s: print(net)
+elif a[:2]==['network','create']:
+    s['network']={'name':a[-1], 'labels':labels(), 'internal':'--internal' in a}; save()
+    if failure=='ambiguous-create': sys.exit(1)
+    print(net)
+elif a[:2]==['network','inspect']:
+    n=s['network']; endpoints=1 if failure=='foreign-endpoint' or (failure=='cleanup-endpoint' and s.get('started')) else int('container' in s)
+    owner=n['labels'].get('org.openj92.cpk.controller-run','')
+    if failure=='foreign-owner': owner='foreign'
+    print(net+'|'+n['name']+'|'+str(n['internal']).lower()+'|'+owner+'|'+str(endpoints))
+elif a[:2]==['network','rm']:
+    if failure=='cleanup': sys.exit(1)
+    s.pop('network'); save()
+elif a[0]=='create':
+    assert opt('--network')==net
+    assert '--pull' in a and opt('--pull')=='never'
+    env=dict(a[i+1].split('=',1) for i,x in enumerate(a) if x=='-e' and '=' in a[i+1])
+    run=env['CPK_POSTGRES_TEST_RUN']; n=s['network']
+    assert run not in n['name']
+    assert n['labels'].get('org.openj92.cpk.test-run')!=run
+    mounts=[a[i+1] for i,x in enumerate(a) if x=='--mount']
+    witness=next(m for m in mounts if 'target=/witness' in m)
+    fixture_path=dict(part.split('=',1) for part in witness.split(','))['source']
+    s['container']={'name':opt('--name'),'labels':labels(),'image':image,'fixtures':fixture_path}; save()
+    pathlib.Path(opt('--cidfile')).write_text(cid)
+    print(cid)
+elif a[0]=='start':
+    s['started']=True
+    fixtures=pathlib.Path(s['container']['fixtures'])
+    for name in ('control.json','password','10-witness.sql'): (fixtures/name).write_text('dummy fixture')
+    (fixtures/'wrong-owner-data').mkdir()
+    save()
+    if failure=='interrupt': os.kill(os.getppid(),15)
+    sys.exit(7 if failure=='controller' else 0)
+elif a[0]=='ps':
+    if 'container' in s: print(cid)
+elif a[:2]==['container','inspect']:
+    if failure=='cleanup-inspect': sys.exit(1)
+    c=s['container']; owner='foreign' if failure=='cleanup-controller-owner' else c['labels']['org.openj92.cpk.controller-run']
+    print(cid+'|/'+c['name']+'|'+owner+'|'+c['image'])
+elif a[:2]==['container','rm']:
+    s.pop('container'); save()
+elif a[0]=='run':
+    assert opt('--network')=='none'
+else: raise AssertionError(a)
+'''
+
+
+class PostgresArtifactShellTests(unittest.TestCase):
+    def summary(self, result):
+        lines = [line for line in result.stdout.splitlines()
+                 if line.startswith('{"postgres_invocation_result":')]
+        self.assertEqual(len(lines), 1, result.stdout)
+        return json.loads(lines[0])["postgres_invocation_result"]
+
+    def test_summary_separates_invocation_failure_from_completed_cleanup(self):
+        result, _, _, state = self.invoke('source', 'controller')
+        self.assertEqual(result.returncode, 7)
+        self.assertEqual(self.summary(result), {
+            "invocation_exit": 7, "final_exit": 7,
+            "controller_cleanup": "completed", "network_cleanup": "completed",
+            "fixture_cleanup": "completed"})
+        self.assertNotIn('container', state)
+        self.assertNotIn('network', state)
+
+    def test_summary_does_not_confuse_unknown_cleanup_with_not_attempted(self):
+        for failure, controller, network in (
+            ('collision', 'not_attempted', 'not_attempted'),
+            ('ambiguous-create', 'not_attempted', 'unknown'),
+            ('cleanup-controller-owner', 'unknown', 'not_attempted'),
+            ('cleanup-endpoint', 'completed', 'unknown'),
+        ):
+            with self.subTest(failure=failure):
+                result, _, _, _ = self.invoke('source', failure)
+                report = self.summary(result)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(report['final_exit'], result.returncode)
+                self.assertEqual(report['controller_cleanup'], controller)
+                self.assertEqual(report['network_cleanup'], network)
+                self.assertEqual(report['fixture_cleanup'],
+                                 'completed' if failure == 'collision' else 'not_attempted')
+
+    def test_closed_summary_pipe_preserves_invocation_exit_and_cleanup(self):
+        result, receipt, _, state = self.invoke('source', 'controller', closed_stdout=True)
+        self.assertEqual((receipt/'qualification.log').read_bytes(), b'')
+        self.assertEqual(result.returncode, 7)
+        self.assertEqual((receipt/'qualification.exit').read_text().strip(), '7')
+        self.assertNotIn('container', state)
+        self.assertNotIn('network', state)
+        self.assertFalse((receipt/'fixtures').exists())
+
+    def invoke(self, mode='published', failure='', extra=None, *, closed_stdout=False,
+               parent_spelling=None):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        (root/'bin').mkdir()
+        for name, text in [('docker', DOCKER), ('git', '#!/bin/sh\nprintf "%s\\n" checkpoint\n')]:
+            path=root/'bin'/name; path.write_text(text); path.chmod(0o755)
+        env=dict(os.environ, PATH=str(root/'bin')+':'+os.environ['PATH'], FAKE_STATE=str(root), FAKE_FAILURE=failure)
+        for key in ('CPK_POSTGRES_ARTIFACT_MODE','CPK_POSTGRES_IMAGE','CPK_POSTGRES_SOURCE_REVISION','CPK_POSTGRES_RECIPE_SHA256'):
+            env.pop(key, None)
+        if mode=='published':
+            env.update(CPK_POSTGRES_ARTIFACT_MODE='published-digest', CPK_POSTGRES_IMAGE='repository@sha256:'+'d'*64,
+                       CPK_POSTGRES_SOURCE_REVISION='e'*40, CPK_POSTGRES_RECIPE_SHA256='f'*64)
+        env.update(extra or {})
+        selector={'published':'--postgres-published-image','source':'--postgres-source-image','unit':'--postgres-release-tests'}[mode]
+        receipt=root/'receipt'
+        if parent_spelling is not None:
+            physical = root/'physical'
+            physical.mkdir()
+            (physical/'scratch').mkdir(mode=0o700)
+            alias = root/'alias'
+            alias.symlink_to(physical, target_is_directory=True)
+            parent = alias/'scratch'
+            if parent_spelling == 'canonical':
+                parent = parent.resolve(strict=True)
+            elif parent_spelling == 'physical':
+                parent = physical/'scratch'
+            receipt = parent/'receipt'
+        command=['sh',str(ROOT/'scripts/postgres_artifact_shell.sh'),selector,
+                 '--controller-image-id',IMAGE,'--receipt-dir',str(receipt)]
+        if closed_stdout:
+            reader, writer = os.pipe()
+            os.close(reader)
+            with os.fdopen(writer, 'wb') as sink:
+                result=subprocess.run(command,env=env,stdout=sink,stderr=subprocess.PIPE,
+                                      text=True,timeout=15)
+        else:
+            result=subprocess.run(command,env=env,capture_output=True,text=True,timeout=15)
+        calls=[json.loads(line) for line in (root/'calls.jsonl').read_text().splitlines()] if (root/'calls.jsonl').exists() else []
+        state=json.loads((root/'state.json').read_text()) if (root/'state.json').exists() else {}
+        return result, receipt, calls, state
+
+    def test_receipt_parent_requires_physical_spelling_even_with_alias_ancestor(self):
+        for spelling in ('alias', 'canonical', 'physical'):
+            with self.subTest(spelling=spelling):
+                result, receipt, calls, state = self.invoke('source', parent_spelling=spelling)
+                if spelling == 'alias':
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(calls, [])
+                    self.assertFalse(receipt.exists())
+                else:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(self.summary(result)['final_exit'], 0)
+                    self.assertTrue(any(call[0] == 'start' for call in calls))
+                    self.assertNotIn('container', state)
+                    self.assertNotIn('network', state)
+
+    def test_effectful_modes_share_internal_launch_and_exact_cleanup(self):
+        for mode in ('source','published'):
+            with self.subTest(mode=mode):
+                result, receipt, calls, state=self.invoke(mode)
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertNotIn('network',state); self.assertNotIn('container',state)
+                self.assertFalse((receipt/'fixtures').exists())
+                self.assertEqual((receipt/'qualification.exit').read_text().strip(),'0')
+                creates=[c for c in calls if c[0]=='create']
+                self.assertEqual(len(creates),1)
+                create=creates[0]
+                self.assertEqual(create[create.index('--network')+1],NETWORK)
+                self.assertNotIn('build',[c[0] for c in calls]); self.assertNotIn('pull',[c[0] for c in calls])
+                self.assertLess(next(i for i,c in enumerate(calls) if c[:2]==['container','rm']),
+                                next(i for i,c in enumerate(calls) if c[:2]==['network','rm']))
+                self.assertIn('CPK_POSTGRES_ARTIFACT_MODE='+('source-built' if mode=='source' else 'published-digest'),create)
+
+    def test_failure_and_interruption_keep_failure_and_cleanup_owned_resources(self):
+        for failure in ('controller','interrupt'):
+            with self.subTest(failure=failure):
+                result, receipt, calls, state=self.invoke(failure=failure)
+                self.assertNotEqual(result.returncode,0)
+                self.assertNotIn('network',state); self.assertNotIn('container',state)
+                self.assertFalse((receipt/'fixtures').exists())
+                self.assertNotEqual((receipt/'qualification.exit').read_text().strip(),'0')
+
+    def test_uncertain_or_foreign_resources_are_not_force_cleaned(self):
+        for failure in ('collision','ambiguous-create','foreign-owner','foreign-endpoint','cleanup'):
+            with self.subTest(failure=failure):
+                result, receipt, calls, state=self.invoke(failure=failure)
+                self.assertNotEqual(result.returncode,0)
+                if failure!='cleanup': self.assertFalse(any(c[:2]==['network','rm'] for c in calls))
+                if failure in ('collision','ambiguous-create','foreign-owner','foreign-endpoint'):
+                    self.assertFalse(any(c[0]=='start' for c in calls))
+
+    def test_source_rejects_published_inputs_before_effects(self):
+        result, _, calls, _=self.invoke('source',extra={'CPK_POSTGRES_IMAGE':'borrowed'})
+        self.assertNotEqual(result.returncode,0)
+        self.assertEqual(calls,[])
+
+    def test_cleanup_refuses_foreign_controller_and_unknown_inspection(self):
+        for failure in ('cleanup-controller-owner','cleanup-inspect'):
+            with self.subTest(failure=failure):
+                result, receipt, calls, state=self.invoke('source',failure)
+                self.assertNotEqual(result.returncode,0)
+                self.assertTrue(state['started'])
+                self.assertTrue((receipt/'fixtures/password').exists())
+                self.assertFalse(any(c[:2] in (['container','rm'],['network','rm'],['network','disconnect']) for c in calls))
+                self.assertNotEqual((receipt/'qualification.exit').read_text().strip(),'0')
+
+    def test_cleanup_removes_owned_controller_but_preserves_foreign_endpoint(self):
+        result, receipt, calls, state=self.invoke('source','cleanup-endpoint')
+        self.assertNotEqual(result.returncode,0)
+        self.assertTrue(state['started'])
+        self.assertNotIn('container',state); self.assertIn('network',state)
+        self.assertTrue(any(c[:2]==['container','rm'] for c in calls))
+        self.assertFalse(any(c[:2] in (['network','rm'],['network','disconnect']) for c in calls))
+        self.assertTrue((receipt/'fixtures/password').exists())
+        self.assertNotEqual((receipt/'qualification.exit').read_text().strip(),'0')
+
+    def test_unit_mode_remains_daemon_free_and_network_none(self):
+        result, _, calls, _=self.invoke('unit')
+        self.assertEqual(result.returncode,0,result.stderr)
+        run=next(c for c in calls if c[0]=='run')
+        self.assertEqual(run[run.index('--network')+1],'none')
+        self.assertFalse(any('docker.sock' in arg for arg in run))
+        self.assertFalse(any(c[0] in ('network','create','start') for c in calls))

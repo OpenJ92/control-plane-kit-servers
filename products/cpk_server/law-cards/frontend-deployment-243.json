@@ -1,0 +1,20 @@
+{
+  "issue": "#243",
+  "selected_servers": "dcad59122b20807d2fb1d24081502927dfab503f",
+  "selected_core_operations": "250d65e19dc748ebe840f705be77eb732dab3cb3",
+  "web_contract": "221ad6dbb409f7765517b7b4efbfdab040b65544",
+  "classification": "new-law",
+  "test_owner": "products/cpk_server/tests/test_frontend_deployment.py",
+  "laws": [
+    "Preserve the caller's immutable image; no publication or default image is invented.",
+    "The HTTP provider port, PORT environment and required canonical HTTPS upstream agree.",
+    "Changed product material has a distinct identity; equal inputs yield canonical equal values.",
+    "No protected health, native verification, secret delivery or runtime authority delivery is declared for the website.",
+    "Selected connector document content and value agree; wrong product or ambiguous ingress target refuses.",
+    "The graph is ordinary, nonmanaged, roundtrippable and scoped only to the explicit frontend workspace/runtime.",
+    "Separate workspace lifetime preserves the website during Hello teardown; live inventory disjointness remains the run plan's obligation."
+  ],
+  "negative_cases": "Credential/path/query-bearing or noncanonical origins; IPv6 zone IDs; unsupported IDNA A-labels; invalid port or unpinned image; mismatched connector document; wrong ingress socket; aliased website/connector; untyped authority.",
+  "discarded_assumptions": "No root bootstrap extension, fictitious SDK receiver, temporary probe, or source-test claim of live readiness/retention.",
+  "evidence": "Existing DockerInstallationTests informs pure product/reference composition. No migration or frozen-suite translation; unchanged owning Docker ./test.sh supplies target-red and green."
+}

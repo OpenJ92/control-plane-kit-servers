@@ -4,18 +4,56 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import hmac
+from types import MappingProxyType
 from typing import Mapping
 
 from control_plane_kit_core.identity import (
     AuthenticatedPrincipal,
     CredentialVerifier,
+    IdentityContractError,
     PrincipalIdentity,
     PrincipalKind,
+    TrustedCommandContext,
     WorkspaceGrant,
 )
 
 
 MAXIMUM_BEARER_CREDENTIAL_BYTES = 4096
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class ConfiguredPrincipalAuthorizer:
+    """Credential-free startup policy; changes require process replacement.
+
+    Conflicting entries deny the entire identity. Each decision consults this
+    independent policy and is bounded by the original authenticated request.
+    """
+
+    _policies: Mapping[PrincipalIdentity, tuple[WorkspaceGrant, ...] | None] = field(repr=False)
+
+    def __init__(self, principals: tuple[AuthenticatedPrincipal, ...]) -> None:
+        if type(principals) is not tuple or any(type(item) is not AuthenticatedPrincipal for item in principals):
+            raise IdentityContractError("configured principal policies are malformed")
+        policies: dict[PrincipalIdentity, tuple[WorkspaceGrant, ...] | None] = {}
+        for principal in principals:
+            identity, grants = principal.identity, principal.workspace_grants
+            if identity in policies and policies[identity] != grants:
+                policies[identity] = None
+            elif identity not in policies:
+                policies[identity] = grants
+        object.__setattr__(self, "_policies", MappingProxyType(policies))
+
+    def authorize(self, principal: AuthenticatedPrincipal, workspace_id: str) -> TrustedCommandContext:
+        if type(principal) is not AuthenticatedPrincipal:
+            raise IdentityContractError("current principal authority is unavailable or denied")
+        original = principal.command_context(workspace_id)
+        policy = self._policies.get(principal.identity)
+        grant = next((item for item in policy or () if item.workspace_id == workspace_id), None)
+        if grant is None:
+            raise IdentityContractError("current principal authority is unavailable or denied")
+        scopes = tuple(scope for scope in grant.scopes if scope in original.granted_scopes)
+        decision = AuthenticatedPrincipal(principal.identity, (WorkspaceGrant(workspace_id, scopes),))
+        return decision.command_context(workspace_id)
 
 
 class CredentialAuthenticationError(ValueError):

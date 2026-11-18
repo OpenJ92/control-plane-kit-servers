@@ -45,3 +45,8 @@ The structural grant helper is imported and run, proving a synthetic protocol
 roundtrip with historical-shaped identifiers, not historical/live authority.
 
 Related source and evidence: [products/cpk_local_gateway/src/control_plane_kit_servers_cpk_local_gateway/verification.py](../../../../../products/cpk_local_gateway/src/control_plane_kit_servers_cpk_local_gateway/verification.py), [products/cpk_local_gateway/src/control_plane_kit_servers_cpk_local_gateway/server.py](../../../../../products/cpk_local_gateway/src/control_plane_kit_servers_cpk_local_gateway/server.py), [scripts/cpk_local_gateway_structural_grant_check.py](../../../../../scripts/cpk_local_gateway_structural_grant_check.py).
+
+#182 strengthens the public minimal-health assertion: an isolated legacy-only
+app has liveness but returns503/not-ready without complete relay/SDK composition.
+Its bounded status still discloses no target count. Probe behavior is otherwise
+unchanged here; this adaptation does not close the parent's legacy retirement.

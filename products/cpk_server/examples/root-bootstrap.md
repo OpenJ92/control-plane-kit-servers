@@ -80,6 +80,49 @@ and verifies `0400` delivery into read-only mounts. The driver image uses UID0 f
 the existing SDK archive helper. Public setup instead uses the inspected CPK UID,
 shares the exact CPK container's network namespace, and receives no Docker socket.
 
+Compiled public configuration artifacts appear in each node's
+`configuration_files` plan entries, with their complete descriptor, target path,
+content digest and deterministic owned volume name. Apply delivers those exact
+artifacts through the existing SDK, verifies their bytes, and checks the complete
+secret/configuration read-only mount set before starting each recipient. The SDK
+creates root-owned configuration files: `0444` supports numeric nonroot readers;
+`0400` requires a root image user and is refused for nonroot recipients before
+network or volume acquisition. Bootstrap never broadens the declared mode.
+Configuration volumes remain in the acquisition receipt on success or HOLD.
+Changed saved projections must be regenerated and reviewed; apply never upgrades
+an old saved plan silently.
+
+For an explicitly enabled managed-health installation, add the full Core
+artifact descriptor as `installation.managed_health_configuration` in the input.
+For example, when preparing that input in the normal package environment:
+
+```python
+from control_plane_kit_servers_cpk_server.managed_health_configuration import (
+    managed_health_configuration_artifact,
+)
+
+document["installation"]["managed_health_configuration"] = (
+    managed_health_configuration_artifact(reviewed_bytes).descriptor()
+)
+```
+
+Use the [closed process format](../../../docs/implementation/managed-health-startup.md) with
+explicit scope references and reviewed canonical product documents. The only
+default is an absent field; explicit `null` is invalid. This field accepts all
+seven Core artifact descriptor fields, including both digests, rather than a
+filename or resolved secret. Original content bytes and valid source metadata
+survive projection into the ordinary `configuration_files` entries. The helper
+does not add a mount path or provider to the acquisition runtime.
+
+The installation requires the configured Docker socket to be
+`/var/run/docker.sock`, matching its existing declared delivery. Managed scope
+references need independent admission. Configuration has a 262,144-byte artifact
+bound and must also fit within the complete Core product's 262,144-byte document
+bound. Both root input and the repeated/escaped plan have a separate 1,048,576-byte
+limit. Review the new plan; old receipts and no-redispatch rules remain unchanged.
+This source path does not demonstrate that the historical image above supports
+the new mode. Published-image and live startup acceptance remain separate.
+
 The private receipt records intent before nontransactional Docker or public-setup
 stages and observations afterward. Any previous receipt stops apply; it is not
 an idempotent repair command. Pending work, conflicting resources, permission
@@ -101,8 +144,8 @@ each response, preserving only returned identities/digests and route evidence.
 A later command failure retains that helper and the staging volumes. Inspect can
 read its progress without executing or replaying it; an unavailable helper leaves
 the last confirmed receipt evidence and HOLD intact. Successful setup copies the
-confirmed progress into the receipt before removing the helper and its two exact
-one-time plan/credential staging volumes. Product delivery and retained data
+confirmed progress into the receipt before removing the helper and its exact
+one-time input staging volumes (plan/credential for static setup). Product delivery and retained data
 volumes remain intact. Returned Docker IDs are persisted while the stage remains
 pending, before ownership or mount checks can fail.
 
@@ -156,3 +199,157 @@ the invoking host user; receipt files written by apply are private driver-owned
 evidence, read through `bootstrap.sh inspect`. Rootless/user-remapped daemons,
 remote daemons and network filesystems that restrict root bind access are not
 established by this acceptance witness.
+
+## Explicit dynamic initialization and enrollment (#346/#347)
+
+The integrated source at8bb96f9 passed the current-image launcher gate and
+[independent combined review](https://github.com/OpenJ92/control-plane-kit-servers/issues/347#issuecomment-6488312730).
+Use the exact qualified pair and common producer in
+[current artifact qualification](../../../docs/current-root-artifacts.md);
+the historical images in the static example above are a separate selection.
+The dynamic witness verifies actual public enrollment, revoked-state persistence
+after restart, matching initialization history and scoped cleanup. This isolated
+fixture does not establish the retained/live root or authorize another deployment.
+The initializer uses a separate fixed-input,
+socket-free helper after fresh PostgreSQL readiness and before application
+writers. It admits the real installer credential/private intent, requires an
+empty namespace under the Operations owner's lock, commits schema, then binds
+the installation in a separate transaction. Ordinary startup never performs
+this binding or grants workspace access.
+
+For an interrupted initializer acquisition, the separate reviewed command is:
+
+```sh
+./bootstrap.sh inspect-initialization DRIVER PLAN DIGEST INDEX STATE
+```
+
+It requires the original reviewed plan and private input index. It creates one
+bounded temporary helper, performs only owner receipt reads, and preserves the
+original acquisition's pending phase. Matching receipt evidence does not resume
+apply. Missing or unavailable evidence does not make retry safe. Uncertain helper
+creation/removal retains evidence and refuses another dispatch. Confirmed cleanup
+removes only the exact temporary helper, its input copies and progress volume, retaining database
+and installation policy. No live installation or image publication is implied by
+this source workflow, and historical receipts are not proof that resources exist.
+
+Progress lives in a dedicated owned volume so acknowledgement files survive
+helper exit. A failed or uncertain helper retains that volume and its pending
+receipt for inspection; successful bounded readback is retained before cleanup.
+
+### Authoring the private dynamic intent
+
+Use a separately reviewed, qualified CPK/Secrets image pair with their actual
+source-owned runtime contracts and commissioning artifacts when the full launcher
+is released. Do not substitute a local tag or assume the static example's image
+digests implement dynamic enrollment. Native PostgreSQL keeps its existing
+selection. The [current-artifact guide](../../../docs/current-root-artifacts.md)
+describes the qualification inputs, accepted exact pair and remaining live boundary.
+
+Dynamic installation makes these public changes to an otherwise valid root input:
+
+```json
+"workspace_grants": [],
+"workspace_authority": {
+  "mode": "dynamic-v1",
+  "private_intent_sha256": "<digest of the exact reviewed private intent>"
+}
+```
+
+The public `setup` adds only a structural summary, for example
+`"administration": {"permission_grant_count": 1, "management_grant": false}`.
+The count must be an integer from 1 through 32. It does not grant access or reveal
+the private target identities, scopes or command keys.
+
+The material index uses `cpk.root-bootstrap.material.v2`. Its existing `files`
+mapping still names exactly the required private credential files. A separate
+`dynamic_workspace` object supplies:
+
+```json
+{
+  "plan_digest": "<reviewed public plan digest>",
+  "policy": {"file": "workspace-policy.json", "sha256": "<exact policy byte digest>"},
+  "installer": {"issuer": "<verified issuer>", "subject_id": "<verified subject>", "kind": "operator"},
+  "initialization_idempotency_key": "<reviewed initialization key>",
+  "administration": {
+    "workspace_creation_idempotency_key": "<reviewed workspace creation key>",
+    "permission_grants": [{
+      "target": {"issuer": "<verified issuer>", "subject_id": "<verified subject>", "kind": "operator"},
+      "scopes": [
+        "instance:workspace:read", "instance:workspace:edit",
+        "secret-provider:register", "secret-provider:read",
+        "runtime-authority:register", "runtime-authority:read",
+        "runtime-authority-delivery:register", "runtime-authority-delivery:read"
+      ],
+      "expected_revision": 0,
+      "idempotency_key": "<reviewed permission grant key>"
+    }],
+    "management_grant": null
+  }
+}
+```
+
+These placeholders are not usable values or default authority. The illustrated
+scopes serve the basic provider/runtime/delivery/product setup; optional secret
+references, pull authorities or ingress require their own explicitly reviewed
+scopes. The setup bearer must resolve through the actual configured verifier to
+the full installer identity, which must be an administrator in the private
+`cpk-server.workspace-authority.v1` policy. Every grant target must be known to
+that policy. Single-operator authentication uses its fixed existing identity;
+multi-principal authentication requires the corresponding private principals
+document. Naming an administrator in a file is not authentication, and administrator
+status does not confer ordinary workspace access.
+
+Compute `private_intent_sha256` with the existing pure
+`bootstrap_workspace.workspace_intent_commitment` using exact `policy_bytes`,
+`installer`, `initialization_idempotency_key`, the complete `public_setup`, and
+`administration`. Then produce and review the public plan and bind its digest in
+the private index. The commitment excludes `plan_digest`, so there is no circular
+hash. A hash proves correspondence, not permission. Review the private intent
+alongside the plan; keep both the policy and index owner-only and out of public
+configuration artifacts, examples with real values, and logs.
+
+If runtime management is explicitly requested, set the public summary's
+`management_grant` to `true` and replace the private null with:
+
+```json
+{
+  "runtime_id": "<installation_id>-docker",
+  "authority_ref": "<reviewed runtime authority reference>",
+  "capability_id": "<explicit installed capability>",
+  "expected_revision": 0,
+  "idempotency_key": "<reviewed management grant key>",
+  "registration_from": "command.runtime-authority.register"
+}
+```
+
+There is no authored registration ID. Setup obtains the actual ID from the
+acknowledged active Docker authority registration and verifies its detail before
+the management command. Management permission does not prove daemon identity,
+provider access, health or application deployment.
+
+### Public command and read correspondence
+
+After explicit initialization, enrollment uses authenticated public routes:
+
+| Command or stage | Required correspondence |
+| --- | --- |
+| `command.workspace-administration.create` | Explicit workspace/body and private key; receipt matches installation, full actor and workspace; fresh initialization acknowledged |
+| `command.workspace-permission.grant` | Exact private target/scopes/revision/key; `read.workspace-permission` queries the full target and matches the resulting owner record |
+| Existing provider/reference/runtime registration | Existing owner responses and detail reads; ordinary permissions are required |
+| Optional `command.managed-runtime-access.grant` | Actual returned registration plus reviewed runtime/authority/capability/revision/key; `read.managed-runtime-assignment` uses raw runtime/authority query text |
+| Delivery/product/pull/ingress registration | Existing sequence and explicit selected inputs; no provider lifecycle is inferred |
+| Final workspace/current/desired reads | Current graph matches creation; desired matches the workspace read, including explicit null with `assigned=false` for a fresh workspace |
+
+Each public command commits independently. Setup sends a mutation once, persists
+pending before dispatch and retains bounded returned coordinates before later
+readback can fail. A response acknowledgement is not verified readback or complete
+enrollment. Denial, stale revision, mismatched response or lost reply stops later
+commands; it does not authorize retry, compensating grants or deletion.
+
+The socket-free public helper receives only plan, credential, private intent,
+policy and optional principals. Database password and acquisition target belong
+only to initialization. Successful cleanup removes exact helper input copies;
+the installation's protected policy and database remain. Failed setup retains its
+helper, staging and partial progress for inspection. Ordinary startup reads the
+retained binding and current durable permissions: it does not initialize, enroll
+again or restore revoked ordinary/management access.

@@ -12,10 +12,14 @@ import stat
 from typing import Iterator, Mapping
 from uuid import UUID
 
+from .transport import safe_http_status, validated_advancement_diagnostic
+
 
 JOURNAL_SCHEMA = "cpk.client-invocation.v1"
 SAVED_JOURNAL_SCHEMA = "cpk.client-saved-invocation.v1"
+PREPARATION_JOURNAL_SCHEMA = "topology-client-preparation.v1"
 MAXIMUM_JOURNAL_BYTES = 1_048_576
+MAXIMUM_PREPARATION_BYTES = 65_536
 MAXIMUM_REQUEST_RECORDS = 128
 _JOURNAL_KEYS = {
     "schema",
@@ -231,6 +235,85 @@ class JournalStore:
                 os.close(descriptor)
             _unlink_owned_partial(partial, owned_identity)
 
+    def create_preparation(
+        self, operation_ref: str, raw: bytes
+    ) -> dict[str, object]:
+        """Publish immutable authored graph bytes without replacing an old path."""
+
+        operation_ref = canonical_operation_ref(operation_ref)
+        self.initialize()
+        if type(raw) is not bytes or not 1 <= len(raw) <= MAXIMUM_PREPARATION_BYTES:
+            raise JournalError("prepared graph is invalid")
+        name = f"{operation_ref}.graph.json"
+        path = self.root / name
+        partial = self.root / f"{name}.part"
+        descriptor, owned_identity = _write_owned_partial(partial, raw)
+        try:
+            os.close(descriptor)
+            descriptor = -1
+            try:
+                os.link(partial, path, follow_symlinks=False)
+            except FileExistsError as error:
+                raise JournalError("prepared graph already exists") from error
+            directory = os.open(self.root, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        except OSError as error:
+            raise JournalError("prepared graph could not be persisted") from error
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+            _unlink_owned_partial(partial, owned_identity)
+        return {"name": name, "size": len(raw), "sha256": sha256(raw).hexdigest()}
+
+    def read_preparation(
+        self, operation_ref: str, value: Mapping[str, object]
+    ) -> bytes:
+        """Read one operation-relative immutable authored graph artifact."""
+
+        operation_ref = canonical_operation_ref(operation_ref)
+        self.initialize()
+        _validate_preparation(value, operation_ref)
+        path = self.root / value["name"]
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(path, flags)
+        except OSError as error:
+            raise JournalError("prepared graph is unavailable") from error
+        try:
+            before = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(before.st_mode)
+                or before.st_uid != os.getuid()
+                or stat.S_IMODE(before.st_mode) != 0o600
+                or before.st_size != value["size"]
+                or before.st_size > MAXIMUM_PREPARATION_BYTES
+            ):
+                raise JournalError("prepared graph is unsafe")
+            chunks = []
+            remaining = MAXIMUM_PREPARATION_BYTES + 1
+            while remaining:
+                chunk = os.read(descriptor, remaining)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            raw = b"".join(chunks)
+            after = os.fstat(descriptor)
+            if (
+                len(raw) != value["size"]
+                or before.st_ino != after.st_ino
+                or before.st_size != after.st_size
+                or before.st_mtime_ns != after.st_mtime_ns
+                or sha256(raw).hexdigest() != value["sha256"]
+            ):
+                raise JournalError("prepared graph is invalid")
+            return raw
+        finally:
+            os.close(descriptor)
+
     def write(self, operation_ref: str, value: Mapping[str, object]) -> None:
         operation_ref = canonical_operation_ref(operation_ref)
         self.initialize()
@@ -263,15 +346,31 @@ class JournalStore:
 
 
 def _validate_journal(value: object, operation_ref: str) -> None:
-    if isinstance(value, dict) and value.get("schema") == "cpk.client-catalogue-invocation.v1":
+    if isinstance(value, dict) and value.get("schema") in {
+        "cpk.client-catalogue-invocation.v1", "cpk.client-catalogue-invocation.v2"
+    }:
         from .catalogue import validate_journal
         validate_journal(value, operation_ref)
         return
     saved = isinstance(value, dict) and value.get("schema") == SAVED_JOURNAL_SCHEMA
-    keys = _JOURNAL_KEYS | {"prepare_request"} if saved else _JOURNAL_KEYS
+    prepared = (
+        isinstance(value, dict)
+        and value.get("schema") == PREPARATION_JOURNAL_SCHEMA
+    )
+    keys = (
+        _JOURNAL_KEYS | {"prepare_request"}
+        if saved
+        else _JOURNAL_KEYS | {"preparation"}
+        if prepared
+        else _JOURNAL_KEYS
+    )
     if not isinstance(value, dict) or set(value) != keys:
         raise JournalError("operation journal is invalid")
-    if value["schema"] not in {JOURNAL_SCHEMA, SAVED_JOURNAL_SCHEMA} or value["operation_ref"] != operation_ref:
+    if value["schema"] not in {
+        JOURNAL_SCHEMA,
+        SAVED_JOURNAL_SCHEMA,
+        PREPARATION_JOURNAL_SCHEMA,
+    } or value["operation_ref"] != operation_ref:
         raise JournalError("operation journal identity is invalid")
     target = value["target"]
     if not isinstance(target, dict) or set(target) != {"endpoint_sha256", "workspace_id"}:
@@ -294,6 +393,9 @@ def _validate_journal(value: object, operation_ref: str) -> None:
         or not _is_sha256(desired["sha256"])
     ):
         raise JournalError("operation journal desired reference is invalid")
+    preparation = value.get("preparation")
+    if prepared:
+        _validate_preparation(preparation, operation_ref)
     phase = value["phase"]
     if phase not in _PHASES:
         raise JournalError("operation journal phase is invalid")
@@ -395,7 +497,15 @@ def _validate_journal(value: object, operation_ref: str) -> None:
         raise JournalError("operation journal advancement coordinates are invalid")
     pending = value["pending_request"]
     if pending is not None:
-        _validate_pending(pending, phase, target, desired, coordinates, value.get("prepare_request"))
+        _validate_pending(
+            pending,
+            phase,
+            target,
+            desired,
+            coordinates,
+            value.get("prepare_request"),
+            preparation,
+        )
     history = value["request_history"]
     if not isinstance(history, list) or len(history) > MAXIMUM_REQUEST_RECORDS:
         raise JournalError("operation journal request budget is exhausted")
@@ -411,7 +521,7 @@ def _validate_journal(value: object, operation_ref: str) -> None:
         ):
             raise JournalError("operation journal request history is invalid")
     if value["last_result"] is not None:
-        _validate_result(value["last_result"], operation_ref, target, coordinates)
+        _validate_result(value["last_result"], operation_ref, target, coordinates, pending)
 
 
 
@@ -451,6 +561,7 @@ def _validate_pending(
     desired: Mapping[str, object],
     coordinates: Mapping[str, object],
     saved_request: Mapping[str, object] | None = None,
+    preparation: Mapping[str, object] | None = None,
 ) -> None:
     keys = {
         "route_id",
@@ -539,7 +650,7 @@ def _validate_pending(
         ):
             raise JournalError("operation journal prepare request is invalid")
         if (
-            source != desired
+            source != (preparation if preparation is not None else desired)
             or not _valid_pointer(body.get("expected_current"))
             or (
                 body.get("expected_desired") is not None
@@ -601,11 +712,24 @@ def _validate_pending(
         raise JournalError("operation journal pending coordinates are invalid")
 
 
+def _validate_preparation(value: object, operation_ref: str) -> None:
+    if (
+        not isinstance(value, Mapping)
+        or set(value) != {"name", "size", "sha256"}
+        or value["name"] != f"{operation_ref}.graph.json"
+        or type(value["size"]) is not int
+        or not 1 <= value["size"] <= MAXIMUM_PREPARATION_BYTES
+        or not _is_sha256(value["sha256"])
+    ):
+        raise JournalError("prepared graph reference is invalid")
+
+
 def _validate_result(
     result: object,
     operation_ref: str,
     target: Mapping[str, object],
     coordinates: Mapping[str, object],
+    pending: object,
 ) -> None:
     required = {
         "schema",
@@ -624,6 +748,8 @@ def _validate_result(
         "run_id",
         "required_scope",
         "destructive",
+        "http_status",
+        "diagnostic",
     }
     if (
         not isinstance(result, dict)
@@ -690,6 +816,31 @@ def _validate_result(
         raise JournalError("operation journal result is invalid")
     if "destructive" in result and type(result["destructive"]) is not bool:
         raise JournalError("operation journal result is invalid")
+    retained = {key: result[key] for key in ("http_status", "diagnostic") if key in result}
+    if retained and (result["advancement"] != "unverified" or retained != advancement_evidence(
+            pending, coordinates, target["workspace_id"], **retained)):
+        raise JournalError("operation journal advancement evidence is invalid")
+
+
+def advancement_evidence(pending: object, coordinates: Mapping[str, object], workspace_id: str,
+                         *, http_status: object = None, diagnostic: object = None) -> dict[str, object]:
+    """Retain observations only for this still-pending advancement command."""
+    status = safe_http_status(http_status)
+    if (status is None or type(pending) is not dict
+            or pending.get("route_id") != "command.graph.advance-current"
+            or type(pending.get("path_parameters")) is not dict or type(pending.get("body")) is not dict):
+        return {}
+    path, body = pending["path_parameters"], pending["body"]
+    expected = {"workspace_id": workspace_id, "run_id": coordinates.get("run_id"),
+        "plan_id": coordinates.get("plan_id"), "idempotency_key": pending.get("idempotency_key")}
+    if (path.get("workspace_id") != workspace_id or path.get("run_id") != expected["run_id"]
+            or body.get("plan_id") != expected["plan_id"] or body.get("idempotency_key") != expected["idempotency_key"]):
+        return {}
+    result = {"http_status": status}
+    validated = validated_advancement_diagnostic(diagnostic, expected)
+    if validated is not None:
+        result["diagnostic"] = validated
+    return result
 
 
 def _valid_pointer(value: object) -> bool:

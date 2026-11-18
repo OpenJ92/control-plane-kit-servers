@@ -1,9 +1,11 @@
 {
   "schema": "cpk-servers.coordinates",
   "upstreams": {
-    "control_plane_kit_commit": "e3e29995a4ffc6e6645c2b35d41f394438464d2d",
-    "control_plane_kit_interpreters_commit": "e19da40f948d324fbb37cd53075bcbf66a4ee77f",
-    "control_plane_kit_secrets_commit": "68d0da6aed3a383d6bdc284cf4a6a6063a31487e"
+    "control_plane_kit_core_commit": "68f187710abe8fa89701f403ac76e904b3fec35d",
+    "control_plane_kit_operations_commit": "68f187710abe8fa89701f403ac76e904b3fec35d",
+    "control_plane_kit_interpreters_commit": "45866b2d9d0b0c08b554aaf2b7692042267e2e93",
+    "control_plane_kit_server_sdk_commit": "b988030bd5931a7f6a3aef6d1a66a43ba817f7e8",
+    "control_plane_kit_secrets_commit": "fd6da8a3de83708968ebebf11c026a5362c23482"
   },
   "products": [
     {
@@ -124,6 +126,18 @@
         "repository": "openj92/control-plane-kit-servers/secrets-server",
         "tag": "bootstrap-158-4468cd0",
         "digest": "sha256:41aba38eb255779c8a0230724d9cc4fffd1dc5d5dfbfafdc133f1629139edfe7"
+      }
+    },
+    {
+      "product_id": "cloudflared-connector-managed",
+      "owner_directory": "products/cloudflared_connector",
+      "descriptor_path": "products/cloudflared_connector/product.managed.cpk.json",
+      "source_commit": "cc1b8d87b7f895cb56153f3daf2e9683fb59bea2",
+      "image": {
+        "registry": "ghcr.io",
+        "repository": "openj92/control-plane-kit-servers/cloudflared-connector",
+        "tag": "managed-cc1b8d87b7f895cb56153f3daf2e9683fb59bea2",
+        "digest": "sha256:812262a6cc6b2e6971492a37f9135655d4c7b82aedd5435a483476f77b642091"
       }
     }
   ]

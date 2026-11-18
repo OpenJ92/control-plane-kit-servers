@@ -2,6 +2,9 @@
 
 from .installation import (
     DockerCpkInstallation,
+    DockerCpkWebsite,
+    DynamicWorkspaceAuthority,
+    SuppliedChildWorkspaceAuthority,
     ExternalInstallationIngress,
     compose_docker_cpk_installation,
 )
@@ -30,6 +33,9 @@ from .composition import (
 
 __all__ = (
     "DockerCpkInstallation",
+    "DockerCpkWebsite",
+    "DynamicWorkspaceAuthority",
+    "SuppliedChildWorkspaceAuthority",
     "ExternalInstallationIngress",
     "compose_docker_cpk_installation",
     "CpkServerApplicationBoundary",

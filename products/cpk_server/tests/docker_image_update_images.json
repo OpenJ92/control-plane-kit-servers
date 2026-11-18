@@ -1,0 +1,28 @@
+{
+  "hello_a": {
+    "reference": "ghcr.io/openj92/control-plane-kit-servers/hello-server@sha256:1888f6154a8099b503b5d2eb1be3df99aa6a6a85ed853e3aa653db6556b6d2ee",
+    "image_id": "sha256:994caba64d46d4f04482023d36eca525eb4b27018a8ea3bebcadcd7d1adb87df",
+    "user": "hello"
+  },
+  "hello_b": {
+    "reference": "ghcr.io/openj92/control-plane-kit-servers/hello-server@sha256:9001b0e90c14eb5e0106f9809e22db310bded7dda468a407bbc1d814cc4ccab4",
+    "image_id": "sha256:709f6954befb9c210897e9860a435a3a98c5606a577db62dab50efecdab806f6",
+    "user": "hello"
+  },
+  "hello_family": {
+    "reference": "ghcr.io/openj92/control-plane-kit-servers/hello-server@sha256:f6aa7d1b748c1f26c898d73451f0e6f78fb2ebcfa15e77b83357ccf9965b4b69",
+    "image_id": "sha256:875fe9776eac9a7ecfbcc7c78cc2664f15bece04eaafada6a30c03bad8cc7b0a",
+    "user": "hello",
+    "source_revision": "fe13cecac329f2a5894dbeab035ca5476c10984e"
+  },
+  "gateway": {
+    "reference": "ghcr.io/openj92/control-plane-kit-servers/cpk-local-gateway@sha256:87fbbd30378cda82ea6cef88d850ee3901da04c02f7099da4472f180098bcd8c",
+    "image_id": "sha256:aa6e027c280bdcedcf4d195ac47eaa6ae8e6b783977682d5adb3d73f0f9e5067",
+    "user": "gateway"
+  },
+  "connector": {
+    "reference": "registry.k8s.io/pause@sha256:7c38f24774e3cbd906d2d33c38354ccf787635581c122965132c9bd309754d4a",
+    "image_id": "sha256:873ed75102791e5b0b8a7fcd41606c92fcec98d56d05ead4ac5131650004c136",
+    "user": "65535:65535"
+  }
+}
