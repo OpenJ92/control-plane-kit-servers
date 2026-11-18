@@ -575,6 +575,107 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
         self.assertEqual(workspace["desired_graph_revision"], args["expected_desired_graph_revision"] + 1)
         self.assertEqual(self.dispatches.count("command.desired-topology-draft.select"), 1)
 
+    async def test_complete_graph_create_revise_and_fresh_sdk_readback(self):
+        workspace = "workspace-a"
+        graph = DEFAULT_GRAPH_CODEC.encode(self.graph("first full graph"))
+        revised = DEFAULT_GRAPH_CODEC.encode(self.graph("second full graph"))
+        base = {"workspace_id": workspace, "session_id": self.sessions[workspace]}
+        create = {**base, "graph": graph, "title": "Full graph", "idempotency_key": "full-create"}
+        async with self.client(self.mode) as client:
+            tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+            self.assertIn("revise_desired_topology_draft", sorted(tools))
+            first = await self.call(client, "create_desired_topology_draft", create)
+            self.assertEqual(first["revision"], 1)
+            revise = {**base, "draft_id": first["draft_id"], "expected_head_revision": 1,
+                      "idempotency_key": "full-revise", "graph": revised}
+            second = await self.call(client, "revise_desired_topology_draft", revise)
+            self.assertEqual((second["workspace_id"], second["draft_id"], second["revision"]),
+                             (workspace, first["draft_id"], 2))
+            self.assertNotEqual(second["graph_id"], first["graph_id"])
+            self.assertEqual(await self.call(client, "revise_desired_topology_draft", revise), second)
+            refused = await client.call_tool("revise_desired_topology_draft", {**revise, "idempotency_key": "stale"})
+            self.assertEqual(refused.structured_content["error"]["status"], 409)
+            for change in ({"actor_id": "synthetic-private-canary"}, {"product_recipe": {}},
+                           {"graph": {"extra": "synthetic-private-canary"}}):
+                refused = await client.call_tool("create_desired_topology_draft", {**create, **change})
+                self.assertTrue(refused.is_error)
+                self.assertNotIn("synthetic-private-canary", str(refused.content))
+        async with self.client(self.mode) as fresh:
+            for receipt, authored in ((first, graph), (second, revised)):
+                args = {"draft_id": receipt["draft_id"], "revision": receipt["revision"]}
+                detail = await self.call(fresh, "get_desired_topology_draft_revision", args)
+                http = await self.http.get(f"/workspaces/{workspace}/desired-topology-drafts/{receipt['draft_id']}/revisions/{receipt['revision']}")
+                self.assertEqual(detail, http.json())
+                with self.unit_of_work() as uow:
+                    self.assertEqual(uow.stores.graphs.get(receipt["graph_id"]).graph_descriptor, authored)
+
+    async def test_pre_registered_complete_child_graph_through_standard_sdk(self):
+        bundle = json.loads(Path("/tmp/cpk-synthetic-child.json").read_text(encoding="utf-8"))
+        workspace, graph = bundle["workspace"], bundle["graph"]
+        scope = {"workspace_id": workspace}
+        self.assertEqual(len(graph["nodes"]), 8)
+        self.assertEqual(len(graph["public_ingresses"]), 3)
+        WorkspaceCommandService(self.unit_of_work, clock=lambda: NOW, id_factory=lambda: uuid4().hex).create(
+            CreateWorkspace(workspace, "Synthetic child workspace", "operator-a", IdempotencyKey(uuid4().hex)))
+        # Authoring requires an already admitted catalogue. This fixture does not
+        # qualify the import of configured products through the public MCP tool.
+        with self.unit_of_work() as uow:
+            for data in bundle["products"]:
+                doc = ProductDescriptorCodec().decode_document(data)
+                uow.stores.registered_products.register(workspace_id=workspace, descriptor_document=doc,
+                    source=InlineDescriptorSource(), imported_by="operator-a", imported_at=NOW)
+            uow.commit()
+        self.grants[b"valid-token"] = principal(workspace)
+        self.grants[b"reader-token"] = principal(workspace, scopes=(PolicyScope.INSTANCE_WORKSPACE_READ,))
+        async with self.client(self.mode) as writer:
+            state = (await self.call(writer, "get_workspace", scope))["workspace"]
+            pins = {key: state[key] for key in ("current_graph_id", "current_realized_projection_id",
+                "desired_graph_id", "desired_realized_projection_id", "desired_graph_revision")}
+            started = await self.call(writer, "start_operation_session",
+                {**scope, "title": "Synthetic child draft", "idempotency_key": "child-start"})
+            args = {**scope, "session_id": started["session_id"], "receiver_lifecycle": pins}
+            first = await self.call(writer, "create_desired_topology_draft",
+                {**args, "graph": graph, "title": "Synthetic child", "idempotency_key": "child-create"})
+            amended = {**graph, "name": graph["name"] + " amended"}
+            second = await self.call(writer, "revise_desired_topology_draft", {**args, "graph": amended,
+                "draft_id": first["draft_id"], "expected_head_revision": 1, "idempotency_key": "child-revise"})
+        self.http.headers["Authorization"] = "Bearer reader-token"
+        async with self.client(self.mode) as fresh:
+            for receipt, expected in ((first, graph), (second, amended)):
+                args = {**scope, "draft_id": receipt["draft_id"], "revision": receipt["revision"]}
+                detail = await self.call(fresh, "get_desired_topology_draft_revision_metadata", args)
+                metadata = {
+                    role: [{k: v for k, v in artifact.items() if k != "content"} for artifact in files]
+                    for role, node in expected["nodes"].items() if (files := node["configuration_artifacts"])
+                }
+                self.assertTrue(metadata, "fixture must include at least one configured file")
+                self.assertTrue(detail == {**receipt, "kind": "desired-topology-draft-revision-metadata",
+                    "configuration_artifacts": metadata}, "exact revision file metadata did not match")
+                self.assertFalse("BEGIN PUBLIC KEY" in json.dumps(detail), "metadata read included a file body")
+                http = await self.http.get(
+                    f"/workspaces/{workspace}/desired-topology-drafts/{receipt['draft_id']}/revisions/{receipt['revision']}/metadata")
+                self.assertEqual(http.status_code, 200)
+                self.assertTrue(http.json() == detail, "HTTP and MCP metadata reads differ")
+                with self.unit_of_work() as uow:
+                    self.assertTrue(uow.stores.graphs.get(receipt["graph_id"]).graph_descriptor == expected,
+                        "persisted child graph differs from the complete authored input")
+            after = (await self.call(fresh, "get_workspace", scope))["workspace"]
+            self.assertEqual({key: after[key] for key in pins}, pins)
+
+    async def test_lost_full_graph_revision_reply_submits_once(self):
+        draft = self.create()
+        graph = DEFAULT_GRAPH_CODEC.encode(self.graph("after interrupted reply"))
+        args = {"session_id": self.sessions["workspace-a"], "draft_id": draft.draft_id,
+                "expected_head_revision": draft.revision, "idempotency_key": "revise-lost", "graph": graph}
+        transport = await self.assert_transport_loss("revise_desired_topology_draft", args)
+        self.assertEqual(transport.sends, 1)
+        async with self.client(self.mode) as reader:
+            observed = await self.call(reader, "get_desired_topology_draft_revision",
+                {"draft_id": draft.draft_id, "revision": draft.revision + 1})
+        with self.unit_of_work() as uow:
+            self.assertEqual(uow.stores.graphs.get(observed["graph_id"]).graph_descriptor, graph)
+        self.assertEqual(self.dispatches.count("command.desired-topology-draft.revise"), 1)
+
     async def test_two_products_save_and_fresh_client_exact_readback(self):
         preview = await self.preview()
         receipt = await self.save_once(preview)

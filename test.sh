@@ -61,16 +61,15 @@ docker run --rm \
 if [ "$COHORT" != default ]; then
   [ -z "$(git status --porcelain)" ] || { echo 'cohort requires a committed source checkpoint' >&2; exit 2; }
   CANDIDATE_SOURCE=$(git rev-parse HEAD)
-  revisions=$(docker run --rm --network none --mount "type=bind,source=$ROOT,target=/source,readonly" \
-    --workdir /source "$POLICY_IMAGE" python scripts/test_cohort.py admit "$COHORT")
-  set -- $revisions
-  [ "$#" = 4 ] || exit 2
+  selection=$(docker run --rm --network none --mount "type=bind,source=$ROOT,target=/source,readonly" \
+    --workdir /source "$POLICY_IMAGE" python scripts/test_cohort.py admit-export "$COHORT")
+  set -- $selection
+  [ "$#" = 6 ] || exit 2
   CORE_REVISION=$1 OPERATIONS_REVISION=$2 INTERPRETERS_REVISION=$3 SDK_REVISION=$4
-  # This exact retained Git export is the approved source kind, not a fallback
-  # to another revision when the original local-only object is unavailable.
+  INTERPRETERS_ARCHIVE_SHA256=$5 INTERPRETERS_MODULE_TREE=$6
   archive_digest=$(shasum -a 256 "$COHORT_INTERPRETERS_ARCHIVE")
   archive_digest=${archive_digest%% *}
-  [ "$archive_digest" = af15d9261cde91e387b2659b489712abbc5579f09ba67ca51350c802552c22e0 ] || exit 2
+  [ "$archive_digest" = "$INTERPRETERS_ARCHIVE_SHA256" ] || exit 2
   [ "$(git get-tar-commit-id < "$COHORT_INTERPRETERS_ARCHIVE")" = "$INTERPRETERS_REVISION" ] || exit 2
   COHORT_CONTEXT=$(mktemp -d /private/tmp/cpk401-test-context.XXXXXX)
   finish_cohort_context() {
@@ -106,7 +105,7 @@ if [ "$COHORT" != default ]; then
         done > "$COHORT_CONTEXT/interpreters.index"
         git -c core.hooksPath=/dev/null -c core.fsmonitor=false update-index --index-info < "$COHORT_CONTEXT/interpreters.index"
         reconstructed_root=$(git write-tree)
-        [ "$(git rev-parse "${reconstructed_root}:src/control_plane_kit_interpreters")" = 97507ed009a5e5c8aa81d280288a2f81ce807835 ]
+        [ "$(git rev-parse "${reconstructed_root}:src/control_plane_kit_interpreters")" = "$INTERPRETERS_MODULE_TREE" ]
         git ls-tree -r "$reconstructed_root" src/control_plane_kit_interpreters > "$COHORT_CONTEXT/cohort/interpreters.git-tree"
         rm -rf .git
       )

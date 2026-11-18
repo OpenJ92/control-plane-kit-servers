@@ -25,8 +25,13 @@ EXPECTED = dict(schema="cpk163.grandparent-cohort.v2", name="grandparent", serve
     mcp_profile="grandparent-read-only-v1", secrets_distribution="absent")
 AUTHORING_EXPECTED = {**EXPECTED,
     "schema": "cpk417.topology-authoring-cohort.v1", "name": "topology-authoring",
-    "core": "068862c07585b7b0d1bdadeb96716a3ef2f90ece",
-    "operations": "068862c07585b7b0d1bdadeb96716a3ef2f90ece", "mcp_profile": "standard"}
+    "core": "68f187710abe8fa89701f403ac76e904b3fec35d",
+    "operations": "68f187710abe8fa89701f403ac76e904b3fec35d",
+    "interpreters": "3e8104fa2aba1275b60ce98db5c46927fbf7b335",
+    "interpreters_source": dict(kind="retained-git-export",
+        sha256="0640be22ce615a11cc923c10d79203e89dbd14d4b083aceb9918231482b8f599",
+        module_tree="c6dbfe0998aca8f829b68e4c2177ca430d6bf182"),
+    "sdk": "e7f517ab79060c52f5942ae82bd2cb8fdc9ee4b1", "mcp_profile": "standard"}
 COHORTS = {"grandparent": (MANIFEST, EXPECTED),
     "topology-authoring": (ROOT / "products/cpk_server/topology-authoring-cohort.json", AUTHORING_EXPECTED)}
 PACKAGES = {
@@ -144,9 +149,13 @@ def verify():
 
 
 if __name__ == "__main__":
-    if sys.argv[1:2] == ["admit"] and len(sys.argv) in (2, 3):
+    if sys.argv[1:2] in (["admit"], ["admit-export"]) and len(sys.argv) in (2, 3):
         value = admit(cohort=sys.argv[2] if len(sys.argv) == 3 else "grandparent")
-        print(" ".join(value[role] for role in PACKAGES))
+        fields = [value[role] for role in PACKAGES]
+        if sys.argv[1] == "admit-export":
+            source = value["interpreters_source"]
+            fields.extend((source["sha256"], source["module_tree"]))
+        print(*fields)
     elif sys.argv[1:] == ["seal"]:
         seal()
     elif sys.argv[1:] == ["verify"]:

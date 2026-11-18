@@ -15,9 +15,17 @@ See [discovery decisions and validation](../../../../../mcp-product-discovery.md
 
 #417/#408 adds the owner-declared `preview_product_topology`, then the existing
 session-start and draft-create parity bindings when that preview contract is
-present in the standard profile's selected Core. Older selected owners retain
-their existing catalogue. The closed first-save schema accepts only the public
-recipe and returned proposal commitment; Operations resolves canonical product
+present in the standard profile's selected Core. The public recipe requires its returned proposal commitment.
+For complete authored graphs, #427 exposes draft creation and revision through
+standard MCP when the selected owner supplies the command and exact revision read.
+For configured files, pass the receipt's workspace, draft and revision to
+`get_desired_topology_draft_revision_metadata`. A workspace reader can compare
+the returned graph ID and each node's file paths, modes and digests. Operations
+constructs this observation from the exact saved revision. The adapter advertises
+the read in the standard profile when the selected Core exposes its route.
+
+Create accepts one graph or one supported recipe. Revise requires the previous
+head revision. Each returns the four coordinates for fresh readback. For both forms, Operations resolves canonical product
 documents and owns compilation, admission, authorization and persistence.
 Schema fields describe transport shape, not a second product validator.
 Start/save are marked as writes with a conservative non-idempotent tool hint
