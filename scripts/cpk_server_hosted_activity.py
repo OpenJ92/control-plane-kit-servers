@@ -2772,6 +2772,9 @@ def _mcp(
     timeout: int = 10,
     authorization: str | None = None,
 ) -> dict[str, Any]:
+    endpoint = os.environ.get("CPK_LEGACY_MCP_PATH", "/mcp/legacy")
+    if endpoint not in {"/mcp", "/mcp/legacy"}:
+        raise ValueError("unsupported legacy MCP endpoint")
     headers = {
         "Accept": "application/json",
         "MCP-Protocol-Version": "2025-06-18",
@@ -2782,7 +2785,7 @@ def _mcp(
     response = _http(
         base_url,
         "POST",
-        "/mcp",
+        endpoint,
         {
             "jsonrpc": "2.0",
             "id": f"{name}:1",

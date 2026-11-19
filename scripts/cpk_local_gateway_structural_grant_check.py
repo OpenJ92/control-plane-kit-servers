@@ -81,7 +81,6 @@ def main() -> int:
         gateway_node_id=GATEWAY_NODE_ID,
         public_keys={KEY_ID: public_key},
         replay_cache=GatewayProbeReplayCache(clock=lambda: NOW),
-        clock=lambda: NOW,
     )
     body = json.dumps(
         request.descriptor(),

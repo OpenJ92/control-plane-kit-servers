@@ -1747,6 +1747,11 @@ class HostedActivityReadinessTests(unittest.TestCase):
             controller.SecretEnvironmentDelivery("TUNNEL_TOKEN", controller.SecretReference(reference),
                                                  controller.SecretUseIntent.CLOUDFLARE_TUNNEL_TOKEN),
         ))
+        from control_plane_kit_core.secret_selections import UnselectedSecretUse
+        self.assertEqual(connector.secret_selections, (UnselectedSecretUse(
+            controller.SecretReference(reference), controller.SecretUseIntent.CLOUDFLARE_TUNNEL_TOKEN),))
+        # This fake-route test protects command orchestration only. An actual
+        # new consumer still needs public exact-version preparation before effects.
         self.assertFalse(prepared[0].get("public_ingresses"))
         edge = next(iter(prepared[0]["edges"].values()))
         self.assertEqual(edge["provider"]["role"], node["node_id"])

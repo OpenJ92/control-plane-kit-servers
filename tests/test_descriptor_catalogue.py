@@ -31,6 +31,7 @@ class DescriptorCatalogueTests(unittest.TestCase):
             [item.product_id for item in catalogue],
             [
                 "cloudflared-connector",
+                "cloudflared-connector-managed",
                 "cpk-local-gateway",
                 "cpk-server",
                 "cpk-server-docker",
@@ -44,6 +45,44 @@ class DescriptorCatalogueTests(unittest.TestCase):
         )
         self.assertTrue(all(item.status == "completed" for item in catalogue))
         self.assertIsInstance(catalogue, tuple)
+
+    def test_seed_and_managed_connector_are_separately_selectable(self):
+        from dataclasses import replace
+        from control_plane_kit_core.products import ProductDescriptorCodec
+        from control_plane_kit_servers.catalogue import load_catalogue
+        from control_plane_kit_servers_cloudflared_connector.managed import declared_runtime_contract
+        from control_plane_kit_servers_cpk_server.client.frontend import _selected_frontend_connector
+        from control_plane_kit_servers_cpk_server.installation_management import selected_managed_connector
+        from products.cloudflared_connector.retained_qualification import REFERENCE, SOURCE
+
+        seed_name, managed_name = "cloudflared-connector", "cloudflared-connector-managed"
+        published = {entry.product_id: entry for entry in load_catalogue()}
+        self.assertIn(managed_name, published)
+        source = {entry.product_id: entry for entry in load_catalogue(ROOT / "catalogue/products.json")}
+        codec = ProductDescriptorCodec()
+        seed, wrapped = [codec.decode_document((ROOT / published[name].descriptor_path).read_bytes())
+                         for name in (seed_name, managed_name)]
+        for name, document in ((seed_name, seed), (managed_name, wrapped)):
+            self.assertEqual(source[name], published[name])
+            self.assertEqual(document.content_digest, published[name].descriptor_sha256)
+            self.assertEqual(document.product.identity.descriptor(), {
+                "namespace": "control-plane-kit", "name": name, "contract_revision": 1})
+        self.assertEqual(wrapped.content_digest, "79791e9167597b7cfbf616451d37f2914ed28ebc5c6393c676dbdd959b69db85")
+        self.assertEqual(published[managed_name].source_commit, SOURCE)
+        self.assertEqual(wrapped.product.image.execution_reference, REFERENCE)
+        self.assertEqual([p.label for p in wrapped.product.image.platforms], ["linux/amd64"])
+        self.assertEqual(wrapped.product.runtime_contract, declared_runtime_contract())
+        self.assertEqual(_selected_frontend_connector(seed), seed.product)
+        self.assertEqual(selected_managed_connector(wrapped), wrapped.product)
+        with self.assertRaises(ValueError):
+            selected_managed_connector(seed)
+        with self.assertRaises(ValueError):
+            _selected_frontend_connector(wrapped)
+        with self.assertRaises(ValueError):
+            selected_managed_connector(codec.encode_document(replace(wrapped.product, image=seed.product.image)))
+        without_platform = replace(wrapped.product.image, platforms=())
+        with self.assertRaises(ValueError):
+            selected_managed_connector(codec.encode_document(replace(wrapped.product, image=without_platform)))
 
     def test_catalogue_rejects_duplicate_product_ids(self) -> None:
         from control_plane_kit_servers.catalogue import CatalogueError, load_catalogue

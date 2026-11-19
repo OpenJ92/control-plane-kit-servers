@@ -80,6 +80,8 @@ class ServerRepositoryPolicyTests(unittest.TestCase):
                 "cloudflared-connector",
                 "postgres-server",
                 "secrets-server",
+                "managed-website",
+                "cloudflared-connector-managed",
             ],
         )
         self.assertEqual(
@@ -94,6 +96,8 @@ class ServerRepositoryPolicyTests(unittest.TestCase):
                 "descriptor-published",
                 "descriptor-published",
                 "descriptor-published",
+                "descriptor-published",
+                "source-implementation",
                 "descriptor-published",
             ],
         )
@@ -155,6 +159,7 @@ class ServerRepositoryPolicyTests(unittest.TestCase):
                 "cloudflared-connector",
                 "postgres-server",
                 "secrets-server",
+                "cloudflared-connector-managed",
             ],
         )
         self.assertTrue(all(product["status"] == "completed" for product in catalogue["products"]))

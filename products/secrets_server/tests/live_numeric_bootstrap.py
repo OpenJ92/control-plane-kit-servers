@@ -1,0 +1,376 @@
+"""Owning source-image/SDK bootstrap witness; not parent custody admission."""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+import os
+from pathlib import Path
+import secrets
+import tempfile
+import time
+from uuid import uuid4
+
+import docker
+import httpx
+import control_plane_kit_core as core
+
+from control_plane_kit_core.secrets import (
+    SecretFileMode, SecretProviderEndpointReference, SecretReference,
+    SecretUseIntent, SecretValue,
+)
+from control_plane_kit_interpreters.docker import (
+    DockerSdkClient, DockerSdkSecretMount, DockerSdkConfigurationMount,
+)
+from control_plane_kit_servers_secrets_server.configuration import secrets_control_configuration_artifact
+from secrets_control_fixtures import SourceControlAuthority
+from control_plane_kit_interpreters.secret_provider import (
+    ControlPlaneKitSecretsClient, SecretProviderBootstrapRegistry,
+    SecretProviderClientCode, SecretProviderClientError,
+)
+from products.cpk_server.tests.live_numeric_bootstrap import exercise_cpk_file
+from products.cpk_server.tests.docker_image_update_identity import fixed_manifest_bytes, qualify_fixed_image
+from live_wrapper_artifacts import exercise_wrapper_artifacts
+
+
+def exercise_provider(token: str, application_value: str) -> None:
+    """Use the existing public provider client and synthetic local credentials."""
+    endpoint = SecretProviderEndpointReference("control-plane-kit")
+    credential = SecretReference("secret://bootstrap/provider-token")
+    reference = SecretReference("secret://control-plane-kit/application/postgres-password")
+    request = dict(workspace_id="workspace-numeric-bootstrap", reference=reference,
+                   intent=SecretUseIntent.POSTGRES_PASSWORD,
+                   caller_subject="numeric-bootstrap-client")
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "token"
+        path.write_text(token, encoding="ascii")
+        path.chmod(0o400)
+        registry = SecretProviderBootstrapRegistry(
+            endpoints={endpoint: "http://secrets-provider:8081"},
+            credential_files={credential: path})
+        configuration = registry.configuration_for(
+            endpoint_reference=endpoint, credential_reference=credential)
+        provider = ControlPlaneKitSecretsClient(configuration)
+        written = provider.write(**request, value=SecretValue(application_value),
+                                 correlation_id="numeric-bootstrap-write")
+        assert written.reference == reference
+        resolved = provider.resolve(**request, correlation_id="numeric-bootstrap-resolve")
+        assert resolved.value.reveal() == application_value, "provider value mismatch"
+        wrong_path = Path(directory) / "wrong-token"
+        wrong_path.write_text("deliberately-invalid-local-token", encoding="ascii")
+        wrong_path.chmod(0o400)
+        denied_registry = SecretProviderBootstrapRegistry(
+            endpoints={endpoint: "http://secrets-provider:8081"},
+            credential_files={credential: wrong_path})
+        denied = ControlPlaneKitSecretsClient(denied_registry.configuration_for(
+            endpoint_reference=endpoint, credential_reference=credential))
+        try:
+            denied.resolve(**request, correlation_id="numeric-bootstrap-denied")
+        except SecretProviderClientError as error:
+            assert error.code is SecretProviderClientCode.DENIED
+            assert token not in repr(error) and application_value not in repr(error)
+        else:
+            raise AssertionError("provider accepted wrong credentials")
+
+
+def exercise_control(authority, sensitive):
+    """Bounded real SDK reads on the existing provider; no extra service."""
+    def read(path, token=None):
+        headers = {} if token is None else {"Authorization": "Bearer " + token}
+        with httpx.stream("GET", "http://secrets-provider:8081" + path,
+                          headers=headers, timeout=5, trust_env=False) as response:
+            body = bytearray()
+            for chunk in response.iter_bytes(chunk_size=4096):
+                assert len(body) + len(chunk) <= 65536, "unbounded control response"
+                body.extend(chunk)
+            return response.status_code, bytes(body)
+
+    static_token = None
+    for static, path in ((True, "/__control/capabilities"), (False, "/__control/health/liveness")):
+        request, token = authority.signed_read(static=static, issued_at=int(time.time()) - 1)
+        sensitive.append(token)
+        status, body = read(path, token)
+        assert status == 200, "source control read failed"
+        if static:
+            static_token = token
+            expected = core.ReceiverControlSurfaceReadResultCodec(request, authority.declaration).capabilities_result()
+            assert body == expected.canonical_bytes(), "source static contract mismatch"
+        else:
+            result = core.ReceiverHealthReadResultCodec(request, authority.declaration).decode(json.loads(body))
+            assert result.outcome is core.NodeHealthReadOutcome.HEALTHY, "source liveness mismatch"
+        assert read(path)[0] == 401, "source control accepted missing authority"
+    assert read("/__control/health/liveness", static_token)[0] == 401, "source control accepted wrong purpose"
+
+
+def main() -> None:
+    # This fresh controller never receives the producer's registry configuration.
+    docker_config = Path(os.environ["DOCKER_CONFIG"])
+    docker_config.mkdir(mode=0o700)
+    (docker_config / "config.json").write_text("{}", encoding="ascii")
+    (docker_config / "config.json").chmod(0o600)
+    engine = docker.from_env()
+    run_id = os.environ["CPK_SECRET_TEST_RUN"]
+    image_id = os.environ["CPK_SECRET_PRODUCT_IMAGE"]
+    network_id = os.environ["CPK_SECRET_NETWORK"]
+    labels = {"org.openj92.cpk.test-run": run_id,
+              "org.openj92.project": "control-plane-kit-servers"}
+    sdk = DockerSdkClient(client=engine,
+                          configuration_helper_image=os.environ["CPK_SECRET_HELPER_IMAGE"])
+    resources = []
+    helper_ids = []
+    absent = set()
+    original_helper = sdk._create_configuration_helper
+
+    def tracked_helper(*args, **kwargs):
+        helper = original_helper(*args, **kwargs)
+        helper_ids.append(helper.id)
+        return helper
+
+    sdk._create_configuration_helper = tracked_helper
+    token = secrets.token_urlsafe(48)
+    root_key = base64.urlsafe_b64encode(os.urandom(32)).decode("ascii")
+    application_value = secrets.token_urlsafe(40)
+    credential_document = json.dumps([{
+        "subject": "numeric-bootstrap-client", "token": token,
+        "grants": [
+            {"action": "secret.write", "workspace_id": "workspace-numeric-bootstrap",
+             "intents": ["postgres.password"]},
+            {"action": "secret.resolve", "workspace_id": "workspace-numeric-bootstrap",
+             "intents": ["postgres.password"]},
+        ],
+    }])
+    material = {
+        "/run/secrets/cpk-secrets/master.key": root_key,
+        "/run/secrets/cpk-secrets/credentials.json": credential_document,
+    }
+    sensitive = [root_key, token, credential_document, application_value]
+    source = None
+    cleanup_failed = False
+    try:
+        assert engine.info().get("ID") == os.environ["CPK_SECRET_ENGINE_ID"], "engine mismatch"
+        assert engine.networks.get(network_id).attrs["Labels"] == labels
+        assert engine.images.get(image_id).labels.get("org.openj92.cpk.test-run") == run_id
+        exercise_cpk_file(engine=engine, sdk=sdk, resources=resources, labels=labels,
+                          image_id=os.environ["CPK_NUMERIC_PRODUCT_IMAGE"],
+                          network_id=network_id)
+        hello_family = []
+        for kinds in ((core.NodeHealthReadKind.LIVENESS, core.NodeHealthReadKind.READINESS),
+                      (core.NodeHealthReadKind.READINESS,)):
+            hello_family.append(exercise_wrapper_artifacts(
+                engine=engine, sdk=sdk, resources=resources, labels=labels,
+                network_id=network_id, hello_reference=os.environ["CPK_WRAPPER_HELLO_IMAGE"],
+                gateway_reference=os.environ["CPK_WRAPPER_GATEWAY_IMAGE"],
+                mode="source-built", expected_attribution=True, hello_health_reads=kinds))
+        assert {value["hello_image_id"] for value in hello_family} == {os.environ["CPK_WRAPPER_HELLO_IMAGE"]}
+        assert len({value["hello_configuration_digest"] for value in hello_family}) == 2
+        print(json.dumps({"hello_declaration_family": "passed", "mode": "source-built",
+            "same_image": True, "image_id": os.environ["CPK_WRAPPER_HELLO_IMAGE"],
+            "declarations": hello_family}), flush=True)
+        # Mandatory #254 prerequisite: qualify the actual published artifact,
+        # separately from the source-built pair and historical optional A/B.
+        inputs = json.loads((Path(__file__).parents[2] /
+            "cpk_server/tests/docker_image_update_images.json").read_text())
+        family, gateway = inputs["hello_family"], inputs["gateway"]
+        family_proofs = {}
+        for role, selected in (("hello_family", family), ("gateway", gateway)):
+            image = engine.images.get(selected["reference"])
+            observed = sdk.inspect_image(selected["reference"])
+            assert observed is not None and observed.image_id == image.id
+            family_proofs[role] = qualify_fixed_image(role, reference=selected["reference"],
+                manifest_bytes=fixed_manifest_bytes(role), image_attrs=image.attrs,
+                interpreter_image_id=observed.image_id)
+        family_execution_ids = {"hello": family_proofs["hello_family"].execution_id,
+                                "gateway": family_proofs["gateway"].execution_id}
+        published_family = []
+        for kinds in ((core.NodeHealthReadKind.LIVENESS, core.NodeHealthReadKind.READINESS),
+                      (core.NodeHealthReadKind.READINESS,)):
+            published_family.append(exercise_wrapper_artifacts(
+                engine=engine, sdk=sdk, resources=resources, labels=labels,
+                network_id=network_id, hello_reference=family["reference"],
+                gateway_reference=gateway["reference"], mode="published-digest",
+                expected_attribution=True, expected_source=family["source_revision"], hello_health_reads=kinds,
+                expected_execution_ids=family_execution_ids))
+        assert {value["hello_image_id"] for value in published_family} == {family_execution_ids["hello"]}
+        assert len({value["hello_configuration_digest"] for value in published_family}) == 2
+        print(json.dumps({"hello_declaration_family": "passed", "mode": "published-digest",
+            "same_image": True, "reference": family["reference"],
+            "config_digest": family_proofs["hello_family"].config_digest,
+            "manifest_digest": family_proofs["hello_family"].manifest_digest,
+            "image_id": family_execution_ids["hello"],
+            "declarations": published_family}), flush=True)
+        if os.environ["CPK_WRAPPER_ARTIFACT_MODE"] == "published-digest":
+            assert engine.images.get(os.environ["CPK_WRAPPER_HELLO_A"]).id != engine.images.get(
+                os.environ["CPK_WRAPPER_HELLO_B"]).id, "published Hello image identities must differ"
+            for version, expected in (("A", False), ("B", True)):
+                exercise_wrapper_artifacts(engine=engine, sdk=sdk, resources=resources, labels=labels,
+                    network_id=network_id, hello_reference=os.environ["CPK_WRAPPER_HELLO_" + version],
+                    gateway_reference=os.environ["CPK_WRAPPER_GATEWAY"],
+                    mode="published-digest", expected_attribution=expected)
+        inspected = sdk.inspect_image(image_id)
+        assert inspected is not None and inspected.image_id == image_id
+        uid = inspected.secret_file_owner_uid()
+        assert uid == 10006, "actual product must declare numeric UID10006"
+        mounts = []
+        for target, value in material.items():
+            volume = engine.volumes.create(name=f"cpk-secret-{uuid4().hex}", labels=labels)
+            resources.append((engine.volumes, volume.name))
+            sdk.materialize_secret_file(volume.name, SecretValue(value),
+                                        SecretFileMode.OWNER_READ_ONLY, owner_uid=uid)
+            evidence = sdk.inspect_secret_file(volume.name)
+            digest = hashlib.sha256(value.encode()).hexdigest()
+            assert evidence.uid == uid and evidence.mode == 0o400 and evidence.regular_file
+            assert evidence.content_digest == digest, "delivered content mismatch"
+            mounts.append(dict(DockerSdkSecretMount(target, volume.name).docker_mount()))
+        authority = SourceControlAuthority(run_id)
+        control = secrets_control_configuration_artifact(authority.configuration())
+        public_volume = engine.volumes.create(name=f"cpk-secret-public-{uuid4().hex}", labels=labels)
+        resources.append((engine.volumes, public_volume.name))
+        sdk.materialize_configuration_artifact(public_volume.name, control)
+        assert sdk.configuration_artifact_digest(public_volume.name) == control.content_digest
+        public_mount = dict(DockerSdkConfigurationMount(control, public_volume.name).docker_mount())
+        data = engine.volumes.create(name=f"cpk-secret-data-{uuid4().hex}", labels=labels)
+        resources.append((engine.volumes, data.name))
+        source = engine.containers.create(
+            image_id, name=f"cpk-secret-provider-{uuid4().hex}", labels=labels,
+            mounts=[*mounts, public_mount, docker.types.Mount("/var/lib/cpk-secrets", data.name, type="volume")],
+            network=network_id,
+            networking_config={network_id:
+                engine.api.create_endpoint_config(aliases=["secrets-provider"])},
+            cap_drop=["ALL"], security_opt=["no-new-privileges"],
+            log_config=docker.types.LogConfig(type="json-file", config={"max-size": "1m", "max-file": "1"}))
+        resources.append((engine.containers, source.id))
+        source.start()
+        readiness = "not-observed"
+        for _ in range(30):
+            source.reload()
+            assert source.status == "running", "actual Secrets process exited"
+            try:
+                response = httpx.get("http://secrets-provider:8081/health/ready", timeout=1, trust_env=False)
+                readiness = str(response.status_code)
+                if response.status_code == 200:
+                    break
+            except httpx.TransportError:
+                readiness = "transport-unavailable"
+            time.sleep(1)
+        else:
+            raise AssertionError(f"actual Secrets readiness failed: {readiness}")
+        source.reload()
+        assert source.attrs["Image"] == image_id
+        assert source.attrs["Config"]["User"] == "10006"
+        assert not source.attrs["HostConfig"]["PortBindings"]
+        actual_environment = dict(item.split("=", 1) for item in source.attrs["Config"]["Env"])
+        assert actual_environment.get("CPK_WRAPPER_CONFIGURATION_FILE") == control.target_path, "recipe control path missing"
+        actual_mounts = {mount["Destination"]: mount for mount in source.attrs["Mounts"]}
+        public_observed = actual_mounts[control.target_path]
+        assert public_observed["Name"] == public_volume.name and public_observed["RW"] is False
+        for mount in mounts:
+            observed = actual_mounts[mount["Target"]]
+            assert observed["Name"] == mount["Source"] and observed["RW"] is False
+        expected = {path: hashlib.sha256(value.encode()).hexdigest()
+                    for path, value in material.items()}
+        probe = f'''
+import hashlib, os, pathlib, pwd, stat
+account = pwd.getpwnam("secrets")
+assert os.getuid() == account.pw_uid == 10006
+assert os.getgid() == account.pw_gid
+assert os.environ["HOME"] == account.pw_dir
+assert os.access(account.pw_dir, os.R_OK | os.X_OK)
+status = pathlib.Path("/proc/1/status").read_text()
+assert next(line.split()[1:] for line in status.splitlines() if line.startswith("Uid:")) == ["10006"] * 4
+assert os.access("/var/lib/cpk-secrets", os.R_OK | os.W_OK | os.X_OK)
+public = pathlib.Path({control.target_path!r})
+public_info = public.stat()
+assert stat.S_ISREG(public_info.st_mode) and stat.S_IMODE(public_info.st_mode) == 0o444
+assert hashlib.sha256(public.read_bytes()).hexdigest() == {control.content_digest!r}
+try:
+    public.write_bytes(b"forbidden")
+except OSError:
+    denied = True
+else:
+    raise AssertionError("public control configuration writable")
+for path, digest in {expected!r}.items():
+    file = pathlib.Path(path)
+    info = file.stat()
+    assert stat.S_ISREG(info.st_mode) and info.st_uid == 10006 and stat.S_IMODE(info.st_mode) == 0o400
+    assert hashlib.sha256(file.read_bytes()).hexdigest() == digest
+    try:
+        file.write_bytes(b"forbidden")
+    except OSError:
+        denied = True
+    else:
+        raise AssertionError("bootstrap writable")
+'''
+        result = source.exec_run(["python", "-B", "-c", probe])
+        assert not any(value.encode() in result.output for value in sensitive), "probe material leak"
+        assert result.exit_code == 0, "actual product UID/account/HOME/file law failed"
+        deny_probe = f'''
+import os, pathlib
+assert os.getuid() == 10007
+for path in {list(material)!r}:
+    try:
+        pathlib.Path(path).read_bytes()
+    except PermissionError:
+        denied = True
+    else:
+        raise AssertionError("unrelated UID read bootstrap")
+'''
+        other = engine.containers.create(
+            image_id, name=f"cpk-secret-other-{uuid4().hex}", labels=labels,
+            entrypoint=["python", "-B", "-c"], command=[deny_probe], user="10007",
+            mounts=mounts, network_mode="none", read_only=True,
+            cap_drop=["ALL"], security_opt=["no-new-privileges"])
+        resources.append((engine.containers, other.id))
+        other.start()
+        assert other.wait(timeout=30).get("StatusCode") == 0, "other UID access law failed"
+        assert not any(value.encode() in other.logs(tail=30) for value in sensitive)
+        exercise_provider(token, application_value)
+        exercise_control(authority, sensitive)
+        logs = source.logs(stdout=True, stderr=True, tail=200)
+        assert len(logs) <= 1024 * 1024, "unbounded product logs"
+        assert not any(value.encode() in logs for value in sensitive), "provider material leak"
+    finally:
+        for manager, identity in reversed(resources):
+            try:
+                resource = manager.get(identity)
+                resource.reload()
+                observed_labels = resource.attrs.get("Labels") or resource.attrs.get("Config", {}).get("Labels", {})
+                if observed_labels.get("org.openj92.cpk.test-run") != run_id:
+                    cleanup_failed = True
+                    continue
+                if isinstance(resource, docker.models.containers.Container):
+                    resource.remove(force=True)
+                else:
+                    resource.remove()
+                try:
+                    manager.get(identity)
+                except docker.errors.NotFound:
+                    absent.add((type(manager).__name__, identity))
+                else:
+                    cleanup_failed = True
+            except docker.errors.NotFound:
+                absent.add((type(manager).__name__, identity))
+            except Exception:
+                cleanup_failed = True
+        for identity in helper_ids:
+            try:
+                engine.containers.get(identity)
+            except docker.errors.NotFound:
+                absent.add((type(engine.containers).__name__, identity))
+            else:
+                cleanup_failed = True
+        expected_absent = {(type(manager).__name__, identity) for manager, identity in resources}
+        expected_absent |= {(type(engine.containers).__name__, identity) for identity in helper_ids}
+        engine.close()
+        (docker_config / "config.json").unlink()
+        docker_config.rmdir()
+        if cleanup_failed or absent != expected_absent:
+            raise RuntimeError("numeric bootstrap fixture cleanup incomplete")
+    print(json.dumps({"status": "passed", "source_product": True, "both_bootstrap_files": True,
+                      "numeric_uid": 10006, "readonly": True, "other_uid_denied": True,
+                      "authenticated_provider": True, "public_control": True, "signed_control_reads": True, "cpk_numeric_uid": 10001,
+                      "cpk_protected_file": True, "redaction": True, "residue": "absent"}))
+
+
+if __name__ == "__main__":
+    main()

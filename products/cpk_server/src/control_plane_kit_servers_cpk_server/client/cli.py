@@ -11,20 +11,63 @@ from typing import Sequence
 from .journal import JournalError
 from .profile import ClientConfigurationError, load_profile
 from .transport import ClientAuthorizationError, ClientTransportError
-from .workflow import ClientInputError, ClientResult, TopologyClient
+from .workflow import ClientInputError, ClientResult, SavedDesiredRevision, TopologyClient, _unique_object, _read_desired
+from .catalogue import _receiver_lifecycle
+from .authoring import (
+    AuthoredDesiredGraph,
+    GatewayHealthRoutes,
+    GatewayHealthTargetIntent,
+    PendingReceiverContinuation,
+    ReceiverIntroduction,
+    ReceiverScope,
+)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _parser()
     arguments = parser.parse_args(argv)
+    if arguments.command == "plan" and ((arguments.draft is None) != (arguments.revision is None)):
+        parser.error("--draft and --revision must be supplied together")
+    if (
+        arguments.command == "plan"
+        and _has_authoring_arguments(arguments)
+        and arguments.desired_graph is None
+    ):
+        parser.error("receiver authoring options require a desired graph file")
     try:
         profile = load_profile(arguments.profile)
         client = TopologyClient(profile)
-        if arguments.command == "plan":
+        if arguments.command == "report":
+            result = client.report(arguments.operation_refs)
+            _render(result, json_output=arguments.json)
+            return result.exit_code
+        elif arguments.command == "overview":
+            result = client.overview()
+        elif arguments.command == "draft":
+            if arguments.draft_command == "list":
+                result = client.draft_list(limit=arguments.limit, cursor=arguments.cursor)
+            elif arguments.draft_command == "show":
+                result = client.draft_show(arguments.draft_id, arguments.revision)
+            elif arguments.draft_command == "save":
+                result = client.draft_save(arguments.graph, title=arguments.title,
+                    receiver_lifecycle=_catalogue_receiver_lifecycle(arguments.receiver_lifecycle))
+            elif arguments.draft_command == "revise":
+                result = client.draft_revise(arguments.draft_id, arguments.graph, arguments.expected_head,
+                    receiver_lifecycle=_catalogue_receiver_lifecycle(arguments.receiver_lifecycle))
+            elif arguments.draft_command == "select":
+                result = client.draft_select(arguments.draft_id, arguments.revision,
+                    receiver_lifecycle=_catalogue_receiver_lifecycle(arguments.receiver_lifecycle))
+            else:
+                result = client.draft_resume(arguments.operation_ref)
+        elif arguments.command == "plan":
             if arguments.resume is not None:
                 result = client.resume_prepare(arguments.resume)
+            elif arguments.draft is not None:
+                result = client.plan(SavedDesiredRevision(arguments.draft, arguments.revision), title=arguments.title)
             elif arguments.desired_graph is not None:
-                result = client.plan(arguments.desired_graph, title=arguments.title)
+                result = client.plan(
+                    _authored_plan_input(arguments), title=arguments.title
+                )
             else:
                 raise ClientInputError("desired graph or operation resume is required")
         elif arguments.command == "apply":
@@ -60,7 +103,60 @@ def _parser() -> argparse.ArgumentParser:
     source = plan.add_mutually_exclusive_group(required=True)
     source.add_argument("desired_graph", nargs="?", type=Path)
     source.add_argument("--resume", metavar="OPERATION_REF")
+    source.add_argument("--draft", metavar="DRAFT_ID")
+    plan.add_argument("--revision", type=_catalogue_integer)
     plan.add_argument("--title", default="Topology deployment")
+    plan.add_argument(
+        "--introduce-receiver",
+        nargs=4,
+        action="append",
+        default=[],
+        metavar=("NODE", "SOCKET", "ARTIFACT_ID", "TARGET_PATH"),
+    )
+    plan.add_argument("--pending-authoring-draft", metavar="DRAFT_ID")
+    plan.add_argument(
+        "--refresh-receiver-verifiers",
+        nargs=2,
+        action="append",
+        default=[],
+        metavar=("NODE", "SOCKET"),
+    )
+    plan.add_argument("--pending-authoring-head", type=_catalogue_integer, metavar="REVISION")
+    plan.add_argument(
+        "--update-receiver-declaration",
+        nargs=2,
+        action="append",
+        default=[],
+        metavar=("NODE", "SOCKET"),
+    )
+    plan.add_argument(
+        "--continue-pending-receiver",
+        nargs=2,
+        action="append",
+        default=[],
+        metavar=("NODE", "SOCKET"),
+    )
+    plan.add_argument(
+        "--replace-gateway-health-routes",
+        nargs=2,
+        action="append",
+        default=[],
+        metavar=("GATEWAY_NODE", "GATEWAY_SOCKET"),
+    )
+    plan.add_argument(
+        "--gateway-health-target",
+        nargs=6,
+        action="append",
+        default=[],
+        metavar=(
+            "GATEWAY_NODE",
+            "GATEWAY_SOCKET",
+            "TARGET_ID",
+            "TARGET_NODE",
+            "TARGET_SOCKET",
+            "ORIGIN",
+        ),
+    )
     plan.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
 
     apply = commands.add_parser("apply")
@@ -74,13 +170,171 @@ def _parser() -> argparse.ArgumentParser:
     status = commands.add_parser("status")
     status.add_argument("operation_ref")
     status.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
+    report = commands.add_parser("report")
+    report.add_argument("operation_refs", nargs="+")
+    report.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
+    overview = commands.add_parser("overview")
+    overview.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
+    draft = commands.add_parser("draft")
+    catalogue = draft.add_subparsers(dest="draft_command", required=True)
+    for name in ("list", "show", "save", "revise", "select", "resume"):
+        command = catalogue.add_parser(name)
+        command.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
+        if name in {"show", "revise", "select"}:
+            command.add_argument("draft_id")
+        if name in {"show", "select"}:
+            command.add_argument("--revision", required=True, type=_catalogue_integer)
+        if name in {"save", "revise"}:
+            command.add_argument("graph", type=Path)
+        if name in {"save", "revise", "select"}:
+            command.add_argument("--receiver-lifecycle", type=Path, metavar="PATH")
+        if name == "save":
+            command.add_argument("--title")
+        if name == "revise":
+            command.add_argument("--expected-head", required=True, type=_catalogue_integer)
+        if name == "resume":
+            command.add_argument("operation_ref")
+        if name == "list":
+            command.add_argument("--limit", default=50, type=_catalogue_integer)
+            command.add_argument("--cursor", type=_catalogue_cursor)
     return parser
+
+
+def _catalogue_receiver_lifecycle(path):
+    if path is None:
+        return None
+    try:
+        _source, value = _read_desired(path)
+        return _receiver_lifecycle(value)
+    except ClientInputError:
+        raise ClientInputError("receiver lifecycle input is invalid") from None
+
+
+def _catalogue_integer(value):
+    if not value.isascii() or not value.isdigit() or value.startswith("0") or len(value) > 19:
+        raise argparse.ArgumentTypeError("expected a canonical positive integer")
+    number = int(value)
+    if number > 2**63 - 1:
+        raise argparse.ArgumentTypeError("integer exceeds the public bound")
+    return number
+
+
+def _authored_plan_input(arguments):
+    selected = _has_authoring_arguments(arguments)
+    if not selected:
+        return arguments.desired_graph
+    try:
+        pending_fields = (
+            arguments.pending_authoring_draft is not None,
+            arguments.pending_authoring_head is not None,
+            bool(arguments.continue_pending_receiver),
+        )
+        if len(set(pending_fields)) != 1:
+            raise ValueError
+        introductions = tuple(
+            ReceiverIntroduction(
+                ReceiverScope(node, socket), artifact_id, target_path
+            )
+            for node, socket, artifact_id, target_path in arguments.introduce_receiver
+        )
+        pending = (
+            PendingReceiverContinuation(
+                arguments.pending_authoring_draft,
+                arguments.pending_authoring_head,
+                tuple(
+                    ReceiverScope(node, socket)
+                    for node, socket in arguments.continue_pending_receiver
+                ),
+            )
+            if all(pending_fields)
+            else None
+        )
+        groups = {}
+        for node, socket in arguments.replace_gateway_health_routes:
+            scope = ReceiverScope(node, socket)
+            if scope in groups:
+                raise ValueError
+            groups[scope] = []
+        for (
+            gateway_node,
+            gateway_socket,
+            target_id,
+            target_node,
+            target_socket,
+            origin,
+        ) in arguments.gateway_health_target:
+            gateway = ReceiverScope(gateway_node, gateway_socket)
+            if gateway not in groups:
+                raise ValueError
+            groups[gateway].append(
+                GatewayHealthTargetIntent(
+                    target_id, ReceiverScope(target_node, target_socket), origin
+                )
+            )
+        routes = tuple(
+            GatewayHealthRoutes(scope, tuple(targets))
+            for scope, targets in groups.items()
+        )
+        return AuthoredDesiredGraph(
+            arguments.desired_graph,
+            introductions=introductions,
+            pending=pending,
+            gateway_health_replacements=routes,
+            verifier_refreshes=tuple(ReceiverScope(node, socket)
+                for node, socket in arguments.refresh_receiver_verifiers),
+            declaration_updates=tuple(ReceiverScope(node, socket)
+                for node, socket in arguments.update_receiver_declaration),
+        )
+    except (ValueError, TypeError):
+        raise ClientInputError("receiver authoring arguments are invalid") from None
+
+
+def _has_authoring_arguments(arguments):
+    return bool(
+        arguments.introduce_receiver
+        or arguments.refresh_receiver_verifiers
+        or arguments.update_receiver_declaration
+        or arguments.pending_authoring_draft is not None
+        or arguments.pending_authoring_head is not None
+        or arguments.continue_pending_receiver
+        or arguments.replace_gateway_health_routes
+        or arguments.gateway_health_target
+    )
+
+
+def _invalid_json_constant(value):
+    raise ValueError("nonstandard JSON constant")
+
+
+def _catalogue_cursor(value):
+    try:
+        if len(value.encode()) > 16384:
+            raise ValueError
+        result = json.loads(value, object_pairs_hook=_unique_object, parse_constant=_invalid_json_constant)
+        if not isinstance(result, dict):
+            raise ValueError
+        return result
+    except (ValueError, RecursionError):
+        raise argparse.ArgumentTypeError("cursor must be a bounded JSON object") from None
 
 
 def _render(result: ClientResult, *, json_output: bool) -> None:
     value = result.descriptor()
+    if value.get("schema") == "cpk.client-report.v1":
+        from .report import LIMITS
+        compact = json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n"
+        rendered = compact if json_output else json.dumps(value, sort_keys=True, indent=2) + "\n"
+        if len(rendered.encode("utf-8")) > LIMITS["output_bytes"]:
+            rendered = compact
+        if len(rendered.encode("utf-8")) > LIMITS["output_bytes"]:
+            raise ClientInputError("report output exceeds its bound")
+        sys.stdout.write(rendered)
+        return
     if json_output:
         print(json.dumps(value, sort_keys=True, separators=(",", ":")))
+        return
+    if value.get("schema", "").startswith("cpk.client-catalogue-"):
+        print(json.dumps(value, sort_keys=True, indent=2))
         return
     print(f"status: {result.status}")
     print(f"operation: {result.operation_ref}")
@@ -90,6 +344,11 @@ def _render(result: ClientResult, *, json_output: bool) -> None:
         print(f"run: {result.run_id}")
     print(f"execution: {result.execution}")
     print(f"advancement: {result.advancement}")
+    if "http_status" in value:
+        print(f"HTTP status: {value['http_status']}")
+    if "diagnostic" in value:
+        diagnostic = value["diagnostic"]
+        print(f"advancement diagnostic: {diagnostic['stage']} / {diagnostic['reason']} / {diagnostic['acceptance']}")
     if result.required_scope is not None:
         print(f"required authorization: {result.required_scope}")
     if result.destructive is not None:

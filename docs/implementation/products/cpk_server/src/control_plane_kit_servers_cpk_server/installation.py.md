@@ -1,0 +1,110 @@
+Source: [installation.py](../../../../../../products/cpk_server/src/control_plane_kit_servers_cpk_server/installation.py).
+
+Servers #378 adds optional `DockerCpkManagement` composition. The installation
+supplies a complete group of selected declared gateway/connector documents,
+public receiver configurations, transit trust and a separate management ingress.
+The website value can hold the exact managed connector declaration; an enclosing
+installation without the group still requires ordinary connectors, as does the
+unchanged standalone frontend composer. Group admission and route construction
+live in [installation_management.py](installation_management.py.md). No bootstrap
+input schema, provider effect or executable-plan support is added by this slice.
+
+The shared pure composer keeps placement, runtime access, credential references
+and selected product contracts explicit. Existing selected-product validation
+owns allowed secret deliveries and retained mounts before variants rebuild the
+installation credential handoffs.
+
+Servers #297 adds an optional, repr-hidden managed-health artifact. None leaves
+the existing path unchanged and imports no optional managed-health/Docker module.
+Enabled validation delegates bytes/digests/schema to Core and the accepted
+process decoder, then checks the socket against actual local Docker delivery.
+Explicit managed scopes are preserved independently from placement.
+
+The original CPK contract must leave both managed-health environment names and
+the artifact ID/path unoccupied, whether an artifact or requirement. This adds
+a fresh slot, never overwrites or deduplicates an existing one. Composition adds
+only the public artifact and two process environment values; unrelated
+configuration, selected images, other instances, generated credential references
+and runtime access declarations retain existing ownership. Core still owns
+generic path collisions and whole-product bounds. Contract hashing naturally
+changes the CPK identity. No provider, file or network effect occurs here.
+
+The owning targets check exact byte/provenance projection, closed root admission,
+unchanged disabled imports, conflict refusals, separate size bounds and actual
+reader/application-factory consumption. #226 retains materialization and receipt
+ownership; source review and the full owning gate are recorded on PR #298.
+
+Servers #299 adds the frozen, repr-hidden `DockerCpkWebsite` and an optional
+installation field. `_website_input` delegates origin and exact connector
+admission to the existing frontend owner. `_website_parts` checks the closed
+Named/Named or external/external profile, derived target, distinct ingress and
+connector identities, and distinct origin hostnames. Host comparison alone
+removes an optional terminal DNS dot; stored strings stay exact. Both construction
+and actual composition revalidate enabled inputs. Errors are raised outside
+handlers to omit rejected exception context. Earlier backend/API errors keep
+their existing owner; None returns before importing the frontend adapter.
+
+`frontend_product` supplies the ordinary website contract from the exact image
+and same-installation API origin. Composition appends the website and, for Named
+ingress, its connector and ingress to the existing runtime. Backend variants and
+store edges stay unchanged. No new wire format, root acquisition behavior,
+credentials, process authority, readiness claim or external effect is introduced.
+The 16 reviewed `test_installation_website.py` methods protect these laws. Source
+and owning-suite evidence belong to PR #300; image and live acceptance remain
+separate.
+# Managed PostgreSQL installation (#327)
+
+The historical native descriptor remains supported. A descriptor with the
+management provider must equal the PostgreSQL product owner's explicit managed
+source contract, allowing its password reference to vary. Socket presence alone
+does not admit an image. The target must name this installation's workspace,
+runtime, PostgreSQL node and management socket. The contract keeps its public
+receiver artifact, retained data, two providers and protected password file.
+The installation variant changes the password reference and adds authenticated
+`PostgresQueryCheck` for cpk/cpk. It never converts that file into an environment
+delivery. Imports of PostgreSQL authoring code are lazy on this selected path.
+
+# Dynamic installer input (#345)
+
+`DynamicWorkspaceAuthority` is an installation-local SHA256 commitment to the
+reviewed private intent. It is not a secret reference or generic file delivery.
+Explicit dynamic input requires empty legacy grants, reserves the fixed policy
+path and environment names, and emits dynamic-v1. Policy stays outside Core
+configuration artifacts. Explicit dynamic authority is required for health v2;
+static and standalone artifact helpers retain their v1 behavior. Enabled health
+must use the matching mode and the existing Core artifact bounds.
+
+The root plan declares the separate private file obligation. An ordinary composed
+graph does not deliver it. The integrated #346/#347 root path now composes
+initialization and authenticated enrollment. The authoring slice alone does not
+qualify an image; actual current-pair launcher acceptance is bound to8bb96f9 and
+[combined review](https://github.com/OpenJ92/control-plane-kit-servers/issues/347#issuecomment-6488312730).
+
+# Supplied child authority delivery (#379)
+
+`SuppliedChildWorkspaceAuthority` is the separate reference-only child input.
+It requires `MultiPrincipalControlAuth`, a distinct authority-document reference
+and explicitly empty legacy grants. The external supplier owns both protected
+documents; composition never reads, generates or validates their private bytes.
+
+The installation owner appends a normal Core `SecretFileDelivery`, purpose
+`APPLICATION_CONTROL_TOKEN`, mode0400, only to the CPK variant. Its fixed child
+path is `/run/secrets/cpk-installation/workspace-authority.json`, preserving
+Core's protected secret namespace. The existing dynamic-v1 environment selects
+that path and the existing process reader consumes it. The principal document
+keeps its existing reference delivery; neither document is copied to the website.
+Normal Core graph encoding/secret selection and provider/interpreter admission
+own delivery thereafter.
+
+The overlap check still refuses caller-owned policy artifacts, environment or
+delivery. Only the explicit child mode additionally reserves its child slot.
+Root `DynamicWorkspaceAuthority` and its original `/etc` policy path, private
+intent commitment, root input decoder and acquisition staging remain unchanged.
+No root action envelope or invented commitment is supplied for a child.
+
+The existing installation/auth tests own reference-only composition, child
+admission and collision refusal. Root bootstrap and workspace process tests
+retain root delivery and real file-reader ownership. The supplied-auth adapter
+continues to own private identity/document correspondence; this composition
+does not claim that a reference or parse proves that correspondence, current
+child association, active grants, image adoption or live #163 acceptance.

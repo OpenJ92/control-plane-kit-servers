@@ -1,5 +1,8 @@
 #!/bin/sh
 set -eu
+case "${CPK_LEGACY_MCP_PATH:-/mcp/legacy}" in
+  /mcp|/mcp/legacy) ;; *) echo 'unsupported legacy MCP endpoint' >&2; exit 2 ;;
+esac
 umask 077
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
@@ -138,6 +141,7 @@ except Exception:
     -v "$ROOT:/source:ro" -v "$EVIDENCE:/evidence:rw" \
     -v "$INSTALLATION/application.json:/application.json:ro" -w /source --env-file "$INSTALLATION/controller.env" \
     -e PYTHONDONTWRITEBYTECODE=1 -e CPK_PUBLIC_CONVERGENCE_WORKSPACE -e CPK_PUBLIC_CONVERGENCE_PULL_AUTHORITY=0 \
+    -e CPK_LEGACY_MCP_PATH="${CPK_LEGACY_MCP_PATH:-/mcp/legacy}" \
     "$CPK_SERVERS_TEST_IMAGE" python -B -m scripts.cpk_server_public_graph_convergence "$@" \
     --report /evidence/public-convergence.json --nodes "${CPK_PUBLIC_CONVERGENCE_NODES:-1}" \
     --active-node "${CPK_DEMO_ACTIVE_NODE:-1}" --capacity "${CPK_PUBLIC_CONVERGENCE_CAPACITY:-4}" > "$EVIDENCE/controller.id"
@@ -258,6 +262,7 @@ docker run -d --pull=never --read-only --name "$RESOURCE-controller" \
   -v "$ROOT:/source:ro" -v "$EVIDENCE:/evidence:rw" -w /source --env-file "$BOOTSTRAP/controller.env" \
   -e PYTHONDONTWRITEBYTECODE=1 -e CPK_PUBLIC_CONVERGENCE_WORKSPACE \
   -e CPK_PUBLIC_CONVERGENCE_PULL_AUTHORITY=0 \
+  -e CPK_LEGACY_MCP_PATH="${CPK_LEGACY_MCP_PATH:-/mcp/legacy}" \
   "$CPK_SERVERS_TEST_IMAGE" python -B -m scripts.cpk_server_public_graph_convergence \
   --approve-transitions --approve-destructive \
   --report /evidence/public-convergence.json \
