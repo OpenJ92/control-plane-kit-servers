@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -17,6 +18,74 @@ from products.cpk_server.tests import live_root_bootstrap as witness
 
 
 class RootBootstrapDiagnosticTests(unittest.TestCase):
+    def authority_evidence_inputs(self):
+        from control_plane_kit_interpreters.docker.authority import DockerAuthorityConformance
+        from control_plane_kit_interpreters.docker.sdk import (
+            DockerSdkBindMount, DockerSdkConfiguredBindMount, DockerSdkResourceInspection,
+        )
+        socket, proxy = "/var/run/docker.sock", "/run/host-services/docker.proxy.sock"
+        labels = {"org.openj92.cpk.installation": "test-run"}
+        container = SimpleNamespace(id="container", attrs={
+            "Image": "image", "Config": {"Labels": labels},
+            "Mounts": [{"Type": "bind", "Source": proxy, "Destination": socket, "RW": True}],
+            "HostConfig": {"Mounts": [{"Type": "bind", "Source": proxy, "Target": socket}]},
+        })
+        inspection = DockerSdkResourceInspection(name="controller", running=True, image="image",
+            image_id="image", container_id="container", labels=labels,
+            bind_mounts=(DockerSdkBindMount(proxy, socket),),
+            configured_bind_mounts=(DockerSdkConfiguredBindMount(proxy, socket, None),),
+            supplementary_groups=("987",))
+        receipt = {"resources": {"containers": {"controller": {"id": "container"}}},
+                   "observations": {"images": {"controller": "image"}}, "labels": labels}
+        node = {"node_id": "controller", "local_docker_access": {"socket": socket}}
+        decision = {"schema": "cpk.docker.authority-decision.v1", "groups": "mismatch",
+                    "local_transport": "not-consulted",
+                    "provider": {"state": "not-consulted", "facts": None},
+                    "disposition": "conflict"}
+        return ("test-run", container, inspection, node, receipt, True), decision, DockerAuthorityConformance.CONFLICT
+
+    def test_authority_failure_is_retained_privately_without_raw_stdout(self):
+        args, decision, result = self.authority_evidence_inputs()
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(witness, "ROOT", Path(directory)), \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertTrue(witness.retain_authority_evidence(*args, decision=decision, conformance=result))
+            path = Path(directory) / "authority-mount-evidence.json"
+            record = json.loads(path.read_bytes())
+            self.assertEqual(record["schema"], "cpk.test.authority-mount-evidence.v2")
+            self.assertEqual(record["authority_decision"], decision)
+            self.assertEqual(record["configured"]["values"][0]["ReadOnly"], "omitted")
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertLessEqual(path.stat().st_size, 4096)
+            status = json.loads(output.getvalue())["cpk_private_authority_evidence"]
+            self.assertTrue(status["complete"])
+            self.assertNotIn("/run/host-services", output.getvalue())
+            self.assertNotIn('"987"', output.getvalue())
+
+    def test_authority_missing_malformed_or_inconsistent_evidence_cannot_qualify(self):
+        for case in ("missing", "malformed", "different-result", "different-inspection", "write-failure"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory, \
+                    patch.object(witness, "ROOT", Path(directory)), \
+                    contextlib.redirect_stdout(io.StringIO()) as output:
+                args, decision, result = self.authority_evidence_inputs()
+                if case == "missing":
+                    decision = None
+                elif case == "malformed":
+                    decision = {**decision, "private": "credential=must-not-escape"}
+                elif case == "different-result":
+                    decision = {**decision, "disposition": "conformant"}
+                elif case == "different-inspection":
+                    from dataclasses import replace
+                    args = (*args[:2], replace(args[2], image_id="other-image"), *args[3:])
+                if case == "write-failure":
+                    with patch.object(witness.os, "fsync", side_effect=OSError("credential=must-not-escape")):
+                        complete = witness.retain_authority_evidence(*args, decision=decision, conformance=result)
+                else:
+                    complete = witness.retain_authority_evidence(*args, decision=decision, conformance=result)
+                self.assertFalse(complete)
+                self.assertFalse(json.loads(output.getvalue())["cpk_private_authority_evidence"]["complete"])
+                self.assertNotIn("credential=must-not-escape", output.getvalue())
+
     def test_commissioning_child_failure_reports_only_validated_stage(self):
         stages = ("imports", "provenance", "plan", "prepare", "decode", "reuse", "complete-plan")
         for index, stage in enumerate(stages, 1):
