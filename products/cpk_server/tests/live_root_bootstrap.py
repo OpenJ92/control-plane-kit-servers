@@ -228,7 +228,8 @@ def numeric_group_check(primary_gid, supplementary_gids, expected_groups, socket
     }
 
 
-def retain_authority_evidence(run, container, inspection, node, receipt, engine_matches):
+def retain_authority_evidence(run, container, inspection, node, receipt, engine_matches,
+                              *, decision, conformance):
     """Keep bounded mount evidence private; diagnostics cannot replace the law."""
     class EvidenceUnavailable(Exception):
         pass
@@ -236,6 +237,35 @@ def retain_authority_evidence(run, container, inspection, node, receipt, engine_
     status = {"written": False, "complete": False}
     directory_fd = None
     try:
+        from control_plane_kit_interpreters.docker.authority import DockerAuthorityConformance
+        from control_plane_kit_interpreters.docker.sdk import DockerSdkBindMount, DockerSdkConfiguredBindMount
+
+        def checked_decision():
+            states = {"match", "mismatch", "unknown", "not-consulted"}
+            if (type(decision) is not dict or set(decision) != {
+                    "schema", "groups", "local_transport", "provider", "disposition"}
+                    or decision["schema"] != "cpk.docker.authority-decision.v1"
+                    or type(conformance) is not DockerAuthorityConformance
+                    or decision["disposition"] != conformance.value
+                    or decision["groups"] not in states or decision["local_transport"] not in states):
+                raise EvidenceUnavailable("unknown decision")
+            provider = decision["provider"]
+            if (type(provider) is not dict or set(provider) != {"state", "facts"}
+                    or provider["state"] not in {"known", "unknown", "not-consulted"}):
+                raise EvidenceUnavailable("unknown provider decision")
+            facts = provider["facts"]
+            if provider["state"] == "known":
+                if (type(facts) is not dict or set(facts) != {
+                        "operating_system", "os_type", "engine_version", "api_version"}
+                        or any(type(value) is not str or not 0 < len(value) <= 128
+                               or any(ord(char) < 32 or ord(char) == 127 for char in value)
+                               for value in facts.values())):
+                    raise EvidenceUnavailable("unknown provider facts")
+            elif facts is not None:
+                raise EvidenceUnavailable("unconsulted provider facts")
+            return {**decision, "provider": {"state": provider["state"],
+                                             "facts": None if facts is None else dict(facts)}}
+
         def binds(values, target_key, readonly_key):
             if type(values) is not list:
                 raise EvidenceUnavailable("unknown mounts")
@@ -290,13 +320,32 @@ def retain_authority_evidence(run, container, inspection, node, receipt, engine_
         if socket != "/var/run/docker.sock":
             raise EvidenceUnavailable("unexpected requested socket")
         record = {
-            "schema": "cpk.test.authority-mount-evidence.v1", "run": run,
+            "schema": "cpk.test.authority-mount-evidence.v2", "run": run,
             "receipt_matches": matches,
             "requested": {"Type": "bind", "Source": socket, "Target": socket, "ReadOnly": False},
             "observed": section(lambda: binds(attrs.get("Mounts"), "Destination", "RW")),
             "configured": section(lambda: binds(attrs.get("HostConfig", {}).get("Mounts"), "Target", "ReadOnly")),
             "supplementary_groups": section(groups),
+            "authority_decision": checked_decision(),
         }
+        # Raw attrs and SDK inspection are separate reads. Require matching
+        # custody and bind projections without refreshing or rewriting either.
+        actual, configured = inspection.bind_mounts, inspection.configured_bind_mounts
+        record["inspection_matches"] = (
+            inspection.container_id == container.id and inspection.image_id == attrs["Image"]
+            and dict(inspection.labels) == attrs["Config"]["Labels"]
+            and record["observed"]["known"] and record["configured"]["known"]
+            and type(actual) is tuple and type(configured) is tuple
+            and all(isinstance(mount, DockerSdkBindMount) and type(mount.read_only) is bool for mount in actual)
+            and all(isinstance(mount, DockerSdkConfiguredBindMount)
+                    and (type(mount.read_only) is bool or mount.read_only is None) for mount in configured)
+            and record["observed"]["values"] == [
+                {"Type": "bind", "Source": mount.source_path, "Destination": mount.target_path,
+                 "RW": not mount.read_only} for mount in actual]
+            and record["configured"]["values"] == [
+                {"Type": "bind", "Source": mount.source_path, "Target": mount.target_path,
+                 "ReadOnly": "omitted" if mount.read_only is None else mount.read_only}
+                for mount in configured])
         payload = json.dumps(record, sort_keys=True, separators=(",", ":")).encode("utf-8")
         if len(payload) > 4096:
             raise EvidenceUnavailable("oversized record")
@@ -312,7 +361,8 @@ def retain_authority_evidence(run, container, inspection, node, receipt, engine_
             evidence.flush()
             os.fsync(evidence.fileno())
         status = {"written": True,
-                  "complete": all(record[key]["known"] for key in ("observed", "configured", "supplementary_groups")),
+                  "complete": record["inspection_matches"] and all(record[key]["known"]
+                      for key in ("observed", "configured", "supplementary_groups")),
                   "actual_captured": record["observed"]["known"], "bytes": len(payload),
                   "sha256": hashlib.sha256(payload).hexdigest()}
     except EvidenceUnavailable as error:
@@ -327,6 +377,7 @@ def retain_authority_evidence(run, container, inspection, node, receipt, engine_
             except OSError:
                 status.update(complete=False, unavailable_or_incomplete=True, reason="directory close failed")
     print(json.dumps({"cpk_private_authority_evidence": status}), flush=True)
+    return status["written"] and status["complete"]
 
 
 def prepare(run):
@@ -667,7 +718,15 @@ def check(run):
                     DockerAuthorityConformance, docker_authority_conformance,
                 )
                 from control_plane_kit_interpreters.docker.sdk import DockerSdkBindMount
-                retain_authority_evidence(run, container, inspection, node, receipt, engine_matches)
+                socket_group = str(os.stat("/var/run/docker.sock").st_gid)
+                decisions = []
+                conformance = docker_authority_conformance(
+                    inspection, expected_mounts=(DockerSdkBindMount(
+                        source_path="/var/run/docker.sock", target_path="/var/run/docker.sock"),),
+                    expected_groups=(socket_group,), client=sdk, observe=decisions.append,
+                )
+                retained = retain_authority_evidence(run, container, inspection, node, receipt, engine_matches,
+                    decision=decisions[0] if len(decisions) == 1 else None, conformance=conformance)
                 binds = inspection.bind_mounts
                 known = isinstance(binds, tuple)
                 print(json.dumps({"cpk_authority_mount_diagnostic": {
@@ -679,12 +738,8 @@ def check(run):
                                     "target_is_canonical": mount.target_path == "/var/run/docker.sock",
                                     "read_only": mount.read_only if type(mount.read_only) is bool else "unknown"}
                                    for mount in (binds[:4] if known else ())]}}}), flush=True)
-                socket_group = str(os.stat("/var/run/docker.sock").st_gid)
-                assert docker_authority_conformance(
-                    inspection, expected_mounts=(DockerSdkBindMount(
-                        source_path="/var/run/docker.sock", target_path="/var/run/docker.sock"),),
-                    expected_groups=(socket_group,), client=sdk,
-                ) is DockerAuthorityConformance.CONFORMANT
+                assert retained, "authority decision evidence is incomplete"
+                assert conformance is DockerAuthorityConformance.CONFORMANT
                 assert inspection.supplementary_groups == (socket_group,)
                 assert image.configured_user == "10001"
                 verify_numeric_socket_read(container, socket_group, receipt["engine_id"], node["image"])

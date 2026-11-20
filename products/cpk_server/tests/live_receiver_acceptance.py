@@ -31,7 +31,7 @@ def verify_provenance():
         "control-plane-kit-operations": "191b3d894b8e30d163015594ece9cc6078f83321",
         "control-plane-kit-server-sdk": "b988030bd5931a7f6a3aef6d1a66a43ba817f7e8",
         "control-plane-kit-secrets": "fd6da8a3de83708968ebebf11c026a5362c23482",
-        "control-plane-kit-interpreters": "45866b2d9d0b0c08b554aaf2b7692042267e2e93",
+        "control-plane-kit-interpreters": "b0b88343e04fb5694da1697b28c3428ac06c8eed",
     }
     for name, commit in pins.items():
         direct = json.loads(importlib.metadata.distribution(name).read_text("direct_url.json"))
