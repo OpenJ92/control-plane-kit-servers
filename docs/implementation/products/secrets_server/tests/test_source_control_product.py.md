@@ -198,3 +198,7 @@ The unchanged Servers Docker gate must establish this consumer's compatibility.
 G #342 separately owns real-process policy mutation/readback and retained-upgrade
 proof. Paused wildcard-seeding source-live scripts remain held; this adoption
 neither repairs live state nor authorizes their execution or publication.
+
+The current source image selects the Servers product factory with Uvicorn's
+`--factory` option. The source packaging test checks that entrypoint alongside
+the existing Secrets dependency pin, user and port.
