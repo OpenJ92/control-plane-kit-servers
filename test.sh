@@ -17,6 +17,10 @@ if [ "${1:-}" = --cohort ]; then
 fi
 
 case "${1:-}" in
+  --bootstrap-packaged-schema-tests)
+    [ "$#" = 1 ] || exit 2
+    exec sh scripts/bootstrap_packaged_schema.sh
+    ;;
   --bootstrap-schema-tests)
     [ "$#" = 1 ] || exit 2
     ;;
@@ -580,8 +584,7 @@ root_bootstrap_witness() (
   }
   trap 'result=$?; trap - 0; cleanup_root_bootstrap || { echo "root bootstrap cleanup HOLD; records=$RECORDS" >&2; result=1; }; exit "$result"' 0
   [ -z "$(docker image ls -q --filter "reference=$DRIVER_TAG")" ]
-  docker build -f products/cpk_server/Dockerfile.bootstrap --build-arg "CPK_IMAGE=$ROOT_BASE_IMAGE" \
-    --label "org.openj92.cpk.test-run=$RUN" --iidfile "$RECORDS/driver" -t "$DRIVER_TAG" .
+  root_bootstrap_driver_build "$ROOT_BASE_IMAGE" "$RUN" "$RECORDS/driver" "$DRIVER_TAG"
   DRIVER="$(cat "$RECORDS/driver")"
   docker run --rm --network none --user "$(id -u):$(id -g)" \
     -e "CPK_ROOT_TEST_PORT=${CPK_ROOT_TEST_PORT:-18089}" \

@@ -1,5 +1,10 @@
-# Closed shell boundary shared only by the two current-root smoke owners/gate.
+# Shared by root artifact qualification and bootstrap installer tests.
 # Sourcing this file performs no Docker or filesystem effects.
+root_bootstrap_driver_build() {
+  docker build -f products/cpk_server/Dockerfile.bootstrap --build-arg "CPK_IMAGE=$1" \
+    --label "org.openj92.cpk.test-run=$2" --iidfile "$3" -t "$4" .
+}
+
 root_artifact_invalid() {
   echo 'current root artifact input is invalid' >&2
   return 2
