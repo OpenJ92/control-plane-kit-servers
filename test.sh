@@ -17,6 +17,9 @@ if [ "${1:-}" = --cohort ]; then
 fi
 
 case "${1:-}" in
+  --bootstrap-schema-tests)
+    [ "$#" = 1 ] || exit 2
+    ;;
   --postgres-release-tests|--postgres-published-image|--postgres-source-image)
     exec sh scripts/postgres_artifact_shell.sh "$@"
     ;;
@@ -270,6 +273,12 @@ run_mcp_authoring_postgres() (
   [ "$invocation_status" = 0 ] && [ "$state" = 'exited|0' ]
 )
 
+if [ "${1:-}" = --bootstrap-schema-tests ]; then
+  docker run --rm --network none --workdir /app/products/cpk_server/tests "$IMAGE" \
+    python -m unittest -v test_bootstrap_schema_correlation.ArchiveSchemaOwnershipTests \
+    test_bootstrap_schema_correlation.InitializationTargetDiagnosticsTests
+  exit 0
+fi
 if [ "${1:-}" = --mcp-source-tests ]; then
   [ "$#" = 1 ] || exit 2
   docker run --rm --network none "${COHORT_IMAGE_ID:-$IMAGE}" python scripts/run_all_tests.py --mcp-source-tests
