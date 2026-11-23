@@ -6,12 +6,14 @@ from importlib.metadata import PathDistribution
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
 from control_plane_kit_servers_cpk_server import bootstrap
 from control_plane_kit_servers_cpk_server import bootstrap_initialization as owner
 from control_plane_kit_servers_cpk_server import bootstrap_initialization_runtime as runtime
+from workspace_initialization_fixtures import initialization_inputs
 
 
 class ArchiveSchemaOwnershipTests(unittest.TestCase):
@@ -63,14 +65,14 @@ class ArchiveSchemaOwnershipTests(unittest.TestCase):
                 self.record.write_text(rows)
                 self.assert_schema_refused()
 
-    def test_changed_sql_and_same_byte_shadow_are_refused(self):
-        original = self.schema.read_bytes()
+    def test_changed_sql_is_refused(self):
         self.schema.write_bytes(b"SELECT 2;\n")
         self.assert_schema_refused()
-        self.schema.write_bytes(original)
+
+    def test_same_byte_shadow_is_refused(self):
         shadow = self.site / "shadow" / self.relative
         shadow.parent.mkdir(parents=True)
-        shadow.write_bytes(original)
+        shadow.write_bytes(self.schema.read_bytes())
         with patch.object(owner, "files", side_effect=lambda name: self.site.joinpath("shadow", *name.split("."))):
             self.assert_schema_refused()
 
@@ -80,28 +82,48 @@ class ArchiveSchemaOwnershipTests(unittest.TestCase):
 
 
 class InitializationTargetDiagnosticsTests(unittest.TestCase):
-    def test_target_and_schema_refusals_precede_helper_intent(self):
-        plan = {"postgres_node_id": "pg", "digest": "plan", "driver_image_id": "driver"}
-        for cause, reason in (("engine", "initialization-target-refused"),
-                              ("schema", "schema-owner-unverified")):
-            with self.subTest(cause=cause):
-                receipt = {"phase": "acquiring", "pending": None, "resources": {"containers": {"pg": {"id": "pg"}}},
-                           "plan_digest": "plan", "driver_image_id": "driver", "engine_id": "expected-engine"}
-                client, sdk = Mock(), Mock()
-                client.info.return_value = {"ID": "different-engine"}
-                with patch.object(owner, "distribution", side_effect=OSError("private-path-canary")) as dist:
-                    with self.assertRaises(bootstrap.RootBootstrapError) as caught:
-                        if cause == "schema":
-                            # The target's earlier ownership observations succeeded.
-                            with patch.object(runtime, "_target", side_effect=lambda *_: owner.package_correlation()):
-                                runtime.initialize_acquired_workspace(plan, {}, None, Path("/unused"), receipt, client, sdk)
-                        else:
-                            runtime.initialize_acquired_workspace(plan, {}, None, Path("/unused"), receipt, client, sdk)
-                    self.assertEqual(dist.call_count, int(cause == "schema"))
-                observed = bootstrap.bootstrap_failure(caught.exception)
-                self.assertEqual((observed["stage"], observed["reason"]), ("initialization-target", reason))
-                self.assertNotIn("private-path-canary", json.dumps(observed))
-                self.assertNotIn("initialization_helper", receipt)
-                self.assertIsNone(receipt["pending"])
-                client.volumes.create.assert_not_called()
-                client.containers.create.assert_not_called()
+    def setUp(self):
+        _, _, self.plan, _, _, target, _ = initialization_inputs(self)
+        pg = next(node for node in self.plan["resources"]["nodes"] if node["node_id"] == self.plan["postgres_node_id"])
+        mounts = [
+            {"Type": "volume", "Name": item["name"], "Destination": item["target"], "RW": category == "data_volumes"}
+            for category in ("data_volumes", "secret_files", "configuration_files") for item in pg[category]
+        ]
+        self.receipt = {
+            "phase": "acquiring", "pending": None, "plan_digest": self.plan["digest"],
+            "driver_image_id": self.plan["driver_image_id"], "engine_id": target["engine_id"], "labels": target["labels"],
+            "resources": {"containers": {pg["node_id"]: {"id": target["postgres_container_id"]}},
+                          "volumes": {mount["Name"]: {"id": mount["Name"]} for mount in mounts}},
+            "observations": {"fresh_postgres_volumes": [item["name"] for item in pg["data_volumes"]],
+                             "images": {pg["node_id"]: target["postgres_image_id"]}},
+        }
+        self.client = Mock()
+        self.client.info.return_value = {"ID": target["engine_id"]}
+        pg_container = self.client.containers.get.return_value
+        pg_container.id = target["postgres_container_id"]
+        pg_container.attrs = {"Image": target["postgres_image_id"], "Config": {"Labels": target["labels"]},
+                              "State": {"Running": True}, "Mounts": mounts}
+        self.client.volumes.get.side_effect = lambda name: SimpleNamespace(id=name, attrs={"Labels": target["labels"]})
+        self.client.images.get.return_value.id = self.plan["driver_image_id"]
+
+    def assert_pre_helper_refusal(self, reason):
+        with self.assertRaises(bootstrap.RootBootstrapError) as caught:
+            runtime.initialize_acquired_workspace(self.plan, {}, None, Path("/unused"), self.receipt, self.client, Mock())
+        observed = bootstrap.bootstrap_failure(caught.exception)
+        self.assertEqual((observed["stage"], observed["reason"]), ("initialization-target", reason))
+        self.assertNotIn("private-path-canary", json.dumps(observed))
+        self.assertNotIn("initialization_helper", self.receipt)
+        self.assertIsNone(self.receipt["pending"])
+        self.client.volumes.create.assert_not_called()
+        self.client.containers.create.assert_not_called()
+
+    def test_schema_refusal_precedes_helper_intent(self):
+        with patch.object(owner, "distribution", side_effect=OSError("private-path-canary")) as dist:
+            self.assert_pre_helper_refusal("schema-owner-unverified")
+            dist.assert_called_once_with("control-plane-kit-operations")
+
+    def test_earlier_engine_refusal_never_consults_schema(self):
+        self.client.info.return_value = {"ID": "different-engine"}
+        with patch.object(owner, "distribution") as dist:
+            self.assert_pre_helper_refusal("initialization-target-refused")
+            dist.assert_not_called()
