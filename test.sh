@@ -260,7 +260,7 @@ run_mcp_authoring_postgres() (
     --network "$DB_NETWORK_ID" \
     -e CPK_OPERATIONS_TEST_DATABASE_URL=postgresql://cpk:cpk@authoring-postgres:5432/cpk \
     -e PYTHONDONTWRITEBYTECODE=1 \
-    -e PYTHONPATH=/app/src:/app/products/cpk_server/src:/app/products/cpk_local_gateway/src:/app/products/hello_server/src:/app/products/cloudflared_connector/src:/app/products/cpk_server/tests:/opt/cpk-test-cohort/operations/tests \
+    -e PYTHONPATH=/app/src:/app/products/cpk_server/src:/app/products/cpk_local_gateway/src:/app/products/hello_server/src:/app/products/cloudflared_connector/src:/app/products/cpk_server/tests:/opt/cpk-test-cohort/operations/tests:/opt/cpk-test-cohort/operations \
     "$COHORT_IMAGE_ID" python -m unittest discover -s products/cpk_server/postgres_tests \
       -p 'test_*.py' -v >/dev/null
   DB_TEST_ID=$(cat "$DB_RECORDS/test.id")
