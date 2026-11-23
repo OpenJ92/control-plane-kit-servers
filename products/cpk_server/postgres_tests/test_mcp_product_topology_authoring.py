@@ -575,6 +575,44 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
         self.assertEqual(workspace["desired_graph_revision"], args["expected_desired_graph_revision"] + 1)
         self.assertEqual(self.dispatches.count("command.desired-topology-draft.select"), 1)
 
+    def ingress_extension(self, base, product, registration_id):
+        return {"schema": "registered-product-ingress-extension.v1",
+            "base": {key: base[key] for key in ("draft_id", "revision", "graph_id")},
+            "runtime_id": "demo-docker",
+            "connector": {"node_id": "connector", "product": product, "receiver_id": "a" * 32,
+                "provider_socket": "control"},
+            "ingress": {"ingress_id": "hello-public", "authority_ref": "hello-public",
+                "registration_id": registration_id, "hostname": "hello.example.test",
+                "target": {"node_id": "mux", "provider_socket": "internal"},
+                "exposure": "https", "lifecycle": "ephemeral"}}
+
+    async def test_extension_revise_bounds_an_inconsistent_owner_receipt(self):
+        base = {"draft_id": "draft-a", "revision": 2, "graph_id": "graph-r2"}
+        extension = self.ingress_extension(base, self.references["hello"], "fixture-registration")
+        args = {"workspace_id": "workspace-a", "session_id": self.sessions["workspace-a"],
+            "draft_id": base["draft_id"], "expected_head_revision": 2, "idempotency_key": "receipt",
+            "product_recipe": extension, "expected_proposal_commitment": {
+                "profile": "registered-product-ingress-extension-public.v1", "sha256": "a" * 64},
+            "receiver_lifecycle": {"current_graph_id": "current", "current_realized_projection_id": "projection",
+                "desired_graph_id": None, "desired_realized_projection_id": None, "desired_graph_revision": 0}}
+        calls = []
+        def inconsistent(request):
+            calls.append(request.route_id)
+            return {"workspace_id": "workspace-a", "draft_id": "another-draft", "revision": 3,
+                "graph_id": "fixture-private-result"}
+        self.host.services[ControlPlaneServiceRole.PLANNING].handle = inconsistent
+        async with self.client(self.mode) as client:
+            result = await client.call_tool("revise_desired_topology_draft", args)
+            self.assertEqual(calls, ["command.desired-topology-draft.revise"])
+            self.assertTrue(result.is_error)
+            self.assertEqual(result.structured_content["error"]["status"], 503)
+            self.assertNotIn("fixture-private-result", str(result.content))
+            for invalid in ({**args, "graph": {"name": "x", "nodes": {}, "edges": {}, "runtimes": {}}},
+                            {k: v for k, v in args.items() if k != "receiver_lifecycle"}):
+                refused = await client.call_tool("revise_desired_topology_draft", invalid)
+                self.assertTrue(refused.is_error)
+            self.assertEqual(calls, ["command.desired-topology-draft.revise"])
+
     async def test_complete_graph_create_revise_and_fresh_sdk_readback(self):
         workspace = "workspace-a"
         graph = DEFAULT_GRAPH_CODEC.encode(self.graph("first full graph"))
