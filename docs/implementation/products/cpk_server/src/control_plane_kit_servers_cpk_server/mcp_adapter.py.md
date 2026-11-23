@@ -38,14 +38,14 @@ the atomic pointer update, action history and exact-key replay. G4 omits all aut
 The dedicated PostgreSQL test root exercises the actual SDK/ASGI/owner path;
 see the [authoring design](../../../../../mcp-product-topology-authoring-design.md).
 
-#398 adds only existing `prepare_deployment` for an exact already-selected saved
-revision, plus existing session-plans/approval/delivery reads. Its closed schema
-requires observed lineage/generation and a caller-owned idempotency key. There
-is no caller-supplied session: the existing program owns its creation. Inline
-graphs, implicit selection, approval/execution and unsupported readiness input
-are not part of this tool. This limitation is specific to the pinned Operations
-885513 source; separately deployed cohorts may have different supported inputs.
-Delivery inspection retains its own permission, not merely workspace-read.
+Standard `prepare_deployment` takes an already-selected saved revision,
+observed lineage and generation, and a caller-owned idempotency key. The closed
+schema admits ordinary omission or one readiness choice. It validates the two
+scalar values before dispatch. The shared HTTP planning service converts each
+choice to the Operations intent type. Operations owns the session, exact-key
+replay, changed-intent conflict and planning outcome. Session, plan, approval
+and delivery reads expose the existing owner records. Delivery inspection
+requires its own permission.
 
 The raw wrapper uses the existing bounded collector and strict decoder. It
 authenticates before sensitive decode and places the verified identity in the

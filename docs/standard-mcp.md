@@ -194,22 +194,26 @@ or change permissions. Any credential installation, grant or live connection
 verification remains the separately approved #399 boundary. SDK source tests
 alone cannot complete that issue.
 
-## #398 saved-revision planning
+## Saved-revision planning
 
-The sole command tool is `prepare_deployment`. It reuses
-`CpkServerPlanningService::_prepare_deployment` and the selected Operations
-`DeploymentProgramInterpreter`; the adapter does not orchestrate sessions.
-Inputs are workspace, exact draft/revision, observed current and Desired
-authored/projection pairs, Desired generation, title and the caller's durable
-idempotency key. All are required; no inline graph, session override, selection,
-approval, execution or managed-readiness input is accepted. Owner results retain
-their status, plan ID and any approval-request ID.
+The standard MCP tool `prepare_deployment` uses the same Operations planning
+service as HTTP. Supply the workspace, selected draft and revision, observed
+Current and Desired authored graph and projection IDs, Desired generation, title
+and a caller-owned idempotency key. Operations creates the preparation session
+and returns its planning status, plan ID and any approval-request ID.
 
-This source pins Operations `885513e3`. Its saved preparation requires that exact
-revision to be already selected, and has no managed-verification input. This is
-not a statement about the separate #163 running Operations `70154b66` cohort,
-which supports a different managed-verification path. No pin change or #163
-readiness acceptance follows from this adapter.
+Omit both readiness fields for ordinary planning, or supply one of the following.
+
+| Field | Accepted value |
+| --- | --- |
+| `http_verification_intent` | `authenticated-samples` |
+| `managed_verification` | `authenticated-local-postgres-and-http` |
+
+The readiness choice is part of the durable intent. Reusing the key for the
+identical request returns the stored result. Changing the choice under that key
+produces a conflict. Operations can return a `review-blocked` plan for an
+unsupported graph. The restricted `grandparent-read-only-v1` profile exposes
+inspection only.
 
 The supported operator sequence is:
 

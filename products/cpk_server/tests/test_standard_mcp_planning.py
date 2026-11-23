@@ -12,6 +12,7 @@ from control_plane_kit_operations.cpk_server import CpkServerPlanningService, Cp
 from control_plane_kit_operations.deployment_program_interpreter import DeploymentProgramAuthorizationDenied, DeploymentProgramStateConflict
 from control_plane_kit_operations.deployment_program import DeploymentProgramReference, SavedDesiredTopologyRevision
 from control_plane_kit_operations.deployment_program_projections import DeploymentNoChanges
+from control_plane_kit_operations.planning import HttpVerificationPlanningIntent, ManagedVerificationPlanningIntent
 
 import test_standard_mcp as fixture
 from test_http_mcp_boundaries import _principal
@@ -48,6 +49,8 @@ class StandardMcpPlanningTests(fixture.StandardMcpFixture, unittest.IsolatedAsyn
             self.assertIs(type(command.desired), SavedDesiredTopologyRevision)
             self.assertEqual((command.desired.draft_id, command.desired.revision), ("draft-a", 7))
             self.assertEqual(command.idempotency_key.value, "mcp-domain-key")
+            self.assertIsNone(command.http_verification_intent)
+            self.assertIsNone(command.managed_verification)
             self.assertEqual(command.expected_desired_graph_revision, 3)
             self.assertEqual(command.expected_current.authored_graph_id, "graph-current")
             self.assertEqual(command.expected_desired.realized_projection_id, "projection-saved")
@@ -57,6 +60,26 @@ class StandardMcpPlanningTests(fixture.StandardMcpFixture, unittest.IsolatedAsyn
             self.assertEqual(result.structured_content, http.json())
             self.assertEqual(self.program.prepare.call_args.args[0], command)
 
+    async def test_saved_readiness_choices_reach_the_same_typed_command_as_http(self):
+        cases = (
+            ("http_verification_intent", HttpVerificationPlanningIntent.AUTHENTICATED_SAMPLES),
+            ("managed_verification", ManagedVerificationPlanningIntent.AUTHENTICATED_LOCAL_POSTGRES_AND_HTTP),
+        )
+        async with self.client() as client:
+            for field, intent in cases:
+                with self.subTest(field=field):
+                    args = {**self.arguments(), field: intent.value}
+                    body = {key: value for key, value in args.items() if key != "workspace_id"}
+                    http = await self.http.post("/workspaces/workspace-a/deployments/prepare", json=body)
+                    self.assertEqual(http.status_code, 200)
+                    command = self.program.prepare.call_args.args[0]
+                    self.assertIs(getattr(command, field), intent)
+                    self.program.prepare.reset_mock()
+                    result = await client.call_tool("prepare_deployment", args)
+                    self.assertFalse(result.is_error, result.structured_content)
+                    self.assertEqual(result.structured_content, http.json())
+                    self.program.prepare.assert_called_once_with(command)
+
     async def test_missing_planning_permission_and_unsupported_intent_do_not_prepare(self):
         async with self.client() as client:
             self.scopes = (PolicyScope.INSTANCE_WORKSPACE_READ, PolicyScope.INSTANCE_WORKSPACE_EDIT)
@@ -65,12 +88,19 @@ class StandardMcpPlanningTests(fixture.StandardMcpFixture, unittest.IsolatedAsyn
             self.assertEqual(denied.structured_content["error"]["status"], 403)
             self.program.prepare.assert_not_called()
             self.scopes += (PolicyScope.PLAN_REQUEST,)
+            planning = self.host.services[ControlPlaneServiceRole.PLANNING]
+            planning.handle = Mock(wraps=planning.handle)
             for extra in ({"managed_verification": {"profile": "unsupported"}},
+                          {"managed_verification": "unsupported"}, {"http_verification_intent": None},
+                          {"http_verification_intent": "unsupported"}, {"managed_verification": None},
+                          {"http_verification_intent": "authenticated-samples",
+                           "managed_verification": "authenticated-local-postgres-and-http"},
                           {"session_id": "caller-invented-session"}, {"desired_graph": {}},
                           {"approval": True}):
                 refused = await client.call_tool("prepare_deployment", {**self.arguments(), **extra})
                 self.assertTrue(refused.is_error)
                 self.assertEqual(refused.structured_content["error"]["status"], 400)
+            planning.handle.assert_not_called()
             self.program.prepare.assert_not_called()
 
     async def test_owner_failures_stay_bounded_and_never_trigger_an_automatic_retry(self):

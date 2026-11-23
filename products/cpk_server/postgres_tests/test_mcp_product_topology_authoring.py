@@ -479,13 +479,13 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
             same_target = await self.call(client, SELECT_TOOL, await self.selection_input(draft))
             self.assertEqual(same_target["desired_graph_revision"], selected["desired_graph_revision"] + 1)
 
-    async def approved_admission(self):
+    async def selected_preparation_input(self):
         from control_plane_kit_operations.health_receiver_trust import HealthReceiverDecoders
         from control_plane_kit_servers_cpk_server.operations_application import (
             OperationsApplicationFactory, OperationsEffectPorts, OperationsIdFactories)
 
         def unexpected_effect(*args, **kwargs):
-            self.fail("Operator admission attempted an external effect")
+            self.fail("Planning or admission attempted an external effect")
 
         draft = await self.save_once(await self.preview())
         ports = OperationsEffectPorts(None, None, None, HealthReceiverDecoders(()),
@@ -501,13 +501,62 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
                 "idempotency_key": uuid4().hex, **{"expected_" + key: workspace[key] for key in
                     ("desired_graph_id", "desired_realized_projection_id", "desired_graph_revision")}})
             workspace = (await self.call(operator, "get_workspace", {}))["workspace"]
-            prepared = await self.call(operator, "prepare_deployment", {
-                "draft_id": draft["draft_id"], "revision": draft["revision"],
-                "title": "Admission reconnect test", "idempotency_key": uuid4().hex,
-                "expected_desired_graph_revision": workspace["desired_graph_revision"],
-                **{"expected_" + side: {"authored_graph_id": workspace[side + "_graph_id"],
-                    "realized_projection_id": workspace[side + "_realized_projection_id"]}
-                    for side in ("current", "desired")}})
+        return {"draft_id": draft["draft_id"], "revision": draft["revision"],
+            "title": "Saved deployment preparation", "idempotency_key": uuid4().hex,
+            "expected_desired_graph_revision": workspace["desired_graph_revision"],
+            **{"expected_" + side: {"authored_graph_id": workspace[side + "_graph_id"],
+                "realized_projection_id": workspace[side + "_realized_projection_id"]}
+                for side in ("current", "desired")}}
+
+    async def test_saved_readiness_http_mcp_replay_and_changed_choice_preserve_owner_records(self):
+        args = await self.selected_preparation_input()
+        samples = {"http_verification_intent": "authenticated-samples"}
+        combined = {"managed_verification": "authenticated-local-postgres-and-http"}
+        path = "/workspaces/workspace-a/deployments/prepare"
+
+        def preparation_records():
+            return {**self.truth(), **self.runtime_truth(),
+                    "sources": self.rows("cpk_saved_preparation_sources")}
+
+        before = preparation_records()
+        async with self.client(self.mode) as operator:
+            stale = await operator.call_tool("prepare_deployment", {
+                **args, **samples, "workspace_id": "workspace-a",
+                "expected_desired_graph_revision": args["expected_desired_graph_revision"] + 1})
+            self.assertEqual(stale.structured_content["error"]["status"], 409)
+        self.assertEqual(preparation_records(), before)
+
+        # The saved Hello/mux revision has no managed runtime. The explicit
+        # profiles therefore produce review-blocked plans on this same revision.
+        for choice, changed, profile, status in (
+            ({}, samples, "management-graph-pair-v1", "approval-required"),
+            (samples, combined, "managed-http-sample-bootstrap-v1", "review-blocked"),
+            (combined, samples, "managed-sql-http-bootstrap-v1", "review-blocked"),
+        ):
+            with self.subTest(profile=profile):
+                request = {**args, "idempotency_key": uuid4().hex}
+                async with self.client(self.mode) as operator:
+                    receipt = await self.call(operator, "prepare_deployment", {**request, **choice})
+                self.assertEqual(receipt["status"], status)
+                self.assertEqual("approval_request_id" in receipt, status == "approval-required")
+                with self.unit_of_work() as uow:
+                    plan = uow.stores.activity_history.get_plan(receipt["plan_id"])
+                    self.assertEqual(plan.derivation_profile.value, profile)
+                    self.assertEqual(plan.desired_graph_id, request["expected_desired"]["authored_graph_id"])
+                committed = preparation_records()
+                replay = await self.http.post(path, json={**request, **choice})
+                self.assertEqual((replay.status_code, replay.json()), (200, receipt))
+                self.assertEqual(preparation_records(), committed)
+                async with self.client(self.mode) as fresh:
+                    conflict = await fresh.call_tool("prepare_deployment",
+                        {"workspace_id": "workspace-a", **request, **changed})
+                    self.assertEqual(conflict.structured_content["error"]["status"], 409)
+                self.assertEqual(preparation_records(), committed)
+
+    async def approved_admission(self):
+        request = await self.selected_preparation_input()
+        async with self.client(self.mode) as operator:
+            prepared = await self.call(operator, "prepare_deployment", request)
             self.assertEqual(prepared["status"], "approval-required")
             plan = await self.call(operator, "get_plan_detail", {"plan_id": prepared["plan_id"]})
         args = {"session_id": plan["plan"]["session_id"],

@@ -276,7 +276,13 @@ def _input_schema(route, *, supports_recipe=True):
             "expected_desired_graph_revision": {"type": "integer", "minimum": 1},
             "title": {"type": "string"}, "idempotency_key": {"type": "string",
                 "description": "Caller-owned durable key for this exact intent; not the JSON-RPC request ID."}}
-        return {"type": "object", "properties": properties, "required": list(properties), "additionalProperties": False}
+        schema = _closed_schema(properties)
+        schema["properties"].update({
+            "http_verification_intent": {"const": "authenticated-samples"},
+            "managed_verification": {"const": "authenticated-local-postgres-and-http"},
+        })
+        schema["not"] = {"required": ["http_verification_intent", "managed_verification"]}
+        return schema
     coordinates = re.findall(r"\{([A-Za-z_][A-Za-z0-9_]*)\}", route.path_template)
     properties = {name: {"type": "integer" if name == "revision" else "string"}
                   for name in coordinates}
@@ -332,8 +338,8 @@ class StandardMcpAdapter:
             self.tools[binding.mcp_tool_name] = Tool(name=binding.mcp_tool_name,
                 description="Request a plan for an already selected saved draft/revision. Requires instance:workspace:edit and plan:request; "
                     "runtime delivery admission may also be required. Supply observed lineage/generation and retain the domain idempotency key. "
-                    "CPK owns its session. This does not select/resave a graph, approve or execute. This endpoint does not support "
-                    "a managed-verification/readiness-intent input here. After interruption query existing references; ambiguous association stays uncertain.",
+                    "Omit both readiness fields for ordinary planning, or request authenticated HTTP samples or combined local PostgreSQL and HTTP verification. "
+                    "CPK owns the session. Preparation does not select, approve or execute. After interruption query existing references; ambiguous association stays uncertain.",
                 input_schema=_input_schema(route), output_schema={"type": "object", "description": "Bounded owner preparation result or safe error; preserves plan/approval references."},
                 annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False))
         if profile == "standard":
