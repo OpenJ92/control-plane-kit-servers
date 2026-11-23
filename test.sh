@@ -17,6 +17,13 @@ if [ "${1:-}" = --cohort ]; then
 fi
 
 case "${1:-}" in
+  --bootstrap-packaged-schema-tests)
+    [ "$#" = 1 ] || exit 2
+    exec sh scripts/bootstrap_packaged_schema.sh
+    ;;
+  --bootstrap-schema-tests)
+    [ "$#" = 1 ] || exit 2
+    ;;
   --postgres-release-tests|--postgres-published-image|--postgres-source-image)
     exec sh scripts/postgres_artifact_shell.sh "$@"
     ;;
@@ -270,6 +277,12 @@ run_mcp_authoring_postgres() (
   [ "$invocation_status" = 0 ] && [ "$state" = 'exited|0' ]
 )
 
+if [ "${1:-}" = --bootstrap-schema-tests ]; then
+  docker run --rm --network none --workdir /app/products/cpk_server/tests "$IMAGE" \
+    python -m unittest -v test_bootstrap_schema_correlation.ArchiveSchemaOwnershipTests \
+    test_bootstrap_schema_correlation.InitializationTargetDiagnosticsTests
+  exit 0
+fi
 if [ "${1:-}" = --mcp-source-tests ]; then
   [ "$#" = 1 ] || exit 2
   docker run --rm --network none "${COHORT_IMAGE_ID:-$IMAGE}" python scripts/run_all_tests.py --mcp-source-tests
@@ -571,8 +584,7 @@ root_bootstrap_witness() (
   }
   trap 'result=$?; trap - 0; cleanup_root_bootstrap || { echo "root bootstrap cleanup HOLD; records=$RECORDS" >&2; result=1; }; exit "$result"' 0
   [ -z "$(docker image ls -q --filter "reference=$DRIVER_TAG")" ]
-  docker build -f products/cpk_server/Dockerfile.bootstrap --build-arg "CPK_IMAGE=$ROOT_BASE_IMAGE" \
-    --label "org.openj92.cpk.test-run=$RUN" --iidfile "$RECORDS/driver" -t "$DRIVER_TAG" .
+  root_bootstrap_driver_build "$ROOT_BASE_IMAGE" "$RUN" "$RECORDS/driver" "$DRIVER_TAG"
   DRIVER="$(cat "$RECORDS/driver")"
   docker run --rm --network none --user "$(id -u):$(id -g)" \
     -e "CPK_ROOT_TEST_PORT=${CPK_ROOT_TEST_PORT:-18089}" \

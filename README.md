@@ -26,6 +26,17 @@ The authoritative clean-checkout package gate is:
 ./test.sh
 ```
 
+Run `./test.sh --bootstrap-schema-tests` for the source tests covering archive
+schema ownership and initialization diagnostics. This uses the package test
+image and exits before product image qualification.
+
+Run `./test.sh --bootstrap-packaged-schema-tests` from the reviewed, clean
+checkout to build one linux/amd64 installer and verify its packaged schema as
+root and as the helper UID from the selected CPK image. This requires Docker,
+`jq`, the cached selector and CPK images, and access to any uncached build
+dependencies. The command prints the location of its private receipts and
+exits after checking the two results and cleaning up its run tag.
+
 The isolated root smoke binds only `127.0.0.1`, on port `18089` by default.
 When that port is occupied by a retained installation, select a known available
 test port with `CPK_ROOT_TEST_PORT=18090 ./test.sh`. The fixture validates the
