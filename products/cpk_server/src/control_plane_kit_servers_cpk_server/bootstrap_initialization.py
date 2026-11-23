@@ -1,4 +1,5 @@
 """Socket-free explicit workspace initialization and read-only receipt inspection."""
+import base64
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
@@ -19,7 +20,10 @@ from control_plane_kit_operations.workspace_permissions import (
     WorkspacePermissionNotFound, WorkspacePermissionReadService,
 )
 
-from .bootstrap import RootBootstrapError, RootBootstrapHold, canonical, decode_document, verified_plan
+from .bootstrap import (
+    BootstrapReason, BootstrapStage, RootBootstrapDiagnostic, RootBootstrapError, RootBootstrapHold,
+    canonical, decode_document, verified_plan,
+)
 from .bootstrap_runtime import private_read
 from .bootstrap_workspace import load_workspace_helper_intent, workspace_helper_input_bytes
 
@@ -42,13 +46,43 @@ class _Inputs:
 
 def package_correlation():
     """Identify the installed owner in this exact driver, never a migration input."""
-    direct = json.loads(distribution("control-plane-kit-operations").read_text("direct_url.json"))
-    match = re.fullmatch(r"https://github\.com/OpenJ92/control-plane-kit/archive/([0-9a-f]{40})\.zip",
-        direct["url"])
-    if match is None or direct.get("subdirectory") != "control-plane-kit-operations":
-        raise RootBootstrapError("bootstrap installed schema owner could not be verified")
-    schema = files("control_plane_kit_operations.postgres").joinpath("current_schema.sql").read_bytes()
-    return {"operations_commit": match[1], "schema_sha256": hashlib.sha256(schema).hexdigest()}
+    try:
+        dist = distribution("control-plane-kit-operations")
+        direct = json.loads(dist.read_text("direct_url.json"))
+        match = re.fullmatch(r"https://github\.com/OpenJ92/control-plane-kit/archive/([0-9a-f]{40})\.zip",
+            direct["url"])
+        if match is None or direct.get("subdirectory") != "control-plane-kit-operations":
+            raise ValueError("unsupported archive origin")
+        return {"operations_commit": match[1], "schema_sha256": _installed_schema_digest(dist)}
+    except Exception:
+        failure = RootBootstrapDiagnostic(
+            BootstrapStage.INITIALIZATION_TARGET, BootstrapReason.SCHEMA_OWNER_UNVERIFIED)
+    raise failure
+
+
+def _installed_schema_digest(dist):
+    package_name = "control_plane_kit_operations"
+    resource_name = package_name + "/postgres/current_schema.sql"
+    records = [entry for entry in dist.files or () if str(entry) == resource_name]
+    if len(records) != 1:
+        raise ValueError("expected one installed schema record")
+    record = records[0]
+    if record.hash is None or record.hash.mode != "sha256":
+        raise ValueError("expected a SHA-256 schema record")
+
+    package = Path(files(package_name))
+    resource = Path(files(package_name + ".postgres").joinpath("current_schema.sql"))
+    package_root = package.resolve(strict=True)
+    installed = resource.resolve(strict=True)
+    if (package.is_symlink() or resource.is_symlink()
+            or package_root != Path(dist.locate_file(package_name)).resolve(strict=True)
+            or installed != Path(dist.locate_file(record)).resolve(strict=True)
+            or not installed.is_relative_to(package_root)):
+        raise ValueError("imported schema differs from installed owner")
+    digest = hashlib.sha256(resource.read_bytes())
+    if base64.urlsafe_b64encode(digest.digest()).rstrip(b"=").decode("ascii") != record.hash.value:
+        raise ValueError("installed schema differs from its RECORD digest")
+    return digest.hexdigest()
 
 
 def database_target(plan):

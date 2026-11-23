@@ -8,6 +8,11 @@ custody evidence, not a cryptographic proof or authority supplied by database
 possession. Policy bytes, actor/key, credentials and private intent never enter
 its bounded progress or exceptions. Ambient PG settings are refused.
 
+The archive identifies the Operations commit. The imported `current_schema.sql`
+must resolve to the file recorded by that installed distribution and match its
+single SHA-256 RECORD entry. An unverifiable origin, path or digest yields
+`initialization-target` / `schema-owner-unverified`.
+
 Initialization opens a fresh idle autocommit connection with explicit loopback,
 port/database/user/password and bounded connect/statement/lock timeouts. The
 existing owner's require_empty=True transaction must commit and the connection
