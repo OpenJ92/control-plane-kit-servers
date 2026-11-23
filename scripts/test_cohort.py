@@ -26,7 +26,7 @@ EXPECTED = dict(schema="cpk163.grandparent-cohort.v2", name="grandparent", serve
 AUTHORING_EXPECTED = {**EXPECTED,
     "schema": "cpk417.topology-authoring-cohort.v1", "name": "topology-authoring",
     "core": "68f187710abe8fa89701f403ac76e904b3fec35d",
-    "operations": "68f187710abe8fa89701f403ac76e904b3fec35d",
+    "operations": "9b93ac2a2cba03d23de13d63440d8da11d380ead",
     "interpreters": "45866b2d9d0b0c08b554aaf2b7692042267e2e93",
     "interpreters_source": dict(kind="retained-git-export",
         sha256="4f897a19221c479f3b8ccf2157223089d2497b0d39fc4d4df032df64e727e3c2",

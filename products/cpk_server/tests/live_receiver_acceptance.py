@@ -28,7 +28,7 @@ def verify_provenance():
     """Apparatus check; no behavioral claim can precede normal installed pins."""
     pins = {
         "control-plane-kit-core": "68f187710abe8fa89701f403ac76e904b3fec35d",
-        "control-plane-kit-operations": "191b3d894b8e30d163015594ece9cc6078f83321",
+        "control-plane-kit-operations": "9b93ac2a2cba03d23de13d63440d8da11d380ead",
         "control-plane-kit-server-sdk": "b988030bd5931a7f6a3aef6d1a66a43ba817f7e8",
         "control-plane-kit-secrets": "fd6da8a3de83708968ebebf11c026a5362c23482",
         "control-plane-kit-interpreters": "b0b88343e04fb5694da1697b28c3428ac06c8eed",

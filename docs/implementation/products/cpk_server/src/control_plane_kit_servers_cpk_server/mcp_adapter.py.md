@@ -102,3 +102,9 @@ that request. With a receipt, match its request ID to the exact plan's run
 history. If the reply was lost before claim, an empty run page is consistent
 with a committed request. Without evidence linking the original caller key to
 a receipt, report submission unknown and stop.
+
+Standard preview admits the named-ingress extension over an exact saved base.
+Revision accepts its normalized recipe, extension commitment and lifecycle as
+one alternative to a complete graph. The authenticated planning service owns
+the append. The adapter bounds its reply to the same four coordinates as
+complete-graph revision, including the workspace, draft and revision checks.

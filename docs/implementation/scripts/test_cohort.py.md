@@ -32,3 +32,7 @@ calls without dispatch; existing two-lifespan behavior is reused. Target-red
 precedes adding the profile. Managed factory preservation remains a separate
 owning composition proof before source acceptance. No runtime or credential
 action is part of this test entrance.
+
+The topology-authoring profile requires Operations `9b93ac2a` for the
+named-ingress revision path. Its Core, SDK and interpreter inputs retain
+their previously accepted coordinates.
