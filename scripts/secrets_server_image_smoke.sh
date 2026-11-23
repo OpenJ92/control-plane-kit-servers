@@ -49,6 +49,8 @@ cleanup_records() {
   for phase in initial restart; do
     rm -f "$CONTROL_RECORDS/$phase/control.json" \
       "$CONTROL_RECORDS/$phase/surface.headers" "$CONTROL_RECORDS/$phase/health.headers" || return 1
+    rm -f "$CONTROL_RECORDS/$phase/http-samples.json" "$CONTROL_RECORDS/$phase/sample.prepared" \
+      "$CONTROL_RECORDS/$phase/sample.ready" "$CONTROL_RECORDS/$phase/sample.passed" || return 1
     if [ -d "$CONTROL_RECORDS/$phase" ]; then
       rmdir "$CONTROL_RECORDS/$phase" || return 1
     fi
@@ -205,6 +207,10 @@ start_provider() {
     --mount "type=volume,src=$DATA_VOLUME,dst=/var/lib/cpk-secrets"
   if [ "$PROFILE" != published-baseline ]; then
     set -- "$@" --mount "type=bind,source=$CONTROL_RECORDS/$CONTROL_PHASE/control.json,target=/etc/cpk/secrets-server/control.json,readonly"
+  fi
+  if [ "$PROFILE" = wrapped-source ] && [ "$CONTROL_PHASE" = restart ]; then
+    set -- "$@" -e CPK_HTTP_VERIFICATION_SAMPLES_CONFIGURATION_FILE=/etc/cpk/secrets-server/http-samples.json \
+      --mount "type=bind,source=$CONTROL_RECORDS/$CONTROL_PHASE/http-samples.json,target=/etc/cpk/secrets-server/http-samples.json,readonly"
   fi
   docker create --pull "$PRODUCT_PULL_POLICY" "$@" "$IMAGE" >/dev/null
   docker start "$PROVIDER" >/dev/null
@@ -409,9 +415,38 @@ assert_logs_redacted
 docker rm -f "$PROVIDER" >/dev/null
 
 prepare_control restart
+if [ "$PROFILE" = wrapped-source ]; then
+  SAMPLE_HELPER="$(docker run -d --name "$RUN_ID-http-sample" --label "$LABEL_KEY=$RUN_ID" \
+    --network "$NETWORK" --read-only --cap-drop ALL --security-opt no-new-privileges \
+    --user "$(id -u):$(id -g)" -e PYTHONDONTWRITEBYTECODE=1 \
+    --mount "type=bind,source=$CONTROL_RECORDS/restart,target=/fixture" \
+    "$CONTROLLER_IMAGE" python scripts/http_sample_fixture.py secrets /fixture)"
+  prepared=0
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    if [ -f "$CONTROL_RECORDS/restart/sample.prepared" ]; then prepared=1; break; fi
+    [ "$(docker inspect --format '{{.State.Running}}' "$SAMPLE_HELPER")" = true ] || break
+    sleep 1
+  done
+  [ "$prepared" = 1 ] || { echo 'Secrets source HTTP sample preparation failed' >&2; exit 1; }
+fi
 start_provider
 wait_ready
 check_control
+if [ "$PROFILE" = wrapped-source ]; then
+  : > "$CONTROL_RECORDS/restart/sample.ready"
+  sample_completed=0
+  sample_attempt=1
+  while [ "$sample_attempt" -le 20 ]; do
+    sample_state="$(docker inspect --format '{{.State.Status}}|{{.State.ExitCode}}' "$SAMPLE_HELPER")" || exit 1
+    if [ "${sample_state%%|*}" = exited ]; then sample_completed=1; break; fi
+    sleep 1
+    sample_attempt=$((sample_attempt + 1))
+  done
+  [ "$sample_completed" = 1 ] && [ "$sample_state" = 'exited|0' ] && [ -f "$CONTROL_RECORDS/restart/sample.passed" ] || {
+    echo 'Secrets source signed ready sample failed' >&2; exit 1;
+  }
+  echo 'Secrets source signed named-listener ready sample passed'
+fi
 
 docker run --rm -i \
   --label "$LABEL_KEY=$RUN_ID" \
