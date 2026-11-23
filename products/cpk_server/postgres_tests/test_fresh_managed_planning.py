@@ -1,11 +1,15 @@
 """A single public planning request against the owner's qualified, synthetic graph."""
 import json
+from dataclasses import replace
+from pathlib import Path
+import traceback
 import unittest
 from uuid import uuid4
 
+from control_plane_kit_core.operations import ControlPlaneServiceRole
 from control_plane_kit_core.policies import PolicyScope
 from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC
-from control_plane_kit_operations.graph_authoring import SecretVersionMetadata, product_references_in_graph
+from control_plane_kit_operations.graph_authoring import SecretVersionMetadata, product_reference_in_node
 from control_plane_kit_operations.health_receiver_trust import HealthReceiverDecoders
 from control_plane_kit_operations.products import InlineDescriptorSource
 from control_plane_kit_servers_cpk_server.operations_application import (
@@ -48,17 +52,53 @@ class FreshManagedPlanningTests(DraftCatalogueFixture, StandardMcpFixture, unitt
         workspace = (await self.call(client, "get_workspace"))["workspace"]
         return {key: workspace[key] for key in PINS}
 
+    async def set_fixture_desired(self, payload):
+        # Preserve the real HTTP result. On failure report only source positions and committed row counts.
+        owner = self.host.services[ControlPlaneServiceRole.PLANNING]
+        dispatch = owner.handle
+        def observed(request):
+            try:
+                return dispatch(request)
+            except Exception as error:
+                cause = error
+                for _ in range(4):
+                    if cause is None:
+                        break
+                    frames = traceback.extract_tb(cause.__traceback__)
+                    locations = [(Path(frame.filename).name, frame.name, frame.lineno) for frame in frames[-4:]]
+                    print("Desired fixture refusal", type(cause).__name__, locations)
+                    cause = cause.__cause__ or cause.__context__
+                raise
+        owner.handle = observed
+        try:
+            return await self.post("graphs/desired", payload)
+        except AssertionError:
+            with self.unit_of_work() as uow:
+                state = uow.stores.workspaces.get(WORKSPACE)
+            print("Desired fixture state", state.desired_graph_id, state.desired_graph_revision,
+                "plans", len(self.rows("cpk_activity_plans")), "approvals", len(self.rows("cpk_approval_requests")))
+            raise
+        finally:
+            owner.handle = dispatch
+
     async def test_fresh_combined_readiness_stops_at_pending_plan_readback(self):
         source = mixed_plan(self)
         graph = DEFAULT_GRAPH_CODEC.decode(source["desired"].graph_descriptor)
         selection, = graph.node("postgres").secret_selections
-        selected_products = product_references_in_graph(graph)
+        documents = {p.reference: p.descriptor_document for p in source["products"]}
+        # The pure plan fixture pins identity and digest. Saved authoring also needs the product's OCI image.
+        attached_images = []
         with self.unit_of_work() as uow:
-            for product in source["products"]:
-                if product.reference in selected_products:
-                    uow.stores.registered_products.register(workspace_id=WORKSPACE,
-                        descriptor_document=product.descriptor_document, source=InlineDescriptorSource(),
-                        imported_by="operator-a", imported_at=NOW)
+            for node in graph.nodes.values():
+                document = documents[product_reference_in_node(node)]
+                image = document.product.image.execution_reference
+                if "oci_image" in node.metadata:
+                    self.assertEqual(node.metadata["oci_image"], image)
+                else:
+                    graph = graph.update_node(replace(node, metadata={**node.metadata, "oci_image": image}))
+                    attached_images.append(node.node_id)
+                uow.stores.registered_products.register(workspace_id=WORKSPACE, descriptor_document=document,
+                    source=InlineDescriptorSource(), imported_by="operator-a", imported_at=NOW)
             uow.commit()
 
         def unexpected_effect(*args, **kwargs):
@@ -73,6 +113,10 @@ class FreshManagedPlanningTests(DraftCatalogueFixture, StandardMcpFixture, unitt
         authenticate = self.host.verifier.authenticate
         self.host.verifier.authenticate = lambda credential: (
             grants[credential] if credential in grants else authenticate(credential))
+        runtime, = source["runtime_authorities"]
+        await self.post("runtime-authorities", {"authority_ref": runtime.authority_ref.reference_id,
+            "runtime_kind": runtime.runtime_kind.value, "authority": {"kind": "local-docker-socket"},
+            "admitted_at": NOW, "idempotency_key": "fixture-runtime"})
         reference = selection.reference.reference_id
         provider = await self.post("secret-providers", {
             "provider_id": selection.reference.provider_id.value, "provider_kind": "control-plane-kit-secrets",
@@ -86,7 +130,7 @@ class FreshManagedPlanningTests(DraftCatalogueFixture, StandardMcpFixture, unitt
             graph_wire = DEFAULT_GRAPH_CODEC.encode(graph)
             # Establish the selected version through the same guarded Desired owner used by HTTP clients.
             # Saved-revision selection may carry forward an admitted choice, but cannot mint one.
-            await self.post("graphs/desired", {"session_id": self.sessions[WORKSPACE], "graph": graph_wire,
+            await self.set_fixture_desired({"session_id": self.sessions[WORKSPACE], "graph": graph_wire,
                 "explicit_secret_choices": {"postgres": [selection.descriptor()]}, "receiver_lifecycle": pins,
                 **{"expected_" + key: pins[key] for key in PINS[2:]}, "idempotency_key": "fixture-version"})
             pins = await self.pins(operator)
@@ -109,6 +153,14 @@ class FreshManagedPlanningTests(DraftCatalogueFixture, StandardMcpFixture, unitt
         async with self.client() as reader:
             saved = await self.call(reader, "get_desired_topology_draft_revision", **revision)
             plan = (await self.call(reader, "get_plan_detail", plan_id=prepared["plan_id"]))["plan"]
+            preparations = await self.call(reader, "list_desired_topology_draft_revision_preparations", **revision)
+            expected_source = {"state": "saved", **revision, "graph_id": saved["graph_id"]}
+            matching = [row for row in preparations["items"]
+                        if row["source"] == expected_source and row["session_id"] == plan["session_id"]]
+            self.assertEqual(len(matching), 1)
+            session_id = matching[0]["session_id"]
+            session_plans = await self.call(reader, "list_session_plans", session_id=session_id)
+            self.assertIn(prepared["plan_id"], [item["plan_id"] for item in session_plans["items"]])
             approval = (await self.call(reader, "get_approval_detail",
                 approval_id=prepared["approval_request_id"]))["approval"]
             self.assertEqual(await self.pins(reader), pins)
@@ -127,7 +179,7 @@ class FreshManagedPlanningTests(DraftCatalogueFixture, StandardMcpFixture, unitt
         verification = {}
         for node_id in ("api", "postgres"):
             self.assertEqual(nodes[node_id]["lifecycle"]["ownership"], "owned")
-            checks = nodes[node_id]["verification"]["checks"]
+            checks = nodes[node_id]["block_spec"]["verification"]["checks"]
             expected = graph.node(node_id).block_spec.verification.descriptor()["checks"]
             self.assertEqual(checks, [{key: check[key] for key in ("kind", "check_id", "provider_socket")}
                                       for check in expected])
@@ -138,7 +190,9 @@ class FreshManagedPlanningTests(DraftCatalogueFixture, StandardMcpFixture, unitt
             revision_graph = uow.stores.graphs.get(saved["graph_id"]).graph_descriptor
             self.assertEqual(revision_graph["nodes"]["postgres"]["secret_selections"], [selection.descriptor()])
         print("Fresh managed planning readback", json.dumps({"draft": revision, "pins": pins,
-            "plan_id": plan["plan_id"], "profile": plan["derivation_profile"], "activities": len(activities),
+            "session_id": session_id, "plan_id": plan["plan_id"], "profile": plan["derivation_profile"],
+            "activities": len(activities),
             "verification_activity_ids": {node: waits[node] for node in ("api", "postgres")}, "checks": verification,
             "approval_request_id": approval["request_id"], "approval_state": approval["state"],
-            "version_public_read": "redacted", "fixture_version": selection.version_id}, sort_keys=True))
+            "version_public_read": "redacted", "fixture_version": selection.version_id,
+            "image_coordinates_from_documents": sorted(attached_images)}, sort_keys=True))
