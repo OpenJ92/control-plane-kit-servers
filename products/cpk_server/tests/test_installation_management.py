@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import control_plane_kit_core as core
 from control_plane_kit_core.configuration import ConfigurationArtifact, ConfigurationMediaType
+from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
 from control_plane_kit_core.products import ProductDescriptorCodec, ProductReference
 from control_plane_kit_core.receiver_configuration import select_receiver_node_control_configuration_artifact
 from control_plane_kit_core.secrets import SecretReference
@@ -100,6 +101,44 @@ class InstallationManagementTests(unittest.TestCase):
             artifacts=node.configuration_artifacts, environment=node.public_environment,
             control_surfaces=node.block_spec.control_surfaces)
         return core.ReceiverNodeControlConfigurationCodec().decode_bytes(artifact.content.encode())
+
+    def test_optional_child_sample_artifacts_survive_real_managed_installation_compilation(self):
+        from scripts.http_sample_fixture import SampleAuthority
+        from control_plane_kit_core.http_verification_sample_installation import HTTP_VERIFICATION_SAMPLES_CONFIGURATION_ENVIRONMENT
+        cpk = importlib.import_module("control_plane_kit_servers_cpk_server.control_configuration")
+        secrets = importlib.import_module("control_plane_kit_servers_secrets_server.configuration")
+        value = self.installation(website=self.managed_website())
+        before = self.graph(value)
+        documents = {}
+        artifacts = {}
+        for role, document, node_id, owner, factory in (
+            ("cpk", value.cpk_product, value.cpk_node_id, cpk, cpk.cpk_http_sample_configuration_artifact),
+            ("secrets", value.secrets_product, value.secrets_node_id, secrets, secrets.secrets_http_sample_configuration_artifact),
+        ):
+            control = self.receiver(before.node(node_id))
+            contract = document.product.runtime_contract
+            authority = SampleAuthority(control, contract)
+            artifact = artifacts[node_id] = factory(control, authority.configuration)
+            control_artifact, = contract.configuration_artifacts
+            supplied = (cpk.cpk_source_runtime_contract(cpk.CpkSourceVariant.DOCKER_CLOUDFLARE,
+                control_artifact, sample_artifact=artifact) if role == "cpk" else
+                secrets.secrets_source_runtime_contract(control_artifact, sample_artifact=artifact))
+            documents[role] = self.codec.encode_document(replace(document.product, runtime_contract=supplied))
+        actual = self.graph(replace(value, cpk_product=documents["cpk"], secrets_product=documents["secrets"]))
+        self.assertTrue(validate_graph(actual).valid)
+        self.assertEqual(set(actual.nodes),set(before.nodes))
+        self.assertEqual(actual.runtimes,before.runtimes)
+        for node_id in before.nodes:
+            if node_id not in artifacts:
+                self.assertEqual(actual.node(node_id), before.node(node_id))
+                continue
+            node = actual.node(node_id)
+            artifact = artifacts[node_id]
+            self.assertIn(artifact,node.configuration_artifacts)
+            self.assertIn(PublicStaticEnvironmentBinding(HTTP_VERIFICATION_SAMPLES_CONFIGURATION_ENVIRONMENT,
+                artifact.target_path),node.public_environment)
+            self.assertEqual(self.receiver(node),self.receiver(before.node(node_id)))
+            self.assertEqual(node.block_spec.verification,before.node(node_id).block_spec.verification)
 
     def test_complete_graph_routes_exact_actual_receivers_and_preserves_documents(self):
         value = self.installation()
