@@ -23,7 +23,7 @@ from control_plane_kit_core.operations import ControlPlaneServiceRole
 PRODUCT = Path(__file__).resolve().parents[1]
 
 
-class CpkControlReceiverTests(unittest.TestCase):
+class CpkControlReceiverFixture(unittest.TestCase):
     def setUp(self):
         sys.path.insert(0,str(PRODUCT / "src"))
         self.config = importlib.import_module("control_plane_kit_servers_cpk_server.control_configuration")
@@ -53,6 +53,8 @@ class CpkControlReceiverTests(unittest.TestCase):
         self.assertIsNone(caught.exception.__context__)
         self.assertEqual(vars(caught.exception),{})
 
+
+class CpkControlReceiverTests(CpkControlReceiverFixture):
     def app(self, control=None):
         with patch.object(self.server,"_operations_application",
                 return_value=self.server.CpkServerOperationsApplication(self.services)):
