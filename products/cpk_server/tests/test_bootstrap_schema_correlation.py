@@ -4,6 +4,7 @@ import base64
 import hashlib
 from importlib.metadata import PathDistribution
 import json
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -22,14 +23,10 @@ class ArchiveSchemaOwnershipTests(unittest.TestCase):
         self.relative = Path("control_plane_kit_operations/postgres/current_schema.sql")
         self.schema = self.site / self.relative
         self.schema.parent.mkdir(parents=True)
-        self.schema.write_bytes(b"SELECT 1;\n")
-        self.digest = hashlib.sha256(self.schema.read_bytes())
-        encoded = base64.urlsafe_b64encode(self.digest.digest()).decode("ascii").rstrip("=")
-        self.row = f"{self.relative},sha256={encoded},{self.schema.stat().st_size}\n"
         metadata = self.site / "control_plane_kit_operations-1.dist-info"
         metadata.mkdir()
         self.record = metadata / "RECORD"
-        self.record.write_text(self.row)
+        self.install_schema(b"SELECT 1;\n")
         self.origin = metadata / "direct_url.json"
         self.commit = "a" * 40
         self.origin.write_text(json.dumps({
@@ -41,6 +38,14 @@ class ArchiveSchemaOwnershipTests(unittest.TestCase):
 
     def resource_directory(self, package):
         return self.site.joinpath(*package.split("."))
+
+    def install_schema(self, content, *, include_size=True):
+        self.schema.write_bytes(content)
+        self.digest = hashlib.sha256(content)
+        encoded = base64.urlsafe_b64encode(self.digest.digest()).decode("ascii").rstrip("=")
+        size = str(len(content)) if include_size else ""
+        self.row = f"{self.relative},sha256={encoded},{size}\n"
+        self.record.write_text(self.row)
 
     def assert_schema_refused(self):
         with self.assertRaises(bootstrap.RootBootstrapError) as caught:
@@ -68,6 +73,28 @@ class ArchiveSchemaOwnershipTests(unittest.TestCase):
     def test_changed_sql_is_refused(self):
         self.schema.write_bytes(b"SELECT 2;\n")
         self.assert_schema_refused()
+
+    def test_correct_digest_with_inconsistent_record_size_is_refused(self):
+        entry, _ = self.row.rsplit(",", 1)
+        self.record.write_text(f"{entry},{self.schema.stat().st_size + 1}\n")
+        self.assert_schema_refused()
+
+    def test_empty_schema_cannot_be_satisfied_by_a_nonregular_descriptor(self):
+        self.install_schema(b"")
+        open_file = os.open
+
+        def open_with_device_at_schema(path, flags, *args, **kwargs):
+            # /dev/null is immediately readable and has the same size and bytes.
+            # Only the type of the opened object distinguishes it.
+            return open_file(os.devnull if Path(path) == self.schema else path, flags, *args, **kwargs)
+
+        with patch.object(os, "open", side_effect=open_with_device_at_schema):
+            self.assert_schema_refused()
+
+    def test_full_digest_is_preserved_when_record_omits_its_optional_size(self):
+        self.install_schema(b"SELECT 1;\n" * 20_000, include_size=False)
+        self.assertEqual(owner.package_correlation(),
+                         {"operations_commit": self.commit, "schema_sha256": self.digest.hexdigest()})
 
     def test_same_byte_shadow_is_refused(self):
         shadow = self.site / "shadow" / self.relative
