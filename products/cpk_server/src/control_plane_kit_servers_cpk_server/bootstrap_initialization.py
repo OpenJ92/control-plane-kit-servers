@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -79,10 +80,33 @@ def _installed_schema_digest(dist):
             or installed != Path(dist.locate_file(record)).resolve(strict=True)
             or not installed.is_relative_to(package_root)):
         raise ValueError("imported schema differs from installed owner")
-    digest = hashlib.sha256(resource.read_bytes())
+    digest = _hash_regular_schema(resource, record.size)
     if base64.urlsafe_b64encode(digest.digest()).rstrip(b"=").decode("ascii") != record.hash.value:
         raise ValueError("installed schema differs from its RECORD digest")
     return digest.hexdigest()
+
+
+def _hash_regular_schema(resource, recorded_size):
+    descriptor = os.open(resource, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError("installed schema must be a regular file")
+        if recorded_size is not None and recorded_size != info.st_size:
+            raise ValueError("installed schema length differs from RECORD")
+        digest = hashlib.sha256()
+        remaining = info.st_size
+        while remaining:
+            chunk = os.read(descriptor, min(64 * 1024, remaining))
+            if not chunk:
+                raise ValueError("installed schema shrank during verification")
+            digest.update(chunk)
+            remaining -= len(chunk)
+        if os.read(descriptor, 1):
+            raise ValueError("installed schema grew during verification")
+        return digest
+    finally:
+        os.close(descriptor)
 
 
 def database_target(plan):

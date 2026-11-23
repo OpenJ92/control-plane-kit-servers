@@ -82,14 +82,20 @@ class ArchiveSchemaOwnershipTests(unittest.TestCase):
     def test_empty_schema_cannot_be_satisfied_by_a_nonregular_descriptor(self):
         self.install_schema(b"")
         open_file = os.open
+        blocking_modes = []
 
         def open_with_device_at_schema(path, flags, *args, **kwargs):
             # /dev/null is immediately readable and has the same size and bytes.
             # Only the type of the opened object distinguishes it.
-            return open_file(os.devnull if Path(path) == self.schema else path, flags, *args, **kwargs)
+            if Path(path) != self.schema:
+                return open_file(path, flags, *args, **kwargs)
+            descriptor = open_file(os.devnull, flags, *args, **kwargs)
+            blocking_modes.append(os.get_blocking(descriptor))
+            return descriptor
 
         with patch.object(os, "open", side_effect=open_with_device_at_schema):
             self.assert_schema_refused()
+        self.assertEqual(set(blocking_modes), {False})
 
     def test_full_digest_is_preserved_when_record_omits_its_optional_size(self):
         self.install_schema(b"SELECT 1;\n" * 20_000, include_size=False)

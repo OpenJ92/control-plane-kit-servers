@@ -10,7 +10,10 @@ its bounded progress or exceptions. Ambient PG settings are refused.
 
 The archive identifies the Operations commit. The imported `current_schema.sql`
 must resolve to the file recorded by that installed distribution and match its
-single SHA-256 RECORD entry. An unverifiable origin, path or digest yields
+single SHA-256 RECORD entry. The reader opens without waiting and requires a
+regular file. It checks the RECORD size when present and streams at most the
+opened file's observed length plus one byte to detect growth. An unverifiable
+origin, resource or digest yields
 `initialization-target` / `schema-owner-unverified`.
 
 Initialization opens a fresh idle autocommit connection with explicit loopback,
