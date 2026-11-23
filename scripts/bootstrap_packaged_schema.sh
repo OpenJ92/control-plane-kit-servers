@@ -87,12 +87,13 @@ base_ref=$(docker run --pull never --rm --network none --read-only --cap-drop AL
 root_artifact_reference cpk-server "$base_ref"
 [ "${base_ref#*@}" = "$base_digest" ]
 
-# Select public fields. Config.Env and other unrestricted image metadata stay private.
+# The base owns the registry digest and the new driver owns the run label.
 inspect_image() {
-  docker image inspect --format '{"local_image_id":{{json .Id}},"os":{{json .Os}},"architecture":{{json .Architecture}},"configured_user":{{json .Config.User}},"layers":{{json .RootFS.Layers}},"repo_digests":{{json .RepoDigests}},"run_label":{{json (index .Config.Labels "org.openj92.cpk.test-run")}}}' "$1"
+  identity_fields='"local_image_id":{{json .Id}},"os":{{json .Os}},"architecture":{{json .Architecture}},"configured_user":{{json .Config.User}},"layers":{{json .RootFS.Layers}}'
+  docker image inspect --format "{$identity_fields,$2}" "$1"
 }
 
-inspect_image "$base_ref" > "$records/base.inspect.json"
+inspect_image "$base_ref" '"repo_digests":{{json .RepoDigests}}' > "$records/base.inspect.json"
 jq -e --arg ref "$base_ref" --arg digest "$base_digest" '
   select((.repo_digests | index($ref)) != null and (.local_image_id | test("^sha256:[0-9a-f]{64}$"))
     and .os == "linux" and .architecture == "amd64"
@@ -118,7 +119,7 @@ fi
 
 phase=driver
 driver=$(cat "$records/driver.iid")
-inspect_image "$tag" > "$records/driver.inspect.json"
+inspect_image "$tag" '"run_label":{{json (index .Config.Labels "org.openj92.cpk.test-run")}}' > "$records/driver.inspect.json"
 jq -e --arg iid "$driver" --arg run "$run" --slurpfile base "$records/base.json" '
   $base[0].layers as $prefix
   | select(($iid | test("^sha256:[0-9a-f]{64}$")) and .local_image_id == $iid
