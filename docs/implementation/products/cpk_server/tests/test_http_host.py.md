@@ -85,3 +85,8 @@ fixture used form-plus encoding for JSON whitespace. The fixture now uses
 `urlencode(..., quote_via=quote)`, matching the maintained client and existing
 workspace witness. Strict percent decoding and every mapping assertion remain
 unchanged; the failed attempt does not establish real Components behavior.
+
+The workspace inventory test calls the authenticated HTTP app with the selected
+Operations reader and two fixture store pages. It follows the returned opaque
+cursor through page two and checks refusal of an invalid cursor and malformed
+query fields. Operations owns cursor encoding, decoding and permission scope.

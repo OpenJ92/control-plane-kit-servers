@@ -1,16 +1,7 @@
-# Public sample admission regression laws
+Source: [grandparent_sample_admission_qualification.py](../../../scripts/grandparent_sample_admission_qualification.py).
+Maintain alongside the named cohort selection.
 
-Servers #401 translates exactly two qualified 23bcab control-receiver laws:
-optional sample metadata preserves ordinary contracts, and real main admits the
-public companion before protected bootstrap. The current receiver fixtures and
-their refusal assertions remain the owner; only the historical ephemeral sample
-configuration constructor is retained. No signed sampling or provider execution
-is performed.
-
-The grandparent-only selector names the two translated methods explicitly;
-ordinary inherited receiver laws run unchanged in common owner selection.
-All three variants, exact target/slot, malformed content, listener redirection,
-real SDK setup and denied sample access remain asserted. Wrong-slot, empty opt-in
-and malformed public configuration cannot reach bootstrap, credential verifier,
-Operations or listener. Default configuration precedence is separately proved
-by the unchanged managed-health configuration module in both cohorts.
+The original #401 qualification path exposes the product's two public sample
+admission tests under their existing class and method names. The cohort runner
+can select these same tests by name. Ordinary Docker discovery also runs them
+in the [CPK product suite](../products/cpk_server/tests/test_http_sample_admission.py.md).

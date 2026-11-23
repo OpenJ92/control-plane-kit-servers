@@ -84,3 +84,7 @@ and integer limit; detail and command reads have an explicitly empty query set.
 Empty sets do not fall through to generic pagination. Duplicate, unknown and
 malformed fields are refused before dispatch. Operations owns semantic policy,
 binding admission, durable commands and current-provider result validation.
+
+For `read.workspaces`, the HTTP adapter passes the strictly decoded `after`
+value as text to Operations. The inventory reader owns its cursor format and
+scope. Other paginated routes continue to use their existing query contracts.

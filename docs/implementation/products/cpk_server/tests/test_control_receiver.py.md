@@ -1,6 +1,9 @@
 Source: [test_control_receiver.py](../../../../../products/cpk_server/tests/test_control_receiver.py).
 Maintain with CPK receiving, startup and authority contracts.
 
+The receiver tests share their control snapshot, bootstrap fixture and bounded
+error assertion with the product's [sample admission tests](test_http_sample_admission.py.md).
+
 #315 updates only the schema-failure double's new explicit authority keyword and
 call expectation, requiring None for this injected-verifier fixture. The actual
 SDK-before-schema ordering and failure propagation assertions remain intact.
