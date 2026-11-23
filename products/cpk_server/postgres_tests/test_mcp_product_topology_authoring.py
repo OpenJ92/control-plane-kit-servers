@@ -14,9 +14,12 @@ from uuid import uuid4
 import httpx2
 from jsonschema import Draft202012Validator
 from psycopg import sql
+from control_plane_kit_core.delegation_keys import DelegationKeyAlgorithm, DelegationKeyPurpose, DelegationPublicKey
 from control_plane_kit_core.operations import ControlPlaneServiceRole
 from control_plane_kit_core.policies import PolicyScope
 from control_plane_kit_core.products import OciImageReference, ProductDescriptorCodec
+from control_plane_kit_core.public_ingress import IngressAuthorityReference
+from control_plane_kit_core.secrets import SecretReference
 from control_plane_kit_core.topology import DEFAULT_GRAPH_CODEC, DeploymentGraph
 from control_plane_kit_core.types import Protocol
 from control_plane_kit_operations.cpk_server import (
@@ -24,6 +27,8 @@ from control_plane_kit_operations.cpk_server import (
     CpkServerUnsupportedService,
 )
 from control_plane_kit_operations.product_topology_authoring import ProductTopologyAuthoringService
+from control_plane_kit_operations.delegation_signing_keys import RegisterDelegationSigningKeyCommand
+from control_plane_kit_operations.ingress_authorities import CloudflareZoneIngressAuthorityCodec
 from control_plane_kit_operations.products import InlineDescriptorSource, ProductRegistrationService
 from control_plane_kit_operations.workflows import IdempotencyKey, OperationCommandService
 from control_plane_kit_operations.workspaces import CreateWorkspace, WorkspaceCommandService
@@ -574,6 +579,130 @@ class AuthoringPersistenceCases(DraftCatalogueFixture, StandardMcpFixture):
         self.assertEqual(desired["graph_id"], draft.graph_id)
         self.assertEqual(workspace["desired_graph_revision"], args["expected_desired_graph_revision"] + 1)
         self.assertEqual(self.dispatches.count("command.desired-topology-draft.select"), 1)
+
+    def ingress_extension(self, base, product, registration_id):
+        return {"schema": "registered-product-ingress-extension.v1",
+            "base": {key: base[key] for key in ("draft_id", "revision", "graph_id")},
+            "runtime_id": "demo-docker",
+            "connector": {"node_id": "connector", "product": product, "receiver_id": "a" * 32,
+                "provider_socket": "control"},
+            "ingress": {"ingress_id": "hello-public", "authority_ref": "hello-public",
+                "registration_id": registration_id, "hostname": "hello.example.test",
+                "target": {"node_id": "mux", "provider_socket": "internal"},
+                "exposure": "https", "lifecycle": "ephemeral"}}
+
+    def seed_ingress_inputs(self):
+        workspace = "workspace-a"
+        document = ProductDescriptorCodec().decode_document(
+            (ROOT / "products/cloudflared_connector/product.managed.cpk.json").read_bytes())
+        authority = CloudflareZoneIngressAuthorityCodec().decode({
+            "provider_kind": "cloudflare", "account_id": "fixture-account", "zone_id": "fixture-zone",
+            "zone_name": "example.test", "allowed_hostname_pattern": "hello.example.test",
+            "api_token_ref": "secret://fixture/api", "generated_secret_provider_registration_id": "fixture-provider",
+            "generated_secret_reference_prefix": "secret://fixture/generated"})
+        public_key = DelegationPublicKey("fixture-public", DelegationKeyAlgorithm.ED25519,
+            "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n-----END PUBLIC KEY-----\n")
+        with self.unit_of_work() as uow:
+            connector = uow.stores.registered_products.register(workspace_id=workspace,
+                descriptor_document=document, source=InlineDescriptorSource(), imported_by="operator-a", imported_at=NOW)
+            binding = uow.stores.ingress_authorities.register(workspace_id=workspace,
+                authority_ref=IngressAuthorityReference("hello-public"), authority=authority,
+                admitted_by="operator-a", admitted_at=NOW)
+            keys = uow.stores.delegation_signing_keys
+            for purpose in (DelegationKeyPurpose.WORKLOAD_NODE_CONTROL_SURFACE_READ, DelegationKeyPurpose.WORKLOAD_NODE_HEALTH_READ):
+                keys.register(RegisterDelegationSigningKeyCommand(workspace, purpose, "fixture-issuer", public_key,
+                    SecretReference("secret://fixture/verifier"), "operator-a", NOW, ()).candidate())
+                keys.activate(workspace, purpose, "fixture-issuer", public_key.key_id, activated_by="operator-a", activated_at=NOW)
+            uow.commit()
+        return connector.reference.descriptor(), binding.registration_id
+
+    async def test_append_hello_ingress_and_read_exact_revisions_with_fresh_sdk(self):
+        owner = ProductTopologyAuthoringService(self.unit_of_work)
+        context = principal().command_context("workspace-a")
+        initial = owner.preview(context, self.recipe(self.references))
+        graph = owner.prepare_saved_graph(context, initial["recipe"], initial["proposal_commitment"])
+        catalogue = self.catalogue()
+        first = catalogue.execute(self.create_command(graph=graph))
+        base = catalogue.execute(self.revise_command(first, graph=graph)).descriptor()
+        self.assertEqual(base["revision"], 2)
+        self.assertNotEqual(base["graph_id"], first.graph_id)
+        pin, registration = self.seed_ingress_inputs()
+        extension = self.ingress_extension(base, pin, registration)
+        async with self.client(self.mode) as writer:
+            before = (await self.call(writer, "get_workspace", {}))["workspace"]
+            preview = await self.call(writer, "preview_product_topology", {"recipe": extension})
+            projected = preview["graph_descriptor"]
+            for role in ("hello", "mux"):
+                self.assertEqual(projected["nodes"][role], initial["graph_descriptor"]["nodes"][role])
+            self.assertEqual(projected["edges"], initial["graph_descriptor"]["edges"])
+            self.assertEqual(projected["nodes"]["connector"]["metadata"]["product_descriptor_digest"], pin["descriptor_sha256"])
+            ingress = extension["ingress"]
+            self.assertEqual(projected["public_ingresses"], [{"ingress_id": ingress["ingress_id"],
+                "hostname": ingress["hostname"], "exposure": ingress["exposure"], "lifecycle": ingress["lifecycle"],
+                "target": ingress["target"], "authority_ref": {"reference_id": ingress["authority_ref"]},
+                "connector_node_id": "connector"}])
+            receipt = await self.call(writer, "revise_desired_topology_draft", {
+                "draft_id": base["draft_id"], "session_id": self.sessions["workspace-a"], "expected_head_revision": 2,
+                "idempotency_key": "append-hello-ingress", "product_recipe": preview["recipe"],
+                "receiver_lifecycle": preview["receiver_lifecycle"], "expected_proposal_commitment": preview["proposal_commitment"]})
+            self.assertEqual(self.dispatches.count("command.desired-topology-draft.revise"), 1)
+            self.assertEqual(receipt, {**base, "revision": 3, "graph_id": receipt["graph_id"]})
+            self.assertNotIn(receipt["graph_id"], (first.graph_id, base["graph_id"]))
+
+        self.http.headers["Authorization"] = "Bearer reader-token"
+        async with self.client(self.mode) as reader:
+            for saved in (base, receipt):
+                args = {k: saved[k] for k in ("workspace_id", "draft_id", "revision")}
+                metadata = await self.call(reader, "get_desired_topology_draft_revision_metadata", args)
+                self.assertEqual({key: metadata[key] for key in saved}, saved)
+                http = await self.http.get(f"/workspaces/workspace-a/desired-topology-drafts/{saved['draft_id']}/revisions/{saved['revision']}/metadata")
+                self.assertEqual(http.status_code, 200)
+                self.assertEqual(metadata, http.json())
+                files = metadata["configuration_artifacts"]
+                if saved == base:
+                    self.assertEqual(files, {})
+                else:
+                    slot = dict(preview["receiver_configuration"])
+                    digest = slot.pop("sha256")
+                    self.assertEqual(files, {"connector": [{**slot, "source_digest": digest, "content_digest": digest}]})
+            after = (await self.call(reader, "get_workspace", {}))["workspace"]
+            for field in ("current_graph_id", "current_realized_projection_id", "desired_graph_id",
+                          "desired_realized_projection_id", "desired_graph_revision"):
+                self.assertEqual(after[field], before[field])
+        with self.unit_of_work() as uow:
+            saved_graph = DEFAULT_GRAPH_CODEC.decode(uow.stores.graphs.get(receipt["graph_id"]).graph_descriptor)
+        self.assertEqual(saved_graph.node("hello"), graph.node("hello"))
+        self.assertEqual(saved_graph.node("mux"), graph.node("mux"))
+        self.assertEqual(saved_graph.edges, graph.edges)
+        self.assertEqual(saved_graph.public_ingresses[0].target.descriptor(), extension["ingress"]["target"])
+        self.assertEqual(saved_graph.node("mux").endpoint("internal").url, "http://mux:8000")
+
+    async def test_extension_revise_bounds_an_inconsistent_owner_receipt(self):
+        base = {"draft_id": "draft-a", "revision": 2, "graph_id": "graph-r2"}
+        extension = self.ingress_extension(base, self.references["hello"], "fixture-registration")
+        args = {"workspace_id": "workspace-a", "session_id": self.sessions["workspace-a"],
+            "draft_id": base["draft_id"], "expected_head_revision": 2, "idempotency_key": "receipt",
+            "product_recipe": extension, "expected_proposal_commitment": {
+                "profile": "registered-product-ingress-extension-public.v1", "sha256": "a" * 64},
+            "receiver_lifecycle": {"current_graph_id": "current", "current_realized_projection_id": "projection",
+                "desired_graph_id": None, "desired_realized_projection_id": None, "desired_graph_revision": 0}}
+        calls = []
+        def inconsistent(request):
+            calls.append(request.route_id)
+            return {"workspace_id": "workspace-a", "draft_id": "another-draft", "revision": 3,
+                "graph_id": "fixture-private-result"}
+        self.host.services[ControlPlaneServiceRole.PLANNING].handle = inconsistent
+        async with self.client(self.mode) as client:
+            result = await client.call_tool("revise_desired_topology_draft", args)
+            self.assertEqual(calls, ["command.desired-topology-draft.revise"])
+            self.assertTrue(result.is_error)
+            self.assertEqual(result.structured_content["error"]["status"], 503)
+            self.assertNotIn("fixture-private-result", str(result.content))
+            for invalid in ({**args, "graph": {"name": "x", "nodes": {}, "edges": {}, "runtimes": {}}},
+                            {k: v for k, v in args.items() if k != "receiver_lifecycle"}):
+                refused = await client.call_tool("revise_desired_topology_draft", invalid)
+                self.assertTrue(refused.is_error)
+            self.assertEqual(calls, ["command.desired-topology-draft.revise"])
 
     async def test_complete_graph_create_revise_and_fresh_sdk_readback(self):
         workspace = "workspace-a"

@@ -258,3 +258,19 @@ The next fixture-only correction follows existing
 injected exception marker. Unrelated errors propagate; received tool results
 cannot masquerade as transport loss. The original durable/send-count assertions
 and fresh read from a known receipt remain required. Full green is still pending.
+
+## Extend an existing draft with a named ingress
+
+The shipping and topology-authoring selections use Operations `9b93ac2a`
+for preview-backed revision. Get the saved draft ID, head revision and graph
+ID, then call `preview_product_topology` with a
+`registered-product-ingress-extension.v1` recipe against those coordinates.
+Retain the returned recipe, proposal commitment and receiver lifecycle.
+Submit them once to `revise_desired_topology_draft` in the open workspace
+session with its observed head and a caller-owned idempotency key. Operations
+resolves the saved graph, verifies current inputs and appends the revision.
+
+Use a fresh reader and `get_desired_topology_draft_revision_metadata` with the
+receipt's coordinates to compare its graph ID and the connector file digest
+with the preview. That read contains file metadata. The disposable test uses
+the stored graph separately to check the mux target and preserved topology.

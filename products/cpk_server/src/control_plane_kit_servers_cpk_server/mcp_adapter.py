@@ -113,20 +113,24 @@ def _closed_schema(properties):
     return {"type": "object", "properties": properties, "required": list(properties), "additionalProperties": False}
 
 
+def _product_reference_schema():
+    text = {"type": "string", "minLength": 1, "maxLength": 512}
+    digest = {"type": "string", "pattern": "^[0-9a-f]{64}$", "minLength": 64, "maxLength": 64}
+    return _closed_schema({"identity": _closed_schema({"namespace": text, "name": text,
+        "contract_revision": {"type": "integer", "minimum": 1}}), "descriptor_sha256": digest})
+
+
 def _product_recipe_schema():
     # These are transport shapes only. Core/Operations own eligibility, product
     # resolution, semantic validation, public commitment and graph compilation.
     text = {"type": "string", "minLength": 1, "maxLength": 512}
     identifier = {"type": "string", "minLength": 1, "maxLength": 200}
-    digest = {"type": "string", "pattern": "^[0-9a-f]{64}$", "minLength": 64, "maxLength": 64}
-    reference = _closed_schema({"identity": _closed_schema({"namespace": text, "name": text,
-        "contract_revision": {"type": "integer", "minimum": 1}}), "descriptor_sha256": digest})
     environment = _closed_schema({"kind": {"const": "public-static"}, "name": text,
         "value": {"type": "string", "maxLength": 16384}})
     configuration = _closed_schema({"public_environment": {"type": "array", "maxItems": 64, "items": environment},
         **{name: {"type": "array", "maxItems": 0} for name in ("configuration_artifacts", "secret_deliveries",
             "requirement_secret_deliveries", "runtime_authority_deliveries")}})
-    instance = _closed_schema({"role_id": identifier, "product": reference, "configuration": configuration})
+    instance = _closed_schema({"role_id": identifier, "product": _product_reference_schema(), "configuration": configuration})
     connection = _closed_schema({"edge_id": identifier, "provider_role": identifier, "provider_socket": identifier,
         "consumer_role": identifier, "requirement_socket": identifier,
         "protocol": _closed_schema({"transport": text, "application": text})})
@@ -136,6 +140,23 @@ def _product_recipe_schema():
             "lifecycle": {"const": {"ownership": "owned", "compute": "ephemeral", "data": []}}}),
         "nodes": {"type": "array", "minItems": 1, "maxItems": 32, "items": instance},
         "connections": {"type": "array", "maxItems": 64, "items": connection}})
+
+
+def _ingress_extension_schema():
+    coordinate = {"type": "string", "minLength": 1, "maxLength": 512}
+    identifier = {"type": "string", "minLength": 1, "maxLength": 200}
+    return _closed_schema({
+        "schema": {"const": "registered-product-ingress-extension.v1"},
+        "base": _closed_schema({"draft_id": coordinate, "graph_id": coordinate,
+            "revision": {"type": "integer", "minimum": 1, "maximum": 9223372036854775807}}),
+        "runtime_id": identifier,
+        "connector": _closed_schema({"node_id": identifier, "product": _product_reference_schema(),
+            "receiver_id": coordinate, "provider_socket": identifier}),
+        "ingress": _closed_schema({"ingress_id": identifier, "authority_ref": coordinate,
+            "registration_id": coordinate, "hostname": {"type": "string", "minLength": 1, "maxLength": 253},
+            "target": _closed_schema({"node_id": identifier, "provider_socket": identifier}),
+            "exposure": {"const": "https"}, "lifecycle": {"enum": ["ephemeral", "retained", "external"]}}),
+    })
 
 
 def _graph_schema():
@@ -189,7 +210,8 @@ def _input_schema(route, *, supports_recipe=True):
             "imported_at": {**text, "description": "Canonical UTC import timestamp."},
             "idempotency_key": {**text, "description": "Required caller key; catalog identity uses the descriptor digest."}})
     if route.route_id == "read.product-topology-preview":
-        return _closed_schema({"workspace_id": {"type": "string"}, "recipe": _product_recipe_schema()})
+        return _closed_schema({"workspace_id": {"type": "string"},
+            "recipe": {"oneOf": [_product_recipe_schema(), _ingress_extension_schema()]}})
     if route.route_id == "command.deployment.admit":
         text = {"type": "string", "minLength": 1}
         schema = _closed_schema({field: text for field in
@@ -211,7 +233,7 @@ def _input_schema(route, *, supports_recipe=True):
                 expected_desired_graph_id=nullable_text, expected_desired_realized_projection_id=nullable_text,
                 expected_desired_graph_revision={"type": "integer", "minimum": 0, "maximum": 9223372036854775806})
         elif route.route_id == "command.desired-topology-draft.revise":
-            properties.update(session_id=text, draft_id=text, graph=_graph_schema(),
+            properties.update(session_id=text, draft_id=text,
                 expected_head_revision={"type": "integer", "minimum": 1, "maximum": 9223372036854775806})
         else:
             properties["title"] = text
@@ -219,16 +241,20 @@ def _input_schema(route, *, supports_recipe=True):
         if create:
             properties.update(session_id=text)
         schema = _closed_schema(properties)
-        if create:
+        revise = route.route_id == "command.desired-topology-draft.revise"
+        if create or revise:
             properties["graph"] = _graph_schema()
             if supports_recipe:
-                properties.update(product_recipe=_product_recipe_schema(),
-                    expected_proposal_commitment=_closed_schema({"profile": {"const": "registered-product-topology-public.v1"},
+                recipe_fields = ["product_recipe", "expected_proposal_commitment"]
+                profile = "registered-product-topology-public.v1" if create else "registered-product-ingress-extension-public.v1"
+                properties.update(product_recipe=_product_recipe_schema() if create else _ingress_extension_schema(),
+                    expected_proposal_commitment=_closed_schema({"profile": {"const": profile},
                         "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$", "minLength": 64, "maxLength": 64}}))
                 schema["oneOf"] = [
                     {"required": ["graph"], "not": {"anyOf": [{"required": ["product_recipe"]},
                                                                {"required": ["expected_proposal_commitment"]}]}},
-                    {"required": ["product_recipe", "expected_proposal_commitment"], "not": {"required": ["graph"]}},
+                    {"required": recipe_fields if create else [*recipe_fields, "receiver_lifecycle"],
+                     "not": {"required": ["graph"]}},
                 ]
             else:
                 schema["required"].append("graph")
@@ -328,6 +354,9 @@ class StandardMcpAdapter:
                 binding = bindings[route_id]
                 if supports_recipe and route_id == "command.desired-topology-draft.create":
                     description += " For a previewed public recipe, supply its normalized recipe and returned proposal commitment."
+                if supports_recipe and route_id == "command.desired-topology-draft.revise":
+                    description += (" For a named ingress extension, preview the exact saved draft, revision and graph ID. "
+                        "Supply the returned recipe, proposal commitment and receiver lifecycle with the observed head.")
                 route = composition.http_api.route(route_id)
                 self.routes[binding.mcp_tool_name] = route
                 self.tools[binding.mcp_tool_name] = Tool(name=binding.mcp_tool_name, description=description,
@@ -403,9 +432,10 @@ class StandardMcpAdapter:
         response = await _dispatch_application_async(self.application, CpkServerServiceRequest(
             surface="mcp", route_id=route.route_id, service_role=route.service_role,
             path_parameters={}, payload=dict(arguments), principal=principal))
-        graph_save = route.route_id in ("command.desired-topology-draft.create", "command.desired-topology-draft.revise") and "graph" in arguments
+        coordinate_receipt = (route.route_id == "command.desired-topology-draft.revise" or
+            (route.route_id == "command.desired-topology-draft.create" and "graph" in arguments))
         if isinstance(response, CpkServerBoundaryResponse):
-            if graph_save:
+            if coordinate_receipt:
                 return _failure(response.status, "graph draft request failed")
             if route.route_id == "command.ingress-authority.register":
                 return _failure(response.status, "ingress registration request failed")
@@ -415,7 +445,7 @@ class StandardMcpAdapter:
         if _json_frame_error(response, route.response_schema.max_bytes) is not None:
             # The owner might already have committed; no rollback/retry claim.
             return _failure(503, "application response unavailable")
-        if graph_save:
+        if coordinate_receipt:
             revision = arguments.get("expected_head_revision", 0) + 1
             try:
                 receipt = DesiredTopologyDraftResult(**{key: response[key] for key in

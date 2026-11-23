@@ -330,3 +330,7 @@ The unchanged Servers Docker gate must establish this consumer's compatibility.
 G #342 separately owns real-process policy mutation/readback and retained-upgrade
 proof. Paused wildcard-seeding source-live scripts remain held; this adoption
 neither repairs live state nor authorizes their execution or publication.
+
+The #408 selection moves the shipping Operations package to `9b93ac2a` for
+preview-backed draft revision. The authoring test manifest selects that same
+Operations commit. Published product digests have their own release history.
