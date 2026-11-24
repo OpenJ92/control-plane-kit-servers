@@ -31,18 +31,19 @@ class ServerRepositoryPolicyTests(unittest.TestCase):
             normalized_agents,
         )
 
-    def test_git_flow_keeps_main_develop_and_issue_branches_explicit(self) -> None:
+    def test_git_flow_routes_new_work_to_main_and_preserves_active_stacks(self) -> None:
         git_flow = (ROOT / "GIT-FLOW.md").read_text(encoding="utf-8")
 
         for required in (
-            "main",
-            "develop",
+            "pull request against `main`",
             "codex/<issue-id>-<slug>",
-            "Pull requests target the active milestone branch or main as directed",
+            "target the active milestone branch named in its governing issue",
             "Do not merge product implementation work directly to main",
+            "Do not force-push shared branches",
         ):
             with self.subTest(required=required):
                 self.assertIn(required, git_flow)
+        self.assertNotIn("`develop`: available for release-flow staging", git_flow)
 
     def test_product_layout_examples_separate_values_processes_and_support(self) -> None:
         layout = (ROOT / "docs" / "product-layouts.md").read_text(encoding="utf-8")

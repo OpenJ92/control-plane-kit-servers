@@ -326,8 +326,9 @@ printf 'control-status=%s\n' "$status"
             encoding="utf-8"
         )
 
-        self.assertIn("main", workflow)
-        self.assertIn("develop", workflow)
+        self.assertIn("  push:\n    branches:\n      - main\n", workflow)
+        self.assertNotIn("      - develop", workflow.splitlines())
+        self.assertIn("  workflow_dispatch:", workflow.splitlines())
         self.assertIn("pull_request:", workflow)
         self.assertNotIn("pull_request:\n    branches:", workflow)
         self.assertIn("packages: read", workflow)
