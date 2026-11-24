@@ -7,6 +7,7 @@ from .installation import (
     SuppliedChildWorkspaceAuthority,
     ExternalInstallationIngress,
     compose_docker_cpk_installation,
+    installation_secret_version_choices,
 )
 
 from .boundary import (
@@ -38,6 +39,7 @@ __all__ = (
     "SuppliedChildWorkspaceAuthority",
     "ExternalInstallationIngress",
     "compose_docker_cpk_installation",
+    "installation_secret_version_choices",
     "CpkServerApplicationBoundary",
     "CpkServerBoundaryResponse",
     "CpkServerHttpProcessBoundary",
