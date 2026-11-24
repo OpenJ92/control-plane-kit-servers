@@ -353,8 +353,8 @@ def installation_secret_version_choices(
                 result[node_id] = [choice.descriptor() for choice in validated]
         return result
     except (ValueError, TypeError, AttributeError):
-        pass
-    raise ValueError(invalid)
+        failure = ValueError(invalid)
+    raise failure
 
 
 def _website_input(value: DockerCpkWebsite, *, allow_managed=False) -> tuple[str, ContainerServerProduct | None]:
