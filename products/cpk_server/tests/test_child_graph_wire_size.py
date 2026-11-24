@@ -1,4 +1,5 @@
 """Wire sizes and catalogue eligibility of the maintained, disposable child composition."""
+from dataclasses import replace
 import json
 import unittest
 
@@ -13,8 +14,26 @@ from test_standard_mcp import StandardMcpFixture
 
 
 class ChildWireSizeTests(StandardMcpFixture, unittest.IsolatedAsyncioTestCase):
+    def test_invalid_installation_version_sets_are_rejected(self):
+        from control_plane_kit_core.secrets import SecretReference
+
+        cases = {
+            "missing": lambda versions: versions[:-1],
+            "extra": lambda versions: (*versions, replace(versions[0], reference=SecretReference("secret://fixture/extra"))),
+            "duplicate": lambda versions: (*versions, versions[0]),
+            "conflict": lambda versions: (*versions, replace(versions[0], version_id="another-version")),
+        }
+        for name, transform in cases.items():
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "^installation secret versions are incomplete or conflicting$"):
+                synthetic_child(transform)
+
     async def test_eight_nodes_six_protected_references_and_exact_wire_sizes(self):
         workspace, desired, docs, uses = synthetic_child()
+        expected_versions = {key: "fixture-version-" + str(i) for i, key in enumerate(uses)}
+        selected = [choice for node in desired.nodes.values() for choice in node.secret_selections]
+        self.assertEqual(len(selected), 7)
+        for choice in selected:
+            self.assertEqual(choice.version_id, expected_versions[(choice.reference.reference_id, choice.intent.value)])
         full = DEFAULT_GRAPH_CODEC.encode(desired)
         self.assertEqual(len(desired.nodes), 8)
         self.assertEqual(len(desired.public_ingresses), 3)
