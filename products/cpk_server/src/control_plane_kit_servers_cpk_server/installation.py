@@ -10,6 +10,7 @@ from dataclasses import dataclass, field, replace
 import hashlib
 import json
 import re
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 from control_plane_kit_core.algebra import DeploymentTopology, DockerRuntime, SocketConnection
@@ -35,8 +36,6 @@ from control_plane_kit_core.runtime_authority import (
     RuntimeAuthorityAccessDeliveryKind,
     RuntimeAuthorityReference,
 )
-from control_plane_kit_core.secret_selections import SecretVersionSelection, normalize_secret_selections
-from control_plane_kit_core.topology import compile_topology
 from control_plane_kit_core.secrets import (
     SecretEnvironmentDelivery,
     SecretFileDelivery,
@@ -50,6 +49,10 @@ from .installation_management import (
     DockerCpkConnectorControl, DockerCpkManagement,
     _require_scope, managed_children, management_ingresses, selected_managed_connector,
 )
+
+
+if TYPE_CHECKING:
+    from control_plane_kit_core.secret_selections import SecretVersionSelection
 
 
 _INSTALLATION_ID = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*\Z")
@@ -329,6 +332,9 @@ def installation_secret_version_choices(
     selections: tuple[SecretVersionSelection, ...],
 ) -> dict[str, list[dict]]:
     """Map supplied immutable version metadata to the public explicit_secret_choices field."""
+    from control_plane_kit_core.secret_selections import SecretVersionSelection, normalize_secret_selections
+    from control_plane_kit_core.topology import compile_topology
+
     graph = compile_topology(compose_docker_cpk_installation(installation))
     required = {(use.reference, use.intent) for node in graph.nodes.values()
                 for use in node.secret_selections}
