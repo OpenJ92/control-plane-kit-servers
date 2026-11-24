@@ -35,6 +35,8 @@ from control_plane_kit_core.runtime_authority import (
     RuntimeAuthorityAccessDeliveryKind,
     RuntimeAuthorityReference,
 )
+from control_plane_kit_core.secret_selections import SecretVersionSelection, normalize_secret_selections
+from control_plane_kit_core.topology import compile_topology
 from control_plane_kit_core.secrets import (
     SecretEnvironmentDelivery,
     SecretFileDelivery,
@@ -320,6 +322,39 @@ def compose_docker_cpk_installation(installation: DockerCpkInstallation) -> Depl
                       management=None if installation.management is None else installation.management.runtime_management),
         public_ingresses=public_ingresses,
     )
+
+
+def installation_secret_version_choices(
+    installation: DockerCpkInstallation,
+    selections: tuple[SecretVersionSelection, ...],
+) -> dict[str, list[dict]]:
+    """Map supplied immutable version metadata to the public explicit_secret_choices field."""
+    graph = compile_topology(compose_docker_cpk_installation(installation))
+    required = {(use.reference, use.intent) for node in graph.nodes.values()
+                for use in node.secret_selections}
+    invalid = "installation secret versions are incomplete or conflicting"
+    if type(selections) is not tuple or len(selections) != len(required):
+        raise ValueError(invalid)
+
+    choices = {}
+    try:
+        for choice in selections:
+            if type(choice) is not SecretVersionSelection:
+                raise ValueError(invalid)
+            choices[(choice.reference, choice.intent)] = choice
+        if choices.keys() != required:
+            raise ValueError(invalid)
+
+        result = {}
+        for node_id, node in graph.nodes.items():
+            if node.secret_selections:
+                values = tuple(choices[(use.reference, use.intent)] for use in node.secret_selections)
+                validated = normalize_secret_selections(node.secret_deliveries, values)
+                result[node_id] = [choice.descriptor() for choice in validated]
+        return result
+    except (ValueError, TypeError, AttributeError):
+        pass
+    raise ValueError(invalid)
 
 
 def _website_input(value: DockerCpkWebsite, *, allow_managed=False) -> tuple[str, ContainerServerProduct | None]:

@@ -108,3 +108,11 @@ retain root delivery and real file-reader ownership. The supplied-auth adapter
 continues to own private identity/document correspondence; this composition
 does not claim that a reference or parse proves that correspondence, current
 child association, active grants, image adoption or live #163 acceptance.
+
+For whole-child authoring, pass the installation and one immutable
+`SecretVersionSelection` per distinct declared reference and intent to
+`installation_secret_version_choices`. Its result supplies the existing
+`explicit_secret_choices` field on the public Desired command. PostgreSQL
+and CPK receive the same password version. Missing, extra, duplicate and
+conflicting inputs fail before authoring. Core validates each node's selections.
+The Operations command owns metadata admission and persistence.

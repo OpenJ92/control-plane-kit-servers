@@ -21,17 +21,14 @@ def synthetic_child(transform_versions=tuple):
         graph = compile_topology(topology)
         docs = {ProductReference.from_document(block.implementation.document): block.implementation.document
                 for block in topology.root.children if hasattr(block, "implementation")}
-        uses = sorted({(use.reference.reference_id, use.intent.value) for node in graph.nodes.values()
-                       for use in node.secret_selections})
         identities = {(use.reference.reference_id, use.intent.value): (use.reference, use.intent)
                       for node in graph.nodes.values() for use in node.secret_selections}
+        uses = sorted(identities)
         versions = tuple(SecretVersionSelection(*identities[key], "fixture-version-" + str(i))
                          for i, key in enumerate(uses))
-        author = getattr(fixture.api, "installation_secret_version_choices", None)
-        if author is None:
-            raise AssertionError("whole-installation secret version authoring is missing")
         choices = {node: secret_selections_from_descriptor(entries)
-                   for node, entries in author(child, transform_versions(versions)).items()}
+                   for node, entries in fixture.api.installation_secret_version_choices(
+                       child, transform_versions(versions)).items()}
         desired = carry_forward_secret_selections(DeploymentGraph(graph.name), graph, choices,
             product_documents=tuple(docs.values()))
         return child.workspace_id, desired, docs, uses
