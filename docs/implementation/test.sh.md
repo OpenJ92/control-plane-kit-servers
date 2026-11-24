@@ -191,3 +191,8 @@ acquired controller receipt, clean source and fresh receipts; builds one owned
 current-source fixture; uses the same host-bind helper result channel; and stops
 before stop-profile/fatal work. The default full gate remains mandatory for
 composition acceptance and is not shortened by this option.
+
+The `--http-sample-witness-tests` option runs the signed live and ready
+source-witness regression for CPK and Secrets in the suite's Docker test image
+with networking disabled. The default suite exercises the original listeners in
+the source image smokes.

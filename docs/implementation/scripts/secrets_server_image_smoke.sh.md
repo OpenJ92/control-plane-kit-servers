@@ -63,12 +63,12 @@ unchanged. No admin capability, new workspace or wildcard authority is added.
 
 #386 keeps the initial source phase without a companion and opts in only the
 source restart. The bounded witness prepares public trust before restart, waits
-for the existing actual readiness signal, mints one15-second grant and reads
+for the existing actual readiness signal, signs separate 15-second grants for live and ready and reads each
 once through secrets-provider:8081. Inner correlated PASSED/status200 and exit0
 are required. Existing run-labelled cleanup/absence covers the helper; exact
 public marker files join existing phase cleanup. Private keys stay in memory.
 Published profiles and retained-custody assertions remain unchanged.
 
 Review correction: after readiness the parent polls helper completion for at
-most20seconds, requires authoritative exited/status0, and fails into the normal
+most 30 seconds, requires authoritative exited/status0, and fails into the normal
 owned cleanup on timeout/inspection failure; no unbounded docker wait remains.

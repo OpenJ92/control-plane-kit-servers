@@ -21,7 +21,7 @@ case "${1:-}" in
     [ "$#" = 1 ] || exit 2
     exec sh scripts/bootstrap_packaged_schema.sh
     ;;
-  --bootstrap-schema-tests)
+  --bootstrap-schema-tests|--http-sample-witness-tests)
     [ "$#" = 1 ] || exit 2
     ;;
   --postgres-release-tests|--postgres-published-image|--postgres-source-image)
@@ -277,6 +277,10 @@ run_mcp_authoring_postgres() (
   [ "$invocation_status" = 0 ] && [ "$state" = 'exited|0' ]
 )
 
+if [ "${1:-}" = --http-sample-witness-tests ]; then
+  docker run --rm --network none "$IMAGE" python -m unittest discover -s tests -p test_http_sample_witness.py -v
+  exit 0
+fi
 if [ "${1:-}" = --bootstrap-schema-tests ]; then
   docker run --rm --network none --workdir /app/products/cpk_server/tests "$IMAGE" \
     python -m unittest -v test_bootstrap_schema_correlation.ArchiveSchemaOwnershipTests \
