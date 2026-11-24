@@ -347,6 +347,7 @@ if [ "$PROFILE" = wrapped-source ]; then
     --label "org.openj92.cpk.test-run=$NETWORK" --network "$NETWORK" \
     --read-only --cap-drop ALL --security-opt no-new-privileges \
     --user "$(id -u):$(id -g)" -e PYTHONDONTWRITEBYTECODE=1 \
+    -e CPK_RUNTIME_INTERPRETERS="$RUNTIME_INTERPRETERS" \
     --mount "type=bind,source=$CONTROL_RECORDS,target=/fixture" \
     "$CPK_SERVERS_TEST_IMAGE" python scripts/http_sample_fixture.py cpk /fixture)"
   prepared=0
@@ -478,16 +479,16 @@ if [ "$PROFILE" = wrapped-source ]; then
   : > "$CONTROL_RECORDS/sample.ready"
   sample_completed=0
   sample_attempt=1
-  while [ "$sample_attempt" -le 20 ]; do
+  while [ "$sample_attempt" -le 30 ]; do
     sample_state="$(docker inspect --format '{{.State.Status}}|{{.State.ExitCode}}' "$SAMPLE_HELPER")" || exit 1
     if [ "${sample_state%%|*}" = exited ]; then sample_completed=1; break; fi
     sleep 1
     sample_attempt=$((sample_attempt + 1))
   done
   [ "$sample_completed" = 1 ] && [ "$sample_state" = 'exited|0' ] && [ -f "$CONTROL_RECORDS/sample.passed" ] || {
-    echo 'CPK source signed ready sample failed' >&2; exit 1;
+    echo 'CPK source signed live and ready samples failed' >&2; exit 1;
   }
-  echo 'CPK source signed named-listener ready sample passed'
+  echo 'CPK source signed named-listener live and ready samples passed'
 fi
 
 phase "reject unauthenticated HTTP"

@@ -28,9 +28,12 @@ from control_plane_kit_core.verification import VerificationOutcome
 
 class SampleAuthority:
     """Ephemeral synthetic trust over an independently produced product contract."""
-    def __init__(self, control, contract):
+    def __init__(self, control, contract, *, all_checks=False):
         self.control = control
         self.check, = (check for check in contract.verification.checks if check.check_id == "ready")
+        self.checks = contract.verification.checks if all_checks else (self.check,)
+        if all_checks and sorted(check.check_id for check in self.checks) != ["live", "ready"]:
+            raise ValueError("source smoke requires live and ready checks")
         self.private = Ed25519PrivateKey.generate()
         public = core.DelegationPublicKey("source-sample", core.DelegationKeyAlgorithm.ED25519,
             self.private.public_key().public_bytes(serialization.Encoding.PEM,
@@ -38,9 +41,12 @@ class SampleAuthority:
         self.configuration = HttpVerificationSampleReceiverConfiguration(control.target,
             control.declaration.identity().value, HttpVerificationSampleVerifierConfiguration(
                 core.DelegationKeyPurpose.WORKLOAD_HTTP_VERIFICATION_SAMPLE, "source-sample-witness", (public,)),
-            (HttpVerificationSampleCheckBinding("ready", http_verification_check_digest(self.check)),))
+            tuple(HttpVerificationSampleCheckBinding(check.check_id, http_verification_check_digest(check))
+                for check in self.checks))
 
-    def request(self):
+    def request(self, check=None):
+        if check is None:
+            check = self.check
         target = self.control.target
         return HttpVerificationSampleRequest(target=target,
             authority_context=core.NodeControlAuthorityContext("source-sample", "source-sample-projection"),
@@ -49,7 +55,7 @@ class SampleAuthority:
                 node_id=replace(target.node_id, value="source-sample-witness")),
             route_id="source-route", run_id="source-run", activity_id="source-activity",
             outer_attempt=1, effect_id="source-effect", request_fingerprint="c" * 64,
-            check_id="ready", check_digest=http_verification_check_digest(self.check),
+            check_id=check.check_id, check_digest=http_verification_check_digest(check),
             sample_ordinal=1, request_id=uuid4().hex)
 
     def token(self, request, issued_at):
@@ -82,7 +88,9 @@ def witness(product, directory):
     if product == "cpk":
         owner = importlib.import_module("control_plane_kit_servers_cpk_server.control_configuration")
         control = owner.decode_cpk_control_configuration((directory / "control.json").read_bytes())
-        contract = owner.cpk_source_runtime_contract(owner.CpkSourceVariant.CPK,
+        variant = {"none": owner.CpkSourceVariant.CPK, "docker": owner.CpkSourceVariant.DOCKER}[
+            os.environ.get("CPK_RUNTIME_INTERPRETERS", "none")]
+        contract = owner.cpk_source_runtime_contract(variant,
             owner.cpk_control_configuration_artifact(control))
         artifact_factory = owner.cpk_http_sample_configuration_artifact
         url = "http://cpk-source:8080"
@@ -95,7 +103,7 @@ def witness(product, directory):
         url = "http://secrets-provider:8081"
     else:
         raise ValueError
-    authority = SampleAuthority(control, contract)
+    authority = SampleAuthority(control, contract, all_checks=True)
     artifact = artifact_factory(control, authority.configuration)
     write_public(directory / "http-samples.json", artifact.content.encode("utf-8"))
     write_public(directory / "sample.prepared", b"prepared\n")
@@ -106,7 +114,13 @@ def witness(product, directory):
         if time.monotonic() >= deadline:
             raise ValueError
         time.sleep(0.1)
-    request = authority.request()
+    for check in authority.checks:
+        verify_sample(url, authority, check)
+    write_public(directory / "sample.passed", b"passed\n")
+
+
+def verify_sample(url, authority, check):
+    request = authority.request(check)
     credential = authority.token(request, int(time.time()))
     with httpx.stream("GET", url + "/__control/verification/http",
             headers={"Authorization": "Bearer " + credential, "Accept-Encoding": "identity"},
@@ -118,8 +132,7 @@ def witness(product, directory):
             if len(body) + len(chunk) > MAX_HTTP_VERIFICATION_SAMPLE_RESULT_BYTES:
                 raise ValueError
             body.extend(chunk)
-    require_passed_sample(bytes(body), request, authority.check)
-    write_public(directory / "sample.passed", b"passed\n")
+    require_passed_sample(bytes(body), request, check)
 
 
 def main():

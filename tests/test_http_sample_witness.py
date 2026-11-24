@@ -19,10 +19,18 @@ from control_plane_kit_servers_cpk_server import control_configuration as cpk
 from control_plane_kit_servers_secrets_server import configuration as secrets
 from products.cpk_server.tests.cpk_http_host_fixtures import fixture
 from products.secrets_server.tests.secrets_control_fixtures import configuration
-from scripts.http_sample_fixture import witness
+from scripts.http_sample_fixture import SampleAuthority, witness
 
 
 class SignedHttpSampleWitnessTests(unittest.TestCase):
+    def test_ready_alone_is_insufficient_for_the_source_smoke(self):
+        control = configuration()
+        contract = secrets.secrets_source_runtime_contract(secrets.secrets_control_configuration_artifact(control))
+        ready, = (check for check in contract.verification.checks if check.check_id == "ready")
+        ready_only = replace(contract, verification=replace(contract.verification, checks=(ready,)))
+        with self.assertRaises(ValueError):
+            SampleAuthority(control, ready_only, all_checks=True)
+
     def exercise(self, product, *, substitute=False):
         if product == "cpk":
             control = fixture().config
