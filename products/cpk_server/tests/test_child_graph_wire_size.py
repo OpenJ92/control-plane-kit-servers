@@ -22,10 +22,35 @@ class ChildWireSizeTests(StandardMcpFixture, unittest.IsolatedAsyncioTestCase):
             "extra": lambda versions: (*versions, replace(versions[0], reference=SecretReference("secret://fixture/extra"))),
             "duplicate": lambda versions: (*versions, versions[0]),
             "conflict": lambda versions: (*versions, replace(versions[0], version_id="another-version")),
+            "substituted": lambda versions: (*versions[:-1], replace(versions[-1],
+                reference=SecretReference("secret://fixture/foreign"))),
+            "repeated-in-place": lambda versions: (*versions[:-1], versions[0]),
+            "conflict-in-place": lambda versions: (*versions[:-1], replace(versions[0], version_id="another-version")),
         }
         for name, transform in cases.items():
             with self.subTest(name=name), self.assertRaisesRegex(ValueError, "^installation secret versions are incomplete or conflicting$"):
                 synthetic_child(transform)
+
+    def test_both_original_password_consumers_receive_the_supplied_version(self):
+        from control_plane_kit_core.secret_selections import SecretVersionSelection
+        from control_plane_kit_core.secrets import SecretReference, SecretUseIntent
+
+        password = SecretVersionSelection(SecretReference("secret://bootstrap/root-a/postgres"),
+            SecretUseIntent.POSTGRES_PASSWORD, "fixture-shared-password-v3")
+
+        def choose_password(versions):
+            return tuple(password if choice.reference == password.reference else choice for choice in versions)
+
+        _, desired, _, _ = synthetic_child(choose_password)
+        postgres = desired.node("root-a-postgres")
+        cpk = desired.node("root-a-cpk")
+        self.assertEqual(postgres.secret_selections, (password,))
+        self.assertIn(password, cpk.secret_selections)
+        password_file, = postgres.secret_deliveries
+        self.assertEqual(password_file.path_binding.environment_name, "POSTGRES_PASSWORD_FILE")
+        self.assertEqual(password_file.reference, password.reference)
+        self.assertTrue(any(getattr(delivery, "environment_name", None) == "PGPASSWORD"
+                            and delivery.reference == password.reference for delivery in cpk.secret_deliveries))
 
     async def test_eight_nodes_six_protected_references_and_exact_wire_sizes(self):
         workspace, desired, docs, uses = synthetic_child()
