@@ -29,6 +29,15 @@ bytes. Composition delivers the policy only to CPK as an owner-readable file at
 file reader. The website receives neither protected document. Caller products
 cannot collide with the reserved child policy slot or root policy slot.
 
+When a supplied child declares a named API ingress targeting its CPK
+`http-api` socket, the composer places that ingress's DNS hostname in
+`CPK_MCP_CHILD_API_HOSTNAME` on the CPK node. A native MCP client can use
+`https://<api-hostname>/mcp` with its scoped bearer and omit the Origin header.
+The transport admits the exact public Host and retains its loopback policy.
+It refuses external Origins, including the HTTPS origin of the API itself.
+The Operations workspace and tool permissions still apply on every call.
+Installations without this binding use the SDK's loopback defaults.
+
 Standalone `DynamicWorkspaceAuthority` retains its installer-private commitment
 and `/etc/cpk/cpk-server/workspace-authority.json` delivery; the root input format
 does not accept this new child mode. A child-supplied reference needs no invented
