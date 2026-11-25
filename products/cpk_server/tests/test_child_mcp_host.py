@@ -12,7 +12,10 @@ from mcp.client.streamable_http import streamable_http_client
 from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
 from control_plane_kit_core.operations import ControlPlaneServiceRole
 from control_plane_kit_core.policies import PolicyScope
-from control_plane_kit_core.secrets import SecretReference
+from control_plane_kit_core.secrets import (
+    SecretEnvironmentDelivery, SecretFileDelivery, SecretFilePathBinding,
+    SecretReference, SecretReferenceEnvironmentDelivery, SecretUseIntent,
+)
 from control_plane_kit_operations import CpkServerOperationsApplication, WorkspaceContextResolver
 from control_plane_kit_operations.cpk_server import CpkServerReadService
 from control_plane_kit_operations.records import WorkspaceRecord
@@ -61,6 +64,44 @@ class ChildMcpHostTests(unittest.IsolatedAsyncioTestCase):
             selected = self.fixture.codec.encode_document(replace(product, runtime_contract=conflicting))
             with self.assertRaises(ValueError):
                 self.fixture.graph(replace(value, cpk_product=selected))
+
+    def product_with_socket_deliveries(self, installation, *deliveries):
+        product = installation.cpk_product.product
+        contract = product.runtime_contract
+        sockets = contract.sockets
+        requirements = tuple(
+            replace(socket, secret_deliveries=(*socket.secret_deliveries, *deliveries))
+            if socket.name == "workplace-store" else socket for socket in sockets.requirements)
+        contract = replace(contract, sockets=replace(sockets, requirements=requirements))
+        return self.fixture.codec.encode_document(replace(product, runtime_contract=contract))
+
+    def test_selected_product_refuses_socket_deliveries_to_reserved_host(self):
+        reference = SecretReference("secret://fixture/socket-input")
+        intent = SecretUseIntent.APPLICATION_CONTROL_TOKEN
+        deliveries = (SecretEnvironmentDelivery(HOST_SETTING, reference, intent),
+            SecretReferenceEnvironmentDelivery(HOST_SETTING, reference),
+            SecretFileDelivery("/run/secrets/socket-input", reference, intent,
+                path_binding=SecretFilePathBinding(HOST_SETTING)))
+        for label, installation in (("bound", self.child), ("unbound", self.fixture.base)):
+            for delivery in deliveries:
+                with self.subTest(installation=label, delivery=type(delivery).__name__):
+                    product = self.product_with_socket_deliveries(installation, delivery)
+                    with self.assertRaisesRegex(ValueError, "^installation child MCP API hostname is reserved$"):
+                        replace(installation, cpk_product=product)
+
+    def test_ordinary_socket_deliveries_survive_child_installation(self):
+        reference = SecretReference("secret://fixture/socket-input")
+        intent = SecretUseIntent.APPLICATION_CONTROL_TOKEN
+        deliveries = (SecretEnvironmentDelivery("SOCKET_INPUT", reference, intent),
+            SecretReferenceEnvironmentDelivery("SOCKET_INPUT_REF", reference),
+            SecretFileDelivery("/run/secrets/socket-input", reference, intent,
+                path_binding=SecretFilePathBinding("SOCKET_INPUT_FILE")),
+            SecretFileDelivery("/run/secrets/socket-file-only", reference, intent))
+        for label, installation in (("bound", self.child), ("unbound", self.fixture.base)):
+            with self.subTest(installation=label):
+                product = self.product_with_socket_deliveries(installation, *deliveries)
+                graph = self.fixture.graph(replace(installation, cpk_product=product))
+                self.assertTrue(set(deliveries).issubset(graph.node(installation.cpk_node_id).secret_deliveries))
 
     def process_environment(self):
         directory = TemporaryDirectory()

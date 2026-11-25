@@ -13,7 +13,7 @@ import re
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
-from control_plane_kit_core.algebra import DeploymentTopology, DockerRuntime, SocketConnection
+from control_plane_kit_core.algebra import DeploymentTopology, DockerRuntime, RequirementSocket, SocketConnection
 from control_plane_kit_core.configuration import ConfigurationArtifact
 from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
 from control_plane_kit_core.identity import WorkspaceGrant
@@ -601,6 +601,16 @@ def _variant(base: ProductDescriptorDocument, role: str, contract: ProductRuntim
                    runtime_contract=contract)
 
 
+def _supplies_child_mcp_hostname(socket: RequirementSocket) -> bool:
+    if CHILD_MCP_API_HOSTNAME_ENV in socket.env_bindings:
+        return True
+    for delivery in socket.secret_deliveries:
+        binding = delivery.path_binding if isinstance(delivery, SecretFileDelivery) else delivery
+        if binding is not None and binding.environment_name == CHILD_MCP_API_HOSTNAME_ENV:
+            return True
+    return False
+
+
 def _selected_product(document: ProductDescriptorDocument | None, name: str) -> ContainerServerProduct:
     if not isinstance(document, ProductDescriptorDocument):
         raise TypeError("installation requires selected product descriptor documents")
@@ -614,7 +624,7 @@ def _selected_product(document: ProductDescriptorDocument | None, name: str) -> 
     environment = {item.name: item.value for item in contract.public_environment}
     if name == "cpk-server-docker-cloudflare":
         if (CHILD_MCP_API_HOSTNAME_ENV in environment
-                or any(CHILD_MCP_API_HOSTNAME_ENV in socket.env_bindings for socket in contract.sockets.requirements)):
+                or any(_supplies_child_mcp_hostname(socket) for socket in contract.sockets.requirements)):
             raise ValueError("installation child MCP API hostname is reserved")
         required_settings = {
             "CPK_SERVER_MODE": "execution-capable",
