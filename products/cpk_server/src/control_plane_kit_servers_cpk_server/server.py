@@ -87,6 +87,7 @@ from .control_configuration import (
 )
 from .http_host import install_operator_http_routes
 from .mcp_adapter import StandardMcpAdapter
+from .installation import CHILD_MCP_API_HOSTNAME_ENV, valid_child_mcp_api_hostname
 from .request_body import MCP_ENVELOPE_MAX_BYTES, RequestBodyTooLarge, collect_request_body
 from control_plane_kit_operations.health_receiver_trust import HealthReceiverDecoders
 from .operations_application import (
@@ -218,6 +219,11 @@ class CpkServerBootstrapConfiguration:
     mcp_profile: str = "standard"
     http_sample_support: object | None = field(default=None, repr=False, compare=False)
     managed_verification_support: object | None = field(default=None, repr=False, compare=False)
+    child_mcp_api_hostname: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.child_mcp_api_hostname is not None and not valid_child_mcp_api_hostname(self.child_mcp_api_hostname):
+            raise BootstrapConfigurationError("child MCP API hostname is invalid")
 
     @classmethod
     def from_environment(
@@ -228,7 +234,8 @@ class CpkServerBootstrapConfiguration:
         profile = values.get("CPK_MCP_PROFILE", "standard")
         if profile not in ("standard", "grandparent-read-only-v1"):
             raise BootstrapConfigurationError("MCP exposure profile is invalid")
-        config = replace(cls._from_environment_configuration(values), mcp_profile=profile)
+        config = replace(cls._from_environment_configuration(values), mcp_profile=profile,
+            child_mcp_api_hostname=values.get(CHILD_MCP_API_HOSTNAME_ENV))
         key = "CPK_MANAGED_VERIFICATION_CONFIGURATION_FILE"
         if key not in values:
             return config
@@ -697,7 +704,8 @@ def create_app(
         credential_verifier)
     http_boundary = CpkServerHttpProcessBoundary(composition, application)
     mcp_boundary = CpkServerMcpProcessBoundary(composition, application)
-    standard_mcp = StandardMcpAdapter(composition, application, profile=config.mcp_profile)
+    standard_mcp = StandardMcpAdapter(composition, application, profile=config.mcp_profile,
+        child_api_hostname=config.child_mcp_api_hostname)
     # A literal ASGI route lets the SDK own HTTP methods and the protocol. The
     # existing fallthrough retains strict unknown/slash handling outside it.
     app.router.routes.insert(0, Route("/mcp", endpoint=standard_mcp))

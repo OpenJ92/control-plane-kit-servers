@@ -13,7 +13,7 @@ import re
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
-from control_plane_kit_core.algebra import DeploymentTopology, DockerRuntime, SocketConnection
+from control_plane_kit_core.algebra import DeploymentTopology, DockerRuntime, RequirementSocket, SocketConnection
 from control_plane_kit_core.configuration import ConfigurationArtifact
 from control_plane_kit_core.environment import PublicStaticEnvironmentBinding
 from control_plane_kit_core.identity import WorkspaceGrant
@@ -65,6 +65,17 @@ _INVALID_WEBSITE = "installation website configuration is invalid"
 WORKSPACE_AUTHORITY_PATH = "/etc/cpk/cpk-server/workspace-authority.json"
 CHILD_WORKSPACE_AUTHORITY_PATH = "/run/secrets/cpk-installation/workspace-authority.json"
 WORKSPACE_AUTHORITY_SCHEMA = "cpk-server.workspace-authority.v1"
+CHILD_MCP_API_HOSTNAME_ENV = "CPK_MCP_CHILD_API_HOSTNAME"
+
+
+def valid_child_mcp_api_hostname(value: str) -> bool:
+    """The binding is one canonical DNS hostname, without a scheme or port."""
+    if type(value) is not str or not 1 <= len(value) <= 253:
+        return False
+    labels = value.split(".")
+    return (len(labels) >= 2 and not re.fullmatch(r"[0-9]+|0x[0-9a-f]*", labels[-1])
+            and all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+                    and not label.startswith("xn--") for label in labels))
 
 
 @dataclass(frozen=True)
@@ -461,6 +472,10 @@ def _cpk_variant(value: DockerCpkInstallation, postgres: ContainerServerProduct)
             "CPK_WORKSPACE_AUTHORITY_CONFIGURATION_FILE": (
                 CHILD_WORKSPACE_AUTHORITY_PATH if type(value.workspace_authority) is SuppliedChildWorkspaceAuthority
                 else WORKSPACE_AUTHORITY_PATH)})
+    if type(value.workspace_authority) is SuppliedChildWorkspaceAuthority and isinstance(value.ingress, NamedPublicIngress):
+        if not valid_child_mcp_api_hostname(value.ingress.hostname):
+            raise ValueError("child MCP API hostname is invalid")
+        additions[CHILD_MCP_API_HOSTNAME_ENV] = value.ingress.hostname
     if managed_health is not None:
         additions.update({
             "CPK_MANAGED_HEALTH": "docker-unix-v2" if value.workspace_authority else "docker-unix-v1",
@@ -586,6 +601,16 @@ def _variant(base: ProductDescriptorDocument, role: str, contract: ProductRuntim
                    runtime_contract=contract)
 
 
+def _supplies_child_mcp_hostname(socket: RequirementSocket) -> bool:
+    if CHILD_MCP_API_HOSTNAME_ENV in socket.env_bindings:
+        return True
+    for delivery in socket.secret_deliveries:
+        binding = delivery.path_binding if isinstance(delivery, SecretFileDelivery) else delivery
+        if binding is not None and binding.environment_name == CHILD_MCP_API_HOSTNAME_ENV:
+            return True
+    return False
+
+
 def _selected_product(document: ProductDescriptorDocument | None, name: str) -> ContainerServerProduct:
     if not isinstance(document, ProductDescriptorDocument):
         raise TypeError("installation requires selected product descriptor documents")
@@ -598,6 +623,9 @@ def _selected_product(document: ProductDescriptorDocument | None, name: str) -> 
         return document.product
     environment = {item.name: item.value for item in contract.public_environment}
     if name == "cpk-server-docker-cloudflare":
+        if (CHILD_MCP_API_HOSTNAME_ENV in environment
+                or any(_supplies_child_mcp_hostname(socket) for socket in contract.sockets.requirements)):
+            raise ValueError("installation child MCP API hostname is reserved")
         required_settings = {
             "CPK_SERVER_MODE": "execution-capable",
             "CPK_CONTROL_AUTH_CONFIGURED": "true",

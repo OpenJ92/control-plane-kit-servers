@@ -44,6 +44,8 @@ def main() -> int:
             # The default product package contains the full child commissioning dependencies.
             run([sys.executable, "-m", "unittest", "discover", "-s", "products/cpk_server/tests",
                  "-p", "test_child_graph_wire_size.py", "-v"])
+            run([sys.executable, "-m", "unittest", "discover", "-s", "products/cpk_server/tests",
+                 "-p", "test_child_mcp_host.py", "-v"])
         run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_cohort_manifest.py", "-v"])
         for name in (
             "test_standard_mcp.py", "test_http_mcp_boundaries.py", "test_http_host.py",

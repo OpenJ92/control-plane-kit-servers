@@ -9,6 +9,7 @@ from control_plane_kit_core.operations import HTTP_ONLY_COMMAND_ROUTE_IDS
 from control_plane_kit_operations.desired_topology_drafts import DesiredTopologyDraftError, DesiredTopologyDraftResult
 from jsonschema import Draft202012Validator
 from mcp.server import Server
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import CallToolResult, JSONRPCMessage, ListToolsResult, TextContent, Tool, ToolAnnotations
 from pydantic import TypeAdapter, ValidationError
 from starlette.requests import Request
@@ -23,6 +24,15 @@ from .request_body import MCP_ENVELOPE_MAX_BYTES, RequestBodyTooLarge, collect_r
 
 
 _MESSAGE = TypeAdapter(JSONRPCMessage)
+
+
+def _well_formed_authority(value: str) -> bool:
+    # The SDK's loopback port patterns compare prefixes. Require an actual TCP
+    # port when one is present, before the SDK checks the configured names.
+    if len(value) > 259:
+        return False
+    match = re.fullmatch(r"(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\])(?::([0-9]{1,5}))?", value)
+    return match is not None and (match[1] is None or 1 <= int(match[1]) <= 65535)
 
 
 # Deliberately curated: route semantics and authorization remain with Operations.
@@ -312,10 +322,18 @@ def _failure(status, message):
 class StandardMcpAdapter:
     """One SDK server; every HTTP request brings its own verified principal."""
 
-    def __init__(self, composition, application, *, profile="standard"):
+    def __init__(self, composition, application, *, profile="standard", child_api_hostname=None):
         if profile not in ("standard", "grandparent-read-only-v1"):
             raise ValueError("unsupported MCP exposure profile")
         self.composition, self.application = composition, application
+        # An unbound installation uses the pinned SDK's loopback defaults.
+        self.transport_security = None
+        if child_api_hostname is not None:
+            self.transport_security = TransportSecuritySettings(
+                enable_dns_rebinding_protection=True,
+                allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", child_api_hostname],
+                allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"],
+            )
         self.routes, self.tools = {}, {}
         for binding in composition.handoff.projection_parity.projections:
             route = composition.http_api.route(binding.http_route_id)
@@ -408,7 +426,7 @@ class StandardMcpAdapter:
         # SDK managers are single-use. Each host lifespan owns a matching fresh
         # transport/manager pair; CPK services and request authentication persist.
         sdk_app = self.sdk.streamable_http_app(json_response=True, stateless_http=True,
-            max_request_body_size=MCP_ENVELOPE_MAX_BYTES)
+            max_request_body_size=MCP_ENVELOPE_MAX_BYTES, transport_security=self.transport_security)
         async with sdk_app.router.lifespan_context(sdk_app):
             self.sdk_app = sdk_app
             try:
@@ -492,6 +510,18 @@ class StandardMcpAdapter:
         if rejection is not None:
             await self._reject(scope, receive, send, *rejection)
             return
+        if self.transport_security is not None:
+            # A supplied empty or repeated Origin is distinct from an absent
+            # Origin. The SDK performs the Host/Origin allowlist decisions.
+            hosts = request.headers.getlist("host")
+            if len(hosts) != 1 or not _well_formed_authority(hosts[0]):
+                await self._reject(scope, receive, send, 421, "invalid Host header")
+                return
+            origins = request.headers.getlist("origin")
+            if origins and (len(origins) != 1 or not origins[0].startswith("http://")
+                    or not _well_formed_authority(origins[0].removeprefix("http://"))):
+                await self._reject(scope, receive, send, 403, "invalid Origin header")
+                return
         if body is not None:
             try:
                 decoded = _strict_json_object(body.decode("utf-8"))
