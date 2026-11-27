@@ -8,6 +8,7 @@ from pathlib import Path
 from subprocess import Popen
 import sys
 import time
+from unittest import TestCase
 from urllib.error import URLError
 from urllib.request import urlopen
 
@@ -111,12 +112,8 @@ def check_retained_and_concurrent():
     with psycopg.connect(unbound) as connection:
         install_schema(connection)
     from control_plane_kit_operations.workspace_permissions import WorkspacePermissionNotFound
-    try:
+    with TestCase().assertRaises(WorkspacePermissionNotFound):
         bind("unbound")
-    except WorkspacePermissionNotFound:
-        pass
-    else:
-        raise AssertionError("a retained, unbound namespace acquired an owner")
     with psycopg.connect(unbound) as connection:
         assert connection.execute("SELECT count(*) FROM cpk_workspace_permission_installation").fetchone() == (0,)
     with ThreadPoolExecutor(max_workers=2) as pool:
