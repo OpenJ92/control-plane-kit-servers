@@ -102,6 +102,17 @@ class InstallationManagementTests(unittest.TestCase):
             control_surfaces=node.block_spec.control_surfaces)
         return core.ReceiverNodeControlConfigurationCodec().decode_bytes(artifact.content.encode())
 
+    def test_managed_child_uses_postgres_signed_readiness_and_selected_delivery(self):
+        child = self.installation(website=self.managed_website(), workspace_grants=(),
+            control_auth=self.api.MultiPrincipalControlAuth(SecretReference("secret://fixture/principals")),
+            workspace_authority=self.api.SuppliedChildWorkspaceAuthority(SecretReference("secret://fixture/policy")))
+        node = self.graph(child).node(child.postgres_node_id)
+        self.assertIn(core.NodeHealthReadKind.READINESS, self.receiver(node).declaration.surface.health_reads)
+        self.assertEqual(node.block_spec.verification.checks, ())
+        delivery, = node.secret_deliveries
+        self.assertEqual(delivery.reference, child.postgres_password)
+        self.assertEqual(delivery.target_path, "/run/secrets/postgres/password")
+
     def test_optional_child_sample_artifacts_survive_real_managed_installation_compilation(self):
         from scripts.http_sample_fixture import SampleAuthority
         from control_plane_kit_core.http_verification_sample_installation import HTTP_VERIFICATION_SAMPLES_CONFIGURATION_ENVIRONMENT
