@@ -27,8 +27,7 @@ No credential belongs in this policy file. In validated dynamic mode, existing
 single/multi credential inputs may contain explicit empty workspace grant maps;
 they may not omit or malform the field. Current permissions and management
 assignments come from Operations. Static mode retains its prior grant requirements.
-An existing owner initialization receipt is required; startup does not seed or
-repair permissions. This file contains no per-workspace assignment list.
+Dynamic v1 requires an existing installation receipt. This file contains no per-workspace assignment list.
 
 For dynamic managed health, select `CPK_MANAGED_HEALTH=docker-unix-v2` and the
 existing `CPK_MANAGED_HEALTH_CONFIGURATION_FILE`. Its closed schema is
@@ -48,3 +47,18 @@ commands and do not edit these files or restart the process.
 See [the public administration example](workspace-administration-example.md)
 for separate workspace creation, ordinary permission grants and runtime-management
 assignments, their readbacks and explicit revocations.
+
+## Configured installation owner
+
+The supplied child recipe selects `CPK_WORKSPACE_AUTHORITY=configured-owner-v1`
+and delivers its policy and verifier through the existing protected references.
+It names exactly one administrator. The verifier recognizes the same identities
+as the policy, each with empty static workspace grants.
+
+On a fresh PostgreSQL namespace, startup installs the schema and records the
+owner identity in one transaction. On restart it verifies the installation ID and
+original owner before serving. A populated namespace without a matching receipt
+requires operator investigation. Credential rotation may preserve this owner
+identity. Startup creates no workspaces or grants. Workspace enrollment and
+grant/revoke occur separately after deployment. Native MCP administration
+commands are tracked in Servers #405.

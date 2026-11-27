@@ -468,7 +468,8 @@ def _cpk_variant(value: DockerCpkInstallation, postgres: ContainerServerProduct)
         "PGDATABASE": postgres_environment["POSTGRES_DB"],
     }
     if value.workspace_authority is not None:
-        additions.update({"CPK_WORKSPACE_AUTHORITY": "dynamic-v1",
+        additions.update({"CPK_WORKSPACE_AUTHORITY": (
+            "configured-owner-v1" if type(value.workspace_authority) is SuppliedChildWorkspaceAuthority else "dynamic-v1"),
             "CPK_WORKSPACE_AUTHORITY_CONFIGURATION_FILE": (
                 CHILD_WORKSPACE_AUTHORITY_PATH if type(value.workspace_authority) is SuppliedChildWorkspaceAuthority
                 else WORKSPACE_AUTHORITY_PATH)})

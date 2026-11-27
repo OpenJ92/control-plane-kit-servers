@@ -63,7 +63,7 @@
     {
       "name": "CPK_WORKSPACE_AUTHORITY",
       "required": false,
-      "allowed_values": ["disabled", "dynamic-v1"]
+      "allowed_values": ["disabled", "dynamic-v1", "configured-owner-v1"]
     },
     {
       "name": "CPK_WORKSPACE_AUTHORITY_CONFIGURATION_FILE",
