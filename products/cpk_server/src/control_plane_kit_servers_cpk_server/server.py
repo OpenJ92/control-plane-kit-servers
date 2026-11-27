@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field, replace
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -122,6 +123,7 @@ _DEFAULT_PUBLIC_DNS_RESOLVER_ENDPOINT = "https://1.1.1.1/dns-query"
 _MANAGED_HEALTH_INVALID = "managed health process configuration is invalid"
 
 if TYPE_CHECKING:
+    from control_plane_kit_interpreters.probes import DnsOverHttpsPublicAddressResolver
     from .managed_health_configuration import ManagedHealthProcessConfiguration
 
 
@@ -1283,6 +1285,16 @@ def _gateway_probe_dispatcher(
     )
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class _AsyncPublicDnsResolver:
+    """Run only the bounded DNS lookup off-loop; the sender owns dispatch and its deadline."""
+
+    resolver: DnsOverHttpsPublicAddressResolver
+
+    async def resolve(self, hostname: str) -> tuple[str, ...]:
+        return await asyncio.to_thread(self.resolver.resolve, hostname)
+
+
 def _public_dns_resolver(
     config: CpkServerBootstrapConfiguration,
     *,
@@ -1494,16 +1506,17 @@ def _docker_runtime_interpreter(
         )
     support = getattr(config, "http_sample_support", None)
     managed = getattr(config, "managed_verification_support", None)
+    if managed is None and support is None:
+        return interpreter
+    public_resolver = _AsyncPublicDnsResolver(_public_dns_resolver(config))
     if managed is not None:
         from .managed_verification_composition import compose_managed_verification_runtime
         return compose_managed_verification_runtime(interpreter, support=managed,
-            resolver=provider.authorized_resolver, public_resolver=_public_dns_resolver(config),
+            resolver=provider.authorized_resolver, public_resolver=public_resolver,
             clock_epoch_ms=lambda: time.time_ns() // 1_000_000)
-    if support is not None:
-        from .http_sample_composition import compose_http_sample_runtime
-        return compose_http_sample_runtime(interpreter, support=support,
-            resolver=provider.authorized_resolver, public_resolver=_public_dns_resolver(config), clock=time.time)
-    return interpreter
+    from .http_sample_composition import compose_http_sample_runtime
+    return compose_http_sample_runtime(interpreter, support=support,
+        resolver=provider.authorized_resolver, public_resolver=public_resolver, clock=time.time)
 
 
 def _ingress_interpreters(
