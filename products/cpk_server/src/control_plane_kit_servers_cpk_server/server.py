@@ -123,7 +123,6 @@ _DEFAULT_PUBLIC_DNS_RESOLVER_ENDPOINT = "https://1.1.1.1/dns-query"
 _MANAGED_HEALTH_INVALID = "managed health process configuration is invalid"
 
 if TYPE_CHECKING:
-    from control_plane_kit_interpreters.probes import DnsOverHttpsPublicAddressResolver
     from .managed_health_configuration import ManagedHealthProcessConfiguration
 
 
@@ -1289,10 +1288,10 @@ def _gateway_probe_dispatcher(
 class _AsyncPublicDnsResolver:
     """Run only the bounded DNS lookup off-loop; the sender owns dispatch and its deadline."""
 
-    resolver: DnsOverHttpsPublicAddressResolver
+    lookup: Callable[[str], tuple[str, ...]]
 
     async def resolve(self, hostname: str) -> tuple[str, ...]:
-        return await asyncio.to_thread(self.resolver.resolve, hostname)
+        return await asyncio.to_thread(self.lookup, hostname)
 
 
 def _public_dns_resolver(
@@ -1508,7 +1507,7 @@ def _docker_runtime_interpreter(
     managed = getattr(config, "managed_verification_support", None)
     if managed is None and support is None:
         return interpreter
-    public_resolver = _AsyncPublicDnsResolver(_public_dns_resolver(config))
+    public_resolver = _AsyncPublicDnsResolver(_public_dns_resolver(config).resolve)
     if managed is not None:
         from .managed_verification_composition import compose_managed_verification_runtime
         return compose_managed_verification_runtime(interpreter, support=managed,
