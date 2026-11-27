@@ -552,13 +552,14 @@ def _postgres_variant(value: DockerCpkInstallation) -> ContainerServerProduct:
     base = value.postgres_product.product
     contract = base.runtime_contract
     if _managed_postgres_configuration(contract) is not None:
-        # The managed source contract advertises signed health. Installation
-        # startup additionally requires semantic SQL using the same credential.
-        check = PostgresQueryCheck(check_id="installation-postgres-ready", provider_socket="postgres",
-            authentication=PostgresPasswordAuthentication("cpk", "cpk", value.postgres_password))
         contract = replace(contract,
-            verification=replace(contract.verification, checks=(check,)),
             secret_deliveries=(replace(contract.secret_deliveries[0], reference=value.postgres_password),))
+        # The managed child can reach the product's signed readiness receiver.
+        # Standalone bootstrap still uses the independent authenticated SQL check.
+        if value.management is None or not isinstance(value.workspace_authority, SuppliedChildWorkspaceAuthority):
+            check = PostgresQueryCheck(check_id="installation-postgres-ready", provider_socket="postgres",
+                authentication=PostgresPasswordAuthentication("cpk", "cpk", value.postgres_password))
+            contract = replace(contract, verification=replace(contract.verification, checks=(check,)))
         return _variant(value.postgres_product, "postgres", contract)
     environment = {item.name: item.value for item in contract.public_environment}
     checks = []
