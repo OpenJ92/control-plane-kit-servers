@@ -117,6 +117,23 @@ class ChildMcpHostTests(unittest.IsolatedAsyncioTestCase):
             "CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON": json.dumps([
                 {**operator, "credential": "fixture-reader", "workspace_grants": {}}])}
 
+    def test_configured_owner_rejects_missing_or_crossed_verifier_before_startup(self):
+        env = self.process_environment()
+        self.assertEqual(env["CPK_WORKSPACE_AUTHORITY"], "configured-owner-v1")
+        key = "CPK_CONTROL_AUTH_STATIC_PRINCIPALS_JSON"
+        entries = json.loads(env[key])
+        crossed = [{**entries[0], "subject_id": "different-owner"}]
+        granted = [{**entries[0], "workspace_grants": {"other-workspace": ["instance:workspace:read"]}}]
+        for label, document in (("missing", None), ("invalid", "{"), ("crossed", json.dumps(crossed)),
+                                ("static grant", json.dumps(granted))):
+            values = env.copy()
+            if document is None:
+                del values[key]
+            else:
+                values[key] = document
+            with self.subTest(label=label), self.assertRaises(self.server.BootstrapConfigurationError):
+                self.server.CpkServerBootstrapConfiguration.from_environment(values)
+
     def test_process_rejects_invalid_public_host_configuration(self):
         environment = self.process_environment()
         for invalid in ("", "*.example.test", "https://api.example.test", "api.example.test:443",
