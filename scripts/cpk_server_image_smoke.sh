@@ -330,6 +330,17 @@ if [ "$POSTGRES_READY" != "1" ]; then
   exit 1
 fi
 
+if [ "$PROFILE" = wrapped-source ]; then
+  phase "verify fresh child owner on packaged CPK"
+  docker exec "$POSTGRES_CONTAINER" createdb -U cpk cpk451
+  docker run --rm --pull=never --network "$NETWORK" --label "$LABEL" \
+    --tmpfs /etc/cpk/cpk-server:rw,noexec,nosuid,uid=10001,mode=0700 \
+    --mount "type=bind,source=$PWD/products/cpk_server/tests,target=/test,readonly" \
+    --mount "type=bind,source=$PWD/scripts/http_sample_fixture.py,target=/test-support/http_sample_fixture.py,readonly" \
+    -e PYTHONPATH=/app/products/cpk_server/src:/app/products/cpk_local_gateway/src:/test-support \
+    "$IMAGE" python /test/configured_owner_smoke.py
+fi
+
 # Generate after image/Postgres preparation so the240-second grants cover only
 # startup and the immediate protected reads. No private key leaves the process.
 if [ "$PROFILE" != "published-baseline" ]; then

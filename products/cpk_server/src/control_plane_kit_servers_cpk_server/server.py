@@ -990,7 +990,7 @@ def _operations_application(
         if invalid:
             raise BootstrapConfigurationError("workspace authority configuration is invalid")
     database_url = config.operations_database_url()
-    if config.configured_owner_startup:
+    if config.configured_owner_startup is True:
         from .configured_owner import install_or_verify_owner
         try:
             install_or_verify_owner(database_url, authority.administration_policy, clock=_clock, id_factory=_id)
@@ -1006,7 +1006,7 @@ def _operations_application(
     def unit_of_work() -> PostgresUnitOfWork:
         return PostgresUnitOfWork(lambda: psycopg.connect(database_url))
 
-    if authority is not None and not config.configured_owner_startup:
+    if authority is not None and config.configured_owner_startup is not True:
         from control_plane_kit_operations.workspace_permissions import (
             WorkspaceAdministrationContext, WorkspacePermissionReadService,
         )
