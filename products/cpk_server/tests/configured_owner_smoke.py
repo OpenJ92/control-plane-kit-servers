@@ -68,9 +68,18 @@ def listening(environment):
 
 async def observe_mcp(owner_token, rejected_token):
     async with httpx2.AsyncClient(headers={"Authorization": "Bearer " + owner_token}) as http:
+        permission_url = BASE + "/workspaces/not-enrolled/permissions"
+        page = await http.get(permission_url)
+        assert page.status_code == 200 and page.json()["items"] == []
+        member = await http.get(permission_url, headers={"Authorization": "Bearer test-member"})
+        assert member.status_code == 403
+
         async with Client(streamable_http_client(BASE + "/mcp", http_client=http)) as client:
             names = {tool.name for tool in (await client.list_tools()).tools}
-            assert "get_workspace" in names
+            assert "get_workspace" in names and "inspect_workspace_permission" in names
+            admin_read = await client.call_tool("inspect_workspace_permission",
+                {"workspace_id": "not-enrolled", "target": MEMBER})
+            assert admin_read.is_error and admin_read.structured_content["error"]["status"] == 404
             result = await client.call_tool("get_workspace", {"workspace_id": "not-enrolled"})
             assert result.is_error and result.structured_content["error"]["status"] == 403
         denied = await http.post(BASE + "/mcp", headers={"Authorization": "Bearer " + rejected_token,
