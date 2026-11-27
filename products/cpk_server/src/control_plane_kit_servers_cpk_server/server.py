@@ -221,8 +221,16 @@ class CpkServerBootstrapConfiguration:
     http_sample_support: object | None = field(default=None, repr=False, compare=False)
     managed_verification_support: object | None = field(default=None, repr=False, compare=False)
     child_mcp_api_hostname: str | None = None
+    configured_owner_startup: bool = False
 
     def __post_init__(self) -> None:
+        if self.configured_owner_startup:
+            policy = self.workspace_authority.administration_policy if self.workspace_authority else None
+            identities = tuple(entry.principal.identity for entry in self.control_auth_static_principals)
+            if (policy is None or len(policy.administrators) != 1 or self.control_auth_verifier != "static-development"
+                    or set(identities) != set(policy.known_identities) or len(set(identities)) != len(identities)
+                    or any(entry.principal.workspace_grants for entry in self.control_auth_static_principals)):
+                raise BootstrapConfigurationError("configured installation owner and verifier do not match")
         if self.child_mcp_api_hostname is not None and not valid_child_mcp_api_hostname(self.child_mcp_api_hostname):
             raise BootstrapConfigurationError("child MCP API hostname is invalid")
 
@@ -236,7 +244,8 @@ class CpkServerBootstrapConfiguration:
         if profile not in ("standard", "grandparent-read-only-v1"):
             raise BootstrapConfigurationError("MCP exposure profile is invalid")
         config = replace(cls._from_environment_configuration(values), mcp_profile=profile,
-            child_mcp_api_hostname=values.get(CHILD_MCP_API_HOSTNAME_ENV))
+            child_mcp_api_hostname=values.get(CHILD_MCP_API_HOSTNAME_ENV),
+            configured_owner_startup=values.get("CPK_WORKSPACE_AUTHORITY") == "configured-owner-v1")
         key = "CPK_MANAGED_VERIFICATION_CONFIGURATION_FILE"
         if key not in values:
             return config
@@ -278,7 +287,7 @@ class CpkServerBootstrapConfiguration:
         authority_path = "CPK_WORKSPACE_AUTHORITY_CONFIGURATION_FILE"
         if authority_mode != "disabled" or authority_path in values:
             try:
-                if authority_mode != "dynamic-v1" or authority_path not in values:
+                if authority_mode not in ("dynamic-v1", "configured-owner-v1") or authority_path not in values:
                     raise ValueError
                 from .workspace_authority_configuration import read_workspace_authority_configuration
                 authority = read_workspace_authority_configuration(values[authority_path])
@@ -982,12 +991,23 @@ def _operations_application(
         if invalid:
             raise BootstrapConfigurationError("workspace authority configuration is invalid")
     database_url = config.operations_database_url()
-    _install_operations_schema(database_url)
+    if config.configured_owner_startup is True:
+        from .configured_owner import install_or_verify_owner
+        try:
+            install_or_verify_owner(database_url, authority.administration_policy, clock=_clock, id_factory=_id)
+        except Exception:
+            failure = BootstrapConfigurationError("configured installation owner is unavailable")
+        else:
+            failure = None
+        if failure is not None:
+            raise failure
+    else:
+        _install_operations_schema(database_url)
 
     def unit_of_work() -> PostgresUnitOfWork:
         return PostgresUnitOfWork(lambda: psycopg.connect(database_url))
 
-    if authority is not None:
+    if authority is not None and config.configured_owner_startup is not True:
         from control_plane_kit_operations.workspace_permissions import (
             WorkspaceAdministrationContext, WorkspacePermissionReadService,
         )

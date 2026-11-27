@@ -44,7 +44,7 @@ class SuppliedChildWorkspaceAuthorityTests(unittest.TestCase):
         self.assertEqual(delivery.reference, value.workspace_authority.authority_document)
         self.assertEqual(delivery.intent, SecretUseIntent.APPLICATION_CONTROL_TOKEN)
         self.assertEqual(delivery.file_mode.value, "0400")
-        self.assertEqual(node.non_secret_environment()["CPK_WORKSPACE_AUTHORITY"], "dynamic-v1")
+        self.assertEqual(node.non_secret_environment()["CPK_WORKSPACE_AUTHORITY"], "configured-owner-v1")
         self.assertEqual(node.non_secret_environment()["CPK_WORKSPACE_AUTHORITY_CONFIGURATION_FILE"], delivery.target_path)
         self.assertIn(delivery.reference, {entry.reference for entry in node.secret_selections})
         protected = {delivery.reference, value.control_auth.principals_document}
