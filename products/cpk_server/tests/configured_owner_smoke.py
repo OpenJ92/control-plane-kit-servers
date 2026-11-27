@@ -148,9 +148,14 @@ def main():
 
     # A credentialed member cannot take over the same installation by changing the policy file.
     policy_path.write_text(json.dumps({**POLICY, "administrators": [MEMBER]}))
-    with Popen([sys.executable, "-m", "control_plane_kit_servers_cpk_server.server"],
-               env=environment("owner-rotated")) as refused:
+    refused = Popen([sys.executable, "-m", "control_plane_kit_servers_cpk_server.server"],
+                    env=environment("owner-rotated"))
+    try:
         assert refused.wait(timeout=20) == 2
+    finally:
+        if refused.poll() is None:
+            refused.kill()
+            refused.wait(timeout=5)
     assert binding() == receipt
     check_retained_and_concurrent()
     print("configured owner: signed ready, fresh native MCP, rotation, restart, ownership and namespace checks passed")
