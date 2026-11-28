@@ -20,6 +20,7 @@ from .boundary import (
     CpkServerBoundaryResponse, CpkServerServiceRequest, _dispatch_application_async,
     _json_frame_error, _strict_json_object, _validate_reobserve_frame,
 )
+from .mcp_workspace_administration import WORKSPACE_ADMINISTRATION_SCHEMAS
 from .request_body import MCP_ENVELOPE_MAX_BYTES, RequestBodyTooLarge, collect_request_body
 
 
@@ -63,7 +64,9 @@ _READS = {
     "read.approval-detail": "Inspect an existing approval request; reading never approves or executes the plan.",
     "read.plan-runs": "Read runs associated with a plan.",
     "read.run-events": "Read durable events for one run.",
-    "read.workspace-permission": "Inspect an explicit principal's workspace permissions; this grants no authority.",
+    "read.workspace-permissions": "As installation administrator, page through current permission records for one workspace. Follow the returned cursor on the same query.",
+    "read.workspace-permission": "As installation administrator, inspect the exact target's current workspace scopes and revision.",
+    "read.workspace-permission-history": "As installation administrator, page through one target's permission receipts. Match the actor, command key, operation and revisions before attributing a change.",
     "read.managed-runtime-assignment": "Inspect an explicit runtime management assignment; this grants no authority.",
     "read.runtime-authority-deliveries": "Inspect admitted runtime delivery metadata. Requires runtime-authority-delivery:read; denied access does not mean no delivery exists.",
 }
@@ -74,13 +77,25 @@ _PAGED = {
     "read.sessions", "read.session-plans", "read.plan-runs", "read.run-events", "read.runtime-authority-deliveries",
 }
 _EXTRA_FIELDS = {
-    "read.workspace-permission": {"target": {"type": "object", "description": "Explicit principal identity: issuer, subject_id and kind."}},
     "read.managed-runtime-assignment": {"runtime_id": {"type": "string"}, "authority_ref": {"type": "string"}},
 }
 _GRANDPARENT_READS = frozenset(("read.workspace", "read.desired-graph",
     "read.desired-topology-draft-revision", "read.desired-topology-draft-revision-attempts"))
 
 _STANDARD_COMMANDS = {
+    "command.workspace-administration.create": (
+        "As configured installation administrator, enroll one named workspace using a caller-owned key. "
+        "Creation grants no workspace permissions. Retain the returned workspace ID and creation receipt. "
+        "After a lost reply, an observed workspace alone cannot identify this request; report uncertainty and do not resend."),
+    "command.workspace-permission.grant": (
+        "As installation administrator, grant explicit scopes to a configured identity in one workspace. "
+        "Use the observed permission revision (zero for a first grant) and a caller-owned key. "
+        "Verify current access with inspect_workspace_permission. After a lost reply look up the same actor, "
+        "target and key in list_workspace_permission_history; do not automatically resubmit."),
+    "command.workspace-permission.revoke": (
+        "As installation administrator, revoke explicit scopes from the exact workspace and identity. "
+        "Use its observed permission revision and a caller-owned key. Inspect the new revision and current access. "
+        "After a lost reply correlate list_workspace_permission_history; do not automatically resubmit."),
     "command.deployment.admit": (
         "Submit one approved plan to the workspace admission service using plan:execute and a caller-owned key. "
         "Keep its queued execution request ID and match it to request_id in list_plan_runs. "
@@ -179,6 +194,8 @@ def _graph_schema():
 
 
 def _input_schema(route, *, supports_recipe=True):
+    if route.route_id in WORKSPACE_ADMINISTRATION_SCHEMAS:
+        return WORKSPACE_ADMINISTRATION_SCHEMAS[route.route_id][0]
     if route.route_id in ("command.ingress-authority.register", "read.ingress-authority-detail"):
         identifier = {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[A-Za-z0-9._-]+$"}
         coordinates = {"workspace_id": identifier, "authority_ref": {
@@ -310,6 +327,12 @@ def _input_schema(route, *, supports_recipe=True):
     return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
 
 
+def _output_schema(route):
+    if route.route_id in WORKSPACE_ADMINISTRATION_SCHEMAS:
+        return WORKSPACE_ADMINISTRATION_SCHEMAS[route.route_id][1]
+    return {"type": "object", "description": "Bounded public " + route.response_schema.name + "; owner fields are preserved."}
+
+
 def _result(body, *, error=False):
     return CallToolResult(content=[TextContent(type="text", text=json.dumps(body, ensure_ascii=True, allow_nan=False))],
                           structured_content=dict(body), is_error=error)
@@ -345,7 +368,7 @@ class StandardMcpAdapter:
             self.routes[name] = route
             self.tools[name] = Tool(name=name, description=_READS[route.route_id],
                 input_schema=_input_schema(route),
-                output_schema={"type": "object", "description": "Bounded public " + route.response_schema.name + "; owner fields are preserved."},
+                output_schema=_output_schema(route),
                 annotations=ToolAnnotations(read_only_hint=True, destructive_hint=False,
                                             idempotent_hint=True, open_world_hint=False))
         if profile == "standard":
@@ -370,6 +393,9 @@ class StandardMcpAdapter:
                     "command.desired-topology-draft.revise": "read.desired-topology-draft-revision",
                     "command.operation-session.start": "read.desired-topology-draft-revision",
                     "command.deployment.admit": "read.approval-detail",
+                    "command.workspace-administration.create": "read.workspace-permissions",
+                    "command.workspace-permission.grant": "read.workspace-permission-history",
+                    "command.workspace-permission.revoke": "read.workspace-permission-history",
                     "command.product.import": "read.product-detail",
                     "command.ingress-authority.register": "read.ingress-authority-detail",
                 }.get(route_id, "read.product-topology-preview")
@@ -384,9 +410,8 @@ class StandardMcpAdapter:
                 route = composition.http_api.route(route_id)
                 self.routes[binding.mcp_tool_name] = route
                 self.tools[binding.mcp_tool_name] = Tool(name=binding.mcp_tool_name, description=description,
-                    input_schema=_input_schema(route, supports_recipe=supports_recipe), output_schema={"type": "object",
-                        "description": "Bounded owner receipt; preserve returned coordinates without guessing or selecting latest."},
-                    annotations=ToolAnnotations(read_only_hint=False, destructive_hint=route_id == "command.deployment.admit",
+                    input_schema=_input_schema(route, supports_recipe=supports_recipe), output_schema=_output_schema(route),
+                    annotations=ToolAnnotations(read_only_hint=False, destructive_hint=route_id in ("command.deployment.admit", "command.workspace-permission.revoke"),
                         idempotent_hint=False, open_world_hint=route_id == "command.deployment.admit"))
         discovery_guidance = (
             "Use list_registered_products for the workspace's active products, following its scoped cursor; "
@@ -400,6 +425,11 @@ class StandardMcpAdapter:
             if profile == "standard" else
             "This profile exposes only four saved-state reads. Product discovery and topology writes are unavailable here. "
         )
+        if "create_workspace_as_administrator" in self.tools:
+            discovery_guidance += (
+                "For a new workspace, a configured installation administrator can create_workspace_as_administrator. "
+                "Keep the returned workspace ID. Grant the intended known identity its explicit scopes in a separate "
+                "authorized call, then reconnect as that identity and call get_workspace for that exact ID. ")
         if "preview_product_topology" in self.tools:
             discovery_guidance += (
                 "Use preview_product_topology with exact registered pins and explicit public settings. "
@@ -469,6 +499,9 @@ class StandardMcpAdapter:
         if _json_frame_error(response, route.response_schema.max_bytes) is not None:
             # The owner might already have committed; no rollback/retry claim.
             return _failure(503, "application response unavailable")
+        if route.route_id in WORKSPACE_ADMINISTRATION_SCHEMAS:
+            if not Draft202012Validator(self.tools[params.name].output_schema).is_valid(response):
+                return _failure(503, "administration outcome unavailable")
         if coordinate_receipt:
             revision = arguments.get("expected_head_revision", 0) + 1
             try:
