@@ -422,3 +422,21 @@ roadmap/1813-runtime-control; this branch changes documentation only.
 **M1R passes for the product list/detail and discovery guidance in #418.** Both selected source gates exercised both supported SDK modes, public list/detail equality with HTTP, scoped pagination, digest bounds, current authority, revoked detail, redaction and direct refusal in the restricted profile. The packaged disposable qualification also called list and exact detail during authoring. Installed native list/detail remains unverified. This read-only slice gives callers exact references and visibility into active/revoked state. A later save rechecks eligibility under current edit authority. Full #404 inspection and wider #413 guidance retain their own acceptance criteria. [Discovery review](https://github.com/OpenJ92/control-plane-kit-servers/pull/418)
 
 **Source integration passes in dependency order.** #418 adds observation. #420 adds preview and exact unselected save and preserves the public revision across a fresh read. In the installed witness the SDK client wrote and fresh native Codex read. #419 adds a separate exact-revision selection with current edit authority and the previous Desired graph, projection and generation. Isolated PostgreSQL and SDK evidence establishes rejection, replay and fresh readback. Current and deployment remain separate. A lost response can leave the specific intent uncorrelated; the supported behavior is a single submission and an explicit unknown outcome. Full #408 attribution, installed selection and later approval/effect/administration work retain their own gates. Merge #418 first; retarget #420, then #419, to the integrated roadmap base while preserving ancestry. Recheck the scoped diff and hosted checks after each base change. No installed mutation follows from this review. [Authoring PR](https://github.com/OpenJ92/control-plane-kit-servers/pull/420) · [Selection PR](https://github.com/OpenJ92/control-plane-kit-servers/pull/419)
+
+### Workspace administration on the standard profile (#405)
+
+The current source exposes the three administrator commands in the table above
+through the standard SDK transport: `create_workspace_as_administrator`,
+`grant_workspace_permissions` and `revoke_workspace_permissions`.
+`list_workspace_permissions`, `inspect_workspace_permission` and
+`list_workspace_permission_history` expose the corresponding administrative
+reads. These are the six workspace-administration rows updated since the
+matrix baseline. The restricted grandparent profile retains its four reads.
+
+For these six routes, Operations checks the authenticated installation
+administrator on every call. Creating an empty workspace and granting an
+existing identity exact scopes are separate commands. Permission history and
+current access are separate reads. Management assignments, credential issuance,
+and a general website approval workflow remain separate decisions. See the
+[workspace setup procedure](standard-mcp.md#create-a-workspace-and-grant-access)
+and the [#405 authority decision](https://github.com/OpenJ92/control-plane-kit-servers/issues/405#issuecomment-7234228152).

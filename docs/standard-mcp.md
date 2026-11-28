@@ -293,3 +293,40 @@ SDK internals, rebuild CPK management state or weaken the receiver witness.
 At that checkpoint focused green and independent source review were pending;
 the later `8b8e87c` source and PR #400 acceptance closed those source/package
 requirements. That historical correction did not itself authorize a full retry.
+
+## Create a workspace and grant access
+
+In the standard profile, authenticate as a configured installation administrator.
+Use an operator-approved workspace ID, principal and set of scopes. Workspace
+edit or deployment approval alone does not authorize administration. Each call
+uses the identity that authenticated that request.
+
+1. Call `create_workspace_as_administrator` with the new `workspace_id`, a
+   display `name` and a caller-owned `idempotency_key`. Optional `metadata` is
+   public workspace data. Keep the returned creation receipt, including its
+   installation ID, workspace ID, actor and observed Current graph ID. Creation
+   initializes the empty workspace and grants nobody access.
+2. Use `inspect_workspace_permission` with that workspace ID and the exact
+   target (`issuer`, `subject_id`, `kind`). As the authorized administrator,
+   confirm the current revision or the absence of a record.
+   `list_workspace_permissions` lists the workspace's current records in pages.
+3. Call `grant_workspace_permissions` separately with the same workspace and
+   target, the agreed `scopes`, the observed `expected_revision` (zero for a
+   first grant) and a new request key. The target must already be known to the
+   installation. Compare the resulting scopes and revision with a fresh
+   permission inspection.
+4. Reconnect as the authorized target and call `get_workspace` with the exact
+   ID from creation. A reader can now inspect that workspace.
+5. To withdraw access, call `revoke_workspace_permissions` with the exact
+   workspace, target, scopes to remove, current revision and a distinct request
+   key. Inspect the resulting scopes separately. Reuse the owner's cursor,
+   unchanged and with the same query, to page through
+   `list_workspace_permission_history`.
+
+After an interrupted permission change, use the target's history to match the
+workspace, actor, target, operation, scopes, prior revision and command key.
+Current access alone cannot identify which request changed it. A lost creation
+reply may leave attribution unknown even when the workspace is readable.
+Stop on an ambiguous result. Further work, including a new submission, needs
+its own decision. This workflow operates on existing identities. The
+authentication provider retains responsibility for issuing their credentials.
