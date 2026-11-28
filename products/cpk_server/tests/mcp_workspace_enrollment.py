@@ -1,6 +1,7 @@
 """Post-deployment enrollment through the normal child MCP listener."""
 from contextlib import asynccontextmanager
 import json
+from urllib.parse import quote, urlencode
 
 import httpx2
 from mcp import Client
@@ -45,9 +46,10 @@ async def verify_enrollment(base_url, owner_token, member_token, owner, member):
         record = await call(admin, "inspect_workspace_permission", target)
         assert record["scopes"] == grant["scopes"] and record["revision"] == receipt["revision"]
         async with httpx2.AsyncClient(headers={"Authorization": "Bearer " + owner_token}) as http:
-            response = await http.get(base_url + "/workspaces/first-hello/permissions/inspect",
-                                      params={"target": json.dumps(member)})
-            assert response.status_code == 200 and response.json() == record
+            query = urlencode({"target": json.dumps(member)}, quote_via=quote)
+            response = await http.get(base_url + "/workspaces/first-hello/permissions/inspect?" + query)
+            assert response.status_code == 200, response.status_code
+            assert response.json() == record
     async with connect(member_token) as fresh:
         state = (await call(fresh, "get_workspace", workspace))["workspace"]
         assert state["workspace_id"] == workspace["workspace_id"]
