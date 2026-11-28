@@ -84,6 +84,21 @@ class StandardMcpLifespanTests(unittest.IsolatedAsyncioTestCase):
 
 
 class StandardMcpTests(StandardMcpFixture, unittest.IsolatedAsyncioTestCase):
+    async def test_workspace_administration_refuses_malformed_target_before_dispatch(self):
+        target = {"issuer": "test", "subject_id": "member", "kind": "operator"}
+        grant = {"workspace_id": "workspace-a", "target": target, "scopes": ["instance:workspace:read"],
+                 "expected_revision": 0, "idempotency_key": "grant-member"}
+        before = sum(len(service.requests) for service in self.host.services.values())
+        async with self.client() as client:
+            for change in ({"target": {"subject_id": "member"}}, {"target": {**target, "credential": "private-canary"}},
+                           {"scopes": []}, {"scopes": ["unknown-scope"]}, {"expected_revision": -1},
+                           {"actor": target}):
+                result = await client.call_tool("grant_workspace_permissions", {**grant, **change})
+                self.assertTrue(result.is_error)
+                self.assertEqual(result.structured_content["error"]["status"], 400)
+                self.assertNotIn("private-canary", str(result.content))
+        self.assertEqual(sum(len(service.requests) for service in self.host.services.values()), before)
+
     def product_reads(self):
         """Immutable store-return fixtures; real owner projection, no store engine."""
         from control_plane_kit_core.algebra import BlockSockets, ProviderSocket, RequirementSocket
