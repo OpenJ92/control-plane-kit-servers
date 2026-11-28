@@ -20,6 +20,7 @@ from psycopg.conninfo import make_conninfo
 
 from cpk_http_host_fixtures import fixture
 from http_sample_fixture import SampleAuthority, verify_sample, write_public
+from mcp_workspace_enrollment import verify_enrollment
 from control_plane_kit_operations.postgres import install_schema
 from control_plane_kit_servers_cpk_server import control_configuration as receiver
 from control_plane_kit_servers_cpk_server.configured_owner import install_or_verify_owner
@@ -90,10 +91,11 @@ async def observe_mcp(owner_token, rejected_token):
         assert denied.status_code == 401
 
 
-def binding():
+def binding(*, enrolled=False):
     with psycopg.connect(DATABASE) as connection:
-        assert connection.execute("SELECT count(*) FROM cpk_workspaces").fetchone() == (0,)
-        assert connection.execute("SELECT count(*) FROM cpk_workspace_permissions").fetchone() == (0,)
+        expected_rows = 1 if enrolled else 0
+        assert connection.execute("SELECT count(*) FROM cpk_workspaces").fetchone() == (expected_rows,)
+        assert connection.execute("SELECT count(*) FROM cpk_workspace_permissions").fetchone() == (expected_rows,)
         (receipt,), = connection.execute("SELECT receipt FROM cpk_workspace_permission_installation").fetchall()
         assert receipt["installation_id"] == POLICY["installation_id"] and receipt["actor"] == OWNER
         return receipt
@@ -141,6 +143,7 @@ def main():
             observed = binding()
             if receipt is not None:
                 assert receipt == observed
+                asyncio.run(verify_enrollment(BASE, current, "test-member", OWNER, MEMBER))
             receipt = observed
 
     # A credentialed member cannot take over the same installation by changing the policy file.
@@ -153,7 +156,7 @@ def main():
         if refused.poll() is None:
             refused.kill()
             refused.wait(timeout=5)
-    assert binding() == receipt
+    assert binding(enrolled=True) == receipt
     check_retained_and_concurrent()
     print("configured owner: signed ready, fresh native MCP, rotation, restart, ownership and namespace checks passed")
 
